@@ -28,3 +28,8 @@ def split(req: SplitRequest):
 def unite(req: UniteRequest):
     # TODO: read manifest_uri, fetch tiles, validate checksums, merge and re-encode JP2
     return {"message": "unite started", "request": req.dict()}
+
+from fastapi.staticfiles import StaticFiles
+
+# serve static UI from /opt/tsg-ui (we'll push index.html there via the pipeline)
+app.mount("/ui", StaticFiles(directory="/opt/tsg-ui", html=True), name="ui")
