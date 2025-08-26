@@ -9,6 +9,13 @@ permissions:
   id-token: write
   contents: read
 
+env:
+  AWS_ACCOUNT_ID: "991105135552"
+  AWS_REGION: "us-east-1"  # pin region
+  # If you prefer to keep the role in secrets, leave this empty and keep the step below.
+  # Otherwise, set it here and remove the secret usage:
+  # AWS_ROLE_ARN: "arn:aws:iam::991105135552:role/GitHubDeployRole"
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -19,23 +26,27 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: "3.11"
 
       - name: Install CDK & deps
         run: |
-          npm install -g aws-cdk
+          npm install -g aws-cdk@latest
           python -m pip install --upgrade pip
           pip install -r infrastructure/requirements.txt
 
       - name: Configure AWS Credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-          aws-region: ${{ secrets.AWS_REGION }}
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}   # or: ${{ env.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: CDK Synth (fail fast)
+        working-directory: infrastructure
+        run: cdk synth --quiet
 
       - name: CDK Bootstrap (idempotent)
         working-directory: infrastructure
-        run: cdk bootstrap
+        run: cdk bootstrap aws://$AWS_ACCOUNT_ID/$AWS_REGION
 
       - name: CDK Deploy
         working-directory: infrastructure
