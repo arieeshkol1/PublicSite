@@ -8,6 +8,8 @@ from aws_cdk import (
     aws_apigatewayv2 as apigw,
     aws_apigatewayv2_integrations as apigw_int,
     aws_iam as iam,
+    aws_stepfunctions as sfn,
+    aws_stepfunctions_tasks as tasks,
 )
 from constructs import Construct
 import os
@@ -20,7 +22,7 @@ class ServerlessJp2Stack(Stack):
         account = Stack.of(self).account
         region = Stack.of(self).region
 
-        # Input bucket (private)
+        # ---------------- Buckets ----------------
         input_bucket = s3.Bucket(
             self, "InputBucket",
             bucket_name=f"jp2-input-{account}-{region}",
@@ -30,7 +32,6 @@ class ServerlessJp2Stack(Stack):
             removal_policy=RemovalPolicy.DESTROY,
         )
 
-        # Output bucket (private)
         output_bucket = s3.Bucket(
             self, "OutputBucket",
             bucket_name=f"jp2-output-{account}-{region}",
@@ -40,20 +41,20 @@ class ServerlessJp2Stack(Stack):
             removal_policy=RemovalPolicy.DESTROY,
         )
 
-        # UI bucket (S3 static website) - public via bucket policy (ACLs blocked)
         ui_bucket = s3.Bucket(
             self, "UiBucket",
             bucket_name=f"jp2-ui-{account}-{region}",
             website_index_document="index.html",
-            public_read_access=True,  # demo simplicity; prefer CloudFront+OAC for prod
-            block_public_access=s3.BlockPublicAccess.BLOCK_ACLS,  # allow public bucket policy, block ACLs
+            public_read_access=True,  # demo; prefer CloudFront+OAC for prod
+            block_public_access=s3.BlockPublicAccess.BLOCK_ACLS,  # allow public policy, block ACLs
             auto_delete_objects=True,
             removal_policy=RemovalPolicy.DESTROY,
         )
 
         lambda_code_dir = os.path.join(os.path.dirname(__file__), "lambda")
 
-        # Controller Lambda for /split, /unite, /status
+        # ---------------- Lambdas ----------------
+        # Controller: /split, /unite (stub), /status/{jobId}, /status-progress
         controller_fn = _lambda.Function(
             self, "ControllerFn",
             runtime=_lambda.Runtime.PYTHON_3_11,
@@ -64,10 +65,11 @@ class ServerlessJp2Stack(Stack):
             environment={
                 "INPUT_BUCKET": input_bucket.bucket_name,
                 "OUTPUT_BUCKET": output_bucket.bucket_name,
+                # STATE_MACHINE_ARN filled after we create it
             },
         )
 
-        # List Input Lambda for /list-input
+        # List-input Lambda
         list_input_fn = _lambda.Function(
             self, "ListInputFn",
             runtime=_lambda.Runtime.PYTHON_3_11,
@@ -79,7 +81,7 @@ class ServerlessJp2Stack(Stack):
                 "INPUT_BUCKET": input_bucket.bucket_name,
             },
         )
-        # IAM: allow ListBucket on the input bucket
+        # IAM for list
         list_input_fn.add_to_role_policy(
             iam.PolicyStatement(
                 actions=["s3:ListBucket"],
@@ -87,7 +89,54 @@ class ServerlessJp2Stack(Stack):
             )
         )
 
-        # API Gateway HTTP API WITH CORS
+        # Split worker (dummy tiler to prove flow; replace later with GDAL)
+        split_worker_fn = _lambda.Function(
+            self, "SplitWorkerFn",
+            runtime=_lambda.Runtime.PYTHON_3_11,
+            handler="split_worker.handler",
+            code=_lambda.Code.from_asset(lambda_code_dir),
+            timeout=Duration.minutes(15),
+            memory_size=10240,  # 10GB to simulate heavy jobs later
+            ephemeral_storage_size=_lambda.EphemeralStorageSize.gib(10),
+            environment={
+                "OUTPUT_BUCKET": output_bucket.bucket_name,
+            },
+        )
+        # Worker S3 perms
+        output_bucket.grant_put(split_worker_fn)
+        output_bucket.grant_read_write(split_worker_fn)
+        output_bucket.grant_list(split_worker_fn)
+        input_bucket.grant_read(split_worker_fn)  # if you later read input
+
+        # ---------------- Step Functions ----------------
+        split_task = tasks.LambdaInvoke(
+            self,
+            "SplitTask",
+            lambda_function=split_worker_fn,
+            payload_response_only=True,  # Lambda returns JSON dict
+        )
+
+        definition = split_task  # simple: one task → success
+
+        state_machine = sfn.StateMachine(
+            self,
+            "SplitStateMachine",
+            definition=definition,
+            timeout=Duration.minutes(30),
+        )
+
+        # Allow controller to start/describe executions
+        controller_fn.add_to_role_policy(
+            iam.PolicyStatement(
+                actions=["states:StartExecution", "states:DescribeExecution"],
+                resources=[state_machine.state_machine_arn],
+            )
+        )
+
+        # Pass SM ARN into controller env
+        controller_fn.add_environment("STATE_MACHINE_ARN", state_machine.state_machine_arn)
+
+        # ---------------- API (HTTP API) with CORS ----------------
         http_api = apigw.HttpApi(
             self,
             "HttpApi",
@@ -98,7 +147,7 @@ class ServerlessJp2Stack(Stack):
                     apigw.CorsHttpMethod.POST,
                     apigw.CorsHttpMethod.OPTIONS,
                 ],
-                allow_origins=["*"],  # tighten later to your UI domain/CloudFront
+                allow_origins=["*"],  # tighten to UI domain for prod
                 max_age=Duration.days(10),
             ),
         )
@@ -108,14 +157,14 @@ class ServerlessJp2Stack(Stack):
 
         # Routes
         http_api.add_routes(path="/split", methods=[apigw.HttpMethod.POST], integration=controller_integ)
-        http_api.add_routes(path="/unite", methods=[apigw.HttpMethod.POST], integration=controller_integ)
+        http_api.add_routes(path="/unite", methods=[apigw.HttpMethod.POST], integration=controller_integ)  # stub
         http_api.add_routes(path="/status/{jobId}", methods=[apigw.HttpMethod.GET], integration=controller_integ)
-
-        # /list-input (no manual OPTIONS — API-level CORS handles preflight)
+        http_api.add_routes(path="/status-progress", methods=[apigw.HttpMethod.GET], integration=controller_integ)
         http_api.add_routes(path="/list-input", methods=[apigw.HttpMethod.GET], integration=list_input_integ)
 
-        # Outputs
+        # ---------------- Outputs ----------------
         CfnOutput(self, "UiBucketWebsiteUrl", value=ui_bucket.bucket_website_url)
         CfnOutput(self, "InputBucketName", value=input_bucket.bucket_name)
         CfnOutput(self, "OutputBucketName", value=output_bucket.bucket_name)
         CfnOutput(self, "ApiEndpoint", value=http_api.api_endpoint)
+        CfnOutput(self, "StateMachineArn", value=state_machine.state_machine_arn)
