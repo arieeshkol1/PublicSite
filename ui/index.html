@@ -1,70 +1,221 @@
-<!doctype html><html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>TSG JP2 Split/Unite (Serverless)</title>
-<style>
- body{font-family:system-ui,Arial,sans-serif;margin:24px;max-width:960px}
- fieldset{border:1px solid #ddd;border-radius:12px;padding:14px;margin:16px 0}
- legend{font-weight:700}
- label{display:block;margin:8px 0 6px}
- input,button{padding:.6rem;border-radius:10px;border:1px solid #ccc}
- input{width:100%}
- .row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
- pre{background:#0d1117;color:#c9d1d9;border-radius:12px;padding:12px;max-height:45vh;overflow:auto;border:1px solid #30363d}
- button{cursor:pointer}
-</style></head><body>
-<h1>TSG JP2 Split / Unite (Serverless)</h1>
-<label>API Base URL</label>
-<input id="api" placeholder="https://xxxxx.execute-api.us-east-1.amazonaws.com"/>
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>TSG JP2 Split / Unite</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    .card{ @apply bg-white p-6 rounded-2xl shadow; }
+    .btn{ @apply px-4 py-2 rounded text-white; }
+    .btn-blue{ @apply bg-blue-600 hover:bg-blue-700; }
+    .btn-green{ @apply bg-green-600 hover:bg-green-700; }
+    .btn-indigo{ @apply bg-indigo-600 hover:bg-indigo-700; }
+    .field{ @apply w-full border rounded p-2; }
+    .label{ @apply block text-gray-700 font-medium mb-1; }
+    .hint{ @apply text-xs text-gray-500; }
+    .err{ @apply text-red-600; }
+    .ok{ @apply text-green-700; }
+    .mono{ font-family: ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace; }
+  </style>
+</head>
+<body class="bg-gray-50">
+  <!-- Header -->
+  <header class="bg-white shadow">
+    <div class="max-w-5xl mx-auto flex items-center gap-4 p-4">
+      <img src="tsglogo.png" alt="TSG" class="h-12">
+      <div>
+        <h1 class="text-2xl font-bold text-gray-800">TSG JP2 Split / Unite</h1>
+        <p class="text-sm text-gray-500">Secure JP2 processing pipeline (Serverless demo)</p>
+      </div>
+    </div>
+  </header>
 
-<fieldset><legend>Split</legend>
-<div class="row">
-  <div><label>Input Key (in Input bucket)</label><input id="split_key" placeholder="raw/scenes/sceneA.jp2"/></div>
-  <div><label>Tile size</label><input id="split_tile" type="number" value="2048"/></div>
-</div>
-<button id="btn_split">Run Split</button>
-</fieldset>
+  <main class="max-w-5xl mx-auto p-4 space-y-6">
+    <!-- API Config -->
+    <section class="card">
+      <h2 class="text-xl font-semibold mb-3">API Configuration</h2>
+      <div class="grid md:grid-cols-2 gap-4">
+        <div>
+          <label class="label">API Base URL</label>
+          <input id="apiBase" class="field" placeholder="https://xxxxx.execute-api.us-east-1.amazonaws.com">
+          <p class="hint">Your API Gateway URL (no trailing slash).</p>
+        </div>
+        <div class="grid grid-cols-2 gap-4">
+          <div>
+            <label class="label">Input Bucket</label>
+            <input id="inBucket" class="field" value="jp2-input-991105135552-us-east-1">
+          </div>
+          <div>
+            <label class="label">Output Bucket</label>
+            <input id="outBucket" class="field" value="jp2-output-991105135552-us-east-1">
+          </div>
+        </div>
+      </div>
+    </section>
 
-<fieldset><legend>Unite</legend>
-<div class="row">
-  <div><label>Manifest Key (in Output bucket)</label><input id="unite_manifest" placeholder="manifests/sceneA.manifest.json"/></div>
-  <div></div>
-</div>
-<button id="btn_unite">Run Unite</button>
-</fieldset>
+    <!-- Split -->
+    <section class="card">
+      <h2 class="text-xl font-semibold mb-3">Split JP2</h2>
+      <div class="grid md:grid-cols-3 gap-4">
+        <div class="md:col-span-2">
+          <label class="label">Input Key (in Input bucket)</label>
+          <input id="inputKey" class="field mono" placeholder="raw/scenes/sceneA.jp2">
+          <p class="hint">Example: <span class="mono">raw/scenes/sceneA.jp2</span></p>
+        </div>
+        <div>
+          <label class="label">Tile size (px)</label>
+          <input id="tileSize" type="number" class="field" value="2048" min="256" step="256">
+        </div>
+      </div>
+      <div class="mt-4 flex gap-2">
+        <button id="btnSplit" class="btn btn-blue">Run Split</button>
+        <button id="btnSplitClear" class="btn btn-indigo" title="Clear results">Clear</button>
+      </div>
+      <div id="splitOut" class="mt-4 text-sm"></div>
+    </section>
 
-<fieldset><legend>Status</legend>
-<div class="row">
-  <div><label>Job ID</label><input id="job_id" placeholder="split-xxxx or unite-xxxx"/></div>
-  <div></div>
-</div>
-<button id="btn_status">Check</button>
-</fieldset>
+    <!-- Unite -->
+    <section class="card">
+      <h2 class="text-xl font-semibold mb-3">Unite JP2</h2>
+      <div class="grid md:grid-cols-2 gap-4">
+        <div>
+          <label class="label">Manifest Key (in Output bucket)</label>
+          <input id="manifestKey" class="field mono" placeholder="manifests/<jobId>.json">
+          <p class="hint">Paste the manifest key produced by Split (stored in the Output bucket).</p>
+        </div>
+      </div>
+      <div class="mt-4 flex gap-2">
+        <button id="btnUnite" class="btn btn-green">Run Unite</button>
+        <button id="btnUniteClear" class="btn btn-indigo" title="Clear results">Clear</button>
+      </div>
+      <div id="uniteOut" class="mt-4 text-sm"></div>
+    </section>
 
-<h3>Output</h3>
-<pre id="out"></pre>
-<script>
-const $ = (id)=>document.getElementById(id);
-const out = $('out');
-function log(o){ out.textContent=(typeof o==='string'?o:JSON.stringify(o,null,2))+"\n"+out.textContent; }
-async function post(url, body){
-  const r = await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-  const t = await r.text(); try { return {status:r.status,json:JSON.parse(t)} } catch { return {status:r.status,text:t} }
-}
-async function get(url){
-  const r = await fetch(url); const t = await r.text(); try { return {status:r.status,json:JSON.parse(t)} } catch { return {status:r.status,text:t} }
-}
-$('btn_split').onclick = async ()=>{
-  const base = $('api').value.trim();
-  const payload = { inputKey: $('split_key').value.trim(), tileSize: Number($('split_tile').value||2048) };
-  log({call:'POST /split', payload}); log(await post(base+'/split', payload));
-};
-$('btn_unite').onclick = async ()=>{
-  const base = $('api').value.trim();
-  const payload = { manifestKey: $('unite_manifest').value.trim() };
-  log({call:'POST /unite', payload}); log(await post(base+'/unite', payload));
-};
-$('btn_status').onclick = async ()=>{
-  const base = $('api').value.trim(); const jobId = $('job_id').value.trim();
-  log({call:'GET /status/'+jobId}); log(await get(base+'/status/'+jobId));
-};
-</script>
-</body></html>
+    <!-- Status -->
+    <section class="card">
+      <h2 class="text-xl font-semibold mb-3">Job Status</h2>
+      <div class="grid md:grid-cols-2 gap-4">
+        <div>
+          <label class="label">Job ID</label>
+          <input id="jobId" class="field mono" placeholder="execution ARN or Job ID">
+          <p class="hint">Use the executionArn returned by Split/Unite.</p>
+        </div>
+      </div>
+      <div class="mt-4 flex gap-2">
+        <button id="btnStatus" class="btn btn-indigo">Check</button>
+        <button id="btnStatusClear" class="btn btn-indigo" title="Clear results">Clear</button>
+      </div>
+      <div id="statusOut" class="mt-4 text-sm"></div>
+    </section>
+
+    <!-- Help -->
+    <section class="card">
+      <h2 class="text-xl font-semibold mb-2">How it works</h2>
+      <ol class="list-decimal pl-5 text-sm text-gray-700 space-y-1">
+        <li>Copy JP2 to the Input bucket.</li>
+        <li>Run <b>Split</b> → tiles + manifest appear in Output bucket.</li>
+        <li>Paste the manifest key and run <b>Unite</b> → final JP2 in Output bucket.</li>
+        <li>Use <b>Status</b> to monitor executions.</li>
+      </ol>
+    </section>
+  </main>
+
+  <script>
+    const el = id => document.getElementById(id);
+    const outLink = (bucket, key) =>
+      \`s3://\${bucket}/\${key}\`;
+
+    function setHTML(target, html){ el(target).innerHTML = html; }
+    function ok(msg){ return '<div class="ok">'+msg+'</div>'; }
+    function err(msg){ return '<div class="err">'+msg+'</div>'; }
+    function pre(obj){
+      return '<pre class="mono bg-gray-100 p-3 rounded overflow-x-auto">'+
+             (typeof obj==='string'? obj : JSON.stringify(obj, null, 2))+
+             '</pre>';
+    }
+
+    async function postJSON(url, body){
+      const res = await fetch(url, { method: 'POST', body: JSON.stringify(body) });
+      const text = await res.text();
+      let data; try { data = JSON.parse(text); } catch(_) { data = { raw:text }; }
+      if(!res.ok){ const e = new Error('HTTP '+res.status); e.data = data; throw e; }
+      return data;
+    }
+
+    // Split
+    el('btnSplit').onclick = async () => {
+      const api = el('apiBase').value.trim();
+      const inBucket = el('inBucket').value.trim();
+      const outBucket = el('outBucket').value.trim();
+      const key = el('inputKey').value.trim();
+      const tile = parseInt(el('tileSize').value,10)||2048;
+
+      setHTML('splitOut', 'Running split…');
+      try{
+        const data = await postJSON(\`\${api}/split\`, {
+          input: { bucket: inBucket, key },
+          output: { bucket: outBucket },
+          params: { tileSize: tile }
+        });
+        const arn = data.executionArn || data.arn || data.jobId || '(see payload below)';
+        setHTML('splitOut',
+          ok('Split started.') +
+          '<div class="mt-2">Execution: <span class="mono">'+arn+'</span></div>' +
+          '<div class="mt-2">Input: <span class="mono">'+ outLink(inBucket, key) +'</span></div>' +
+          pre(data)
+        );
+        // convenience: prefill status field
+        el('jobId').value = arn;
+      }catch(e){
+        setHTML('splitOut', err('Split failed') + pre(e.data || e.message));
+      }
+    };
+    el('btnSplitClear').onclick = () => setHTML('splitOut','');
+
+    // Unite
+    el('btnUnite').onclick = async () => {
+      const api = el('apiBase').value.trim();
+      const outBucket = el('outBucket').value.trim();
+      const manifestKey = el('manifestKey').value.trim();
+
+      setHTML('uniteOut', 'Starting unite…');
+      try{
+        const data = await postJSON(\`\${api}/unite\`, {
+          output: { bucket: outBucket },
+          manifestKey
+        });
+        const arn = data.executionArn || data.arn || data.jobId || '(see payload below)';
+        setHTML('uniteOut',
+          ok('Unite started.') +
+          '<div class="mt-2">Execution: <span class="mono">'+arn+'</span></div>' +
+          '<div class="mt-2">Manifest: <span class="mono">'+ outLink(outBucket, manifestKey) +'</span></div>' +
+          pre(data)
+        );
+        el('jobId').value = arn;
+      }catch(e){
+        setHTML('uniteOut', err('Unite failed') + pre(e.data || e.message));
+      }
+    };
+    el('btnUniteClear').onclick = () => setHTML('uniteOut','');
+
+    // Status
+    el('btnStatus').onclick = async () => {
+      const api = el('apiBase').value.trim();
+      const jobId = el('jobId').value.trim();
+      if(!jobId){ setHTML('statusOut', err('Enter a Job ID / executionArn')); return; }
+      setHTML('statusOut','Checking…');
+      try{
+        // Accept full executionArn or short id; backend expects arn in path
+        const url = \`\${api}/status/\${encodeURIComponent(jobId)}\`;
+        const data = await (await fetch(url)).json();
+        const status = data.status || data.executionStatus || 'UNKNOWN';
+        setHTML('statusOut', ok('Status: '+status) + pre(data));
+      }catch(e){
+        setHTML('statusOut', err('Status check failed') + pre(e.data || e.message));
+      }
+    };
+    el('btnStatusClear').onclick = () => setHTML('statusOut','');
+  </script>
+</body>
+</html>
