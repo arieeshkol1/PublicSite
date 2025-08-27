@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import aws_cdk as cdk
 from aws_cdk import Environment
-from .stack import ServerlessJp2Stack
+from stack import ServerlessJp2Stack
 
 app = cdk.App()
 
