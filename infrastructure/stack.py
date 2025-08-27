@@ -66,7 +66,7 @@ class ServerlessJp2Stack(Stack):
             environment={
                 "INPUT_BUCKET": input_bucket.bucket_name,
                 "OUTPUT_BUCKET": output_bucket.bucket_name,
-                # STATE_MACHINE_ARN added after SM creation
+                # "STATE_MACHINE_ARN" added below after SM creation
             },
         )
 
@@ -90,7 +90,6 @@ class ServerlessJp2Stack(Stack):
         )
 
         # ---------------- Split Worker Lambda ----------------
-        # ---------------- Split Worker Lambda ----------------
         split_worker_fn = _lambda.Function(
             self, "SplitWorkerFn",
             runtime=_lambda.Runtime.PYTHON_3_11,
@@ -102,36 +101,20 @@ class ServerlessJp2Stack(Stack):
                 "OUTPUT_BUCKET": output_bucket.bucket_name,
             },
         )
-
         # Back-compat: set ephemeral /tmp = 10 GiB via L1 (works with older CDK)
-        from aws_cdk.aws_lambda import CfnFunction
         cfn_worker = split_worker_fn.node.default_child
         if isinstance(cfn_worker, CfnFunction):
             cfn_worker.ephemeral_storage = CfnFunction.EphemeralStorageProperty(size=10240)  # MiB
 
-
         # Worker S3 perms
-        # - Read/Write objects under the output bucket (covers Put/Get on bucket/*)
-        output_bucket.grant_read_write(split_worker_fn)
-
-        # - Allow listing keys in the output bucket (needed for progress / manifests)
-        split_worker_fn.add_to_role_policy(
+        output_bucket.grant_read_write(split_worker_fn)  # Get/Put on bucket/*
+        split_worker_fn.add_to_role_policy(  # List bucket keys
             iam.PolicyStatement(
-            actions=["s3:ListBucket"],
-            resources=[output_bucket.bucket_arn],
-           )
+                actions=["s3:ListBucket"],
+                resources=[output_bucket.bucket_arn],
+            )
         )
-
-        # If the worker also needs to read the input object:
-        input_bucket.grant_read(split_worker_fn)
-
-        # If the worker needs to list the input bucket too (optional):
-        # split_worker_fn.add_to_role_policy(
-        #     iam.PolicyStatement(
-        #         actions=["s3:ListBucket"],
-        #         resources=[input_bucket.bucket_arn],
-        #     )
-        # )
+        input_bucket.grant_read(split_worker_fn)  # if reading source object later
 
         # ---------------- Step Functions ----------------
         split_task = tasks.LambdaInvoke(
@@ -144,17 +127,29 @@ class ServerlessJp2Stack(Stack):
         state_machine = sfn.StateMachine(
             self,
             "SplitStateMachine",
-            definition=split_task,
+            definition_body=sfn.DefinitionBody.from_chainable(split_task),  # non-deprecated API
             timeout=Duration.minutes(30),
         )
 
-        # Allow controller to start/describe
+        # IAM for controller → Step Functions
+        # Start on the state machine ARN:
         controller_fn.add_to_role_policy(
             iam.PolicyStatement(
-                actions=["states:StartExecution", "states:DescribeExecution"],
+                actions=["states:StartExecution"],
                 resources=[state_machine.state_machine_arn],
             )
         )
+        # Describe on the execution ARNs (must target the 'execution:' ARN format):
+        controller_fn.add_to_role_policy(
+            iam.PolicyStatement(
+                actions=["states:DescribeExecution"],
+                resources=[
+                    f"arn:aws:states:{region}:{account}:execution:{state_machine.state_machine_name}:*"
+                ],
+            )
+        )
+
+        # Pass SM ARN to the controller
         controller_fn.add_environment("STATE_MACHINE_ARN", state_machine.state_machine_arn)
 
         # ---------------- HTTP API with CORS ----------------
