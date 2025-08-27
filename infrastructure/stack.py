@@ -67,7 +67,7 @@ class ServerlessJp2Stack(Stack):
             },
         )
 
-        # --- NEW: List Input Lambda for /list-input ---
+        # List Input Lambda for /list-input
         list_input_fn = _lambda.Function(
             self, "ListInputFn",
             runtime=_lambda.Runtime.PYTHON_3_11,
@@ -76,7 +76,6 @@ class ServerlessJp2Stack(Stack):
             timeout=Duration.seconds(15),
             memory_size=256,
             environment={
-                # optional default so UI can omit ?bucket=
                 "INPUT_BUCKET": input_bucket.bucket_name,
             },
         )
@@ -88,21 +87,34 @@ class ServerlessJp2Stack(Stack):
             )
         )
 
-        # API Gateway HTTP API
-        http_api = apigw.HttpApi(self, "HttpApi")
+        # API Gateway HTTP API WITH CORS
+        http_api = apigw.HttpApi(
+            self,
+            "HttpApi",
+            cors_preflight=apigw.CorsPreflightOptions(
+                allow_headers=["Content-Type"],
+                allow_methods=[
+                    apigw.CorsHttpMethod.GET,
+                    apigw.CorsHttpMethod.POST,
+                    apigw.CorsHttpMethod.OPTIONS,
+                ],
+                allow_origins=["*"],  # tighten later to your UI domain/CloudFront
+                max_age=Duration.days(10),
+            ),
+        )
 
         controller_integ = apigw_int.HttpLambdaIntegration("ControllerIntegration", handler=controller_fn)
         list_input_integ = apigw_int.HttpLambdaIntegration("ListInputIntegration", handler=list_input_fn)
 
-        # Existing routes
+        # Routes
         http_api.add_routes(path="/split", methods=[apigw.HttpMethod.POST], integration=controller_integ)
         http_api.add_routes(path="/unite", methods=[apigw.HttpMethod.POST], integration=controller_integ)
         http_api.add_routes(path="/status/{jobId}", methods=[apigw.HttpMethod.GET], integration=controller_integ)
 
-        # NEW: /list-input (GET + OPTIONS for CORS preflight if ever needed)
-        http_api.add_routes(path="/list-input", methods=[apigw.HttpMethod.GET, apigw.HttpMethod.OPTIONS], integration=list_input_integ)
+        # /list-input (no manual OPTIONS — API-level CORS handles preflight)
+        http_api.add_routes(path="/list-input", methods=[apigw.HttpMethod.GET], integration=list_input_integ)
 
-        # Useful outputs
+        # Outputs
         CfnOutput(self, "UiBucketWebsiteUrl", value=ui_bucket.bucket_website_url)
         CfnOutput(self, "InputBucketName", value=input_bucket.bucket_name)
         CfnOutput(self, "OutputBucketName", value=output_bucket.bucket_name)
