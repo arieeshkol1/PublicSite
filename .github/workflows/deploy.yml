@@ -1,8 +1,6 @@
 name: CI-CDK-Deploy
 
 on:
-  push:
-    branches: [ "main" ]
   workflow_dispatch:
 
 permissions:
@@ -37,20 +35,11 @@ jobs:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: CDK Synth (fail fast)
-        working-directory: .
-        env:
-          PYTHONPATH: .
-        run: cdk synth --app "python -m infrastructure.app" --quiet
+      - name: CDK Synth
+        run: cdk synth --quiet
 
       - name: CDK Bootstrap (idempotent)
-        working-directory: .
-        env:
-          PYTHONPATH: .
-        run: cdk bootstrap --app "python -m infrastructure.app" aws://$AWS_ACCOUNT_ID/$AWS_REGION
+        run: cdk bootstrap aws://$AWS_ACCOUNT_ID/$AWS_REGION
 
       - name: CDK Deploy
-        working-directory: .
-        env:
-          PYTHONPATH: .
-        run: cdk deploy --app "python -m infrastructure.app" --all --require-approval never
+        run: cdk deploy --all --require-approval never

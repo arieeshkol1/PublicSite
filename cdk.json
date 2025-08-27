@@ -1,5 +1,5 @@
 {
-  "app": "python3 infrastructure/app.py",
+  "app": "python -m infrastructure.app",
   "context": {
     "account": "991105135552",
     "region": "us-east-1"
