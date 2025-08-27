@@ -41,7 +41,7 @@ jobs:
       - name: CDK Deploy
         run: cdk deploy --all --require-approval never
 
-     - name: Upload UI
+      - name: Upload UI
         run: |
           aws s3 sync ui/ s3://jp2-ui-${{ env.AWS_ACCOUNT_ID }}-${{ env.AWS_REGION }}/ --delete --follow-symlinks
           # set short cache for HTML so updates show fast
