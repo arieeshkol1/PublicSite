@@ -84,8 +84,16 @@
           <div class="small" id="stateText">—</div>
         </div>
         <div class="row" style="grid-template-columns: 120px 1fr;">
+          <div class="muted small">Tiles</div>
+          <div class="small" id="tilesText">—</div>
+        </div>
+        <div class="row" style="grid-template-columns: 120px 1fr;">
           <div class="muted small">Detail</div>
           <div class="small" id="detailText">—</div>
+        </div>
+        <div class="row" style="grid-template-columns: 120px 1fr;">
+          <div class="muted small">Logs</div>
+          <div class="small" id="logsText">—</div>
         </div>
         <div class="steps" id="stepsArea"></div>
       </div>
@@ -95,8 +103,8 @@
   </div>
 
   <script>
-    // ===== Configuration (hidden from the user) =====
-    const API_BASE = "https://qmiu91xhgk.execute-api.us-east-1.amazonaws.com"; // append stage if needed, e.g., "/prod"
+    // ===== Fixed configuration (hidden from the user) =====
+    const API_BASE = "https://qmiu91xhgk.execute-api.us-east-1.amazonaws.com"; // add "/prod" if you use a stage
     const INPUT_BUCKET  = "jp2-input-991105135552-us-east-1";
     const OUTPUT_BUCKET = "jp2-output-991105135552-us-east-1";
 
@@ -117,7 +125,9 @@
     const stopPollBtn = $("stopPollBtn");
     const progBar = $("progBar");
     const stateText = $("stateText");
+    const tilesText = $("tilesText");
     const detailText = $("detailText");
+    const logsText = $("logsText");
     const stepsArea = $("stepsArea");
 
     bucketNameEl.textContent = INPUT_BUCKET;
@@ -177,12 +187,8 @@
     async function listInput(){
       filesArea.innerHTML = '<div class="muted small">Loading file list… <span class="loader"></span></div>';
       try {
-        // Try primary route
         let resp = await fetch(`${API_BASE}/list-input?bucket=${encodeURIComponent(INPUT_BUCKET)}`);
-        if (!resp.ok) {
-          // try a compatibility route if controller uses a different path
-          resp = await fetch(`${API_BASE}/list?bucket=${encodeURIComponent(INPUT_BUCKET)}`);
-        }
+        if (!resp.ok) resp = await fetch(`${API_BASE}/list?bucket=${encodeURIComponent(INPUT_BUCKET)}`);
         if (!resp.ok) throw new Error(`List failed (${resp.status})`);
         const data = await resp.json();
         const objs = (data.objects || data.Contents || []).map(x => ({
@@ -214,9 +220,20 @@ Backend must expose GET /list-input?bucket=... (JSON: { objects:[{key,size}] }) 
         });
         if (!resp.ok) throw new Error(`Split failed (${resp.status})`);
         const data = await resp.json();
+
         const arn = data.executionArn || '(no arn)';
-        showResult(`Split started. Execution ARN:<br><code>${arn}</code><br><br>
-          <span class="small">Use the Status tool to monitor: <span class="kbd">/status/{arn}</span></span>`);
+        const jobId = data.jobId || '';                // optional if your controller returns it
+        const expectedTiles = data.expectedTiles || total;
+
+        // Save for progress API
+        window.__lastJobId = jobId;
+        window.__lastExpectedTiles = expectedTiles;
+
+        showResult(
+          `Split started. Execution ARN:<br><code>${arn}</code><br>` +
+          (jobId ? `Job ID:<br><code>${jobId}</code><br>` : '') +
+          `<br><span class="small">Use the Status tool to monitor: <span class="kbd">/status/{arn}</span></span>`
+        );
         // Auto-wire ARN and start polling
         statusArnEl.value = arn; startPollBtn.click();
       } catch (err){
@@ -233,7 +250,7 @@ Backend must expose GET /list-input?bucket=... (JSON: { objects:[{key,size}] }) 
 
     function renderSteps(arr){
       if (!Array.isArray(arr) || arr.length === 0){ stepsArea.innerHTML = ''; return; }
-      stepsArea.innerHTML = arr.map(s => `<span class=\"chip\">${s}</span>`).join('');
+      stepsArea.innerHTML = arr.map(s => `<span class="chip">${s}</span>`).join('');
     }
 
     function extractProgress(payload){
@@ -276,12 +293,45 @@ Backend must expose GET /list-input?bucket=... (JSON: { objects:[{key,size}] }) 
       startPollBtn.disabled = true; stopPollBtn.disabled = false;
       try {
         const data = await checkStatusOnce(arn);
-        const { status, percent, detail, steps } = extractProgress(data);
+        let { status, percent, detail, steps } = extractProgress(data);
+
+        // Augment with /status-progress if we know jobId/expected (optional backend)
+        const jobId = (window.__lastJobId || '');
+        const expected = (window.__lastExpectedTiles || 0);
+        if (jobId && expected) {
+          try {
+            const pResp = await fetch(`${API_BASE}/status-progress?jobId=${encodeURIComponent(jobId)}&expected=${encodeURIComponent(expected)}`);
+            if (pResp.ok) {
+              const pJson = await pResp.json();
+              if (typeof pJson.percent === 'number') percent = pJson.percent;
+              if (typeof pJson.tilesCount === 'number') tilesText.textContent = `${pJson.tilesCount} / ${expected}`;
+            }
+          } catch(_) {}
+        } else {
+          tilesText.textContent = '—';
+        }
+
         stateText.textContent = status;
         detailText.textContent = detail || '';
         renderSteps(steps);
         setProgress(percent);
+
+        // If terminal, stop polling; on failure try to pull detailed cause (optional backend)
         if (/SUCCEEDED|FAILED|TIMED_OUT|ABORTED/i.test(status)){
+          if (/FAILED|TIMED_OUT|ABORTED/i.test(status)) {
+            try {
+              const detResp = await fetch(`${API_BASE}/status-detail/${encodeURIComponent(arn)}`);
+              if (detResp.ok) {
+                const det = await detResp.json();
+                const message = det.cause || det.error || '';
+                if (message) detailText.textContent = String(message).slice(0, 1200);
+                const links = [];
+                if (det.logLink) links.push(`<a href="${det.logLink}" target="_blank" rel="noopener">CloudWatch Logs</a>`);
+                if (det.sfnLink) links.push(`<a href="${det.sfnLink}" target="_blank" rel="noopener">Execution</a>`);
+                logsText.innerHTML = links.length ? links.join(" · ") : "—";
+              }
+            } catch(_) {}
+          }
           clearInterval(pollHandle); pollHandle = null;
           startPollBtn.disabled = false; stopPollBtn.disabled = true;
         }
@@ -292,6 +342,7 @@ Backend must expose GET /list-input?bucket=... (JSON: { objects:[{key,size}] }) 
       }
     }
 
+    // Wire UI
     refreshBtn.addEventListener('click', listInput);
     splitBtn.addEventListener('click', split);
     startPollBtn.addEventListener('click', () => {
