@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 import aws_cdk as cdk
 from aws_cdk import Environment
-from infrastructure.network_stack import NetworkStack
-from infrastructure.storage_stack import StorageStack
+from .network_stack import NetworkStack
+from .storage_stack import StorageStack
 
 app = cdk.App()
 
