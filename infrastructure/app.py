@@ -1,16 +1,21 @@
-from aws_cdk import App, Environment
-from stacks.network_stack import NetworkStack
-from stacks.storage_stack import StorageStack
-from stacks.compute_stack import ComputeStack
-from stacks.iam_ci_stack import IamCiStack
+#!/usr/bin/env python3
+import aws_cdk as cdk
+from aws_cdk import Environment
+from infrastructure.network_stack import NetworkStack
+from infrastructure.storage_stack import StorageStack
 
-app = App()
+app = cdk.App()
 
-env = Environment(account="991105135552", region="us-east-1")  # <— pin here
+# Single, explicit env
+env = Environment(account="991105135552", region="us-east-1")  # <- change region if needed
 
-network = NetworkStack(app, "TSG-Network", env=env)
-storage = StorageStack(app, "TSG-Storage", env=env)
-compute = ComputeStack(app, "TSG-Compute", vpc=network.vpc, buckets=storage.buckets, env=env)
-iam_ci = IamCiStack(app, "TSG-IamCi", env=env)
+# Create VPC first
+network = NetworkStack(app, "TSG-Network", env=env)   # must expose `self.vpc`
+
+# Pass the VPC to StorageStack
+storage = StorageStack(app, "TSG-Storage", vpc=network.vpc, env=env)
+
+# Ensure synth order is stable (and cross-stack refs are fine)
+storage.add_dependency(network)
 
 app.synth()
