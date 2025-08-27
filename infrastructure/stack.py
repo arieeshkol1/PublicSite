@@ -107,9 +107,27 @@ class ServerlessJp2Stack(Stack):
             cfn_worker.ephemeral_storage = CfnFunction.EphemeralStorageProperty(size=10240)  # MiB
 
         # Worker S3 perms
+        # - Read/Write objects under the output bucket (covers Put/Get on bucket/*)
         output_bucket.grant_read_write(split_worker_fn)
-        output_bucket.grant_list(split_worker_fn)
+
+        # - Allow listing keys in the output bucket (needed for progress / manifests)
+        split_worker_fn.add_to_role_policy(
+            iam.PolicyStatement(
+            actions=["s3:ListBucket"],
+            resources=[output_bucket.bucket_arn],
+           )
+        )
+
+        # If the worker also needs to read the input object:
         input_bucket.grant_read(split_worker_fn)
+
+        # If the worker needs to list the input bucket too (optional):
+        # split_worker_fn.add_to_role_policy(
+        #     iam.PolicyStatement(
+        #         actions=["s3:ListBucket"],
+        #         resources=[input_bucket.bucket_arn],
+        #     )
+        # )
 
         # ---------------- Step Functions ----------------
         split_task = tasks.LambdaInvoke(
