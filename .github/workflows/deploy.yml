@@ -1,4 +1,4 @@
-name: CI-CDK-Deploy
+name: Deploy-Serverless-JP2
 
 on:
   workflow_dispatch:
@@ -35,11 +35,11 @@ jobs:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: CDK Synth
-        run: cdk synth --quiet
-
       - name: CDK Bootstrap (idempotent)
         run: cdk bootstrap aws://$AWS_ACCOUNT_ID/$AWS_REGION
 
       - name: CDK Deploy
         run: cdk deploy --all --require-approval never
+
+      - name: Upload UI
+        run: aws s3 cp ui/index.html s3://jp2-ui-${{ env.AWS_ACCOUNT_ID }}-${{ env.AWS_REGION }}/index.html

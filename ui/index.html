@@ -1,0 +1,70 @@
+<!doctype html><html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>TSG JP2 Split/Unite (Serverless)</title>
+<style>
+ body{font-family:system-ui,Arial,sans-serif;margin:24px;max-width:960px}
+ fieldset{border:1px solid #ddd;border-radius:12px;padding:14px;margin:16px 0}
+ legend{font-weight:700}
+ label{display:block;margin:8px 0 6px}
+ input,button{padding:.6rem;border-radius:10px;border:1px solid #ccc}
+ input{width:100%}
+ .row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+ pre{background:#0d1117;color:#c9d1d9;border-radius:12px;padding:12px;max-height:45vh;overflow:auto;border:1px solid #30363d}
+ button{cursor:pointer}
+</style></head><body>
+<h1>TSG JP2 Split / Unite (Serverless)</h1>
+<label>API Base URL</label>
+<input id="api" placeholder="https://xxxxx.execute-api.us-east-1.amazonaws.com"/>
+
+<fieldset><legend>Split</legend>
+<div class="row">
+  <div><label>Input Key (in Input bucket)</label><input id="split_key" placeholder="raw/scenes/sceneA.jp2"/></div>
+  <div><label>Tile size</label><input id="split_tile" type="number" value="2048"/></div>
+</div>
+<button id="btn_split">Run Split</button>
+</fieldset>
+
+<fieldset><legend>Unite</legend>
+<div class="row">
+  <div><label>Manifest Key (in Output bucket)</label><input id="unite_manifest" placeholder="manifests/sceneA.manifest.json"/></div>
+  <div></div>
+</div>
+<button id="btn_unite">Run Unite</button>
+</fieldset>
+
+<fieldset><legend>Status</legend>
+<div class="row">
+  <div><label>Job ID</label><input id="job_id" placeholder="split-xxxx or unite-xxxx"/></div>
+  <div></div>
+</div>
+<button id="btn_status">Check</button>
+</fieldset>
+
+<h3>Output</h3>
+<pre id="out"></pre>
+<script>
+const $ = (id)=>document.getElementById(id);
+const out = $('out');
+function log(o){ out.textContent=(typeof o==='string'?o:JSON.stringify(o,null,2))+"\n"+out.textContent; }
+async function post(url, body){
+  const r = await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  const t = await r.text(); try { return {status:r.status,json:JSON.parse(t)} } catch { return {status:r.status,text:t} }
+}
+async function get(url){
+  const r = await fetch(url); const t = await r.text(); try { return {status:r.status,json:JSON.parse(t)} } catch { return {status:r.status,text:t} }
+}
+$('btn_split').onclick = async ()=>{
+  const base = $('api').value.trim();
+  const payload = { inputKey: $('split_key').value.trim(), tileSize: Number($('split_tile').value||2048) };
+  log({call:'POST /split', payload}); log(await post(base+'/split', payload));
+};
+$('btn_unite').onclick = async ()=>{
+  const base = $('api').value.trim();
+  const payload = { manifestKey: $('unite_manifest').value.trim() };
+  log({call:'POST /unite', payload}); log(await post(base+'/unite', payload));
+};
+$('btn_status').onclick = async ()=>{
+  const base = $('api').value.trim(); const jobId = $('job_id').value.trim();
+  log({call:'GET /status/'+jobId}); log(await get(base+'/status/'+jobId));
+};
+</script>
+</body></html>

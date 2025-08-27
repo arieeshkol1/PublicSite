@@ -2,6 +2,7 @@
   "app": "python -m infrastructure.app",
   "context": {
     "account": "991105135552",
-    "region": "us-east-1"
+    "region": "us-east-1",
+    "stack_prefix": "TSG"
   }
 }
