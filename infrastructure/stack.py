@@ -65,7 +65,7 @@ class ServerlessJp2Stack(Stack):
             environment={
                 "INPUT_BUCKET": input_bucket.bucket_name,
                 "OUTPUT_BUCKET": output_bucket.bucket_name,
-                # STATE_MACHINE_ARN set below
+                # STATE_MACHINE_ARN / _UNITE set after SMs are created
             },
         )
 
@@ -85,9 +85,7 @@ class ServerlessJp2Stack(Stack):
             code=_lambda.Code.from_asset(lambda_code_dir),
             timeout=Duration.seconds(15),
             memory_size=256,
-            environment={
-                "INPUT_BUCKET": input_bucket.bucket_name,
-            },
+            environment={"INPUT_BUCKET": input_bucket.bucket_name},
         )
         list_input_fn.add_to_role_policy(
             iam.PolicyStatement(
@@ -104,69 +102,83 @@ class ServerlessJp2Stack(Stack):
             code=_lambda.Code.from_asset(lambda_code_dir),
             timeout=Duration.minutes(15),
             memory_size=3008,  # account/region cap
-            environment={
-                "OUTPUT_BUCKET": output_bucket.bucket_name,
-            },
+            environment={"OUTPUT_BUCKET": output_bucket.bucket_name},
         )
-        # Back-compat: set ephemeral /tmp = 10 GiB via L1
-        cfn_worker = split_worker_fn.node.default_child
-        if isinstance(cfn_worker, CfnFunction):
-            cfn_worker.ephemeral_storage = CfnFunction.EphemeralStorageProperty(size=10240)  # MiB
+        # Ephemeral /tmp = 10 GiB via L1
+        cfn_split = split_worker_fn.node.default_child
+        if isinstance(cfn_split, CfnFunction):
+            cfn_split.ephemeral_storage = CfnFunction.EphemeralStorageProperty(size=10240)  # MiB
 
-        # Worker S3 perms
-        output_bucket.grant_read_write(split_worker_fn)  # Get/Put on bucket/*
+        output_bucket.grant_read_write(split_worker_fn)
         split_worker_fn.add_to_role_policy(
-            iam.PolicyStatement(
-                actions=["s3:ListBucket"],
-                resources=[output_bucket.bucket_arn],
-            )
+            iam.PolicyStatement(actions=["s3:ListBucket"], resources=[output_bucket.bucket_arn])
         )
         input_bucket.grant_read(split_worker_fn)
 
-        # ---------------- Step Functions ----------------
-        split_task = tasks.LambdaInvoke(
-            self,
-            "SplitTask",
-            lambda_function=split_worker_fn,
-            payload_response_only=True,
+        # ---------------- Unite Worker Lambda ----------------
+        unite_worker_fn = _lambda.Function(
+            self, "UniteWorkerFn",
+            runtime=_lambda.Runtime.PYTHON_3_11,
+            handler="unite_worker.handler",
+            code=_lambda.Code.from_asset(lambda_code_dir),
+            timeout=Duration.minutes(5),
+            memory_size=512,
+            environment={"OUTPUT_BUCKET": output_bucket.bucket_name},
+        )
+        output_bucket.grant_read_write(unite_worker_fn)
+        unite_worker_fn.add_to_role_policy(
+            iam.PolicyStatement(actions=["s3:ListBucket"], resources=[output_bucket.bucket_arn])
         )
 
-        state_machine = sfn.StateMachine(
-            self,
-            "SplitStateMachine",
-            definition_body=sfn.DefinitionBody.from_chainable(split_task),  # non-deprecated API
+        # ---------------- Step Functions ----------------
+        # Split SM
+        split_task = tasks.LambdaInvoke(
+            self, "SplitTask", lambda_function=split_worker_fn, payload_response_only=True
+        )
+        split_sm = sfn.StateMachine(
+            self, "SplitStateMachine",
+            definition_body=sfn.DefinitionBody.from_chainable(split_task),
             timeout=Duration.minutes(30),
         )
 
-        # Controller -> StepFunctions IAM (separate statements; correct resources)
-        # Start on state machine ARN:
+        # Unite SM
+        unite_task = tasks.LambdaInvoke(
+            self, "UniteTask", lambda_function=unite_worker_fn, payload_response_only=True
+        )
+        unite_sm = sfn.StateMachine(
+            self, "UniteStateMachine",
+            definition_body=sfn.DefinitionBody.from_chainable(unite_task),
+            timeout=Duration.minutes(10),
+        )
+
+        # Controller -> StepFunctions IAM
         controller_fn.add_to_role_policy(
             iam.PolicyStatement(
                 actions=["states:StartExecution"],
-                resources=[state_machine.state_machine_arn],
+                resources=[split_sm.state_machine_arn, unite_sm.state_machine_arn],
             )
         )
-        # Describe/GetHistory on execution ARNs:
         controller_fn.add_to_role_policy(
             iam.PolicyStatement(
                 actions=["states:DescribeExecution", "states:GetExecutionHistory"],
-                resources=[f"arn:aws:states:{region}:{account}:execution:{state_machine.state_machine_name}:*"],
+                resources=[
+                    f"arn:aws:states:{region}:{account}:execution:{split_sm.state_machine_name}:*",
+                    f"arn:aws:states:{region}:{account}:execution:{unite_sm.state_machine_name}:*",
+                ],
             )
         )
-        controller_fn.add_environment("STATE_MACHINE_ARN", state_machine.state_machine_arn)
+
+        # Pass SM ARNs to controller
+        controller_fn.add_environment("STATE_MACHINE_ARN", split_sm.state_machine_arn)
+        controller_fn.add_environment("STATE_MACHINE_ARN_UNITE", unite_sm.state_machine_arn)
 
         # ---------------- HTTP API with CORS ----------------
         http_api = apigw.HttpApi(
-            self,
-            "HttpApi",
+            self, "HttpApi",
             cors_preflight=apigw.CorsPreflightOptions(
                 allow_headers=["Content-Type"],
-                allow_methods=[
-                    apigw.CorsHttpMethod.GET,
-                    apigw.CorsHttpMethod.POST,
-                    apigw.CorsHttpMethod.OPTIONS,
-                ],
-                allow_origins=["*"],  # tighten to UI origin for prod
+                allow_methods=[apigw.CorsHttpMethod.GET, apigw.CorsHttpMethod.POST, apigw.CorsHttpMethod.OPTIONS],
+                allow_origins=["*"],
                 max_age=Duration.days(10),
             ),
         )
@@ -176,13 +188,12 @@ class ServerlessJp2Stack(Stack):
 
         # Routes (controller)
         http_api.add_routes(path="/split", methods=[apigw.HttpMethod.POST], integration=controller_integ)
-        http_api.add_routes(path="/unite", methods=[apigw.HttpMethod.POST], integration=controller_integ)  # stub
+        http_api.add_routes(path="/unite", methods=[apigw.HttpMethod.POST], integration=controller_integ)
         http_api.add_routes(path="/status/{jobId}", methods=[apigw.HttpMethod.GET], integration=controller_integ)
         http_api.add_routes(path="/status-progress", methods=[apigw.HttpMethod.GET], integration=controller_integ)
         http_api.add_routes(path="/status-detail/{jobId}", methods=[apigw.HttpMethod.GET], integration=controller_integ)
         http_api.add_routes(path="/status-history/{jobId}", methods=[apigw.HttpMethod.GET], integration=controller_integ)
         http_api.add_routes(path="/list-output", methods=[apigw.HttpMethod.GET], integration=controller_integ)
-
         # Routes (list input)
         http_api.add_routes(path="/list-input", methods=[apigw.HttpMethod.GET], integration=list_input_integ)
 
@@ -191,4 +202,5 @@ class ServerlessJp2Stack(Stack):
         CfnOutput(self, "InputBucketName", value=input_bucket.bucket_name)
         CfnOutput(self, "OutputBucketName", value=output_bucket.bucket_name)
         CfnOutput(self, "ApiEndpoint", value=http_api.api_endpoint)
-        CfnOutput(self, "StateMachineArn", value=state_machine.state_machine_arn)
+        CfnOutput(self, "SplitStateMachineArn", value=split_sm.state_machine_arn)
+        CfnOutput(self, "UniteStateMachineArn", value=unite_sm.state_machine_arn)
