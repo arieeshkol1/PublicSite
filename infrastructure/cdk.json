@@ -1,7 +1,7 @@
 {
   "app": "python3 infrastructure/app.py",
   "context": {
-    "vpc_cidr": "10.42.0.0/16",
+    "account": "991105135552",
     "region": "us-east-1"
   }
 }
