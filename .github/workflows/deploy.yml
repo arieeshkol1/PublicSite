@@ -41,5 +41,11 @@ jobs:
       - name: CDK Deploy
         run: cdk deploy --all --require-approval never
 
-      - name: Upload UI
-        run: aws s3 cp ui/index.html s3://jp2-ui-${{ env.AWS_ACCOUNT_ID }}-${{ env.AWS_REGION }}/index.html
+     - name: Upload UI
+        run: |
+          aws s3 sync ui/ s3://jp2-ui-${{ env.AWS_ACCOUNT_ID }}-${{ env.AWS_REGION }}/ --delete --follow-symlinks
+          # set short cache for HTML so updates show fast
+          aws s3 cp s3://jp2-ui-${{ env.AWS_ACCOUNT_ID }}-${{ env.AWS_REGION }}/index.html s3://jp2-ui-${{ env.AWS_ACCOUNT_ID }}-${{ env.AWS_REGION }}/index.html \
+            --metadata-directive REPLACE \
+            --cache-control "max-age=60" \
+            --content-type "text/html"
