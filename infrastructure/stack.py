@@ -11,6 +11,7 @@ from aws_cdk import (
     aws_stepfunctions as sfn,
     aws_stepfunctions_tasks as tasks,
 )
+from aws_cdk.aws_lambda import CfnFunction
 from constructs import Construct
 import os
 
@@ -41,20 +42,20 @@ class ServerlessJp2Stack(Stack):
             removal_policy=RemovalPolicy.DESTROY,
         )
 
+        # Public website bucket (demo; prefer CloudFront+OAC for prod)
         ui_bucket = s3.Bucket(
             self, "UiBucket",
             bucket_name=f"jp2-ui-{account}-{region}",
             website_index_document="index.html",
-            public_read_access=True,  # demo; prefer CloudFront+OAC for prod
-            block_public_access=s3.BlockPublicAccess.BLOCK_ACLS,  # allow public policy, block ACLs
+            public_read_access=True,
+            block_public_access=s3.BlockPublicAccess.BLOCK_ACLS,
             auto_delete_objects=True,
             removal_policy=RemovalPolicy.DESTROY,
         )
 
         lambda_code_dir = os.path.join(os.path.dirname(__file__), "lambda")
 
-        # ---------------- Lambdas ----------------
-        # Controller: /split, /unite (stub), /status/{jobId}, /status-progress
+        # ---------------- Controller Lambda ----------------
         controller_fn = _lambda.Function(
             self, "ControllerFn",
             runtime=_lambda.Runtime.PYTHON_3_11,
@@ -65,11 +66,11 @@ class ServerlessJp2Stack(Stack):
             environment={
                 "INPUT_BUCKET": input_bucket.bucket_name,
                 "OUTPUT_BUCKET": output_bucket.bucket_name,
-                # STATE_MACHINE_ARN filled after we create it
+                # STATE_MACHINE_ARN added after SM creation
             },
         )
 
-        # List-input Lambda
+        # ---------------- List Input Lambda ----------------
         list_input_fn = _lambda.Function(
             self, "ListInputFn",
             runtime=_lambda.Runtime.PYTHON_3_11,
@@ -81,7 +82,6 @@ class ServerlessJp2Stack(Stack):
                 "INPUT_BUCKET": input_bucket.bucket_name,
             },
         )
-        # IAM for list
         list_input_fn.add_to_role_policy(
             iam.PolicyStatement(
                 actions=["s3:ListBucket"],
@@ -89,7 +89,7 @@ class ServerlessJp2Stack(Stack):
             )
         )
 
-     # ---------------- Split Worker Lambda ----------------
+        # ---------------- Split Worker Lambda ----------------
         split_worker_fn = _lambda.Function(
             self, "SplitWorkerFn",
             runtime=_lambda.Runtime.PYTHON_3_11,
@@ -99,50 +99,43 @@ class ServerlessJp2Stack(Stack):
             memory_size=10240,  # 10 GB RAM
             environment={
                 "OUTPUT_BUCKET": output_bucket.bucket_name,
-    },
-)
-
-# Back-compat way to set 10 GiB ephemeral /tmp
-from aws_cdk.aws_lambda import CfnFunction
-cfn_worker = split_worker_fn.node.default_child
-if isinstance(cfn_worker, CfnFunction):
-    cfn_worker.ephemeral_storage = CfnFunction.EphemeralStorageProperty(size=10240)  # size in MiB
+            },
+        )
+        # Back-compat: set ephemeral /tmp = 10 GiB via L1 (works on older CDK)
+        cfn_worker = split_worker_fn.node.default_child
+        if isinstance(cfn_worker, CfnFunction):
+            cfn_worker.ephemeral_storage = CfnFunction.EphemeralStorageProperty(size=10240)  # MiB
 
         # Worker S3 perms
-        output_bucket.grant_put(split_worker_fn)
         output_bucket.grant_read_write(split_worker_fn)
         output_bucket.grant_list(split_worker_fn)
-        input_bucket.grant_read(split_worker_fn)  # if you later read input
+        input_bucket.grant_read(split_worker_fn)
 
         # ---------------- Step Functions ----------------
         split_task = tasks.LambdaInvoke(
             self,
             "SplitTask",
             lambda_function=split_worker_fn,
-            payload_response_only=True,  # Lambda returns JSON dict
+            payload_response_only=True,
         )
-
-        definition = split_task  # simple: one task → success
 
         state_machine = sfn.StateMachine(
             self,
             "SplitStateMachine",
-            definition=definition,
+            definition=split_task,
             timeout=Duration.minutes(30),
         )
 
-        # Allow controller to start/describe executions
+        # Allow controller to start/describe
         controller_fn.add_to_role_policy(
             iam.PolicyStatement(
                 actions=["states:StartExecution", "states:DescribeExecution"],
                 resources=[state_machine.state_machine_arn],
             )
         )
-
-        # Pass SM ARN into controller env
         controller_fn.add_environment("STATE_MACHINE_ARN", state_machine.state_machine_arn)
 
-        # ---------------- API (HTTP API) with CORS ----------------
+        # ---------------- HTTP API with CORS ----------------
         http_api = apigw.HttpApi(
             self,
             "HttpApi",
@@ -153,7 +146,7 @@ if isinstance(cfn_worker, CfnFunction):
                     apigw.CorsHttpMethod.POST,
                     apigw.CorsHttpMethod.OPTIONS,
                 ],
-                allow_origins=["*"],  # tighten to UI domain for prod
+                allow_origins=["*"],  # tighten to your UI origin for prod
                 max_age=Duration.days(10),
             ),
         )
@@ -161,11 +154,13 @@ if isinstance(cfn_worker, CfnFunction):
         controller_integ = apigw_int.HttpLambdaIntegration("ControllerIntegration", handler=controller_fn)
         list_input_integ = apigw_int.HttpLambdaIntegration("ListInputIntegration", handler=list_input_fn)
 
-        # Routes
+        # Routes (controller)
         http_api.add_routes(path="/split", methods=[apigw.HttpMethod.POST], integration=controller_integ)
         http_api.add_routes(path="/unite", methods=[apigw.HttpMethod.POST], integration=controller_integ)  # stub
         http_api.add_routes(path="/status/{jobId}", methods=[apigw.HttpMethod.GET], integration=controller_integ)
         http_api.add_routes(path="/status-progress", methods=[apigw.HttpMethod.GET], integration=controller_integ)
+
+        # Routes (list input)
         http_api.add_routes(path="/list-input", methods=[apigw.HttpMethod.GET], integration=list_input_integ)
 
         # ---------------- Outputs ----------------
