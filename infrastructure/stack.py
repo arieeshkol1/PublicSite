@@ -74,17 +74,9 @@ class ServerlessJp2Stack(Stack):
             iam.PolicyStatement(
                 actions=["s3:ListBucket"],
                 resources=[output_bucket.bucket_arn],
-                actions=["states:StartExecution"],
-                resources=[state_machine.state_machine_arn],
             )
         )
-            # Describe/GetHistory on the execution ARNs (note the 'execution:' pattern)
-                controller_fn.add_to_role_policy(
-                iam.PolicyStatement(
-                actions=["states:DescribeExecution", "states:GetExecutionHistory"],
-                resources=[f"arn:aws:states:{region}:{account}:execution:{state_machine.state_machine_name}:*"],
-    )
-)
+
         # ---------------- List Input Lambda ----------------
         list_input_fn = _lambda.Function(
             self, "ListInputFn",
@@ -146,7 +138,7 @@ class ServerlessJp2Stack(Stack):
             timeout=Duration.minutes(30),
         )
 
-        # Controller -> StepFunctions IAM
+        # Controller -> StepFunctions IAM (separate statements; correct resources)
         # Start on state machine ARN:
         controller_fn.add_to_role_policy(
             iam.PolicyStatement(
