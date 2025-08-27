@@ -42,12 +42,11 @@ class ServerlessJp2Stack(Stack):
             removal_policy=RemovalPolicy.DESTROY,
         )
 
-        # Public website bucket (demo; prefer CloudFront+OAC for prod)
         ui_bucket = s3.Bucket(
             self, "UiBucket",
             bucket_name=f"jp2-ui-{account}-{region}",
             website_index_document="index.html",
-            public_read_access=True,
+            public_read_access=True,  # demo; prefer CloudFront+OAC for prod
             block_public_access=s3.BlockPublicAccess.BLOCK_ACLS,
             auto_delete_objects=True,
             removal_policy=RemovalPolicy.DESTROY,
@@ -66,8 +65,16 @@ class ServerlessJp2Stack(Stack):
             environment={
                 "INPUT_BUCKET": input_bucket.bucket_name,
                 "OUTPUT_BUCKET": output_bucket.bucket_name,
-                # "STATE_MACHINE_ARN" added below after SM creation
+                # STATE_MACHINE_ARN set below
             },
+        )
+
+        # Controller needs to list output-bucket for /status-progress & /list-output
+        controller_fn.add_to_role_policy(
+            iam.PolicyStatement(
+                actions=["s3:ListBucket"],
+                resources=[output_bucket.bucket_arn],
+            )
         )
 
         # ---------------- List Input Lambda ----------------
@@ -93,28 +100,28 @@ class ServerlessJp2Stack(Stack):
         split_worker_fn = _lambda.Function(
             self, "SplitWorkerFn",
             runtime=_lambda.Runtime.PYTHON_3_11,
-            handler="split_worker.handler",  # file: split_worker.py ; func: handler
+            handler="split_worker.handler",
             code=_lambda.Code.from_asset(lambda_code_dir),
             timeout=Duration.minutes(15),
-            memory_size=3008,  # <= 3008 due to account/region limit
+            memory_size=3008,  # account/region cap
             environment={
                 "OUTPUT_BUCKET": output_bucket.bucket_name,
             },
         )
-        # Back-compat: set ephemeral /tmp = 10 GiB via L1 (works with older CDK)
+        # Back-compat: set ephemeral /tmp = 10 GiB via L1
         cfn_worker = split_worker_fn.node.default_child
         if isinstance(cfn_worker, CfnFunction):
             cfn_worker.ephemeral_storage = CfnFunction.EphemeralStorageProperty(size=10240)  # MiB
 
         # Worker S3 perms
         output_bucket.grant_read_write(split_worker_fn)  # Get/Put on bucket/*
-        split_worker_fn.add_to_role_policy(  # List bucket keys
+        split_worker_fn.add_to_role_policy(
             iam.PolicyStatement(
                 actions=["s3:ListBucket"],
                 resources=[output_bucket.bucket_arn],
             )
         )
-        input_bucket.grant_read(split_worker_fn)  # if reading source object later
+        input_bucket.grant_read(split_worker_fn)
 
         # ---------------- Step Functions ----------------
         split_task = tasks.LambdaInvoke(
@@ -131,25 +138,21 @@ class ServerlessJp2Stack(Stack):
             timeout=Duration.minutes(30),
         )
 
-        # IAM for controller → Step Functions
-        # Start on the state machine ARN:
+        # Controller -> StepFunctions IAM
+        # Start on state machine ARN:
         controller_fn.add_to_role_policy(
             iam.PolicyStatement(
                 actions=["states:StartExecution"],
                 resources=[state_machine.state_machine_arn],
             )
         )
-        # Describe on the execution ARNs (must target the 'execution:' ARN format):
+        # Describe/GetHistory on execution ARNs:
         controller_fn.add_to_role_policy(
             iam.PolicyStatement(
-                actions=["states:DescribeExecution"],
-                resources=[
-                    f"arn:aws:states:{region}:{account}:execution:{state_machine.state_machine_name}:*"
-                ],
+                actions=["states:DescribeExecution", "states:GetExecutionHistory"],
+                resources=[f"arn:aws:states:{region}:{account}:execution:{state_machine.state_machine_name}:*"],
             )
         )
-
-        # Pass SM ARN to the controller
         controller_fn.add_environment("STATE_MACHINE_ARN", state_machine.state_machine_arn)
 
         # ---------------- HTTP API with CORS ----------------
@@ -163,7 +166,7 @@ class ServerlessJp2Stack(Stack):
                     apigw.CorsHttpMethod.POST,
                     apigw.CorsHttpMethod.OPTIONS,
                 ],
-                allow_origins=["*"],  # tighten to your UI origin for prod
+                allow_origins=["*"],  # tighten to UI origin for prod
                 max_age=Duration.days(10),
             ),
         )
@@ -176,6 +179,9 @@ class ServerlessJp2Stack(Stack):
         http_api.add_routes(path="/unite", methods=[apigw.HttpMethod.POST], integration=controller_integ)  # stub
         http_api.add_routes(path="/status/{jobId}", methods=[apigw.HttpMethod.GET], integration=controller_integ)
         http_api.add_routes(path="/status-progress", methods=[apigw.HttpMethod.GET], integration=controller_integ)
+        http_api.add_routes(path="/status-detail/{jobId}", methods=[apigw.HttpMethod.GET], integration=controller_integ)
+        http_api.add_routes(path="/status-history/{jobId}", methods=[apigw.HttpMethod.GET], integration=controller_integ)
+        http_api.add_routes(path="/list-output", methods=[apigw.HttpMethod.GET], integration=controller_integ)
 
         # Routes (list input)
         http_api.add_routes(path="/list-input", methods=[apigw.HttpMethod.GET], integration=list_input_integ)
