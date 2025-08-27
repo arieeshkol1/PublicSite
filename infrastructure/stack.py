@@ -89,19 +89,25 @@ class ServerlessJp2Stack(Stack):
             )
         )
 
-        # Split worker (dummy tiler to prove flow; replace later with GDAL)
-        split_worker_fn = _lambda.Function(
-            self, "SplitWorkerFn",
-            runtime=_lambda.Runtime.PYTHON_3_11,
-            handler="split_worker.handler",
-            code=_lambda.Code.from_asset(lambda_code_dir),
-            timeout=Duration.minutes(15),
-            memory_size=10240,  # 10GB to simulate heavy jobs later
-            ephemeral_storage_size=_lambda.EphemeralStorageSize.gib(10),
-            environment={
-                "OUTPUT_BUCKET": output_bucket.bucket_name,
-            },
-        )
+     # ---------------- Split Worker Lambda ----------------
+split_worker_fn = _lambda.Function(
+    self, "SplitWorkerFn",
+    runtime=_lambda.Runtime.PYTHON_3_11,
+    handler="split_worker.handler",  # file: split_worker.py ; func: handler
+    code=_lambda.Code.from_asset(lambda_code_dir),
+    timeout=Duration.minutes(15),
+    memory_size=10240,  # 10 GB RAM
+    environment={
+        "OUTPUT_BUCKET": output_bucket.bucket_name,
+    },
+)
+
+# Back-compat way to set 10 GiB ephemeral /tmp
+from aws_cdk.aws_lambda import CfnFunction
+cfn_worker = split_worker_fn.node.default_child
+if isinstance(cfn_worker, CfnFunction):
+    cfn_worker.ephemeral_storage = CfnFunction.EphemeralStorageProperty(size=10240)  # size in MiB
+
         # Worker S3 perms
         output_bucket.grant_put(split_worker_fn)
         output_bucket.grant_read_write(split_worker_fn)
