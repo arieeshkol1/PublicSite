@@ -90,21 +90,25 @@ class ServerlessJp2Stack(Stack):
         )
 
         # ---------------- Split Worker Lambda ----------------
+        # ---------------- Split Worker Lambda ----------------
         split_worker_fn = _lambda.Function(
             self, "SplitWorkerFn",
             runtime=_lambda.Runtime.PYTHON_3_11,
             handler="split_worker.handler",  # file: split_worker.py ; func: handler
             code=_lambda.Code.from_asset(lambda_code_dir),
             timeout=Duration.minutes(15),
-            memory_size=10240,  # 10 GB RAM
+            memory_size=3008,  # <= 3008 due to account/region limit
             environment={
                 "OUTPUT_BUCKET": output_bucket.bucket_name,
             },
         )
-        # Back-compat: set ephemeral /tmp = 10 GiB via L1 (works on older CDK)
+
+        # Back-compat: set ephemeral /tmp = 10 GiB via L1 (works with older CDK)
+        from aws_cdk.aws_lambda import CfnFunction
         cfn_worker = split_worker_fn.node.default_child
         if isinstance(cfn_worker, CfnFunction):
             cfn_worker.ephemeral_storage = CfnFunction.EphemeralStorageProperty(size=10240)  # MiB
+
 
         # Worker S3 perms
         # - Read/Write objects under the output bucket (covers Put/Get on bucket/*)
