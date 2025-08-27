@@ -7,6 +7,7 @@ from aws_cdk import (
     aws_lambda as _lambda,
     aws_apigatewayv2 as apigw,
     aws_apigatewayv2_integrations as apigw_int,
+    aws_iam as iam,
 )
 from constructs import Construct
 import os
@@ -50,12 +51,14 @@ class ServerlessJp2Stack(Stack):
             removal_policy=RemovalPolicy.DESTROY,
         )
 
-        # Lambda stub controller for /split, /unite, /status
+        lambda_code_dir = os.path.join(os.path.dirname(__file__), "lambda")
+
+        # Controller Lambda for /split, /unite, /status
         controller_fn = _lambda.Function(
             self, "ControllerFn",
             runtime=_lambda.Runtime.PYTHON_3_11,
             handler="controller.handler",
-            code=_lambda.Code.from_asset(os.path.join(os.path.dirname(__file__), "lambda")),
+            code=_lambda.Code.from_asset(lambda_code_dir),
             timeout=Duration.seconds(30),
             memory_size=512,
             environment={
@@ -64,25 +67,40 @@ class ServerlessJp2Stack(Stack):
             },
         )
 
+        # --- NEW: List Input Lambda for /list-input ---
+        list_input_fn = _lambda.Function(
+            self, "ListInputFn",
+            runtime=_lambda.Runtime.PYTHON_3_11,
+            handler="lambda_list_input.handler",
+            code=_lambda.Code.from_asset(lambda_code_dir),
+            timeout=Duration.seconds(15),
+            memory_size=256,
+            environment={
+                # optional default so UI can omit ?bucket=
+                "INPUT_BUCKET": input_bucket.bucket_name,
+            },
+        )
+        # IAM: allow ListBucket on the input bucket
+        list_input_fn.add_to_role_policy(
+            iam.PolicyStatement(
+                actions=["s3:ListBucket"],
+                resources=[input_bucket.bucket_arn],
+            )
+        )
+
         # API Gateway HTTP API
         http_api = apigw.HttpApi(self, "HttpApi")
-        integ = apigw_int.HttpLambdaIntegration("ControllerIntegration", handler=controller_fn)
 
-        http_api.add_routes(
-            path="/split",
-            methods=[apigw.HttpMethod.POST],
-            integration=integ,
-        )
-        http_api.add_routes(
-            path="/unite",
-            methods=[apigw.HttpMethod.POST],
-            integration=integ,
-        )
-        http_api.add_routes(
-            path="/status/{jobId}",
-            methods=[apigw.HttpMethod.GET],
-            integration=integ,
-        )
+        controller_integ = apigw_int.HttpLambdaIntegration("ControllerIntegration", handler=controller_fn)
+        list_input_integ = apigw_int.HttpLambdaIntegration("ListInputIntegration", handler=list_input_fn)
+
+        # Existing routes
+        http_api.add_routes(path="/split", methods=[apigw.HttpMethod.POST], integration=controller_integ)
+        http_api.add_routes(path="/unite", methods=[apigw.HttpMethod.POST], integration=controller_integ)
+        http_api.add_routes(path="/status/{jobId}", methods=[apigw.HttpMethod.GET], integration=controller_integ)
+
+        # NEW: /list-input (GET + OPTIONS for CORS preflight if ever needed)
+        http_api.add_routes(path="/list-input", methods=[apigw.HttpMethod.GET, apigw.HttpMethod.OPTIONS], integration=list_input_integ)
 
         # Useful outputs
         CfnOutput(self, "UiBucketWebsiteUrl", value=ui_bucket.bucket_website_url)
