@@ -38,19 +38,19 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
 
       - name: CDK Synth (fail fast)
-        working-directory: infrastructure
+        working-directory: .
         env:
-          PYTHONPATH: ..            # <-- key fix so 'infrastructure' package resolves
+          PYTHONPATH: .
         run: cdk synth --quiet
 
       - name: CDK Bootstrap (idempotent)
-        working-directory: infrastructure
+        working-directory: .
         env:
-          PYTHONPATH: ..            # keep same env for consistency
+          PYTHONPATH: .
         run: cdk bootstrap aws://$AWS_ACCOUNT_ID/$AWS_REGION
 
       - name: CDK Deploy
-        working-directory: infrastructure
+        working-directory: .
         env:
-          PYTHONPATH: ..            # keep same env for consistency
+          PYTHONPATH: .
         run: cdk deploy --all --require-approval never
