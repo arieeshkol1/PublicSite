@@ -5,6 +5,7 @@ import urllib.parse as up
 import datetime as dt
 
 import boto3
+from botocore.exceptions import ClientError
 
 # ===== ENV =====
 REGION = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION") or "us-east-1"
@@ -18,6 +19,7 @@ s3 = boto3.client("s3", region_name=REGION)
 
 # ===== helpers =====
 def _resp(code: int, body_obj):
+    # Always CORS+JSON
     return {
         "statusCode": code,
         "headers": {
@@ -35,8 +37,8 @@ def _parse_json_body(event):
     if not b:
         return {}
     if event.get("isBase64Encoded"):
-        b = b.encode("utf-8")
-        # HTTP API rarely base64-encodes JSON, so skipping decode for brevity
+        # Most HTTP API JSON bodies are not base64-encoded; ignoring for brevity
+        pass
     try:
         return json.loads(b)
     except Exception:
@@ -69,7 +71,6 @@ def _split(event):
     if not (input_bucket and input_key and output_bucket):
         return _resp(400, {"error": "inputBucket, inputKey, outputBucket are required"})
 
-    # jobId
     job_id = payload.get("jobId") or f"split-job-{int(time.time()*1000)}"
 
     exec_input = {
@@ -82,7 +83,6 @@ def _split(event):
 
     print("SPLIT start", exec_input)
 
-    # optional: unique execution name to avoid name collisions
     exec_name = job_id
     try:
         resp = sfn.start_execution(
@@ -91,7 +91,6 @@ def _split(event):
             input=json.dumps(exec_input),
         )
     except sfn.exceptions.ExecutionAlreadyExists:
-        # fallback if name already used
         resp = sfn.start_execution(
             stateMachineArn=STATE_MACHINE_ARN,
             input=json.dumps(exec_input),
@@ -111,10 +110,22 @@ def _split(event):
 def _status(execution_arn: str):
     try:
         d = sfn.describe_execution(executionArn=execution_arn)
+        return _resp(200, d)
     except sfn.exceptions.ExecutionDoesNotExist:
-        return _resp(404, {"error": "Execution not found"})
-    # return raw, UI is tolerant
-    return _resp(200, d)
+        print("DescribeExecution: not found", execution_arn)
+        return _resp(404, {"error": "Execution not found", "arn": execution_arn})
+    except ClientError as e:
+        # AccessDenied, throttling, etc. — return clean JSON with details
+        code = e.response.get("ResponseMetadata", {}).get("HTTPStatusCode", 500)
+        print("DescribeExecution ClientError:", e)
+        return _resp(code if code else 500, {
+            "error": "DescribeExecution failed",
+            "message": str(e),
+            "arn": execution_arn
+        })
+    except Exception as e:
+        print("DescribeExecution Exception:", repr(e))
+        return _resp(500, {"error": "DescribeExecution exception", "message": str(e), "arn": execution_arn})
 
 
 def _status_progress(qs):
@@ -124,24 +135,30 @@ def _status_progress(qs):
         return _resp(400, {"error": "jobId is required"})
     prefix = f"tiles/{job_id}/"
     count = 0
-    paginator = s3.get_paginator("list_objects_v2")
-    for page in paginator.paginate(Bucket=OUTPUT_BUCKET, Prefix=prefix):
-        for _ in page.get("Contents", []) or []:
-            count += 1
+    try:
+        paginator = s3.get_paginator("list_objects_v2")
+        for page in paginator.paginate(Bucket=OUTPUT_BUCKET, Prefix=prefix):
+            for _ in page.get("Contents", []) or []:
+                count += 1
+    except ClientError as e:
+        print("status-progress S3 ClientError:", e)
+        return _resp(500, {"error": "S3 list failed", "message": str(e), "prefix": prefix})
     percent = int(min(100, round((count / expected) * 100))) if expected > 0 else None
     return _resp(200, {"jobId": job_id, "tilesPrefix": prefix, "tilesCount": count, "percent": percent})
 
 
 def _status_detail(execution_arn: str):
-    # Pull latest events to find failure and lambda name (for logs link)
-    hist = sfn.get_execution_history(executionArn=execution_arn, maxResults=50, reverseOrder=True)
+    try:
+        hist = sfn.get_execution_history(executionArn=execution_arn, maxResults=50, reverseOrder=True)
+    except ClientError as e:
+        print("GetExecutionHistory ClientError:", e)
+        return _resp(500, {"error": "GetExecutionHistory failed", "message": str(e)})
 
     error = cause = failed_state = None
     function_arn = function_name = None
 
     for ev in hist.get("events", []):
         et = ev["type"]
-        # event details key heuristic
         det = ev.get(f"{et[0].lower()}{et[1:]}EventDetails", {}) or {}
 
         if et in ("ExecutionFailed", "TaskFailed", "LambdaFunctionFailed") and not error:
@@ -173,7 +190,12 @@ def _status_detail(execution_arn: str):
 
 
 def _status_history(execution_arn: str):
-    hist = sfn.get_execution_history(executionArn=execution_arn, maxResults=100, reverseOrder=False)
+    try:
+        hist = sfn.get_execution_history(executionArn=execution_arn, maxResults=100, reverseOrder=False)
+    except ClientError as e:
+        print("GetExecutionHistory ClientError:", e)
+        return _resp(500, {"error": "GetExecutionHistory failed", "message": str(e)})
+
     events = []
     log_group = None
 
@@ -208,10 +230,14 @@ def _list_output(qs):
         return _resp(400, {"error": "bucket is required"})
 
     out = []
-    paginator = s3.get_paginator("list_objects_v2")
-    for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
-        for it in page.get("Contents", []) or []:
-            out.append({"key": it["Key"], "size": it.get("Size")})
+    try:
+        paginator = s3.get_paginator("list_objects_v2")
+        for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+            for it in page.get("Contents", []) or []:
+                out.append({"key": it["Key"], "size": it.get("Size")})
+    except ClientError as e:
+        print("list-output S3 ClientError:", e)
+        return _resp(500, {"error": "S3 list failed", "message": str(e), "bucket": bucket, "prefix": prefix})
 
     return _resp(200, {"objects": out})
 
@@ -222,42 +248,40 @@ def _unite(_event):
 
 # ===== main handler =====
 def handler(event, _context):
-    method = (event.get("requestContext") or {}).get("http", {}).get("method", "GET")
-    raw_path = event.get("rawPath") or "/"
-    qs = event.get("queryStringParameters") or {}
+    try:
+        method = (event.get("requestContext") or {}).get("http", {}).get("method", "GET")
+        raw_path = event.get("rawPath") or "/"
+        qs = event.get("queryStringParameters") or {}
 
-    if method == "OPTIONS":
-        return _resp(200, {"ok": True})
+        if method == "OPTIONS":
+            return _resp(200, {"ok": True})
 
-    # POST /split
-    if raw_path == "/split" and method == "POST":
-        return _split(event)
+        if raw_path == "/split" and method == "POST":
+            return _split(event)
 
-    # GET /status/{executionArn}
-    if raw_path.startswith("/status/") and method == "GET":
-        arn = up.unquote(raw_path.split("/status/", 1)[1])
-        return _status(arn)
+        if raw_path.startswith("/status/") and method == "GET":
+            arn = up.unquote(raw_path.split("/status/", 1)[1])
+            return _status(arn)
 
-    # GET /status-progress?jobId=...&expected=...
-    if raw_path == "/status-progress" and method == "GET":
-        return _status_progress(qs)
+        if raw_path == "/status-progress" and method == "GET":
+            return _status_progress(qs)
 
-    # GET /status-detail/{executionArn}
-    if raw_path.startswith("/status-detail/") and method == "GET":
-        arn = up.unquote(raw_path.split("/status-detail/", 1)[1])
-        return _status_detail(arn)
+        if raw_path.startswith("/status-detail/") and method == "GET":
+            arn = up.unquote(raw_path.split("/status-detail/", 1)[1])
+            return _status_detail(arn)
 
-    # GET /status-history/{executionArn}
-    if raw_path.startswith("/status-history/") and method == "GET":
-        arn = up.unquote(raw_path.split("/status-history/", 1)[1])
-        return _status_history(arn)
+        if raw_path.startswith("/status-history/") and method == "GET":
+            arn = up.unquote(raw_path.split("/status-history/", 1)[1])
+            return _status_history(arn)
 
-    # GET /list-output?bucket=...&prefix=...
-    if raw_path == "/list-output" and method == "GET":
-        return _list_output(qs)
+        if raw_path == "/list-output" and method == "GET":
+            return _list_output(qs)
 
-    # POST /unite (stub)
-    if raw_path == "/unite" and method == "POST":
-        return _unite(event)
+        if raw_path == "/unite" and method == "POST":
+            return _unite(event)
 
-    return _resp(404, {"error": f"No route for {method} {raw_path}"})
+        return _resp(404, {"error": f"No route for {method} {raw_path}"})
+    except Exception as e:
+        # Final safety net so API doesn't 500 without a JSON body
+        print("UNHANDLED CONTROLLER EXCEPTION:", repr(e))
+        return _resp(500, {"error": "controller exception", "message": str(e)})
