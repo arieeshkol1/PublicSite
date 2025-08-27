@@ -90,15 +90,15 @@ class ServerlessJp2Stack(Stack):
         )
 
      # ---------------- Split Worker Lambda ----------------
-split_worker_fn = _lambda.Function(
-    self, "SplitWorkerFn",
-    runtime=_lambda.Runtime.PYTHON_3_11,
-    handler="split_worker.handler",  # file: split_worker.py ; func: handler
-    code=_lambda.Code.from_asset(lambda_code_dir),
-    timeout=Duration.minutes(15),
-    memory_size=10240,  # 10 GB RAM
-    environment={
-        "OUTPUT_BUCKET": output_bucket.bucket_name,
+        split_worker_fn = _lambda.Function(
+            self, "SplitWorkerFn",
+            runtime=_lambda.Runtime.PYTHON_3_11,
+            handler="split_worker.handler",  # file: split_worker.py ; func: handler
+            code=_lambda.Code.from_asset(lambda_code_dir),
+            timeout=Duration.minutes(15),
+            memory_size=10240,  # 10 GB RAM
+            environment={
+                "OUTPUT_BUCKET": output_bucket.bucket_name,
     },
 )
 
