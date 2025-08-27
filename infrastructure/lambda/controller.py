@@ -1,30 +1,38 @@
-import json, os, re, uuid
+# controller.py
+import json
+import os
 
-def _resp(status, body):
-    return {"statusCode": status, "headers": {"Content-Type": "application/json"}, "body": json.dumps(body)}
+def _resp(status, body, origin="*"):
+    return {
+        "statusCode": status,
+        "headers": {
+            "Access-Control-Allow-Origin": origin,
+            "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type",
+        },
+        "body": json.dumps(body),
+    }
 
 def handler(event, context):
-    route = (event.get("requestContext", {}).get("http", {}).get("path") or "").lower()
-    method = (event.get("requestContext", {}).get("http", {}).get("method") or "").upper()
+    method = (event.get("requestContext", {})
+                   .get("http", {})
+                   .get("method", "GET")).upper()
 
-    if route == "/split" and method == "POST":
-        body = json.loads(event.get("body") or "{}")
-        input_key = body.get("inputKey")
-        tile_size = int(body.get("tileSize") or 2048)
-        if not input_key:
-            return _resp(400, {"error":"inputKey required"})
-        # stub: return job id only
-        return _resp(200, {"jobId": f"split-{uuid.uuid4().hex[:8]}", "tileSize": tile_size})
+    # Handle CORS preflight
+    if method == "OPTIONS":
+        return _resp(200, {"ok": True})
 
-    if route == "/unite" and method == "POST":
-        body = json.loads(event.get("body") or "{}")
-        manifest_key = body.get("manifestKey")
-        if not manifest_key:
-            return _resp(400, {"error":"manifestKey required"})
-        return _resp(200, {"jobId": f"unite-{uuid.uuid4().hex[:8]}"})
+    path = event.get("rawPath", "")
 
-    m = re.match(r"^/status/([A-Za-z0-9\-]+)$", route)
-    if m and method == "GET":
-        return _resp(200, {"jobId": m.group(1), "state": "SUCCEEDED", "outputKey": None})
-
-    return _resp(404, {"error":"not found"})
+    try:
+        if path.endswith("/split") and method == "POST":
+            # TODO: implement split logic or call Step Function
+            return _resp(200, {"executionArn": "arn:aws:states:demo-split"})
+        elif path.endswith("/unite") and method == "POST":
+            return _resp(200, {"executionArn": "arn:aws:states:demo-unite"})
+        elif path.startswith("/status") and method == "GET":
+            return _resp(200, {"status": "RUNNING"})
+        else:
+            return _resp(404, {"error": "Not found"})
+    except Exception as e:
+        return _resp(500, {"error": str(e)})
