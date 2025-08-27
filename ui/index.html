@@ -34,6 +34,8 @@
     .bar { height:100%; width:0%; background: var(--accent); transition: width .35s ease; }
     .box { border:1px solid rgba(15,23,42,.12); border-radius: 10px; padding: 10px; min-height: 60px; }
     .list { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; line-height: 1.35; white-space: pre-wrap; }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
   </style>
 </head>
 <body>
@@ -111,6 +113,21 @@
         </div>
       </div>
 
+      <h2>4) Unite (simulate)</h2>
+      <div class="grid" style="gap:10px;">
+        <div class="row" style="grid-template-columns: 1fr auto;">
+          <div class="small muted">Job ID</div>
+          <div class="small"><span class="kbd" id="jobIdText">—</span></div>
+        </div>
+        <div class="row" style="grid-template-columns: 1fr auto;">
+          <div class="small muted">Final file (expected)</div>
+          <div class="small"><span class="kbd" id="finalKeyText">—</span></div>
+        </div>
+        <div>
+          <button class="btn" id="uniteBtn" disabled>Unite</button>
+        </div>
+      </div>
+
       <footer>TSG © Secure JP2 Pipeline</footer>
     </div>
   </div>
@@ -143,11 +160,19 @@
     const filesPrefixEl = $("filesPrefix");
     const filesLive = $("filesLive");
 
+    const jobIdText = $("jobIdText");
+    const finalKeyText = $("finalKeyText");
+    const uniteBtn = $("uniteBtn");
+
     bucketNameEl.textContent = INPUT_BUCKET;
     cfgInfoEl.textContent = `Using fixed configuration • API hidden • Output: ${OUTPUT_BUCKET}`;
 
     let selectedKey = null;
     let pollHandle = null;
+    // Saved from split response
+    window.__lastJobId = null;
+    window.__lastExpectedTiles = 0;
+    window.__tilesPrefix = null;
 
     function humanSize(bytes){
       if (bytes === 0) return '0 B';
@@ -244,8 +269,13 @@ Backend must expose GET /list-input?bucket=... (JSON: { objects:[{key,size}] }) 
         window.__tilesPrefix = jobId ? `tiles/${jobId}/` : '';
 
         filesPrefixEl.textContent = window.__tilesPrefix || '—';
-        filesLive.textContent = '—';
         sfnEvents.textContent = '—';
+        filesLive.textContent = '—';
+
+        // Unite section setup
+        jobIdText.textContent = jobId || '—';
+        finalKeyText.textContent = jobId ? `final/unite-${jobId}.jp2` : '—';
+        uniteBtn.disabled = !jobId;
 
         showResult(
           `Split started. Execution ARN:<br><code>${arn}</code><br>` +
@@ -259,6 +289,39 @@ Backend must expose GET /list-input?bucket=... (JSON: { objects:[{key,size}] }) 
         showError(err.message);
       } finally {
         splitBtn.disabled = !selectedKey; splitBtn.textContent = 'Split';
+      }
+    }
+
+    // Unite (simulate)
+    async function unite(){
+      const jobId = window.__lastJobId;
+      if (!jobId) return;
+      uniteBtn.disabled = true; uniteBtn.textContent = 'Uniting…';
+      try {
+        const body = {
+          outputBucket: OUTPUT_BUCKET,
+          jobId: jobId,
+          // You can pass tilesPrefix instead if you want:
+          // tilesPrefix: `tiles/${jobId}/`,
+          // finalKey: `final/unite-${jobId}.jp2`, // optional (default is this)
+        };
+        const resp = await fetch(`${API_BASE}/unite`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+        });
+        if (!resp.ok) throw new Error(`Unite failed (${resp.status})`);
+        const data = await resp.json();
+
+        const arn = data.executionArn || '(no arn)';
+        const expectFinal = data.expectedFinalKey || `final/unite-${jobId}.jp2`;
+        finalKeyText.textContent = expectFinal;
+
+        // Start monitoring Unite execution
+        statusArnEl.value = arn;
+        startAutoPoll();
+      } catch (err){
+        showError(err.message);
+      } finally {
+        uniteBtn.disabled = false; uniteBtn.textContent = 'Unite';
       }
     }
 
@@ -394,7 +457,7 @@ Backend must expose GET /list-input?bucket=... (JSON: { objects:[{key,size}] }) 
         const hist = await fetchSfnHistory(arn);
         if (hist) renderHistory(hist);
 
-        // Live file list
+        // Live file list for current split job
         if (window.__tilesPrefix) {
           const out = await listOutput(window.__tilesPrefix);
           renderFiles(out.objects || out.Contents || []);
@@ -421,6 +484,7 @@ Backend must expose GET /list-input?bucket=... (JSON: { objects:[{key,size}] }) 
     // Wire UI
     refreshBtn.addEventListener('click', listInput);
     splitBtn.addEventListener('click', split);
+    uniteBtn.addEventListener('click', unite);
     statusArnEl.addEventListener('change', startAutoPoll);
 
     // boot
