@@ -41,16 +41,16 @@ jobs:
         working-directory: .
         env:
           PYTHONPATH: .
-        run: cdk synth --app "python3 infrastructure/app.py" --quiet
+        run: cdk synth --app "python -m infrastructure.app" --quiet
 
       - name: CDK Bootstrap (idempotent)
         working-directory: .
         env:
           PYTHONPATH: .
-        run: cdk bootstrap --app "python3 infrastructure/app.py" aws://$AWS_ACCOUNT_ID/$AWS_REGION
+        run: cdk bootstrap --app "python -m infrastructure.app" aws://$AWS_ACCOUNT_ID/$AWS_REGION
 
       - name: CDK Deploy
         working-directory: .
         env:
           PYTHONPATH: .
-        run: cdk deploy --app "python3 infrastructure/app.py" --all --require-approval never
+        run: cdk deploy --app "python -m infrastructure.app" --all --require-approval never
