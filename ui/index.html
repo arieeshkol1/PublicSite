@@ -5,40 +5,44 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>TSG JP2 Pipeline</title>
   <style>
-    :root { --bg:#0b0f14; --card:#121922; --muted:#9fb3c8; --text:#e6eef7; --accent:#62a0ff; --danger:#ff5b6e; }
+    :root { --bg:#ffffff; --card:#ffffff; --muted:#475569; --text:#0f172a; --accent:#1e40af; --danger:#b91c1c; }
     html,body { height:100%; background:var(--bg); color:var(--text); font:14px/1.45 system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, "Helvetica Neue", Arial, "Apple Color Emoji", "Segoe UI Emoji"; }
     .wrap { max-width: 960px; margin: 32px auto; padding: 0 16px; }
-    .card { background: var(--card); border-radius: 16px; padding: 20px; box-shadow: 0 6px 24px rgba(0,0,0,.35); }
+    .card { background: var(--card); border-radius: 16px; padding: 20px; box-shadow: 0 6px 24px rgba(2,6,23,.08); border:1px solid rgba(15,23,42,.08);} 
     h1 { font-size: 22px; margin: 0 0 12px; }
     h2 { font-size: 16px; margin: 18px 0 10px; color: var(--muted); font-weight: 600; }
     .row { display: grid; grid-template-columns: 1fr auto; gap: 12px; align-items: center; }
-    .btn { appearance:none; border:0; padding: 10px 14px; border-radius: 10px; background: var(--accent); color: #051c38; font-weight: 700; cursor:pointer; }
+    .btn { appearance:none; border:0; padding: 10px 14px; border-radius: 10px; background: var(--accent); color: #fff; font-weight: 700; cursor:pointer; }
     .btn[disabled] { opacity:.5; cursor:not-allowed; }
     .btn.outline { background: transparent; color: var(--accent); box-shadow: inset 0 0 0 2px var(--accent); }
     .danger { color: var(--danger); }
     .muted { color: var(--muted); }
     .grid { display:grid; gap: 16px; }
     table { width:100%; border-collapse: collapse; }
-    th, td { padding: 10px 8px; text-align: left; border-bottom: 1px solid rgba(255,255,255,.06); font-size: 13px; }
+    th, td { padding: 10px 8px; text-align: left; border-bottom: 1px solid rgba(15,23,42,.08); font-size: 13px; }
     th { color: var(--muted); font-weight: 600; }
-    .toast { margin-top: 10px; padding: 10px 12px; border-radius: 8px; background: rgba(98,160,255,.1); border: 1px solid rgba(98,160,255,.35); color: var(--text); }
-    .error { background: rgba(255,91,110,.08); border-color: rgba(255,91,110,.35); }
-    .loader { width:18px; height:18px; border-radius: 50%; border: 3px solid rgba(255,255,255,.2); border-top-color: var(--accent); animation: spin 1s linear infinite; display:inline-block; vertical-align: -4px; }
+    .toast { margin-top: 10px; padding: 10px 12px; border-radius: 8px; background: rgba(30,64,175,.06); border: 1px solid rgba(30,64,175,.25); color: var(--text); }
+    .error { background: rgba(185,28,28,.08); border-color: rgba(185,28,28,.25); }
+    .loader { width:18px; height:18px; border-radius: 50%; border: 3px solid rgba(15,23,42,.15); border-top-color: var(--accent); animation: spin 1s linear infinite; display:inline-block; vertical-align: -4px; }
     @keyframes spin { to { transform: rotate(360deg);} }
     .small { font-size: 12px; }
-    .kbd { background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.1); border-bottom-width:2px; padding:2px 6px; border-radius: 6px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
+    .kbd { background: rgba(2,6,23,.04); border: 1px solid rgba(2,6,23,.08); border-bottom-width:2px; padding:2px 6px; border-radius: 6px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
     footer { color: var(--muted); font-size: 12px; margin-top: 18px; }
-    .progress { width:100%; height:12px; background: rgba(255,255,255,.06); border-radius: 999px; overflow:hidden; }
+    .progress { width:100%; height:12px; background: rgba(2,6,23,.06); border-radius: 999px; overflow:hidden; }
     .bar { height:100%; width:0%; background: var(--accent); transition: width .35s ease; }
     .steps { display:flex; gap:6px; flex-wrap:wrap; margin-top:8px; }
-    .chip { padding:4px 8px; border-radius: 999px; background: rgba(255,255,255,.06); border:1px solid rgba(255,255,255,.1); font-size: 11px; }
+    .chip { padding:4px 8px; border-radius: 999px; background: rgba(2,6,23,.04); border:1px solid rgba(2,6,23,.08); font-size: 11px; }
   </style>
 </head>
 <body>
   <div class="wrap grid">
     <div class="card">
-      <h1>TSG JP2 Pipeline</h1>
+      <div style="display:flex; align-items:center; gap:12px; margin-bottom:8px;">
+        <img src="tsglogo.png" alt="TSG" style="height:32px; width:auto;" />
+        <h1 style="margin:0;">TSG JP2 Pipeline</h1>
+      </div>
       <div class="muted small" id="cfgInfo"></div>
+
       <h2>1) Choose a JP2 from Input Bucket</h2>
       <div class="row" style="grid-template-columns: 1fr auto;">
         <div class="muted small">Listing from <span class="kbd" id="bucketName"></span></div>
@@ -50,8 +54,13 @@
 
       <h2>2) Split Settings</h2>
       <div class="row" style="grid-template-columns: 200px 1fr;">
-        <label for="tileSize">Tile size (px)</label>
-        <input id="tileSize" type="number" min="256" step="256" value="2048" style="width:120px; padding:8px; border-radius:8px; border:1px solid rgba(255,255,255,.15); background:transparent; color:var(--text);" />
+        <label for="tilesSelect">Number of tiles</label>
+        <select id="tilesSelect" style="width:160px; padding:8px; border-radius:8px; border:1px solid rgba(15,23,42,.15); background:transparent; color:var(--text);">
+          <option value="9">9 (3×3)</option>
+          <option value="16" selected>16 (4×4)</option>
+          <option value="25">25 (5×5)</option>
+          <option value="36">36 (6×6)</option>
+        </select>
       </div>
 
       <div class="row" style="margin-top:14px;">
@@ -61,10 +70,11 @@
 
       <div id="result" class="toast" style="display:none;"></div>
       <div id="error" class="toast error" style="display:none;"></div>
+
       <h2>3) Status</h2>
       <div class="grid">
         <div class="row" style="grid-template-columns: 1fr auto auto;">
-          <input id="statusArn" type="text" placeholder="Execution ARN" style="width:100%; padding:8px; border-radius:8px; border:1px solid rgba(255,255,255,.15); background:transparent; color:var(--text);" />
+          <input id="statusArn" type="text" placeholder="Execution ARN" style="width:100%; padding:8px; border-radius:8px; border:1px solid rgba(15,23,42,.15); background:transparent; color:var(--text);" />
           <button class="btn outline" id="startPollBtn">Start</button>
           <button class="btn outline" id="stopPollBtn" disabled>Stop</button>
         </div>
@@ -80,21 +90,15 @@
         <div class="steps" id="stepsArea"></div>
       </div>
 
-      <footer>TSG
+      <footer>TSG © Secure JP2 Pipeline</footer>
     </div>
   </div>
 
   <script>
     // ===== Configuration (hidden from the user) =====
-    // API Gateway base (no UI field). Provided by ops at build time.
     const API_BASE = "https://qmiu91xhgk.execute-api.us-east-1.amazonaws.com"; // append stage if needed, e.g., "/prod"
-
-    // Buckets are set here (no user input fields)
     const INPUT_BUCKET  = "jp2-input-991105135552-us-east-1";
     const OUTPUT_BUCKET = "jp2-output-991105135552-us-east-1";
-
-    // Optional: if your API uses a stage, set it once here
-    // const API_BASE = "https://qmiu91xhgk.execute-api.us-east-1.amazonaws.com/prod";
 
     // ===== DOM helpers =====
     const $ = (id) => document.getElementById(id);
@@ -102,16 +106,25 @@
     const filesArea = $("filesArea");
     const bucketNameEl = $("bucketName");
     const selectedKeyEl = $("selectedKey");
-    const tileSizeEl = $("tileSize");
+    const tilesSelect = $("tilesSelect");
     const splitBtn = $("splitBtn");
     const refreshBtn = $("refreshBtn");
     const resultEl = $("result");
     const errorEl = $("error");
 
+    const statusArnEl = $("statusArn");
+    const startPollBtn = $("startPollBtn");
+    const stopPollBtn = $("stopPollBtn");
+    const progBar = $("progBar");
+    const stateText = $("stateText");
+    const detailText = $("detailText");
+    const stepsArea = $("stepsArea");
+
     bucketNameEl.textContent = INPUT_BUCKET;
-    cfgInfoEl.textContent = `Using fixed configuration • API: ${API_BASE} • Output: ${OUTPUT_BUCKET}`;
+    cfgInfoEl.textContent = `Using fixed configuration • API hidden • Output: ${OUTPUT_BUCKET}`;
 
     let selectedKey = null;
+    let pollHandle = null;
 
     function humanSize(bytes){
       if (bytes === 0) return '0 B';
@@ -149,7 +162,6 @@
           <tbody>${rows}</tbody>
         </table>`;
       filesArea.innerHTML = html;
-      // set default selection
       const first = objs[0];
       selectedKey = first ? first.key : null;
       selectedKeyEl.textContent = selectedKey || 'None';
@@ -165,17 +177,23 @@
     async function listInput(){
       filesArea.innerHTML = '<div class="muted small">Loading file list… <span class="loader"></span></div>';
       try {
-        // NOTE: This expects a small backend endpoint that lists JP2s from the input bucket.
-        // Example response: { objects: [{ key:"raw/sceneA.jp2", size: 123456789 }, ...] }
-        const resp = await fetch(`${API_BASE}/list-input?bucket=${encodeURIComponent(INPUT_BUCKET)}`);
+        // Try primary route
+        let resp = await fetch(`${API_BASE}/list-input?bucket=${encodeURIComponent(INPUT_BUCKET)}`);
+        if (!resp.ok) {
+          // try a compatibility route if controller uses a different path
+          resp = await fetch(`${API_BASE}/list?bucket=${encodeURIComponent(INPUT_BUCKET)}`);
+        }
         if (!resp.ok) throw new Error(`List failed (${resp.status})`);
         const data = await resp.json();
-        // filter to .jp2 (defensive)
-        const objs = (data.objects || []).filter(o => /\.jp2$/i.test(o.key));
+        const objs = (data.objects || data.Contents || []).map(x => ({
+          key: x.key || x.Key,
+          size: x.size ?? x.Size
+        })).filter(o => o.key && /\.jp2$/i.test(o.key));
         renderTable(objs);
       } catch (err){
         console.error(err);
-        showError(`Could not load files: ${err.message}. Ensure the backend exposes GET /list-input.`);
+        showError(`Could not load files: ${err.message}.
+Backend must expose GET /list-input?bucket=... (JSON: { objects:[{key,size}] }) or a compatible /list route.`);
       }
     }
 
@@ -183,11 +201,13 @@
       if (!selectedKey) return;
       splitBtn.disabled = true; splitBtn.textContent = 'Splitting…';
       try {
+        const total = parseInt(tilesSelect.value, 10) || 16;
+        const grid = Math.round(Math.sqrt(total));
         const body = {
           inputBucket: INPUT_BUCKET,
           inputKey: selectedKey,
           outputBucket: OUTPUT_BUCKET,
-          params: { tileSize: parseInt(tileSizeEl.value, 10) || 2048 }
+          params: { tilesTotal: total, tilesGrid: grid }
         };
         const resp = await fetch(`${API_BASE}/split`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
@@ -197,6 +217,8 @@
         const arn = data.executionArn || '(no arn)';
         showResult(`Split started. Execution ARN:<br><code>${arn}</code><br><br>
           <span class="small">Use the Status tool to monitor: <span class="kbd">/status/{arn}</span></span>`);
+        // Auto-wire ARN and start polling
+        statusArnEl.value = arn; startPollBtn.click();
       } catch (err){
         showError(err.message);
       } finally {
@@ -204,8 +226,83 @@
       }
     }
 
+    function setProgress(p){
+      const clamped = Math.max(0, Math.min(100, Math.round(p)));
+      progBar.style.width = clamped + '%';
+    }
+
+    function renderSteps(arr){
+      if (!Array.isArray(arr) || arr.length === 0){ stepsArea.innerHTML = ''; return; }
+      stepsArea.innerHTML = arr.map(s => `<span class=\"chip\">${s}</span>`).join('');
+    }
+
+    function extractProgress(payload){
+      let status = payload.status || payload.Status || 'UNKNOWN';
+      let percent = payload.percent ?? payload.Percent ?? null;
+      let detail = payload.detail || payload.Detail || '';
+      let steps = payload.steps || payload.Steps || [];
+      if (!percent && typeof payload.output === 'string'){
+        try {
+          const out = JSON.parse(payload.output);
+          if (typeof out.percent === 'number') percent = out.percent;
+          if (out.detail) detail = out.detail;
+          if (Array.isArray(out.steps)) steps = out.steps;
+          if (out.status) status = out.status;
+        } catch(_){}
+      }
+      if (percent == null && Array.isArray(steps) && steps.length){
+        const done = steps.filter(s => /done|ok|complete|finished/i.test(String(s))).length;
+        percent = Math.round( (done/steps.length) * 100 );
+      }
+      if (percent == null){
+        if (/RUNNING/i.test(status)) percent = 25; else
+        if (/SUCCEEDED/i.test(status)) percent = 100; else
+        if (/FAILED|TIMED_OUT|ABORTED/i.test(status)) percent = 100; else
+          percent = 0;
+      }
+      return { status, percent, detail, steps };
+    }
+
+    async function checkStatusOnce(arn){
+      const url = `${API_BASE}/status/${encodeURIComponent(arn)}`;
+      const resp = await fetch(url);
+      if (!resp.ok) throw new Error(`Status failed (${resp.status})`);
+      return resp.json();
+    }
+
+    async function pollStatus(){
+      const arn = statusArnEl.value.trim();
+      if (!arn){ showError('Please provide an execution ARN'); return; }
+      startPollBtn.disabled = true; stopPollBtn.disabled = false;
+      try {
+        const data = await checkStatusOnce(arn);
+        const { status, percent, detail, steps } = extractProgress(data);
+        stateText.textContent = status;
+        detailText.textContent = detail || '';
+        renderSteps(steps);
+        setProgress(percent);
+        if (/SUCCEEDED|FAILED|TIMED_OUT|ABORTED/i.test(status)){
+          clearInterval(pollHandle); pollHandle = null;
+          startPollBtn.disabled = false; stopPollBtn.disabled = true;
+        }
+      } catch (err){
+        showError(err.message);
+        clearInterval(pollHandle); pollHandle = null;
+        startPollBtn.disabled = false; stopPollBtn.disabled = true;
+      }
+    }
+
     refreshBtn.addEventListener('click', listInput);
     splitBtn.addEventListener('click', split);
+    startPollBtn.addEventListener('click', () => {
+      if (pollHandle) clearInterval(pollHandle);
+      pollStatus();
+      pollHandle = setInterval(pollStatus, 3000);
+    });
+    stopPollBtn.addEventListener('click', () => {
+      if (pollHandle) { clearInterval(pollHandle); pollHandle = null; }
+      startPollBtn.disabled = false; stopPollBtn.disabled = true;
+    });
 
     // boot
     listInput();
