@@ -1,221 +1,214 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <title>TSG JP2 Split / Unite</title>
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <script src="https://cdn.tailwindcss.com"></script>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>TSG JP2 Pipeline</title>
   <style>
-    .card{ @apply bg-white p-6 rounded-2xl shadow; }
-    .btn{ @apply px-4 py-2 rounded text-white; }
-    .btn-blue{ @apply bg-blue-600 hover:bg-blue-700; }
-    .btn-green{ @apply bg-green-600 hover:bg-green-700; }
-    .btn-indigo{ @apply bg-indigo-600 hover:bg-indigo-700; }
-    .field{ @apply w-full border rounded p-2; }
-    .label{ @apply block text-gray-700 font-medium mb-1; }
-    .hint{ @apply text-xs text-gray-500; }
-    .err{ @apply text-red-600; }
-    .ok{ @apply text-green-700; }
-    .mono{ font-family: ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace; }
+    :root { --bg:#0b0f14; --card:#121922; --muted:#9fb3c8; --text:#e6eef7; --accent:#62a0ff; --danger:#ff5b6e; }
+    html,body { height:100%; background:var(--bg); color:var(--text); font:14px/1.45 system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, "Helvetica Neue", Arial, "Apple Color Emoji", "Segoe UI Emoji"; }
+    .wrap { max-width: 960px; margin: 32px auto; padding: 0 16px; }
+    .card { background: var(--card); border-radius: 16px; padding: 20px; box-shadow: 0 6px 24px rgba(0,0,0,.35); }
+    h1 { font-size: 22px; margin: 0 0 12px; }
+    h2 { font-size: 16px; margin: 18px 0 10px; color: var(--muted); font-weight: 600; }
+    .row { display: grid; grid-template-columns: 1fr auto; gap: 12px; align-items: center; }
+    .btn { appearance:none; border:0; padding: 10px 14px; border-radius: 10px; background: var(--accent); color: #051c38; font-weight: 700; cursor:pointer; }
+    .btn[disabled] { opacity:.5; cursor:not-allowed; }
+    .btn.outline { background: transparent; color: var(--accent); box-shadow: inset 0 0 0 2px var(--accent); }
+    .danger { color: var(--danger); }
+    .muted { color: var(--muted); }
+    .grid { display:grid; gap: 16px; }
+    table { width:100%; border-collapse: collapse; }
+    th, td { padding: 10px 8px; text-align: left; border-bottom: 1px solid rgba(255,255,255,.06); font-size: 13px; }
+    th { color: var(--muted); font-weight: 600; }
+    .toast { margin-top: 10px; padding: 10px 12px; border-radius: 8px; background: rgba(98,160,255,.1); border: 1px solid rgba(98,160,255,.35); color: var(--text); }
+    .error { background: rgba(255,91,110,.08); border-color: rgba(255,91,110,.35); }
+    .loader { width:18px; height:18px; border-radius: 50%; border: 3px solid rgba(255,255,255,.2); border-top-color: var(--accent); animation: spin 1s linear infinite; display:inline-block; vertical-align: -4px; }
+    @keyframes spin { to { transform: rotate(360deg);} }
+    .small { font-size: 12px; }
+    .kbd { background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.1); border-bottom-width:2px; padding:2px 6px; border-radius: 6px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
+    footer { color: var(--muted); font-size: 12px; margin-top: 18px; }
+    .progress { width:100%; height:12px; background: rgba(255,255,255,.06); border-radius: 999px; overflow:hidden; }
+    .bar { height:100%; width:0%; background: var(--accent); transition: width .35s ease; }
+    .steps { display:flex; gap:6px; flex-wrap:wrap; margin-top:8px; }
+    .chip { padding:4px 8px; border-radius: 999px; background: rgba(255,255,255,.06); border:1px solid rgba(255,255,255,.1); font-size: 11px; }
   </style>
 </head>
-<body class="bg-gray-50">
-  <!-- Header -->
-  <header class="bg-white shadow">
-    <div class="max-w-5xl mx-auto flex items-center gap-4 p-4">
-      <img src="tsglogo.png" alt="TSG" class="h-12">
-      <div>
-        <h1 class="text-2xl font-bold text-gray-800">TSG JP2 Split / Unite</h1>
-        <p class="text-sm text-gray-500">Secure JP2 processing pipeline (Serverless demo)</p>
+<body>
+  <div class="wrap grid">
+    <div class="card">
+      <h1>TSG JP2 Pipeline</h1>
+      <div class="muted small" id="cfgInfo"></div>
+      <h2>1) Choose a JP2 from Input Bucket</h2>
+      <div class="row" style="grid-template-columns: 1fr auto;">
+        <div class="muted small">Listing from <span class="kbd" id="bucketName"></span></div>
+        <button class="btn outline" id="refreshBtn">Refresh</button>
       </div>
+      <div id="filesArea" class="grid" style="margin-top: 10px;">
+        <div class="muted small">Loading file list… <span class="loader"></span></div>
+      </div>
+
+      <h2>2) Split Settings</h2>
+      <div class="row" style="grid-template-columns: 200px 1fr;">
+        <label for="tileSize">Tile size (px)</label>
+        <input id="tileSize" type="number" min="256" step="256" value="2048" style="width:120px; padding:8px; border-radius:8px; border:1px solid rgba(255,255,255,.15); background:transparent; color:var(--text);" />
+      </div>
+
+      <div class="row" style="margin-top:14px;">
+        <div class="small muted">Selected file: <span class="kbd" id="selectedKey">None</span></div>
+        <button class="btn" id="splitBtn" disabled>Split</button>
+      </div>
+
+      <div id="result" class="toast" style="display:none;"></div>
+      <div id="error" class="toast error" style="display:none;"></div>
+      <h2>3) Status</h2>
+      <div class="grid">
+        <div class="row" style="grid-template-columns: 1fr auto auto;">
+          <input id="statusArn" type="text" placeholder="Execution ARN" style="width:100%; padding:8px; border-radius:8px; border:1px solid rgba(255,255,255,.15); background:transparent; color:var(--text);" />
+          <button class="btn outline" id="startPollBtn">Start</button>
+          <button class="btn outline" id="stopPollBtn" disabled>Stop</button>
+        </div>
+        <div class="progress"><div class="bar" id="progBar"></div></div>
+        <div class="row" style="grid-template-columns: 120px 1fr;">
+          <div class="muted small">State</div>
+          <div class="small" id="stateText">—</div>
+        </div>
+        <div class="row" style="grid-template-columns: 120px 1fr;">
+          <div class="muted small">Detail</div>
+          <div class="small" id="detailText">—</div>
+        </div>
+        <div class="steps" id="stepsArea"></div>
+      </div>
+
+      <footer>TSG
     </div>
-  </header>
-
-  <main class="max-w-5xl mx-auto p-4 space-y-6">
-    <!-- API Config -->
-    <section class="card">
-      <h2 class="text-xl font-semibold mb-3">API Configuration</h2>
-      <div class="grid md:grid-cols-2 gap-4">
-        <div>
-          <label class="label">API Base URL</label>
-          <input id="apiBase" class="field" placeholder="https://xxxxx.execute-api.us-east-1.amazonaws.com">
-          <p class="hint">Your API Gateway URL (no trailing slash).</p>
-        </div>
-        <div class="grid grid-cols-2 gap-4">
-          <div>
-            <label class="label">Input Bucket</label>
-            <input id="inBucket" class="field" value="jp2-input-991105135552-us-east-1">
-          </div>
-          <div>
-            <label class="label">Output Bucket</label>
-            <input id="outBucket" class="field" value="jp2-output-991105135552-us-east-1">
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <!-- Split -->
-    <section class="card">
-      <h2 class="text-xl font-semibold mb-3">Split JP2</h2>
-      <div class="grid md:grid-cols-3 gap-4">
-        <div class="md:col-span-2">
-          <label class="label">Input Key (in Input bucket)</label>
-          <input id="inputKey" class="field mono" placeholder="raw/scenes/sceneA.jp2">
-          <p class="hint">Example: <span class="mono">raw/scenes/sceneA.jp2</span></p>
-        </div>
-        <div>
-          <label class="label">Tile size (px)</label>
-          <input id="tileSize" type="number" class="field" value="2048" min="256" step="256">
-        </div>
-      </div>
-      <div class="mt-4 flex gap-2">
-        <button id="btnSplit" class="btn btn-blue">Run Split</button>
-        <button id="btnSplitClear" class="btn btn-indigo" title="Clear results">Clear</button>
-      </div>
-      <div id="splitOut" class="mt-4 text-sm"></div>
-    </section>
-
-    <!-- Unite -->
-    <section class="card">
-      <h2 class="text-xl font-semibold mb-3">Unite JP2</h2>
-      <div class="grid md:grid-cols-2 gap-4">
-        <div>
-          <label class="label">Manifest Key (in Output bucket)</label>
-          <input id="manifestKey" class="field mono" placeholder="manifests/<jobId>.json">
-          <p class="hint">Paste the manifest key produced by Split (stored in the Output bucket).</p>
-        </div>
-      </div>
-      <div class="mt-4 flex gap-2">
-        <button id="btnUnite" class="btn btn-green">Run Unite</button>
-        <button id="btnUniteClear" class="btn btn-indigo" title="Clear results">Clear</button>
-      </div>
-      <div id="uniteOut" class="mt-4 text-sm"></div>
-    </section>
-
-    <!-- Status -->
-    <section class="card">
-      <h2 class="text-xl font-semibold mb-3">Job Status</h2>
-      <div class="grid md:grid-cols-2 gap-4">
-        <div>
-          <label class="label">Job ID</label>
-          <input id="jobId" class="field mono" placeholder="execution ARN or Job ID">
-          <p class="hint">Use the executionArn returned by Split/Unite.</p>
-        </div>
-      </div>
-      <div class="mt-4 flex gap-2">
-        <button id="btnStatus" class="btn btn-indigo">Check</button>
-        <button id="btnStatusClear" class="btn btn-indigo" title="Clear results">Clear</button>
-      </div>
-      <div id="statusOut" class="mt-4 text-sm"></div>
-    </section>
-
-    <!-- Help -->
-    <section class="card">
-      <h2 class="text-xl font-semibold mb-2">How it works</h2>
-      <ol class="list-decimal pl-5 text-sm text-gray-700 space-y-1">
-        <li>Copy JP2 to the Input bucket.</li>
-        <li>Run <b>Split</b> → tiles + manifest appear in Output bucket.</li>
-        <li>Paste the manifest key and run <b>Unite</b> → final JP2 in Output bucket.</li>
-        <li>Use <b>Status</b> to monitor executions.</li>
-      </ol>
-    </section>
-  </main>
+  </div>
 
   <script>
-    const el = id => document.getElementById(id);
-    const outLink = (bucket, key) =>
-      \`s3://\${bucket}/\${key}\`;
+    // ===== Configuration (hidden from the user) =====
+    // API Gateway base (no UI field). Provided by ops at build time.
+    const API_BASE = "https://qmiu91xhgk.execute-api.us-east-1.amazonaws.com"; // append stage if needed, e.g., "/prod"
 
-    function setHTML(target, html){ el(target).innerHTML = html; }
-    function ok(msg){ return '<div class="ok">'+msg+'</div>'; }
-    function err(msg){ return '<div class="err">'+msg+'</div>'; }
-    function pre(obj){
-      return '<pre class="mono bg-gray-100 p-3 rounded overflow-x-auto">'+
-             (typeof obj==='string'? obj : JSON.stringify(obj, null, 2))+
-             '</pre>';
+    // Buckets are set here (no user input fields)
+    const INPUT_BUCKET  = "jp2-input-991105135552-us-east-1";
+    const OUTPUT_BUCKET = "jp2-output-991105135552-us-east-1";
+
+    // Optional: if your API uses a stage, set it once here
+    // const API_BASE = "https://qmiu91xhgk.execute-api.us-east-1.amazonaws.com/prod";
+
+    // ===== DOM helpers =====
+    const $ = (id) => document.getElementById(id);
+    const cfgInfoEl = $("cfgInfo");
+    const filesArea = $("filesArea");
+    const bucketNameEl = $("bucketName");
+    const selectedKeyEl = $("selectedKey");
+    const tileSizeEl = $("tileSize");
+    const splitBtn = $("splitBtn");
+    const refreshBtn = $("refreshBtn");
+    const resultEl = $("result");
+    const errorEl = $("error");
+
+    bucketNameEl.textContent = INPUT_BUCKET;
+    cfgInfoEl.textContent = `Using fixed configuration • API: ${API_BASE} • Output: ${OUTPUT_BUCKET}`;
+
+    let selectedKey = null;
+
+    function humanSize(bytes){
+      if (bytes === 0) return '0 B';
+      const k = 1024; const sizes = ['B','KB','MB','GB','TB'];
+      const i = Math.floor(Math.log(bytes)/Math.log(k));
+      return parseFloat((bytes/Math.pow(k,i)).toFixed(2)) + ' ' + sizes[i];
     }
 
-    async function postJSON(url, body){
-      const res = await fetch(url, { method: 'POST', body: JSON.stringify(body) });
-      const text = await res.text();
-      let data; try { data = JSON.parse(text); } catch(_) { data = { raw:text }; }
-      if(!res.ok){ const e = new Error('HTTP '+res.status); e.data = data; throw e; }
-      return data;
+    function showError(msg){
+      errorEl.textContent = msg; errorEl.style.display = 'block';
+      resultEl.style.display = 'none';
+    }
+    function showResult(html){
+      resultEl.innerHTML = html; resultEl.style.display = 'block';
+      errorEl.style.display = 'none';
     }
 
-    // Split
-    el('btnSplit').onclick = async () => {
-      const api = el('apiBase').value.trim();
-      const inBucket = el('inBucket').value.trim();
-      const outBucket = el('outBucket').value.trim();
-      const key = el('inputKey').value.trim();
-      const tile = parseInt(el('tileSize').value,10)||2048;
-
-      setHTML('splitOut', 'Running split…');
-      try{
-        const data = await postJSON(\`\${api}/split\`, {
-          input: { bucket: inBucket, key },
-          output: { bucket: outBucket },
-          params: { tileSize: tile }
+    function renderTable(objs){
+      if (!objs || objs.length === 0){
+        filesArea.innerHTML = '<div class="muted small">No JP2 objects found in bucket.</div>';
+        splitBtn.disabled = true; selectedKey = null; selectedKeyEl.textContent = 'None';
+        return;
+      }
+      const rows = objs.map((o, idx) => `
+        <tr>
+          <td style="width:32px"><input type="radio" name="pick" value="${o.key}" ${idx===0?'checked':''}></td>
+          <td><code>${o.key}</code></td>
+          <td>${o.size != null ? humanSize(o.size) : ''}</td>
+        </tr>`).join('');
+      const html = `
+        <table>
+          <thead>
+            <tr><th></th><th>Object Key</th><th>Size</th></tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>`;
+      filesArea.innerHTML = html;
+      // set default selection
+      const first = objs[0];
+      selectedKey = first ? first.key : null;
+      selectedKeyEl.textContent = selectedKey || 'None';
+      splitBtn.disabled = !selectedKey;
+      filesArea.querySelectorAll('input[name="pick"]').forEach(r => {
+        r.addEventListener('change', (e) => {
+          selectedKey = e.target.value; selectedKeyEl.textContent = selectedKey;
+          splitBtn.disabled = !selectedKey;
         });
-        const arn = data.executionArn || data.arn || data.jobId || '(see payload below)';
-        setHTML('splitOut',
-          ok('Split started.') +
-          '<div class="mt-2">Execution: <span class="mono">'+arn+'</span></div>' +
-          '<div class="mt-2">Input: <span class="mono">'+ outLink(inBucket, key) +'</span></div>' +
-          pre(data)
-        );
-        // convenience: prefill status field
-        el('jobId').value = arn;
-      }catch(e){
-        setHTML('splitOut', err('Split failed') + pre(e.data || e.message));
+      });
+    }
+
+    async function listInput(){
+      filesArea.innerHTML = '<div class="muted small">Loading file list… <span class="loader"></span></div>';
+      try {
+        // NOTE: This expects a small backend endpoint that lists JP2s from the input bucket.
+        // Example response: { objects: [{ key:"raw/sceneA.jp2", size: 123456789 }, ...] }
+        const resp = await fetch(`${API_BASE}/list-input?bucket=${encodeURIComponent(INPUT_BUCKET)}`);
+        if (!resp.ok) throw new Error(`List failed (${resp.status})`);
+        const data = await resp.json();
+        // filter to .jp2 (defensive)
+        const objs = (data.objects || []).filter(o => /\.jp2$/i.test(o.key));
+        renderTable(objs);
+      } catch (err){
+        console.error(err);
+        showError(`Could not load files: ${err.message}. Ensure the backend exposes GET /list-input.`);
       }
-    };
-    el('btnSplitClear').onclick = () => setHTML('splitOut','');
+    }
 
-    // Unite
-    el('btnUnite').onclick = async () => {
-      const api = el('apiBase').value.trim();
-      const outBucket = el('outBucket').value.trim();
-      const manifestKey = el('manifestKey').value.trim();
-
-      setHTML('uniteOut', 'Starting unite…');
-      try{
-        const data = await postJSON(\`\${api}/unite\`, {
-          output: { bucket: outBucket },
-          manifestKey
+    async function split(){
+      if (!selectedKey) return;
+      splitBtn.disabled = true; splitBtn.textContent = 'Splitting…';
+      try {
+        const body = {
+          inputBucket: INPUT_BUCKET,
+          inputKey: selectedKey,
+          outputBucket: OUTPUT_BUCKET,
+          params: { tileSize: parseInt(tileSizeEl.value, 10) || 2048 }
+        };
+        const resp = await fetch(`${API_BASE}/split`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
         });
-        const arn = data.executionArn || data.arn || data.jobId || '(see payload below)';
-        setHTML('uniteOut',
-          ok('Unite started.') +
-          '<div class="mt-2">Execution: <span class="mono">'+arn+'</span></div>' +
-          '<div class="mt-2">Manifest: <span class="mono">'+ outLink(outBucket, manifestKey) +'</span></div>' +
-          pre(data)
-        );
-        el('jobId').value = arn;
-      }catch(e){
-        setHTML('uniteOut', err('Unite failed') + pre(e.data || e.message));
+        if (!resp.ok) throw new Error(`Split failed (${resp.status})`);
+        const data = await resp.json();
+        const arn = data.executionArn || '(no arn)';
+        showResult(`Split started. Execution ARN:<br><code>${arn}</code><br><br>
+          <span class="small">Use the Status tool to monitor: <span class="kbd">/status/{arn}</span></span>`);
+      } catch (err){
+        showError(err.message);
+      } finally {
+        splitBtn.disabled = !selectedKey; splitBtn.textContent = 'Split';
       }
-    };
-    el('btnUniteClear').onclick = () => setHTML('uniteOut','');
+    }
 
-    // Status
-    el('btnStatus').onclick = async () => {
-      const api = el('apiBase').value.trim();
-      const jobId = el('jobId').value.trim();
-      if(!jobId){ setHTML('statusOut', err('Enter a Job ID / executionArn')); return; }
-      setHTML('statusOut','Checking…');
-      try{
-        // Accept full executionArn or short id; backend expects arn in path
-        const url = \`\${api}/status/\${encodeURIComponent(jobId)}\`;
-        const data = await (await fetch(url)).json();
-        const status = data.status || data.executionStatus || 'UNKNOWN';
-        setHTML('statusOut', ok('Status: '+status) + pre(data));
-      }catch(e){
-        setHTML('statusOut', err('Status check failed') + pre(e.data || e.message));
-      }
-    };
-    el('btnStatusClear').onclick = () => setHTML('statusOut','');
+    refreshBtn.addEventListener('click', listInput);
+    splitBtn.addEventListener('click', split);
+
+    // boot
+    listInput();
   </script>
 </body>
 </html>
