@@ -11,10 +11,7 @@ permissions:
 
 env:
   AWS_ACCOUNT_ID: "991105135552"
-  AWS_REGION: "us-east-1"  # pin region
-  # If you prefer to keep the role in secrets, leave this empty and keep the step below.
-  # Otherwise, set it here and remove the secret usage:
-  # AWS_ROLE_ARN: "arn:aws:iam::991105135552:role/GitHubDeployRole"
+  AWS_REGION: "us-east-1"
 
 jobs:
   deploy:
@@ -37,17 +34,23 @@ jobs:
       - name: Configure AWS Credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}   # or: ${{ env.AWS_ROLE_ARN }}
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: CDK Synth (fail fast)
         working-directory: infrastructure
+        env:
+          PYTHONPATH: ..            # <-- key fix so 'infrastructure' package resolves
         run: cdk synth --quiet
 
       - name: CDK Bootstrap (idempotent)
         working-directory: infrastructure
+        env:
+          PYTHONPATH: ..            # keep same env for consistency
         run: cdk bootstrap aws://$AWS_ACCOUNT_ID/$AWS_REGION
 
       - name: CDK Deploy
         working-directory: infrastructure
+        env:
+          PYTHONPATH: ..            # keep same env for consistency
         run: cdk deploy --all --require-approval never
