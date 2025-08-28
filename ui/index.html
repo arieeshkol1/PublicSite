@@ -1,224 +1,259 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>TSG JP2 Pipeline</title>
   <style>
-    :root { --bg:#0f172a; --panel:#111827; --muted:#94a3b8; --accent:#22d3ee; --ok:#10b981; --warn:#f59e0b; --err:#ef4444; }
-    * { box-sizing: border-box; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
-    body { margin:0; background:var(--bg); color:#e5e7eb; }
-    header { display:flex; align-items:center; gap:.75rem; padding:16px 20px; border-bottom:1px solid #1f2937; background:#0b1220; position:sticky; top:0; z-index:5; }
-    header .title { font-weight:700; letter-spacing:.2px; }
-    header .tag { font-size:.85rem; color:var(--muted); }
-    main { max-width:1100px; margin:0 auto; padding:20px; }
-    .card { background:var(--panel); border:1px solid #1f2937; border-radius:14px; padding:16px; margin:14px 0; }
-    .row { display:flex; gap:16px; flex-wrap:wrap; }
-    .col { flex:1 1 480px; min-width:320px; }
-    h2 { margin:.1rem 0 .6rem; font-size:1.05rem; color:#e5e7eb; }
-    .muted { color:var(--muted); }
-    .small { font-size:.9rem; color:var(--muted); }
-    table { width:100%; border-collapse:collapse; }
-    th, td { text-align:left; padding:8px 10px; border-bottom:1px solid #1f2937; font-size:.95rem; }
-    th { color:#cbd5e1; font-weight:600; background:#0e1626; position:sticky; top:0; }
-    .btn { display:inline-flex; align-items:center; gap:.4rem; padding:8px 12px; border-radius:10px; border:1px solid #1f2937; background:#0b1220; color:#e5e7eb; cursor:pointer; }
-    .btn.primary { background:linear-gradient(90deg, #06b6d4, #22d3ee); color:#0b1220; border:none; font-weight:700; }
-    .btn:disabled { opacity:.6; cursor:not-allowed; }
-    .grid { display:grid; grid-template-columns: repeat(6, minmax(0,1fr)); gap:6px; }
-    .tileopt { padding:6px 8px; border:1px solid #1f2937; border-radius:8px; text-align:center; cursor:pointer; background:#0b1220; }
-    .tileopt.active { outline:2px solid var(--accent); }
-    .bar { height:10px; border-radius:999px; background:#0b1220; border:1px solid #1f2937; overflow:hidden; }
-    .bar > i { display:block; height:100%; width:0%; background:linear-gradient(90deg,#22d3ee,#06b6d4); }
-    .links a { color:var(--accent); text-decoration:none; }
-    .footer { margin-top:18px; color:var(--muted); font-size:.85rem; text-align:center; }
-    /* LOG area —
-       Important: we constrain height and never write outside this element. */
-    #log { white-space:pre-wrap; max-height:220px; overflow:auto; background:#0b1220; border:1px dashed #1f2937; border-radius:10px; padding:10px; }
+    :root { --bg:#ffffff; --card:#ffffff; --muted:#475569; --text:#0f172a; --accent:#1e40af; --danger:#b91c1c; }
+    html,body { height:100%; background:var(--bg); color:var(--text); font:14px/1.45 system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, "Helvetica Neue", Arial, "Apple Color Emoji", "Segoe UI Emoji"; }
+    .wrap { max-width: 1080px; margin: 32px auto; padding: 0 16px; }
+    .card { background: var(--card); border-radius: 16px; padding: 20px; box-shadow: 0 6px 24px rgba(2,6,23,.08); border:1px solid rgba(15,23,42,.08);} 
+    h1 { font-size: 22px; margin: 0 0 12px; }
+    h2 { font-size: 16px; margin: 18px 0 10px; color: var(--muted); font-weight: 600; }
+    .row { display: grid; grid-template-columns: 1fr auto; gap: 12px; align-items: center; }
+    .muted { color: var(--muted); }
+    .btn { appearance: none; border: 1px solid rgba(15,23,42,.14); background: #f8fafc; padding: 8px 12px; border-radius: 10px; cursor: pointer; }
+    .btn.primary { background: #1e40af; color: #fff; border-color: #1e40af; }
+    .btn:disabled { opacity: .6; cursor: not-allowed; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { border-bottom: 1px solid rgba(15,23,42,.08); padding: 8px 10px; text-align: left; }
+    th { color: var(--muted); font-weight: 600; }
+    .grid { display: grid; grid-template-columns: repeat(6, minmax(0,1fr)); gap: 6px; }
+    .opt { padding: 8px 10px; border: 1px solid rgba(15,23,42,.14); border-radius: 10px; text-align: center; cursor: pointer; user-select:none; }
+    .opt.active { outline: 2px solid var(--accent); }
+    .bar { height: 10px; border-radius: 999px; background: #f1f5f9; border: 1px solid rgba(15,23,42,.12); overflow: hidden; }
+    .bar > i { display: block; height: 100%; width: 0%; background: linear-gradient(90deg,#60a5fa,#1e40af); }
+    .links { display:flex; gap:10px; flex-wrap:wrap; }
+    .links a { color: var(--accent); text-decoration: none; }
+    .well { background:#f8fafc; border:1px dashed rgba(15,23,42,.16); border-radius:10px; padding:10px; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
   </style>
 </head>
 <body>
-  <header>
-    <img alt="TSG" src="tsglogo.png" height="24" />
-    <div class="title">TSG JP2 Pipeline</div>
-    <div class="tag">Fixed config • API hidden • Output bucket is static</div>
-  </header>
+  <div class="wrap">
+    <h1>TSG JP2 Pipeline</h1>
+    <div class="muted">Using fixed configuration • API hidden • Output: <span id="outBucketLbl" class="mono"></span></div>
 
-  <main id="app">
-    <div class="row">
-      <section class="card col" aria-labelledby="sec1">
-        <h2 id="sec1">1) Choose a JP2 from Input Bucket</h2>
-        <div class="small">Listing from <b id="inputBucketLbl"></b> <button id="btnRefresh" class="btn" type="button">Refresh</button></div>
-        <div id="inputTableWrap" class="card" style="margin-top:10px;">
-          <table id="inputTable" aria-label="Input objects">
-            <thead>
-              <tr><th>Object Key</th><th>Size</th><th></th></tr>
-            </thead>
-            <tbody id="inputTbody"></tbody>
-          </table>
-        </div>
-      </section>
-
-      <section class="card col" aria-labelledby="sec2">
-        <h2 id="sec2">2) Split Settings</h2>
-        <div class="small">Choose number of tiles:</div>
-        <div id="tileOptions" class="grid" role="group" aria-label="Tiles">
-          <!-- generated by JS: 9/16/25/36 -->
-        </div>
-        <div class="small" style="margin-top:10px">Selected file: <span id="selectedKey" class="muted">—</span></div>
-        <div style="margin-top:10px; display:flex; gap:10px; align-items:center;">
-          <button id="btnSplit" class="btn primary" type="button" disabled>Split</button>
-          <span id="splitMsg" class="small muted"></span>
-        </div>
-      </section>
+    <div class="card">
+      <div class="row">
+        <h2>1) Choose a JP2 from Input Bucket</h2>
+        <button id="btnRefresh" class="btn">Refresh</button>
+      </div>
+      <div class="muted">Listing from <b id="inBucketLbl" class="mono"></b></div>
+      <div class="well" style="margin-top:10px;">
+        <table aria-label="Input objects">
+          <thead>
+            <tr><th>Object Key</th><th style="width:160px;">Size</th><th style="width:120px;"></th></tr>
+          </thead>
+          <tbody id="inputTbody"></tbody>
+        </table>
+      </div>
     </div>
 
-    <section class="card" aria-labelledby="sec3">
-      <h2 id="sec3">3) Status</h2>
-      <div class="small">Execution ARN: <span id="execArn" class="muted">—</span></div>
-      <div class="small">Job ID: <span id="jobId" class="muted">—</span></div>
+    <div class="card">
+      <h2>2) Split Settings</h2>
+      <div class="grid" id="tileOpts" role="group" aria-label="Tiles"></div>
+      <div class="muted" style="margin-top:10px">Selected file: <span id="selectedKey" class="mono">—</span></div>
+      <div style="margin-top:10px; display:flex; gap:10px; align-items:center;">
+        <button id="btnSplit" class="btn primary" disabled>Split</button>
+        <span id="splitMsg" class="muted"></span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>3) Status</h2>
+      <div class="muted">Execution ARN</div>
+      <div id="execArn" class="mono">—</div>
+      <div class="muted" style="margin-top:6px;">Job ID</div>
+      <div id="jobId" class="mono">—</div>
       <div style="margin:10px 0;" class="bar"><i id="barFill"></i></div>
-      <div class="small">Tiles: <span id="tilesCount">0</span> / <span id="tilesExpected">0</span></div>
-      <div class="links small" style="margin-top:8px; display:flex; gap:16px; flex-wrap:wrap;">
+      <div>Tiles <span id="tilesCount" class="mono">0</span> / <span id="tilesExpected" class="mono">0</span></div>
+      <div class="links" style="margin-top:8px;">
         <a id="linkExec" href="#" target="_blank" rel="noreferrer noopener">Execution</a>
         <a id="linkLogs" href="#" target="_blank" rel="noreferrer noopener" style="display:none;">CloudWatch Logs</a>
       </div>
-      <div id="log" aria-live="polite" aria-atomic="false" style="margin-top:10px;"></div>
-    </section>
+      <h3 style="margin-top:14px; font-size:14px; color:var(--muted);">Step Functions Events</h3>
+      <pre id="stepsLive" class="well mono" style="white-space:pre-wrap; max-height:220px; overflow:auto;">—</pre>
+    </div>
 
-    <section class="footer">TSG © Secure JP2 Pipeline</section>
-  </main>
+    <div class="card">
+      <h2>Files under <span class="mono">tiles/&lt;jobId&gt;/</span></h2>
+      <pre id="filesLive" class="well mono" style="white-space:pre-wrap; max-height:240px; overflow:auto;">—</pre>
+    </div>
+
+    <div class="card">
+      <h2>4) Unite (simulate)</h2>
+      <div class="row">
+        <div>
+          <div class="muted">Job ID</div>
+          <div id="jobId2" class="mono">—</div>
+        </div>
+        <button id="btnUnite" class="btn">Unite</button>
+      </div>
+      <div class="muted" style="margin-top:8px;">Final file (expected)</div>
+      <div id="finalKey" class="mono">—</div>
+    </div>
+
+    <div class="muted" style="text-align:center; margin:20px 0;">TSG © Secure JP2 Pipeline</div>
+  </div>
 
   <script>
-    // ===== Fixed API configuration (hidden) =====
-    const API_BASE = ""; // if hosted behind API GW stage, put absolute; else same origin
-    const INPUT_BUCKET = "jp2-input-991105135552-us-east-1";
-    const OUTPUT_BUCKET = "jp2-output-991105135552-us-east-1";
+    // Prevent accidental full-document writes (common source of stray bottom text)
+    document.write = function(){ console.warn('document.write blocked'); };
 
-    // ===== Safe DOM helpers (NEVER write outside dedicated containers) =====
-    const el = (id) => document.getElementById(id);
-    const setText = (id, v) => { el(id).textContent = v ?? ""; };
-    const setHTML = (id, v) => { el(id).innerHTML = v ?? ""; };
-    const log = (...args) => {
-      const s = args.map(x => typeof x === 'string' ? x : JSON.stringify(x)).join(' ');
-      const target = el('log');
-      target.textContent = (target.textContent + (target.textContent ? "\n" : "") + s).slice(-15000);
-      target.scrollTop = target.scrollHeight;
-    };
+    // ===== Fixed config =====
+    const API_BASE = '';
+    const INPUT_BUCKET = 'jp2-input-991105135552-us-east-1';
+    const OUTPUT_BUCKET = 'jp2-output-991105135552-us-east-1';
 
-    // Prevent accidental full-document writes
-    document.write = function() { console.warn('document.write blocked'); };
+    // ===== DOM helpers =====
+    const $ = (id) => document.getElementById(id);
+    const setText = (id, v) => { const n=$(id); if(n) n.textContent = v ?? ''; };
 
     // ===== State =====
     let selectedKey = null;
-    let tilesTotal = 16; // default
+    let tilesTotal = 16;
     let jobId = null;
     let expected = 0;
     let pollTimer = null;
 
     // ===== UI build =====
-    function buildTileOptions() {
-      const opts = [9,16,25,36];
-      const root = el('tileOptions');
-      root.innerHTML = '';
-      opts.forEach(val => {
-        const div = document.createElement('div');
-        div.className = 'tileopt' + (val===tilesTotal ? ' active' : '');
-        div.textContent = `${val} (${Math.sqrt(val)}×${Math.sqrt(val)})`;
-        div.tabIndex = 0;
-        div.onclick = () => {
-          tilesTotal = val; [...root.children].forEach(c => c.classList.remove('active')); div.classList.add('active');
-        };
-        root.appendChild(div);
+    function buildTileOptions(){
+      const root = $('tileOpts'); root.innerHTML = '';
+      [9,16,25,36].forEach(val => {
+        const d = document.createElement('div');
+        d.className = 'opt' + (val===tilesTotal ? ' active' : '');
+        d.textContent = `${val} (${Math.sqrt(val)}×${Math.sqrt(val)})`;
+        d.onclick = () => { tilesTotal = val; [...root.children].forEach(c=>c.classList.remove('active')); d.classList.add('active'); };
+        root.appendChild(d);
       });
     }
 
-    async function listInput() {
-      setText('inputBucketLbl', INPUT_BUCKET);
-      setHTML('inputTbody', '<tr><td class="small muted" colspan="3">Loading…</td></tr>');
-      try {
+    function humanSize(n){ if(n==null) return '—'; const kb=1024, mb=kb*1024, gb=mb*1024; if(n>=gb) return (n/gb).toFixed(2)+' GB'; if(n>=mb) return (n/mb).toFixed(2)+' MB'; if(n>=kb) return (n/kb).toFixed(2)+' KB'; return n+' B'; }
+
+    async function listInput(){
+      setText('inBucketLbl', INPUT_BUCKET);
+      setText('outBucketLbl', OUTPUT_BUCKET);
+      $('inputTbody').innerHTML = '<tr><td colspan="3" class="muted">Loading…</td></tr>';
+      try{
         const r = await fetch(`${API_BASE}/list-input?bucket=${encodeURIComponent(INPUT_BUCKET)}`);
         const j = await r.json();
-        const items = (j.objects||[]).filter(o => o.key && o.key.endsWith('.jp2'));
-        if (!items.length) {
-          setHTML('inputTbody', '<tr><td class="small muted" colspan="3">No JP2 objects</td></tr>');
-          return;
-        }
-        setHTML('inputTbody', items.map(o => `
+        const items = (j.objects||[]).filter(o => String(o.key||'').endsWith('.jp2'));
+        if(!items.length){ $('inputTbody').innerHTML = '<tr><td colspan="3" class="muted">No JP2 objects</td></tr>'; return; }
+        $('inputTbody').innerHTML = items.map(o => `
           <tr>
-            <td class="small">${o.key}</td>
-            <td class="small">${fmtSize(o.size)}</td>
+            <td class="mono">${o.key}</td>
+            <td>${humanSize(o.size)}</td>
             <td><button class="btn" data-key="${o.key}">Select</button></td>
-          </tr>`).join(''));
-        // Delegate button clicks
-        el('inputTbody').onclick = (ev)=>{
-          const b = ev.target.closest('button[data-key]');
-          if (!b) return;
+          </tr>`).join('');
+        $('inputTbody').onclick = (ev)=>{
+          const b = ev.target.closest('button[data-key]'); if(!b) return;
           selectedKey = b.getAttribute('data-key');
           setText('selectedKey', selectedKey);
-          el('btnSplit').disabled = !selectedKey;
+          $('btnSplit').disabled = !selectedKey;
         };
-      } catch (e) {
-        setHTML('inputTbody', `<tr><td class="small" colspan="3">Error: ${e}</td></tr>`);
-      }
+      } catch(e){ $('inputTbody').innerHTML = `<tr><td colspan="3">Error: ${e}</td></tr>`; }
     }
-
-    function fmtSize(n){ if (n==null) return '—'; const kb = 1024; const mb=kb*1024; const gb=mb*1024; if(n>=gb) return (n/gb).toFixed(2)+' GB'; if(n>=mb) return (n/mb).toFixed(2)+' MB'; if(n>=kb) return (n/kb).toFixed(2)+' KB'; return n+' B'; }
 
     async function doSplit(){
-      if (!selectedKey) return;
-      el('btnSplit').disabled = true;
-      setText('splitMsg', 'Starting…');
-      log('Split request for', selectedKey, 'tiles', tilesTotal);
-      try {
-        const body = {
-          inputBucket: INPUT_BUCKET,
-          inputKey: selectedKey,
-          outputBucket: OUTPUT_BUCKET,
-          params: { tilesTotal: tilesTotal, tilesGrid: Math.sqrt(tilesTotal)|0 }
-        };
+      if(!selectedKey) return;
+      $('btnSplit').disabled = true; setText('splitMsg','Starting…');
+      try{
+        const body = { inputBucket: INPUT_BUCKET, inputKey: selectedKey, outputBucket: OUTPUT_BUCKET, params:{ tilesTotal: tilesTotal, tilesGrid: Math.sqrt(tilesTotal)|0 } };
         const r = await fetch(`${API_BASE}/split`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
-        const j = await r.json();
-        if (!r.ok) throw new Error(j.error||'split failed');
-        setText('splitMsg', 'Split started.');
+        const j = await r.json(); if(!r.ok) throw new Error(j.error||'split failed');
+        setText('splitMsg','Split started.');
         setText('execArn', j.executionArn||'—');
-        setText('jobId', j.jobId||'—');
-        expected = j.expectedTiles||tilesTotal;
-        setText('tilesExpected', expected);
-        setText('tilesCount', '0');
-        jobId = j.jobId;
-        el('linkExec').href = j.links?.execution || '#';
+        setText('jobId', j.jobId||'—'); setText('jobId2', j.jobId||'—');
+        expected = j.expectedTiles||tilesTotal; setText('tilesExpected', expected); setText('tilesCount','0');
+        jobId = j.jobId; $('linkExec').href = j.links?.execution || '#';
+        setText('finalKey', `final/unite-${jobId}.jp2`);
         startPolling();
-      } catch (e) {
-        setText('splitMsg', 'Error');
-        log('Split error:', e.message||e);
-      } finally {
-        el('btnSplit').disabled = !selectedKey;
-      }
+      } catch(e){ setText('splitMsg','Error'); console.error(e); }
+      finally { $('btnSplit').disabled = !selectedKey; }
     }
 
-    function startPolling(){
-      stopPolling();
-      const tick = async ()=>{
-        try {
-          const r = await fetch(`${API_BASE}/status-progress?jobId=${encodeURIComponent(jobId)}&expected=${expected}`);
-          const j = await r.json();
-          if (!r.ok) throw new Error(j.error||'status failed');
-          const done = j.tilesCount||0;
-          const pct = j.percent ?? (expected? Math.round((done/expected)*100): 0);
-          setText('tilesCount', done);
-          el('barFill').style.width = `${pct}%`;
-        } catch (e) { log('poll error:', e.message||e); }
-      };
-      pollTimer = setInterval(tick, 1500);
-      tick();
+    function startPolling(){ stopPolling(); pollTimer = setInterval(tick, 1500); tick(); }
+    function stopPolling(){ if(pollTimer){ clearInterval(pollTimer); pollTimer = null; } }
+
+    async function tick(){
+      if(!jobId) return;
+      try{
+        // Progress
+        const r1 = await fetch(`${API_BASE}/status-progress?jobId=${encodeURIComponent(jobId)}&expected=${expected}`);
+        const j1 = await r1.json(); if(!r1.ok) throw new Error(j1.error||'status failed');
+        const done = j1.tilesCount||0; const pct = j1.percent ?? (expected? Math.round((done/expected)*100): 0);
+        setText('tilesCount', done); $('barFill').style.width = `${pct}%`;
+        // Files
+        await refreshFiles(jobId);
+        // History (safe try/catch)
+        await refreshHistory($('execArn').textContent);
+      }catch(e){ console.warn('poll error', e); }
     }
-    function stopPolling(){ if (pollTimer){ clearInterval(pollTimer); pollTimer=null; } }
 
-    // Wire buttons safely
-    el('btnRefresh').addEventListener('click', listInput);
-    el('btnSplit').addEventListener('click', doSplit);
+    async function refreshFiles(jid){
+      if(!jid) return;
+      const prefix = `tiles/${jid}/`;
+      try{
+        const r = await fetch(`${API_BASE}/list-output?bucket=${encodeURIComponent(OUTPUT_BUCKET)}&prefix=${encodeURIComponent(prefix)}`);
+        const j = await r.json(); if(!r.ok) throw new Error(j.error||'list failed');
+        renderFiles(j.objects||[]);
+      }catch(e){ $('filesLive').textContent = `Error: ${e}`; }
+    }
 
-    // Initial build
+    function renderFiles(objs){
+      const out = $('filesLive'); if(!out) return;
+      if(!objs || !objs.length){ out.textContent = '—'; return; }
+      const rx = /_(\d+)\.(?:jp2|tif|tiff)$/i;
+      const lines = objs.slice().sort((a,b)=>{
+        const ak=String(a.key||''), bk=String(b.key||'');
+        const am=ak.match(rx), bm=bk.match(rx);
+        const ai = am? parseInt(am[1],10) : Number.MAX_SAFE_INTEGER;
+        const bi = bm? parseInt(bm[1],10) : Number.MAX_SAFE_INTEGER;
+        return ai===bi ? ak.localeCompare(bk) : ai-bi;
+      }).map(o => `${o.key}${o.size!=null ? `  (${humanSize(o.size)})` : ''}`);
+      out.textContent = lines.join('\n');
+    }
+
+    async function refreshHistory(execArn){
+      if(!execArn || execArn==='—') return;
+      try {
+        const r = await fetch(`${API_BASE}/status-history/${encodeURIComponent(execArn)}`);
+        const out = await r.json();
+        let steps = [];
+        if(out && typeof out === 'object'){
+          if(Array.isArray(out.events)){
+            steps = out.events.map(e => `[${e.time}] ${e.type}${e.detail? ` — ${e.detail}`:''}`);
+          }
+        }
+        renderSteps(steps);
+      } catch(_) { /* ignore */ }
+    }
+
+    function renderSteps(steps){
+      const el = $('stepsLive'); if(!el) return;
+      if(!Array.isArray(steps) || !steps.length){ el.textContent = '—'; return; }
+      el.textContent = steps.join('\n');
+    }
+
+    async function doUnite(){
+      if(!jobId) return;
+      try{
+        const body = { outputBucket: OUTPUT_BUCKET, jobId };
+        const resp = await fetch(`${API_BASE}/unite`, { method:'POST', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify(body) });
+        const j = await resp.json(); if(!resp.ok) throw new Error(j.error||'unite failed');
+        setText('finalKey', j.expectedFinalKey || `final/unite-${jobId}.jp2`);
+        $('linkExec').href = j.links?.execution || '#';
+      } catch(e){ console.error(e); }
+    }
+
+    // Wire
+    $('btnRefresh').addEventListener('click', listInput);
+    $('btnSplit').addEventListener('click', doSplit);
+    $('btnUnite').addEventListener('click', doUnite);
+
+    // Init
     buildTileOptions();
     listInput();
   </script>
