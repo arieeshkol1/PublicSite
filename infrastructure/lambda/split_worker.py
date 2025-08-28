@@ -1,64 +1,107 @@
-# infrastructure/lambda/split_worker.py
-import json
+# infrastructure/lambda/unite_worker.py
 import os
+import io
+import re
+import json
 import time
-import boto3
-from random import randint
+import tempfile
+import subprocess
 from pathlib import Path
+from typing import List, Tuple, Dict, Optional
 
+import boto3
+from botocore.exceptions import ClientError
 
 s3 = boto3.client("s3")
-OUTPUT_BUCKET = os.environ["OUTPUT_BUCKET"]
+
+OUTPUT_BUCKET = os.environ.get("OUTPUT_BUCKET")  # fallback to event's outputBucket
+GDAL_ENABLED = os.environ.get("GDAL_ENABLED", "0") in ("1", "true", "TRUE")
+
+# Paths for GDAL in a Lambda layer (adjust if you packaged differently)
+GDALBUILDVRT = "/opt/bin/gdalbuildvrt"
+GDAL_TRANSLATE = "/opt/bin/gdal_translate"
 
 
-def handler(event, context):
-"""
-Dummy tiler:
-- Reads jobId, inputKey, params.tilesTotal (default 16), params.tilesGrid
-- Writes tiles at `tiles/{jobId}/{<basename>}_{seq}.jp2` (seq starts at 1)
-- Writes manifest at `manifests/{jobId}.json`
-"""
-print("EVENT:", json.dumps(event))
-job_id = event.get("jobId") or f"job-{int(time.time()*1000)}"
-input_key = event.get("inputKey") or ""
-base = Path(input_key).stem or "tile"
+def _numeric_key(k: str) -> Tuple[int, str]:
+    """
+    Extract a numeric suffix from names like ..._<n>.jp2 for correct ordering.
+    Returns a tuple (n or big, key) for sorting.
+    """
+    m = re.search(r'_(\d+)\.jp2$', k, re.IGNORECASE)
+    if m:
+        return (int(m.group(1)), k)
+    # No numeric suffix → keep stable but after numbered ones
+    return (10**12, k)
 
 
-params = event.get("params") or {}
-total = int(params.get("tilesTotal", 16))
-grid = int(params.get("tilesGrid", max(1, int(total ** 0.5))))
-print(f"Split start job={job_id} total={total} grid={grid} base={base}")
+def _list_tiles_from_prefix(bucket: str, prefix: str) -> List[str]:
+    """List all objects under prefix and return sorted tile keys (strings)."""
+    out = []
+    paginator = s3.get_paginator("list_objects_v2")
+    for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+        for it in page.get("Contents", []) or []:
+            key = it.get("Key") or ""
+            # Only take .jp2 tiles
+            if key.lower().endswith(".jp2"):
+                out.append(key)
+    out.sort(key=_numeric_key)
+    return out
 
 
-# Simulate tiling work and upload numerically named tiles starting at 1
-for i in range(total):
-seq = i + 1
-key = f"tiles/{job_id}/{base}_{seq}.jp2"
-body = f"DUMMY TILE {seq} {time.time()}".encode("utf-8")
-s3.put_object(Bucket=OUTPUT_BUCKET, Key=key, Body=body)
-print("wrote", key)
-time.sleep(0.1 + (randint(0, 50) / 1000.0))
+def _load_manifest(bucket: str, key: str) -> Dict:
+    """Download and parse a JSON manifest from S3."""
+    obj = s3.get_object(Bucket=bucket, Key=key)
+    data = obj["Body"].read()
+    return json.loads(data.decode("utf-8"))
 
 
-manifest_key = f"manifests/{job_id}.json"
-tiles = [f"tiles/{job_id}/{base}_{seq}.jp2" for seq in range(1, total + 1)]
-manifest = {
-"jobId": job_id,
-"sourceKey": input_key,
-"baseName": base,
-"tilesTotal": total,
-"tilesGrid": grid,
-"tilesPrefix": f"tiles/{job_id}/",
-"tiles": tiles,
-"createdAt": int(time.time()),
-}
-s3.put_object(Bucket=OUTPUT_BUCKET, Key=manifest_key, Body=json.dumps(manifest).encode("utf-8"))
-print("manifest", manifest_key)
+def _download_tiles(bucket: str, keys: List[str], work_dir: Path) -> List[Path]:
+    """Download tiles to /tmp; returns local file paths."""
+    local_paths = []
+    for i, key in enumerate(keys, start=1):
+        local = work_dir / Path(key).name
+        s3.download_file(bucket, key, str(local))
+        print(f"[{i}/{len(keys)}] downloaded {key} -> {local}")
+        local_paths.append(local)
+    return local_paths
 
 
-return {
-"status": "SUCCEEDED",
-"jobId": job_id,
-"manifestKey": manifest_key,
-"tilesTotal": total,
-}
+def _run(cmd: List[str], cwd: Optional[Path] = None):
+    print("RUN:", " ".join(cmd))
+    res = subprocess.run(cmd, cwd=str(cwd) if cwd else None, capture_output=True, text=True)
+    print("STDOUT:", res.stdout[:2000])
+    print("STDERR:", res.stderr[:2000])
+    if res.returncode != 0:
+        raise RuntimeError(f"Command failed ({res.returncode}): {' '.join(cmd)}")
+
+
+def _gdal_unite(local_tiles: List[Path], out_path: Path):
+    """
+    Real mosaic using GDAL. Requires GDAL binaries in /opt/bin and
+    a Lambda layer with appropriate shared libs.
+    """
+    with tempfile.TemporaryDirectory() as tdir:
+        tdirp = Path(tdir)
+        filelist = tdirp / "files.txt"
+        with filelist.open("w", encoding="utf-8") as f:
+            for p in local_tiles:
+                f.write(str(p) + "\n")
+
+        vrt = tdirp / "mosaic.vrt"
+        _run([GDALBUILDVRT, "-input_file_list", str(filelist), str(vrt)])
+
+        # Use OpenJPEG driver to produce a JP2
+        _run([GDAL_TRANSLATE, "-of", "JP2OpenJPEG", str(vrt), str(out_path)])
+
+
+def _stub_unite(final_fp: io.BytesIO, meta: Dict):
+    """
+    Stub: creates a non-image placeholder with a small header and JSON metadata.
+    Keeps .jp2 suffix so your pipeline naming stays consistent.
+    """
+    header = b"TSG-UNITE-STUB\n"
+    final_fp.write(header)
+    final_fp.write(json.dumps(meta, indent=2).encode("utf-8"))
+
+
+def handler(ev
