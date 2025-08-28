@@ -3,13 +3,18 @@
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <!-- Optional: set API base here -->
+  <!-- <meta name="api-base" content="https://abc123.execute-api.us-east-1.amazonaws.com/prod"> -->
   <title>TSG JP2 Pipeline</title>
   <style>
     :root { --bg:#ffffff; --card:#ffffff; --muted:#475569; --text:#0f172a; --accent:#1e40af; --danger:#b91c1c; }
-    html,body { height:100%; background:var(--bg); color:var(--text); font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,"Helvetica Neue",Arial,"Apple Color Emoji","Segoe UI Emoji"; }
-    .wrap { max-width:1080px; margin:32px auto; padding:0 16px; }
-    .card { background:var(--card); border-radius:16px; padding:20px; box-shadow:0 6px 24px rgba(2,6,23,.08); border:1px solid rgba(15,23,42,.08); }
-    h1 { font-size:22px; margin:0 0 12px; }
+    html,body { height:100%; background:var(--bg); color:var(--text);
+      font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,"Helvetica Neue",Arial,"Apple Color Emoji","Segoe UI Emoji"; }
+    .wrap { max-width:1080px; margin:24px auto; padding:0 16px; }
+    .card { background:var(--card); border-radius:16px; padding:20px;
+      box-shadow:0 6px 24px rgba(2,6,23,.08); border:1px solid rgba(15,23,42,.08); }
+    header { display:flex; align-items:center; gap:10px; margin-bottom:8px; }
+    h1 { font-size:22px; margin:0; }
     h2 { font-size:16px; margin:18px 0 10px; color:var(--muted); font-weight:600; }
     .row { display:grid; grid-template-columns:1fr auto; gap:12px; align-items:center; }
     .muted { color:var(--muted); }
@@ -32,7 +37,10 @@
 </head>
 <body>
   <div class="wrap">
-    <h1>TSG JP2 Pipeline</h1>
+    <header>
+      <img src="tsglogo.png" alt="TSG" height="24"/>
+      <h1>TSG JP2 Pipeline</h1>
+    </header>
     <div class="muted">Using fixed configuration • API hidden • Output: <span id="outBucketLbl" class="mono"></span></div>
 
     <div class="card">
@@ -99,27 +107,33 @@
   </div>
 
   <script>
-    // Prevent accidental full-document writes (fixes stray bottom text)
+    // Block document.write (prevents stray text at bottom if a lib tries to write)
     document.write = function(){ console.warn('document.write blocked'); };
 
-    // ===== Fixed config =====
-    const API_BASE = '';
+    // ======= Config (baseline-compatible) =======
+    const metaApi = document.querySelector('meta[name="api-base"]')?.content || '';
+    const qsApi = new URLSearchParams(location.search).get('api') || '';
+    const API_BASE = (window.API_BASE || qsApi || metaApi || '').replace(/\/+$/,''); // '' => same origin
     const INPUT_BUCKET  = 'jp2-input-991105135552-us-east-1';
     const OUTPUT_BUCKET = 'jp2-output-991105135552-us-east-1';
 
-    // ===== DOM helpers =====
     const $ = (id) => document.getElementById(id);
     const setText = (id, v) => { const n = $(id); if (n) n.textContent = v ?? ''; };
     function humanSize(n){ if(n==null) return '—'; const kb=1024, mb=kb*1024, gb=mb*1024; if(n>=gb) return (n/gb).toFixed(2)+' GB'; if(n>=mb) return (n/mb).toFixed(2)+' MB'; if(n>=kb) return (n/kb).toFixed(2)+' KB'; return n+' B'; }
 
-    // ===== State =====
-    let selectedKey = null;
-    let tilesTotal = 16;
-    let jobId = null;
-    let expected = 0;
-    let pollTimer = null;
+    // Robust JSON fetch: detect HTML error pages and show a helpful message
+    async function getJSON(url){
+      const r = await fetch(url);
+      const text = await r.text();
+      try { return JSON.parse(text); }
+      catch (e) {
+        const snippet = text.slice(0, 120).replace(/\\s+/g,' ').trim();
+        throw new Error(`Expected JSON from ${url}. Got: ${snippet || '(empty)'}`);
+      }
+    }
 
-    // ===== UI build =====
+    let selectedKey = null, tilesTotal = 16, jobId = null, expected = 0, pollTimer = null;
+
     function buildTileOptions(){
       const root = $('tileOpts'); root.innerHTML = '';
       [9,16,25,36].forEach(val => {
@@ -136,10 +150,12 @@
       setText('outBucketLbl', OUTPUT_BUCKET);
       $('inputTbody').innerHTML = '<tr><td colspan="3" class="muted">Loading…</td></tr>';
       try{
-        const r = await fetch(`${API_BASE}/list-input?bucket=${encodeURIComponent(INPUT_BUCKET)}`);
-        const j = await r.json();
+        const url = `${API_BASE}/list-input?bucket=${encodeURIComponent(INPUT_BUCKET)}`;
+        const j = await getJSON(url);
         const items = (j.objects||[]).filter(o => String(o.key||'').endsWith('.jp2'));
-        if(!items.length){ $('inputTbody').innerHTML = '<tr><td colspan="3" class="muted">No JP2 objects</td></tr>'; return; }
+        if(!items.length){
+          $('inputTbody').innerHTML = '<tr><td colspan="3" class="muted">No JP2 objects</td></tr>'; return;
+        }
         $('inputTbody').innerHTML = items.map(o => `
           <tr>
             <td class="mono">${o.key}</td>
@@ -152,16 +168,22 @@
           setText('selectedKey', selectedKey);
           $('btnSplit').disabled = !selectedKey;
         };
-      } catch(e){ $('inputTbody').innerHTML = `<tr><td colspan="3">Error: ${e}</td></tr>`; }
+      } catch(e){
+        $('inputTbody').innerHTML = `<tr><td colspan="3">Error: ${e.message}</td></tr>`;
+      }
     }
 
     async function doSplit(){
       if(!selectedKey) return;
       $('btnSplit').disabled = true; setText('splitMsg','Starting…');
       try{
-        const body = { inputBucket: INPUT_BUCKET, inputKey: selectedKey, outputBucket: OUTPUT_BUCKET, params: { tilesTotal: tilesTotal, tilesGrid: Math.sqrt(tilesTotal)|0 } };
+        const body = { inputBucket: INPUT_BUCKET, inputKey: selectedKey, outputBucket: OUTPUT_BUCKET,
+                       params: { tilesTotal: tilesTotal, tilesGrid: Math.sqrt(tilesTotal)|0 } };
         const r = await fetch(`${API_BASE}/split`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
-        const j = await r.json(); if(!r.ok) throw new Error(j.error||'split failed');
+        const text = await r.text();
+        const j = JSON.parse(text);
+        if(!r.ok) throw new Error(j.error||'split failed');
+
         setText('splitMsg','Split started.');
         setText('execArn', j.executionArn||'—');
         setText('jobId', j.jobId||'—'); setText('jobId2', j.jobId||'—');
@@ -169,8 +191,11 @@
         jobId = j.jobId; $('linkExec').href = j.links?.execution || '#';
         setText('finalKey', `final/unite-${jobId}.jp2`);
         startPolling();
-      } catch(e){ setText('splitMsg','Error'); console.error(e); }
-      finally { $('btnSplit').disabled = !selectedKey; }
+      } catch(e){
+        setText('splitMsg', `Error: ${e.message}`);
+      } finally {
+        $('btnSplit').disabled = !selectedKey;
+      }
     }
 
     function startPolling(){ stopPolling(); pollTimer = setInterval(tick, 1500); tick(); }
@@ -179,28 +204,25 @@
     async function tick(){
       if(!jobId) return;
       try{
-        // Progress
-        const r1 = await fetch(`${API_BASE}/status-progress?jobId=${encodeURIComponent(jobId)}&expected=${expected}`);
-        const j1 = await r1.json(); if(!r1.ok) throw new Error(j1.error||'status failed');
+        const j1 = await getJSON(`${API_BASE}/status-progress?jobId=${encodeURIComponent(jobId)}&expected=${expected}`);
         const done = j1.tilesCount||0; const pct = j1.percent ?? (expected? Math.round((done/expected)*100): 0);
         setText('tilesCount', done); $('barFill').style.width = `${pct}%`;
 
-        // Files
         await refreshFiles(jobId);
-
-        // History (safe try/catch)
         await refreshHistory($('execArn').textContent);
-      }catch(e){ console.warn('poll error', e); }
+      }catch(e){
+        // Show a short status error in files area so you see it immediately
+        $('filesLive').textContent = `Status error: ${e.message}`;
+      }
     }
 
     async function refreshFiles(jid){
       if(!jid) return;
       const prefix = `tiles/${jid}/`;
       try{
-        const r = await fetch(`${API_BASE}/list-output?bucket=${encodeURIComponent(OUTPUT_BUCKET)}&prefix=${encodeURIComponent(prefix)}`);
-        const j = await r.json(); if(!r.ok) throw new Error(j.error||'list failed');
+        const j = await getJSON(`${API_BASE}/list-output?bucket=${encodeURIComponent(OUTPUT_BUCKET)}&prefix=${encodeURIComponent(prefix)}`);
         renderFiles(j.objects||[]);
-      }catch(e){ $('filesLive').textContent = `Error: ${e}`; }
+      }catch(e){ $('filesLive').textContent = `List error: ${e.message}`; }
     }
 
     function renderFiles(objs){
@@ -214,18 +236,14 @@
         const bi = bm? parseInt(bm[1],10) : Number.MAX_SAFE_INTEGER;
         return ai===bi ? ak.localeCompare(bk) : ai-bi;
       }).map(o => `${o.key}${o.size!=null ? `  (${humanSize(o.size)})` : ''}`);
-      out.textContent = lines.join('\n'); // textContent keeps it safe
+      out.textContent = lines.join('\n');
     }
 
     async function refreshHistory(execArn){
       if(!execArn || execArn==='—') return;
       try {
-        const r = await fetch(`${API_BASE}/status-history/${encodeURIComponent(execArn)}`);
-        const out = await r.json();
-        let steps = [];
-        if(out && typeof out === 'object' && Array.isArray(out.events)){
-          steps = out.events.map(e => `[${e.time}] ${e.type}${e.detail? ` — ${e.detail}`:''}`);
-        }
+        const out = await getJSON(`${API_BASE}/status-history/${encodeURIComponent(execArn)}`);
+        const steps = Array.isArray(out?.events) ? out.events.map(e => `[${e.time}] ${e.type}${e.detail? ` — ${e.detail}`:''}`) : [];
         renderSteps(steps);
       } catch (_) { /* ignore */ }
     }
@@ -233,15 +251,17 @@
     function renderSteps(steps){
       const el = $('stepsLive'); if(!el) return;
       if(!Array.isArray(steps) || !steps.length){ el.textContent = '—'; return; }
-      el.textContent = steps.join('\n'); // scoped, safe
+      el.textContent = steps.join('\n');
     }
 
     async function doUnite(){
       if(!jobId) return;
       try{
         const body = { outputBucket: OUTPUT_BUCKET, jobId };
-        const resp = await fetch(`${API_BASE}/unite`, { method:'POST', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify(body) });
-        const j = await resp.json(); if(!resp.ok) throw new Error(j.error||'unite failed');
+        const r = await fetch(`${API_BASE}/unite`, { method:'POST', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify(body) });
+        const text = await r.text();
+        const j = JSON.parse(text);
+        if(!r.ok) throw new Error(j.error||'unite failed');
         setText('finalKey', j.expectedFinalKey || `final/unite-${jobId}.jp2`);
         $('linkExec').href = j.links?.execution || '#';
       } catch(e){ console.error(e); }
