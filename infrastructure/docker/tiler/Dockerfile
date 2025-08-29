@@ -1,5 +1,5 @@
-# Make the GDAL base tag configurable (fallback to a known-good version)
-ARG GDAL_TAG=ubuntu-small-3.8.4
+# Make the GDAL base tag configurable from CDK/CI; default to a widely-available tag
+ARG GDAL_TAG=ubuntu-small-latest
 FROM osgeo/gdal:${GDAL_TAG}
 
 # Tools: boto3 for S3; keep image lean
@@ -12,7 +12,7 @@ RUN apt-get update && \
 WORKDIR /app
 COPY tiler.py /app/tiler.py
 
-# GDAL env
+# (Usually not needed on this image, but harmless if present)
 ENV GDAL_LIBRARY_PATH=/usr/lib/libgdal.so
 ENV PROJ_LIB=/usr/share/proj
 ENV CREATE_OPTS="TILED=YES,BIGTIFF=IF_SAFER,COMPRESS=LZW,PREDICTOR=2"
