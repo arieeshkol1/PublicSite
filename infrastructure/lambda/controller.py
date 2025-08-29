@@ -65,9 +65,12 @@ def _split(event):
     input_bucket = payload.get("inputBucket") or INPUT_BUCKET
     input_key = payload.get("inputKey")
     output_bucket = payload.get("outputBucket") or OUTPUT_BUCKET
-    params = payload.get("params") or {}
-    tiles_total = int(params.get("tilesTotal", 16))
-    tiles_grid = int(params.get("tilesGrid", max(1, int(tiles_total ** 0.5))))
+    params_in = payload.get("params") or {}
+
+    tiles_total = int(params_in.get("tilesTotal", 16))
+    tiles_grid = int(params_in.get("tilesGrid", max(1, int(tiles_total ** 0.5))))
+    # Ensure formatOption is ALWAYS present for Step Functions JSONPath
+    format_option = (params_in.get("formatOption") or "tiff").lower()
 
     if not (input_bucket and input_key and output_bucket):
         return _resp(400, {"error": "inputBucket, inputKey, outputBucket are required"})
@@ -78,7 +81,11 @@ def _split(event):
         "inputBucket": input_bucket,
         "inputKey": input_key,
         "outputBucket": output_bucket,
-        "params": {"tilesTotal": tiles_total, "tilesGrid": tiles_grid},
+        "params": {
+            "tilesTotal": tiles_total,
+            "tilesGrid": tiles_grid,
+            "formatOption": format_option,  # <-- key fix
+        },
     }
 
     print("SPLIT start", exec_input)
