@@ -126,11 +126,10 @@ class ServerlessJp2Stack(Stack):
             image=ecs.ContainerImage.from_docker_image_asset(tiler_asset),
             logging=ecs.LogDriver.aws_logs(stream_prefix="split", log_group=log_group),
             environment={
-                # defaults; overwritten per-execution via Step Functions overrides
+                # defaults; can be overridden via SFN environment overrides
                 "CREATE_OPTS": "TILED=YES,BIGTIFF=IF_SAFER,COMPRESS=LZW,PREDICTOR=2"
             }
         )
-        # run the python tiler; Step Functions can override command if needed
         container.add_ulimits(ecs.Ulimit(
             name=ecs.UlimitName.NOFILE, soft_limit=102400, hard_limit=102400
         ))
@@ -158,29 +157,42 @@ class ServerlessJp2Stack(Stack):
             cluster=cluster,
             task_definition=task_def,
             launch_target=tasks.EcsFargateLaunchTarget(
-                platform_version=ecs.FargatePlatformVersion.LATEST  # <-- add this
-                ),
+                platform_version=ecs.FargatePlatformVersion.LATEST
+            ),
             assign_public_ip=True,  # public subnet, no NAT
             container_overrides=[
                 tasks.ContainerOverride(
                     container=container,
                     command=["python3", "/app/tiler.py"],
                     environment=[
-                        tasks.TaskEnvironmentVariable(name="INPUT_BUCKET",
-                            value=sfn.TaskInput.from_json_path_at("$.inputBucket")),
-                        tasks.TaskEnvironmentVariable(name="INPUT_KEY",
-                            value=sfn.TaskInput.from_json_path_at("$.inputKey")),
-                        tasks.TaskEnvironmentVariable(name="OUTPUT_BUCKET",
-                            value=sfn.TaskInput.from_json_path_at("$.outputBucket")),
-                        tasks.TaskEnvironmentVariable(name="JOB_ID",
-                            value=sfn.TaskInput.from_json_path_at("$.jobId")),
-                        tasks.TaskEnvironmentVariable(name="TILES_TOTAL",
-                            value=sfn.TaskInput.from_json_path_at("$.params.tilesTotal")),
-                        tasks.TaskEnvironmentVariable(name="TILES_GRID",
-                            value=sfn.TaskInput.from_json_path_at("$.params.tilesGrid")),
-                        tasks.TaskEnvironmentVariable(name="FORMAT_OPTION",
-                            value=sfn.TaskInput.from_json_path_at("$.params.formatOption")),
-                        # CREATE_OPTS comes from task/container env; override here if needed
+                        tasks.TaskEnvironmentVariable(
+                            name="INPUT_BUCKET",
+                            value=sfn.JsonPath.string_at("$.inputBucket")
+                        ),
+                        tasks.TaskEnvironmentVariable(
+                            name="INPUT_KEY",
+                            value=sfn.JsonPath.string_at("$.inputKey")
+                        ),
+                        tasks.TaskEnvironmentVariable(
+                            name="OUTPUT_BUCKET",
+                            value=sfn.JsonPath.string_at("$.outputBucket")
+                        ),
+                        tasks.TaskEnvironmentVariable(
+                            name="JOB_ID",
+                            value=sfn.JsonPath.string_at("$.jobId")
+                        ),
+                        tasks.TaskEnvironmentVariable(
+                            name="TILES_TOTAL",
+                            value=sfn.JsonPath.string_at("$.params.tilesTotal")
+                        ),
+                        tasks.TaskEnvironmentVariable(
+                            name="TILES_GRID",
+                            value=sfn.JsonPath.string_at("$.params.tilesGrid")
+                        ),
+                        tasks.TaskEnvironmentVariable(
+                            name="FORMAT_OPTION",
+                            value=sfn.JsonPath.string_at("$.params.formatOption")
+                        ),
                     ],
                 )
             ],
@@ -193,7 +205,7 @@ class ServerlessJp2Stack(Stack):
         split_sm = sfn.StateMachine(
             self, "SplitStateMachine",
             definition_body=sfn.DefinitionBody.from_chainable(split_task),
-            timeout=Duration.minutes(60),  # allow long mosaics
+            timeout=Duration.minutes(60),
         )
 
         # Unite SM (unchanged)
