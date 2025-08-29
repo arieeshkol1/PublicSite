@@ -96,7 +96,8 @@ class ServerlessJp2Stack(Stack):
         cluster = ecs.Cluster(self, "Cluster", vpc=vpc)
 
         # Build/push the tiler image from local Dockerfile (asset)
-        gdal_tag = os.environ.get("GDAL_TAG") or self.node.try_get_context("GDAL_TAG") or "ubuntu-small-3.8.4"
+        # Take GDAL tag only from CDK context (-c GDAL_TAG=...), else default
+        gdal_tag = self.node.try_get_context("GDAL_TAG") or "ubuntu-small-latest"
         tiler_asset = DockerImageAsset(
             self, "TilerImage",
             directory=os.path.join(os.path.dirname(__file__), "docker", "tiler"),
