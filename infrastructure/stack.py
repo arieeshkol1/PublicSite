@@ -157,7 +157,9 @@ class ServerlessJp2Stack(Stack):
             integration_pattern=sfn.IntegrationPattern.RUN_JOB,
             cluster=cluster,
             task_definition=task_def,
-            launch_target=tasks.EcsFargateLaunchTarget(),
+            launch_target=tasks.EcsFargateLaunchTarget(
+                platform_version=ecs.FargatePlatformVersion.LATEST  # <-- add this
+                ),
             assign_public_ip=True,  # public subnet, no NAT
             container_overrides=[
                 tasks.ContainerOverride(
