@@ -5,6 +5,7 @@ import urllib.parse as up
 import datetime as dt
 import datetime as _dt
 from decimal import Decimal as _Decimal
+from typing import Any, Dict, Optional
 
 import boto3
 from botocore.exceptions import ClientError
@@ -13,33 +14,31 @@ from botocore.exceptions import ClientError
 REGION = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION") or "us-east-1"
 INPUT_BUCKET = os.environ.get("INPUT_BUCKET", "")
 OUTPUT_BUCKET = os.environ.get("OUTPUT_BUCKET", "")
-STATE_MACHINE_ARN = os.environ.get("STATE_MACHINE_ARN", "")               # Split SM
-STATE_MACHINE_ARN_UNITE = os.environ.get("STATE_MACHINE_ARN_UNITE", "")   # Unite SM
+STATE_MACHINE_ARN = os.environ.get("STATE_MACHINE_ARN", "")                 # Split SM
+STATE_MACHINE_ARN_UNITE = os.environ.get("STATE_MACHINE_ARN_UNITE", "")     # Unite SM
 
 sfn = boto3.client("stepfunctions", region_name=REGION)
 s3 = boto3.client("s3", region_name=REGION)
 
 # ===== helpers =====
-def _json_default(o):
+def _json_default(o: Any):
     if isinstance(o, (_dt.datetime, _dt.date, _dt.time)):
         return o.isoformat()
     if isinstance(o, _Decimal):
         return float(o)
     return str(o)
 
-def _resp(code: int, body_obj):
-    return {
-        "statusCode": code,
-        "headers": {
-            "Content-Type": "application/json",
-            "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Headers": "Content-Type",
-            "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
-        },
-        "body": json.dumps(body_obj, default=_json_default),
-    }
+_CORS_HDRS = {
+    "Content-Type": "application/json",
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Headers": "Content-Type",
+    "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
+}
 
-def _parse_json_body(event):
+def _resp(code: int, body_obj: Any) -> Dict[str, Any]:
+    return {"statusCode": code, "headers": _CORS_HDRS, "body": json.dumps(body_obj, default=_json_default)}
+
+def _parse_json_body(event: Dict[str, Any]) -> Dict[str, Any]:
     b = event.get("body")
     if not b:
         return {}
@@ -48,16 +47,22 @@ def _parse_json_body(event):
     except Exception:
         return {}
 
-def _console_sfn_link(exec_arn: str):
+def _console_sfn_link(exec_arn: str) -> str:
     return f"https://{REGION}.console.aws.amazon.com/states/home?region={REGION}#/executions/details/{up.quote(exec_arn, safe='')}"
 
-def _console_logs_link(log_group: str | None):
+def _console_logs_link(log_group: Optional[str]) -> Optional[str]:
     if not log_group:
         return None
     return f"https://{REGION}.console.aws.amazon.com/cloudwatch/home?region={REGION}#logsV2:log-groups/log-group/{up.quote(log_group, safe='')}"
 
+def _to_int(v: Any, default: int) -> int:
+    try:
+        return int(v)
+    except Exception:
+        return default
+
 # ===== split =====
-def _split(event):
+def _split(event: Dict[str, Any]):
     if not STATE_MACHINE_ARN:
         return _resp(500, {"error": "STATE_MACHINE_ARN is not configured"})
 
@@ -67,10 +72,10 @@ def _split(event):
     output_bucket = payload.get("outputBucket") or OUTPUT_BUCKET
     params_in = payload.get("params") or {}
 
-    tiles_total = int(params_in.get("tilesTotal", 16))
-    tiles_grid = int(params_in.get("tilesGrid", max(1, int(tiles_total ** 0.5))))
-    # Ensure formatOption is ALWAYS present for Step Functions JSONPath
-    format_option = (params_in.get("formatOption") or "tiff").lower()
+    tiles_total = _to_int(params_in.get("tilesTotal"), 16)
+    # grid from tiles_total if not provided
+    tiles_grid = _to_int(params_in.get("tilesGrid"), max(1, int((tiles_total ** 0.5))))
+    format_option = (params_in.get("formatOption") or "tiff").lower()  # guarantee presence
 
     if not (input_bucket and input_key and output_bucket):
         return _resp(400, {"error": "inputBucket, inputKey, outputBucket are required"})
@@ -84,7 +89,9 @@ def _split(event):
         "params": {
             "tilesTotal": tiles_total,
             "tilesGrid": tiles_grid,
-            "formatOption": format_option,  # <-- key fix
+            "tilesTotal": str(tiles_total),
+            "tilesGrid": str(tiles_grid),
+            "formatOption": format_option,  # required by SFN JSONPath
         },
     }
 
@@ -117,11 +124,11 @@ def _split(event):
         "executionArn": resp["executionArn"],
         "jobId": job_id,
         "expectedTiles": tiles_total,
-        "links": {"execution": _console_sfn_link(resp["executionArn"])}
+        "links": {"execution": _console_sfn_link(resp["executionArn"])},
     })
 
 # ===== unite =====
-def _unite(event):
+def _unite(event: Dict[str, Any]):
     if not STATE_MACHINE_ARN_UNITE:
         return _resp(500, {"error": "STATE_MACHINE_ARN_UNITE is not configured"})
 
@@ -133,7 +140,6 @@ def _unite(event):
     manifest_key = payload.get("manifestKey")
     final_key = payload.get("finalKey")  # optional override
 
-    # Extract jobId from manifestKey if present
     if manifest_key and not job_id:
         base = manifest_key.rsplit("/", 1)[-1]
         if base.endswith(".json"):
@@ -146,7 +152,6 @@ def _unite(event):
         return _resp(400, {"error": "Provide tilesPrefix or jobId or manifestKey"})
 
     if not job_id:
-        # derive from tiles_prefix if possible
         parts = (tiles_prefix or "").strip("/").split("/")
         if len(parts) >= 2 and parts[0] == "tiles":
             job_id = parts[1]
@@ -182,7 +187,7 @@ def _unite(event):
         "executionArn": resp["executionArn"],
         "jobId": job_id,
         "expectedFinalKey": final_key,
-        "links": {"execution": _console_sfn_link(resp["executionArn"])}
+        "links": {"execution": _console_sfn_link(resp["executionArn"])},
     })
 
 # ===== status family =====
@@ -198,9 +203,9 @@ def _status(execution_arn: str):
     except Exception as e:
         return _resp(500, {"error": "DescribeExecution exception", "message": str(e), "arn": execution_arn})
 
-def _status_progress(qs):
+def _status_progress(qs: Dict[str, Any]):
     job_id = (qs or {}).get("jobId")
-    expected = int((qs or {}).get("expected") or 0)
+    expected = _to_int((qs or {}).get("expected"), 0)
     if not job_id:
         return _resp(400, {"error": "jobId is required"})
     prefix = f"tiles/{job_id}/"
@@ -215,7 +220,7 @@ def _status_progress(qs):
     percent = int(min(100, round((count / expected) * 100))) if expected > 0 else None
     return _resp(200, {"jobId": job_id, "tilesPrefix": prefix, "tilesCount": count, "percent": percent})
 
-def _status_detail_or_history(execution_arn: str, history=False):
+def _status_detail_or_history(execution_arn: str, history: bool = False):
     try:
         hist = sfn.get_execution_history(executionArn=execution_arn, maxResults=100, reverseOrder=not history)
     except ClientError as e:
@@ -230,21 +235,17 @@ def _status_detail_or_history(execution_arn: str, history=False):
             when_s = when.isoformat() if isinstance(when, dt.datetime) else str(when)
             det_key = f"{et[0].lower()}{et[1:]}EventDetails"
             d = ev.get(det_key, {}) or {}
-
             if et == "LambdaFunctionScheduled":
                 fa = d.get("resource") or d.get("functionArn")
                 if isinstance(fa, str) and ":function:" in fa:
                     fn_name = fa.split(":function:", 1)[1]
                     log_group = f"/aws/lambda/{fn_name}"
-
             detail = None
             if "error" in d or "cause" in d:
                 detail = json.dumps({k: d[k] for k in ("error", "cause") if k in d})[:2000]
             elif "name" in d:
                 detail = d["name"]
-
             events.append({"time": when_s, "type": et, "detail": detail})
-
         return _resp(200, {"events": events, "links": {
             "sfn": _console_sfn_link(execution_arn),
             "logs": _console_logs_link(log_group)
@@ -283,25 +284,19 @@ def handler(event, _context):
 
         if raw_path == "/split" and method == "POST":
             return _split(event)
-
         if raw_path == "/unite" and method == "POST":
             return _unite(event)
-
         if raw_path.startswith("/status/") and method == "GET":
             arn = up.unquote(raw_path.split("/status/", 1)[1])
             return _status(arn)
-
         if raw_path == "/status-progress" and method == "GET":
             return _status_progress(qs)
-
         if raw_path.startswith("/status-detail/") and method == "GET":
             arn = up.unquote(raw_path.split("/status-detail/", 1)[1])
             return _status_detail_or_history(arn, history=False)
-
         if raw_path.startswith("/status-history/") and method == "GET":
             arn = up.unquote(raw_path.split("/status-history/", 1)[1])
             return _status_detail_or_history(arn, history=True)
-
         if raw_path == "/list-output" and method == "GET":
             bucket = qs.get("bucket") or OUTPUT_BUCKET
             prefix = qs.get("prefix") or ""
