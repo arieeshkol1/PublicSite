@@ -1,8 +1,5 @@
 from aws_cdk import (
-    Stack,
-    Duration,
-    RemovalPolicy,
-    CfnOutput,
+    Stack, Duration, RemovalPolicy, CfnOutput,
     aws_s3 as s3,
     aws_lambda as _lambda,
     aws_apigatewayv2 as apigw,
@@ -10,11 +7,14 @@ from aws_cdk import (
     aws_iam as iam,
     aws_stepfunctions as sfn,
     aws_stepfunctions_tasks as tasks,
+    aws_ec2 as ec2,
+    aws_ecs as ecs,
+    aws_logs as logs,
 )
 from aws_cdk.aws_lambda import CfnFunction
+from aws_cdk.aws_ecr_assets import DockerImageAsset
 from constructs import Construct
 import os
-
 
 class ServerlessJp2Stack(Stack):
     def __init__(self, scope: Construct, cid: str, **kwargs):
@@ -32,7 +32,6 @@ class ServerlessJp2Stack(Stack):
             auto_delete_objects=True,
             removal_policy=RemovalPolicy.DESTROY,
         )
-
         output_bucket = s3.Bucket(
             self, "OutputBucket",
             bucket_name=f"jp2-output-{account}-{region}",
@@ -41,7 +40,6 @@ class ServerlessJp2Stack(Stack):
             auto_delete_objects=True,
             removal_policy=RemovalPolicy.DESTROY,
         )
-
         ui_bucket = s3.Bucket(
             self, "UiBucket",
             bucket_name=f"jp2-ui-{account}-{region}",
@@ -68,13 +66,8 @@ class ServerlessJp2Stack(Stack):
                 # STATE_MACHINE_ARN / _UNITE set after SMs are created
             },
         )
-
-        # Controller needs to list output-bucket for /status-progress & /list-output
         controller_fn.add_to_role_policy(
-            iam.PolicyStatement(
-                actions=["s3:ListBucket"],
-                resources=[output_bucket.bucket_arn],
-            )
+            iam.PolicyStatement(actions=["s3:ListBucket"], resources=[output_bucket.bucket_arn])
         )
 
         # ---------------- List Input Lambda ----------------
@@ -88,34 +81,61 @@ class ServerlessJp2Stack(Stack):
             environment={"INPUT_BUCKET": input_bucket.bucket_name},
         )
         list_input_fn.add_to_role_policy(
-            iam.PolicyStatement(
-                actions=["s3:ListBucket"],
-                resources=[input_bucket.bucket_arn],
-            )
+            iam.PolicyStatement(actions=["s3:ListBucket"], resources=[input_bucket.bucket_arn])
         )
 
-        # ---------------- Split Worker Lambda ----------------
-        split_worker_fn = _lambda.Function(
-            self, "SplitWorkerFn",
-            runtime=_lambda.Runtime.PYTHON_3_11,
-            handler="split_worker.handler",
-            code=_lambda.Code.from_asset(lambda_code_dir),
-            timeout=Duration.minutes(15),
-            memory_size=3008,  # account/region cap
-            environment={"OUTPUT_BUCKET": output_bucket.bucket_name},
+        # ---------------- ECS Fargate for Split ----------------
+        # VPC with public subnets (no NAT cost)
+        vpc = ec2.Vpc(self, "Vpc",
+            max_azs=2,
+            nat_gateways=0,
+            subnet_configuration=[
+                ec2.SubnetConfiguration(name="public", subnet_type=ec2.SubnetType.PUBLIC)
+            ],
         )
-        # Ephemeral /tmp = 10 GiB via L1
-        cfn_split = split_worker_fn.node.default_child
-        if isinstance(cfn_split, CfnFunction):
-            cfn_split.ephemeral_storage = CfnFunction.EphemeralStorageProperty(size=10240)  # MiB
+        cluster = ecs.Cluster(self, "Cluster", vpc=vpc)
 
-        output_bucket.grant_read_write(split_worker_fn)
-        split_worker_fn.add_to_role_policy(
-            iam.PolicyStatement(actions=["s3:ListBucket"], resources=[output_bucket.bucket_arn])
+        # Build/push the tiler image from local Dockerfile (asset)
+        tiler_asset = DockerImageAsset(self, "TilerImage",
+            directory=os.path.join(os.path.dirname(__file__), "docker", "tiler")
         )
-        input_bucket.grant_read(split_worker_fn)
 
-        # ---------------- Unite Worker Lambda ----------------
+        # Task definition: 8 vCPU, 16 GiB
+        task_def = ecs.FargateTaskDefinition(
+            self, "SplitTaskDef",
+            cpu=8192,                    # 8 vCPU
+            memory_limit_mib=16384,      # 16 GiB
+        )
+        # Task role: access S3
+        task_def.add_to_task_role_policy(iam.PolicyStatement(
+            actions=["s3:GetObject", "s3:ListBucket"],
+            resources=[input_bucket.bucket_arn, input_bucket.arn_for_objects("*")]
+        ))
+        task_def.add_to_task_role_policy(iam.PolicyStatement(
+            actions=["s3:PutObject", "s3:ListBucket", "s3:GetObject"],
+            resources=[output_bucket.bucket_arn, output_bucket.arn_for_objects("*")]
+        ))
+
+        # CloudWatch logs
+        log_group = logs.LogGroup(self, "SplitLogs",
+            retention=logs.RetentionDays.ONE_WEEK,
+            removal_policy=RemovalPolicy.DESTROY
+        )
+
+        container = task_def.add_container("Tiler",
+            image=ecs.ContainerImage.from_docker_image_asset(tiler_asset),
+            logging=ecs.LogDriver.aws_logs(stream_prefix="split", log_group=log_group),
+            environment={
+                # defaults; overwritten per-execution via Step Functions overrides
+                "CREATE_OPTS": "TILED=YES,BIGTIFF=IF_SAFER,COMPRESS=LZW,PREDICTOR=2"
+            }
+        )
+        # run the python tiler; Step Functions can override command if needed
+        container.add_ulimits(ecs.Ulimit(
+            name=ecs.UlimitName.NOFILE, soft_limit=102400, hard_limit=102400
+        ))
+
+        # ---------------- Unite Worker Lambda (kept as-is) ----------------
         unite_worker_fn = _lambda.Function(
             self, "UniteWorkerFn",
             runtime=_lambda.Runtime.PYTHON_3_11,
@@ -131,17 +151,50 @@ class ServerlessJp2Stack(Stack):
         )
 
         # ---------------- Step Functions ----------------
-        # Split SM
-        split_task = tasks.LambdaInvoke(
-            self, "SplitTask", lambda_function=split_worker_fn, payload_response_only=True
+        # Split: run Fargate task with env overrides from input
+        split_task = tasks.EcsRunTask(
+            self, "SplitTask",
+            integration_pattern=sfn.IntegrationPattern.RUN_JOB,
+            cluster=cluster,
+            task_definition=task_def,
+            launch_target=tasks.EcsFargateLaunchTarget(),
+            assign_public_ip=True,  # public subnet, no NAT
+            container_overrides=[
+                tasks.ContainerOverride(
+                    container=container,
+                    command=["python3", "/app/tiler.py"],
+                    environment=[
+                        tasks.TaskEnvironmentVariable(name="INPUT_BUCKET",
+                            value=sfn.TaskInput.from_json_path_at("$.inputBucket")),
+                        tasks.TaskEnvironmentVariable(name="INPUT_KEY",
+                            value=sfn.TaskInput.from_json_path_at("$.inputKey")),
+                        tasks.TaskEnvironmentVariable(name="OUTPUT_BUCKET",
+                            value=sfn.TaskInput.from_json_path_at("$.outputBucket")),
+                        tasks.TaskEnvironmentVariable(name="JOB_ID",
+                            value=sfn.TaskInput.from_json_path_at("$.jobId")),
+                        tasks.TaskEnvironmentVariable(name="TILES_TOTAL",
+                            value=sfn.TaskInput.from_json_path_at("$.params.tilesTotal")),
+                        tasks.TaskEnvironmentVariable(name="TILES_GRID",
+                            value=sfn.TaskInput.from_json_path_at("$.params.tilesGrid")),
+                        tasks.TaskEnvironmentVariable(name="FORMAT_OPTION",
+                            value=sfn.TaskInput.from_json_path_at("$.params.formatOption")),
+                        # CREATE_OPTS comes from task/container env; override here if needed
+                    ],
+                )
+            ],
+            # optional runtime limits at SFN level:
+            result_selector={
+                "status": sfn.JsonPath.string_at("$.Attachments[0].Status")
+            },
+            result_path="$.splitResult"
         )
         split_sm = sfn.StateMachine(
             self, "SplitStateMachine",
             definition_body=sfn.DefinitionBody.from_chainable(split_task),
-            timeout=Duration.minutes(30),
+            timeout=Duration.minutes(60),  # allow long mosaics
         )
 
-        # Unite SM
+        # Unite SM (unchanged)
         unite_task = tasks.LambdaInvoke(
             self, "UniteTask", lambda_function=unite_worker_fn, payload_response_only=True
         )
@@ -167,8 +220,6 @@ class ServerlessJp2Stack(Stack):
                 ],
             )
         )
-
-        # Pass SM ARNs to controller
         controller_fn.add_environment("STATE_MACHINE_ARN", split_sm.state_machine_arn)
         controller_fn.add_environment("STATE_MACHINE_ARN_UNITE", unite_sm.state_machine_arn)
 
@@ -182,11 +233,9 @@ class ServerlessJp2Stack(Stack):
                 max_age=Duration.days(10),
             ),
         )
-
         controller_integ = apigw_int.HttpLambdaIntegration("ControllerIntegration", handler=controller_fn)
         list_input_integ = apigw_int.HttpLambdaIntegration("ListInputIntegration", handler=list_input_fn)
 
-        # Routes (controller)
         http_api.add_routes(path="/split", methods=[apigw.HttpMethod.POST], integration=controller_integ)
         http_api.add_routes(path="/unite", methods=[apigw.HttpMethod.POST], integration=controller_integ)
         http_api.add_routes(path="/status/{jobId}", methods=[apigw.HttpMethod.GET], integration=controller_integ)
@@ -194,7 +243,6 @@ class ServerlessJp2Stack(Stack):
         http_api.add_routes(path="/status-detail/{jobId}", methods=[apigw.HttpMethod.GET], integration=controller_integ)
         http_api.add_routes(path="/status-history/{jobId}", methods=[apigw.HttpMethod.GET], integration=controller_integ)
         http_api.add_routes(path="/list-output", methods=[apigw.HttpMethod.GET], integration=controller_integ)
-        # Routes (list input)
         http_api.add_routes(path="/list-input", methods=[apigw.HttpMethod.GET], integration=list_input_integ)
 
         # ---------------- Outputs ----------------
