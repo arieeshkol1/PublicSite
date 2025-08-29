@@ -160,9 +160,10 @@ class ServerlessJp2Stack(Stack):
                 platform_version=ecs.FargatePlatformVersion.LATEST
             ),
             assign_public_ip=True,  # public subnet, no NAT
+            subnets=ec2.SubnetSelection(subnet_type=ec2.SubnetType.PUBLIC),
             container_overrides=[
                 tasks.ContainerOverride(
-                    container=container,
+                    container_definition=container,   # <— FIXED NAME
                     command=["python3", "/app/tiler.py"],
                     environment=[
                         tasks.TaskEnvironmentVariable(
