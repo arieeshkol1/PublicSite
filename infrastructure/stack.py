@@ -96,8 +96,11 @@ class ServerlessJp2Stack(Stack):
         cluster = ecs.Cluster(self, "Cluster", vpc=vpc)
 
         # Build/push the tiler image from local Dockerfile (asset)
-        tiler_asset = DockerImageAsset(self, "TilerImage",
-            directory=os.path.join(os.path.dirname(__file__), "docker", "tiler")
+        gdal_tag = os.environ.get("GDAL_TAG") or self.node.try_get_context("GDAL_TAG") or "ubuntu-small-3.8.4"
+        tiler_asset = DockerImageAsset(
+            self, "TilerImage",
+            directory=os.path.join(os.path.dirname(__file__), "docker", "tiler"),
+            build_args={"GDAL_TAG": gdal_tag},
         )
 
         # Task definition: 8 vCPU, 16 GiB
@@ -163,7 +166,7 @@ class ServerlessJp2Stack(Stack):
             subnets=ec2.SubnetSelection(subnet_type=ec2.SubnetType.PUBLIC),
             container_overrides=[
                 tasks.ContainerOverride(
-                    container_definition=container,   # <— FIXED NAME
+                    container_definition=container,
                     command=["python3", "/app/tiler.py"],
                     environment=[
                         tasks.TaskEnvironmentVariable(
@@ -197,7 +200,6 @@ class ServerlessJp2Stack(Stack):
                     ],
                 )
             ],
-            # optional runtime limits at SFN level:
             result_selector={
                 "status": sfn.JsonPath.string_at("$.Attachments[0].Status")
             },
