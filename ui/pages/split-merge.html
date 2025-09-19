@@ -9,37 +9,14 @@
 :root{ --bg:#0b1020; --panel:#121a34; --accent:#45a1ff; --text:#e7ecf7; --muted:#96a2c0; --border:#233059; }
 *{ box-sizing:border-box; }
 body{ margin:0; font-family:Inter,system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif; color:var(--text); background:linear-gradient(180deg,#0b1020, #0d1330 40%, #0b1020 100%); }
-header{
-  display:flex; align-items:center; gap:.75rem;
-  padding:.75rem 1rem; background:rgba(10,16,36,.8); border-bottom:1px solid var(--border);
-  position:sticky; top:0; backdrop-filter:saturate(120%) blur(6px);
-}
-header .title{ font-size:1.1rem; letter-spacing:.3px; font-weight:600; }
-.container{ display:grid; grid-template-columns: 240px 1fr; min-height: calc(100vh - 56px); }
-nav{ padding:1rem; border-right:1px solid var(--border); background:rgba(12,18,44,.55); }
-nav .section{ font-size:.75rem; color:var(--muted); text-transform:uppercase; margin:.5rem 0 .25rem; }
-nav a{
-  display:flex; align-items:center; gap:.5rem; padding:.6rem .7rem; margin:.25rem 0;
-  color:var(--text); text-decoration:none; border:1px solid transparent; border-radius:.75rem; background:transparent;
-}
-nav a:hover{ border-color:var(--border); background:rgba(69,161,255,.08); }
-nav a.active{ border-color:var(--accent); background:rgba(69,161,255,.12); }
-iframe{ width:100%; height: calc(100vh - 56px); border:0; background:transparent; }
-.btn{
-  appearance:none; border:1px solid var(--border); background:rgba(255,255,255,.02);
-  color:var(--text); padding:.6rem .9rem; border-radius:.6rem; cursor:pointer;
-}
+.btn{ appearance:none; border:1px solid var(--border); background:rgba(255,255,255,.02); color:var(--text); padding:.6rem .9rem; border-radius:.6rem; cursor:pointer; }
 .btn:hover{ border-color:var(--accent); }
-select,input[type="text"],.picker{
-  width:100%; padding:.55rem .6rem; border-radius:.55rem; color:var(--text);
-  border:1px solid var(--border); background:rgba(255,255,255,.03);
-}
+select,input[type="text"],.picker{ width:100%; padding:.55rem .6rem; border-radius:.55rem; color:var(--text); border:1px solid var(--border); background:rgba(255,255,255,.03); }
 label{ font-size:.9rem; color:var(--muted); display:block; margin-top:.4rem; margin-bottom:.3rem; }
 .card{ border:1px solid var(--border); background:rgba(10,16,36,.4); border-radius:1rem; padding:1rem; }
 .grid{ display:grid; gap:1rem; grid-template-columns: repeat(12, 1fr); }
-.col-6{ grid-column: span 6; } .col-4{ grid-column: span 4; } .col-3{ grid-column: span 3; } .col-12{ grid-column: span 12; }
+.col-6{ grid-column: span 6; } .col-12{ grid-column: span 12; }
 small.hint{ color:var(--muted); display:block; margin-top:.25rem; }
-hr{ border:none; border-top:1px solid var(--border); margin:1rem 0; }
 </style>
 </head>
 <body>
@@ -59,7 +36,7 @@ hr{ border:none; border-top:1px solid var(--border); margin:1rem 0; }
 
           <div class="col-12">
             <label>Choose input file</label>
-            <select id="split-file" size="10" style="height: 14rem;"></select>
+            <select id="split-file" size="10"></select>
           </div>
 
           <div class="col-12">
@@ -69,9 +46,8 @@ hr{ border:none; border-top:1px solid var(--border); margin:1rem 0; }
               <option value="3x3">3×3</option>
               <option value="4x4">4×4</option>
               <option value="5x5">5×5</option>
-              <option value="6x6">6×6</option>
             </select>
-            <small class="hint">Fixed options only. No separate mode/parameter.</small>
+            <small class="hint">Only the listed grids are allowed.</small>
           </div>
 
           <div class="col-12">
@@ -98,7 +74,7 @@ hr{ border:none; border-top:1px solid var(--border); margin:1rem 0; }
           </div>
           <div class="col-12">
             <label>Select input folders</label>
-            <select id="merge-folders" multiple size="10" style="height: 14rem;"></select>
+            <select id="merge-folders" multiple size="10"></select>
             <small class="hint">Choose one or more folders that contain tiles to merge</small>
           </div>
 
@@ -124,13 +100,10 @@ hr{ border:none; border-top:1px solid var(--border); margin:1rem 0; }
   </div>
 
   <script>
-    // API base can be set by window.__API_BASE or via ?api=<url>
     const urlParams = new URLSearchParams(location.search);
     const API_BASE = window.__API_BASE || urlParams.get('api') || '';
+    const api = (p) => (API_BASE || '') + p;
 
-    function api(path) { return (API_BASE || '') + path; }
-
-    // Load input files from /list-input
     async function loadInputFiles() {
       try {
         const res = await fetch(api('/list-input'));
@@ -147,12 +120,9 @@ hr{ border:none; border-top:1px solid var(--border); margin:1rem 0; }
             opt.textContent = key;
             select.appendChild(opt);
           });
-      } catch (e) {
-        console.error('loadInputFiles failed', e);
-      }
+      } catch (e) { console.error('loadInputFiles failed', e); }
     }
 
-    // Derive folder prefixes from /list-input
     async function loadInputFolders() {
       try {
         const res = await fetch(api('/list-input'));
@@ -162,72 +132,39 @@ hr{ border:none; border-top:1px solid var(--border); margin:1rem 0; }
         keys.forEach(k => {
           if (typeof k === 'string' && k.includes('/')) {
             const parts = k.split('/');
-            // collect first and second-level prefixes to keep list compact
             for (let i = 1; i <= Math.min(parts.length - 1, 3); i++) {
               prefixes.add(parts.slice(0, i).join('/') + '/');
             }
           }
         });
-        const list = Array.from(prefixes).sort();
         const sel = document.getElementById('merge-folders');
         sel.innerHTML = '';
-        list.forEach(pfx => {
+        Array.from(prefixes).sort().forEach(p => {
           const opt = document.createElement('option');
-          opt.value = pfx;
-          opt.textContent = pfx;
+          opt.value = p;
+          opt.textContent = p;
           sel.appendChild(opt);
         });
-      } catch (e) {
-        console.error('loadInputFolders failed', e);
-      }
+      } catch (e) { console.error('loadInputFolders failed', e); }
     }
 
-    // Simple placeholders for bucket names (optional enhancements later)
-    async function resolveBuckets() {
-      try {
-        document.getElementById('split-bucket').textContent = 'input bucket (via backend)';
-        document.getElementById('merge-bucket').textContent = 'input bucket (via backend)';
-        document.getElementById('split-out-bucket').textContent = 'output bucket (via backend)';
-        document.getElementById('merge-out-bucket').textContent = 'output bucket (via backend)';
-      } catch (e) {
-        console.error('resolveBuckets failed', e);
-      }
-    }
-
-    function tilesToTotal(grid) {
-      const [a,b] = grid.split('x').map(Number);
-      return a*b;
-    }
+    function tilesToTotal(grid) { const [a,b] = grid.split('x').map(Number); return a*b; }
 
     async function onSplit() {
       const inputKey = document.getElementById('split-file').value;
       const tilesGrid = document.getElementById('tiles-grid').value;
       const outFolder = document.getElementById('split-out-folder').value.trim();
-
-      if (!inputKey) return alert('Please choose an input file from the input bucket');
-
+      if (!inputKey) return alert('Please choose an input file');
       const body = {
         inputKey,
-        params: {
-          tilesGrid,
-          tilesTotal: tilesToTotal(tilesGrid),
-          formatOption: 'JPEG2000'
-        },
+        params: { tilesGrid, tilesTotal: tilesToTotal(tilesGrid), formatOption: 'JPEG2000' },
         outputPrefix: outFolder || ''
       };
-
       try {
-        const res = await fetch(api('/split'), {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body)
-        });
+        const res = await fetch(api('/split'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
         const data = await res.json();
         alert('Split started: ' + JSON.stringify(data));
-      } catch (e) {
-        console.error(e);
-        alert('Split failed to start');
-      }
+      } catch (e) { console.error(e); alert('Split failed to start'); }
     }
 
     async function onMerge() {
@@ -235,32 +172,22 @@ hr{ border:none; border-top:1px solid var(--border); margin:1rem 0; }
       const folders = Array.from(sel.selectedOptions).map(o => o.value);
       const outFolder = document.getElementById('merge-out-folder').value.trim();
       const outName = document.getElementById('merge-output-name').value.trim();
-
       if (folders.length === 0) return alert('Please select at least one input folder');
       if (!outName) return alert('Please provide an output filename');
-
-      const body = {
-        inputFolders: folders,
-        outputPrefix: outFolder || '',
-        outputName: outName
-      };
-
+      const body = { inputFolders: folders, outputPrefix: outFolder || '', outputName: outName };
       try {
-        const res = await fetch(api('/unite'), {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body)
-        });
+        const res = await fetch(api('/unite'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
         const data = await res.json();
         alert('Merge started: ' + JSON.stringify(data));
-      } catch (e) {
-        console.error(e);
-        alert('Merge failed to start');
-      }
+      } catch (e) { console.error(e); alert('Merge failed to start'); }
     }
 
-    // init
-    resolveBuckets();
+    // simple labels for buckets
+    document.getElementById('split-bucket').textContent = 'input bucket (via backend)';
+    document.getElementById('split-out-bucket').textContent = 'output bucket (via backend)';
+    document.getElementById('merge-bucket').textContent = 'input bucket (via backend)';
+    document.getElementById('merge-out-bucket').textContent = 'output bucket (via backend)';
+
     loadInputFiles();
     loadInputFolders();
   </script>
