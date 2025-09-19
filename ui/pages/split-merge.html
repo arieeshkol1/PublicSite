@@ -5,10 +5,19 @@
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <title>TSG JP2 Pipeline — Split / Merge</title>
   <style>
-    :root { --bg:#ffffff; --card:#ffffff; --muted:#475569; --text:#0f172a; --accent:#1e40af; --danger:#b91c1c; }
-    html,body { height:100%; background:var(--bg); color:var(--text); font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,"Helvetica Neue",Arial,"Apple Color Emoji","Segoe UI Emoji"; margin:0; }
+    :root {
+      --bg:#ffffff;
+      --card:#ffffff;
+      --muted:#475569;   /* slate-600 */
+      --text:#0f172a;    /* slate-900 */
+      --accent:#1e40af;  /* blue-900 */
+      --danger:#b91c1c;  /* red-700 */
+    }
+    html,body { height:100%; background:var(--bg); color:var(--text);
+      font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,"Helvetica Neue",Arial,"Apple Color Emoji","Segoe UI Emoji"; margin:0; }
     .wrap { max-width:1080px; margin:24px auto; padding:0 16px; }
-    .card { background:var(--card); border-radius:16px; padding:20px; box-shadow:0 6px 24px rgba(2,6,23,.08); border:1px solid rgba(15,23,42,.08); }
+    .card { background:var(--card); border-radius:16px; padding:20px;
+      box-shadow:0 6px 24px rgba(2,6,23,.08); border:1px solid rgba(15,23,42,.08); }
     header { display:flex; align-items:center; gap:10px; margin-bottom:8px; }
     h1 { font-size:22px; margin:0; }
     h2 { font-size:16px; margin:18px 0 10px; color:var(--muted); font-weight:600; }
@@ -16,7 +25,7 @@
     .muted { color:var(--muted); }
     .mono { font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace; }
     .btn { appearance:none; border:1px solid rgba(15,23,42,.14); background:#f8fafc; padding:8px 12px; border-radius:10px; cursor:pointer; }
-    .btn.primary { background:#1e40af; color:#fff; border-color:#1e40af; }
+    .btn.primary { background:var(--accent); color:#fff; border-color:var(--accent); }
     .btn:disabled { opacity:.6; cursor:not-allowed; }
     table { width:100%; border-collapse:collapse; }
     th,td { border-bottom:1px solid rgba(15,23,42,.08); padding:8px 10px; text-align:left; }
@@ -25,27 +34,26 @@
     .opt { padding:8px 10px; border:1px solid rgba(15,23,42,.14); border-radius:10px; text-align:center; cursor:pointer; user-select:none; }
     .opt.active { outline:2px solid var(--accent); }
     .bar { height:10px; border-radius:999px; background:#f1f5f9; border:1px solid rgba(15,23,42,.12); overflow:hidden; }
-    .bar > i { display:block; height:100%; width:0%; background:linear-gradient(90deg,#60a5fa,#1e40af); }
+    .bar > i { display:block; height:100%; width:0%; background:linear-gradient(90deg,#60a5fa,var(--accent)); }
     .links { display:flex; gap:10px; flex-wrap:wrap; }
     .links a { color:var(--accent); text-decoration:none; }
     .well { background:#f8fafc; border:1px dashed rgba(15,23,42,.16); border-radius:10px; padding:10px; }
     .err { background:#fee2e2; border:1px solid #fecaca; color:#991b1b; padding:10px; border-radius:10px; margin-bottom:10px; display:none; white-space:pre-wrap; }
   </style>
 
-  <!-- 1) Set API base FIRST (CDK Output: ApiEndpoint) -->
+  <!-- API base from your stack (CDK Output: ApiEndpoint) -->
   <script>
-    window.API_BASE = "https://<YOUR-API-ID>.execute-api.us-east-1.amazonaws.com";
+    window.API_BASE = "https://qmiu91xhgk.execute-api.us-east-1.amazonaws.com";
   </script>
 </head>
 <body>
   <div class="wrap">
     <header>
-      <!-- Note: page is under /pages/, so go up one level for the logo -->
+      <!-- page is under /pages/, go up one level for logo -->
       <img src="../tsglogo.png" alt="TSG" height="24"/>
       <h1>TSG JP2 Pipeline — Split / Merge</h1>
     </header>
 
-    <!-- Visible error box if anything breaks -->
     <div id="errorBox" class="err"></div>
 
     <div class="muted">API: <span class="mono" id="apiBaseLbl"></span> • Output: <span id="outBucketLbl" class="mono"></span></div>
@@ -123,47 +131,32 @@
     <div class="muted" style="text-align:center; margin:20px 0;">TSG © Secure JP2 Pipeline</div>
   </div>
 
-  <!-- 2) App script AT THE END so DOM exists -->
   <script>
-    // Simple on-page error reporter
-    function showError(msg){
-      const box = document.getElementById('errorBox');
-      if (box) { box.style.display='block'; box.textContent = msg; }
-      console.error(msg);
-    }
+    // error helper
+    function showError(msg){ const b=document.getElementById('errorBox'); if(b){ b.style.display='block'; b.textContent=msg; } console.error(msg); }
     window.addEventListener('error', e => showError(`JS error: ${e.message}`));
 
-    // Verify API_BASE
-    if (!window.API_BASE || !/^https:\/\/.+\.execute-api\./.test(window.API_BASE)) {
-      showError('API_BASE is missing or invalid. Set it at the top of the file to your API Gateway endpoint.');
-    }
-
-    // Fixed buckets
+    // buckets (existing, per stack)
     const INPUT_BUCKET  = 'jp2-input-991105135552-us-east-1';
     const OUTPUT_BUCKET = 'jp2-output-991105135552-us-east-1';
 
-    // Helpers
+    // helpers
     const $ = (id) => document.getElementById(id);
     const setText = (id, v) => { const n=$(id); if(n) n.textContent = v ?? ''; };
-    function humanSize(n){ if(n==null) return '—'; const kb=1024, mb=kb*1024, gb=mb*1024; if(n>=gb) return (n/gb).toFixed(2)+' GB'; if(n>=mb) return (n/mb).toFixed(2)+' MB'; if(n>=kb) return (n/kb).toFixed(2)+' KB'; return n+' B'; }
-    async function getJSON(url){
-      const r = await fetch(url);
-      const text = await r.text();
-      try { return JSON.parse(text); }
-      catch { throw new Error(`Expected JSON from ${url}. Got: ${text.slice(0,120).replace(/\s+/g,' ')}`); }
-    }
+    function humanSize(n){ if(n==null) return '—'; const kb=1024, mb=kb*1024, gb=mb*1024;
+      if(n>=gb) return (n/gb).toFixed(2)+' GB'; if(n>=mb) return (n/mb).toFixed(2)+' MB'; if(n>=kb) return (n/kb).toFixed(2)+' KB'; return n+' B'; }
+    async function getJSON(url){ const r=await fetch(url); const t=await r.text(); try{ return JSON.parse(t);}catch{ throw new Error(`Expected JSON from ${url}. Got: ${t.slice(0,120).replace(/\s+/g,' ')}`); } }
 
-    // State
-    let selectedKey = null, tilesTotal = 16, jobId = null, expected = 0, pollTimer = null;
+    // state
+    let selectedKey=null, tilesTotal=16, jobId=null, expected=0, pollTimer=null, execArn=null;
 
     function buildTileOptions(){
-      const root = $('tileOpts'); if(!root) return;
-      root.innerHTML = '';
-      [9,16,25,36].forEach(val => {
-        const d = document.createElement('div');
-        d.className = 'opt' + (val===tilesTotal ? ' active' : '');
-        d.textContent = `${val} (${Math.sqrt(val)}×${Math.sqrt(val)})`;
-        d.onclick = () => { tilesTotal = val; [...root.children].forEach(c=>c.classList.remove('active')); d.classList.add('active'); };
+      const root=$('tileOpts'); if(!root) return; root.innerHTML='';
+      [9,16,25,36].forEach(val=>{
+        const d=document.createElement('div');
+        d.className='opt'+(val===tilesTotal?' active':'');
+        d.textContent=`${val} (${Math.sqrt(val)}×${Math.sqrt(val)})`;
+        d.onclick=()=>{ tilesTotal=val; [...root.children].forEach(c=>c.classList.remove('active')); d.classList.add('active'); };
         root.appendChild(d);
       });
     }
@@ -172,149 +165,135 @@
       setText('apiBaseLbl', window.API_BASE);
       setText('inBucketLbl', INPUT_BUCKET);
       setText('outBucketLbl', OUTPUT_BUCKET);
-      const tbody = $('inputTbody');
-      if (tbody) tbody.innerHTML = '<tr><td colspan="3" class="muted">Loading…</td></tr>';
+      const tbody=$('inputTbody'); if(tbody) tbody.innerHTML='<tr><td colspan="3" class="muted">Loading…</td></tr>';
       try{
         const j = await getJSON(`${window.API_BASE}/list-input?bucket=${encodeURIComponent(INPUT_BUCKET)}`);
-        const items = (j.objects||[]).filter(o => String(o.key||'').toLowerCase().endsWith('.jp2'));
-        if(!items.length){ if(tbody) tbody.innerHTML = '<tr><td colspan="3" class="muted">No JP2 objects</td></tr>'; return; }
-        if (tbody) tbody.innerHTML = items.map(o => `
+        const items=(j.objects||[]).filter(o=>String(o.key||'').toLowerCase().endsWith('.jp2'));
+        if(!items.length){ if(tbody) tbody.innerHTML='<tr><td colspan="3" class="muted">No JP2 objects</td></tr>'; return; }
+        if(tbody) tbody.innerHTML=items.map(o=>`
           <tr>
             <td class="mono">${o.key}</td>
             <td>${humanSize(o.size)}</td>
             <td><button class="btn" data-key="${o.key}">Select</button></td>
           </tr>`).join('');
-        if (tbody) tbody.onclick = (ev)=>{
-          const b = ev.target.closest('button[data-key]'); if(!b) return;
-          selectedKey = b.getAttribute('data-key');
+        if(tbody) tbody.onclick=(ev)=>{
+          const b=ev.target.closest('button[data-key]'); if(!b) return;
+          selectedKey=b.getAttribute('data-key');
           setText('selectedKey', selectedKey);
-          const btn = $('btnSplit'); if (btn) btn.disabled = !selectedKey;
+          const btn=$('btnSplit'); if(btn) btn.disabled=!selectedKey;
         };
-      } catch(e){
-        if (tbody) tbody.innerHTML = `<tr><td colspan="3">Error: ${e.message}</td></tr>`;
+      }catch(e){
+        if(tbody) tbody.innerHTML=`<tr><td colspan="3">Error: ${e.message}</td></tr>`;
         showError(`list-input failed: ${e.message}`);
       }
     }
 
     async function doSplit(){
       if(!selectedKey) return;
-      const btn = $('btnSplit'); if (btn) btn.disabled = true;
+      const btn=$('btnSplit'); if(btn) btn.disabled=true;
       setText('splitMsg','Starting…');
       try{
-        const fmtEl = $('fmt');
-        const formatOption = (fmtEl && fmtEl.value) ? fmtEl.value : 'tiff';
-        const body = {
+        const fmtEl=$('fmt'); const formatOption=(fmtEl && fmtEl.value)?fmtEl.value:'tiff';
+        const body={
           inputBucket: INPUT_BUCKET,
           inputKey: selectedKey,
           outputBucket: OUTPUT_BUCKET,
-          params: {
-            tilesTotal: tilesTotal,
-            tilesGrid: Math.sqrt(tilesTotal)|0,
-            formatOption: formatOption
-          }
+          params:{ tilesTotal: tilesTotal, tilesGrid: Math.sqrt(tilesTotal)|0, formatOption }
         };
-        const r = await fetch(`${window.API_BASE}/split`, {
-          method:'POST',
-          headers:{'Content-Type':'application/json'},
-          body: JSON.stringify(body)
-        });
-        const text = await r.text();
-        let j; try { j = JSON.parse(text); }
-        catch { throw new Error(`Bad JSON from /split: ${text.slice(0,120).replace(/\s+/g,' ')}`); }
+        const r=await fetch(`${window.API_BASE}/split`,{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+        const text=await r.text(); let j; try{ j=JSON.parse(text);}catch{ throw new Error(`Bad JSON from /split: ${text.slice(0,120).replace(/\s+/g,' ')}`); }
         if(!r.ok) throw new Error(j.error||'split failed');
 
         setText('splitMsg','Split started.');
-        setText('execArn', j.executionArn||'—');
-        setText('jobId', j.jobId||'—'); setText('jobId2', j.jobId||'—');
-        expected = j.expectedTiles||tilesTotal; setText('tilesExpected', expected); setText('tilesCount','0');
-        jobId = j.jobId; const le = $('linkExec'); if (le) le.href = j.links?.execution || '#';
-        setText('finalKey', `final/unite-${jobId}.jp2`);
+        execArn = j.executionArn || null; setText('execArn', execArn || '—');
+        jobId = j.jobId || null; setText('jobId', jobId || '—'); setText('jobId2', jobId || '—');
+        expected = j.expectedTiles || tilesTotal; setText('tilesExpected', expected); setText('tilesCount','0');
+        const le=$('linkExec'); if(le) le.href = j.links?.execution || '#';
+        setText('finalKey', jobId ? `final/unite-${jobId}.jp2` : '—');
         startPolling();
-      } catch(e){
+      }catch(e){
         setText('splitMsg', `Error: ${e.message}`);
         showError(`split failed: ${e.message}`);
-      } finally {
-        if (btn) btn.disabled = !selectedKey;
+      }finally{
+        if(btn) btn.disabled=!selectedKey;
       }
     }
 
-    function startPolling(){ stopPolling(); pollTimer = setInterval(tick, 1500); tick(); }
-    function stopPolling(){ if(pollTimer){ clearInterval(pollTimer); pollTimer = null; } }
+    function startPolling(){ stopPolling(); pollTimer=setInterval(tick,1500); tick(); }
+    function stopPolling(){ if(pollTimer){ clearInterval(pollTimer); pollTimer=null; } }
 
     async function tick(){
       if(!jobId) return;
       try{
-        const j1 = await getJSON(`${window.API_BASE}/status-progress?jobId=${encodeURIComponent(jobId)}&expected=${expected}`);
-        const done = j1.tilesCount||0; const pct = j1.percent ?? (expected? Math.round((done/expected)*100): 0);
-        setText('tilesCount', done); const bar = $('barFill'); if (bar) bar.style.width = `${pct}%`;
+        const pr = await getJSON(`${window.API_BASE}/status-progress?jobId=${encodeURIComponent(jobId)}&expected=${expected}`);
+        const done = pr.tilesCount||0; const pct = pr.percent ?? (expected? Math.round((done/expected)*100): 0);
+        setText('tilesCount', done); const bar=$('barFill'); if(bar) bar.style.width=`${pct}%`;
         await refreshFiles(jobId);
-        await refreshHistory($('execArn')?.textContent);
+        await refreshHistory(jobId);  // <-- stack route: /status-history/{jobId}
       }catch(e){
-        const fl = $('filesLive'); if (fl) fl.textContent = `Status error: ${e.message}`;
+        const fl=$('filesLive'); if(fl) fl.textContent=`Status error: ${e.message}`;
         showError(`status-progress failed: ${e.message}`);
       }
     }
 
     async function refreshFiles(jid){
       if(!jid) return;
-      const prefix = `tiles/${jid}/`;
+      const prefix=`tiles/${jid}/`;
       try{
         const j = await getJSON(`${window.API_BASE}/list-output?bucket=${encodeURIComponent(OUTPUT_BUCKET)}&prefix=${encodeURIComponent(prefix)}`);
         renderFiles(j.objects||[]);
       }catch(e){
-        const fl = $('filesLive'); if (fl) fl.textContent = `List error: ${e.message}`;
+        const fl=$('filesLive'); if(fl) fl.textContent=`List error: ${e.message}`;
       }
     }
 
     function renderFiles(objs){
-      const out = $('filesLive'); if(!out) return;
-      if(!objs || !objs.length){ out.textContent = '—'; return; }
-      const rx = /_(\d+)\.(?:jp2|tif|tiff|bin|hdr)$/i;
-      const lines = objs.slice().sort((a,b)=>{
+      const out=$('filesLive'); if(!out) return;
+      if(!objs || !objs.length){ out.textContent='—'; return; }
+      const rx=/_(\d+)\.(?:jp2|tif|tiff|bin|hdr)$/i;
+      const lines=objs.slice().sort((a,b)=>{
         const ak=String(a.key||''), bk=String(b.key||'');
         const am=ak.match(rx), bm=bk.match(rx);
-        const ai = am? parseInt(am[1],10) : Number.MAX_SAFE_INTEGER;
-        const bi = bm? parseInt(bm[1],10) : Number.MAX_SAFE_INTEGER;
-        return ai===bi ? ak.localeCompare(bk) : ai-bi;
-      }).map(o => `${o.key}${o.size!=null ? `  (${humanSize(o.size)})` : ''}`);
-      out.textContent = lines.join('\n');
+        const ai=am?parseInt(am[1],10):Number.MAX_SAFE_INTEGER;
+        const bi=bm?parseInt(bm[1],10):Number.MAX_SAFE_INTEGER;
+        return ai===bi? ak.localeCompare(bk) : ai-bi;
+      }).map(o=>`${o.key}${o.size!=null?`  (${humanSize(o.size)})`:''}`);
+      out.textContent=lines.join('\n');
     }
 
-    async function refreshHistory(execArn){
-      if(!execArn || execArn==='—') return;
-      try {
-        const out = await getJSON(`${window.API_BASE}/status-history/${encodeURIComponent(execArn)}`);
-        const steps = Array.isArray(out?.events) ? out.events.map(e => `[${e.time}] ${e.type}${e.detail? ` — ${e.detail}`:''}`) : [];
+    async function refreshHistory(jid){
+      if(!jid) return;
+      try{
+        // per stack: /status-history/{jobId}
+        const out = await getJSON(`${window.API_BASE}/status-history/${encodeURIComponent(jid)}`);
+        const steps = Array.isArray(out?.events) ? out.events.map(e => `[${e.time}] ${e.type}${e.detail?` — ${e.detail}`:''}`) : [];
         renderSteps(steps);
-      } catch (_) { /* ignore */ }
+      }catch(_){/* ignore */}
     }
 
     function renderSteps(steps){
-      const el = $('stepsLive'); if(!el) return;
-      if(!Array.isArray(steps) || !steps.length){ el.textContent = '—'; return; }
-      el.textContent = steps.join('\n');
+      const el=$('stepsLive'); if(!el) return;
+      if(!Array.isArray(steps) || !steps.length){ el.textContent='—'; return; }
+      el.textContent=steps.join('\n');
     }
 
     async function doUnite(){
       if(!jobId) return;
       try{
-        const body = { outputBucket: OUTPUT_BUCKET, jobId };
-        const r = await fetch(`${window.API_BASE}/unite`, { method:'POST', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify(body) });
-        const text = await r.text(); const j = JSON.parse(text);
+        const body={ outputBucket: OUTPUT_BUCKET, jobId };
+        const r=await fetch(`${window.API_BASE}/unite`,{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+        const text=await r.text(); const j=JSON.parse(text);
         if(!r.ok) throw new Error(j.error||'unite failed');
         setText('finalKey', j.expectedFinalKey || `final/unite-${jobId}.jp2`);
-        const le = $('linkExec'); if (le) le.href = j.links?.execution || '#';
-      } catch(e){ showError(`unite failed: ${e.message}`); }
+        const le=$('linkExec'); if(le) le.href=j.links?.execution || '#';
+      }catch(e){ showError(`unite failed: ${e.message}`); }
     }
 
-    // Wire
+    // wire + init
     $('btnRefresh')?.addEventListener('click', listInput);
     $('btnSplit')?.addEventListener('click', doSplit);
     $('btnUnite')?.addEventListener('click', doUnite);
-
-    // Init
-    buildTileOptions();
-    listInput();
+    buildTileOptions(); listInput();
   </script>
 </body>
 </html>
