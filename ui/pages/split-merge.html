@@ -40,6 +40,8 @@
     .well { background:#1f2937; border:1px dashed rgba(255,255,255,.3); border-radius:10px; padding:10px; color:#fff; }
     .err { background:#7f1d1d; border:1px solid #fecaca; color:#fee2e2; padding:10px; border-radius:10px; margin-bottom:10px; display:none; white-space:pre-wrap; }
     .split-merge { display:grid; grid-template-columns:1fr 1fr; gap:20px; }
+    .diag { font-size:12px; color:var(--muted); }
+    .diag pre { background:#0b1220; color:#e5e7eb; padding:10px; border-radius:8px; overflow:auto; max-height:180px; border:1px solid rgba(255,255,255,.1); }
   </style>
   <script>
     // ControllerFn API base
@@ -145,6 +147,15 @@
           <h3 style="margin-top:14px; font-size:14px; color:var(--muted);">Step Functions Events</h3>
           <pre id="uStepsLive" class="well mono" style="white-space:pre-wrap; max-height:220px; overflow:auto;">—</pre>
         </div>
+
+        <div class="card diag">
+          <h2>Diagnostics</h2>
+          <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+            <button id="btnDiag" class="btn">Run API checks</button>
+            <span>API: <span class="mono" id="diagApi"></span></span>
+          </div>
+          <pre id="diagOut">(no output)</pre>
+        </div>
       </div>
     </div>
 
@@ -178,6 +189,7 @@
     // show meta
     setText('apiBaseLbl', window.API_BASE);
     setText('outBucketLbl', OUTPUT_BUCKET);
+    setText('diagApi', window.API_BASE);
 
     // ---------- Split (left) ----------
     let selectedKey=null, tilesTotal=16, jobId=null, expected=0, pollTimer=null, execArn=null;
@@ -332,15 +344,13 @@
       try{
         const body={ outputBucket: OUTPUT_BUCKET, jobId: uId };
         const j = await postJSON(`${window.API_BASE}/unite`, body);
-        // If backend returns a canonical jobId, prefer it for polling
-        const jid = j.jobId || uId;
+        const jid = j.jobId || uId; // prefer canonical jobId from backend
         setText('uJobId', jid);
         setText('uFinalKey', j.expectedFinalKey || `final/unite-${jid}.jp2`);
         setText('uExecArn', j.executionArn || '—');
         const le=$('linkExecUnite'); if(le) le.href=j.links?.execution || '#';
         startUnitePolling(jid);
       }catch(e){ setText('uFinalKey', `Error: ${e.message}`); showError(`unite failed: ${e.message}`); }
-    }catch(e){ setText('uFinalKey', `Error: ${e.message}`); showError(`unite failed: ${e.message}`); }
     }
 
     function startUnitePolling(jobId){ stopUnitePolling(); const el=$('uStepsLive'); if(el) el.textContent='—'; uPollTimer=setInterval(()=>refreshUniteStatus(jobId),1500); refreshUniteStatus(jobId); }
@@ -373,11 +383,6 @@
         }catch(e){ lastErr=e; }
       }
       const el=$('uStepsLive'); if(el) el.textContent = `Status error${lastErr?`: ${lastErr.message}`:''}`;
-    }/status-history/${encodeURIComponent(jobId)}`);
-        const events = Array.isArray(out?.events) ? out.events : [];
-        renderUSteps(events);
-        if(events.some(e=> termTypes.has(e.type))){ stopUnitePolling(); }
-      }catch(e){ const el=$('uStepsLive'); if(el) el.textContent='Status error'; }
     }
 
     function renderUSteps(steps){
@@ -387,11 +392,36 @@
       el.textContent=steps.map(e=>`[${e.time}] ${e.type}${e.detail?` — ${e.detail}`:''}`).join('\n');
     }
 
+    // ---------- Diagnostics ----------
+    async function runDiagnostics(){
+      const out=$('diagOut'); out.textContent='Running...\n';
+      const lines=[];
+      function log(s){ lines.push(s); out.textContent = lines.join('\n'); }
+      try{ log(`API_BASE: ${window.API_BASE}`); }catch{}
+      try{
+        const r1 = await getJSON(`${window.API_BASE}/list-input?bucket=${encodeURIComponent(INPUT_BUCKET)}`);
+        log(`list-input OK (${(r1.objects||[]).length} objects)`);
+      }catch(e){ log(`list-input ERROR: ${e.message}`); }
+      try{
+        const r2 = await getJSON(`${window.API_BASE}/list-output?bucket=${encodeURIComponent(OUTPUT_BUCKET)}`);
+        const folders=new Set(); (r2.objects||[]).forEach(o=>{ const m=String(o.key||'').match(/^tiles\/(.+?)\//); if(m) folders.add(m[1]); });
+        log(`list-output OK (${(r2.objects||[]).length} objects, ${(folders.size)} folders under tiles/)`);
+      }catch(e){ log(`list-output ERROR: ${e.message}`); }
+      const jid=$('uJobId')?.textContent; if(jid && jid!=='—'){
+        try{ await getJSON(`${window.API_BASE}/status-history/${encodeURIComponent(jid)}`); log('status-history by jobId OK'); }
+        catch(e){ log(`status-history by jobId ERROR: ${e.message}`); }
+      } else {
+        log('status-history skipped (no jobId selected yet)');
+      }
+      log('Diagnostics done.');
+    }
+
     // ---------- Wire & init ----------
     $('btnRefresh')?.addEventListener('click', listInput);
     $('btnSplit')?.addEventListener('click', doSplit);
     $('btnRefreshUnite')?.addEventListener('click', listUnite);
     $('btnUnite')?.addEventListener('click', doUnite);
+    $('btnDiag')?.addEventListener('click', runDiagnostics);
     buildTileOptions(); listInput(); listUnite();
   </script>
 </body>
