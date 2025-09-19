@@ -11,6 +11,7 @@ from aws_cdk import (
     aws_ec2 as ec2,
     aws_ecs as ecs,
     aws_logs as logs,
+    aws_ecr as ecr,   # <-- added
 )
 from constructs import Construct
 import os
@@ -74,7 +75,6 @@ class ServerlessJp2Stack(Stack):
                 # STATE_MACHINE_ARN / _UNITE set after SMs are created
             },
         )
-        # List output (and optionally read objects for sizes, manifests, etc.)
         controller_fn.add_to_role_policy(
             iam.PolicyStatement(actions=["s3:ListBucket"], resources=[output_bucket.bucket_arn])
         )
@@ -106,19 +106,24 @@ class ServerlessJp2Stack(Stack):
         )
         cluster = ecs.Cluster(self, "Cluster", vpc=vpc)
 
-        # Build/push the tiler image from local Dockerfile (asset)
-        from aws_cdk.aws_ecr_assets import DockerImageAsset
-        tiler_asset = DockerImageAsset(
-            self, "TilerImage",
-            directory=os.path.join(os.path.dirname(__file__), "docker", "tiler"),
+        # === Use prebuilt image from ECR (no local Docker build) ===
+        # Change the ARN below to your repo. Tag can be provided via context (-c tilerTag=...)
+        repo = ecr.Repository.from_repository_arn(
+            self, "TilerRepo",
+            "arn:aws:ecr:us-east-1:991105135552:repository/jp2-split"  # <-- put YOUR ECR repo ARN here
         )
+        image_tag = self.node.try_get_context("tilerTag") or "latest"
 
         # Task definition: 8 vCPU, 16 GiB
         task_def = ecs.FargateTaskDefinition(
             self, "SplitTaskDef",
-            cpu=8192,                    # 8 vCPU
-            memory_limit_mib=16384,      # 16 GiB
+            cpu=8192,                   # 8 vCPU
+            memory_limit_mib=16384,     # 16 GiB
         )
+
+        # Allow the ECS execution role to pull from ECR
+        repo.grant_pull(task_def.obtain_execution_role())
+
         # Task role: S3 read input / read-write output
         task_def.add_to_task_role_policy(iam.PolicyStatement(
             actions=["s3:GetObject", "s3:ListBucket"],
@@ -137,11 +142,10 @@ class ServerlessJp2Stack(Stack):
         )
 
         container = task_def.add_container(
-            "Tiler",
-            image=ecs.ContainerImage.from_docker_image_asset(tiler_asset),
+            self.unique_id("Tiler"),
+            image=ecs.ContainerImage.from_ecr_repository(repo, image_tag),
             logging=ecs.LogDriver.aws_logs(stream_prefix="split", log_group=log_group),
             environment={
-                # defaults; can be overridden via SFN environment overrides
                 "CREATE_OPTS": "TILED=YES,BIGTIFF=IF_SAFER,COMPRESS=LZW,PREDICTOR=2"
             }
         )
@@ -179,7 +183,8 @@ class ServerlessJp2Stack(Stack):
             container_overrides=[
                 tasks.ContainerOverride(
                     container_definition=container,
-                    command=["python3", "/app/tiler.py"],
+                    # Ensure we run the correct script (inside the image)
+                    command=["python3", "/app/split_worker.py"],
                     environment=[
                         tasks.TaskEnvironmentVariable(
                             name="INPUT_BUCKET",
@@ -212,7 +217,6 @@ class ServerlessJp2Stack(Stack):
                     ],
                 )
             ],
-            # Let SFN return the default RunTask response (inspect later if needed)
             result_path="$.splitResult"
         )
         split_sm = sfn.StateMachine(
@@ -279,3 +283,7 @@ class ServerlessJp2Stack(Stack):
         CfnOutput(self, "ApiEndpoint", value=http_api.api_endpoint)
         CfnOutput(self, "SplitStateMachineArn", value=split_sm.state_machine_arn)
         CfnOutput(self, "UniteStateMachineArn", value=unite_sm.state_machine_arn)
+
+    def unique_id(self, base: str) -> str:
+        # Helper to avoid collisions when re-running in different scopes
+        return f"{base}"
