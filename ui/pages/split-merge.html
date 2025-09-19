@@ -368,13 +368,22 @@
     function stopUnitePolling(){ if(uPollTimer){ clearInterval(uPollTimer); uPollTimer=null; } }
 
     async function refreshUniteStatus(jobId){
-      // Per your routes, prefer GET /status-detail/{jobId}
+      // Prefer polling by executionArn first; controller likely expects ARN for DescribeExecution/GetExecutionHistory
       let lastErr=null;
-      const urls = [
-        `${window.API_BASE}/status-detail/${encodeURIComponent(jobId)}`,
+      const arn = $('uExecArn')?.textContent;
+      const urls = [];
+      if (arn && arn !== '—') {
+        urls.push(`${window.API_BASE}/status-detail/${encodeURIComponent(arn)}`);
+        urls.push(`${window.API_BASE}/status-history/${encodeURIComponent(arn)}`);
+      }
+      // Also try common jobId variants
+      urls.push(
+        `${window.API_BASE}/status-history/${encodeURIComponent('unite-'+jobId)}`,
         `${window.API_BASE}/status-history/${encodeURIComponent(jobId)}`,
+        `${window.API_BASE}/status-detail/${encodeURIComponent('unite-'+jobId)}`,
+        `${window.API_BASE}/status-detail/${encodeURIComponent(jobId)}`,
         `${window.API_BASE}/status/${encodeURIComponent(jobId)}`,
-      ];
+      );
       for (const url of urls){
         try{
           setText('uPollInfo', url);
@@ -386,6 +395,8 @@
           return;
         }catch(e){ lastErr=e; }
       }
+      const el=$('uStepsLive'); if(el) el.textContent = `Status error${lastErr?`: ${lastErr.message}`:''}`;
+    }
       const el=$('uStepsLive'); if(el) el.textContent = `Status error${lastErr?`: ${lastErr.message}`:''}`;
     }
 
@@ -429,13 +440,23 @@
 
     // Diagnostics
     async function runDiagnostics(){
-      const out=$('diagOut'); out.textContent='Running...\n';
-      const lines=[]; const log=(s)=>{ lines.push(s); out.textContent = lines.join('\n'); };
+      const out=$('diagOut'); out.textContent='Running...
+';
+      const lines=[]; const log=(s)=>{ lines.push(s); out.textContent = lines.join('
+'); };
       log(`API_BASE: ${window.API_BASE}`);
       try{ const r1=await getJSON(`${window.API_BASE}/list-input?bucket=${encodeURIComponent(INPUT_BUCKET)}`); log(`list-input OK (${(r1.objects||[]).length})`);}catch(e){ log(`list-input ERROR: ${e.message}`);}    
       try{ const r2=await getJSON(`${window.API_BASE}/list-output?bucket=${encodeURIComponent(OUTPUT_BUCKET)}`); log(`list-output OK (${(r2.objects||[]).length})`);}catch(e){ log(`list-output ERROR: ${e.message}`);}    
-      const jid=$('uJobId').textContent; if(jid && jid!=='—'){
-        try{ await getJSON(`${window.API_BASE}/status-detail/${encodeURIComponent(jid)}`); log('status-detail by jobId OK'); }catch(e){ log(`status-detail ERROR: ${e.message}`);} 
+      const jid=$('uJobId').textContent; const arn=$('uExecArn')?.textContent;
+      if(arn && arn!=='—'){
+        try{ await getJSON(`${window.API_BASE}/status-detail/${encodeURIComponent(arn)}`); log('status-detail by executionArn OK'); }catch(e){ log(`status-detail(arn) ERROR: ${e.message}`);} 
+        try{ await getJSON(`${window.API_BASE}/status-history/${encodeURIComponent(arn)}`); log('status-history by executionArn OK'); }catch(e){ log(`status-history(arn) ERROR: ${e.message}`);} 
+      }
+      if(jid && jid!=='—'){
+        try{ await getJSON(`${window.API_BASE}/status-detail/${encodeURIComponent('unite-'+jid)}`); log('status-detail by unite-jobId OK'); }catch(e){ log(`status-detail(unite-jobId) ERROR: ${e.message}`);} 
+        try{ await getJSON(`${window.API_BASE}/status-history/${encodeURIComponent('unite-'+jid)}`); log('status-history by unite-jobId OK'); }catch(e){ log(`status-history(unite-jobId) ERROR: ${e.message}`);} 
+        try{ await getJSON(`${window.API_BASE}/status-detail/${encodeURIComponent(jid)}`); log('status-detail by jobId OK'); }catch(e){ log(`status-detail(jobId) ERROR: ${e.message}`);} 
+        try{ await getJSON(`${window.API_BASE}/status-history/${encodeURIComponent(jid)}`); log('status-history by jobId OK'); }catch(e){ log(`status-history(jobId) ERROR: ${e.message}`);} 
       }
       log('Diagnostics done.');
     }
