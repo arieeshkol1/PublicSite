@@ -332,19 +332,48 @@
       try{
         const body={ outputBucket: OUTPUT_BUCKET, jobId: uId };
         const j = await postJSON(`${window.API_BASE}/unite`, body);
-        setText('uFinalKey', j.expectedFinalKey || `final/unite-${uId}.jp2`);
+        // If backend returns a canonical jobId, prefer it for polling
+        const jid = j.jobId || uId;
+        setText('uJobId', jid);
+        setText('uFinalKey', j.expectedFinalKey || `final/unite-${jid}.jp2`);
         setText('uExecArn', j.executionArn || '—');
         const le=$('linkExecUnite'); if(le) le.href=j.links?.execution || '#';
-        startUnitePolling(uId);
+        startUnitePolling(jid);
       }catch(e){ setText('uFinalKey', `Error: ${e.message}`); showError(`unite failed: ${e.message}`); }
+    }catch(e){ setText('uFinalKey', `Error: ${e.message}`); showError(`unite failed: ${e.message}`); }
     }
 
     function startUnitePolling(jobId){ stopUnitePolling(); const el=$('uStepsLive'); if(el) el.textContent='—'; uPollTimer=setInterval(()=>refreshUniteStatus(jobId),1500); refreshUniteStatus(jobId); }
     function stopUnitePolling(){ if(uPollTimer){ clearInterval(uPollTimer); uPollTimer=null; } }
 
     async function refreshUniteStatus(jobId){
-      try{
-        const out = await getJSON(`${window.API_BASE}/status-history/${encodeURIComponent(jobId)}`);
+      let lastErr=null;
+      const tryUrls = [
+        `${window.API_BASE}/status-history/${encodeURIComponent(jobId)}`,
+        `${window.API_BASE}/status-history/${encodeURIComponent('unite-'+jobId)}`,
+        `${window.API_BASE}/status/${encodeURIComponent(jobId)}`,
+      ];
+      for (const url of tryUrls){
+        try{
+          const out = await getJSON(url);
+          const events = Array.isArray(out?.events) ? out.events : (out?.history || []);
+          if (events.length){ renderUSteps(events); if(events.some(e=> termTypes.has(e.type))){ stopUnitePolling(); } }
+          else { renderUSteps([]); }
+          return;
+        }catch(e){ lastErr=e; }
+      }
+      const arn = $('uExecArn')?.textContent;
+      if(arn && arn !== '—'){
+        try{
+          const out = await getJSON(`${window.API_BASE}/status-detail/${encodeURIComponent(arn)}`);
+          const events = Array.isArray(out?.events) ? out.events : (out?.history || []);
+          if (events.length){ renderUSteps(events); if(events.some(e=> termTypes.has(e.type))){ stopUnitePolling(); } }
+          else { renderUSteps([]); }
+          return;
+        }catch(e){ lastErr=e; }
+      }
+      const el=$('uStepsLive'); if(el) el.textContent = `Status error${lastErr?`: ${lastErr.message}`:''}`;
+    }/status-history/${encodeURIComponent(jobId)}`);
         const events = Array.isArray(out?.events) ? out.events : [];
         renderUSteps(events);
         if(events.some(e=> termTypes.has(e.type))){ stopUnitePolling(); }
