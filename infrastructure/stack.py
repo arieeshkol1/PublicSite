@@ -11,7 +11,7 @@ from aws_cdk import (
     aws_ec2 as ec2,
     aws_ecs as ecs,
     aws_logs as logs,
-    aws_ecr as ecr,   # <-- added
+    aws_ecr as ecr,
 )
 from constructs import Construct
 import os
@@ -24,25 +24,17 @@ class ServerlessJp2Stack(Stack):
         account = Stack.of(self).account
         region = Stack.of(self).region
 
-        # ---------------- Buckets we OWN (create/destroy with the stack) ----------------
-        input_bucket = s3.Bucket(
+        # ---------------- Reuse EXISTING Buckets ----------------
+        input_bucket = s3.Bucket.from_bucket_name(
             self, "InputBucket",
-            bucket_name=f"jp2-input-{account}-{region}",
-            encryption=s3.BucketEncryption.S3_MANAGED,
-            block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
-            auto_delete_objects=True,
-            removal_policy=RemovalPolicy.DESTROY,
+            bucket_name=f"jp2-input-{account}-{region}"
         )
-        output_bucket = s3.Bucket(
+        output_bucket = s3.Bucket.from_bucket_name(
             self, "OutputBucket",
-            bucket_name=f"jp2-output-{account}-{region}",
-            encryption=s3.BucketEncryption.S3_MANAGED,
-            block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
-            auto_delete_objects=True,
-            removal_policy=RemovalPolicy.DESTROY,
+            bucket_name=f"jp2-output-{account}-{region}"
         )
 
-        # ---------------- UI bucket is PRE-EXISTING (do NOT recreate) ----------------
+        # ---------------- UI bucket is PRE-EXISTING ----------------
         ui_bucket = s3.Bucket.from_bucket_name(
             self, "UiBucket",
             bucket_name="jp2-ui-991105135552-us-east-1"
@@ -106,11 +98,11 @@ class ServerlessJp2Stack(Stack):
         )
         cluster = ecs.Cluster(self, "Cluster", vpc=vpc)
 
-        # === Use prebuilt image from ECR (no local Docker build) ===
-        # Change the ARN below to your repo. Tag can be provided via context (-c tilerTag=...)
+        # Use prebuilt image from ECR (no local Docker build)
+        # Update ARN to your repo; pass tag via -c tilerTag=... (defaults to "latest")
         repo = ecr.Repository.from_repository_arn(
             self, "TilerRepo",
-            "arn:aws:ecr:us-east-1:991105135552:repository/jp2-split"  # <-- put YOUR ECR repo ARN here
+            "arn:aws:ecr:us-east-1:991105135552:repository/jp2-split"
         )
         image_tag = self.node.try_get_context("tilerTag") or "latest"
 
@@ -121,7 +113,7 @@ class ServerlessJp2Stack(Stack):
             memory_limit_mib=16384,     # 16 GiB
         )
 
-        # Allow the ECS execution role to pull from ECR
+        # Allow ECS execution role to pull from ECR
         repo.grant_pull(task_def.obtain_execution_role())
 
         # Task role: S3 read input / read-write output
@@ -142,7 +134,7 @@ class ServerlessJp2Stack(Stack):
         )
 
         container = task_def.add_container(
-            self.unique_id("Tiler"),
+            "Tiler",
             image=ecs.ContainerImage.from_ecr_repository(repo, image_tag),
             logging=ecs.LogDriver.aws_logs(stream_prefix="split", log_group=log_group),
             environment={
@@ -183,7 +175,6 @@ class ServerlessJp2Stack(Stack):
             container_overrides=[
                 tasks.ContainerOverride(
                     container_definition=container,
-                    # Ensure we run the correct script (inside the image)
                     command=["python3", "/app/split_worker.py"],
                     environment=[
                         tasks.TaskEnvironmentVariable(
@@ -284,6 +275,3 @@ class ServerlessJp2Stack(Stack):
         CfnOutput(self, "SplitStateMachineArn", value=split_sm.state_machine_arn)
         CfnOutput(self, "UniteStateMachineArn", value=unite_sm.state_machine_arn)
 
-    def unique_id(self, base: str) -> str:
-        # Helper to avoid collisions when re-running in different scopes
-        return f"{base}"
