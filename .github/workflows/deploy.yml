@@ -1,7 +1,8 @@
 name: Deploy-Serverless-JP2
 
 on:
-  workflow_dispatch:
+  push:                # run on ANY branch push
+  workflow_dispatch:   # allow manual runs too
 
 permissions:
   id-token: write
@@ -32,7 +33,7 @@ jobs:
       - name: Configure AWS Credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}   # existing role, unchanged
           aws-region: ${{ env.AWS_REGION }}
 
       - name: CDK Bootstrap (idempotent)
