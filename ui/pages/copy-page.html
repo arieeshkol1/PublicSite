@@ -3,86 +3,256 @@
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>Copy Page — TSG</title>
+  <title>Copy ▶ Paste — TSG</title>
   <link rel="icon" href="../assets/tsg-logo.svg">
   <style>
-:root{ --bg:#0b1020; --panel:#121a34; --accent:#45a1ff; --text:#e7ecf7; --muted:#96a2c0; --border:#233059; }
-*{ box-sizing:border-box; }
-body{ margin:0; font-family:Inter,system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif; color:var(--text); background:linear-gradient(180deg,#0b1020, #0d1330 40%, #0b1020 100%); }
-header{
-  display:flex; align-items:center; gap:.75rem;
-  padding:.75rem 1rem; background:rgba(10,16,36,.8); border-bottom:1px solid var(--border);
-  position:sticky; top:0; backdrop-filter:saturate(120%) blur(6px);
-}
-header .title{ font-size:1.1rem; letter-spacing:.3px; font-weight:600; }
-.container{ display:grid; grid-template-columns: 240px 1fr; min-height: calc(100vh - 56px); }
-nav{ padding:1rem; border-right:1px solid var(--border); background:rgba(12,18,44,.55); }
-nav .section{ font-size:.75rem; color:var(--muted); text-transform:uppercase; margin:.5rem 0 .25rem; }
-nav a{
-  display:flex; align-items:center; gap:.5rem; padding:.6rem .7rem; margin:.25rem 0;
-  color:var(--text); text-decoration:none; border:1px solid transparent; border-radius:.75rem; background:transparent;
-}
-nav a:hover{ border-color:var(--border); background:rgba(69,161,255,.08); }
-nav a.active{ border-color:var(--accent); background:rgba(69,161,255,.12); }
-iframe{ width:100%; height: calc(100vh - 56px); border:0; background:transparent; }
-.btn{
-  appearance:none; border:1px solid var(--border); background:rgba(255,255,255,.02);
-  color:var(--text); padding:.6rem .9rem; border-radius:.6rem; cursor:pointer;
-}
-.btn:hover{ border-color:var(--accent); }
-select,input[type="text"],input[type="file"],.picker{
-  width:100%; padding:.55rem .6rem; border-radius:.55rem; color:var(--text);
-  border:1px solid var(--border); background:rgba(255,255,255,.03);
-}
-label{ font-size:.9rem; color:var(--muted); }
-.card{ border:1px solid var(--border); background:rgba(10,16,36,.4); border-radius:1rem; padding:1rem; }
-.grid{ display:grid; gap:1rem; grid-template-columns: repeat(12, 1fr); }
-.col-6{ grid-column: span 6; } .col-4{ grid-column: span 4; } .col-3{ grid-column: span 3; } .col-12{ grid-column: span 12; }
-small.hint{ color:var(--muted); display:block; margin-top:.25rem; }
-hr{ border:none; border-top:1px solid var(--border); margin:1rem 0; }
-.footer-note{ color:var(--muted); font-size:.8rem; text-align:center; padding:1rem 0 2rem; }
-</style>
+    :root{ --bg:#0b1020; --panel:#121a34; --accent:#45a1ff; --text:#e7ecf7; --muted:#96a2c0; --border:#233059; }
+    *{ box-sizing:border-box; }
+    body{ margin:0; font-family:Inter,system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif; color:var(--text); background:linear-gradient(180deg,#0b1020, #0d1330 40%, #0b1020 100%); }
+    header{ display:flex; align-items:center; gap:.75rem; padding:.75rem 1rem; background:rgba(10,16,36,.8); border-bottom:1px solid var(--border); position:sticky; top:0; backdrop-filter:saturate(120%) blur(6px); }
+    header .title{ font-size:1.1rem; letter-spacing:.3px; font-weight:600; }
+    .wrap{ max-width:980px; margin:1rem auto 2rem; padding:0 1rem; }
+    .card{ border:1px solid var(--border); background:rgba(10,16,36,.45); border-radius:1rem; padding:1rem; }
+    .step{ border:1px dashed var(--border); border-radius:.9rem; padding:1rem; margin:.75rem 0; background:rgba(69,161,255,.04); }
+    .step h3{ margin:.2rem 0 .8rem; font-size:1.05rem; }
+    label{ display:block; font-size:.9rem; color:var(--muted); margin:.4rem 0 .3rem; }
+    select,input[type="text"]{ width:100%; padding:.55rem .6rem; border-radius:.55rem; color:var(--text); border:1px solid var(--border); background:rgba(255,255,255,.03); }
+    .row{ display:flex; gap:.75rem; align-items:center; }
+    .col{ flex:1; }
+    .btn{ appearance:none; border:1px solid var(--border); background:rgba(255,255,255,.02); color:var(--text); padding:.6rem .9rem; border-radius:.6rem; cursor:pointer; }
+    .btn:hover{ border-color:var(--accent); }
+    .btn.primary{ background:linear-gradient(180deg,rgba(69,161,255,.25),rgba(69,161,255,.15)); border-color:var(--accent); }
+    .muted{ color:var(--muted); font-size:.85rem; }
+    .list{ border:1px solid var(--border); border-radius:.6rem; overflow:hidden; background:rgba(255,255,255,.02); max-height:260px; overflow-y:auto; }
+    .item{ display:flex; align-items:center; gap:.6rem; padding:.55rem .7rem; border-bottom:1px solid rgba(255,255,255,.04); cursor:pointer; }
+    .item:last-child{ border-bottom:0; }
+    .item:hover{ background:rgba(69,161,255,.08); }
+    .item.selected{ outline:2px solid var(--accent); background:rgba(69,161,255,.12); }
+    .badge{ font-size:.7rem; padding:.1rem .4rem; border:1px solid var(--border); border-radius:.4rem; color:var(--muted); }
+    .right{ margin-left:auto; color:var(--muted); font-size:.85rem; }
+    .hidden{ display:none !important; }
+    .ok{ color:#8ef0a7; }
+    .err{ color:#ff9090; }
+  </style>
 </head>
 <body>
-  <div style="padding:1rem 1.25rem;">
-    <h2>Copy Page (From / To)</h2>
+  <header>
+    <img src="../assets/tsg-logo.svg" alt="TSG" width="24" height="24"/>
+    <div class="title">Copy ▶ Paste Wizard</div>
+  </header>
+  <div class="wrap">
     <div class="card">
-      <div class="grid">
-        <div class="col-6">
-          <h3>Source</h3>
-          <label>Bucket</label>
-          <select id="src-bucket">
-            <option value="input">input</option>
-            <option value="stage">stage</option>
-            <option value="output">output</option>
-          </select>
-          <label>Folder</label>
-          <input id="src-folder" type="text" placeholder="e.g. inbound/batch-42"/>
+      <!-- STEP 1: Pick From bucket → To auto-computed -->
+      <div class="step" id="step1">
+        <h3>Step 1 — Select direction</h3>
+        <div class="row">
+          <div class="col">
+            <label>From (only Input or Output)</label>
+            <select id="fromBucket">
+              <option value="input">Input</option>
+              <option value="output">Output</option>
+            </select>
+          </div>
+          <div class="col">
+            <label>To (auto)</label>
+            <input id="toBucket" type="text" value="Output" disabled>
+          </div>
         </div>
-        <div class="col-6">
-          <h3>Destination</h3>
-          <label>Bucket</label>
-          <select id="dst-bucket">
-            <option value="input">input</option>
-            <option value="stage">stage</option>
-            <option value="output">output</option>
-          </select>
-          <label>Folder</label>
-          <input id="dst-folder" type="text" placeholder="e.g. stage/review"/>
+        <div class="muted" style="margin-top:.5rem">Choosing <span id="fromBadge" class="badge">Input</span> will auto-target <span id="toBadge" class="badge">Output</span> (and vice‑versa).</div>
+      </div>
+
+      <!-- STEP 2: Choose File or Folder mode -->
+      <div class="step" id="step2">
+        <h3>Step 2 — What to copy</h3>
+        <div class="row">
+          <label class="row" style="gap:.4rem">
+            <input type="radio" name="mode" value="folder" checked> Folder
+          </label>
+          <label class="row" style="gap:.4rem">
+            <input type="radio" name="mode" value="file"> File
+          </label>
+          <span class="muted">We'll list only the selected type from the source bucket.</span>
         </div>
-        <div class="col-12">
-          <label>Items to copy</label>
-          <input id="items" type="text" placeholder="Comma-separated file names or glob (e.g. *.pdf)"/>
-          <small class="hint">This is a static UI. Integrate with your object store list API to enable browsing.</small>
+      </div>
+
+      <!-- STEP 3: Browse and select one item from From-bucket -->
+      <div class="step" id="step3">
+        <h3>Step 3 — Pick a <span id="modeLabel">folder</span> from <span id="fromLabel">Input</span></h3>
+        <div class="row" style="margin:.25rem 0 .5rem">
+          <input id="search" type="text" placeholder="Search by prefix or name..."/>
+          <button class="btn" id="refreshBtn">Refresh</button>
         </div>
-        <div class="col-12">
-          <button class="btn" onclick="onCopy()">Copy</button>
+        <div id="list" class="list" role="listbox" aria-label="Objects list"></div>
+        <div class="muted" id="listHint">Showing latest objects. Hook this to your API: <code>/list-input</code> or <code>/list-output</code> with <code>?type=folder|file</code>.</div>
+      </div>
+
+      <!-- STEP 4: Copy -->
+      <div class="step" id="step4">
+        <h3>Step 4 — Execute</h3>
+        <div class="row">
+          <button class="btn" id="copyBtn">Copy selected</button>
+          <div class="right" id="status"></div>
         </div>
+        <div class="muted">POST to <code>/copy</code> with payload: { fromBucket, toBucket, mode, key }</div>
       </div>
     </div>
   </div>
+
   <script>
-    function onCopy(){ alert('Copy request prepared. Wire to backend API: /api/copy'); }
+    // --- Config ---
+    const API_BASE = ""; // if you have a gateway base, set it here (e.g. "/api")
+
+    // --- State ---
+    const state = {
+      fromBucket: 'input',
+      toBucket: 'output',
+      mode: 'folder', // 'folder' | 'file'
+      allItems: [],   // raw from API
+      filtered: [],   // after search
+      selectedKey: null,
+    };
+
+    // --- Elements ---
+    const el = (id)=>document.getElementById(id);
+    const fromSel = el('fromBucket');
+    const toTxt   = el('toBucket');
+    const fromBadge = el('fromBadge');
+    const toBadge = el('toBadge');
+    const modeLabel = el('modeLabel');
+    const fromLabel = el('fromLabel');
+    const listBox = el('list');
+    const search = el('search');
+    const refreshBtn = el('refreshBtn');
+    const status = el('status');
+
+    // --- Helpers ---
+    function computeTo(from){ return from === 'input' ? 'output' : 'input'; }
+    function setDirection(from){
+      state.fromBucket = from;
+      state.toBucket = computeTo(from);
+      toTxt.value = cap(state.toBucket);
+      fromBadge.textContent = cap(state.fromBucket);
+      toBadge.textContent = cap(state.toBucket);
+      fromLabel.textContent = cap(state.fromBucket);
+      fetchAndRender();
+    }
+    function cap(s){ return s.charAt(0).toUpperCase()+s.slice(1); }
+
+    function currentListEndpoint(){
+      const route = state.fromBucket === 'input' ? '/list-input' : '/list-output';
+      const q = `?type=${state.mode}`;
+      return (API_BASE||'') + route + q;
+    }
+
+    async function fetchList(){
+      const url = currentListEndpoint();
+      try{
+        const res = await fetch(url);
+        if(!res.ok) throw new Error('HTTP '+res.status);
+        const data = await res.json();
+        // expected: { items:[ { key:"path/" or "file.ext", size:1234, type:"folder"|"file" } ] }
+        return Array.isArray(data.items) ? data.items : [];
+      }catch(err){
+        console.warn('List fetch failed, using demo data', err);
+        // Fallback demo data
+        if(state.mode==='folder'){
+          return [
+            {key:'tiles/job-2025-09-20/', type:'folder'},
+            {key:'incoming/batch-001/', type:'folder'},
+            {key:'incoming/batch-002/', type:'folder'},
+          ];
+        }else{
+          return [
+            {key:'final/unite-abc.jp2', size: 987654321, type:'file'},
+            {key:'final/unite-def.jp2', size: 854321987, type:'file'},
+            {key:'samples/demo.jp2', size: 12345678, type:'file'},
+          ];
+        }
+      }
+    }
+
+    function renderList(){
+      listBox.innerHTML = '';
+      const frag = document.createDocumentFragment();
+      state.filtered.forEach((it, idx)=>{
+        const div = document.createElement('div');
+        div.className = 'item'+(state.selectedKey===it.key?' selected':'');
+        div.tabIndex = 0;
+        div.role = 'option';
+        div.setAttribute('aria-selected', state.selectedKey===it.key);
+        div.addEventListener('click', ()=> selectItem(it.key));
+        div.addEventListener('keydown', (e)=>{ if(e.key==='Enter' || e.key===' '){ e.preventDefault(); selectItem(it.key); }});
+        const badge = document.createElement('span');
+        badge.className = 'badge';
+        badge.textContent = it.type==='folder' ? 'Folder' : 'File';
+        const name = document.createElement('div');
+        name.textContent = it.key;
+        name.style.flex = '1';
+        const meta = document.createElement('div');
+        meta.className = 'right';
+        meta.textContent = it.size ? human(it.size) : '';
+        div.append(badge, name, meta);
+        frag.appendChild(div);
+      });
+      listBox.appendChild(frag);
+    }
+
+    function selectItem(key){ state.selectedKey = key; renderList(); }
+
+    function human(n){
+      const u=['B','KB','MB','GB','TB'];
+      let i=0, x=Number(n||0);
+      while(x>=1024 && i<u.length-1){ x/=1024; i++; }
+      return x.toFixed(x<10&&i>0?1:0)+' '+u[i];
+    }
+
+    function applyFilter(){
+      const q = (search.value||'').toLowerCase();
+      if(!q) state.filtered = state.allItems.slice(0,300);
+      else state.filtered = state.allItems.filter(it=> it.key.toLowerCase().includes(q)).slice(0,300);
+      renderList();
+    }
+
+    async function fetchAndRender(){
+      status.textContent='';
+      document.body.style.cursor='progress';
+      try{
+        modeLabel.textContent = state.mode;
+        fromLabel.textContent = cap(state.fromBucket);
+        state.allItems = await fetchList();
+        applyFilter();
+      } finally{ document.body.style.cursor='auto'; }
+    }
+
+    async function doCopy(){
+      if(!state.selectedKey){ status.innerHTML = '<span class="err">Select an item first.</span>'; return; }
+      const payload = {
+        fromBucket: state.fromBucket,
+        toBucket: state.toBucket,
+        mode: state.mode,
+        key: state.selectedKey
+      };
+      status.textContent='Sending copy request…';
+      try{
+        const res = await fetch((API_BASE||'')+ '/copy', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
+        if(!res.ok) throw new Error('HTTP '+res.status);
+        const data = await res.json().catch(()=>({}));
+        status.innerHTML = '<span class="ok">Copy initiated.</span> ' + (data.message||'');
+      }catch(err){
+        console.error(err);
+        status.innerHTML = '<span class="err">Copy failed:</span> '+ err.message + ' — check API route /copy';
+      }
+    }
+
+    // --- Wire up events ---
+    fromSel.addEventListener('change', e=> setDirection(e.target.value));
+    document.querySelectorAll('input[name="mode"]').forEach(r=> r.addEventListener('change', (e)=>{ state.mode = e.target.value; fetchAndRender(); }));
+    search.addEventListener('input', applyFilter);
+    refreshBtn.addEventListener('click', fetchAndRender);
+    document.getElementById('copyBtn').addEventListener('click', doCopy);
+
+    // Init
+    setDirection('input');
   </script>
 </body>
 </html>
