@@ -83,7 +83,7 @@
           <button class="btn" id="refreshBtn">Refresh</button>
         </div>
         <div id="list" class="list" role="listbox" aria-label="Objects list"></div>
-        <div class="muted" id="listHint">Showing latest objects. Hook this to your API: <code>/list-input</code> or <code>/list-output</code> with <code>?type=folder|file</code>.</div>
+        <div class="muted" id="listHint">Showing latest objects from API.</div>
       </div>
 
       <!-- STEP 4: Copy -->
@@ -99,20 +99,21 @@
   </div>
 
   <script>
-    // --- Config ---
-    const API_BASE = ""; // if you have a gateway base, set it here (e.g. "/api")
+    // Actual AWS API Gateway invoke URLs
+    const API_BASE       = "https://xui5toa569.execute-api.us-east-1.amazonaws.com";
+    const LIST_INPUT_URL = API_BASE + "/list-input";
+    const LIST_OUTPUT_URL= API_BASE + "/list-output";
+    const COPY_URL       = API_BASE + "/copy"; // adjust if your copy route differs
 
-    // --- State ---
     const state = {
       fromBucket: 'input',
       toBucket: 'output',
-      mode: 'folder', // 'folder' | 'file'
-      allItems: [],   // raw from API
-      filtered: [],   // after search
+      mode: 'folder',
+      allItems: [],
+      filtered: [],
       selectedKey: null,
     };
 
-    // --- Elements ---
     const el = (id)=>document.getElementById(id);
     const fromSel = el('fromBucket');
     const toTxt   = el('toBucket');
@@ -125,7 +126,6 @@
     const refreshBtn = el('refreshBtn');
     const status = el('status');
 
-    // --- Helpers ---
     function computeTo(from){ return from === 'input' ? 'output' : 'input'; }
     function setDirection(from){
       state.fromBucket = from;
@@ -139,42 +139,21 @@
     function cap(s){ return s.charAt(0).toUpperCase()+s.slice(1); }
 
     function currentListEndpoint(){
-      const route = state.fromBucket === 'input' ? '/list-input' : '/list-output';
-      const q = `?type=${state.mode}`;
-      return (API_BASE||'') + route + q;
+      return state.fromBucket === 'input' ? LIST_INPUT_URL : LIST_OUTPUT_URL;
     }
 
     async function fetchList(){
       const url = currentListEndpoint();
-      try{
-        const res = await fetch(url);
-        if(!res.ok) throw new Error('HTTP '+res.status);
-        const data = await res.json();
-        // expected: { items:[ { key:"path/" or "file.ext", size:1234, type:"folder"|"file" } ] }
-        return Array.isArray(data.items) ? data.items : [];
-      }catch(err){
-        console.warn('List fetch failed, using demo data', err);
-        // Fallback demo data
-        if(state.mode==='folder'){
-          return [
-            {key:'tiles/job-2025-09-20/', type:'folder'},
-            {key:'incoming/batch-001/', type:'folder'},
-            {key:'incoming/batch-002/', type:'folder'},
-          ];
-        }else{
-          return [
-            {key:'final/unite-abc.jp2', size: 987654321, type:'file'},
-            {key:'final/unite-def.jp2', size: 854321987, type:'file'},
-            {key:'samples/demo.jp2', size: 12345678, type:'file'},
-          ];
-        }
-      }
+      const res = await fetch(url);
+      if(!res.ok) throw new Error('HTTP '+res.status);
+      const data = await res.json();
+      return Array.isArray(data.items) ? data.items : [];
     }
 
     function renderList(){
       listBox.innerHTML = '';
       const frag = document.createDocumentFragment();
-      state.filtered.forEach((it, idx)=>{
+      state.filtered.forEach((it)=>{
         const div = document.createElement('div');
         div.className = 'item'+(state.selectedKey===it.key?' selected':'');
         div.tabIndex = 0;
@@ -221,6 +200,8 @@
         fromLabel.textContent = cap(state.fromBucket);
         state.allItems = await fetchList();
         applyFilter();
+      } catch(err){
+        status.innerHTML = '<span class="err">Failed to list: '+err.message+'</span>';
       } finally{ document.body.style.cursor='auto'; }
     }
 
@@ -234,24 +215,21 @@
       };
       status.textContent='Sending copy request…';
       try{
-        const res = await fetch((API_BASE||'')+ '/copy', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
+        const res = await fetch(COPY_URL, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
         if(!res.ok) throw new Error('HTTP '+res.status);
         const data = await res.json().catch(()=>({}));
         status.innerHTML = '<span class="ok">Copy initiated.</span> ' + (data.message||'');
       }catch(err){
-        console.error(err);
-        status.innerHTML = '<span class="err">Copy failed:</span> '+ err.message + ' — check API route /copy';
+        status.innerHTML = '<span class="err">Copy failed:</span> '+ err.message;
       }
     }
 
-    // --- Wire up events ---
     fromSel.addEventListener('change', e=> setDirection(e.target.value));
     document.querySelectorAll('input[name="mode"]').forEach(r=> r.addEventListener('change', (e)=>{ state.mode = e.target.value; fetchAndRender(); }));
     search.addEventListener('input', applyFilter);
     refreshBtn.addEventListener('click', fetchAndRender);
     document.getElementById('copyBtn').addEventListener('click', doCopy);
 
-    // Init
     setDirection('input');
   </script>
 </body>
