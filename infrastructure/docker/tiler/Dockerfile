@@ -1,19 +1,20 @@
-# infrastructure/lambda/docker/tiler/Dockerfile
-# Stable base that doesn't disappear: Debian Bookworm Slim
-FROM debian:bookworm-slim
+# Small-ish Ubuntu GDAL image; includes gdal_translate, Python
+FROM osgeo/gdal:ubuntu-small-3.8.5
 
-# System deps + GDAL (CLI + Python bindings) + Python toolchain
+# Tools: awscli + boto3 for S3 upload; pip kept minimal
 RUN apt-get update && \
-    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-      gdal-bin python3-gdal python3-pip python3-venv ca-certificates curl && \
-    rm -rf /var/lib/apt/lists/*
+    apt-get install -y --no-install-recommends python3-pip curl ca-certificates && \
+    pip3 install --no-cache-dir boto3 && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Python libs used by the worker
-RUN pip3 install --no-cache-dir boto3 awscli
-
-# Workdir & app code
+# App files
 WORKDIR /app
 COPY tiler.py /app/tiler.py
 
-# ECS / Step Functions will override this via container command
-CMD ["python3"]
+# Env for GDAL
+ENV GDAL_LIBRARY_PATH=/usr/lib/libgdal.so
+ENV PROJ_LIB=/usr/share/proj
+ENV CREATE_OPTS="TILED=YES,BIGTIFF=IF_SAFER,COMPRESS=LZW,PREDICTOR=2"
+
+# Default command (Step Functions can still override)
+CMD ["python3", "/app/tiler.py"]
