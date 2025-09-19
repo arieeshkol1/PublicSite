@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Split / Merge — TSG</title>
+  <link rel="icon" href="../assets/tsg-logo.svg">
+  <style>
+:root{ --bg:#0b1020; --panel:#121a34; --accent:#45a1ff; --text:#e7ecf7; --muted:#96a2c0; --border:#233059; }
+*{ box-sizing:border-box; }
+body{ margin:0; font-family:Inter,system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif; color:var(--text); background:linear-gradient(180deg,#0b1020, #0d1330 40%, #0b1020 100%); }
+header{
+  display:flex; align-items:center; gap:.75rem;
+  padding:.75rem 1rem; background:rgba(10,16,36,.8); border-bottom:1px solid var(--border);
+  position:sticky; top:0; backdrop-filter:saturate(120%) blur(6px);
+}
+header .title{ font-size:1.1rem; letter-spacing:.3px; font-weight:600; }
+.container{ display:grid; grid-template-columns: 240px 1fr; min-height: calc(100vh - 56px); }
+nav{ padding:1rem; border-right:1px solid var(--border); background:rgba(12,18,44,.55); }
+nav .section{ font-size:.75rem; color:var(--muted); text-transform:uppercase; margin:.5rem 0 .25rem; }
+nav a{
+  display:flex; align-items:center; gap:.5rem; padding:.6rem .7rem; margin:.25rem 0;
+  color:var(--text); text-decoration:none; border:1px solid transparent; border-radius:.75rem; background:transparent;
+}
+nav a:hover{ border-color:var(--border); background:rgba(69,161,255,.08); }
+nav a.active{ border-color:var(--accent); background:rgba(69,161,255,.12); }
+iframe{ width:100%; height: calc(100vh - 56px); border:0; background:transparent; }
+.btn{
+  appearance:none; border:1px solid var(--border); background:rgba(255,255,255,.02);
+  color:var(--text); padding:.6rem .9rem; border-radius:.6rem; cursor:pointer;
+}
+.btn:hover{ border-color:var(--accent); }
+select,input[type="text"],input[type="file"],.picker{
+  width:100%; padding:.55rem .6rem; border-radius:.55rem; color:var(--text);
+  border:1px solid var(--border); background:rgba(255,255,255,.03);
+}
+label{ font-size:.9rem; color:var(--muted); }
+.card{ border:1px solid var(--border); background:rgba(10,16,36,.4); border-radius:1rem; padding:1rem; }
+.grid{ display:grid; gap:1rem; grid-template-columns: repeat(12, 1fr); }
+.col-6{ grid-column: span 6; } .col-4{ grid-column: span 4; } .col-3{ grid-column: span 3; } .col-12{ grid-column: span 12; }
+small.hint{ color:var(--muted); display:block; margin-top:.25rem; }
+hr{ border:none; border-top:1px solid var(--border); margin:1rem 0; }
+.footer-note{ color:var(--muted); font-size:.8rem; text-align:center; padding:1rem 0 2rem; }
+</style>
+</head>
+<body>
+  <div style="padding:1rem 1.25rem;">
+    <h2>Split / Merge</h2>
+    <p class="card">Keep only splitting and merging options. No conversion actions appear here.</p>
+
+    <div class="grid">
+      <section class="card col-6">
+        <h3>Split File</h3>
+        <div class="grid">
+          <div class="col-12">
+            <label>Source bucket</label>
+            <select id="split-bucket">
+              <option value="input">input</option>
+              <option value="stage">stage</option>
+              <option value="output">output</option>
+            </select>
+            <small class="hint">Choose the bucket that contains the file to split</small>
+          </div>
+          <div class="col-12">
+            <label>Folder / Path</label>
+            <input type="text" id="split-path" placeholder="e.g. documents/2025/sets"/>
+          </div>
+          <div class="col-12">
+            <label>File</label>
+            <input type="file" id="split-file" />
+          </div>
+          <div class="col-6">
+            <label>Split mode</label>
+            <select id="split-mode">
+              <option value="pages">By pages</option>
+              <option value="size">By size (MB)</option>
+            </select>
+          </div>
+          <div class="col-6">
+            <label>Parameter</label>
+            <input type="text" id="split-param" placeholder="e.g. 5 or 10MB"/>
+          </div>
+          <div class="col-12">
+            <button class="btn" onclick="onSplit()">Split</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="card col-6">
+        <h3>Merge Files</h3>
+        <div class="grid">
+          <div class="col-12">
+            <label>Source bucket</label>
+            <select id="merge-bucket">
+              <option value="input">input</option>
+              <option value="stage">stage</option>
+              <option value="output">output</option>
+            </select>
+          </div>
+          <div class="col-12">
+            <label>Folder / Path</label>
+            <input type="text" id="merge-path" placeholder="e.g. docs/to-merge"/>
+          </div>
+          <div class="col-12">
+            <label>Files</label>
+            <input type="file" id="merge-files" multiple />
+          </div>
+          <div class="col-12">
+            <button class="btn" onclick="onMerge()">Merge</button>
+          </div>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <script>
+    function onSplit(){ alert('Split request prepared. Wire to backend API: /api/split'); }
+    function onMerge(){ alert('Merge request prepared. Wire to backend API: /api/merge'); }
+  </script>
+</body>
+</html>

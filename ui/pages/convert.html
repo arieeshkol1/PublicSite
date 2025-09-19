@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>Dynamic File Manager — TSG</title>
-  <link rel="icon" href="assets/tsg-logo.svg">
+  <title>Convert — TSG</title>
+  <link rel="icon" href="../assets/tsg-logo.svg">
   <style>
 :root{ --bg:#0b1020; --panel:#121a34; --accent:#45a1ff; --text:#e7ecf7; --muted:#96a2c0; --border:#233059; }
 *{ box-sizing:border-box; }
@@ -44,40 +44,60 @@ hr{ border:none; border-top:1px solid var(--border); margin:1rem 0; }
 </style>
 </head>
 <body>
-  <header>
-    <img src="assets/tsg-logo.svg" alt="TSG" width="28" height="28" style="color:var(--accent)">
-    <div class="title">TSG · Dynamic File Manager</div>
-  </header>
+  <div style="padding:1rem 1.25rem;">
+    <h2>Convert</h2>
+    <div class="card">
+      <div class="grid">
+        <div class="col-4">
+          <label>Input bucket</label>
+          <select id="in-bucket">
+            <option value="input" selected>input</option>
+            <option value="stage">stage</option>
+          </select>
+        </div>
+        <div class="col-8">
+          <label>Input folder</label>
+          <input id="in-folder" type="text" placeholder="e.g. inbound/images"/>
+        </div>
 
-  <div class="container">
-    <nav>
-      <div class="section">Modules</div>
-      <a href="pages/split-merge.html" target="work" id="link-split-merge">Split / Merge</a>
-      <a href="pages/copy-page.html" target="work" id="link-copy">Copy Page (From / To)</a>
-      <a href="pages/convert.html" target="work" id="link-convert">Convert</a>
-      <a href="pages/scan.html" target="work" id="link-scan">Scan</a>
-      <hr/>
-      <button class="btn" onclick="reloadFrame()">Reload Frame</button>
-    </nav>
-    <main style="padding:0;">
-      <iframe name="work" src="pages/split-merge.html" id="workframe" title="Work Area"></iframe>
-    </main>
+        <div class="col-12">
+          <label>Pick file(s) or folder</label>
+          <input id="in-files" type="file" webkitdirectory directory multiple />
+          <small class="hint">Choose one or more files, or pick a folder. In production use your bucket browser.</small>
+        </div>
+
+        <div class="col-4">
+          <label>Output bucket</label>
+          <select id="out-bucket">
+            <option value="output" selected>output</option>
+            <option value="stage">stage</option>
+          </select>
+        </div>
+        <div class="col-8">
+          <label>Output folder</label>
+          <input id="out-folder" type="text" placeholder="e.g. converted/jp2"/>
+        </div>
+
+        <div class="col-12">
+          <label>Format</label>
+          <select id="format">
+            <option>JPEG2000</option>
+            <option>png</option>
+            <option>XML</option>
+            <option>RAW</option>
+            <option>TXT</option>
+            <option>JSON</option>
+          </select>
+        </div>
+
+        <div class="col-12">
+          <button class="btn" onclick="onConvert()">Convert</button>
+        </div>
+      </div>
+    </div>
   </div>
-
-  <div class="footer-note">Static UI prototype. Wire up form submit handlers to backend APIs when available.</div>
-
   <script>
-    const links = [
-      document.getElementById('link-split-merge'),
-      document.getElementById('link-copy'),
-      document.getElementById('link-convert'),
-      document.getElementById('link-scan')
-    ];
-    function setActive(e){ links.forEach(a=>a.classList.remove('active')); e.classList.add('active'); }
-    links.forEach(a=>a.addEventListener('click', ev=>setActive(ev.currentTarget)));
-    links[0].classList.add('active');
-
-    function reloadFrame(){ const f = document.getElementById('workframe'); f.contentWindow.location.reload(); }
+    function onConvert(){ alert('Convert request prepared. Wire to backend API: /api/convert'); }
   </script>
 </body>
 </html>

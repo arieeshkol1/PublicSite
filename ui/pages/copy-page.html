@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>Dynamic File Manager — TSG</title>
-  <link rel="icon" href="assets/tsg-logo.svg">
+  <title>Copy Page — TSG</title>
+  <link rel="icon" href="../assets/tsg-logo.svg">
   <style>
 :root{ --bg:#0b1020; --panel:#121a34; --accent:#45a1ff; --text:#e7ecf7; --muted:#96a2c0; --border:#233059; }
 *{ box-sizing:border-box; }
@@ -44,40 +44,45 @@ hr{ border:none; border-top:1px solid var(--border); margin:1rem 0; }
 </style>
 </head>
 <body>
-  <header>
-    <img src="assets/tsg-logo.svg" alt="TSG" width="28" height="28" style="color:var(--accent)">
-    <div class="title">TSG · Dynamic File Manager</div>
-  </header>
-
-  <div class="container">
-    <nav>
-      <div class="section">Modules</div>
-      <a href="pages/split-merge.html" target="work" id="link-split-merge">Split / Merge</a>
-      <a href="pages/copy-page.html" target="work" id="link-copy">Copy Page (From / To)</a>
-      <a href="pages/convert.html" target="work" id="link-convert">Convert</a>
-      <a href="pages/scan.html" target="work" id="link-scan">Scan</a>
-      <hr/>
-      <button class="btn" onclick="reloadFrame()">Reload Frame</button>
-    </nav>
-    <main style="padding:0;">
-      <iframe name="work" src="pages/split-merge.html" id="workframe" title="Work Area"></iframe>
-    </main>
+  <div style="padding:1rem 1.25rem;">
+    <h2>Copy Page (From / To)</h2>
+    <div class="card">
+      <div class="grid">
+        <div class="col-6">
+          <h3>Source</h3>
+          <label>Bucket</label>
+          <select id="src-bucket">
+            <option value="input">input</option>
+            <option value="stage">stage</option>
+            <option value="output">output</option>
+          </select>
+          <label>Folder</label>
+          <input id="src-folder" type="text" placeholder="e.g. inbound/batch-42"/>
+        </div>
+        <div class="col-6">
+          <h3>Destination</h3>
+          <label>Bucket</label>
+          <select id="dst-bucket">
+            <option value="input">input</option>
+            <option value="stage">stage</option>
+            <option value="output">output</option>
+          </select>
+          <label>Folder</label>
+          <input id="dst-folder" type="text" placeholder="e.g. stage/review"/>
+        </div>
+        <div class="col-12">
+          <label>Items to copy</label>
+          <input id="items" type="text" placeholder="Comma-separated file names or glob (e.g. *.pdf)"/>
+          <small class="hint">This is a static UI. Integrate with your object store list API to enable browsing.</small>
+        </div>
+        <div class="col-12">
+          <button class="btn" onclick="onCopy()">Copy</button>
+        </div>
+      </div>
+    </div>
   </div>
-
-  <div class="footer-note">Static UI prototype. Wire up form submit handlers to backend APIs when available.</div>
-
   <script>
-    const links = [
-      document.getElementById('link-split-merge'),
-      document.getElementById('link-copy'),
-      document.getElementById('link-convert'),
-      document.getElementById('link-scan')
-    ];
-    function setActive(e){ links.forEach(a=>a.classList.remove('active')); e.classList.add('active'); }
-    links.forEach(a=>a.addEventListener('click', ev=>setActive(ev.currentTarget)));
-    links[0].classList.add('active');
-
-    function reloadFrame(){ const f = document.getElementById('workframe'); f.contentWindow.location.reload(); }
+    function onCopy(){ alert('Copy request prepared. Wire to backend API: /api/copy'); }
   </script>
 </body>
 </html>
