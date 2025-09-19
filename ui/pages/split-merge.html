@@ -44,7 +44,6 @@
     .diag pre { background:#0b1220; color:#e5e7eb; padding:10px; border-radius:8px; overflow:auto; max-height:180px; border:1px solid rgba(255,255,255,.1); }
   </style>
   <script>
-    // ControllerFn API base
     window.API_BASE = "https://xui5toa569.execute-api.us-east-1.amazonaws.com";
   </script>
 </head>
@@ -144,8 +143,23 @@
           <div class="links" style="margin-top:8px;">
             <a id="linkExecUnite" href="#" target="_blank" rel="noreferrer noopener">Execution</a>
           </div>
+          <div class="muted" style="margin-top:6px;">Polling</div>
+          <div id="uPollInfo" class="mono muted">—</div>
           <h3 style="margin-top:14px; font-size:14px; color:var(--muted);">Step Functions Events</h3>
           <pre id="uStepsLive" class="well mono" style="white-space:pre-wrap; max-height:220px; overflow:auto;">—</pre>
+          <h3 style="margin-top:14px; font-size:14px; color:var(--muted);">Merge Log (file/status/time)</h3>
+          <div class="well" style="padding:0; overflow:auto; max-height:220px;">
+            <table style="width:100%; border-collapse:collapse;">
+              <thead>
+                <tr>
+                  <th style="padding:8px 10px; border-bottom:1px solid rgba(255,255,255,.2); text-align:left;">Time</th>
+                  <th style="padding:8px 10px; border-bottom:1px solid rgba(255,255,255,.2); text-align:left;">Action</th>
+                  <th style="padding:8px 10px; border-bottom:1px solid rgba(255,255,255,.2); text-align:left;">Item</th>
+                </tr>
+              </thead>
+              <tbody id="uLogBody"></tbody>
+            </table>
+          </div>
         </div>
 
         <div class="card diag">
@@ -163,35 +177,32 @@
   </div>
 
   <script>
-    // ---------- Config ----------
     const INPUT_BUCKET  = 'jp2-input-991105135552-us-east-1';
     const OUTPUT_BUCKET = 'jp2-output-991105135552-us-east-1';
 
-    // ---------- Helpers ----------
     const $ = id => document.getElementById(id);
     const setText=(id,v)=>{const n=$(id);if(n)n.textContent=v??''};
     function humanSize(n){ if(n==null) return '—'; const kb=1024, mb=kb*1024, gb=mb*1024;
       if(n>=gb) return (n/gb).toFixed(2)+' GB'; if(n>=mb) return (n/mb).toFixed(2)+' MB'; if(n>=kb) return (n/kb).toFixed(2)+' KB'; return n+' B'; }
     async function getJSON(url){
       const r=await fetch(url,{credentials:'omit'});
-      const t=await r.text(); let j; try{ j=JSON.parse(t);}catch{ j={ _raw:t }; }
+      const t=await r.text(); let j; try{ j=JSON.parse(t);}catch(err){ j={ _raw:t }; }
       if(!r.ok) throw new Error(j.error||j._raw||`HTTP ${r.status}`);
       return j;
     }
     async function postJSON(url, body){
       const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),credentials:'omit'});
-      const t=await r.text(); let j; try{ j=JSON.parse(t);}catch{ j={ _raw:t }; }
+      const t=await r.text(); let j; try{ j=JSON.parse(t);}catch(err){ j={ _raw:t }; }
       if(!r.ok) throw new Error(j.error||j._raw||`HTTP ${r.status}`);
       return j;
     }
     function showError(msg){ const b=$('errorBox'); if(b){ b.style.display='block'; b.textContent=msg; } console.error(msg); }
 
-    // show meta
     setText('apiBaseLbl', window.API_BASE);
     setText('outBucketLbl', OUTPUT_BUCKET);
     setText('diagApi', window.API_BASE);
 
-    // ---------- Split (left) ----------
+    // Split
     let selectedKey=null, tilesTotal=16, jobId=null, expected=0, pollTimer=null, execArn=null;
 
     function buildTileOptions(){
@@ -314,7 +325,7 @@
       el.textContent=steps.join('\n');
     }
 
-    // ---------- Unite (right) ----------
+    // Unite
     const termTypes = new Set(['ExecutionSucceeded','ExecutionFailed','ExecutionAborted','ExecutionTimedOut']);
     let uPollTimer=null;
 
@@ -344,7 +355,7 @@
       try{
         const body={ outputBucket: OUTPUT_BUCKET, jobId: uId };
         const j = await postJSON(`${window.API_BASE}/unite`, body);
-        const jid = j.jobId || uId; // prefer canonical jobId from backend
+        const jid = j.jobId || uId;
         setText('uJobId', jid);
         setText('uFinalKey', j.expectedFinalKey || `final/unite-${jid}.jp2`);
         setText('uExecArn', j.executionArn || '—');
@@ -353,70 +364,83 @@
       }catch(e){ setText('uFinalKey', `Error: ${e.message}`); showError(`unite failed: ${e.message}`); }
     }
 
-    function startUnitePolling(jobId){ stopUnitePolling(); const el=$('uStepsLive'); if(el) el.textContent='—'; uPollTimer=setInterval(()=>refreshUniteStatus(jobId),1500); refreshUniteStatus(jobId); }
+    function startUnitePolling(jobId){ stopUnitePolling(); const el=$('uStepsLive'); if(el) el.textContent='—'; $('uLogBody').innerHTML=''; uPollTimer=setInterval(()=>refreshUniteStatus(jobId),1500); refreshUniteStatus(jobId); }
     function stopUnitePolling(){ if(uPollTimer){ clearInterval(uPollTimer); uPollTimer=null; } }
 
     async function refreshUniteStatus(jobId){
+      // Per your routes, prefer GET /status-detail/{jobId}
       let lastErr=null;
-      const tryUrls = [
+      const urls = [
+        `${window.API_BASE}/status-detail/${encodeURIComponent(jobId)}`,
         `${window.API_BASE}/status-history/${encodeURIComponent(jobId)}`,
-        `${window.API_BASE}/status-history/${encodeURIComponent('unite-'+jobId)}`,
         `${window.API_BASE}/status/${encodeURIComponent(jobId)}`,
       ];
-      for (const url of tryUrls){
+      for (const url of urls){
         try{
+          setText('uPollInfo', url);
           const out = await getJSON(url);
-          const events = Array.isArray(out?.events) ? out.events : (out?.history || []);
-          if (events.length){ renderUSteps(events); if(events.some(e=> termTypes.has(e.type))){ stopUnitePolling(); } }
-          else { renderUSteps([]); }
-          return;
-        }catch(e){ lastErr=e; }
-      }
-      const arn = $('uExecArn')?.textContent;
-      if(arn && arn !== '—'){
-        try{
-          const out = await getJSON(`${window.API_BASE}/status-detail/${encodeURIComponent(arn)}`);
-          const events = Array.isArray(out?.events) ? out.events : (out?.history || []);
-          if (events.length){ renderUSteps(events); if(events.some(e=> termTypes.has(e.type))){ stopUnitePolling(); } }
-          else { renderUSteps([]); }
+          const events = normalizeEvents(out);
+          renderUSteps(events);
+          updateMergeLog(events);
+          if(events.some(e=> termTypes.has(e.type))){ stopUnitePolling(); }
           return;
         }catch(e){ lastErr=e; }
       }
       const el=$('uStepsLive'); if(el) el.textContent = `Status error${lastErr?`: ${lastErr.message}`:''}`;
     }
 
+    function normalizeEvents(out){
+      const raw = Array.isArray(out?.events) ? out.events
+                : Array.isArray(out?.history) ? out.history
+                : Array.isArray(out?.Events) ? out.Events
+                : [];
+      return raw.map(ev=>{
+        const type = ev.type || ev.eventType || ev.name || 'Event';
+        const time = ev.time || ev.timestamp || ev.eventTimestamp || ev.startedAt || ev.startTime || '';
+        const detail = ev.detail || ev.message || ev.reason || ev.cause || ev.status || ev.state || ev.action || '';
+        const item = ev.item || ev.file || ev.tile || ev.key || ev.path || '';
+        return { type, time, detail, item };
+      });
+    }
+
     function renderUSteps(steps){
       const el=$('uStepsLive');
       if(!el)return;
       if(!steps.length){el.textContent='—';return;}
-      el.textContent=steps.map(e=>`[${e.time}] ${e.type}${e.detail?` — ${e.detail}`:''}`).join('\n');
+      el.textContent=steps.map(e=>`[${e.time||''}] ${e.type||'Event'}${e.detail?` — ${e.detail}`:''}${e.item?` (${e.item})`:''}`).join('\n');
     }
 
-    // ---------- Diagnostics ----------
+    function updateMergeLog(steps){
+      const body=$('uLogBody'); if(!body) return;
+      if(!Array.isArray(steps) || !steps.length){ body.innerHTML=''; return; }
+      const interesting = steps.filter(e => /tile|stitch|merge|file|write|output/i.test(`${e.type} ${e.detail} ${e.item}`));
+      body.innerHTML = (interesting.length? interesting: steps).map(e=>{
+        const time = e.time || '';
+        let action = e.detail || e.type || 'Event';
+        const item = e.item || '';
+        return `<tr>
+          <td style="padding:6px 10px; border-bottom:1px solid rgba(255,255,255,.12);" class="mono">${time}</td>
+          <td style="padding:6px 10px; border-bottom:1px solid rgba(255,255,255,.12);">${escapeHtml(action)}</td>
+          <td style="padding:6px 10px; border-bottom:1px solid rgba(255,255,255,.12);" class="mono">${escapeHtml(item)}</td>
+        </tr>`;
+      }).join('');
+    }
+    function escapeHtml(s){ return String(s||'').replace(/[&<>\"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+    // Diagnostics
     async function runDiagnostics(){
       const out=$('diagOut'); out.textContent='Running...\n';
-      const lines=[];
-      function log(s){ lines.push(s); out.textContent = lines.join('\n'); }
-      try{ log(`API_BASE: ${window.API_BASE}`); }catch{}
-      try{
-        const r1 = await getJSON(`${window.API_BASE}/list-input?bucket=${encodeURIComponent(INPUT_BUCKET)}`);
-        log(`list-input OK (${(r1.objects||[]).length} objects)`);
-      }catch(e){ log(`list-input ERROR: ${e.message}`); }
-      try{
-        const r2 = await getJSON(`${window.API_BASE}/list-output?bucket=${encodeURIComponent(OUTPUT_BUCKET)}`);
-        const folders=new Set(); (r2.objects||[]).forEach(o=>{ const m=String(o.key||'').match(/^tiles\/(.+?)\//); if(m) folders.add(m[1]); });
-        log(`list-output OK (${(r2.objects||[]).length} objects, ${(folders.size)} folders under tiles/)`);
-      }catch(e){ log(`list-output ERROR: ${e.message}`); }
-      const jid=$('uJobId')?.textContent; if(jid && jid!=='—'){
-        try{ await getJSON(`${window.API_BASE}/status-history/${encodeURIComponent(jid)}`); log('status-history by jobId OK'); }
-        catch(e){ log(`status-history by jobId ERROR: ${e.message}`); }
-      } else {
-        log('status-history skipped (no jobId selected yet)');
+      const lines=[]; const log=(s)=>{ lines.push(s); out.textContent = lines.join('\n'); };
+      log(`API_BASE: ${window.API_BASE}`);
+      try{ const r1=await getJSON(`${window.API_BASE}/list-input?bucket=${encodeURIComponent(INPUT_BUCKET)}`); log(`list-input OK (${(r1.objects||[]).length})`);}catch(e){ log(`list-input ERROR: ${e.message}`);}    
+      try{ const r2=await getJSON(`${window.API_BASE}/list-output?bucket=${encodeURIComponent(OUTPUT_BUCKET)}`); log(`list-output OK (${(r2.objects||[]).length})`);}catch(e){ log(`list-output ERROR: ${e.message}`);}    
+      const jid=$('uJobId').textContent; if(jid && jid!=='—'){
+        try{ await getJSON(`${window.API_BASE}/status-detail/${encodeURIComponent(jid)}`); log('status-detail by jobId OK'); }catch(e){ log(`status-detail ERROR: ${e.message}`);} 
       }
       log('Diagnostics done.');
     }
 
-    // ---------- Wire & init ----------
+    // Wire & init
     $('btnRefresh')?.addEventListener('click', listInput);
     $('btnSplit')?.addEventListener('click', doSplit);
     $('btnRefreshUnite')?.addEventListener('click', listUnite);
