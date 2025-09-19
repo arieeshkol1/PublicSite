@@ -30,56 +30,59 @@ iframe{ width:100%; height: calc(100vh - 56px); border:0; background:transparent
   color:var(--text); padding:.6rem .9rem; border-radius:.6rem; cursor:pointer;
 }
 .btn:hover{ border-color:var(--accent); }
-select,input[type="text"],input[type="file"],.picker{
+select,input[type="text"],.picker{
   width:100%; padding:.55rem .6rem; border-radius:.55rem; color:var(--text);
   border:1px solid var(--border); background:rgba(255,255,255,.03);
 }
-label{ font-size:.9rem; color:var(--muted); }
+label{ font-size:.9rem; color:var(--muted); display:block; margin-top:.4rem; margin-bottom:.3rem; }
 .card{ border:1px solid var(--border); background:rgba(10,16,36,.4); border-radius:1rem; padding:1rem; }
 .grid{ display:grid; gap:1rem; grid-template-columns: repeat(12, 1fr); }
 .col-6{ grid-column: span 6; } .col-4{ grid-column: span 4; } .col-3{ grid-column: span 3; } .col-12{ grid-column: span 12; }
 small.hint{ color:var(--muted); display:block; margin-top:.25rem; }
 hr{ border:none; border-top:1px solid var(--border); margin:1rem 0; }
-.footer-note{ color:var(--muted); font-size:.8rem; text-align:center; padding:1rem 0 2rem; }
 </style>
 </head>
 <body>
   <div style="padding:1rem 1.25rem;">
     <h2>Split / Merge</h2>
-    <p class="card">Keep only splitting and merging options. No conversion actions appear here.</p>
+    <p class="card">Selections are taken from the S3 buckets via API (no local file uploads).</p>
 
     <div class="grid">
       <section class="card col-6">
         <h3>Split File</h3>
         <div class="grid">
           <div class="col-12">
-            <label>Source bucket</label>
-            <select id="split-bucket">
-              <option value="input">input</option>
-              <option value="stage">stage</option>
-              <option value="output">output</option>
+            <label>Source (input bucket)</label>
+            <div class="picker" id="split-bucket">Resolved from backend</div>
+            <small class="hint">Files are loaded from the input bucket using /list-input</small>
+          </div>
+
+          <div class="col-12">
+            <label>Choose input file</label>
+            <select id="split-file" size="10" style="height: 14rem;"></select>
+          </div>
+
+          <div class="col-12">
+            <label>Tiles grid</label>
+            <select id="tiles-grid">
+              <option value="2x2">2×2</option>
+              <option value="3x3">3×3</option>
+              <option value="4x4">4×4</option>
+              <option value="5x5">5×5</option>
+              <option value="6x6">6×6</option>
             </select>
-            <small class="hint">Choose the bucket that contains the file to split</small>
+            <small class="hint">Fixed options only. No separate mode/parameter.</small>
+          </div>
+
+          <div class="col-12">
+            <label>Destination (output bucket)</label>
+            <div class="picker" id="split-out-bucket">Resolved from backend</div>
           </div>
           <div class="col-12">
-            <label>Folder / Path</label>
-            <input type="text" id="split-path" placeholder="e.g. documents/2025/sets"/>
+            <label>Destination folder (optional)</label>
+            <input type="text" id="split-out-folder" placeholder="e.g. tiles/jobs"/>
           </div>
-          <div class="col-12">
-            <label>File</label>
-            <input type="file" id="split-file" />
-          </div>
-          <div class="col-6">
-            <label>Split mode</label>
-            <select id="split-mode">
-              <option value="pages">By pages</option>
-              <option value="size">By size (MB)</option>
-            </select>
-          </div>
-          <div class="col-6">
-            <label>Parameter</label>
-            <input type="text" id="split-param" placeholder="e.g. 5 or 10MB"/>
-          </div>
+
           <div class="col-12">
             <button class="btn" onclick="onSplit()">Split</button>
           </div>
@@ -90,21 +93,28 @@ hr{ border:none; border-top:1px solid var(--border); margin:1rem 0; }
         <h3>Merge Files</h3>
         <div class="grid">
           <div class="col-12">
-            <label>Source bucket</label>
-            <select id="merge-bucket">
-              <option value="input">input</option>
-              <option value="stage">stage</option>
-              <option value="output">output</option>
-            </select>
+            <label>Source (input bucket)</label>
+            <div class="picker" id="merge-bucket">Resolved from backend</div>
           </div>
           <div class="col-12">
-            <label>Folder / Path</label>
-            <input type="text" id="merge-path" placeholder="e.g. docs/to-merge"/>
+            <label>Select input folders</label>
+            <select id="merge-folders" multiple size="10" style="height: 14rem;"></select>
+            <small class="hint">Choose one or more folders that contain tiles to merge</small>
+          </div>
+
+          <div class="col-12">
+            <label>Destination (output bucket)</label>
+            <div class="picker" id="merge-out-bucket">Resolved from backend</div>
           </div>
           <div class="col-12">
-            <label>Files</label>
-            <input type="file" id="merge-files" multiple />
+            <label>Destination folder</label>
+            <input type="text" id="merge-out-folder" placeholder="e.g. final/"/>
           </div>
+          <div class="col-12">
+            <label>Output filename</label>
+            <input type="text" id="merge-output-name" placeholder="e.g. unite-<jobId>.jp2"/>
+          </div>
+
           <div class="col-12">
             <button class="btn" onclick="onMerge()">Merge</button>
           </div>
@@ -114,8 +124,145 @@ hr{ border:none; border-top:1px solid var(--border); margin:1rem 0; }
   </div>
 
   <script>
-    function onSplit(){ alert('Split request prepared. Wire to backend API: /api/split'); }
-    function onMerge(){ alert('Merge request prepared. Wire to backend API: /api/merge'); }
+    // API base can be set by window.__API_BASE or via ?api=<url>
+    const urlParams = new URLSearchParams(location.search);
+    const API_BASE = window.__API_BASE || urlParams.get('api') || '';
+
+    function api(path) { return (API_BASE || '') + path; }
+
+    // Load input files from /list-input
+    async function loadInputFiles() {
+      try {
+        const res = await fetch(api('/list-input'));
+        const data = await res.json();
+        const files = Array.isArray(data.files) ? data.files : (Array.isArray(data) ? data : []);
+        const select = document.getElementById('split-file');
+        select.innerHTML = '';
+        files
+          .filter(k => typeof k === 'string')
+          .filter(k => !k.endsWith('/'))
+          .forEach(key => {
+            const opt = document.createElement('option');
+            opt.value = key;
+            opt.textContent = key;
+            select.appendChild(opt);
+          });
+      } catch (e) {
+        console.error('loadInputFiles failed', e);
+      }
+    }
+
+    // Derive folder prefixes from /list-input
+    async function loadInputFolders() {
+      try {
+        const res = await fetch(api('/list-input'));
+        const data = await res.json();
+        const keys = Array.isArray(data.files) ? data.files : (Array.isArray(data) ? data : []);
+        const prefixes = new Set();
+        keys.forEach(k => {
+          if (typeof k === 'string' && k.includes('/')) {
+            const parts = k.split('/');
+            // collect first and second-level prefixes to keep list compact
+            for (let i = 1; i <= Math.min(parts.length - 1, 3); i++) {
+              prefixes.add(parts.slice(0, i).join('/') + '/');
+            }
+          }
+        });
+        const list = Array.from(prefixes).sort();
+        const sel = document.getElementById('merge-folders');
+        sel.innerHTML = '';
+        list.forEach(pfx => {
+          const opt = document.createElement('option');
+          opt.value = pfx;
+          opt.textContent = pfx;
+          sel.appendChild(opt);
+        });
+      } catch (e) {
+        console.error('loadInputFolders failed', e);
+      }
+    }
+
+    // Simple placeholders for bucket names (optional enhancements later)
+    async function resolveBuckets() {
+      try {
+        document.getElementById('split-bucket').textContent = 'input bucket (via backend)';
+        document.getElementById('merge-bucket').textContent = 'input bucket (via backend)';
+        document.getElementById('split-out-bucket').textContent = 'output bucket (via backend)';
+        document.getElementById('merge-out-bucket').textContent = 'output bucket (via backend)';
+      } catch (e) {
+        console.error('resolveBuckets failed', e);
+      }
+    }
+
+    function tilesToTotal(grid) {
+      const [a,b] = grid.split('x').map(Number);
+      return a*b;
+    }
+
+    async function onSplit() {
+      const inputKey = document.getElementById('split-file').value;
+      const tilesGrid = document.getElementById('tiles-grid').value;
+      const outFolder = document.getElementById('split-out-folder').value.trim();
+
+      if (!inputKey) return alert('Please choose an input file from the input bucket');
+
+      const body = {
+        inputKey,
+        params: {
+          tilesGrid,
+          tilesTotal: tilesToTotal(tilesGrid),
+          formatOption: 'JPEG2000'
+        },
+        outputPrefix: outFolder || ''
+      };
+
+      try {
+        const res = await fetch(api('/split'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        });
+        const data = await res.json();
+        alert('Split started: ' + JSON.stringify(data));
+      } catch (e) {
+        console.error(e);
+        alert('Split failed to start');
+      }
+    }
+
+    async function onMerge() {
+      const sel = document.getElementById('merge-folders');
+      const folders = Array.from(sel.selectedOptions).map(o => o.value);
+      const outFolder = document.getElementById('merge-out-folder').value.trim();
+      const outName = document.getElementById('merge-output-name').value.trim();
+
+      if (folders.length === 0) return alert('Please select at least one input folder');
+      if (!outName) return alert('Please provide an output filename');
+
+      const body = {
+        inputFolders: folders,
+        outputPrefix: outFolder || '',
+        outputName: outName
+      };
+
+      try {
+        const res = await fetch(api('/unite'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        });
+        const data = await res.json();
+        alert('Merge started: ' + JSON.stringify(data));
+      } catch (e) {
+        console.error(e);
+        alert('Merge failed to start');
+      }
+    }
+
+    // init
+    resolveBuckets();
+    loadInputFiles();
+    loadInputFolders();
   </script>
 </body>
 </html>
