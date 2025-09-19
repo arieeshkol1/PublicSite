@@ -41,9 +41,8 @@
     .err { background:#7f1d1d; border:1px solid #fecaca; color:#fee2e2; padding:10px; border-radius:10px; margin-bottom:10px; display:none; white-space:pre-wrap; }
     .split-merge { display:grid; grid-template-columns:1fr 1fr; gap:20px; }
   </style>
-
-  <!-- Use the ControllerFn API base for all routes -->
   <script>
+    // ControllerFn API base
     window.API_BASE = "https://xui5toa569.execute-api.us-east-1.amazonaws.com";
   </script>
 </head>
@@ -175,7 +174,6 @@
       return j;
     }
     function showError(msg){ const b=$('errorBox'); if(b){ b.style.display='block'; b.textContent=msg; } console.error(msg); }
-    window.addEventListener('error', e => showError(`JS error: ${e.message}`));
 
     // show meta
     setText('apiBaseLbl', window.API_BASE);
@@ -278,7 +276,7 @@
     function renderFiles(objs){
       const out=$('filesLive'); if(!out) return;
       if(!objs || !objs.length){ out.textContent='—'; return; }
-      const rx=/(\\d+)\\.(?:jp2|tif|tiff|bin|hdr)$/i;
+      const rx=/(\d+)\.(?:jp2|tif|tiff|bin|hdr)$/i;
       const lines=objs.slice().sort((a,b)=>{
         const ak=String(a.key||''), bk=String(b.key||'');
         const am=ak.match(rx), bm=bk.match(rx);
@@ -286,7 +284,7 @@
         const bi=bm?parseInt(bm[1],10):Number.MAX_SAFE_INTEGER;
         return ai===bi? ak.localeCompare(bk) : ai-bi;
       }).map(o=>`${o.key}${o.size!=null?`  (${humanSize(o.size)})`:''}`);
-      out.textContent=lines.join('\\n');
+      out.textContent=lines.join('\n');
     }
 
     async function refreshHistory(jid){
@@ -301,7 +299,7 @@
     function renderSteps(steps){
       const el=$('stepsLive'); if(!el) return;
       if(!Array.isArray(steps) || !steps.length){ el.textContent='—'; return; }
-      el.textContent=steps.join('\\n');
+      el.textContent=steps.join('\n');
     }
 
     // ---------- Unite (right) ----------
@@ -315,7 +313,7 @@
         const j = await getJSON(`${window.API_BASE}/list-output?bucket=${encodeURIComponent(OUTPUT_BUCKET)}`);
         const folders=new Set();
         (j.objects||[]).forEach(o=>{
-          const m=String(o.key||'').match(/^tiles\\/(.+?)\\//);
+          const m=String(o.key||'').match(/^tiles\/(.+?)\//);
           if(m) folders.add(m[1]);
         });
         if(!folders.size){ tbody.innerHTML='<tr><td colspan=2>No tile folders</td></tr>'; return; }
@@ -357,7 +355,7 @@
       const el=$('uStepsLive');
       if(!el)return;
       if(!steps.length){el.textContent='—';return;}
-      el.textContent=steps.map(e=>`[${e.time}] ${e.type}${e.detail?` — ${e.detail}`:''}`).join('\\n');
+      el.textContent=steps.map(e=>`[${e.time}] ${e.type}${e.detail?` — ${e.detail}`:''}`).join('\n');
     }
 
     // ---------- Wire & init ----------
