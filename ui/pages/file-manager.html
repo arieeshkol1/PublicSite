@@ -38,8 +38,8 @@
 
   <section class="card">
     <div class="note">
-      Uses existing API routes:<br/>
-      <code>GET /list-output</code> (browse), <code>POST /copy-files</code>, <code>POST /delete-files</code>, <code>POST /download-file</code> (same HttpApi).
+      Using existing API routes:<br/>
+      <code>GET /list-output</code> (browse), <code>POST /copy-files</code>, <code>POST /delete-files</code>, <code>POST /download-file</code>.
     </div>
     <div style="display:flex;gap:8px;align-items:center;margin-top:8px">
       <button class="btn" id="btnPing">Test list-output</button>
@@ -91,11 +91,9 @@
 
 <script>
   // ===== CONFIG =====
-  // allow ?api= override for quick testing; otherwise set the fallback below.
-  const urlApiParam = new URLSearchParams(location.search).get('api');
-  const API_BASE = urlApiParam || "%%API_BASE%%"; // e.g., https://xui5toa569.execute-api.us-east-1.amazonaws.com
+  const API_BASE = "https://xui5toa569.execute-api.us-east-1.amazonaws.com";
   const OUTPUT_BUCKET = "jp2-output-991105135552-us-east-1"; // required by /list-output
-  document.getElementById('apiShow').textContent = API_BASE || 'NOT SET';
+  document.getElementById('apiShow').textContent = API_BASE;
 
   // ===== STATE =====
   let prefix = "";
@@ -138,6 +136,7 @@
     rows.innerHTML = "";
     objectsCache = objects || [];
     crumbs.textContent = prefix || "";
+
     // Left tree
     tree.innerHTML = (prefix ? `<div><a href="#" onclick="goPrefix('')">/</a> ${prefix}</div>` : `<div>/</div>`);
     (prefixes || []).forEach(next => {
@@ -146,6 +145,7 @@
       const clean = label.endsWith('/') ? label.slice(0, -1) : label;
       tree.innerHTML += `<div><a href="#" onclick="goPrefix('${name}')">${clean}/</a></div>`;
     });
+
     // Table
     objectsCache.forEach(o => {
       const key = o.Key || o.key || o.name || "";
@@ -161,6 +161,7 @@
         <td>${sc}</td>
       </tr>`;
     });
+
     nextToken = token || null;
     pageInfo.textContent = `Prefix: /${prefix || ''} | Objects: ${objectsCache.length}`;
     btnPrev.disabled = prevStack.length === 0;
@@ -178,22 +179,17 @@
 
   async function listOutput({ forward=false } = {}) {
     try {
-      if (!API_BASE || !API_BASE.startsWith("http")) {
-        throw new Error('API_BASE is not set. Set ?api=https://<api-id>.execute-api.<region>.amazonaws.com or replace "%%API_BASE%%".');
-      }
       const url = new URL(API_BASE + "/list-output");
-      url.searchParams.set("bucket", OUTPUT_BUCKET);       // <-- critical: your Lambda requires this
+      url.searchParams.set("bucket", OUTPUT_BUCKET); // Lambda requires this
       url.searchParams.set("prefix", prefix);
-      // Support both param names for pagination:
+      // Support both token names
       if (forward && nextToken) {
         url.searchParams.set("continuationToken", nextToken);
         url.searchParams.set("token", nextToken);
       }
-      console.log("GET", url.toString());
       const res = await fetch(url.toString(), { method: "GET" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
-      console.log("list-output resp:", data);
 
       if (forward && nextToken) prevStack.push(nextToken);
 
