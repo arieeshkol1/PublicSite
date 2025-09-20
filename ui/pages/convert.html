@@ -1,58 +1,43 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <title>TSG JP2 Pipeline — Convert</title>
   <style>
-    :root {
-      --bg:#000000;
-      --card:#111111;
-      --muted:#d1d5db;
-      --text:#ffffff;
-      --accent:#3b82f6;
-    }
-    html,body { height:100%; background:var(--bg); color:var(--text);
-      font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,"Helvetica Neue",Arial; margin:0; }
-    .wrap { max-width:1100px; margin:24px auto; padding:0 16px; }
-    .card { background:var(--card); border-radius:16px; padding:20px;
-      box-shadow:0 6px 24px rgba(255,255,255,.08); border:1px solid rgba(255,255,255,.1); color:var(--text); }
+    :root { --bg:#000000; --card:#111111; --muted:#d1d5db; --text:#ffffff; --accent:#3b82f6; }
+    html,body { height:100%; background:var(--bg); color:var(--text); font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,"Helvetica Neue",Arial; margin:0; }
+    .wrap { max-width:1000px; margin:24px auto; padding:0 16px; }
+    .card { background:var(--card); border-radius:16px; padding:20px; box-shadow:0 6px 24px rgba(255,255,255,.08); border:1px solid rgba(255,255,255,.1); color:var(--text); margin-bottom:20px; }
     header { margin-bottom:8px; }
     h1 { font-size:22px; margin:0; }
     h2 { font-size:16px; margin:18px 0 10px; color:var(--muted); font-weight:600; }
-    .row { display:grid; grid-template-columns:1fr auto; gap:12px; align-items:center; }
-    .muted { color:var(--muted); }
-    .mono { font-family:ui-monospace,Menlo,Consolas,monospace; }
     .btn { border:1px solid rgba(255,255,255,.2); background:#1f2937; color:#fff; padding:8px 12px; border-radius:10px; cursor:pointer; }
     .btn.primary { background:var(--accent); border-color:var(--accent); }
     .btn:disabled { opacity:.6; cursor:not-allowed; }
     table { width:100%; border-collapse:collapse; }
     th,td { border-bottom:1px solid rgba(255,255,255,.2); padding:8px 10px; text-align:left; }
     th { color:var(--muted); font-weight:600; }
-    .well { background:#1f2937; border:1px dashed rgba(255,255,255,.3); border-radius:10px; padding:10px; color:#fff; }
-    .log { white-space:pre-wrap; }
-    select, input[type="text"] { width:100%; padding:8px 10px; border-radius:10px; border:1px solid rgba(255,255,255,.2); background:#0f172a; color:#fff; }
+    .mono { font-family:ui-monospace,Menlo,Consolas,monospace; }
+    .err { background:#7f1d1d; border:1px solid #fecaca; color:#fee2e2; padding:10px; border-radius:10px; margin-bottom:10px; display:none; white-space:pre-wrap; }
+    .log { background:#1f2937; border:1px dashed rgba(255,255,255,.3); border-radius:10px; padding:10px; color:#fff; white-space:pre-wrap; min-height:60px; }
     .row-2 { display:grid; grid-template-columns:1fr 200px; gap:8px; align-items:end; }
   </style>
   <script>
-    // Ensure API base is set to your execute-api domain (no trailing slash).
-    window.API_BASE = window.API_BASE || "https://xui5toa569.execute-api.us-east-1.amazonaws.com";
+    window.API_BASE = "https://xui5toa569.execute-api.us-east-1.amazonaws.com";
+    const INPUT_BUCKET = 'jp2-input-991105135552-us-east-1';
   </script>
 </head>
 <body>
   <div class="wrap">
-    <header>
-      <h1>TSG JP2 Pipeline — Convert</h1>
-      <div class="muted">API: <span class="mono" id="apiBaseLbl"></span></div>
-    </header>
+    <header><h1>TSG JP2 Pipeline — Convert</h1></header>
+    <div id="errorBox" class="err"></div>
 
-    <!-- STEP 1: pick file(s) from input bucket -->
     <div class="card">
-      <div class="row">
+      <div style="display:flex; justify-content:space-between; align-items:center;">
         <h2>1) Choose file(s) from Input Bucket</h2>
         <button id="btnRefresh" class="btn">Refresh</button>
       </div>
-
       <div class="row-2" style="margin-top:6px;">
         <div>
           <div class="muted">Prefix filter (optional)</div>
@@ -63,143 +48,85 @@
           <input id="inBucket" type="text" value="jp2-input-991105135552-us-east-1" />
         </div>
       </div>
-
       <div class="well" style="margin-top:10px;">
         <table aria-label="Input objects">
           <thead>
-            <tr>
-              <th style="width:32px;"><input type="checkbox" id="checkAll"></th>
-              <th>Object Key</th>
-              <th style="width:140px;">Size</th>
-            </tr>
+            <tr><th style="width:32px;"><input type="checkbox" id="checkAll"></th><th>Object Key</th><th style="width:160px;">Size</th></tr>
           </thead>
-          <tbody id="inputTbody">
-            <tr><td colspan="3" class="muted">Click Refresh</td></tr>
-          </tbody>
+          <tbody id="inputTbody"><tr><td colspan="3" class="muted">Click Refresh</td></tr></tbody>
         </table>
       </div>
     </div>
 
-    <!-- STEP 2: target format -->
     <div class="card">
-      <h2>2) Target Format</h2>
-      <div style="max-width:360px;">
-        <select id="format">
-          <option value="JPEG2">JPEG2</option>
-          <option value="TIFF">TIFF</option>
-          <option value="RAW">RAW</option>
-          <option value="XML">XML</option>
-          <option value="TXT">TXT</option>
-          <option value="JSON">JSON</option>
-        </select>
-      </div>
+      <h2>2) Select Format</h2>
+      <select id="format" class="btn">
+        <option value="JPEG2000">JPEG2000</option>
+        <option value="TIFF">TIFF</option>
+        <option value="RAW">RAW</option>
+        <option value="XML">XML</option>
+        <option value="TXT">TXT</option>
+        <option value="JSON">JSON</option>
+      </select>
     </div>
 
-    <!-- STEP 3: submit + log -->
     <div class="card">
-      <div class="row">
-        <h2>3) Submit</h2>
-        <button id="btnSubmit" class="btn primary" disabled>Convert</button>
-      </div>
-      <div class="muted">Selected files: <span id="selectedCount" class="mono">0</span></div>
-      <div class="well" style="margin-top:10px;">
-        <div id="log" class="mono log">—</div>
-      </div>
+      <h2>3) Run Convert</h2>
+      <button id="btnConvert" class="btn primary" disabled>Convert</button>
     </div>
 
-    <div class="muted" style="text-align:center; margin:20px 0;">TSG © Secure JP2 Pipeline</div>
+    <div class="card">
+      <h2>Log</h2>
+      <div id="logBox" class="log">—</div>
+    </div>
   </div>
 
   <script>
-    const $ = id => document.getElementById(id);
-    const setText=(id,v)=>{const n=$(id);if(n)n.textContent=v??''};
-    function humanSize(n){ if(n==null) return '—'; const kb=1024, mb=kb*1024, gb=mb*1024;
-      if(n>=gb) return (n/gb).toFixed(2)+' GB'; if(n>=mb) return (n/mb).toFixed(2)+' MB'; if(n>=kb) return (n/kb).toFixed(2)+' KB'; return n+' B'; }
-    async function getJSON(url){
-      const r=await fetch(url,{credentials:'omit'});
-      const t=await r.text(); let j; try{ j=JSON.parse(t);}catch(err){ j={ _raw:t }; }
-      if(!r.ok) throw new Error(j.error||j._raw||`HTTP ${r.status}`);
-      return j;
-    }
-    async function postJSON(url, body){
-      const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),credentials:'omit'});
-      const t=await r.text(); let j; try{ j=JSON.parse(t);}catch(err){ j={ _raw:t }; }
-      if(!r.ok) throw new Error(j.error||j._raw||`HTTP ${r.status}`);
-      return j;
-    }
-    function log(msg){ const el=$('log'); if(el){ el.textContent = String(msg); } console.log(msg); }
+    const $=id=>document.getElementById(id);
+    function humanSize(n){if(n==null) return '—';const kb=1024,mb=kb*1024,gb=mb*1024;if(n>=gb)return(n/gb).toFixed(2)+' GB';if(n>=mb)return(n/mb).toFixed(2)+' MB';if(n>=kb)return(n/kb).toFixed(2)+' KB';return n+' B';}
+    async function getJSON(url){const r=await fetch(url);const t=await r.text();let j;try{j=JSON.parse(t);}catch{j={_raw:t};}if(!r.ok)throw new Error(j.error||j._raw||`HTTP ${r.status}`);return j;}
+    async function postJSON(url,body){const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const t=await r.text();let j;try{j=JSON.parse(t);}catch{j={_raw:t};}if(!r.ok)throw new Error(j.error||j._raw||`HTTP ${r.status}`);return j;}
 
-    setText('apiBaseLbl', window.API_BASE);
-
-    // Selections
-    let selectedKeys = [];
+    let selectedKeys=[];
 
     function renderList(objs){
       const tbody=$('inputTbody');
-      if(!tbody) return;
-      if(!objs || !objs.length){
-        tbody.innerHTML = '<tr><td colspan="3" class="muted">No objects</td></tr>';
-        return;
-      }
-      tbody.innerHTML = objs.map(o => `
-        <tr>
-          <td><input type="checkbox" class="pick" data-key="${o.key}"></td>
-          <td class="mono">${o.key}</td>
-          <td>${humanSize(o.size)}</td>
-        </tr>`).join('');
-
-      // events
-      tbody.addEventListener('change', onPickChange, { once:true, passive:true });
-      $('checkAll').onchange = e => {
-        document.querySelectorAll('.pick').forEach(cb => cb.checked = e.target.checked);
-        updateSelection();
-      };
-      updateSelection();
+      if(!tbody)return;
+      if(!objs||!objs.length){tbody.innerHTML='<tr><td colspan="3" class="muted">No objects</td></tr>';return;}
+      // Normalize for both {objects:[...]} and {items:[...]}
+      const items = (objs||[]).map(o=>({key:o.key||o.Key,size:o.size||o.Size}));
+      tbody.innerHTML=items.map(o=>`<tr><td><input type="checkbox" class="pick" data-key="${o.key}"></td><td class="mono">${o.key}</td><td>${humanSize(o.size)}</td></tr>`).join('');
+      tbody.querySelectorAll('.pick').forEach(cb=>cb.addEventListener('change',updateSelection));
+      $('checkAll').onchange=e=>{document.querySelectorAll('.pick').forEach(cb=>cb.checked=e.target.checked);updateSelection();};
     }
 
     function updateSelection(){
-      selectedKeys = Array.from(document.querySelectorAll('.pick:checked')).map(cb => cb.dataset.key);
-      setText('selectedCount', selectedKeys.length);
-      $('btnSubmit').disabled = selectedKeys.length === 0;
-    }
-
-    function onPickChange(){
-      document.querySelectorAll('.pick').forEach(cb => cb.addEventListener('change', updateSelection));
-      updateSelection();
+      selectedKeys=Array.from(document.querySelectorAll('.pick:checked')).map(cb=>cb.dataset.key);
+      $('btnConvert').disabled=selectedKeys.length===0;
     }
 
     async function listInput(){
-      const bucket = $('inBucket').value.trim();
-      const prefix = $('prefix').value.trim();
-      const url = `${window.API_BASE}/list-input?bucket=${encodeURIComponent(bucket)}${prefix?`&prefix=${encodeURIComponent(prefix)}`:''}`;
-      const tbody=$('inputTbody'); if(tbody) tbody.innerHTML='<tr><td colspan="3" class="muted">Loading…</td></tr>';
+      const bucket=$('inBucket').value.trim();
+      const prefix=$('prefix').value.trim();
+      const url=`${window.API_BASE}/list-input?bucket=${encodeURIComponent(bucket)}${prefix?`&prefix=${encodeURIComponent(prefix)}`:''}`;
+      const tbody=$('inputTbody');tbody.innerHTML='<tr><td colspan=3>Loading…</td></tr>';
       try{
-        const j = await getJSON(url);
-        // split/merge returns {objects:[{key,size},...]}
-        const items = Array.isArray(j.objects) ? j.objects : [];
+        const j=await getJSON(url);
+        const items=j.objects||j.items||[];
         renderList(items);
-      }catch(e){
-        if(tbody) tbody.innerHTML = `<tr><td colspan="3">Error: ${e.message}</td></tr>`;
-        log(`list-input failed: ${e.message}`);
-      }
+      }catch(e){tbody.innerHTML=`<tr><td colspan=3>Error: ${e.message}</td></tr>`;$('logBox').textContent=`list-input failed: ${e.message}`;}
     }
 
-    async function submitConvert(){
-      if(!selectedKeys.length){ log('Select at least one file.'); return; }
-      const payload = { keys: selectedKeys, target_format: $('format').value };
-      log('Submitting conversion…');
+    async function doConvert(){
+      const fmt=$('format').value;
       try{
-        const j = await postJSON(`${window.API_BASE}/convert`, payload);
-        log(`Job ${j.job_id || '—'} submitted.`);
-      }catch(e){
-        log(`Submit failed: ${e.message}`);
-      }
+        const j=await postJSON(`${window.API_BASE}/convert`,{keys:selectedKeys,target_format:fmt});
+        $('logBox').textContent=`Job ${j.job_id||j.jobId||'—'} submitted.`;
+      }catch(e){$('logBox').textContent=`Convert error: ${e.message}`;}
     }
 
-    // Wire & init
-    $('btnRefresh')?.addEventListener('click', listInput);
-    $('btnSubmit')?.addEventListener('click', submitConvert);
-    // optional: auto-list on load if bucket is set
+    $('btnRefresh').addEventListener('click',listInput);
+    $('btnConvert').addEventListener('click',doConvert);
     listInput();
   </script>
 </body>
