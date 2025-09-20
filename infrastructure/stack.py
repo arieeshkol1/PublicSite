@@ -67,6 +67,7 @@ class ServerlessJp2Stack(Stack):
                 # STATE_MACHINE_ARN / _UNITE set after SMs are created
             },
         )
+        # Allow listing/reading output where needed by controller
         controller_fn.add_to_role_policy(
             iam.PolicyStatement(actions=["s3:ListBucket"], resources=[output_bucket.bucket_arn])
         )
@@ -85,6 +86,22 @@ class ServerlessJp2Stack(Stack):
         list_input_fn.add_to_role_policy(
             iam.PolicyStatement(actions=["s3:ListBucket"], resources=[input_bucket.bucket_arn])
         )
+        input_bucket.grant_read(list_input_fn)
+
+        # ---------------- List Output Lambda (NEW) ----------------
+        list_output_fn = _lambda.Function(
+            self, "ListOutputFn",
+            runtime=_lambda.Runtime.PYTHON_3_11,
+            handler="lambda_list_output.handler",  # implement same pattern as lambda_list_input
+            code=_lambda.Code.from_asset(lambda_code_dir),
+            timeout=Duration.seconds(15),
+            memory_size=256,
+            environment={"OUTPUT_BUCKET": output_bucket.bucket_name},
+        )
+        list_output_fn.add_to_role_policy(
+            iam.PolicyStatement(actions=["s3:ListBucket"], resources=[output_bucket.bucket_arn])
+        )
+        output_bucket.grant_read(list_output_fn)
 
         # ---------------- ECS Fargate for Split ----------------
         # VPC with public subnets (no NAT)
@@ -99,7 +116,6 @@ class ServerlessJp2Stack(Stack):
         cluster = ecs.Cluster(self, "Cluster", vpc=vpc)
 
         # Use prebuilt image from ECR (no local Docker build)
-        # Update ARN to your repo; pass tag via -c tilerTag=... (defaults to "latest")
         repo = ecr.Repository.from_repository_arn(
             self, "TilerRepo",
             "arn:aws:ecr:us-east-1:991105135552:repository/jp2-split"
@@ -249,23 +265,25 @@ class ServerlessJp2Stack(Stack):
         http_api = apigw.HttpApi(
             self, "HttpApi",
             cors_preflight=apigw.CorsPreflightOptions(
-                allow_headers=["Content-Type"],
+                allow_headers=["Content-Type"],  # add "x-api-key" if you use API keys
                 allow_methods=[apigw.CorsHttpMethod.GET, apigw.CorsHttpMethod.POST, apigw.CorsHttpMethod.OPTIONS],
-                allow_origins=["*"],
+                allow_origins=["*"],             # lock this down to your S3 UI origin if desired
                 max_age=Duration.days(10),
             ),
         )
-        controller_integ = apigw_int.HttpLambdaIntegration("ControllerIntegration", handler=controller_fn)
-        list_input_integ = apigw_int.HttpLambdaIntegration("ListInputIntegration", handler=list_input_fn)
+        controller_integ   = apigw_int.HttpLambdaIntegration("ControllerIntegration", handler=controller_fn)
+        list_input_integ   = apigw_int.HttpLambdaIntegration("ListInputIntegration", handler=list_input_fn)
+        list_output_integ  = apigw_int.HttpLambdaIntegration("ListOutputIntegration", handler=list_output_fn)
 
-        http_api.add_routes(path="/split", methods=[apigw.HttpMethod.POST], integration=controller_integ)
-        http_api.add_routes(path="/unite", methods=[apigw.HttpMethod.POST], integration=controller_integ)
-        http_api.add_routes(path="/status/{jobId}", methods=[apigw.HttpMethod.GET], integration=controller_integ)
-        http_api.add_routes(path="/status-progress", methods=[apigw.HttpMethod.GET], integration=controller_integ)
+        http_api.add_routes(path="/split",               methods=[apigw.HttpMethod.POST], integration=controller_integ)
+        http_api.add_routes(path="/unite",               methods=[apigw.HttpMethod.POST], integration=controller_integ)
+        http_api.add_routes(path="/status/{jobId}",      methods=[apigw.HttpMethod.GET],  integration=controller_integ)
+        http_api.add_routes(path="/status-progress",     methods=[apigw.HttpMethod.GET],  integration=controller_integ)
         http_api.add_routes(path="/status-detail/{jobId}", methods=[apigw.HttpMethod.GET], integration=controller_integ)
         http_api.add_routes(path="/status-history/{jobId}", methods=[apigw.HttpMethod.GET], integration=controller_integ)
-        http_api.add_routes(path="/list-output", methods=[apigw.HttpMethod.GET], integration=controller_integ)
-        http_api.add_routes(path="/list-input", methods=[apigw.HttpMethod.GET], integration=list_input_integ)
+        http_api.add_routes(path="/list-input",          methods=[apigw.HttpMethod.GET],  integration=list_input_integ)
+        # IMPORTANT: route list-output to the dedicated Lambda
+        http_api.add_routes(path="/list-output",         methods=[apigw.HttpMethod.GET],  integration=list_output_integ)
 
         # ---------------- Outputs ----------------
         CfnOutput(self, "UiBucketName", value="jp2-ui-991105135552-us-east-1")
@@ -274,4 +292,3 @@ class ServerlessJp2Stack(Stack):
         CfnOutput(self, "ApiEndpoint", value=http_api.api_endpoint)
         CfnOutput(self, "SplitStateMachineArn", value=split_sm.state_machine_arn)
         CfnOutput(self, "UniteStateMachineArn", value=unite_sm.state_machine_arn)
-
