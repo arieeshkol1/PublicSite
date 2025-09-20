@@ -33,6 +33,8 @@
     .hidden{ display:none !important; }
     .ok{ color:#8ef0a7; }
     .err{ color:#ff9090; }
+    details.diag { margin-top:.75rem; }
+    details.diag pre { white-space:pre-wrap; background:rgba(255,255,255,.03); border:1px solid var(--border); border-radius:.5rem; padding:.5rem; }
   </style>
 </head>
 <body>
@@ -61,176 +63,210 @@
         <div class="muted" style="margin-top:.5rem">Choosing <span id="fromBadge" class="badge">Input</span> will auto-target <span id="toBadge" class="badge">Output</span> (and vice‑versa).</div>
       </div>
 
-      <!-- STEP 2: Choose File or Folder mode -->
-      <div class="step" id="step2">
-        <h3>Step 2 — What to copy</h3>
-        <div class="row">
-          <label class="row" style="gap:.4rem">
-            <input type="radio" name="mode" value="folder" checked> Folder
-          </label>
-          <label class="row" style="gap:.4rem">
-            <input type="radio" name="mode" value="file"> File
-          </label>
-          <span class="muted">We'll list only the selected type from the source bucket.</span>
-        </div>
-      </div>
-
-      <!-- STEP 3: Browse and select one item from From-bucket -->
+      <!-- STEP 3: Explorer -->
       <div class="step" id="step3">
-        <h3>Step 3 — Pick a <span id="modeLabel">folder</span> from <span id="fromLabel">Input</span></h3>
+        <h3>Step 2 — Browse <span id="fromLabel">Input</span> like Explorer</h3>
         <div class="row" style="margin:.25rem 0 .5rem">
-          <input id="search" type="text" placeholder="Search by prefix or name..."/>
+          <input id="search" type="text" placeholder="Path prefix (e.g., tiles/) — empty = root"/>
+          <button class="btn" id="upBtn" title="Up one level">Up ▴</button>
           <button class="btn" id="refreshBtn">Refresh</button>
         </div>
-        <div id="list" class="list" role="listbox" aria-label="Objects list"></div>
-        <div class="muted" id="listHint">Showing latest objects from API.</div>
+        <div class="row" style="align-items:flex-start">
+          <div class="col">
+            <label>Folders</label>
+            <div id="listFolders" class="list" role="listbox" aria-label="Folders list"></div>
+          </div>
+          <div class="col">
+            <label>Files</label>
+            <div id="listFiles" class="list" role="listbox" aria-label="Files list"></div>
+          </div>
+        </div>
+        <div class="muted" style="margin-top:.4rem">Endpoints → Folders: <code id="epFolders"></code> | Files: <code id="epFiles"></code></div>
+        <div class="muted" id="listHint">The UI calls <code>/list-(input|output)?type=folder|file&prefix=...</code>. Double‑click a folder to navigate; click a file to select it for copy.</div>
       </div>
 
       <!-- STEP 4: Copy -->
       <div class="step" id="step4">
-        <h3>Step 4 — Execute</h3>
+        <h3>Step 3 — Execute</h3>
         <div class="row">
           <button class="btn" id="copyBtn">Copy selected</button>
           <div class="right" id="status"></div>
         </div>
         <div class="muted">POST to <code>/copy</code> with payload: { fromBucket, toBucket, mode, key }</div>
       </div>
+
+      <details class="diag">
+        <summary>Diagnostics / Self‑tests</summary>
+        <pre id="diag"></pre>
+      </details>
     </div>
   </div>
 
   <script>
-    // Actual AWS API Gateway invoke URLs
-    const API_BASE       = "https://xui5toa569.execute-api.us-east-1.amazonaws.com";
-    const LIST_INPUT_URL = API_BASE + "/list-input";
-    const LIST_OUTPUT_URL= API_BASE + "/list-output";
-    const COPY_URL       = API_BASE + "/copy"; // adjust if your copy route differs
+  'use strict';
+  // ===== Config =====
+  const API_BASE        = "https://xui5toa569.execute-api.us-east-1.amazonaws.com";
+  const LIST_INPUT_URL  = API_BASE + "/list-input";
+  const LIST_OUTPUT_URL = API_BASE + "/list-output";
+  const COPY_URL        = API_BASE + "/copy";
 
-    const state = {
-      fromBucket: 'input',
-      toBucket: 'output',
-      mode: 'folder',
-      allItems: [],
-      filtered: [],
-      selectedKey: null,
-    };
+  // ===== State =====
+  const state = {
+    fromBucket: 'input',
+    toBucket: 'output',
+    selectedKey: null,
+    selectedType: null, // 'file' | 'folder'
+    prefix: '',
+    allFolders: [],
+    allFiles: []
+  };
 
-    const el = (id)=>document.getElementById(id);
-    const fromSel = el('fromBucket');
-    const toTxt   = el('toBucket');
-    const fromBadge = el('fromBadge');
-    const toBadge = el('toBadge');
-    const modeLabel = el('modeLabel');
-    const fromLabel = el('fromLabel');
-    const listBox = el('list');
-    const search = el('search');
-    const refreshBtn = el('refreshBtn');
-    const status = el('status');
+  // ===== Elements =====
+  const el = (id)=>document.getElementById(id);
+  const fromSel   = el('fromBucket');
+  const toTxt     = el('toBucket');
+  const fromBadge = el('fromBadge');
+  const toBadge   = el('toBadge');
+  const fromLabel = el('fromLabel');
+  const listFolders = el('listFolders');
+  const listFiles   = el('listFiles');
+  const search      = el('search');
+  const refreshBtn  = el('refreshBtn');
+  const status      = el('status');
+  const diagBox     = el('diag');
 
-    function computeTo(from){ return from === 'input' ? 'output' : 'input'; }
-    function setDirection(from){
-      state.fromBucket = from;
-      state.toBucket = computeTo(from);
-      toTxt.value = cap(state.toBucket);
-      fromBadge.textContent = cap(state.fromBucket);
-      toBadge.textContent = cap(state.toBucket);
-      fromLabel.textContent = cap(state.fromBucket);
-      fetchAndRender();
-    }
-    function cap(s){ return s.charAt(0).toUpperCase()+s.slice(1); }
+  // ===== Helpers =====
+  function computeTo(from){ return from === 'input' ? 'output' : 'input'; }
+  function cap(s){ return s.charAt(0).toUpperCase()+s.slice(1); }
+  function human(n){ const u=['B','KB','MB','GB','TB']; let i=0,x=Number(n||0); while(x>=1024&&i<u.length-1){x/=1024;i++;} return x.toFixed(x<10&&i>0?1:0)+' '+u[i]; }
 
-    function currentListEndpoint(){
-      return state.fromBucket === 'input' ? LIST_INPUT_URL : LIST_OUTPUT_URL;
-    }
+  function setDirection(from){
+    state.fromBucket = from;
+    state.toBucket   = computeTo(from);
+    toTxt.value      = cap(state.toBucket);
+    if (fromBadge) fromBadge.textContent = cap(state.fromBucket);
+    if (toBadge)   toBadge.textContent   = cap(state.toBucket);
+    if (fromLabel) fromLabel.textContent = cap(state.fromBucket);
+    state.prefix = '';
+    state.selectedKey = null; state.selectedType = null;
+    if (search) search.value = '';
+    fetchAndRender();
+  }
 
-    async function fetchList(){
-      const url = currentListEndpoint();
-      const res = await fetch(url);
-      if(!res.ok) throw new Error('HTTP '+res.status);
-      const data = await res.json();
-      return Array.isArray(data.items) ? data.items : [];
-    }
+  function currentListEndpoint(type){
+    const base = state.fromBucket === 'input' ? LIST_INPUT_URL : LIST_OUTPUT_URL;
+    const params = new URLSearchParams();
+    params.set('bucket', state.fromBucket === 'input' ? 'jp2-input-991105135552-us-east-1' : 'jp2-output-991105135552-us-east-1');
+    params.set('type', type); // 'folder' | 'file'
+    if(state.prefix) params.set('prefix', state.prefix);
+    return base + '?' + params.toString();
+  }
 
-    function renderList(){
-      listBox.innerHTML = '';
-      const frag = document.createDocumentFragment();
-      state.filtered.forEach((it)=>{
-        const div = document.createElement('div');
-        div.className = 'item'+(state.selectedKey===it.key?' selected':'');
-        div.tabIndex = 0;
-        div.role = 'option';
-        div.setAttribute('aria-selected', state.selectedKey===it.key);
-        div.addEventListener('click', ()=> selectItem(it.key));
-        div.addEventListener('keydown', (e)=>{ if(e.key==='Enter' || e.key===' '){ e.preventDefault(); selectItem(it.key); }});
-        const badge = document.createElement('span');
-        badge.className = 'badge';
-        badge.textContent = it.type==='folder' ? 'Folder' : 'File';
-        const name = document.createElement('div');
-        name.textContent = it.key;
-        name.style.flex = '1';
-        const meta = document.createElement('div');
-        meta.className = 'right';
-        meta.textContent = it.size ? human(it.size) : '';
-        div.append(badge, name, meta);
-        frag.appendChild(div);
-      });
-      listBox.appendChild(frag);
-    }
+  function parseItems(raw, type){
+    const pickKey = (o)=> o.key || o.Key || o.prefix || o.Prefix;
+    const asItems = (arr,t)=> (arr||[]).map(o=>({ key: pickKey(o), size: o.size||o.Size||0, type: o.type||t }));
+    let items = [];
+    if (Array.isArray(raw)) items = asItems(raw, type);
+    else if (raw && Array.isArray(raw.items)) items = asItems(raw.items, type);
+    else if (type==='file'   && raw && Array.isArray(raw.Contents))       items = asItems(raw.Contents,'file');
+    else if (type==='folder' && raw && Array.isArray(raw.CommonPrefixes)) items = asItems(raw.CommonPrefixes,'folder');
 
-    function selectItem(key){ state.selectedKey = key; renderList(); }
-
-    function human(n){
-      const u=['B','KB','MB','GB','TB'];
-      let i=0, x=Number(n||0);
-      while(x>=1024 && i<u.length-1){ x/=1024; i++; }
-      return x.toFixed(x<10&&i>0?1:0)+' '+u[i];
-    }
-
-    function applyFilter(){
-      const q = (search.value||'').toLowerCase();
-      if(!q) state.filtered = state.allItems.slice(0,300);
-      else state.filtered = state.allItems.filter(it=> it.key.toLowerCase().includes(q)).slice(0,300);
-      renderList();
-    }
-
-    async function fetchAndRender(){
-      status.textContent='';
-      document.body.style.cursor='progress';
-      try{
-        modeLabel.textContent = state.mode;
-        fromLabel.textContent = cap(state.fromBucket);
-        state.allItems = await fetchList();
-        applyFilter();
-      } catch(err){
-        status.innerHTML = '<span class="err">Failed to list: '+err.message+'</span>';
-      } finally{ document.body.style.cursor='auto'; }
-    }
-
-    async function doCopy(){
-      if(!state.selectedKey){ status.innerHTML = '<span class="err">Select an item first.</span>'; return; }
-      const payload = {
-        fromBucket: state.fromBucket,
-        toBucket: state.toBucket,
-        mode: state.mode,
-        key: state.selectedKey
-      };
-      status.textContent='Sending copy request…';
-      try{
-        const res = await fetch(COPY_URL, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
-        if(!res.ok) throw new Error('HTTP '+res.status);
-        const data = await res.json().catch(()=>({}));
-        status.innerHTML = '<span class="ok">Copy initiated.</span> ' + (data.message||'');
-      }catch(err){
-        status.innerHTML = '<span class="err">Copy failed:</span> '+ err.message;
+    if (type==='folder' && items.length===0){
+      const src = raw && (raw.Contents || raw.items || (Array.isArray(raw)? raw : [])) || [];
+      const arr = Array.isArray(src) ? src : [];
+      const seen = new Set(); const base = state.prefix || '';
+      for (const o of arr){
+        const k = pickKey(o)||''; if(!k.startsWith(base)) continue; const rest=k.slice(base.length);
+        const slash=rest.indexOf('/'); if(slash>0){ const child=rest.slice(0,slash+1); const full=base+child; if(!seen.has(full)){ seen.add(full); items.push({key:full,type:'folder'}); } }
       }
     }
+    return items.filter(it => !!it.key);
+  }
 
-    fromSel.addEventListener('change', e=> setDirection(e.target.value));
-    document.querySelectorAll('input[name="mode"]').forEach(r=> r.addEventListener('change', (e)=>{ state.mode = e.target.value; fetchAndRender(); }));
-    search.addEventListener('input', applyFilter);
-    refreshBtn.addEventListener('click', fetchAndRender);
-    document.getElementById('copyBtn').addEventListener('click', doCopy);
+  async function fetchList(type){
+    const url = currentListEndpoint(type);
+    const epF = document.getElementById('epFolders');
+    const epFi= document.getElementById('epFiles');
+    if (type==='folder' && epF) epF.textContent = url; if (type==='file' && epFi) epFi.textContent = url;
+    const res = await fetch(url, { method:'GET' });
+    if(!res.ok){ const txt = await res.text().catch(()=> ''); throw new Error('HTTP '+res.status+' '+txt); }
+    const data = await res.json();
+    const items = parseItems(data, type);
+    console.log('List', type, 'URL =', url, 'items =', items.length);
+    return items;
+  }
 
-    setDirection('input');
+  function renderList(){
+    listFolders.innerHTML = '';
+    listFiles.innerHTML   = '';
+    const make = (it)=>{
+      const div = document.createElement('div');
+      div.className = 'item'+(state.selectedKey===it.key?' selected':'');
+      div.tabIndex = 0; div.role='option'; div.setAttribute('aria-selected', state.selectedKey===it.key);
+      div.addEventListener('click', ()=> selectItem(it.key, it.type));
+      div.addEventListener('dblclick', ()=> navigateIfFolder(it));
+      const badge = document.createElement('span'); badge.className = 'badge'; badge.textContent = it.type==='folder' ? 'Folder' : 'File';
+      const name = document.createElement('div'); name.textContent = it.key; name.style.flex='1';
+      const meta = document.createElement('div'); meta.className='right'; meta.textContent = it.size ? human(it.size) : '';
+      div.append(badge, name, meta);
+      return div;
+    };
+    (state.allFolders||[]).forEach(it=> listFolders.appendChild(make(it)));
+    (state.allFiles||[]).forEach(it=> listFiles.appendChild(make(it)));
+  }
+
+  function selectItem(key, type){ state.selectedKey = key; state.selectedType = type; renderList(); }
+
+  async function fetchAndRender(){
+    status.textContent='';
+    document.body.style.cursor='progress';
+    try{
+      if (fromLabel) fromLabel.textContent = cap(state.fromBucket);
+      const [folders, files] = await Promise.all([ fetchList('folder'), fetchList('file') ]);
+      state.allFolders = folders.map(x=> ({...x, type:'folder'}));
+      state.allFiles   = files.map(x=> ({...x, type:'file'}));
+      renderList();
+    } catch(err){
+      console.error(err);
+      status.innerHTML = '<span class="err">Failed to list: '+(err&&err.message||err)+'</span>';
+    } finally{ document.body.style.cursor='auto'; }
+  }
+
+  async function doCopy(){
+    if(!state.selectedKey){ status.innerHTML = '<span class="err">Select a file or folder first.</span>'; return; }
+    const mode = state.selectedType || 'file';
+    const payload = { fromBucket: state.fromBucket, toBucket: state.toBucket, mode, key: state.selectedKey };
+    status.textContent='Sending copy request…';
+    try{
+      const res = await fetch(COPY_URL, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
+      if(!res.ok) throw new Error('HTTP '+res.status);
+      const data = await res.json().catch(()=>({}));
+      status.innerHTML = '<span class="ok">Copy initiated.</span> ' + (data.message||'');
+    }catch(err){
+      status.innerHTML = '<span class="err">Copy failed:</span> '+ err.message;
+    }
+  }
+
+  function navigateIfFolder(it){ if(it && it.type==='folder'){ state.prefix = it.key; if (search) search.value = state.prefix; state.selectedKey=null; state.selectedType=null; fetchAndRender(); }}
+
+  // ===== Wire up =====
+  fromSel.addEventListener('change', e=> setDirection(e.target.value));
+  search.addEventListener('input', ()=>{ state.prefix = search.value.trim(); fetchAndRender(); });
+  refreshBtn.addEventListener('click', fetchAndRender);
+  document.getElementById('copyBtn').addEventListener('click', doCopy);
+  document.getElementById('upBtn').addEventListener('click', ()=>{
+    if(!state.prefix) return; // at root
+    const p = state.prefix.endsWith('/') ? state.prefix.slice(0,-1) : state.prefix;
+    const i = p.lastIndexOf('/');
+    state.prefix = i>0 ? p.slice(0,i+1) : '';
+    if (search) search.value = state.prefix;
+    state.selectedKey = null;
+    state.selectedType = null;
+    fetchAndRender();
+  });
+
+  // Init
+  setDirection('input');
   </script>
 </body>
 </html>
