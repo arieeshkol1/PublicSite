@@ -1,0 +1,243 @@
+<!doctype html>
+<html lang="en" style="background:#0b1b2a;color:#e6eef5;font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>TSG — JP2 File Manager</title>
+  <style>
+    .header {display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid #14314c;background:#0e2236;}
+    .logo {width:28px;height:28px;border-radius:6px;background:#2a6fb3;display:inline-block}
+    .title {font-weight:700;font-size:16px;letter-spacing:.3px}
+    .layout {display:grid;grid-template-columns:260px 1fr;gap:12px;padding:12px}
+    .pane {background:#0f263d;border:1px solid #173b5a;border-radius:12px;display:flex;flex-direction:column;min-height:60vh}
+    .pane .head {padding:10px 12px;border-bottom:1px solid #173b5a;font-weight:600}
+    .tree {padding:8px 12px;font-size:12px}
+    .crumbs {padding:8px 12px;border-bottom:1px solid #173b5a;font-size:12px;opacity:.9}
+    .toolbar {display:flex;gap:8px;align-items:center}
+    .btn {border:1px solid #2b5177;border-radius:10px;padding:8px 12px;background:#14314c;color:#e6eef5;cursor:pointer}
+    .btn.primary {background:#2a6fb3;border-color:#2a6fb3}
+    .btn.danger {background:#7a2132;border-color:#7a2132}
+    .btn:disabled {opacity:.5;cursor:not-allowed}
+    table {width:100%;border-collapse:collapse;font-size:13px}
+    th, td {padding:8px 10px;border-bottom:1px solid #173b5a}
+    th {text-align:left;opacity:.9}
+    .pager {display:flex;justify-content:space-between;align-items:center;padding:8px 12px}
+    .note {font-size:12px;opacity:.8}
+    a {color:#b7d8ff;text-decoration:none}
+    .card {background:#0f263d;border:1px solid #173b5a;border-radius:12px;padding:12px;margin:12px}
+  </style>
+</head>
+<body>
+  <header class="header">
+    <span class="logo"></span>
+    <div class="title">TSG — JP2 File Manager</div>
+    <div style="margin-left:auto;font-size:12px;opacity:.8">Output → Input | us-east-1</div>
+  </header>
+
+  <main class="card">
+    <div class="note">Browse the <b>Output</b> bucket via <code>/list-output</code>. Actions call <code>/copy-files</code>, <code>/delete-files</code>, <code>/download-file</code> on the same API.</div>
+  </main>
+
+  <section class="layout">
+    <aside class="pane">
+      <div class="head">Folders</div>
+      <div class="crumbs">/output/<span id="crumbPrefix"></span></div>
+      <div class="tree" id="tree"></div>
+    </aside>
+
+    <section class="pane">
+      <div class="head" style="display:flex;align-items:center;gap:8px;justify-content:space-between">
+        <div class="toolbar">
+          <button class="btn primary" id="btnMove" disabled>Copy to Input &amp; Delete Source</button>
+          <button class="btn danger" id="btnDelete" disabled>Delete</button>
+          <button class="btn" id="btnDownload" disabled>Download</button>
+        </div>
+        <div id="selCount" class="note">0 selected</div>
+      </div>
+
+      <div style="overflow:auto;flex:1">
+        <table>
+          <thead>
+            <tr>
+              <th style="width:28px"><input type="checkbox" id="chkAll"/></th>
+              <th>Name</th><th>Size</th><th>Last Modified</th><th>Class</th>
+            </tr>
+          </thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+
+      <div class="pager">
+        <div id="pageInfo" class="note">—</div>
+        <div style="display:flex;gap:8px">
+          <button class="btn" id="btnPrev" disabled>Prev</button>
+          <button class="btn" id="btnNext" disabled>Next</button>
+        </div>
+      </div>
+    </section>
+  </section>
+
+  <section class="card" id="activity" style="display:none"></section>
+
+<script>
+  // ===== CONFIG =====
+  const API_BASE = "%%API_BASE%%";  // e.g., https://abc123.execute-api.us-east-1.amazonaws.com
+
+  // ===== STATE =====
+  let prefix = "";
+  let nextToken = null;
+  let prevStack = [];
+  let selection = new Set();
+  let objectsCache = [];
+
+  // ===== DOM =====
+  const rows = document.getElementById('rows');
+  const tree = document.getElementById('tree');
+  const pageInfo = document.getElementById('pageInfo');
+  const btnPrev = document.getElementById('btnPrev');
+  const btnNext = document.getElementById('btnNext');
+  const btnMove = document.getElementById('btnMove');
+  const btnDelete = document.getElementById('btnDelete');
+  const btnDownload = document.getElementById('btnDownload');
+  const selCount = document.getElementById('selCount');
+  const chkAll = document.getElementById('chkAll');
+  const crumbs = document.getElementById('crumbPrefix');
+  const activity = document.getElementById('activity');
+
+  function setButtons() {
+    const hasSel = selection.size > 0;
+    btnMove.disabled = !hasSel;
+    btnDelete.disabled = !hasSel;
+    btnDownload.disabled = !hasSel;
+    selCount.textContent = `${selection.size} selected`;
+  }
+
+  function render(objects, prefixes, token) {
+    rows.innerHTML = "";
+    objectsCache = objects || [];
+    crumbs.textContent = prefix || "";
+    // left tree
+    tree.innerHTML = (prefix ? `<div><a href="#" onclick="goPrefix('')">/</a> ${prefix}</div>` : `<div>/</div>`);
+    (prefixes || []).forEach(next => {
+      const name = next.replace(prefix, "");
+      const label = name.endsWith('/') ? name.slice(0, -1) : name;
+      tree.innerHTML += `<div><a href="#" onclick="goPrefix('${next}')">${label}/</a></div>`;
+    });
+    // table
+    objectsCache.forEach(o => {
+      const id = o.Key || o.key || "";
+      const checked = selection.has(id) ? 'checked' : '';
+      const size = (o.Size ?? o.size ?? 0);
+      const lm = o.LastModified ?? o.lastModified ?? '';
+      const sc = o.StorageClass ?? o.storageClass ?? '';
+      rows.innerHTML += `<tr>
+        <td><input type="checkbox" data-key="${id}" ${checked} /></td>
+        <td>${id.substring(prefix.length)}</td>
+        <td>${Number(size).toLocaleString()}</td>
+        <td>${lm}</td>
+        <td>${sc}</td>
+      </tr>`;
+    });
+    nextToken = token || null;
+    pageInfo.textContent = `Prefix: /${prefix || ''} | Objects: ${objectsCache.length}`;
+    btnPrev.disabled = prevStack.length === 0;
+    btnNext.disabled = !nextToken;
+    chkAll.checked = false;
+    setButtons();
+    rows.querySelectorAll('input[type=checkbox]').forEach(ch => {
+      ch.addEventListener('change', (e) => {
+        const k = e.target.getAttribute('data-key');
+        if (e.target.checked) selection.add(k); else selection.delete(k);
+        setButtons();
+      });
+    });
+  }
+
+  async function listOutput({ forward=false } = {}) {
+    const url = new URL(API_BASE + "/list-output");
+    url.searchParams.set("prefix", prefix);
+    if (forward && nextToken) url.searchParams.set("token", nextToken);
+    const res = await fetch(url, { method: "GET" });
+    const data = await res.json();
+    if (forward && nextToken) prevStack.push(nextToken);
+    render(
+      data.objects || data.Contents || [],
+      data.commonPrefixes || data.CommonPrefixes || [],
+      data.nextToken || data.NextContinuationToken
+    );
+  }
+
+  function goPrefix(p) {
+    prefix = p;
+    nextToken = null;
+    prevStack = [];
+    selection.clear();
+    listOutput({ forward:false });
+  }
+
+  btnPrev.onclick = () => {
+    if (prevStack.length === 0) return;
+    nextToken = prevStack.pop();
+    listOutput({ forward:false });
+  };
+  btnNext.onclick = () => listOutput({ forward:true });
+
+  chkAll.onchange = () => {
+    selection.clear();
+    if (chkAll.checked) objectsCache.forEach(o => selection.add(o.Key || o.key));
+    render(objectsCache, [], nextToken);
+  };
+
+  function flash(msg) {
+    activity.style.display = 'block';
+    activity.innerHTML = `<div>${msg}</div>`;
+    setTimeout(() => { activity.style.display='none'; }, 3500);
+  }
+
+  // Actions
+  btnMove.onclick = async () => {
+    const keys = Array.from(selection);
+    if (!keys.length) return;
+    const res = await fetch(API_BASE + "/copy-files", {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ keys })
+    });
+    const j = await res.json();
+    flash(`Moved ${j.completed || 0}/${keys.length} → Input (deleted from Output).`);
+    selection.clear(); setButtons(); listOutput({forward:false});
+  };
+
+  btnDelete.onclick = async () => {
+    const keys = Array.from(selection);
+    if (!keys.length) return;
+    const res = await fetch(API_BASE + "/delete-files", {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ keys })
+    });
+    const j = await res.json();
+    flash(`Deleted ${j.completed || 0}/${keys.length} from Output.`);
+    selection.clear(); setButtons(); listOutput({forward:false});
+  };
+
+  btnDownload.onclick = async () => {
+    const keys = Array.from(selection);
+    if (!keys.length) return;
+    const res = await fetch(API_BASE + "/download-file", {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ keys })
+    });
+    const j = await res.json();
+    if (j.url) {
+      window.location = j.url;
+    } else if (Array.isArray(j.urls)) {
+      // open first in new tab and show links
+      window.open(j.urls[0], "_blank");
+      flash(`Generated ${j.urls.length} download link(s).`);
+    }
+  };
+
+  // First load
+  listOutput({forward:false});
+</script>
+</body>
+</html>

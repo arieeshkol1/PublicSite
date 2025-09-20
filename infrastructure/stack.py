@@ -130,3 +130,67 @@ class ServerlessJp2Stack(Stack):
         CfnOutput(self, "InputBucketName", value=input_bucket.bucket_name)
         CfnOutput(self, "OutputBucketName", value=output_bucket.bucket_name)
         CfnOutput(self, "ApiEndpoint", value=http_api.api_endpoint)
+        
+
+
+        # ---------------- File Manager Lambdas (NEW) ----------------
+        fm_env = {
+            "INPUT_BUCKET": input_bucket.bucket_name,
+            "OUTPUT_BUCKET": output_bucket.bucket_name,
+        }
+
+        copy_files_fn = _lambda.Function(
+            self, "CopyFilesFn",
+            runtime=_lambda.Runtime.PYTHON_3_11,
+            handler="lambda_copy_files.handler",
+            code=_lambda.Code.from_asset(lambda_code_dir),
+            timeout=Duration.minutes(5),
+            memory_size=1024,
+            environment=fm_env,
+        )
+        delete_files_fn = _lambda.Function(
+            self, "DeleteFilesFn",
+            runtime=_lambda.Runtime.PYTHON_3_11,
+            handler="lambda_delete_files.handler",
+            code=_lambda.Code.from_asset(lambda_code_dir),
+            timeout=Duration.minutes(5),
+            memory_size=512,
+            environment=fm_env,
+        )
+        download_file_fn = _lambda.Function(
+            self, "DownloadFileFn",
+            runtime=_lambda.Runtime.PYTHON_3_11,
+            handler="lambda_download_file.handler",
+            code=_lambda.Code.from_asset(lambda_code_dir),
+            timeout=Duration.seconds(30),
+            memory_size=256,
+            environment=fm_env,
+        )
+
+        # IAM (scoped to input/output buckets only)
+        for fn in [copy_files_fn, delete_files_fn, download_file_fn]:
+            fn.add_to_role_policy(iam.PolicyStatement(
+                actions=["s3:ListBucket"],
+                resources=[input_bucket.bucket_arn, output_bucket.bucket_arn]
+            ))
+            fn.add_to_role_policy(iam.PolicyStatement(
+                actions=[
+                    "s3:GetObject", "s3:PutObject", "s3:DeleteObject",
+                    "s3:AbortMultipartUpload", "s3:CreateMultipartUpload",
+                    "s3:UploadPart", "s3:CompleteMultipartUpload"
+                ],
+                resources=[
+                    input_bucket.arn_for_objects("*"),
+                    output_bucket.arn_for_objects("*")
+                ]
+            ))
+
+        # ---------------- Integrations & Routes (same HttpApi) ----------------
+        copy_files_integ = apigw_int.HttpLambdaIntegration("CopyFilesIntegration", handler=copy_files_fn)
+        delete_files_integ = apigw_int.HttpLambdaIntegration("DeleteFilesIntegration", handler=delete_files_fn)
+        download_file_integ = apigw_int.HttpLambdaIntegration("DownloadFileIntegration", handler=download_file_fn)
+
+        http_api.add_routes(path="/copy-files", methods=[apigw.HttpMethod.POST], integration=copy_files_integ)
+        http_api.add_routes(path="/delete-files", methods=[apigw.HttpMethod.POST], integration=delete_files_integ)
+        http_api.add_routes(path="/download-file", methods=[apigw.HttpMethod.POST], integration=download_file_integ)
+
