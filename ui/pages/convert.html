@@ -1,10 +1,11 @@
-```html
 <!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Convert — TSG</title>
+  <!-- Optionally set your API base here so S3 static hosting can reach the API Gateway domain -->
+  <meta name="api-base" content="">
   <link rel="icon" href="/assets/tsg-logo.svg">
   <style>
     :root{ --bg:#0b1020; --panel:#121a34; --accent:#45a1ff; --text:#e7ecf7; --muted:#96a2c0; --border:#233059; }
@@ -82,29 +83,41 @@
   </div>
 
   <script>
-    // API base: if your API is on a different domain, set window.API_BASE = "https://xxxx.execute-api.REGION.amazonaws.com" before including this page.
-    const API_BASE = window.API_BASE || '';
-    const api = (p) => (API_BASE ? API_BASE : '') + p;
-    const fmt = (b)=>{const u=['B','KB','MB','GB'];let i=0,v=b;while(v>1024&&i<u.length-1){v/=1024;i++;}return `${v.toFixed(1)} ${u[i]}`;};
+    // Resolve API base in this order:
+    // window.API_BASE → ?api= URL param → <meta name="api-base"> → localStorage → '' (same origin)
+    (function(){
+      const url = new URL(window.location.href);
+      const paramApi = url.searchParams.get('api');
+      const metaApi  = (document.querySelector('meta[name="api-base"]')||{}).content || '';
+      const lsApi    = localStorage.getItem('API_BASE') || '';
+      const apiBase  = (window.API_BASE || paramApi || metaApi || lsApi || '').replace(/\/$/, '');
+      if (paramApi && paramApi !== lsApi) localStorage.setItem('API_BASE', apiBase);
+      window.__API_BASE__ = apiBase; // debug
+    })();
+
+    const api = (p)=> (window.__API_BASE__ ? window.__API_BASE__ : '') + p;
+    const fmt = (b)=>{const u=['B','KB','MB','GB','TB'];let i=0,v=b||0;while(v>1024&&i<u.length-1){v/=1024;i++;}return `${v.toFixed(1)} ${u[i]}`;};
     const log = (m)=>{ document.getElementById('log').textContent = m; };
 
     async function listFiles(){
       const prefix = document.getElementById('prefix').value || '';
       log('Listing…');
-      const r = await fetch(api(`/list-input?prefix=${encodeURIComponent(prefix)}`));
-      if(!r.ok){ log(`List failed: ${r.status}`); return; }
-      const d = await r.json();
-      const body = document.getElementById('files-body');
-      body.innerHTML = '';
-      if(!d.files || !d.files.length){ body.innerHTML = '<tr><td colspan="3"><span class="hint">No files.</span></td></tr>'; return; }
-      for(const f of d.files){
-        const tr = document.createElement('tr');
-        tr.innerHTML = `<td><input type="checkbox" class="pick" data-key="${f.key}"></td>`+
-                       `<td>${f.key}</td>`+
-                       `<td>${fmt(f.size||0)}</td>`;
-        body.appendChild(tr);
-      }
-      log(`Loaded ${d.files.length} file(s).`);
+      try{
+        const r = await fetch(api(`/list-input?prefix=${encodeURIComponent(prefix)}`));
+        if(!r.ok){ log(`List failed: HTTP ${r.status}`); return; }
+        const d = await r.json();
+        const body = document.getElementById('files-body');
+        body.innerHTML = '';
+        if(!d.files || !d.files.length){ body.innerHTML = '<tr><td colspan="3"><span class="hint">No files.</span></td></tr>'; return; }
+        for(const f of d.files){
+          const tr = document.createElement('tr');
+          tr.innerHTML = `<td><input type="checkbox" class="pick" data-key="${f.key}"></td>`+
+                         `<td>${f.key}</td>`+
+                         `<td>${fmt(f.size)}</td>`;
+          body.appendChild(tr);
+        }
+        log(`Loaded ${d.files.length} file(s).`);
+      }catch(e){ log('List error: '+ e); }
     }
 
     async function submitConvert(){
@@ -112,119 +125,44 @@
       const target = document.getElementById('format').value;
       if(!picks.length){ log('Select at least one file.'); return; }
       log('Submitting conversion…');
-      const payload = { keys: picks, target_format: target };
-      const r = await fetch(api('/convert'), { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
-      const data = await r.json().catch(()=>({}));
-      if(!r.ok){ log(`Submit failed (${r.status}). ${data.error||''}`); return; }
-      log(`Job ${data.job_id} submitted. Tracking…`);
-      poll(data.job_id);
+      try{
+        const payload = { keys: picks, target_format: target };
+        const r = await fetch(api('/convert'), { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+        const data = await r.json().catch(()=>({}));
+        if(!r.ok){ log(`Submit failed (${r.status}). ${data.error||''}`); return; }
+        log(`Job ${data.job_id} submitted. Tracking…`);
+        poll(data.job_id);
+      }catch(e){ log('Submit error: '+ e); }
     }
 
     async function poll(jobId){
-      const r = await fetch(api(`/status/${encodeURIComponent(jobId)}`));
-      const d = await r.json().catch(()=>({}));
-      if(!r.ok){ log(`Status error: ${r.status}`); return; }
-      const lines = [
-        `status: ${d.status || '—'}`,
-        `started_at: ${d.started_at || '—'}`,
-        `finished_at: ${d.finished_at || '—'}`,
-        `duration_sec: ${d.duration_sec ?? '—'}`,
-        `cpu.avg: ${d.cpu?.avg ?? '—'} | cpu.p95: ${d.cpu?.p95 ?? '—'}`,
-        `outputs: ${(d.outputs||[]).join(', ') || '—'}`,
-        `error: ${d.error || '—'}`
-      ];
-      document.getElementById('log').textContent = lines.join('
-');
-      if(d.status === 'queued' || d.status === 'running') setTimeout(()=>poll(jobId), 1500);
+      try{
+        const r = await fetch(api(`/status/${encodeURIComponent(jobId)}`));
+        const d = await r.json().catch(()=>({}));
+        if(!r.ok){ log(`Status error: HTTP ${r.status}`); return; }
+        const lines = [
+          `status: ${d.status || '—'}`,
+          `started_at: ${d.started_at || '—'}`,
+          `finished_at: ${d.finished_at || '—'}`,
+          `duration_sec: ${d.duration_sec ?? '—'}`,
+          `cpu.avg: ${d.cpu?.avg ?? '—'} | cpu.p95: ${d.cpu?.p95 ?? '—'}`,
+          `outputs: ${(d.outputs||[]).join(', ') || '—'}`,
+          `error: ${d.error || '—'}`
+        ];
+        log(lines.join('\\n'));
+        if(d.status === 'queued' || d.status === 'running') setTimeout(()=>poll(jobId), 1500);
+      }catch(e){ log('Poll error: '+ e); }
     }
 
     document.getElementById('btn-list').addEventListener('click', listFiles);
     document.getElementById('btn-clear').addEventListener('click', ()=>{ document.getElementById('files-body').innerHTML=''; log('–'); });
     document.getElementById('btn-submit').addEventListener('click', submitConvert);
-    document.getElementById('check-all').addEventListener('change', (e)=>{ document.querySelectorAll('.pick').forEach(cb=> cb.checked = e.target.checked); });
+    document.getElementById('check-all').addEventListener('change', (e)=>{
+      document.querySelectorAll('.pick').forEach(cb=> cb.checked = e.target.checked);
+    });
+
+    // Auto-list on load if API base is known
+    if (window.__API_BASE__) listFiles();
   </script>
 </body>
 </html>
-```
-```html
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>Convert — TSG</title>
-  <link rel="icon" href="tsglogo.png">
-  <style>
-    body { font-family: Arial, sans-serif; background:#0b1020; color:#e7ecf7; margin:0; }
-    .container { max-width:960px; margin:2rem auto; padding:1rem; }
-    .card { background:#121a34; border:1px solid #233059; border-radius:.75rem; padding:1rem; }
-    label { display:block; margin:.5rem 0; color:#96a2c0; }
-    select, input[type=text] { width:100%; padding:.5rem; border-radius:.5rem; border:1px solid #233059; background:#0b1020; color:#e7ecf7; }
-    button { margin-top:1rem; padding:.6rem 1rem; border:none; border-radius:.5rem; background:#45a1ff; color:white; cursor:pointer; }
-    button:hover { background:#2680d9; }
-    table { width:100%; border-collapse:collapse; margin-top:1rem; }
-    th, td { padding:.5rem; border-bottom:1px solid #233059; font-size:.9rem; }
-    .log { margin-top:1rem; padding:.75rem; background:#0d1330; border:1px solid #233059; border-radius:.5rem; font-family:monospace; font-size:.85rem; white-space:pre-wrap; }
-  </style>
-</head>
-<body>
-  <div class="container">
-    <h2>Convert</h2>
-    <div class="card">
-      <label>Step 1 — Select files from input bucket</label>
-      <button onclick="listFiles()">Refresh list</button>
-      <table id="files"><thead><tr><th></th><th>Key</th><th>Size</th></tr></thead><tbody><tr><td colspan="3"><i>No files yet</i></td></tr></tbody></table>
-
-      <label>Step 2 — Choose format</label>
-      <select id="format">
-        <option value="JPEG2">JPEG2</option>
-        <option value="TIFF">TIFF</option>
-        <option value="RAW">RAW</option>
-        <option value="XML">XML</option>
-        <option value="TXT">TXT</option>
-        <option value="JSON">JSON</option>
-      </select>
-
-      <button onclick="submitConvert()">Submit</button>
-      <div class="log" id="log">–</div>
-    </div>
-  </div>
-  <script>
-    async function listFiles(){
-      const res = await fetch('/list-input');
-      const data = await res.json();
-      const tbody = document.querySelector('#files tbody');
-      tbody.innerHTML = '';
-      if(!data.files || !data.files.length){
-        tbody.innerHTML = '<tr><td colspan="3"><i>No files</i></td></tr>';
-        return;
-      }
-      for(const f of data.files){
-        const tr = document.createElement('tr');
-        tr.innerHTML = `<td><input type=checkbox data-key="${f.key}"></td><td>${f.key}</td><td>${(f.size/1024).toFixed(1)} KB</td>`;
-        tbody.appendChild(tr);
-      }
-    }
-    async function submitConvert(){
-      const picks = Array.from(document.querySelectorAll('input[type=checkbox]:checked')).map(cb=>cb.dataset.key);
-      const fmt = document.getElementById('format').value;
-      if(!picks.length){ setLog('Select at least one file.'); return; }
-      setLog('Submitting...');
-      const res = await fetch('/convert',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({keys:picks,target_format:fmt})});
-      const data = await res.json();
-      if(!res.ok){ setLog('Error: '+JSON.stringify(data)); return; }
-      setLog('Job '+data.job_id+' submitted.');
-      pollJob(data.job_id);
-    }
-    async function pollJob(job){
-      const res = await fetch('/status/'+job);
-      const d = await res.json();
-      const lines = [`status: ${d.status}`,`started: ${d.started_at}`,`finished: ${d.finished_at}`,`cpu: ${JSON.stringify(d.cpu)}`,`outputs: ${d.outputs}`];
-      setLog(lines.join('\n'));
-      if(d.status==='queued' || d.status==='running') setTimeout(()=>pollJob(job),2000);
-    }
-    function setLog(msg){ document.getElementById('log').textContent=msg; }
-  </script>
-</body>
-</html>
-```
