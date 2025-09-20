@@ -3,11 +3,11 @@
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>TSG JP2 Pipeline — Convert</title>
+  <title>TSG JP2 Pipeline — Convert (Compat)</title>
   <style>
-    :root { --bg:#000000; --card:#111111; --muted:#d1d5db; --text:#ffffff; --accent:#3b82f6; }
+    :root { --bg:#000; --card:#111; --muted:#9ca3af; --text:#fff; --accent:#3b82f6; --ok:#16a34a; --warn:#f59e0b; --err:#ef4444; }
     html,body { height:100%; background:var(--bg); color:var(--text); font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,"Helvetica Neue",Arial; margin:0; }
-    .wrap { max-width:1000px; margin:24px auto; padding:0 16px; }
+    .wrap { max-width:1100px; margin:24px auto; padding:0 16px; }
     .card { background:var(--card); border-radius:16px; padding:20px; box-shadow:0 6px 24px rgba(255,255,255,.08); border:1px solid rgba(255,255,255,.1); color:var(--text); margin-bottom:20px; }
     header { margin-bottom:8px; }
     h1 { font-size:22px; margin:0; }
@@ -16,22 +16,33 @@
     .btn.primary { background:var(--accent); border-color:var(--accent); }
     .btn:disabled { opacity:.6; cursor:not-allowed; }
     table { width:100%; border-collapse:collapse; }
-    th,td { border-bottom:1px solid rgba(255,255,255,.2); padding:8px 10px; text-align:left; }
+    th,td { border-bottom:1px solid rgba(255,255,255,.15); padding:8px 10px; text-align:left; vertical-align:top; }
     th { color:var(--muted); font-weight:600; }
     .mono { font-family:ui-monospace,Menlo,Consolas,monospace; }
-    .err { background:#7f1d1d; border:1px solid #fecaca; color:#fee2e2; padding:10px; border-radius:10px; margin-bottom:10px; display:none; white-space:pre-wrap; }
-    .log { background:#1f2937; border:1px dashed rgba(255,255,255,.3); border-radius:10px; padding:10px; color:#fff; white-space:pre-wrap; min-height:60px; }
+    .row-3 { display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px; align-items:end; }
     .row-2 { display:grid; grid-template-columns:1fr 200px; gap:8px; align-items:end; }
+    .muted { color: var(--muted); font-size: 12px; margin-bottom: 6px; }
+    .pill { display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; line-height:18px; }
+    .pill.run { background:rgba(59,130,246,.12); border:1px solid rgba(59,130,246,.35); }
+    .pill.ok  { background:rgba(22,163,74,.12); border:1px solid rgba(22,163,74,.35); }
+    .pill.err { background:rgba(239,68,68,.12); border:1px solid rgba(239,68,68,.35); }
+    progress { width:120px; height:10px; }
+    a { color:#93c5fd; text-decoration:none; }
+    a:hover { text-decoration:underline; }
+    .small { font-size:12px; color:var(--muted); }
+    .right { text-align:right; }
+    .log { background:#0b1220; border:1px dashed rgba(255,255,255,.3); border-radius:10px; padding:10px; color:#fff; white-space:pre-wrap; min-height:60px; }
   </style>
+  <!-- COMPAT: old API base -->
   <script>
-    window.API_BASE = "https://xui5toa569.execute-api.us-east-1.amazonaws.com";
-    const INPUT_BUCKET = 'jp2-input-991105135552-us-east-1';
+    window.API_BASE = "https://qmiu91xhgk.execute-api.us-east-1.amazonaws.com";
+    const INPUT_BUCKET  = 'jp2-input-991105135552-us-east-1';
+    const OUTPUT_BUCKET = 'jp2-output-991105135552-us-east-1';
   </script>
 </head>
 <body>
   <div class="wrap">
-    <header><h1>TSG JP2 Pipeline — Convert</h1></header>
-    <div id="errorBox" class="err"></div>
+    <header><h1>TSG JP2 Pipeline — Convert (Compat)</h1></header>
 
     <div class="card">
       <div style="display:flex; justify-content:space-between; align-items:center;">
@@ -59,20 +70,46 @@
     </div>
 
     <div class="card">
-      <h2>2) Select Format</h2>
+      <h2>2) Select Format (compat)</h2>
       <select id="format" class="btn">
-        <option value="JPEG2000">JPEG2000</option>
-        <option value="TIFF">TIFF</option>
+        <option value="JPEG2000">JPEG2000 (keep)</option>
+        <option value="TIFF" selected>TIFF</option>
         <option value="RAW">RAW</option>
-        <option value="XML">XML</option>
-        <option value="TXT">TXT</option>
-        <option value="JSON">JSON</option>
       </select>
+      <div class="small" style="margin-top:6px;">Formats limited to old API support: keep/tiff/raw</div>
     </div>
 
     <div class="card">
       <h2>3) Run Convert</h2>
-      <button id="btnConvert" class="btn primary" disabled>Convert</button>
+      <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+        <button id="btnConvert" class="btn primary" disabled>Convert</button>
+        <span class="small">Tiles per job:</span>
+        <select id="tilesTotal" class="btn">
+          <option value="9">9 (3×3)</option>
+          <option value="16" selected>16 (4×4)</option>
+          <option value="25">25 (5×5)</option>
+          <option value="36">36 (6×6)</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Conversion Progress</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Input</th>
+            <th>Job ID</th>
+            <th>Status</th>
+            <th>Progress</th>
+            <th>Expected</th>
+            <th>Execution</th>
+            <th class="right">Tiles listed</th>
+          </tr>
+        </thead>
+        <tbody id="progTbody"><tr><td colspan="8" class="small">No jobs yet</td></tr></tbody>
+      </table>
     </div>
 
     <div class="card">
@@ -82,51 +119,146 @@
   </div>
 
   <script>
+    // Utils
     const $=id=>document.getElementById(id);
     function humanSize(n){if(n==null) return '—';const kb=1024,mb=kb*1024,gb=mb*1024;if(n>=gb)return(n/gb).toFixed(2)+' GB';if(n>=mb)return(n/mb).toFixed(2)+' MB';if(n>=kb)return(n/kb).toFixed(2)+' KB';return n+' B';}
-    async function getJSON(url){const r=await fetch(url);const t=await r.text();let j;try{j=JSON.parse(t);}catch{j={_raw:t};}if(!r.ok)throw new Error(j.error||j._raw||`HTTP ${r.status}`);return j;}
-    async function postJSON(url,body){const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const t=await r.text();let j;try{j=JSON.parse(t);}catch{j={_raw:t};}if(!r.ok)throw new Error(j.error||j._raw||`HTTP ${r.status}`);return j;}
+    function ts(){ return new Date().toISOString().replace('T',' ').replace('Z',''); }
+    function logLine(s){ const b=$('logBox'); b.textContent=(b.textContent==='—'?'':b.textContent+'\n')+`[${ts()}] ${s}`; b.scrollTop=b.scrollHeight; }
+    async function getJSON(url){ const r=await fetch(url); const t=await r.text(); try{ return JSON.parse(t);}catch{ throw new Error(`Expected JSON from ${url}. Got: ${t.slice(0,120).replace(/\s+/g,' ')}`);} }
+    async function postJSON(url,body){ const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}); const t=await r.text(); let j; try{ j=JSON.parse(t);}catch{ throw new Error(`Expected JSON from ${url}. Got: ${t.slice(0,120).replace(/\s+/g,' ')}`);} if(!r.ok) throw new Error(j.error||j.message||`HTTP ${r.status}`); return j; }
 
+    // State
     let selectedKeys=[];
+    let jobs=[]; // {idx,key,jobId,expected,tilesCount,percent,exec,done}
+    let pollTimer=null;
 
     function renderList(objs){
       const tbody=$('inputTbody');
-      if(!tbody)return;
       if(!objs||!objs.length){tbody.innerHTML='<tr><td colspan="3" class="muted">No objects</td></tr>';return;}
-      // Normalize for both {objects:[...]} and {items:[...]}
-      const items = (objs||[]).map(o=>({key:o.key||o.Key,size:o.size||o.Size}));
+      const items=(objs||[]).map(o=>({key:o.key||o.Key,size:o.size||o.Size}));
       tbody.innerHTML=items.map(o=>`<tr><td><input type="checkbox" class="pick" data-key="${o.key}"></td><td class="mono">${o.key}</td><td>${humanSize(o.size)}</td></tr>`).join('');
       tbody.querySelectorAll('.pick').forEach(cb=>cb.addEventListener('change',updateSelection));
       $('checkAll').onchange=e=>{document.querySelectorAll('.pick').forEach(cb=>cb.checked=e.target.checked);updateSelection();};
     }
-
     function updateSelection(){
       selectedKeys=Array.from(document.querySelectorAll('.pick:checked')).map(cb=>cb.dataset.key);
       $('btnConvert').disabled=selectedKeys.length===0;
     }
 
     async function listInput(){
-      const bucket=$('inBucket').value.trim();
+      const bucket=$('inBucket').value.trim()||INPUT_BUCKET;
       const prefix=$('prefix').value.trim();
       const url=`${window.API_BASE}/list-input?bucket=${encodeURIComponent(bucket)}${prefix?`&prefix=${encodeURIComponent(prefix)}`:''}`;
       const tbody=$('inputTbody');tbody.innerHTML='<tr><td colspan=3>Loading…</td></tr>';
       try{
         const j=await getJSON(url);
-        const items=j.objects||j.items||[];
+        const items=(j.objects||j.items||[]);
         renderList(items);
-      }catch(e){tbody.innerHTML=`<tr><td colspan=3>Error: ${e.message}</td></tr>`;$('logBox').textContent=`list-input failed: ${e.message}`;}
+        logLine(`Listed ${items.length} object(s).`);
+      }catch(e){
+        tbody.innerHTML=`<tr><td colspan=3>Error: ${e.message}</td></tr>`;
+        logLine(`list-input failed: ${e.message}`);
+      }
+    }
+
+    function fmtToOption(v){
+      if(v==='JPEG2000')return'keep';
+      if(v==='TIFF')return'tiff';
+      if(v==='RAW')return'raw';
+      return'keep';
+    }
+
+    function statusPill(s){
+      s=(s||'RUNNING').toUpperCase();
+      if(s==='SUCCEEDED' || s==='COMPLETED') return `<span class="pill ok">SUCCEEDED</span>`;
+      if(s==='FAILED') return `<span class="pill err">FAILED</span>`;
+      if(s==='PENDING' || s==='QUEUED') return `<span class="pill run">QUEUED</span>`;
+      return `<span class="pill run">${s}</span>`;
+    }
+
+    function renderJobs(){
+      const tbody=$('progTbody');
+      if(jobs.length===0){ tbody.innerHTML='<tr><td colspan="8" class="small">No jobs yet</td></tr>'; return; }
+      tbody.innerHTML=jobs.map((j,i)=>`
+        <tr>
+          <td>${i+1}</td>
+          <td class="mono">${j.key}</td>
+          <td class="mono">${j.jobId||'—'}</td>
+          <td>${statusPill(j.status)}</td>
+          <td>
+            <progress max="100" value="${j.percent||0}"></progress>
+            <div class="small">${j.percent||0}%</div>
+          </td>
+          <td>${j.expected||0}</td>
+          <td>${j.exec? `<a href="${j.exec}" target="_blank" rel="noreferrer">Execution</a>`:'—'}</td>
+          <td class="right"><span class="small">${j.tilesCount||0}</span></td>
+        </tr>
+      `).join('');
     }
 
     async function doConvert(){
-      const fmt=$('format').value;
-      try{
-        const j=await postJSON(`${window.API_BASE}/convert`,{keys:selectedKeys,target_format:fmt});
-        $('logBox').textContent=`Job ${j.job_id||j.jobId||'—'} submitted.`;
-      }catch(e){$('logBox').textContent=`Convert error: ${e.message}`;}
+      if(selectedKeys.length===0) return;
+      const tilesTotal=parseInt($('tilesTotal').value,10)||16;
+      const tilesGrid=Math.sqrt(tilesTotal)|0;
+      const formatOption=fmtToOption($('format').value);
+
+      logLine(`Submitting ${selectedKeys.length} job(s): tiles=${tilesTotal}, format=${formatOption}`);
+
+      // Launch one /split per key (parallel)
+      const submissions=selectedKeys.map(async(key)=>{
+        const body={
+          inputBucket: INPUT_BUCKET,
+          inputKey: key,
+          outputBucket: OUTPUT_BUCKET,
+          params: { tilesTotal, tilesGrid, formatOption }
+        };
+        try{
+          const res=await postJSON(`${window.API_BASE}/split`, body);
+          const jobId=res.jobId||res.job_id||null;
+          const expected=res.expectedTiles||tilesTotal;
+          const exec=res.links?.execution;
+          const j={ key, jobId, expected, tilesCount:0, percent:0, status:'RUNNING', exec };
+          jobs.push(j);
+          logLine(`Started job ${jobId} for ${key}`);
+        }catch(e){
+          const j={ key, jobId:null, expected:0, tilesCount:0, percent:0, status:'FAILED', exec:null };
+          jobs.push(j);
+          logLine(`Failed to start for ${key}: ${e.message}`);
+        }
+        renderJobs();
+      });
+
+      await Promise.all(submissions);
+      startPolling();
     }
 
-    $('btnRefresh').addEventListener('click',listInput);
-    $('btnConvert').addEventListener('click',doConvert);
+    function startPolling(){
+      if(pollTimer) clearInterval(pollTimer);
+      pollTimer=setInterval(async()=>{
+        for(const j of jobs){
+          if(!j.jobId) continue;
+          try{
+            const s=await getJSON(`${window.API_BASE}/status-progress?jobId=${encodeURIComponent(j.jobId)}&expected=${j.expected}`);
+            j.tilesCount=s.tilesCount||0;
+            j.percent = s.percent ?? (j.expected? Math.round((j.tilesCount/j.expected)*100): 0);
+            j.status  = (s.state||s.status|| (j.percent===100?'SUCCEEDED':'RUNNING')).toUpperCase();
+          }catch(e){
+            // leave as is, keep trying
+          }
+        }
+        renderJobs();
+        if(jobs.length>0 && jobs.every(x => ['SUCCEEDED','COMPLETED','FAILED','CANCELLED'].includes((x.status||'').toUpperCase()))){
+          clearInterval(pollTimer); pollTimer=null;
+          logLine('All jobs finished.');
+        }
+      },1500);
+    }
+
+    // Wire
+    $('btnRefresh').addEventListener('click', listInput);
+    $('btnConvert').addEventListener('click', doConvert);
+
+    // Init
     listInput();
   </script>
 </body>
