@@ -25,6 +25,8 @@
     .note {font-size:12px;opacity:.8}
     a {color:#b7d8ff;text-decoration:none}
     .card {background:#0f263d;border:1px solid #173b5a;border-radius:12px;padding:12px;margin:12px}
+    .alert {background:#3a0f16;border:1px solid #7a2132;color:#ffd8df;border-radius:10px;padding:8px 12px;margin:12px}
+    .ok {background:#0e2236;border:1px solid #2b5177;color:#cde6ff;border-radius:10px;padding:8px 12px;margin:12px}
   </style>
 </head>
 <body>
@@ -34,9 +36,17 @@
     <div style="margin-left:auto;font-size:12px;opacity:.8">Output → Input | us-east-1</div>
   </header>
 
-  <main class="card">
-    <div class="note">Browse the <b>Output</b> bucket via <code>/list-output</code>. Actions call <code>/copy-files</code>, <code>/delete-files</code>, <code>/download-file</code> on the same API.</div>
-  </main>
+  <section class="card">
+    <div class="note">
+      Uses existing API routes:<br/>
+      <code>GET /list-output</code> (browse), <code>POST /copy-files</code>, <code>POST /delete-files</code>, <code>POST /download-file</code> (same HttpApi).
+    </div>
+    <div style="display:flex;gap:8px;align-items:center;margin-top:8px">
+      <button class="btn" id="btnPing">Test list-output</button>
+      <div class="note">API_BASE: <code id="apiShow">—</code></div>
+    </div>
+    <div id="banner" class="" style="display:none"></div>
+  </section>
 
   <section class="layout">
     <aside class="pane">
@@ -77,11 +87,15 @@
     </section>
   </section>
 
-  <section class="card" id="activity" style="display:none"></section>
+  <section id="activity" style="display:none"></section>
 
 <script>
   // ===== CONFIG =====
-  const API_BASE = "%%API_BASE%%";  // e.g., https://abc123.execute-api.us-east-1.amazonaws.com
+  // allow ?api= override for quick testing; otherwise set the fallback below.
+  const urlApiParam = new URLSearchParams(location.search).get('api');
+  const API_BASE = urlApiParam || "%%API_BASE%%"; // e.g., https://xui5toa569.execute-api.us-east-1.amazonaws.com
+  const OUTPUT_BUCKET = "jp2-output-991105135552-us-east-1"; // required by /list-output
+  document.getElementById('apiShow').textContent = API_BASE || 'NOT SET';
 
   // ===== STATE =====
   let prefix = "";
@@ -102,7 +116,15 @@
   const selCount = document.getElementById('selCount');
   const chkAll = document.getElementById('chkAll');
   const crumbs = document.getElementById('crumbPrefix');
-  const activity = document.getElementById('activity');
+  const banner = document.getElementById('banner');
+  const btnPing = document.getElementById('btnPing');
+
+  function showBanner(msg, ok=false) {
+    banner.style.display = 'block';
+    banner.className = ok ? 'ok' : 'alert';
+    banner.innerHTML = msg;
+    setTimeout(()=>{ banner.style.display='none'; }, ok ? 3000 : 6000);
+  }
 
   function setButtons() {
     const hasSel = selection.size > 0;
@@ -116,23 +138,24 @@
     rows.innerHTML = "";
     objectsCache = objects || [];
     crumbs.textContent = prefix || "";
-    // left tree
+    // Left tree
     tree.innerHTML = (prefix ? `<div><a href="#" onclick="goPrefix('')">/</a> ${prefix}</div>` : `<div>/</div>`);
     (prefixes || []).forEach(next => {
-      const name = next.replace(prefix, "");
-      const label = name.endsWith('/') ? name.slice(0, -1) : name;
-      tree.innerHTML += `<div><a href="#" onclick="goPrefix('${next}')">${label}/</a></div>`;
+      const name = typeof next === 'string' ? next : (next.Prefix || next.prefix || next);
+      const label = name.replace(prefix, "");
+      const clean = label.endsWith('/') ? label.slice(0, -1) : label;
+      tree.innerHTML += `<div><a href="#" onclick="goPrefix('${name}')">${clean}/</a></div>`;
     });
-    // table
+    // Table
     objectsCache.forEach(o => {
-      const id = o.Key || o.key || "";
-      const checked = selection.has(id) ? 'checked' : '';
+      const key = o.Key || o.key || o.name || "";
       const size = (o.Size ?? o.size ?? 0);
       const lm = o.LastModified ?? o.lastModified ?? '';
       const sc = o.StorageClass ?? o.storageClass ?? '';
+      const checked = selection.has(key) ? 'checked' : '';
       rows.innerHTML += `<tr>
-        <td><input type="checkbox" data-key="${id}" ${checked} /></td>
-        <td>${id.substring(prefix.length)}</td>
+        <td><input type="checkbox" data-key="${key}" ${checked} /></td>
+        <td>${key.substring(prefix.length)}</td>
         <td>${Number(size).toLocaleString()}</td>
         <td>${lm}</td>
         <td>${sc}</td>
@@ -154,17 +177,36 @@
   }
 
   async function listOutput({ forward=false } = {}) {
-    const url = new URL(API_BASE + "/list-output");
-    url.searchParams.set("prefix", prefix);
-    if (forward && nextToken) url.searchParams.set("token", nextToken);
-    const res = await fetch(url, { method: "GET" });
-    const data = await res.json();
-    if (forward && nextToken) prevStack.push(nextToken);
-    render(
-      data.objects || data.Contents || [],
-      data.commonPrefixes || data.CommonPrefixes || [],
-      data.nextToken || data.NextContinuationToken
-    );
+    try {
+      if (!API_BASE || !API_BASE.startsWith("http")) {
+        throw new Error('API_BASE is not set. Set ?api=https://<api-id>.execute-api.<region>.amazonaws.com or replace "%%API_BASE%%".');
+      }
+      const url = new URL(API_BASE + "/list-output");
+      url.searchParams.set("bucket", OUTPUT_BUCKET);       // <-- critical: your Lambda requires this
+      url.searchParams.set("prefix", prefix);
+      // Support both param names for pagination:
+      if (forward && nextToken) {
+        url.searchParams.set("continuationToken", nextToken);
+        url.searchParams.set("token", nextToken);
+      }
+      console.log("GET", url.toString());
+      const res = await fetch(url.toString(), { method: "GET" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      console.log("list-output resp:", data);
+
+      if (forward && nextToken) prevStack.push(nextToken);
+
+      render(
+        data.objects || data.Contents || data.items || data.files || data.keys || [],
+        data.commonPrefixes || data.CommonPrefixes || data.prefixes || data.Prefixes || [],
+        data.nextToken || data.NextContinuationToken || data.token || data.continuationToken || null
+      );
+      showBanner("list-output OK", true);
+    } catch (e) {
+      console.error(e);
+      showBanner("list-output failed: " + e.message, false);
+    }
   }
 
   function goPrefix(p) {
@@ -175,68 +217,82 @@
     listOutput({ forward:false });
   }
 
+  // Pagination + selection
   btnPrev.onclick = () => {
     if (prevStack.length === 0) return;
     nextToken = prevStack.pop();
     listOutput({ forward:false });
   };
   btnNext.onclick = () => listOutput({ forward:true });
-
   chkAll.onchange = () => {
     selection.clear();
-    if (chkAll.checked) objectsCache.forEach(o => selection.add(o.Key || o.key));
+    if (chkAll.checked) objectsCache.forEach(o => selection.add(o.Key || o.key || o.name));
     render(objectsCache, [], nextToken);
   };
-
-  function flash(msg) {
-    activity.style.display = 'block';
-    activity.innerHTML = `<div>${msg}</div>`;
-    setTimeout(() => { activity.style.display='none'; }, 3500);
-  }
+  btnPing.onclick = () => listOutput({forward:false});
 
   // Actions
+  function flashOk(msg) { showBanner(msg, true); }
+
   btnMove.onclick = async () => {
     const keys = Array.from(selection);
     if (!keys.length) return;
-    const res = await fetch(API_BASE + "/copy-files", {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ keys })
-    });
-    const j = await res.json();
-    flash(`Moved ${j.completed || 0}/${keys.length} → Input (deleted from Output).`);
-    selection.clear(); setButtons(); listOutput({forward:false});
+    try {
+      const res = await fetch(API_BASE + "/copy-files", {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ keys })
+      });
+      const j = await res.json();
+      if (!res.ok) throw new Error(j.error || res.status);
+      flashOk(`Moved ${j.completed || 0}/${keys.length} → Input (deleted from Output).`);
+      selection.clear(); setButtons(); listOutput({forward:false});
+    } catch (e) {
+      showBanner("copy-files failed: " + e.message, false);
+    }
   };
 
   btnDelete.onclick = async () => {
     const keys = Array.from(selection);
     if (!keys.length) return;
-    const res = await fetch(API_BASE + "/delete-files", {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ keys })
-    });
-    const j = await res.json();
-    flash(`Deleted ${j.completed || 0}/${keys.length} from Output.`);
-    selection.clear(); setButtons(); listOutput({forward:false});
+    try {
+      const res = await fetch(API_BASE + "/delete-files", {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ keys })
+      });
+      const j = await res.json();
+      if (!res.ok) throw new Error(j.error || res.status);
+      flashOk(`Deleted ${j.completed || 0}/${keys.length} from Output.`);
+      selection.clear(); setButtons(); listOutput({forward:false});
+    } catch (e) {
+      showBanner("delete-files failed: " + e.message, false);
+    }
   };
 
   btnDownload.onclick = async () => {
     const keys = Array.from(selection);
     if (!keys.length) return;
-    const res = await fetch(API_BASE + "/download-file", {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ keys })
-    });
-    const j = await res.json();
-    if (j.url) {
-      window.location = j.url;
-    } else if (Array.isArray(j.urls)) {
-      // open first in new tab and show links
-      window.open(j.urls[0], "_blank");
-      flash(`Generated ${j.urls.length} download link(s).`);
+    try {
+      const res = await fetch(API_BASE + "/download-file", {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ keys })
+      });
+      const j = await res.json();
+      if (!res.ok) throw new Error(j.error || res.status);
+      if (j.url) {
+        window.open(j.url, "_blank");
+        flashOk("Download URL ready.");
+      } else if (Array.isArray(j.urls)) {
+        window.open(j.urls[0], "_blank");
+        flashOk(`Generated ${j.urls.length} download link(s).`);
+      } else {
+        showBanner("No URL(s) returned.", false);
+      }
+    } catch (e) {
+      showBanner("download-file failed: " + e.message, false);
     }
   };
 
-  // First load
+  // Initial auto-load
   listOutput({forward:false});
 </script>
 </body>
