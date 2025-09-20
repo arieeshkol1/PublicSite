@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>TSG JP2 Pipeline — Convert (Old API)</title>
+  <title>TSG JP2 Pipeline — Convert</title>
   <style>
     :root { --bg:#000; --card:#111; --muted:#9ca3af; --text:#fff; --accent:#3b82f6; --ok:#16a34a; --warn:#f59e0b; --err:#ef4444; }
     html,body { height:100%; background:var(--bg); color:var(--text); font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,"Helvetica Neue",Arial; margin:0; }
@@ -80,10 +80,10 @@
         <option value="TIFF" selected>TIFF</option>
         <option value="RAW">RAW</option>
       </select>
-      <div class="small" style="margin-top:6px;">(Uses old API: keep/tiff/raw)</div>
+      <div class="small" style="margin-top:6px;">(Old API contract: <span class="mono">formatOption</span> → <span class="mono">keep|tiff|raw</span>)</div>
     </div>
 
-    <!-- STEP 3: RUN CONVERT (tiles=1 == no split) -->
+    <!-- STEP 3: RUN (Tiles=1 = NO SPLIT) -->
     <div class="card">
       <h2>3) Run Convert</h2>
       <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
@@ -127,11 +127,11 @@
   </div>
 
   <script>
+    // === Utils ===
     const $=id=>document.getElementById(id);
     function humanSize(n){ if(n==null) return '—'; const kb=1024, mb=kb*1024, gb=mb*1024; if(n>=gb) return (n/gb).toFixed(2)+' GB'; if(n>=mb) return (n/mb).toFixed(2)+' MB'; if(n>=kb) return (n/kb).toFixed(2)+' KB'; return n+' B'; }
     function ts(){ return new Date().toISOString().replace('T',' ').replace('Z',''); }
     function logLine(s){ const b=$('logBox'); b.textContent=(b.textContent==='—'?'':b.textContent+'\n')+`[${ts()}] ${s}`; b.scrollTop=b.scrollHeight; }
-
     async function getJSON(url){ const r=await fetch(url); const t=await r.text(); try{ return JSON.parse(t);}catch{ throw new Error(`Expected JSON from ${url}. Got: ${t.slice(0,200).replace(/\s+/g,' ')}`);} }
     async function postJSON(url,body){
       const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
@@ -140,9 +140,10 @@
       return j;
     }
 
-    // state
+    // === State ===
     let selectedKeys=[], jobs=[], pollTimer=null;
 
+    // === Input list ===
     function renderList(objs){
       const tbody=$('inputTbody');
       if(!objs||!objs.length){tbody.innerHTML='<tr><td colspan="3" class="muted">No objects</td></tr>';return;}
@@ -166,13 +167,8 @@
       }catch(e){tbody.innerHTML=`<tr><td colspan=3>Error: ${e.message}</td></tr>`;logLine(`list-input failed: ${e.message}`);}
     }
 
-    function fmtToOption(v){
-      if(v==='JPEG2000')return'keep';
-      if(v==='TIFF')return'tiff';
-      if(v==='RAW')return'raw';
-      return'keep';
-    }
-
+    // === Format mapping (old API) ===
+    function fmtToOption(v){ if(v==='JPEG2000')return'keep'; if(v==='TIFF')return'tiff'; if(v==='RAW')return'raw'; return'keep'; }
     function statusPill(s){
       s=(s||'RUNNING').toUpperCase();
       if(s==='SUCCEEDED'||s==='COMPLETED') return `<span class="pill ok">SUCCEEDED</span>`;
@@ -181,6 +177,7 @@
       return `<span class="pill run">${s}</span>`;
     }
 
+    // === Jobs table ===
     function renderJobs(){
       const tbody=$('progTbody');
       if(jobs.length===0){ tbody.innerHTML='<tr><td colspan="8" class="small">No jobs yet</td></tr>'; return; }
@@ -215,12 +212,10 @@
         </tr>
       `).join('');
 
-      // wire expanders
+      // toggle details
       tbody.querySelectorAll('.expand-btn').forEach(btn=>{
         btn.addEventListener('click',()=>{
-          const idx=btn.dataset.idx;
-          const row=$(`detail-${idx}`);
-          const open=row.style.display!=='none';
+          const idx=btn.dataset.idx, row=$(`detail-${idx}`); const open=row.style.display!=='none';
           row.style.display=open?'none':'table-row';
           btn.setAttribute('aria-expanded', String(!open));
           btn.textContent = !open ? 'Hide' : 'Details';
@@ -228,15 +223,15 @@
       });
     }
 
+    // === Convert (old /split per file) ===
     async function doConvert(){
       if(selectedKeys.length===0) return;
-      const tilesTotal=parseInt($('tilesTotal').value,10)||1; // 1 = no split
+      const tilesTotal=parseInt($('tilesTotal').value,10)||1;  // 1 = no split
       const tilesGrid=Math.sqrt(tilesTotal)|0;
       const formatOption=fmtToOption($('format').value);
 
       logLine(`Submitting ${selectedKeys.length} job(s): tiles=${tilesTotal}, format=${formatOption}`);
 
-      // Launch one /split per file (parallel)
       const submissions=selectedKeys.map(async(key)=>{
         const body={
           inputBucket: INPUT_BUCKET,
@@ -250,7 +245,6 @@
           const expected=res.expectedTiles||tilesTotal;
           const exec=res.links?.execution;
           const j={ key, jobId, expected, tilesCount:0, percent:0, status:'RUNNING', exec,
-            // details (will be filled from status-progress if provided)
             output_key:null, output_size:null, duration_ms:null, task_arn:null
           };
           jobs.push(j);
@@ -267,6 +261,7 @@
       startPolling();
     }
 
+    // === Poll status-progress per job ===
     function startPolling(){
       if(pollTimer) clearInterval(pollTimer);
       pollTimer=setInterval(async()=>{
@@ -278,15 +273,14 @@
             j.percent    = s.percent ?? (j.expected? Math.round((j.tilesCount/j.expected)*100): 0);
             j.status     = (s.state||s.status|| (j.percent===100?'SUCCEEDED':'RUNNING')).toUpperCase();
 
-            // OPTIONAL: details if backend provides them on status-progress
-            // Support several common field names
-            j.output_key  = s.output_key || s.final_key || j.output_key;
-            j.output_size = s.output_size || s.size_final || j.output_size;
-            j.duration_ms = s.duration_ms || s.time_ms || j.duration_ms;
-            j.task_arn    = s.task_arn || s.ecs_task_arn || s.container_id || j.task_arn;
+            // Optional detail fields (shown in Details row if present)
+            j.output_key  = s.output_key  || s.final_key      || j.output_key;
+            j.output_size = s.output_size || s.size_final     || j.output_size;
+            j.duration_ms = s.duration_ms || s.time_ms        || j.duration_ms;
+            j.task_arn    = s.task_arn    || s.ecs_task_arn   || s.container_id || j.task_arn;
 
           }catch(e){
-            // keep trying
+            // keep trying; silent to avoid log spam
           }
         }
         renderJobs();
@@ -298,6 +292,7 @@
       },1500);
     }
 
+    // Wire + init
     $('btnRefresh').addEventListener('click', listInput);
     $('btnConvert').addEventListener('click', doConvert);
     listInput();
