@@ -1,5 +1,5 @@
 from aws_cdk import (
-    Stack, Duration, RemovalPolicy, CfnOutput,
+    Stack, Duration, CfnOutput,
     aws_s3 as s3,
     aws_s3_deployment as s3deploy,
     aws_lambda as _lambda,
@@ -58,10 +58,13 @@ class ServerlessJp2Stack(Stack):
             environment={"BUCKET": input_bucket.bucket_name},
         )
         list_input_fn.add_to_role_policy(
-            iam.PolicyStatement(actions=["s3:ListBucket"], resources=[input_bucket.bucket_arn])
+            iam.PolicyStatement(
+                actions=["s3:ListBucket"],
+                resources=[input_bucket.bucket_arn]
+            )
         )
 
-        # ---------------- List Output Lambda (reuse same handler) ----------------
+        # ---------------- List Output Lambda (reuse same code) ----------------
         list_output_fn = _lambda.Function(
             self, "ListOutputFn",
             runtime=_lambda.Runtime.PYTHON_3_11,
@@ -72,12 +75,15 @@ class ServerlessJp2Stack(Stack):
             environment={"BUCKET": output_bucket.bucket_name},
         )
         list_output_fn.add_to_role_policy(
-            iam.PolicyStatement(actions=["s3:ListBucket"], resources=[output_bucket.bucket_arn])
+            iam.PolicyStatement(
+                actions=["s3:ListBucket"],
+                resources=[output_bucket.bucket_arn]
+            )
         )
 
         # ---------------- Convert Lambda (NEW) ----------------
-        # Optionally pass the Split State Machine ARN from context or env:
-        # cdk synth/deploy with: -c splitSmArn=arn:aws:states:...
+        # Provide Split State Machine ARN via context or env if your convert.py starts SFN:
+        # cdk deploy -c splitSmArn=arn:aws:states:REGION:ACCOUNT:stateMachine:YourSplitSm
         split_sm_arn = self.node.try_get_context("splitSmArn") or os.getenv("SPLIT_SM_ARN", "")
 
         convert_fn = _lambda.Function(
@@ -90,16 +96,18 @@ class ServerlessJp2Stack(Stack):
             environment={
                 "INPUT_BUCKET": input_bucket.bucket_name,
                 "OUTPUT_BUCKET": output_bucket.bucket_name,
-                "SPLIT_SM_ARN": split_sm_arn,  # may be empty if not used by your handler
+                "SPLIT_SM_ARN": split_sm_arn,  # may be empty if convert.py doesn't use SFN
             },
         )
 
-        # If a specific SM ARN is provided, grant StartExecution on it
+        # If Split SM ARN is provided, allow Convert to start it
         if split_sm_arn:
-            convert_fn.add_to_role_policy(iam.PolicyStatement(
-                actions=["states:StartExecution"],
-                resources=[split_sm_arn],
-            ))
+            convert_fn.add_to_role_policy(
+                iam.PolicyStatement(
+                    actions=["states:StartExecution"],
+                    resources=[split_sm_arn],
+                )
+            )
 
         # ---------------- HTTP API with CORS ----------------
         http_api = apigw.HttpApi(
@@ -112,16 +120,16 @@ class ServerlessJp2Stack(Stack):
             ),
         )
 
-        list_input_integ  = apigw_int.HttpLambdaIntegration("ListInputIntegration", handler=list_input_fn)
+        list_input_integ  = apigw_int.HttpLambdaIntegration("ListInputIntegration",  handler=list_input_fn)
         list_output_integ = apigw_int.HttpLambdaIntegration("ListOutputIntegration", handler=list_output_fn)
-        convert_integ     = apigw_int.HttpLambdaIntegration("ConvertIntegration", handler=convert_fn)
+        convert_integ     = apigw_int.HttpLambdaIntegration("ConvertIntegration",    handler=convert_fn)
 
         http_api.add_routes(path="/list-input",  methods=[apigw.HttpMethod.GET],  integration=list_input_integ)
         http_api.add_routes(path="/list-output", methods=[apigw.HttpMethod.GET],  integration=list_output_integ)
         http_api.add_routes(path="/convert",     methods=[apigw.HttpMethod.POST], integration=convert_integ)
 
         # ---------------- Outputs ----------------
-        CfnOutput(self, "UiBucketName",   value="jp2-ui-991105135552-us-east-1")
-        CfnOutput(self, "InputBucketName", value=input_bucket.bucket_name)
+        CfnOutput(self, "UiBucketName",     value="jp2-ui-991105135552-us-east-1")
+        CfnOutput(self, "InputBucketName",  value=input_bucket.bucket_name)
         CfnOutput(self, "OutputBucketName", value=output_bucket.bucket_name)
-        CfnOutput(self, "ApiEndpoint",     value=http_api.api_endpoint)
+        CfnOutput(self, "ApiEndpoint",      value=http_api.api_endpoint)
