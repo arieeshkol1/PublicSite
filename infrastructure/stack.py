@@ -67,10 +67,11 @@ class ServerlessJp2Stack(Stack):
                 # STATE_MACHINE_ARN / _UNITE set after SMs are created
             },
         )
-        # Allow listing/reading output where needed by controller
+        # Allow listing/reading S3 where controller needs it
         controller_fn.add_to_role_policy(
-            iam.PolicyStatement(actions=["s3:ListBucket"], resources=[output_bucket.bucket_arn])
+            iam.PolicyStatement(actions=["s3:ListBucket"], resources=[input_bucket.bucket_arn, output_bucket.bucket_arn])
         )
+        input_bucket.grant_read(controller_fn)
         output_bucket.grant_read(controller_fn)
 
         # ---------------- List Input Lambda ----------------
@@ -88,15 +89,17 @@ class ServerlessJp2Stack(Stack):
         )
         input_bucket.grant_read(list_input_fn)
 
-        # ---------------- List Output Lambda (NEW) ----------------
+        # ---------------- List Output Lambda (reuse input handler) ----------------
+        # The handler 'lambda_list_input.handler' expects INPUT_BUCKET.
+        # Set INPUT_BUCKET = output bucket so it lists the OUTPUT side.
         list_output_fn = _lambda.Function(
             self, "ListOutputFn",
             runtime=_lambda.Runtime.PYTHON_3_11,
-            handler="lambda_list_output.handler",  # implement same pattern as lambda_list_input
+            handler="lambda_list_input.handler",  # reuse same code
             code=_lambda.Code.from_asset(lambda_code_dir),
             timeout=Duration.seconds(15),
             memory_size=256,
-            environment={"OUTPUT_BUCKET": output_bucket.bucket_name},
+            environment={"INPUT_BUCKET": output_bucket.bucket_name},  # <-- key fix
         )
         list_output_fn.add_to_role_policy(
             iam.PolicyStatement(actions=["s3:ListBucket"], resources=[output_bucket.bucket_arn])
@@ -104,7 +107,6 @@ class ServerlessJp2Stack(Stack):
         output_bucket.grant_read(list_output_fn)
 
         # ---------------- ECS Fargate for Split ----------------
-        # VPC with public subnets (no NAT)
         vpc = ec2.Vpc(
             self, "Vpc",
             max_azs=2,
@@ -115,24 +117,19 @@ class ServerlessJp2Stack(Stack):
         )
         cluster = ecs.Cluster(self, "Cluster", vpc=vpc)
 
-        # Use prebuilt image from ECR (no local Docker build)
         repo = ecr.Repository.from_repository_arn(
             self, "TilerRepo",
             "arn:aws:ecr:us-east-1:991105135552:repository/jp2-split"
         )
         image_tag = self.node.try_get_context("tilerTag") or "latest"
 
-        # Task definition: 8 vCPU, 16 GiB
         task_def = ecs.FargateTaskDefinition(
             self, "SplitTaskDef",
-            cpu=8192,                   # 8 vCPU
-            memory_limit_mib=16384,     # 16 GiB
+            cpu=8192,
+            memory_limit_mib=16384,
         )
-
-        # Allow ECS execution role to pull from ECR
         repo.grant_pull(task_def.obtain_execution_role())
 
-        # Task role: S3 read input / read-write output
         task_def.add_to_task_role_policy(iam.PolicyStatement(
             actions=["s3:GetObject", "s3:ListBucket"],
             resources=[input_bucket.bucket_arn, input_bucket.arn_for_objects("*")]
@@ -142,7 +139,6 @@ class ServerlessJp2Stack(Stack):
             resources=[output_bucket.bucket_arn, output_bucket.arn_for_objects("*")]
         ))
 
-        # CloudWatch logs
         log_group = logs.LogGroup(
             self, "SplitLogs",
             retention=logs.RetentionDays.ONE_WEEK,
@@ -177,7 +173,6 @@ class ServerlessJp2Stack(Stack):
         )
 
         # ---------------- Step Functions ----------------
-        # Split: run Fargate task with env overrides from input
         split_task = tasks.EcsRunTask(
             self, "SplitTask",
             integration_pattern=sfn.IntegrationPattern.RUN_JOB,
@@ -186,41 +181,20 @@ class ServerlessJp2Stack(Stack):
             launch_target=tasks.EcsFargateLaunchTarget(
                 platform_version=ecs.FargatePlatformVersion.LATEST
             ),
-            assign_public_ip=True,  # public subnet, no NAT
+            assign_public_ip=True,
             subnets=ec2.SubnetSelection(subnet_type=ec2.SubnetType.PUBLIC),
             container_overrides=[
                 tasks.ContainerOverride(
                     container_definition=container,
                     command=["python3", "/app/split_worker.py"],
                     environment=[
-                        tasks.TaskEnvironmentVariable(
-                            name="INPUT_BUCKET",
-                            value=sfn.JsonPath.string_at("$.inputBucket")
-                        ),
-                        tasks.TaskEnvironmentVariable(
-                            name="INPUT_KEY",
-                            value=sfn.JsonPath.string_at("$.inputKey")
-                        ),
-                        tasks.TaskEnvironmentVariable(
-                            name="OUTPUT_BUCKET",
-                            value=sfn.JsonPath.string_at("$.outputBucket")
-                        ),
-                        tasks.TaskEnvironmentVariable(
-                            name="JOB_ID",
-                            value=sfn.JsonPath.string_at("$.jobId")
-                        ),
-                        tasks.TaskEnvironmentVariable(
-                            name="TILES_TOTAL",
-                            value=sfn.JsonPath.string_at("$.params.tilesTotal")
-                        ),
-                        tasks.TaskEnvironmentVariable(
-                            name="TILES_GRID",
-                            value=sfn.JsonPath.string_at("$.params.tilesGrid")
-                        ),
-                        tasks.TaskEnvironmentVariable(
-                            name="FORMAT_OPTION",
-                            value=sfn.JsonPath.string_at("$.params.formatOption")
-                        ),
+                        tasks.TaskEnvironmentVariable(name="INPUT_BUCKET",  value=sfn.JsonPath.string_at("$.inputBucket")),
+                        tasks.TaskEnvironmentVariable(name="INPUT_KEY",     value=sfn.JsonPath.string_at("$.inputKey")),
+                        tasks.TaskEnvironmentVariable(name="OUTPUT_BUCKET", value=sfn.JsonPath.string_at("$.outputBucket")),
+                        tasks.TaskEnvironmentVariable(name="JOB_ID",        value=sfn.JsonPath.string_at("$.jobId")),
+                        tasks.TaskEnvironmentVariable(name="TILES_TOTAL",   value=sfn.JsonPath.string_at("$.params.tilesTotal")),
+                        tasks.TaskEnvironmentVariable(name="TILES_GRID",    value=sfn.JsonPath.string_at("$.params.tilesGrid")),
+                        tasks.TaskEnvironmentVariable(name="FORMAT_OPTION", value=sfn.JsonPath.string_at("$.params.formatOption")),
                     ],
                 )
             ],
@@ -232,7 +206,6 @@ class ServerlessJp2Stack(Stack):
             timeout=Duration.minutes(60),
         )
 
-        # Unite SM
         unite_task = tasks.LambdaInvoke(
             self, "UniteTask", lambda_function=unite_worker_fn, payload_response_only=True
         )
@@ -242,7 +215,6 @@ class ServerlessJp2Stack(Stack):
             timeout=Duration.minutes(10),
         )
 
-        # Controller -> StepFunctions IAM
         controller_fn.add_to_role_policy(
             iam.PolicyStatement(
                 actions=["states:StartExecution"],
@@ -265,12 +237,13 @@ class ServerlessJp2Stack(Stack):
         http_api = apigw.HttpApi(
             self, "HttpApi",
             cors_preflight=apigw.CorsPreflightOptions(
-                allow_headers=["Content-Type"],  # add "x-api-key" if you use API keys
+                allow_headers=["Content-Type"],  # add "x-api-key" if needed
                 allow_methods=[apigw.CorsHttpMethod.GET, apigw.CorsHttpMethod.POST, apigw.CorsHttpMethod.OPTIONS],
-                allow_origins=["*"],             # lock this down to your S3 UI origin if desired
+                allow_origins=["*"],             # lock to your S3 UI origin if desired
                 max_age=Duration.days(10),
             ),
         )
+
         controller_integ   = apigw_int.HttpLambdaIntegration("ControllerIntegration", handler=controller_fn)
         list_input_integ   = apigw_int.HttpLambdaIntegration("ListInputIntegration", handler=list_input_fn)
         list_output_integ  = apigw_int.HttpLambdaIntegration("ListOutputIntegration", handler=list_output_fn)
@@ -281,8 +254,12 @@ class ServerlessJp2Stack(Stack):
         http_api.add_routes(path="/status-progress",     methods=[apigw.HttpMethod.GET],  integration=controller_integ)
         http_api.add_routes(path="/status-detail/{jobId}", methods=[apigw.HttpMethod.GET], integration=controller_integ)
         http_api.add_routes(path="/status-history/{jobId}", methods=[apigw.HttpMethod.GET], integration=controller_integ)
+
+        # FIX: add /copy route so UI copy works
+        http_api.add_routes(path="/copy",                methods=[apigw.HttpMethod.POST], integration=controller_integ)
+
+        # Correct list routes
         http_api.add_routes(path="/list-input",          methods=[apigw.HttpMethod.GET],  integration=list_input_integ)
-        # IMPORTANT: route list-output to the dedicated Lambda
         http_api.add_routes(path="/list-output",         methods=[apigw.HttpMethod.GET],  integration=list_output_integ)
 
         # ---------------- Outputs ----------------
@@ -290,5 +267,3 @@ class ServerlessJp2Stack(Stack):
         CfnOutput(self, "InputBucketName", value=input_bucket.bucket_name)
         CfnOutput(self, "OutputBucketName", value=output_bucket.bucket_name)
         CfnOutput(self, "ApiEndpoint", value=http_api.api_endpoint)
-        CfnOutput(self, "SplitStateMachineArn", value=split_sm.state_machine_arn)
-        CfnOutput(self, "UniteStateMachineArn", value=unite_sm.state_machine_arn)
