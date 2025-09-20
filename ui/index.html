@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>Dynamic File Manager — TSG</title>
+  <title>TSG · JP2 Tools</title>
   <link rel="icon" href="assets/tsg-logo.svg">
   <style>
 :root{ --bg:#0b1020; --panel:#121a34; --accent:#45a1ff; --text:#e7ecf7; --muted:#96a2c0; --border:#233059; }
@@ -41,26 +41,25 @@ label{ font-size:.9rem; color:var(--muted); }
 small.hint{ color:var(--muted); display:block; margin-top:.25rem; }
 hr{ border:none; border-top:1px solid var(--border); margin:1rem 0; }
 .footer-note{ color:var(--muted); font-size:.8rem; text-align:center; padding:1rem 0 2rem; }
-</style>
+  </style>
 </head>
 <body>
   <header>
     <img src="assets/tsg-logo.svg" alt="TSG" width="28" height="28" style="color:var(--accent)">
-    <div class="title">TSG · Dynamic File Manager</div>
+    <div class="title">TSG · JP2 Tools</div>
   </header>
 
   <div class="container">
     <nav>
       <div class="section">Modules</div>
+      <a href="pages/file-manager.html" target="work" id="link-file-manager">File Manager</a>
       <a href="pages/split-merge.html" target="work" id="link-split-merge">Split / Merge</a>
-      <a href="pages/copy-page.html" target="work" id="link-copy">Copy </a>
       <a href="pages/convert.html" target="work" id="link-convert">Convert</a>
-      <a href="pages/scan.html" target="work" id="link-scan">Scan</a>
       <hr/>
       <button class="btn" onclick="reloadFrame()">Reload Frame</button>
     </nav>
     <main style="padding:0;">
-      <iframe name="work" src="pages/split-merge.html" id="workframe" title="Work Area"></iframe>
+      <iframe name="work" src="pages/file-manager.html" id="workframe" title="Work Area"></iframe>
     </main>
   </div>
 
@@ -68,10 +67,9 @@ hr{ border:none; border-top:1px solid var(--border); margin:1rem 0; }
 
   <script>
     const links = [
+      document.getElementById('link-file-manager'),
       document.getElementById('link-split-merge'),
-      document.getElementById('link-copy'),
-      document.getElementById('link-convert'),
-      document.getElementById('link-scan')
+      document.getElementById('link-convert')
     ];
     function setActive(e){ links.forEach(a=>a.classList.remove('active')); e.classList.add('active'); }
     links.forEach(a=>a.addEventListener('click', ev=>setActive(ev.currentTarget)));
