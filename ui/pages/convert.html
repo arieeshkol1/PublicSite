@@ -34,17 +34,10 @@
     .details { background:#0b1220; border:1px dashed rgba(255,255,255,.25); border-radius:10px; padding:10px; margin-top:8px; }
     .expand-btn { cursor:pointer; border:1px solid rgba(255,255,255,.2); background:#0f172a; border-radius:8px; padding:4px 8px; }
     .expand-btn[aria-expanded="true"] { background:#13203a; }
-    input, select { background:#0f172a; border:1px solid rgba(255,255,255,.2); color:#fff; padding:6px 8px; border-radius:8px; width:100%; }
-    .kbd { font-family:ui-monospace, Menlo, Consolas, monospace; background:#0f172a; border:1px solid rgba(255,255,255,.2); padding:2px 6px; border-radius:6px; }
   </style>
+  <!-- Old, working API base -->
   <script>
-    // === API endpoints ===
-    window.API_BASE = "https://qmiu91xhgk.execute-api.us-east-1.amazonaws.com"; // list/status
-
-    // Convert API (separate deployment). Ensure stage is correct ("/prod" if required).
-    window.API_BASE_CONVERT = "https://xui5toa569.execute-api.us-east-1.amazonaws.com";
-    window.API_CONVERT_STAGE = "/prod"; // adjust to match deployed stage
-
+    window.API_BASE = "https://qmiu91xhgk.execute-api.us-east-1.amazonaws.com";
     const INPUT_BUCKET  = 'jp2-input-991105135552-us-east-1';
     const OUTPUT_BUCKET = 'jp2-output-991105135552-us-east-1';
   </script>
@@ -85,9 +78,9 @@
       <select id="format" class="btn">
         <option value="JPEG2000">JPEG2000 (keep)</option>
         <option value="TIFF" selected>TIFF</option>
-        <option value="RAW">RAW (not implemented)</option>
+        <option value="RAW">RAW</option>
       </select>
-      <div class="small" style="margin-top:6px;">(Converter hits <span class="mono">POST /convert</span> on <span class="kbd">xui5toa569</span> API)</div>
+      <div class="small" style="margin-top:6px;">(Old API contract: <span class="mono">formatOption</span> → <span class="mono">keep|tiff|raw</span>)</div>
     </div>
 
     <!-- STEP 3: RUN (Tiles=1 = NO SPLIT) -->
@@ -119,8 +112,8 @@
             <th>Job ID</th>
             <th>Status</th>
             <th style="width:140px;">Progress</th>
-            <th>ECS Task</th>
-            <th class="right" style="width:90px;">Tiles</th>
+            <th>Execution</th>
+            <th class="right" style="width:80px;">Tiles</th>
           </tr>
         </thead>
         <tbody id="progTbody"><tr><td colspan="8" class="small">No jobs yet</td></tr></tbody>
@@ -130,14 +123,11 @@
     <div class="card">
       <h2>Log</h2>
       <div id="logBox" class="log">—</div>
-      <div class="small" style="margin-top:8px;">
-        <div>List/Status API: <span class="mono" id="dbgListApi"></span></div>
-        <div>Convert API: <span class="mono" id="dbgConvApi"></span></div>
-      </div>
     </div>
   </div>
 
   <script>
+    // === Utils ====
     const $=id=>document.getElementById(id);
     function humanSize(n){ if(n==null) return '—'; const kb=1024, mb=kb*1024, gb=mb*1024; if(n>=gb) return (n/gb).toFixed(2)+' GB'; if(n>=mb) return (n/mb).toFixed(2)+' MB'; if(n>=kb) return (n/kb).toFixed(2)+' KB'; return n+' B'; }
     function ts(){ return new Date().toISOString().replace('T',' ').replace('Z',''); }
@@ -149,19 +139,11 @@
       if(!r.ok){ const et=r.headers.get('x-amzn-errortype')||''; const rid=r.headers.get('x-amzn-requestid')||r.headers.get('x-amz-request-id')||''; throw new Error(`${j.error||j.message||j._raw||('HTTP '+r.status)}\nPOST ${url}\nStatus:${r.status}\n${et?('AWS-ErrorType:'+et+'\n'):''}${rid?('RequestId:'+rid+'\n'):''}Body:${JSON.stringify(body)}\nResp:${t.slice(0,800)}`); }
       return j;
     }
-    function baseName(key){ const k=key.split('/').pop()||key; return k.replace(/\.[^.]+$/,''); }
-    function uiToFmtOption(v){ if(v==='JPEG2000')return'keep'; if(v==='TIFF')return'tiff'; if(v==='RAW')return'raw'; return'keep'; }
-    function extFor(fmt){ return fmt==='tiff' ? '.tif' : (fmt==='keep' ? '.jp2' : ''); }
-    function statusPill(s){
-      s=(s||'RUNNING').toUpperCase();
-      if(s==='SUCCEEDED'||s==='COMPLETED') return `<span class="pill ok">SUCCEEDED</span>`;
-      if(s==='FAILED') return `<span class="pill err">FAILED</span>`;
-      if(s==='PENDING'||s==='QUEUED') return `<span class="pill run">QUEUED</span>`;
-      return `<span class="pill run">${s}</span>`;
-    }
 
+    // === State ===
     let selectedKeys=[], jobs=[], pollTimer=null;
 
+    // === Input list ===
     function renderList(objs){
       const tbody=$('inputTbody');
       if(!objs||!objs.length){tbody.innerHTML='<tr><td colspan="3" class="muted">No objects</td></tr>';return;}
@@ -181,10 +163,21 @@
         const j=await getJSON(url);
         const items=j.objects||j.items||[];
         renderList(items);
-        logLine(`Listed ${items.length} object(s) from ${bucket}${prefix?` with prefix \"${prefix}\"`:''}.`);
+        logLine(`Listed ${items.length} object(s) from ${bucket}${prefix?` with prefix "${prefix}"`:''}.`);
       }catch(e){tbody.innerHTML=`<tr><td colspan=3>Error: ${e.message}</td></tr>`;logLine(`list-input failed: ${e.message}`);}
     }
 
+    // === Format mapping (old API) ===
+    function fmtToOption(v){ if(v==='JPEG2000')return'keep'; if(v==='TIFF')return'tiff'; if(v==='RAW')return'raw'; return'keep'; }
+    function statusPill(s){
+      s=(s||'RUNNING').toUpperCase();
+      if(s==='SUCCEEDED'||s==='COMPLETED') return `<span class="pill ok">SUCCEEDED</span>`;
+      if(s==='FAILED') return `<span class="pill err">FAILED</span>`;
+      if(s==='PENDING'||s==='QUEUED') return `<span class="pill run">QUEUED</span>`;
+      return `<span class="pill run">${s}</span>`;
+    }
+
+    // === Jobs table ===
     function renderJobs(){
       const tbody=$('progTbody');
       if(jobs.length===0){ tbody.innerHTML='<tr><td colspan="8" class="small">No jobs yet</td></tr>'; return; }
@@ -199,22 +192,27 @@
             <progress max="100" value="${j.percent||0}"></progress>
             <div class="small">${j.percent||0}%</div>
           </td>
-          <td class="mono" style="max-width:240px; overflow:hidden; text-overflow:ellipsis;">${j.task_arn || '—'}</td>
+          <td>${j.exec? `<a href="${j.exec}" target="_blank" rel="noreferrer">Execution</a>`:'—'}</td>
           <td class="right"><span class="small">${j.tilesCount||0}/${j.expected||0}</span></td>
         </tr>
         <tr class="detail-row" id="detail-${i}" style="display:none;">
           <td></td>
           <td colspan="7">
             <div class="details">
-              <div class="small">Output(s):</div>
-              <div class="mono">${(j.outputs||[]).map(o=>`${o.key} (${humanSize(o.size)})`).join('<br/>') || '—'}</div>
+              <div class="small">Final file name:</div>
+              <div class="mono">${j.output_key || '—'}</div>
+              <div class="small" style="margin-top:6px;">Final file size:</div>
+              <div>${j.output_size!=null ? humanSize(j.output_size) : '—'}</div>
               <div class="small" style="margin-top:6px;">Time to convert:</div>
               <div>${j.duration_ms!=null ? `${Math.round(j.duration_ms/1000)}s (${j.duration_ms} ms)` : '—'}</div>
+              <div class="small" style="margin-top:6px;">ECS Task/Container ID:</div>
+              <div class="mono">${j.task_arn || '—'}</div>
             </div>
           </td>
         </tr>
       `).join('');
 
+      // toggle details
       tbody.querySelectorAll('.expand-btn').forEach(btn=>{
         btn.addEventListener('click',()=>{
           const idx=btn.dataset.idx, row=$(`detail-${idx}`); const open=row.style.display!=='none';
@@ -225,8 +223,79 @@
       });
     }
 
+    // === Convert (old /split per file) ===
     async function doConvert(){
       if(selectedKeys.length===0) return;
-      const tiles=parseInt($('tilesTotal').value,10)||1;
-      const target_format=$('format').value;
-      if(target_format==='RAW'){ alert
+      const tilesTotal=parseInt($('tilesTotal').value,10)||1;  // 1 = no split
+      const tilesGrid=Math.sqrt(tilesTotal)|0;
+      const formatOption=fmtToOption($('format').value);
+
+      logLine(`Submitting ${selectedKeys.length} job(s): tiles=${tilesTotal}, format=${formatOption}`);
+
+      const submissions=selectedKeys.map(async(key)=>{
+        const body={
+          inputBucket: INPUT_BUCKET,
+          inputKey: key,
+          outputBucket: OUTPUT_BUCKET,
+          params: { tilesTotal, tilesGrid, formatOption }
+        };
+        try{
+          const res=await postJSON(`${window.API_BASE}/split`, body);
+          const jobId=res.jobId||res.job_id||null;
+          const expected=res.expectedTiles||tilesTotal;
+          const exec=res.links?.execution;
+          const j={ key, jobId, expected, tilesCount:0, percent:0, status:'RUNNING', exec,
+            output_key:null, output_size:null, duration_ms:null, task_arn:null
+          };
+          jobs.push(j);
+          logLine(`Started job ${jobId} for ${key}`);
+        }catch(e){
+          const j={ key, jobId:null, expected:0, tilesCount:0, percent:0, status:'FAILED', exec:null };
+          jobs.push(j);
+          logLine(`Failed to start for ${key}: ${e.message}`);
+        }
+        renderJobs();
+      });
+
+      await Promise.all(submissions);
+      startPolling();
+    }
+
+    // === Poll status-progress per job ===
+    function startPolling(){
+      if(pollTimer) clearInterval(pollTimer);
+      pollTimer=setInterval(async()=>{
+        for(const j of jobs){
+          if(!j.jobId) continue;
+          try{
+            const s=await getJSON(`${window.API_BASE}/status-progress?jobId=${encodeURIComponent(j.jobId)}&expected=${j.expected}`);
+            j.tilesCount = s.tilesCount||0;
+            j.percent    = s.percent ?? (j.expected? Math.round((j.tilesCount/j.expected)*100): 0);
+            j.status     = (s.state||s.status|| (j.percent===100?'SUCCEEDED':'RUNNING')).toUpperCase();
+
+            // Optional detail fields (shown in Details row if present)
+            j.output_key  = s.output_key  || s.final_key      || j.output_key;
+            j.output_size = s.output_size || s.size_final     || j.output_size;
+            j.duration_ms = s.duration_ms || s.time_ms        || j.duration_ms;
+            j.task_arn    = s.task_arn    || s.ecs_task_arn   || s.container_id || j.task_arn;
+
+          }catch(e){
+            // keep trying; silent to avoid log spam
+          }
+        }
+        renderJobs();
+
+        if(jobs.length>0 && jobs.every(x => ['SUCCEEDED','COMPLETED','FAILED','CANCELLED'].includes((x.status||'').toUpperCase()))){
+          clearInterval(pollTimer); pollTimer=null;
+          logLine('All jobs finished.');
+        }
+      },1500);
+    }
+
+    // Wire + init
+    $('btnRefresh').addEventListener('click', listInput);
+    $('btnConvert').addEventListener('click', doConvert);
+    listInput();
+  </script>
+</body>
+</html>
