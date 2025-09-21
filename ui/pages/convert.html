@@ -35,10 +35,16 @@
     .expand-btn { cursor:pointer; border:1px solid rgba(255,255,255,.2); background:#0f172a; border-radius:8px; padding:4px 8px; }
     .expand-btn[aria-expanded="true"] { background:#13203a; }
     input, select { background:#0f172a; border:1px solid rgba(255,255,255,.2); color:#fff; padding:6px 8px; border-radius:8px; width:100%; }
+    .kbd { font-family:ui-monospace, Menlo, Consolas, monospace; background:#0f172a; border:1px solid rgba(255,255,255,.2); padding:2px 6px; border-radius:6px; }
   </style>
   <script>
-    // If you changed the API in CDK, you can replace this with the new endpoint output.
-    window.API_BASE = "https://qmiu91xhgk.execute-api.us-east-1.amazonaws.com";
+    // === API endpoints ===
+    window.API_BASE = "https://qmiu91xhgk.execute-api.us-east-1.amazonaws.com"; // list/status
+
+    // Convert API (separate deployment). Ensure stage is correct ("/prod" if required).
+    window.API_BASE_CONVERT = "https://xui5toa569.execute-api.us-east-1.amazonaws.com";
+    window.API_CONVERT_STAGE = "/prod"; // adjust to match deployed stage
+
     const INPUT_BUCKET  = 'jp2-input-991105135552-us-east-1';
     const OUTPUT_BUCKET = 'jp2-output-991105135552-us-east-1';
   </script>
@@ -81,7 +87,7 @@
         <option value="TIFF" selected>TIFF</option>
         <option value="RAW">RAW (not implemented)</option>
       </select>
-      <div class="small" style="margin-top:6px;">(Converter hits <span class="mono">POST /convert</span> — one ECS task per file)</div>
+      <div class="small" style="margin-top:6px;">(Converter hits <span class="mono">POST /convert</span> on <span class="kbd">xui5toa569</span> API)</div>
     </div>
 
     <!-- STEP 3: RUN (Tiles=1 = NO SPLIT) -->
@@ -124,11 +130,14 @@
     <div class="card">
       <h2>Log</h2>
       <div id="logBox" class="log">—</div>
+      <div class="small" style="margin-top:8px;">
+        <div>List/Status API: <span class="mono" id="dbgListApi"></span></div>
+        <div>Convert API: <span class="mono" id="dbgConvApi"></span></div>
+      </div>
     </div>
   </div>
 
   <script>
-    // === Utils ===
     const $=id=>document.getElementById(id);
     function humanSize(n){ if(n==null) return '—'; const kb=1024, mb=kb*1024, gb=mb*1024; if(n>=gb) return (n/gb).toFixed(2)+' GB'; if(n>=mb) return (n/mb).toFixed(2)+' MB'; if(n>=kb) return (n/kb).toFixed(2)+' KB'; return n+' B'; }
     function ts(){ return new Date().toISOString().replace('T',' ').replace('Z',''); }
@@ -141,12 +150,18 @@
       return j;
     }
     function baseName(key){ const k=key.split('/').pop()||key; return k.replace(/\.[^.]+$/,''); }
+    function uiToFmtOption(v){ if(v==='JPEG2000')return'keep'; if(v==='TIFF')return'tiff'; if(v==='RAW')return'raw'; return'keep'; }
     function extFor(fmt){ return fmt==='tiff' ? '.tif' : (fmt==='keep' ? '.jp2' : ''); }
+    function statusPill(s){
+      s=(s||'RUNNING').toUpperCase();
+      if(s==='SUCCEEDED'||s==='COMPLETED') return `<span class="pill ok">SUCCEEDED</span>`;
+      if(s==='FAILED') return `<span class="pill err">FAILED</span>`;
+      if(s==='PENDING'||s==='QUEUED') return `<span class="pill run">QUEUED</span>`;
+      return `<span class="pill run">${s}</span>`;
+    }
 
-    // === State ===
     let selectedKeys=[], jobs=[], pollTimer=null;
 
-    // === Input list ===
     function renderList(objs){
       const tbody=$('inputTbody');
       if(!objs||!objs.length){tbody.innerHTML='<tr><td colspan="3" class="muted">No objects</td></tr>';return;}
@@ -166,21 +181,10 @@
         const j=await getJSON(url);
         const items=j.objects||j.items||[];
         renderList(items);
-        logLine(`Listed ${items.length} object(s) from ${bucket}${prefix?` with prefix "${prefix}"`:''}.`);
+        logLine(`Listed ${items.length} object(s) from ${bucket}${prefix?` with prefix \"${prefix}\"`:''}.`);
       }catch(e){tbody.innerHTML=`<tr><td colspan=3>Error: ${e.message}</td></tr>`;logLine(`list-input failed: ${e.message}`);}
     }
 
-    // === UI ↔ tiler format mapping ===
-    function uiToFmtOption(v){ if(v==='JPEG2000')return'keep'; if(v==='TIFF')return'tiff'; if(v==='RAW')return'raw'; return'keep'; }
-    function statusPill(s){
-      s=(s||'RUNNING').toUpperCase();
-      if(s==='SUCCEEDED'||s==='COMPLETED') return `<span class="pill ok">SUCCEEDED</span>`;
-      if(s==='FAILED') return `<span class="pill err">FAILED</span>`;
-      if(s==='PENDING'||s==='QUEUED') return `<span class="pill run">QUEUED</span>`;
-      return `<span class="pill run">${s}</span>`;
-    }
-
-    // === Jobs table ===
     function renderJobs(){
       const tbody=$('progTbody');
       if(jobs.length===0){ tbody.innerHTML='<tr><td colspan="8" class="small">No jobs yet</td></tr>'; return; }
@@ -211,7 +215,6 @@
         </tr>
       `).join('');
 
-      // toggles
       tbody.querySelectorAll('.expand-btn').forEach(btn=>{
         btn.addEventListener('click',()=>{
           const idx=btn.dataset.idx, row=$(`detail-${idx}`); const open=row.style.display!=='none';
@@ -222,106 +225,8 @@
       });
     }
 
-    // === Convert via /convert (Fargate) ===
     async function doConvert(){
       if(selectedKeys.length===0) return;
       const tiles=parseInt($('tilesTotal').value,10)||1;
       const target_format=$('format').value;
-      if(target_format==='RAW'){ alert('RAW path not implemented yet'); return; }
-
-      logLine(`Submitting convert: ${selectedKeys.length} file(s), tiles=${tiles}, format=${target_format}`);
-
-      try{
-        const res=await postJSON(`${window.API_BASE}/convert`, {
-          keys: selectedKeys,
-          target_format,
-          tiles
-        });
-
-        const fmtOpt = uiToFmtOption(target_format);
-        const ext = extFor(fmtOpt);
-        const t0 = Date.now();
-
-        (res.items||[]).forEach((it)=>{
-          const bname = baseName(it.key);
-          const expected = tiles<=1 ? 1 : tiles;
-          const outputPrefix = tiles<=1
-            ? `converted/${bname}${ext}`
-            : `tiles/${res.job_id}/`; // list all tiles for this job
-
-          jobs.push({
-            key: it.key,
-            jobId: res.job_id,
-            expected,
-            tilesCount: 0,
-            percent: 0,
-            status: it.taskArn ? 'QUEUED' : 'FAILED',
-            task_arn: it.taskArn || null,
-            fmtOpt, ext, t0,
-            outputPrefix,
-            outputs: []
-          });
-        });
-
-        renderJobs();
-        startPolling(); // S3-based progress
-      }catch(e){
-        logLine(`Convert error: ${e.message}`);
-      }
-    }
-
-    // === Poll S3 outputs to infer progress ===
-    async function pollOnce(j){
-      // Single convert: look for converted/<base>.<ext>
-      // Tiling: list tiles/<jobId>/ and count by extension
-      try{
-        if(j.expected===1){
-          const key = j.outputPrefix; // exact key (converted/<base>.<ext>)
-          const pref = key.substring(0, key.lastIndexOf('/')+1);
-          const list = await getJSON(`${window.API_BASE}/list-output?bucket=${encodeURIComponent(OUTPUT_BUCKET)}&prefix=${encodeURIComponent(pref)}`);
-          const objs = (list.objects||list.items||[]).map(o=>({key:o.key||o.Key,size:o.size||o.Size}));
-          const found = objs.find(o => (o.key===key));
-          if(found){
-            j.tilesCount = 1;
-            j.percent = 100;
-            j.status = 'SUCCEEDED';
-            j.outputs = [found];
-            j.duration_ms = j.duration_ms ?? (Date.now()-j.t0);
-          } else {
-            j.status = (j.status==='QUEUED'?'RUNNING':j.status);
-            j.percent = 0;
-          }
-        } else {
-          const pref = `tiles/${encodeURIComponent(j.jobId)}/`;
-          const list = await getJSON(`${window.API_BASE}/list-output?bucket=${encodeURIComponent(OUTPUT_BUCKET)}&prefix=${pref}`);
-          const objs = (list.objects||list.items||[]).map(o=>({key:o.key||o.Key,size:o.size||o.Size}));
-          // count only expected extension
-          const rx = new RegExp(`\\${j.ext}$`, 'i');
-          const mine = objs.filter(o => rx.test(o.key));
-          j.tilesCount = mine.length;
-          j.outputs = mine;
-          j.percent = Math.min(100, Math.round((j.tilesCount/j.expected)*100));
-          j.status = (j.percent===100 ? 'SUCCEEDED' : (j.status==='QUEUED'?'RUNNING':j.status));
-          if(j.percent===100) j.duration_ms = j.duration_ms ?? (Date.now()-j.t0);
-        }
-      }catch(_){ /* keep polling */ }
-    }
-
-    function startPolling(){
-      if(pollTimer) clearInterval(pollTimer);
-      pollTimer = setInterval(async ()=>{
-        const active = jobs.filter(j => !['SUCCEEDED','FAILED','CANCELLED'].includes((j.status||'').toUpperCase()));
-        if(active.length===0){ clearInterval(pollTimer); pollTimer=null; logLine('All jobs finished.'); return; }
-        await Promise.all(active.map(pollOnce));
-        renderJobs();
-      }, 2000);
-    }
-
-    // Wire + init
-    $('btnRefresh').addEventListener('click', listInput);
-    $('btnConvert').addEventListener('click', doConvert);
-    function onPickChange(){ selectedKeys=Array.from(document.querySelectorAll('.pick:checked')).map(cb=>cb.dataset.key); $('btnConvert').disabled=selectedKeys.length===0; }
-    listInput();
-  </script>
-</body>
-</html>
+      if(target_format==='RAW'){ alert
