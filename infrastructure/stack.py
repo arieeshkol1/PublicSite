@@ -178,12 +178,13 @@ class ServerlessJp2Stack(Stack):
             cluster=cluster,
             task_definition=tiler_taskdef,
             launch_target=tasks.EcsFargateLaunchTarget(
-                platform_version=ecs.FargatePlatformVersion.LATEST  # <-- required by your CDK version
+                platform_version=ecs.FargatePlatformVersion.LATEST
             ),
             assign_public_ip=True,
             integration_pattern=sfn.IntegrationPattern.RUN_JOB,
             container_overrides=[tasks.ContainerOverride(
-                container=tiler_taskdef.default_container,
+                # FIX: older CDK uses 'container_definition', not 'container'
+                container_definition=tiler_taskdef.default_container,
                 environment=[
                     tasks.TaskEnvironmentVariable(name="INPUT_BUCKET",  value=sfn.JsonPath.string_at("$.inputBucket")),
                     tasks.TaskEnvironmentVariable(name="OUTPUT_BUCKET", value=sfn.JsonPath.string_at("$.outputBucket")),
