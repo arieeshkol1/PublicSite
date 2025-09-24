@@ -44,15 +44,12 @@
     .diag pre { background:#0b1220; color:#e5e7eb; padding:10px; border-radius:8px; overflow:auto; max-height:180px; border:1px solid rgba(255,255,255,.1); }
   </style>
   <script>
-    // ControllerFn API base
     window.API_BASE = "https://xui5toa569.execute-api.us-east-1.amazonaws.com";
   </script>
 </head>
 <body>
   <div class="wrap">
-    <header>
-      <h1>TSG JP2 Pipeline — Split / Merge</h1>
-    </header>
+    <header><h1>TSG JP2 Pipeline — Split / Merge</h1></header>
 
     <div id="errorBox" class="err"></div>
     <div class="muted">API: <span class="mono" id="apiBaseLbl"></span> • Output: <span id="outBucketLbl" class="mono"></span></div>
@@ -68,9 +65,7 @@
           <div class="muted">Listing from <b id="inBucketLbl" class="mono"></b></div>
           <div class="well" style="margin-top:10px;">
             <table aria-label="Input objects">
-              <thead>
-                <tr><th>Object Key</th><th style="width:160px;">Size</th><th style="width:120px;"></th></tr>
-              </thead>
+              <thead><tr><th>Object Key</th><th style="width:160px;">Size</th><th style="width:120px;"></th></tr></thead>
               <tbody id="inputTbody"></tbody>
             </table>
           </div>
@@ -78,7 +73,7 @@
 
         <div class="card">
           <h2>2) Split Settings</h2>
-          <div class="grid" id="tileOpts" role="group" aria-label="Tiles"></div>
+          <div class="grid" id="tileOpts" role="group"></div>
           <div class="muted" style="margin-top:10px">Selected file: <span id="selectedKey" class="mono">—</span></div>
           <div style="margin-top:10px; display:flex; gap:10px; align-items:center;">
             <button id="btnSplit" class="btn primary" disabled>Split</button>
@@ -88,23 +83,21 @@
 
         <div class="card">
           <h2>3) Status</h2>
-          <div class="muted">Execution ARN</div>
-          <div id="execArn" class="mono">—</div>
-          <div class="muted" style="margin-top:6px;">Job ID</div>
-          <div id="jobId" class="mono">—</div>
+          <div class="muted">Execution ARN</div><div id="execArn" class="mono">—</div>
+          <div class="muted" style="margin-top:6px;">Job ID</div><div id="jobId" class="mono">—</div>
           <div style="margin:10px 0;" class="bar"><i id="barFill"></i></div>
           <div>Tiles <span id="tilesCount" class="mono">0</span> / <span id="tilesExpected" class="mono">0</span></div>
           <div class="links" style="margin-top:8px;">
-            <a id="linkExec" href="#" target="_blank" rel="noreferrer noopener">Execution</a>
-            <a id="linkLogs" href="#" target="_blank" rel="noreferrer noopener" style="display:none;">CloudWatch Logs</a>
+            <a id="linkExec" href="#" target="_blank">Execution</a>
+            <a id="linkLogs" href="#" target="_blank" style="display:none;">CloudWatch Logs</a>
           </div>
-          <h3 style="margin-top:14px; font-size:14px; color:var(--muted);">Step Functions Events</h3>
-          <pre id="stepsLive" class="well mono" style="white-space:pre-wrap; max-height:220px; overflow:auto;">—</pre>
+          <h3 style="margin-top:14px;">Step Functions Events</h3>
+          <pre id="stepsLive" class="well mono">—</pre>
         </div>
 
         <div class="card">
           <h2>Files under <span class="mono">tiles/&lt;jobId&gt;/</span></h2>
-          <pre id="filesLive" class="well mono" style="white-space:pre-wrap; max-height:240px; overflow:auto;">—</pre>
+          <pre id="filesLive" class="well mono">—</pre>
         </div>
       </div>
 
@@ -118,7 +111,7 @@
           <div class="muted">Listing tile folders from <b class="mono">output bucket</b></div>
           <div class="well" style="margin-top:10px;">
             <table aria-label="Tile folders">
-              <thead><tr><th>Folder (Job ID)</th><th style="width:120px;"></th></tr></thead>
+              <thead><tr><th>Folder (Job ID)</th><th></th></tr></thead>
               <tbody id="uniteTbody"></tbody>
             </table>
           </div>
@@ -127,10 +120,7 @@
         <div class="card">
           <h2>5) Unite Job</h2>
           <div class="row">
-            <div>
-              <div class="muted">Job ID</div>
-              <div id="uJobId" class="mono">—</div>
-            </div>
+            <div><div class="muted">Job ID</div><div id="uJobId" class="mono">—</div></div>
             <button id="btnUnite" class="btn primary" disabled>Unite</button>
           </div>
           <div class="muted" style="margin-top:8px;">Final file (expected)</div>
@@ -139,21 +129,17 @@
 
         <div class="card">
           <h2>6) Unite Status</h2>
-          <div class="muted">Execution ARN</div>
-          <div id="uExecArn" class="mono">—</div>
+          <div class="muted">Execution ARN</div><div id="uExecArn" class="mono">—</div>
           <div class="links" style="margin-top:8px;">
-            <a id="linkExecUnite" href="#" target="_blank" rel="noreferrer noopener">Execution</a>
+            <a id="linkExecUnite" href="#" target="_blank">Execution</a>
           </div>
-          <h3 style="margin-top:14px; font-size:14px; color:var(--muted);">Step Functions Events</h3>
-          <pre id="uStepsLive" class="well mono" style="white-space:pre-wrap; max-height:220px; overflow:auto;">—</pre>
+          <h3 style="margin-top:14px;">Step Functions Events</h3>
+          <pre id="uStepsLive" class="well mono">—</pre>
         </div>
 
         <div class="card diag">
           <h2>Diagnostics</h2>
-          <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-            <button id="btnDiag" class="btn">Run API checks</button>
-            <span>API: <span class="mono" id="diagApi"></span></span>
-          </div>
+          <button id="btnDiag" class="btn">Run API checks</button>
           <pre id="diagOut">(no output)</pre>
         </div>
       </div>
@@ -162,267 +148,59 @@
     <div class="muted" style="text-align:center; margin:20px 0;">TSG © Secure JP2 Pipeline</div>
   </div>
 
-  <script>
-    // ---------- Config ----------
-    const INPUT_BUCKET  = 'jp2-input-991105135552-us-east-1';
-    const OUTPUT_BUCKET = 'jp2-output-991105135552-us-east-1';
+<script>
+const INPUT_BUCKET='jp2-input-991105135552-us-east-1';
+const OUTPUT_BUCKET='jp2-output-991105135552-us-east-1';
+const $=id=>document.getElementById(id);
+const setText=(id,v)=>{const n=$(id);if(n)n.textContent=v??''};
+function humanSize(n){if(n==null)return'—';const kb=1024,mb=kb*1024,gb=mb*1024;if(n>=gb)return(n/gb).toFixed(2)+' GB';if(n>=mb)return(n/mb).toFixed(2)+' MB';if(n>=kb)return(n/kb).toFixed(2)+' KB';return n+' B';}
+async function getJSON(url){const r=await fetch(url);const t=await r.text();let j;try{j=JSON.parse(t);}catch{j={_raw:t};}if(!r.ok)throw new Error(j.error||j._raw||`HTTP ${r.status}`);return j;}
+async function postJSON(url,body){const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const t=await r.text();let j;try{j=JSON.parse(t);}catch{j={_raw:t};}if(!r.ok)throw new Error(j.error||j._raw||`HTTP ${r.status}`);return j;}
+function showError(m){const b=$('errorBox');if(b){b.style.display='block';b.textContent=m;}}
 
-    // ---------- Helpers ----------
-    const $ = id => document.getElementById(id);
-    const setText=(id,v)=>{const n=$(id);if(n)n.textContent=v??''};
-    function humanSize(n){ if(n==null) return '—'; const kb=1024, mb=kb*1024, gb=mb*1024;
-      if(n>=gb) return (n/gb).toFixed(2)+' GB'; if(n>=mb) return (n/mb).toFixed(2)+' MB'; if(n>=kb) return (n/kb).toFixed(2)+' KB'; return n+' B'; }
-    async function getJSON(url){
-      const r=await fetch(url,{credentials:'omit'});
-      const t=await r.text(); let j; try{ j=JSON.parse(t);}catch{ j={ _raw:t }; }
-      if(!r.ok) throw new Error(j.error||j._raw||`HTTP ${r.status}`);
-      return j;
-    }
-    async function postJSON(url, body){
-      const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),credentials:'omit'});
-      const t=await r.text(); let j; try{ j=JSON.parse(t);}catch{ j={ _raw:t }; }
-      if(!r.ok) throw new Error(j.error||j._raw||`HTTP ${r.status}`);
-      return j;
-    }
-    function showError(msg){ const b=$('errorBox'); if(b){ b.style.display='block'; b.textContent=msg; } console.error(msg); }
+setText('apiBaseLbl',window.API_BASE);setText('outBucketLbl',OUTPUT_BUCKET);
 
-    // show meta
-    setText('apiBaseLbl', window.API_BASE);
-    setText('outBucketLbl', OUTPUT_BUCKET);
-    setText('diagApi', window.API_BASE);
+async function listInput(){
+  setText('inBucketLbl',INPUT_BUCKET);
+  const tbody=$('inputTbody');tbody.innerHTML='<tr><td colspan="3">Loading…</td></tr>';
+  try{
+    const j=await getJSON(`${window.API_BASE}/list-input?bucket=${encodeURIComponent(INPUT_BUCKET)}`);
+    const items=(j.items||[]).filter(o=>String(o.key||'').toLowerCase().endsWith('.jp2'));
+    if(!items.length){tbody.innerHTML='<tr><td colspan=3>No JP2 objects</td></tr>';return;}
+    tbody.innerHTML=items.map(o=>`<tr><td class="mono">${o.key}</td><td>${humanSize(o.size)}</td><td><button class="btn" data-key="${o.key}">Select</button></td></tr>`).join('');
+    tbody.onclick=ev=>{const b=ev.target.closest('button[data-key]');if(!b)return;selectedKey=b.dataset.key;setText('selectedKey',selectedKey);$('btnSplit').disabled=!selectedKey;};
+  }catch(e){tbody.innerHTML=`<tr><td colspan=3>Error: ${e.message}</td></tr>`;}
+}
 
-    // ---------- Split (left) ----------
-    let selectedKey=null, tilesTotal=16, jobId=null, expected=0, pollTimer=null, execArn=null;
+async function refreshFiles(jid){
+  if(!jid)return;
+  const prefix=`tiles/${jid}/`;
+  try{
+    const j=await getJSON(`${window.API_BASE}/list-output?bucket=${OUTPUT_BUCKET}&prefix=${prefix}`);
+    renderFiles(j.items||[]);
+  }catch(e){$('filesLive').textContent=`List error: ${e.message}`;}
+}
 
-    function buildTileOptions(){
-      const root=$('tileOpts'); if(!root) return; root.innerHTML='';
-      [9,16,25,36].forEach(val=>{
-        const d=document.createElement('div');
-        d.className='opt'+(val===tilesTotal?' active':'');
-        d.textContent=`${val} (${Math.sqrt(val)}×${Math.sqrt(val)})`;
-        d.onclick=()=>{ tilesTotal=val; [...root.children].forEach(c=>c.classList.remove('active')); d.classList.add('active'); };
-        root.appendChild(d);
-      });
-    }
+async function listUnite(){
+  const tbody=$('uniteTbody');tbody.innerHTML='<tr><td colspan=2>Loading…</td></tr>';
+  try{
+    const j=await getJSON(`${window.API_BASE}/list-output?bucket=${OUTPUT_BUCKET}`);
+    const folders=new Set();(j.items||[]).forEach(o=>{const m=String(o.key||'').match(/^tiles\/(.+?)\//);if(m)folders.add(m[1]);});
+    if(!folders.size){tbody.innerHTML='<tr><td colspan=2>No tile folders</td></tr>';return;}
+    tbody.innerHTML=[...folders].map(f=>`<tr><td>${f}</td><td><button class="btn" data-folder="${f}">Select</button></td></tr>`).join('');
+  }catch(e){tbody.innerHTML=`<tr><td colspan=2>Error: ${e.message}</td></tr>`;}
+}
 
-    async function listInput(){
-      setText('inBucketLbl', INPUT_BUCKET);
-      const tbody=$('inputTbody'); if(tbody) tbody.innerHTML='<tr><td colspan="3" class="muted">Loading…</td></tr>';
-      try{
-        const j = await getJSON(`${window.API_BASE}/list-input?bucket=${encodeURIComponent(INPUT_BUCKET)}`);
-        const items=(j.objects||[]).filter(o=>String(o.key||'').toLowerCase().endsWith('.jp2'));
-        if(!items.length){ if(tbody) tbody.innerHTML='<tr><td colspan="3" class="muted">No JP2 objects</td></tr>'; return; }
-        if(tbody) tbody.innerHTML=items.map(o=>`
-          <tr>
-            <td class="mono">${o.key}</td>
-            <td>${humanSize(o.size)}</td>
-            <td><button class="btn" data-key="${o.key}">Select</button></td>
-          </tr>`).join('');
-        if(tbody) tbody.onclick=(ev)=>{
-          const b=ev.target.closest('button[data-key]'); if(!b) return;
-          selectedKey=b.getAttribute('data-key');
-          setText('selectedKey', selectedKey);
-          const btn=$('btnSplit'); if(btn) btn.disabled=!selectedKey;
-        };
-      }catch(e){
-        if(tbody) tbody.innerHTML=`<tr><td colspan="3">Error: ${e.message}</td></tr>`;
-        showError(`list-input failed: ${e.message}`);
-      }
-    }
+async function runDiagnostics(){
+  const out=$('diagOut');out.textContent='Running...\n';
+  try{const r1=await getJSON(`${window.API_BASE}/list-input?bucket=${INPUT_BUCKET}`);out.textContent+=`list-input OK (${(r1.items||[]).length} objects)\n`;}catch(e){out.textContent+=`list-input ERROR: ${e.message}\n`;}
+  try{const r2=await getJSON(`${window.API_BASE}/list-output?bucket=${OUTPUT_BUCKET}`);out.textContent+=`list-output OK (${(r2.items||[]).length} objects)\n`;}catch(e){out.textContent+=`list-output ERROR: ${e.message}\n`;}
+}
 
-    async function doSplit(){
-      if(!selectedKey) return;
-      const btn=$('btnSplit'); if(btn) btn.disabled=true;
-      setText('splitMsg','Starting…');
-      try{
-        const body={
-          inputBucket: INPUT_BUCKET,
-          inputKey: selectedKey,
-          outputBucket: OUTPUT_BUCKET,
-          params:{ tilesTotal: tilesTotal, tilesGrid: Math.sqrt(tilesTotal)|0, formatOption: 'keep' }
-        };
-        const j = await postJSON(`${window.API_BASE}/split`, body);
-
-        setText('splitMsg','Split started.');
-        execArn = j.executionArn || null; setText('execArn', execArn || '—');
-        jobId = j.jobId || null; setText('jobId', jobId || '—');
-        expected = j.expectedTiles || tilesTotal; setText('tilesExpected', expected); setText('tilesCount','0');
-        const le=$('linkExec'); if(le) le.href = j.links?.execution || '#';
-        startPolling();
-      }catch(e){
-        setText('splitMsg', `Error: ${e.message}`);
-        showError(`split failed: ${e.message}`);
-      }finally{
-        if(btn) btn.disabled=!selectedKey;
-      }
-    }
-
-    function startPolling(){ stopPolling(); pollTimer=setInterval(tick,1500); tick(); }
-    function stopPolling(){ if(pollTimer){ clearInterval(pollTimer); pollTimer=null; } }
-
-    async function tick(){
-      if(!jobId) return;
-      try{
-        const pr = await getJSON(`${window.API_BASE}/status-progress?jobId=${encodeURIComponent(jobId)}&expected=${expected}`);
-        const done = pr.tilesCount||0; const pct = pr.percent ?? (expected? Math.round((done/expected)*100): 0);
-        setText('tilesCount', done); const bar=$('barFill'); if(bar) bar.style.width=`${pct}%`;
-        await refreshFiles(jobId);
-        await refreshHistory(jobId);
-      }catch(e){
-        const fl=$('filesLive'); if(fl) fl.textContent=`Status error: ${e.message}`;
-        showError(`status-progress failed: ${e.message}`);
-      }
-    }
-
-    async function refreshFiles(jid){
-      if(!jid) return;
-      const prefix=`tiles/${jid}/`;
-      try{
-        const j = await getJSON(`${window.API_BASE}/list-output?bucket=${encodeURIComponent(OUTPUT_BUCKET)}&prefix=${encodeURIComponent(prefix)}`);
-        renderFiles(j.objects||[]);
-      }catch(e){
-        const fl=$('filesLive'); if(fl) fl.textContent=`List error: ${e.message}`;
-      }
-    }
-
-    function renderFiles(objs){
-      const out=$('filesLive'); if(!out) return;
-      if(!objs || !objs.length){ out.textContent='—'; return; }
-      const rx=/(\d+)\.(?:jp2|tif|tiff|bin|hdr)$/i;
-      const lines=objs.slice().sort((a,b)=>{
-        const ak=String(a.key||''), bk=String(b.key||'');
-        const am=ak.match(rx), bm=bk.match(rx);
-        const ai=am?parseInt(am[1],10):Number.MAX_SAFE_INTEGER;
-        const bi=bm?parseInt(bm[1],10):Number.MAX_SAFE_INTEGER;
-        return ai===bi? ak.localeCompare(bk) : ai-bi;
-      }).map(o=>`${o.key}${o.size!=null?`  (${humanSize(o.size)})`:''}`);
-      out.textContent=lines.join('\n');
-    }
-
-    async function refreshHistory(jid){
-      if(!jid) return;
-      try{
-        const out = await getJSON(`${window.API_BASE}/status-history/${encodeURIComponent(jid)}`);
-        const steps = Array.isArray(out?.events) ? out.events.map(e => `[${e.time}] ${e.type}${e.detail?` — ${e.detail}`:''}`) : [];
-        renderSteps(steps);
-      }catch(_){/* ignore */}
-    }
-
-    function renderSteps(steps){
-      const el=$('stepsLive'); if(!el) return;
-      if(!Array.isArray(steps) || !steps.length){ el.textContent='—'; return; }
-      el.textContent=steps.join('\n');
-    }
-
-    // ---------- Unite (right) ----------
-    const termTypes = new Set(['ExecutionSucceeded','ExecutionFailed','ExecutionAborted','ExecutionTimedOut']);
-    let uPollTimer=null;
-
-    async function listUnite(){
-      const tbody=$('uniteTbody');
-      if(tbody) tbody.innerHTML='<tr><td colspan=2>Loading…</td></tr>';
-      try{
-        const j = await getJSON(`${window.API_BASE}/list-output?bucket=${encodeURIComponent(OUTPUT_BUCKET)}`);
-        const folders=new Set();
-        (j.objects||[]).forEach(o=>{
-          const m=String(o.key||'').match(/^tiles\/(.+?)\//);
-          if(m) folders.add(m[1]);
-        });
-        if(!folders.size){ tbody.innerHTML='<tr><td colspan=2>No tile folders</td></tr>'; return; }
-        tbody.innerHTML=[...folders].map(f=>`<tr><td class="mono">${f}</td><td><button class="btn" data-folder="${f}">Select</button></td></tr>`).join('');
-        tbody.onclick=ev=>{
-          const b=ev.target.closest('button[data-folder]'); if(!b)return;
-          const folder=b.getAttribute('data-folder');
-          setText('uJobId',folder);
-          $('btnUnite').disabled=false;
-        };
-      }catch(e){tbody.innerHTML=`<tr><td colspan=2>Error: ${e.message}</td></tr>`;}
-    }
-
-    async function doUnite(){
-      const uId=$('uJobId').textContent; if(!uId||uId==='—') return;
-      try{
-        const body={ outputBucket: OUTPUT_BUCKET, jobId: uId };
-        const j = await postJSON(`${window.API_BASE}/unite`, body);
-        const jid = j.jobId || uId; // prefer canonical jobId from backend
-        setText('uJobId', jid);
-        setText('uFinalKey', j.expectedFinalKey || `final/unite-${jid}.jp2`);
-        setText('uExecArn', j.executionArn || '—');
-        const le=$('linkExecUnite'); if(le) le.href=j.links?.execution || '#';
-        startUnitePolling(jid);
-      }catch(e){ setText('uFinalKey', `Error: ${e.message}`); showError(`unite failed: ${e.message}`); }
-    }
-
-    function startUnitePolling(jobId){ stopUnitePolling(); const el=$('uStepsLive'); if(el) el.textContent='—'; uPollTimer=setInterval(()=>refreshUniteStatus(jobId),1500); refreshUniteStatus(jobId); }
-    function stopUnitePolling(){ if(uPollTimer){ clearInterval(uPollTimer); uPollTimer=null; } }
-
-    async function refreshUniteStatus(jobId){
-      let lastErr=null;
-      const tryUrls = [
-        `${window.API_BASE}/status-history/${encodeURIComponent(jobId)}`,
-        `${window.API_BASE}/status-history/${encodeURIComponent('unite-'+jobId)}`,
-        `${window.API_BASE}/status/${encodeURIComponent(jobId)}`,
-      ];
-      for (const url of tryUrls){
-        try{
-          const out = await getJSON(url);
-          const events = Array.isArray(out?.events) ? out.events : (out?.history || []);
-          if (events.length){ renderUSteps(events); if(events.some(e=> termTypes.has(e.type))){ stopUnitePolling(); } }
-          else { renderUSteps([]); }
-          return;
-        }catch(e){ lastErr=e; }
-      }
-      const arn = $('uExecArn')?.textContent;
-      if(arn && arn !== '—'){
-        try{
-          const out = await getJSON(`${window.API_BASE}/status-detail/${encodeURIComponent(arn)}`);
-          const events = Array.isArray(out?.events) ? out.events : (out?.history || []);
-          if (events.length){ renderUSteps(events); if(events.some(e=> termTypes.has(e.type))){ stopUnitePolling(); } }
-          else { renderUSteps([]); }
-          return;
-        }catch(e){ lastErr=e; }
-      }
-      const el=$('uStepsLive'); if(el) el.textContent = `Status error${lastErr?`: ${lastErr.message}`:''}`;
-    }
-
-    function renderUSteps(steps){
-      const el=$('uStepsLive');
-      if(!el)return;
-      if(!steps.length){el.textContent='—';return;}
-      el.textContent=steps.map(e=>`[${e.time}] ${e.type}${e.detail?` — ${e.detail}`:''}`).join('\n');
-    }
-
-    // ---------- Diagnostics ----------
-    async function runDiagnostics(){
-      const out=$('diagOut'); out.textContent='Running...\n';
-      const lines=[];
-      function log(s){ lines.push(s); out.textContent = lines.join('\n'); }
-      try{ log(`API_BASE: ${window.API_BASE}`); }catch{}
-      try{
-        const r1 = await getJSON(`${window.API_BASE}/list-input?bucket=${encodeURIComponent(INPUT_BUCKET)}`);
-        log(`list-input OK (${(r1.objects||[]).length} objects)`);
-      }catch(e){ log(`list-input ERROR: ${e.message}`); }
-      try{
-        const r2 = await getJSON(`${window.API_BASE}/list-output?bucket=${encodeURIComponent(OUTPUT_BUCKET)}`);
-        const folders=new Set(); (r2.objects||[]).forEach(o=>{ const m=String(o.key||'').match(/^tiles\/(.+?)\//); if(m) folders.add(m[1]); });
-        log(`list-output OK (${(r2.objects||[]).length} objects, ${(folders.size)} folders under tiles/)`);
-      }catch(e){ log(`list-output ERROR: ${e.message}`); }
-      const jid=$('uJobId')?.textContent; if(jid && jid!=='—'){
-        try{ await getJSON(`${window.API_BASE}/status-history/${encodeURIComponent(jid)}`); log('status-history by jobId OK'); }
-        catch(e){ log(`status-history by jobId ERROR: ${e.message}`); }
-      } else {
-        log('status-history skipped (no jobId selected yet)');
-      }
-      log('Diagnostics done.');
-    }
-
-    // ---------- Wire & init ----------
-    $('btnRefresh')?.addEventListener('click', listInput);
-    $('btnSplit')?.addEventListener('click', doSplit);
-    $('btnRefreshUnite')?.addEventListener('click', listUnite);
-    $('btnUnite')?.addEventListener('click', doUnite);
-    $('btnDiag')?.addEventListener('click', runDiagnostics);
-    buildTileOptions(); listInput(); listUnite();
-  </script>
+$('btnRefresh').onclick=listInput;
+$('btnRefreshUnite').onclick=listUnite;
+$('btnDiag').onclick=runDiagnostics;
+listInput();listUnite();
+</script>
 </body>
 </html>
