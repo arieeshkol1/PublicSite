@@ -183,20 +183,46 @@ class ServerlessJp2Stack(Stack):
             assign_public_ip=True,
             integration_pattern=sfn.IntegrationPattern.RUN_JOB,
             container_overrides=[tasks.ContainerOverride(
-                # FIX: older CDK uses 'container_definition', not 'container'
+                # CDK version compatibility: use container_definition
                 container_definition=tiler_taskdef.default_container,
                 environment=[
-                    tasks.TaskEnvironmentVariable(name="INPUT_BUCKET",  value=sfn.JsonPath.string_at("$.inputBucket")),
-                    tasks.TaskEnvironmentVariable(name="OUTPUT_BUCKET", value=sfn.JsonPath.string_at("$.outputBucket")),
-                    tasks.TaskEnvironmentVariable(name="INPUT_KEY",     value=sfn.JsonPath.string_at("$.inputKey")),
-                    tasks.TaskEnvironmentVariable(name="FORMAT_OPTION", value=sfn.JsonPath.string_at("$.params.formatOption")),
-                    tasks.TaskEnvironmentVariable(name="TILES_TOTAL",   value=sfn.JsonPath.string_at("$.params.tilesTotal")),
-                    tasks.TaskEnvironmentVariable(name="TILES_GRID",    value=sfn.JsonPath.string_at("$.params.tilesGrid")),
-                    tasks.TaskEnvironmentVariable(name="JOB_ID",        value=sfn.JsonPath.string_at("$.jobId")),
-                    tasks.TaskEnvironmentVariable(name="CREATE_OPTS",   value="TILED=YES,BIGTIFF=IF_SAFER,COMPRESS=LZW,PREDICTOR=2"),
+                    # Force everything to STRING with JsonPath.format("{}", …)
+                    tasks.TaskEnvironmentVariable(
+                        name="INPUT_BUCKET",
+                        value=sfn.JsonPath.format("{}", sfn.JsonPath.string_at("$.inputBucket"))
+                    ),
+                    tasks.TaskEnvironmentVariable(
+                        name="OUTPUT_BUCKET",
+                        value=sfn.JsonPath.format("{}", sfn.JsonPath.string_at("$.outputBucket"))
+                    ),
+                    tasks.TaskEnvironmentVariable(
+                        name="INPUT_KEY",
+                        value=sfn.JsonPath.format("{}", sfn.JsonPath.string_at("$.inputKey"))
+                    ),
+                    tasks.TaskEnvironmentVariable(
+                        name="FORMAT_OPTION",
+                        value=sfn.JsonPath.format("{}", sfn.JsonPath.string_at("$.params.formatOption"))
+                    ),
+                    tasks.TaskEnvironmentVariable(
+                        name="TILES_TOTAL",
+                        value=sfn.JsonPath.format("{}", sfn.JsonPath.object_at("$.params.tilesTotal"))
+                    ),
+                    tasks.TaskEnvironmentVariable(
+                        name="TILES_GRID",
+                        value=sfn.JsonPath.format("{}", sfn.JsonPath.object_at("$.params.tilesGrid"))
+                    ),
+                    tasks.TaskEnvironmentVariable(
+                        name="JOB_ID",
+                        value=sfn.JsonPath.format("{}", sfn.JsonPath.string_at("$.jobId"))
+                    ),
+                    tasks.TaskEnvironmentVariable(
+                        name="CREATE_OPTS",
+                        value="TILED=YES,BIGTIFF=IF_SAFER,COMPRESS=LZW,PREDICTOR=2"
+                    ),
                 ],
             )],
             result_path="$.ecsResult",
+            # If your CDK version complains about 'subnets', rename to 'vpc_subnets'
             subnets=ec2.SubnetSelection(subnets=vpc.public_subnets),
             security_groups=[tiler_sg],
         )
