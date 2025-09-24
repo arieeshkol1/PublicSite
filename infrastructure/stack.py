@@ -305,6 +305,49 @@ class ServerlessJp2Stack(Stack):
         http_api.add_routes(path="/delete-files", methods=[apigw.HttpMethod.POST], integration=delete_files_integ)
         http_api.add_routes(path="/download-file", methods=[apigw.HttpMethod.POST], integration=download_file_integ)
 
+        # ---------------- Status Lambdas (NEW) ----------------
+        # /status-progress
+        status_progress_fn = _lambda.Function(
+            self, "StatusProgressFn",
+            runtime=_lambda.Runtime.PYTHON_3_11,
+            handler="status_progress.handler",
+            code=_lambda.Code.from_asset(lambda_code_dir),
+            timeout=Duration.seconds(20),
+            memory_size=256,
+            environment={"OUTPUT_BUCKET": output_bucket.bucket_name},
+        )
+        status_progress_fn.add_to_role_policy(iam.PolicyStatement(
+            actions=["s3:ListBucket"],
+            resources=[output_bucket.bucket_arn]
+        ))
+        status_progress_fn.add_to_role_policy(iam.PolicyStatement(
+            actions=["s3:GetObject"],
+            resources=[output_bucket.arn_for_objects("*")]
+        ))
+        status_progress_integ = apigw_int.HttpLambdaIntegration("StatusProgressInteg", handler=status_progress_fn)
+        http_api.add_routes(path="/status-progress", methods=[apigw.HttpMethod.GET], integration=status_progress_integ)
+
+        # /status-history/{jobId} and /status-detail/{executionArn}
+        status_history_fn = _lambda.Function(
+            self, "StatusHistoryFn",
+            runtime=_lambda.Runtime.PYTHON_3_11,
+            handler="status_history.handler",
+            code=_lambda.Code.from_asset(lambda_code_dir),
+            timeout=Duration.seconds(30),
+            memory_size=256,
+            environment={"SPLIT_SFN_ARN": split_state_machine.state_machine_arn},
+        )
+        status_history_fn.add_to_role_policy(iam.PolicyStatement(
+            actions=["states:GetExecutionHistory", "states:DescribeExecution"],
+            resources=["*"]  # can be narrowed to this account/region
+        ))
+
+        status_history_integ_hist = apigw_int.HttpLambdaIntegration("StatusHistoryInteg", handler=status_history_fn)
+        status_history_integ_det  = apigw_int.HttpLambdaIntegration("StatusDetailInteg",  handler=status_history_fn)
+
+        http_api.add_routes(path="/status-history/{jobId}", methods=[apigw.HttpMethod.GET, apigw.HttpMethod.OPTIONS], integration=status_history_integ_hist)
+        http_api.add_routes(path="/status-detail/{executionArn}", methods=[apigw.HttpMethod.GET, apigw.HttpMethod.OPTIONS], integration=status_history_integ_det)
+
         # ---------------- Outputs ----------------
         CfnOutput(self, "UiBucketName", value="jp2-ui-991105135552-us-east-1")
         CfnOutput(self, "InputBucketName", value=input_bucket.bucket_name)
@@ -313,3 +356,5 @@ class ServerlessJp2Stack(Stack):
         CfnOutput(self, "EcsClusterArn", value=cluster.cluster_arn)
         CfnOutput(self, "TilerTaskDefArn", value=tiler_taskdef.task_definition_arn)
         CfnOutput(self, "SplitStateMachineArn", value=split_state_machine.state_machine_arn)
+        CfnOutput(self, "StatusProgressRoute", value=f"{http_api.api_endpoint}/status-progress")
+        CfnOutput(self, "StatusHistoryRoute", value=f"{http_api.api_endpoint}/status-history/{{jobId}}")
