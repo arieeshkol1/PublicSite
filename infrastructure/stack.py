@@ -172,38 +172,50 @@ class ServerlessJp2Stack(Stack):
             resources=[output_bucket.bucket_arn, output_bucket.arn_for_objects("*")]
         ))
 
-        # ---------------- Split Worker Lambda ----------------
-        split_worker_fn = _lambda.Function(
-            self, "SplitWorkerFn",
-            runtime=_lambda.Runtime.PYTHON_3_11,
-            handler="split_worker.handler",
-            code=_lambda.Code.from_asset(lambda_code_dir),
-            timeout=Duration.minutes(15),
-            memory_size=2048,
-            environment={
-                "INPUT_BUCKET": input_bucket.bucket_name,
-                "OUTPUT_BUCKET": output_bucket.bucket_name,
-            },
+        # ---------------- Step Function (Split via ECS) ----------------
+        # Run the tiler container (which includes GDAL) directly from Step Functions
+        split_task = tasks.EcsRunTask(
+            self, "RunSplitOnFargate",
+            cluster=cluster,
+            task_definition=tiler_taskdef,
+            launch_target=tasks.EcsFargateLaunchTarget(),
+            assign_public_ip=True,
+            integration_pattern=sfn.IntegrationPattern.RUN_JOB,  # wait for task to finish
+            container_overrides=[tasks.ContainerOverride(
+                container=tiler_taskdef.default_container,
+                environment=[
+                    tasks.TaskEnvironmentVariable(name="INPUT_BUCKET",  value=sfn.JsonPath.string_at("$.inputBucket")),
+                    tasks.TaskEnvironmentVariable(name="OUTPUT_BUCKET", value=sfn.JsonPath.string_at("$.outputBucket")),
+                    tasks.TaskEnvironmentVariable(name="INPUT_KEY",     value=sfn.JsonPath.string_at("$.inputKey")),
+                    tasks.TaskEnvironmentVariable(name="FORMAT_OPTION", value=sfn.JsonPath.string_at("$.params.formatOption")),
+                    tasks.TaskEnvironmentVariable(name="TILES_TOTAL",   value=sfn.JsonPath.string_at("$.params.tilesTotal")),
+                    tasks.TaskEnvironmentVariable(name="TILES_GRID",    value=sfn.JsonPath.string_at("$.params.tilesGrid")),
+                    tasks.TaskEnvironmentVariable(name="JOB_ID",        value=sfn.JsonPath.string_at("$.jobId")),
+                    # Pass default create opts; container can parse/override
+                    tasks.TaskEnvironmentVariable(name="CREATE_OPTS",   value="TILED=YES,BIGTIFF=IF_SAFER,COMPRESS=LZW,PREDICTOR=2"),
+                ],
+            )],
+            result_path="$.ecsResult",
+            subnets=ec2.SubnetSelection(subnets=vpc.public_subnets),
+            security_groups=[tiler_sg],
         )
-        split_worker_fn.add_to_role_policy(iam.PolicyStatement(
-            actions=["s3:GetObject", "s3:PutObject", "s3:ListBucket"],
-            resources=[
-                input_bucket.bucket_arn, input_bucket.arn_for_objects("*"),
-                output_bucket.bucket_arn, output_bucket.arn_for_objects("*")
-            ]
-        ))
 
-        # ---------------- Step Function (Split) ----------------
-        split_task = tasks.LambdaInvoke(
-            self, "RunSplitWorker",
-            lambda_function=split_worker_fn,
-            output_path="$.Payload",
-        )
         split_state_machine = sfn.StateMachine(
             self, "SplitStateMachine",
             definition=split_task,
-            timeout=Duration.minutes(30)
+            timeout=Duration.minutes(60)
         )
+
+        # Permissions for SFN to RunTask/PassRole
+        split_state_machine.add_to_role_policy(iam.PolicyStatement(
+            actions=["ecs:RunTask", "ecs:DescribeTasks"],
+            resources=[tiler_taskdef.task_definition_arn]
+        ))
+        split_state_machine.add_to_role_policy(iam.PolicyStatement(
+            actions=["iam:PassRole"],
+            resources=[tiler_task_role.role_arn],
+            conditions={"StringEquals": {"iam:PassedToService": "ecs-tasks.amazonaws.com"}}
+        ))
 
         # ---------------- Split Controller Lambda ----------------
         split_controller_fn = _lambda.Function(
@@ -305,7 +317,7 @@ class ServerlessJp2Stack(Stack):
         http_api.add_routes(path="/delete-files", methods=[apigw.HttpMethod.POST], integration=delete_files_integ)
         http_api.add_routes(path="/download-file", methods=[apigw.HttpMethod.POST], integration=download_file_integ)
 
-        # ---------------- Status Lambdas (NEW) ----------------
+        # ---------------- Status Lambdas ----------------
         # /status-progress
         status_progress_fn = _lambda.Function(
             self, "StatusProgressFn",
@@ -339,7 +351,7 @@ class ServerlessJp2Stack(Stack):
         )
         status_history_fn.add_to_role_policy(iam.PolicyStatement(
             actions=["states:GetExecutionHistory", "states:DescribeExecution"],
-            resources=["*"]  # can be narrowed to this account/region
+            resources=["*"]  # you can narrow to this account/region if desired
         ))
 
         status_history_integ_hist = apigw_int.HttpLambdaIntegration("StatusHistoryInteg", handler=status_history_fn)
