@@ -173,14 +173,15 @@ class ServerlessJp2Stack(Stack):
         ))
 
         # ---------------- Step Function (Split via ECS) ----------------
-        # Run the tiler container (which includes GDAL) directly from Step Functions
         split_task = tasks.EcsRunTask(
             self, "RunSplitOnFargate",
             cluster=cluster,
             task_definition=tiler_taskdef,
-            launch_target=tasks.EcsFargateLaunchTarget(),
+            launch_target=tasks.EcsFargateLaunchTarget(
+                platform_version=ecs.FargatePlatformVersion.LATEST  # <-- required by your CDK version
+            ),
             assign_public_ip=True,
-            integration_pattern=sfn.IntegrationPattern.RUN_JOB,  # wait for task to finish
+            integration_pattern=sfn.IntegrationPattern.RUN_JOB,
             container_overrides=[tasks.ContainerOverride(
                 container=tiler_taskdef.default_container,
                 environment=[
@@ -191,7 +192,6 @@ class ServerlessJp2Stack(Stack):
                     tasks.TaskEnvironmentVariable(name="TILES_TOTAL",   value=sfn.JsonPath.string_at("$.params.tilesTotal")),
                     tasks.TaskEnvironmentVariable(name="TILES_GRID",    value=sfn.JsonPath.string_at("$.params.tilesGrid")),
                     tasks.TaskEnvironmentVariable(name="JOB_ID",        value=sfn.JsonPath.string_at("$.jobId")),
-                    # Pass default create opts; container can parse/override
                     tasks.TaskEnvironmentVariable(name="CREATE_OPTS",   value="TILED=YES,BIGTIFF=IF_SAFER,COMPRESS=LZW,PREDICTOR=2"),
                 ],
             )],
@@ -351,7 +351,7 @@ class ServerlessJp2Stack(Stack):
         )
         status_history_fn.add_to_role_policy(iam.PolicyStatement(
             actions=["states:GetExecutionHistory", "states:DescribeExecution"],
-            resources=["*"]  # you can narrow to this account/region if desired
+            resources=["*"]
         ))
 
         status_history_integ_hist = apigw_int.HttpLambdaIntegration("StatusHistoryInteg", handler=status_history_fn)
