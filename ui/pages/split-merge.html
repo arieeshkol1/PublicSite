@@ -165,7 +165,7 @@ async function listInput(){
   const tbody=$('inputTbody');tbody.innerHTML='<tr><td colspan="3">Loading…</td></tr>';
   try{
     const j=await getJSON(`${window.API_BASE}/list-input?bucket=${encodeURIComponent(INPUT_BUCKET)}`);
-    const items=(j.items||[]).filter(o=>String(o.key||'').toLowerCase().endsWith('.jp2'));
+    const items=(j.items||j.objects||[]).filter(o=>String(o.key||'').toLowerCase().endsWith('.jp2'));
     if(!items.length){tbody.innerHTML='<tr><td colspan=3>No JP2 objects</td></tr>';return;}
     tbody.innerHTML=items.map(o=>`<tr><td class="mono">${o.key}</td><td>${humanSize(o.size)}</td><td><button class="btn" data-key="${o.key}">Select</button></td></tr>`).join('');
     tbody.onclick=ev=>{const b=ev.target.closest('button[data-key]');if(!b)return;selectedKey=b.dataset.key;setText('selectedKey',selectedKey);$('btnSplit').disabled=!selectedKey;};
@@ -177,7 +177,7 @@ async function refreshFiles(jid){
   const prefix=`tiles/${jid}/`;
   try{
     const j=await getJSON(`${window.API_BASE}/list-output?bucket=${OUTPUT_BUCKET}&prefix=${prefix}`);
-    renderFiles(j.items||[]);
+    renderFiles(j.items||j.objects||[]);
   }catch(e){$('filesLive').textContent=`List error: ${e.message}`;}
 }
 
@@ -185,7 +185,7 @@ async function listUnite(){
   const tbody=$('uniteTbody');tbody.innerHTML='<tr><td colspan=2>Loading…</td></tr>';
   try{
     const j=await getJSON(`${window.API_BASE}/list-output?bucket=${OUTPUT_BUCKET}`);
-    const folders=new Set();(j.items||[]).forEach(o=>{const m=String(o.key||'').match(/^tiles\/(.+?)\//);if(m)folders.add(m[1]);});
+    const folders=new Set();(j.items||j.objects||[]).forEach(o=>{const m=String(o.key||'').match(/^tiles\/(.+?)\//);if(m)folders.add(m[1]);});
     if(!folders.size){tbody.innerHTML='<tr><td colspan=2>No tile folders</td></tr>';return;}
     tbody.innerHTML=[...folders].map(f=>`<tr><td>${f}</td><td><button class="btn" data-folder="${f}">Select</button></td></tr>`).join('');
   }catch(e){tbody.innerHTML=`<tr><td colspan=2>Error: ${e.message}</td></tr>`;}
@@ -193,14 +193,17 @@ async function listUnite(){
 
 async function runDiagnostics(){
   const out=$('diagOut');out.textContent='Running...\n';
-  try{const r1=await getJSON(`${window.API_BASE}/list-input?bucket=${INPUT_BUCKET}`);out.textContent+=`list-input OK (${(r1.items||[]).length} objects)\n`;}catch(e){out.textContent+=`list-input ERROR: ${e.message}\n`;}
-  try{const r2=await getJSON(`${window.API_BASE}/list-output?bucket=${OUTPUT_BUCKET}`);out.textContent+=`list-output OK (${(r2.items||[]).length} objects)\n`;}catch(e){out.textContent+=`list-output ERROR: ${e.message}\n`;}
+  try{const r1=await getJSON(`${window.API_BASE}/list-input?bucket=${INPUT_BUCKET}`);out.textContent+=`list-input OK (${(r1.items||r1.objects||[]).length} objects)\n`;}catch(e){out.textContent+=`list-input ERROR: ${e.message}\n`;}
+  try{const r2=await getJSON(`${window.API_BASE}/list-output?bucket=${OUTPUT_BUCKET}`);out.textContent+=`list-output OK (${(r2.items||r2.objects||[]).length} objects)\n`;}catch(e){out.textContent+=`list-output ERROR: ${e.message}\n`;}
 }
 
-$('btnRefresh').onclick=listInput;
-$('btnRefreshUnite').onclick=listUnite;
-$('btnDiag').onclick=runDiagnostics;
-listInput();listUnite();
+window.addEventListener("DOMContentLoaded", () => {
+  $('btnRefresh').onclick=listInput;
+  $('btnRefreshUnite').onclick=listUnite;
+  $('btnDiag').onclick=runDiagnostics;
+  listInput();
+  listUnite();
+});
 </script>
 </body>
 </html>
