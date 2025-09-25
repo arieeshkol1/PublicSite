@@ -35,6 +35,10 @@
     .expand-btn { cursor:pointer; border:1px solid rgba(255,255,255,.2); background:#0f172a; border-radius:8px; padding:4px 8px; }
     .expand-btn[aria-expanded="true"] { background:#13203a; }
     .grid-cols-2 { display:grid; grid-template-columns:2fr 1fr; gap:20px; }
+    .filters { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+    .chip { display:inline-flex; align-items:center; gap:6px; border:1px solid rgba(255,255,255,.2); background:#0f172a; padding:6px 10px; border-radius:999px; }
+    .chip input { accent-color: var(--accent); }
+    .divider { height:1px; background:rgba(255,255,255,.1); margin:8px 0 0; }
   </style>
   <script>
     // === Config ===
@@ -57,7 +61,18 @@
           <h2>1) Choose file from Input Bucket</h2>
           <button id="btnRefresh" class="btn">Refresh</button>
         </div>
-        <table aria-label="Input objects">
+
+        <!-- NEW: type filters -->
+        <div class="filters" style="margin:8px 0 4px;">
+          <span class="small">Show types:</span>
+          <label class="chip"><input type="checkbox" id="f_jp2" checked> JP2</label>
+          <label class="chip"><input type="checkbox" id="f_tif" checked> TIFF/TIF</label>
+          <label class="chip"><input type="checkbox" id="f_raw" checked> RAW</label>
+          <label class="chip"><input type="checkbox" id="f_all"> All</label>
+        </div>
+        <div class="divider"></div>
+
+        <table aria-label="Input objects" style="margin-top:6px;">
           <thead><tr><th></th><th>Object Key</th><th>Size</th></tr></thead>
           <tbody id="inputTbody"><tr><td colspan="3" class="muted">Click Refresh</td></tr></tbody>
         </table>
@@ -155,13 +170,60 @@
 
     // ===== State =====
     let selectedKey=null, jobs=[], pollTimer=null;
+    let lastListedItems = []; // keep raw list for re-filtering
+
+    // ===== Extension filtering (NEW) =====
+    function getExt(key){
+      const m = (key||'').toLowerCase().match(/\.([a-z0-9]+)$/);
+      return m ? m[1] : '';
+    }
+    function isAllowed(key){
+      const ext = getExt(key);
+      const all = $('f_all').checked;
+      const jp2 = $('f_jp2').checked;
+      const tif = $('f_tif').checked;
+      const raw = $('f_raw').checked;
+
+      if (all) return true;
+      if (ext === 'jp2') return jp2;
+      if (ext === 'tif' || ext === 'tiff') return tif;
+      if (ext === 'raw') return raw;
+      // allow also common GeoTIFF extensions if any appear:
+      if (ext === 'geotiff') return tif;
+      return false;
+    }
+    function bindFilters(){
+      const filterIds = ['f_all','f_jp2','f_tif','f_raw'];
+      filterIds.forEach(id=>{
+        $(id).addEventListener('change', ()=>{
+          // if All is checked -> check all; if any unchecked -> uncheck All.
+          if (id==='f_all') {
+            const on=$('f_all').checked;
+            $('f_jp2').checked = on;
+            $('f_tif').checked = on;
+            $('f_raw').checked = on;
+          } else {
+            if (!$('f_jp2').checked || !$('f_tif').checked || !$('f_raw').checked) $('f_all').checked = false;
+            if ($('f_jp2').checked && $('f_tif').checked && $('f_raw').checked) $('f_all').checked = true;
+          }
+          renderList(lastListedItems);
+        });
+      });
+      // Initialize All according to individual defaults
+      $('f_all').checked = $('f_jp2').checked && $('f_tif').checked && $('f_raw').checked;
+    }
 
     // ===== List Input =====
     function renderList(objs){
       const tbody=$('inputTbody');
       if(!objs||!objs.length){tbody.innerHTML='<tr><td colspan="3" class="muted">No objects</td></tr>';return;}
       const items=(objs||[]).map(o=>({key:o.key||o.Key,size:o.size||o.Size}));
-      tbody.innerHTML=items.map(o=>`<tr>
+      const filtered = items.filter(o => isAllowed(o.key));
+      if (filtered.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="3" class="muted">No objects match the selected types</td></tr>';
+        return;
+      }
+      tbody.innerHTML=filtered.map(o=>`<tr>
         <td><input type="radio" name="pickone" class="pick" data-key="${o.key}"></td>
         <td class="mono">${o.key}</td>
         <td>${humanSize(o.size)}</td>
@@ -172,7 +234,15 @@
     async function listInput(){
       const url=`${window.API_BASE}/list-input?bucket=${encodeURIComponent(INPUT_BUCKET)}`;
       const tbody=$('inputTbody'); tbody.innerHTML='<tr><td colspan=3>Loading…</td></tr>';
-      try{ const j=await getJSON(url); const items=j.objects||j.items||[]; renderList(items); logLine(`Listed ${items.length} object(s)`);}catch(e){ tbody.innerHTML=`<tr><td colspan=3>Error: ${e.message}</td></tr>`; }
+      try{
+        const j=await getJSON(url);
+        const items=j.objects||j.items||[];
+        lastListedItems = items;           // keep full list
+        renderList(items);                 // render with filters
+        logLine(`Listed ${items.length} object(s) (filtered view may show fewer)`);
+      }catch(e){
+        tbody.innerHTML=`<tr><td colspan=3>Error: ${e.message}</td></tr>`;
+      }
     }
 
     // ===== Jobs table =====
@@ -227,131 +297,4 @@
     // ===== Convert (SINGLE FILE, /convert) =====
     function fmtToOption(v){ if(v==='JPEG2000')return'keep'; if(v==='TIFF')return'tiff'; if(v==='RAW')return'raw'; return'keep'; }
     function parseConvertResponse(res){
-      // Accept both shapes:
-      // A) {job_id, items:[{taskArn,key,...}], launched, failed}
-      // B) API GW wrapper {statusCode, body:"{...}"}
       let body = res;
-      if (res && typeof res.body === 'string') {
-        try { body = JSON.parse(res.body); } catch { body = {}; }
-      }
-      return body || {};
-    }
-    async function doConvert(){
-      if(!selectedKey) return;
-      $('btnConvert').disabled = true; // prevent double click
-      try{
-        const fmtUi = $('format').value;   // JPEG2000 | TIFF | RAW
-        const fmtOpt = fmtToOption(fmtUi); // keep | tiff | raw
-
-        // Use the Lambda contract used in your working backend now:
-        // For the new converter, it expects: { keys: [..], tiles, target_format }
-        // Keep legacy payload fields too (no harm).
-        const bodyNew = {
-          keys: [selectedKey],
-          tiles: 16,
-          target_format: fmtUi,
-          // legacy fields (ignored by new Lambda, harmless):
-          inputBucket: INPUT_BUCKET,
-          inputKey: selectedKey,
-          outputBucket: OUTPUT_BUCKET,
-          outputKey: `output/final/${selectedKey.split('/').pop().replace(/\.[^.]+$/,'')}.${fmtUi==='TIFF'?'tif':(fmtUi==='RAW'?'raw':'jp2')}`,
-          params: { format: fmtUi, formatOption: fmtOpt }
-        };
-
-        logLine(`Submitting convert for ${selectedKey} (${fmtUi})`);
-        const raw = await postJSON(`${window.API_BASE}/convert`, bodyNew);
-        const res = parseConvertResponse(raw);
-
-        const jobId = res.job_id || res.jobId || null;
-        // Extract first item (single-file mode)
-        const it = (res.items && res.items[0]) || {};
-        const taskArn = it.taskArn || it.task_arn || null;
-        const logsUrl = taskArn ? cloudWatchTaskUrl(taskArn) : null;
-
-        const job = {
-          key: selectedKey,
-          jobId,
-          status: (res.launched > 0 ? 'RUNNING' : (res.failed > 0 ? 'FAILED' : 'QUEUED')),
-          percent: 0,
-          exec: null,
-          logsUrl,
-          output_key: null,
-          output_size: null,
-          duration_ms: null,
-          task_arn: taskArn,
-          error: it.error || res.error || null
-        };
-        jobs.push(job); renderJobs();
-        logLine(`Started convert job ${jobId || '(no-id)'}`);
-        startPolling();
-      }catch(e){
-        const job={ key: selectedKey, jobId:null, status:'FAILED', percent:0, exec:null, error:String(e.message||e) };
-        jobs.push(job); renderJobs();
-      }finally{
-        $('btnConvert').disabled = !selectedKey; // re-enable for retry
-      }
-    }
-
-    // ===== Poll status =====
-    function startPolling(){
-      if(pollTimer) clearInterval(pollTimer);
-      pollTimer=setInterval(async()=>{
-        for(const j of jobs){
-          if(!j.jobId) continue;
-          try{
-            // If you have a backend status endpoint, keep using it:
-            const s=await getJSON(`${window.API_BASE}/status-progress?jobId=${encodeURIComponent(j.jobId)}`);
-            if (s.percent != null) j.percent = s.percent;
-            const st=(s.state||s.status||j.status||'RUNNING').toUpperCase();
-            j.status = st;
-            if (j.percent==null || j.percent===0) {
-              if (s.phase === 'DOWNLOADING') j.percent = 10;
-              else if (s.phase === 'CONVERTING') j.percent = 70;
-              else if (s.phase === 'UPLOADING') j.percent = 90;
-            }
-            j.output_key  = s.output_key  || s.final_key   || j.output_key;
-            j.output_size = s.output_size || s.size_final  || j.output_size;
-            j.duration_ms = s.duration_ms || s.time_ms     || j.duration_ms;
-            j.task_arn    = s.task_arn    || s.ecs_task_arn|| s.container_id || j.task_arn;
-
-            // if backend returns last error (e.g., GDAL STDERR), surface it
-            if (s.error || s.errorMessage) j.error = s.error || s.errorMessage;
-
-            // add logs URL if we learned task arn later
-            if (!j.logsUrl && j.task_arn) j.logsUrl = cloudWatchTaskUrl(j.task_arn);
-
-            if (st==='SUCCEEDED' || st==='COMPLETED') j.percent = 100;
-          }catch(e){
-            // keep polling but show a single-line error
-            showError(`status-progress ${j.jobId}: ${e.message||e}`);
-          }
-        }
-        renderJobs();
-        if(jobs.length>0 && jobs.every(x => ['SUCCEEDED','COMPLETED','FAILED','CANCELLED'].includes((x.status||'').toUpperCase()))){
-          clearInterval(pollTimer); pollTimer=null; logLine('All jobs finished.');
-        }
-      },1500);
-    }
-
-    // ===== Wire up =====
-    $('btnRefresh').addEventListener('click', (e)=>{ e.preventDefault(); listInput(); });
-    $('btnConvert').addEventListener('click', (e)=>{ e.preventDefault(); doConvert(); });
-    $('btnDiag').addEventListener('click', async (e)=>{
-      e.preventDefault();
-      logLine('Running connectivity diagnostics…');
-      $('originTxt').textContent = location.origin;
-      $('apiBaseTxt').textContent = window.API_BASE;
-      try{ await getJSON(`${window.API_BASE}/list-input?bucket=${encodeURIComponent(INPUT_BUCKET)}`); logLine('GET /list-input: OK'); }catch{ logLine('GET /list-input: FAILED'); }
-      try{ await fetch(`${window.API_BASE}/list-input`,{method:'OPTIONS',mode:'cors',headers:{'Access-Control-Request-Method':'GET','Origin':location.origin}}); logLine('OPTIONS /list-input: attempted (check CORS)'); }catch{ logLine('OPTIONS /list-input: FAILED (CORS blocked)'); }
-      try{ await postJSON(`${window.API_BASE}/convert`,{_diag:true}); logLine('POST /convert: OK (diag)'); }catch{ logLine('POST /convert: FAILED'); }
-      try{ await getJSON(`${window.API_BASE}/status-progress?jobId=diag`); logLine('GET /status-progress: OK'); }catch{ logLine('GET /status-progress: FAILED'); }
-      logLine('Diagnostics complete. Check Errors panel for details.');
-    });
-
-    // initial load
-    $('originTxt').textContent = location.origin;
-    $('apiBaseTxt').textContent = window.API_BASE;
-    listInput();
-  </script>
-</body>
-</html>
