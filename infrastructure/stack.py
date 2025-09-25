@@ -94,7 +94,6 @@ class ServerlessJp2Stack(Stack):
             self, "TilerTaskRole",
             assumed_by=iam.ServicePrincipal("ecs-tasks.amazonaws.com")
         )
-        # S3 permissions for container
         tiler_task_role.add_to_policy(iam.PolicyStatement(
             actions=["s3:GetObject", "s3:ListBucket"],
             resources=[input_bucket.bucket_arn, input_bucket.arn_for_objects("*")]
@@ -177,9 +176,8 @@ class ServerlessJp2Stack(Stack):
             assign_public_ip=True,
             integration_pattern=sfn.IntegrationPattern.RUN_JOB,
             container_overrides=[tasks.ContainerOverride(
-                container_definition=tiler_taskdef.default_container,  # CDK-compatible name
+                container_definition=tiler_taskdef.default_container,
                 environment=[
-                    # All values are strings (controller_split coerces numerics)
                     tasks.TaskEnvironmentVariable(name="INPUT_BUCKET",  value=sfn.JsonPath.string_at("$.inputBucket")),
                     tasks.TaskEnvironmentVariable(name="OUTPUT_BUCKET", value=sfn.JsonPath.string_at("$.outputBucket")),
                     tasks.TaskEnvironmentVariable(name="INPUT_KEY",     value=sfn.JsonPath.string_at("$.inputKey")),
@@ -191,7 +189,7 @@ class ServerlessJp2Stack(Stack):
                 ],
             )],
             result_path="$.ecsResult",
-            # If your CDK version prefers vpc_subnets, rename this parameter accordingly
+            # If your CDK expects vpc_subnets instead of subnets, swap the param name.
             subnets=ec2.SubnetSelection(subnets=vpc.public_subnets),
             security_groups=[tiler_sg],
         )
@@ -283,7 +281,7 @@ class ServerlessJp2Stack(Stack):
             environment={
                 "OUTPUT_BUCKET": output_bucket.bucket_name,
                 "UNITE_SFN_ARN": unite_state_machine.state_machine_arn,
-                "SPLIT_SFN_ARN": split_state_machine.state_machine_arn,  # optional (for parity/tools)
+                "SPLIT_SFN_ARN": split_state_machine.state_machine_arn,  # optional
             },
         )
         unite_controller_fn.add_to_role_policy(iam.PolicyStatement(
@@ -295,7 +293,7 @@ class ServerlessJp2Stack(Stack):
         http_api = apigw.HttpApi(
             self, "HttpApi",
             cors_preflight=apigw.CorsPreflightOptions(
-                allow_headers=["Content-Type"],
+                allow_headers=["*"],  # WIDENED to avoid browser 403 on preflight
                 allow_methods=[
                     apigw.CorsHttpMethod.GET,
                     apigw.CorsHttpMethod.POST,
@@ -365,7 +363,6 @@ class ServerlessJp2Stack(Stack):
         copy_files_integ     = apigw_int.HttpLambdaIntegration("CopyFilesIntegration", handler=copy_files_fn)
         delete_files_integ   = apigw_int.HttpLambdaIntegration("DeleteFilesIntegration", handler=delete_files_fn)
         download_file_integ  = apigw_int.HttpLambdaIntegration("DownloadFileIntegration", handler=download_file_fn)
-
         http_api.add_routes(path="/copy-files",   methods=[apigw.HttpMethod.POST], integration=copy_files_integ)
         http_api.add_routes(path="/delete-files", methods=[apigw.HttpMethod.POST], integration=delete_files_integ)
         http_api.add_routes(path="/download-file",methods=[apigw.HttpMethod.POST], integration=download_file_integ)
@@ -390,7 +387,7 @@ class ServerlessJp2Stack(Stack):
         status_progress_integ = apigw_int.HttpLambdaIntegration("StatusProgressInteg", handler=status_progress_fn)
         http_api.add_routes(path="/status-progress", methods=[apigw.HttpMethod.GET], integration=status_progress_integ)
 
-        # /status-history/{jobId} and /status-detail/{executionArn}
+        # /status-history + /status-detail (supports both Split & Unite)
         status_history_fn = _lambda.Function(
             self, "StatusHistoryFn",
             runtime=_lambda.Runtime.PYTHON_3_11,
@@ -398,10 +395,14 @@ class ServerlessJp2Stack(Stack):
             code=_lambda.Code.from_asset(lambda_code_dir),
             timeout=Duration.seconds(30),
             memory_size=256,
-            environment={"SPLIT_SFN_ARN": split_state_machine.state_machine_arn},
+            environment={
+                "SPLIT_SFN_ARN": split_state_machine.state_machine_arn,
+                "UNITE_SFN_ARN": unite_state_machine.state_machine_arn,
+            },
         )
         status_history_fn.add_to_role_policy(iam.PolicyStatement(
-            actions=["states:GetExecutionHistory", "states:DescribeExecution"], resources=["*"]
+            actions=["states:GetExecutionHistory", "states:DescribeExecution"],
+            resources=["*"]
         ))
         status_history_integ_hist = apigw_int.HttpLambdaIntegration("StatusHistoryInteg", handler=status_history_fn)
         status_history_integ_det  = apigw_int.HttpLambdaIntegration("StatusDetailInteg",  handler=status_history_fn)

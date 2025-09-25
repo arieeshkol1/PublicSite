@@ -1,4 +1,3 @@
-# infrastructure/lambda/status_history.py
 import os, json, urllib.parse, boto3
 
 sfn = boto3.client("stepfunctions")
@@ -80,10 +79,9 @@ def handler(event, _ctx):
             if not job_id:
                 return _resp(400, {"error": "missing jobId in path"})
 
-            # Heuristic: unite executions are typically named "unite-<jobId>"
             prefer_unite = job_id.startswith("unite-") and bool(UNITE_SFN_ARN)
 
-            # Try preferred machine first, then fallback to the other.
+            # Try preferred machine first, then fallback
             tried = []
             for sm in ([UNITE_SFN_ARN, SPLIT_SFN_ARN] if prefer_unite else [SPLIT_SFN_ARN, UNITE_SFN_ARN]):
                 if not sm:
@@ -93,9 +91,8 @@ def handler(event, _ctx):
                 try:
                     return _resp(200, _get_history_by_exec_arn(exec_arn))
                 except sfn.exceptions.ExecutionDoesNotExist:
-                    continue  # try the other SM if available
+                    continue
 
-            # Not found on either SM
             return _resp(404, {"error": "execution not found", "jobId": job_id, "tried": tried})
 
         # 2) /status-detail/{executionArn}
