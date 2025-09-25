@@ -2,62 +2,57 @@
 <html lang="en">
 <head>
   <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
   <title>TSG JP2 Pipeline — Split / Merge</title>
   <style>
     :root {
-      --bg:#000000;
-      --card:#111111;
-      --muted:#d1d5db;
-      --text:#ffffff;
-      --accent:#3b82f6;
-      --danger:#ef4444;
+      --bg:#000; --card:#111; --muted:#9ca3af; --text:#fff; --accent:#3b82f6; --danger:#ef4444;
     }
-    html,body { height:100%; background:var(--bg); color:var(--text);
-      font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,"Helvetica Neue",Arial; margin:0; }
-    .wrap { max-width:1200px; margin:24px auto; padding:0 16px; }
-    .card { background:var(--card); border-radius:16px; padding:20px;
-      box-shadow:0 6px 24px rgba(255,255,255,.08); border:1px solid rgba(255,255,255,.1); color:var(--text); }
-    header { margin-bottom:8px; }
-    h1 { font-size:22px; margin:0; }
-    h2 { font-size:16px; margin:18px 0 10px; color:var(--muted); font-weight:600; }
-    .row { display:grid; grid-template-columns:1fr auto; gap:12px; align-items:center; }
-    .muted { color:var(--muted); }
-    .mono { font-family:ui-monospace,Menlo,Consolas,monospace; }
-    .btn { border:1px solid rgba(255,255,255,.2); background:#1f2937; color:#fff; padding:8px 12px; border-radius:10px; cursor:pointer; }
-    .btn.primary { background:var(--accent); border-color:var(--accent); }
-    .btn:disabled { opacity:.6; cursor:not-allowed; }
-    table { width:100%; border-collapse:collapse; }
-    th,td { border-bottom:1px solid rgba(255,255,255,.2); padding:8px 10px; text-align:left; }
-    th { color:var(--muted); font-weight:600; }
-    .grid { display:grid; grid-template-columns:repeat(6,minmax(0,1fr)); gap:6px; }
-    .opt { padding:8px 10px; border:1px solid rgba(255,255,255,.2); border-radius:10px; text-align:center; cursor:pointer; user-select:none; }
-    .opt.active { outline:2px solid var(--accent); }
-    .bar { height:10px; border-radius:999px; background:#374151; border:1px solid rgba(255,255,255,.2); overflow:hidden; }
-    .bar > i { display:block; height:100%; width:0%; background:linear-gradient(90deg,#60a5fa,var(--accent)); }
-    .links { display:flex; gap:10px; flex-wrap:wrap; }
-    .links a { color:var(--accent); text-decoration:none; }
-    .well { background:#1f2937; border:1px dashed rgba(255,255,255,.3); border-radius:10px; padding:10px; color:#fff; }
-    .err { background:#7f1d1d; border:1px solid #fecaca; color:#fee2e2; padding:10px; border-radius:10px; margin-bottom:10px; display:none; white-space:pre-wrap; }
-    .split-merge { display:grid; grid-template-columns:1fr 1fr; gap:20px; }
-    .diag { font-size:12px; color:var(--muted); }
-    .diag pre { background:#0b1220; color:#e5e7eb; padding:10px; border-radius:8px; overflow:auto; max-height:180px; border:1px solid rgba(255,255,255,.1); }
+    html,body{height:100%;background:var(--bg);color:var(--text);
+      font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,"Helvetica Neue",Arial;margin:0}
+    .wrap{max-width:1200px;margin:24px auto;padding:0 16px}
+    .card{background:var(--card);border-radius:16px;padding:20px;box-shadow:0 6px 24px rgba(255,255,255,.08);
+      border:1px solid rgba(255,255,255,.1)}
+    header{margin-bottom:8px}
+    h1{font-size:22px;margin:0}
+    h2{font-size:16px;margin:18px 0 10px;color:var(--muted);font-weight:600}
+    .row{display:grid;grid-template-columns:1fr auto;gap:12px;align-items:center}
+    .muted{color:var(--muted)}
+    .mono{font-family:ui-monospace,Menlo,Consolas,monospace}
+    .btn{border:1px solid rgba(255,255,255,.2);background:#1f2937;color:#fff;padding:8px 12px;border-radius:10px;cursor:pointer}
+    .btn.primary{background:var(--accent);border-color:var(--accent)}
+    .btn:disabled{opacity:.6;cursor:not-allowed}
+    table{width:100%;border-collapse:collapse}
+    th,td{border-bottom:1px solid rgba(255,255,255,.2);padding:8px 10px;text-align:left}
+    th{color:var(--muted);font-weight:600}
+    .grid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:6px}
+    .opt{padding:8px 10px;border:1px solid rgba(255,255,255,.2);border-radius:10px;text-align:center;cursor:pointer;user-select:none}
+    .opt.active{outline:2px solid var(--accent)}
+    .bar{height:10px;border-radius:999px;background:#374151;border:1px solid rgba(255,255,255,.2);overflow:hidden}
+    .bar>i{display:block;height:100%;width:0%;background:linear-gradient(90deg,#60a5fa,var(--accent))}
+    .links{display:flex;gap:10px;flex-wrap:wrap}
+    .links a{color:var(--accent);text-decoration:none}
+    .well{background:#1f2937;border:1px dashed rgba(255,255,255,.3);border-radius:10px;padding:10px;color:#fff}
+    .err{background:#7f1d1d;border:1px solid #fecaca;color:#fee2e2;padding:10px;border-radius:10px;margin:10px 0;display:none;white-space:pre-wrap}
+    .split-merge{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+    .diag{font-size:12px;color:var(--muted)}
+    .diag pre{background:#0b1220;color:#e5e7eb;padding:10px;border-radius:8px;overflow:auto;max-height:180px;border:1px solid rgba(255,255,255,.1)}
+    @media (max-width: 980px){ .split-merge{grid-template-columns:1fr} }
   </style>
   <script>
+    // ---- API base ----
     window.API_BASE = "https://xui5toa569.execute-api.us-east-1.amazonaws.com";
   </script>
 </head>
 <body>
   <div class="wrap">
-    <header>
-      <h1>TSG JP2 Pipeline — Split / Merge</h1>
-    </header>
+    <header><h1>TSG JP2 Pipeline — Split / Merge</h1></header>
 
     <div id="errorBox" class="err"></div>
-    <div class="muted">API: <span class="mono" id="apiBaseLbl"></span> • Output: <span id="outBucketLbl" class="mono"></span></div>
+    <div class="muted">API: <span id="apiBaseLbl" class="mono"></span> • Output: <span id="outBucketLbl" class="mono"></span></div>
 
     <div class="split-merge">
-      <!-- Split on left -->
+      <!-- Left: Split -->
       <div>
         <div class="card">
           <div class="row">
@@ -67,9 +62,7 @@
           <div class="muted">Listing from <b id="inBucketLbl" class="mono"></b></div>
           <div class="well" style="margin-top:10px;">
             <table aria-label="Input objects">
-              <thead>
-                <tr><th>Object Key</th><th style="width:160px;">Size</th><th style="width:120px;"></th></tr>
-              </thead>
+              <thead><tr><th>Object Key</th><th style="width:160px;">Size</th><th style="width:120px;"></th></tr></thead>
               <tbody id="inputTbody"></tbody>
             </table>
           </div>
@@ -79,7 +72,7 @@
           <h2>2) Split Settings</h2>
           <div class="grid" id="tileOpts" role="group" aria-label="Tiles"></div>
           <div class="muted" style="margin-top:10px">Selected file: <span id="selectedKey" class="mono">—</span></div>
-          <div style="margin-top:10px; display:flex; gap:10px; align-items:center;">
+          <div style="margin-top:10px;display:flex;gap:10px;align-items:center">
             <button id="btnSplit" class="btn primary" disabled>Split</button>
             <span id="splitMsg" class="muted"></span>
           </div>
@@ -91,23 +84,23 @@
           <div id="execArn" class="mono">—</div>
           <div class="muted" style="margin-top:6px;">Job ID</div>
           <div id="jobId" class="mono">—</div>
-          <div style="margin:10px 0;" class="bar"><i id="barFill"></i></div>
+          <div style="margin:10px 0" class="bar"><i id="barFill"></i></div>
           <div>Tiles <span id="tilesCount" class="mono">0</span> / <span id="tilesExpected" class="mono">0</span></div>
-          <div class="links" style="margin-top:8px;">
+          <div class="links" style="margin-top:8px">
             <a id="linkExec" href="#" target="_blank" rel="noreferrer noopener">Execution</a>
             <a id="linkLogs" href="#" target="_blank" rel="noreferrer noopener" style="display:none;">CloudWatch Logs</a>
           </div>
-          <h3 style="margin-top:14px; font-size:14px; color:var(--muted);">Step Functions Events</h3>
-          <pre id="stepsLive" class="well mono" style="white-space:pre-wrap; max-height:220px; overflow:auto;">—</pre>
+          <h3 style="margin-top:14px;font-size:14px;color:var(--muted)">Step Functions Events</h3>
+          <pre id="stepsLive" class="well mono" style="white-space:pre-wrap;max-height:220px;overflow:auto">—</pre>
         </div>
 
         <div class="card">
           <h2>Files under <span class="mono">tiles/&lt;jobId&gt;/</span></h2>
-          <pre id="filesLive" class="well mono" style="white-space:pre-wrap; max-height:240px; overflow:auto;">—</pre>
+          <pre id="filesLive" class="well mono" style="white-space:pre-wrap;max-height:240px;overflow:auto">—</pre>
         </div>
       </div>
 
-      <!-- Unite on right -->
+      <!-- Right: Unite -->
       <div>
         <div class="card">
           <div class="row">
@@ -143,13 +136,13 @@
           <div class="links" style="margin-top:8px;">
             <a id="linkExecUnite" href="#" target="_blank" rel="noreferrer noopener">Execution</a>
           </div>
-          <h3 style="margin-top:14px; font-size:14px; color:var(--muted);">Step Functions Events</h3>
-          <pre id="uStepsLive" class="well mono" style="white-space:pre-wrap; max-height:220px; overflow:auto;">—</pre>
+          <h3 style="margin-top:14px;font-size:14px;color:var(--muted)">Step Functions Events</h3>
+          <pre id="uStepsLive" class="well mono" style="white-space:pre-wrap;max-height:220px;overflow:auto">—</pre>
         </div>
 
         <div class="card diag">
           <h2>Diagnostics</h2>
-          <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
             <button id="btnDiag" class="btn">Run API checks</button>
             <span>API: <span class="mono" id="diagApi"></span></span>
           </div>
@@ -158,7 +151,7 @@
       </div>
     </div>
 
-    <div class="muted" style="text-align:center; margin:20px 0;">TSG © Secure JP2 Pipeline</div>
+    <div class="muted" style="text-align:center;margin:20px 0;">TSG © Secure JP2 Pipeline</div>
   </div>
 
   <script>
@@ -168,7 +161,7 @@
 
     // ---------- Helpers ----------
     const $ = id => document.getElementById(id);
-    const setText=(id,v)=>{const n=$(id);if(n)n.textContent=v??''};
+    const setText=(id,v)=>{ const n=$(id); if(n) n.textContent = v ?? ''; };
     function humanSize(n){ if(n==null) return '—'; const kb=1024, mb=kb*1024, gb=mb*1024;
       if(n>=gb) return (n/gb).toFixed(2)+' GB'; if(n>=mb) return (n/mb).toFixed(2)+' MB'; if(n>=kb) return (n/kb).toFixed(2)+' KB'; return n+' B'; }
     async function getJSON(url){
@@ -183,7 +176,7 @@
       if(!r.ok) throw new Error(j.error||j._raw||`HTTP ${r.status}`);
       return j;
     }
-    function showError(msg){ const b=$('errorBox'); if(b){ b.style.display='block'; b.textContent=msg; } console.error(msg); }
+    function showError(msg){ const b=$('errorBox'); if(!b) return; b.style.display='block'; b.textContent=msg; console.error(msg); }
 
     // show meta
     setText('apiBaseLbl', window.API_BASE);
@@ -191,11 +184,12 @@
     setText('diagApi', window.API_BASE);
 
     // ---------- Split (left) ----------
-    let selectedKey=null, tilesTotal=16, jobId=null, expected=0, pollTimer=null, execArn=null;
+    // Default tiles = 4 (2x2) as requested
+    let selectedKey=null, tilesTotal=4, jobId=null, expected=0, pollTimer=null, execArn=null;
 
     function buildTileOptions(){
       const root=$('tileOpts'); if(!root) return; root.innerHTML='';
-      [9,16,25,36].forEach(val=>{
+      [4,9,16,25,36].forEach(val=>{
         const d=document.createElement('div');
         d.className='opt'+(val===tilesTotal?' active':'');
         d.textContent=`${val} (${Math.sqrt(val)}×${Math.sqrt(val)})`;
@@ -209,7 +203,8 @@
       const tbody=$('inputTbody'); if(tbody) tbody.innerHTML='<tr><td colspan="3" class="muted">Loading…</td></tr>';
       try{
         const j = await getJSON(`${window.API_BASE}/list-input?bucket=${encodeURIComponent(INPUT_BUCKET)}`);
-        const items=(j.items || j.objects || []).filter(o=>String(o.key||'').toLowerCase().endsWith('.jp2'));
+        const raw = (j.items||j.objects||[]);
+        const items = raw.filter(o=>String(o.key||'').toLowerCase().endsWith('.jp2'));
         if(!items.length){ if(tbody) tbody.innerHTML='<tr><td colspan="3" class="muted">No JP2 objects</td></tr>'; return; }
         if(tbody) tbody.innerHTML=items.map(o=>`
           <tr>
@@ -241,8 +236,6 @@
           params:{ tilesTotal: tilesTotal, tilesGrid: Math.sqrt(tilesTotal)|0, formatOption: 'keep' }
         };
         const j = await postJSON(`${window.API_BASE}/split`, body);
-        console.log("Split response:", j);
-
         setText('splitMsg','Split started.');
         execArn = j.executionArn || null; setText('execArn', execArn || '—');
         jobId = j.jobId || null; setText('jobId', jobId || '—');
@@ -279,7 +272,7 @@
       const prefix=`tiles/${jid}/`;
       try{
         const j = await getJSON(`${window.API_BASE}/list-output?bucket=${encodeURIComponent(OUTPUT_BUCKET)}&prefix=${encodeURIComponent(prefix)}`);
-        renderFiles(j.items||j.objects||[]);
+        renderFiles((j.items||j.objects||[]));
       }catch(e){
         const fl=$('filesLive'); if(fl) fl.textContent=`List error: ${e.message}`;
       }
@@ -386,8 +379,7 @@
     }
 
     function renderUSteps(steps){
-      const el=$('uStepsLive');
-      if(!el)return;
+      const el=$('uStepsLive'); if(!el)return;
       if(!steps.length){el.textContent='—';return;}
       el.textContent=steps.map(e=>`[${e.time}] ${e.type}${e.detail?` — ${e.detail}`:''}`).join('\n');
     }
@@ -395,8 +387,7 @@
     // ---------- Diagnostics ----------
     async function runDiagnostics(){
       const out=$('diagOut'); out.textContent='Running...\n';
-      const lines=[];
-      function log(s){ lines.push(s); out.textContent = lines.join('\n'); }
+      const lines=[]; const log = s => { lines.push(s); out.textContent=lines.join('\n'); };
       try{ log(`API_BASE: ${window.API_BASE}`); }catch{}
       try{
         const r1 = await getJSON(`${window.API_BASE}/list-input?bucket=${encodeURIComponent(INPUT_BUCKET)}`);
@@ -405,7 +396,7 @@
       try{
         const r2 = await getJSON(`${window.API_BASE}/list-output?bucket=${encodeURIComponent(OUTPUT_BUCKET)}`);
         const folders=new Set(); (r2.items||r2.objects||[]).forEach(o=>{ const m=String(o.key||'').match(/^tiles\/(.+?)\//); if(m) folders.add(m[1]); });
-        log(`list-output OK (${(r2.items||r2.objects||[]).length} objects, ${(folders.size)} folders under tiles/)`);
+        log(`list-output OK (${(r2.items||r2.objects||[]).length} objects, ${folders.size} folders under tiles/)`);
       }catch(e){ log(`list-output ERROR: ${e.message}`); }
       const jid=$('uJobId')?.textContent; if(jid && jid!=='—'){
         try{ await getJSON(`${window.API_BASE}/status-history/${encodeURIComponent(jid)}`); log('status-history by jobId OK'); }
@@ -423,10 +414,7 @@
       $('btnRefreshUnite')?.addEventListener('click', listUnite);
       $('btnUnite')?.addEventListener('click', doUnite);
       $('btnDiag')?.addEventListener('click', runDiagnostics);
-
-      buildTileOptions();
-      listInput();
-      listUnite();
+      buildTileOptions(); listInput(); listUnite();
     });
   </script>
 </body>
