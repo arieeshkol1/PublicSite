@@ -3,7 +3,10 @@ import os, json, urllib.parse, boto3
 
 sfn = boto3.client("stepfunctions")
 
-SPLIT_SFN_ARN = os.environ["SPLIT_SFN_ARN"]  # e.g., arn:aws:states:us-east-1:111122223333:stateMachine:SplitStateMachineXYZ
+# Split is required (existing behavior)
+SPLIT_SFN_ARN = os.environ["SPLIT_SFN_ARN"]
+# Unite is optional; when present we can resolve unite-* executions
+UNITE_SFN_ARN = os.environ.get("UNITE_SFN_ARN", "")
 
 def _resp(code, body):
     return {
@@ -17,16 +20,23 @@ def _resp(code, body):
         "body": json.dumps(body)
     }
 
-def _exec_arn_from_job(job_id: str) -> str:
-    # Build execution ARN from State Machine ARN + job name
-    # stateMachine ARN: arn:aws:states:{region}:{account}:stateMachine:{sm_name}
-    parts = SPLIT_SFN_ARN.split(":")
+def _exec_arn_from_job(sm_arn: str, job_id: str) -> str:
+    """
+    Build execution ARN from State Machine ARN + execution name (job_id).
+    sm_arn: arn:aws:states:{region}:{account}:stateMachine:{sm_name}
+    ->     arn:aws:states:{region}:{account}:execution:{sm_name}:{job_id}
+    """
+    parts = sm_arn.split(":")
+    if len(parts) < 7:
+        raise ValueError(f"Unexpected state machine ARN format: {sm_arn}")
     region = parts[3]
     account = parts[4]
-    sm_name = parts[6].split("stateMachine/")[-1] if "stateMachine/" in parts[6] else parts[6]
-    # Some CDK ARNs have ":" form with name at end; normalize name
+    sm_name = parts[6]
+    # Normalize "stateMachine:{name}" vs "stateMachine/{name}"
     if sm_name.startswith("stateMachine:"):
         sm_name = sm_name.split("stateMachine:")[-1]
+    if "stateMachine/" in sm_name:
+        sm_name = sm_name.split("stateMachine/")[-1]
     return f"arn:aws:states:{region}:{account}:execution:{sm_name}:{job_id}"
 
 def _format_events(history):
@@ -35,7 +45,6 @@ def _format_events(history):
         et = ev.get("type")
         ts = ev.get("timestamp")
         detail = None
-        # Surface short details where useful
         if "executionFailedEventDetails" in ev:
             detail = ev["executionFailedEventDetails"].get("cause") or ev["executionFailedEventDetails"].get("error")
         elif "lambdaFunctionFailedEventDetails" in ev:
@@ -44,8 +53,16 @@ def _format_events(history):
             detail = ev["lambdaFunctionSucceededEventDetails"].get("output")
             if detail and len(detail) > 300:
                 detail = detail[:300] + "…"
-        out.append({"time": ts.isoformat() if hasattr(ts, "isoformat") else str(ts), "type": et, "detail": detail})
+        out.append({
+            "time": ts.isoformat() if hasattr(ts, "isoformat") else str(ts),
+            "type": et,
+            "detail": detail
+        })
     return out
+
+def _get_history_by_exec_arn(exec_arn: str):
+    hist = sfn.get_execution_history(executionArn=exec_arn, reverseOrder=True)
+    return {"executionArn": exec_arn, "events": _format_events(hist)}
 
 def handler(event, _ctx):
     if (event.get("requestContext", {}).get("http", {}).get("method") == "OPTIONS"):
@@ -56,32 +73,46 @@ def handler(event, _ctx):
     qs = event.get("queryStringParameters") or {}
 
     try:
-        # 1) /status-history/{jobId}  (UI calls this)
-        if "/status-history/" in route and "proxy" in path_params or "jobId" in path_params or path_params:
+        # 1) /status-history/{jobId}
+        if "/status-history/" in route and (path_params or "jobId" in path_params or "proxy" in path_params):
             # HttpApi often maps as {proxy+}. Try any param present.
             job_id = path_params.get("jobId") or next(iter(path_params.values()), None)
             if not job_id:
                 return _resp(400, {"error": "missing jobId in path"})
-            exec_arn = _exec_arn_from_job(job_id)
-            hist = sfn.get_execution_history(executionArn=exec_arn, reverseOrder=True)
-            return _resp(200, {"executionArn": exec_arn, "events": _format_events(hist)})
 
-        # 2) /status-detail/{executionArn} (optional path used by UI on unite flow)
+            # Heuristic: unite executions are typically named "unite-<jobId>"
+            prefer_unite = job_id.startswith("unite-") and bool(UNITE_SFN_ARN)
+
+            # Try preferred machine first, then fallback to the other.
+            tried = []
+            for sm in ([UNITE_SFN_ARN, SPLIT_SFN_ARN] if prefer_unite else [SPLIT_SFN_ARN, UNITE_SFN_ARN]):
+                if not sm:
+                    continue
+                exec_arn = _exec_arn_from_job(sm, job_id)
+                tried.append(exec_arn)
+                try:
+                    return _resp(200, _get_history_by_exec_arn(exec_arn))
+                except sfn.exceptions.ExecutionDoesNotExist:
+                    continue  # try the other SM if available
+
+            # Not found on either SM
+            return _resp(404, {"error": "execution not found", "jobId": job_id, "tried": tried})
+
+        # 2) /status-detail/{executionArn}
         if "/status-detail/" in route and path_params:
             raw = next(iter(path_params.values()), None)
             if not raw:
                 return _resp(400, {"error":"missing executionArn in path"})
             exec_arn = urllib.parse.unquote(raw)
-            hist = sfn.get_execution_history(executionArn=exec_arn, reverseOrder=True)
-            return _resp(200, {"executionArn": exec_arn, "events": _format_events(hist)})
+            return _resp(200, _get_history_by_exec_arn(exec_arn))
 
         # 3) Fallback: if provided via query (?arn=...)
         if qs.get("arn"):
             exec_arn = qs["arn"]
-            hist = sfn.get_execution_history(executionArn=exec_arn, reverseOrder=True)
-            return _resp(200, {"executionArn": exec_arn, "events": _format_events(hist)})
+            return _resp(200, _get_history_by_exec_arn(exec_arn))
 
         return _resp(400, {"error":"unsupported route; provide /status-history/{jobId} or /status-detail/{executionArn} or ?arn="})
+
     except sfn.exceptions.ExecutionDoesNotExist as e:
         return _resp(404, {"error": "execution not found", "detail": str(e)})
     except Exception as e:
