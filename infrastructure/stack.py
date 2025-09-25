@@ -183,37 +183,37 @@ class ServerlessJp2Stack(Stack):
             assign_public_ip=True,
             integration_pattern=sfn.IntegrationPattern.RUN_JOB,
             container_overrides=[tasks.ContainerOverride(
-                # CDK version compatibility: use container_definition
+                # Use container_definition for CDK compatibility
                 container_definition=tiler_taskdef.default_container,
                 environment=[
-                    # Force everything to STRING with JsonPath.format("{}", …)
+                    # Use string_at for ALL values so ECS gets strings
                     tasks.TaskEnvironmentVariable(
                         name="INPUT_BUCKET",
-                        value=sfn.JsonPath.format("{}", sfn.JsonPath.string_at("$.inputBucket"))
+                        value=sfn.JsonPath.string_at("$.inputBucket")
                     ),
                     tasks.TaskEnvironmentVariable(
                         name="OUTPUT_BUCKET",
-                        value=sfn.JsonPath.format("{}", sfn.JsonPath.string_at("$.outputBucket"))
+                        value=sfn.JsonPath.string_at("$.outputBucket")
                     ),
                     tasks.TaskEnvironmentVariable(
                         name="INPUT_KEY",
-                        value=sfn.JsonPath.format("{}", sfn.JsonPath.string_at("$.inputKey"))
+                        value=sfn.JsonPath.string_at("$.inputKey")
                     ),
                     tasks.TaskEnvironmentVariable(
                         name="FORMAT_OPTION",
-                        value=sfn.JsonPath.format("{}", sfn.JsonPath.string_at("$.params.formatOption"))
+                        value=sfn.JsonPath.string_at("$.params.formatOption")
                     ),
                     tasks.TaskEnvironmentVariable(
                         name="TILES_TOTAL",
-                        value=sfn.JsonPath.format("{}", sfn.JsonPath.object_at("$.params.tilesTotal"))
+                        value=sfn.JsonPath.string_at("$.params.tilesTotal")
                     ),
                     tasks.TaskEnvironmentVariable(
                         name="TILES_GRID",
-                        value=sfn.JsonPath.format("{}", sfn.JsonPath.object_at("$.params.tilesGrid"))
+                        value=sfn.JsonPath.string_at("$.params.tilesGrid")
                     ),
                     tasks.TaskEnvironmentVariable(
                         name="JOB_ID",
-                        value=sfn.JsonPath.format("{}", sfn.JsonPath.string_at("$.jobId"))
+                        value=sfn.JsonPath.string_at("$.jobId")
                     ),
                     tasks.TaskEnvironmentVariable(
                         name="CREATE_OPTS",
@@ -222,7 +222,8 @@ class ServerlessJp2Stack(Stack):
                 ],
             )],
             result_path="$.ecsResult",
-            # If your CDK version complains about 'subnets', rename to 'vpc_subnets'
+            # If your CDK complains about 'subnets', change to:
+            # vpc_subnets=ec2.SubnetSelection(subnets=vpc.public_subnets),
             subnets=ec2.SubnetSelection(subnets=vpc.public_subnets),
             security_groups=[tiler_sg],
         )
