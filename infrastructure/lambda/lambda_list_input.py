@@ -3,7 +3,6 @@ import os
 import boto3
 
 s3 = boto3.client("s3")
-
 UI_ORIGIN = os.environ.get("UI_ORIGIN", "*")  # e.g. https://jp2-ui-...s3.us-east-1.amazonaws.com
 
 def _resp(status: int, body: dict, origin: str = UI_ORIGIN):
@@ -34,39 +33,32 @@ def handler(event, context):
     mode   = (params.get("type") or "file").lower()   # 'file' | 'folder'
     prefix = params.get("prefix") or ""
     cursor = params.get("cursor") or None
-    max_keys = int(params.get("maxKeys") or "1000")   # adjust as you like
+    max_keys = int(params.get("maxKeys") or "1000")
 
-    # Base request
     req = {"Bucket": bucket, "Prefix": prefix, "MaxKeys": max_keys}
     if cursor:
         req["ContinuationToken"] = cursor
 
-    items = []
-    cursor_next = None
+    items, cursor_next = [], None
+    allowed_exts = ("jp2", "tif", "tiff", "geotiff", "bin", "hdr")
 
     try:
         if mode == "folder":
-            # Delimiter groups by "folders"
             req["Delimiter"] = "/"
             page = s3.list_objects_v2(**req)
-            # Folders appear in CommonPrefixes
             for p in page.get("CommonPrefixes", []) or []:
                 key = p.get("Prefix")
                 if key:
                     items.append({"key": key, "type": "folder"})
-            # Optional: also include files immediately under prefix (exclude nested)
-            # for it in page.get("Contents", []) or []:
-            #     if it["Key"] != prefix:  # skip the prefix "placeholder" object
-            #         items.append({"key": it["Key"], "size": it.get("Size", 0), "type": "file"})
             if page.get("IsTruncated"):
                 cursor_next = page.get("NextContinuationToken")
         else:
-            # Files only
             page = s3.list_objects_v2(**req)
             for it in page.get("Contents", []) or []:
                 key = it["Key"]
-                # only JP2 if you want to filter:
-                # if not key.lower().endswith(".jp2"): continue
+                ext = key.lower().rsplit(".", 1)[-1] if "." in key else ""
+                if ext not in allowed_exts:
+                    continue  # skip irrelevant files (e.g. JSON manifests)
                 items.append({"key": key, "size": it.get("Size", 0), "type": "file"})
             if page.get("IsTruncated"):
                 cursor_next = page.get("NextContinuationToken")
