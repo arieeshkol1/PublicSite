@@ -19,9 +19,6 @@ STATE_MACHINE_ARN_UNITE = os.environ.get("STATE_MACHINE_ARN_UNITE", "")   # Unit
 sfn = boto3.client("stepfunctions", region_name=REGION)
 s3  = boto3.client("s3",            region_name=REGION)
 
-# Default extensions we want to expose to the UI
-DEFAULT_ALLOWED_EXTS = {"jp2", "tif", "tiff", "geotiff", "bin", "hdr"}
-
 # ===== helpers =====
 def _json_default(o):
     if isinstance(o, (_dt.datetime, _dt.date, _dt.time)):
@@ -59,36 +56,13 @@ def _console_logs_link(log_group: str | None):
         return None
     return f"https://{REGION}.console.aws.amazon.com/cloudwatch/home?region={REGION}#logsV2:log-groups/log-group/{up.quote(log_group, safe='')}"
 
-def _normalize_exts_param(exts_param: str | None):
-    """
-    Parse a comma-separated list of extensions from query string.
-    Return a set of lowercase extensions without dots.
-    """
-    if not exts_param:
-        return set(DEFAULT_ALLOWED_EXTS)
-    parts = [p.strip().lower().lstrip(".") for p in exts_param.split(",") if p.strip()]
-    return set(p for p in parts if p)
-
-def _s3_list_filtered(bucket: str, prefix: str = "", allowed_exts: set[str] | None = None):
-    """
-    List S3 objects under (bucket,prefix) with pagination and optional extension filtering.
-    Returns a list of {"key":..., "size":...}.
-    """
-    if allowed_exts is None:
-        allowed_exts = DEFAULT_ALLOWED_EXTS
-
+def _s3_list_all(bucket: str, prefix: str = ""):
+    """List ALL objects under (bucket,prefix) with pagination. No server-side extension filtering."""
     out = []
     paginator = s3.get_paginator("list_objects_v2")
-    try:
-        for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
-            for it in page.get("Contents", []) or []:
-                key = it["Key"]
-                # extension (no dot, lowercase)
-                ext = key.lower().rsplit(".", 1)[-1] if "." in key else ""
-                if ext in allowed_exts:
-                    out.append({"key": key, "size": it.get("Size", 0)})
-    except ClientError as e:
-        raise
+    for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+        for it in page.get("Contents", []) or []:
+            out.append({"key": it["Key"], "size": it.get("Size", 0)})
     return out
 
 # ===== split =====
@@ -174,7 +148,6 @@ def _unite(event):
         return _resp(400, {"error": "Provide tilesPrefix or jobId or manifestKey"})
 
     if not job_id:
-        # derive from tiles_prefix if possible
         parts = (tiles_prefix or "").strip("/").split("/")
         if len(parts) >= 2 and parts[0] == "tiles":
             job_id = parts[1]
@@ -330,28 +303,26 @@ def handler(event, _context):
             arn = up.unquote(raw_path.split("/status-history/", 1)[1])
             return _status_detail_or_history(arn, history=True)
 
-        # ---- NEW: list-input ----
+        # ---- list-input (no server-side ext filtering) ----
         if raw_path == "/list-input" and method == "GET":
             bucket = qs.get("bucket") or INPUT_BUCKET
             prefix = qs.get("prefix") or ""
-            exts   = _normalize_exts_param(qs.get("exts"))
             if not bucket:
                 return _resp(400, {"error": "Missing 'bucket' param or INPUT_BUCKET env"})
             try:
-                out = _s3_list_filtered(bucket=bucket, prefix=prefix, allowed_exts=exts)
+                out = _s3_list_all(bucket=bucket, prefix=prefix)
             except ClientError as e:
                 return _resp(500, {"error": "S3 list failed", "message": str(e), "bucket": bucket, "prefix": prefix})
             return _resp(200, {"objects": out})
 
-        # ---- list-output (kept, now filtered + supports exts) ----
+        # ---- list-output (no server-side ext filtering) ----
         if raw_path == "/list-output" and method == "GET":
             bucket = qs.get("bucket") or OUTPUT_BUCKET
             prefix = qs.get("prefix") or ""
-            exts   = _normalize_exts_param(qs.get("exts"))
             if not bucket:
                 return _resp(400, {"error": "Missing 'bucket' param or OUTPUT_BUCKET env"})
             try:
-                out = _s3_list_filtered(bucket=bucket, prefix=prefix, allowed_exts=exts)
+                out = _s3_list_all(bucket=bucket, prefix=prefix)
             except ClientError as e:
                 return _resp(500, {"error": "S3 list failed", "message": str(e), "bucket": bucket, "prefix": prefix})
             return _resp(200, {"objects": out})
