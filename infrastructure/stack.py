@@ -119,14 +119,16 @@ class ServerlessJp2Stack(Stack):
             "edfcf89c0236c949848d9ccd83d731a69fd6fc85308fa3d3a3313ea50b05a526"
         )
 
+        # IMPORTANT: add DISABLE_PREDICTOR + FORCE_COMPRESS and keep sane CREATE_OPTS
         tiler_taskdef.add_container(
             "tiler",
             image=ecs.ContainerImage.from_registry(tiler_image_uri),
             essential=True,
             logging=ecs.LogDriver.aws_logs(stream_prefix="tiler", log_group=tiler_logs),
             environment={
-                # Use DEFLATE to avoid predictor injection for LZW
-                "CREATE_OPTS": "TILED=YES,BIGTIFF=IF_SAFER,COMPRESS=DEFLATE"
+                "CREATE_OPTS": "TILED=YES,BIGTIFF=IF_SAFER,COMPRESS=DEFLATE",
+                "DISABLE_PREDICTOR": "1",
+                "FORCE_COMPRESS": "DEFLATE",
             }
         )
 
@@ -137,7 +139,7 @@ class ServerlessJp2Stack(Stack):
         convert_fn = _lambda.Function(
             self, "ConvertFn",
             runtime=_lambda.Runtime.PYTHON_3_11,
-            handler="converter.handler",  # matches your 'converter.py'
+            handler="converter.handler",  # matches your converter.py
             code=_lambda.Code.from_asset(lambda_code_dir),
             timeout=Duration.minutes(5),
             memory_size=2048,
@@ -149,8 +151,9 @@ class ServerlessJp2Stack(Stack):
                 "SUBNET_IDS": ",".join(public_subnet_ids),
                 "SECURITY_GROUP_ID": tiler_sg.security_group_id,
                 "ASSIGN_PUBLIC_IP": "ENABLED",
-                # Same default as container to keep behavior aligned
                 "CREATE_OPTS": "TILED=YES,BIGTIFF=IF_SAFER,COMPRESS=DEFLATE",
+                "DISABLE_PREDICTOR": "1",
+                "FORCE_COMPRESS": "DEFLATE",
             },
         )
         convert_fn.add_to_role_policy(iam.PolicyStatement(
@@ -187,8 +190,9 @@ class ServerlessJp2Stack(Stack):
                     tasks.TaskEnvironmentVariable(name="TILES_TOTAL",   value=sfn.JsonPath.string_at("$.params.tilesTotal")),
                     tasks.TaskEnvironmentVariable(name="TILES_GRID",    value=sfn.JsonPath.string_at("$.params.tilesGrid")),
                     tasks.TaskEnvironmentVariable(name="JOB_ID",        value=sfn.JsonPath.string_at("$.jobId")),
-                    # Keep consistent with CREATE_OPTS (no predictor path)
                     tasks.TaskEnvironmentVariable(name="CREATE_OPTS",   value="TILED=YES,BIGTIFF=IF_SAFER,COMPRESS=DEFLATE"),
+                    tasks.TaskEnvironmentVariable(name="DISABLE_PREDICTOR", value="1"),
+                    tasks.TaskEnvironmentVariable(name="FORCE_COMPRESS",   value="DEFLATE"),
                 ],
             )],
             result_path="$.ecsResult",
@@ -250,6 +254,8 @@ class ServerlessJp2Stack(Stack):
                     tasks.TaskEnvironmentVariable(name="FINAL_KEY",     value=sfn.JsonPath.string_at("$.finalKey")),
                     tasks.TaskEnvironmentVariable(name="FORMAT_OPTION", value=sfn.JsonPath.string_at("$.formatOption")),
                     tasks.TaskEnvironmentVariable(name="CREATE_OPTS",   value="TILED=YES,BIGTIFF=IF_SAFER,COMPRESS=DEFLATE"),
+                    tasks.TaskEnvironmentVariable(name="DISABLE_PREDICTOR", value="1"),
+                    tasks.TaskEnvironmentVariable(name="FORCE_COMPRESS",   value="DEFLATE"),
                 ],
             )],
             result_path="$.ecsResult",
