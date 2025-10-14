@@ -125,8 +125,8 @@ class ServerlessJp2Stack(Stack):
             essential=True,
             logging=ecs.LogDriver.aws_logs(stream_prefix="tiler", log_group=tiler_logs),
             environment={
-                # Removed PREDICTOR=2 to avoid GDAL error
-                "CREATE_OPTS": "TILED=YES,BIGTIFF=IF_SAFER,COMPRESS=LZW"
+                # Use DEFLATE to avoid predictor injection for LZW
+                "CREATE_OPTS": "TILED=YES,BIGTIFF=IF_SAFER,COMPRESS=DEFLATE"
             }
         )
 
@@ -137,7 +137,7 @@ class ServerlessJp2Stack(Stack):
         convert_fn = _lambda.Function(
             self, "ConvertFn",
             runtime=_lambda.Runtime.PYTHON_3_11,
-            handler="converter.handler",  # match your existing file 'converter.py'
+            handler="converter.handler",  # matches your 'converter.py'
             code=_lambda.Code.from_asset(lambda_code_dir),
             timeout=Duration.minutes(5),
             memory_size=2048,
@@ -149,8 +149,8 @@ class ServerlessJp2Stack(Stack):
                 "SUBNET_IDS": ",".join(public_subnet_ids),
                 "SECURITY_GROUP_ID": tiler_sg.security_group_id,
                 "ASSIGN_PUBLIC_IP": "ENABLED",
-                # Removed PREDICTOR=2 here as well
-                "CREATE_OPTS": "TILED=YES,BIGTIFF=IF_SAFER,COMPRESS=LZW",
+                # Same default as container to keep behavior aligned
+                "CREATE_OPTS": "TILED=YES,BIGTIFF=IF_SAFER,COMPRESS=DEFLATE",
             },
         )
         convert_fn.add_to_role_policy(iam.PolicyStatement(
@@ -187,8 +187,8 @@ class ServerlessJp2Stack(Stack):
                     tasks.TaskEnvironmentVariable(name="TILES_TOTAL",   value=sfn.JsonPath.string_at("$.params.tilesTotal")),
                     tasks.TaskEnvironmentVariable(name="TILES_GRID",    value=sfn.JsonPath.string_at("$.params.tilesGrid")),
                     tasks.TaskEnvironmentVariable(name="JOB_ID",        value=sfn.JsonPath.string_at("$.jobId")),
-                    # Removed PREDICTOR=2 in ECS override as well
-                    tasks.TaskEnvironmentVariable(name="CREATE_OPTS",   value="TILED=YES,BIGTIFF=IF_SAFER,COMPRESS=LZW"),
+                    # Keep consistent with CREATE_OPTS (no predictor path)
+                    tasks.TaskEnvironmentVariable(name="CREATE_OPTS",   value="TILED=YES,BIGTIFF=IF_SAFER,COMPRESS=DEFLATE"),
                 ],
             )],
             result_path="$.ecsResult",
@@ -249,8 +249,7 @@ class ServerlessJp2Stack(Stack):
                     tasks.TaskEnvironmentVariable(name="OUTPUT_BUCKET", value=sfn.JsonPath.string_at("$.outputBucket")),
                     tasks.TaskEnvironmentVariable(name="FINAL_KEY",     value=sfn.JsonPath.string_at("$.finalKey")),
                     tasks.TaskEnvironmentVariable(name="FORMAT_OPTION", value=sfn.JsonPath.string_at("$.formatOption")),
-                    # Removed PREDICTOR=2 in ECS override as well
-                    tasks.TaskEnvironmentVariable(name="CREATE_OPTS",   value="TILED=YES,BIGTIFF=IF_SAFER,COMPRESS=LZW"),
+                    tasks.TaskEnvironmentVariable(name="CREATE_OPTS",   value="TILED=YES,BIGTIFF=IF_SAFER,COMPRESS=DEFLATE"),
                 ],
             )],
             result_path="$.ecsResult",
