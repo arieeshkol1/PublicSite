@@ -125,7 +125,7 @@ class ServerlessJp2Stack(Stack):
             essential=True,
             logging=ecs.LogDriver.aws_logs(stream_prefix="tiler", log_group=tiler_logs),
             environment={
-                # Removed PREDICTOR=2 to support 12-bit safely
+                # MINIMAL FIX: remove PREDICTOR=2 to avoid GDAL error on non 8/16/32/64-bit samples
                 "CREATE_OPTS": "TILED=YES,BIGTIFF=IF_SAFER,COMPRESS=LZW"
             }
         )
@@ -137,7 +137,7 @@ class ServerlessJp2Stack(Stack):
         convert_fn = _lambda.Function(
             self, "ConvertFn",
             runtime=_lambda.Runtime.PYTHON_3_11,
-            handler="converter.handler",  # match your converter.py
+            handler="converter.handler",  # match your file name 'converter.py'
             code=_lambda.Code.from_asset(lambda_code_dir),
             timeout=Duration.minutes(5),
             memory_size=2048,
@@ -149,7 +149,7 @@ class ServerlessJp2Stack(Stack):
                 "SUBNET_IDS": ",".join(public_subnet_ids),
                 "SECURITY_GROUP_ID": tiler_sg.security_group_id,
                 "ASSIGN_PUBLIC_IP": "ENABLED",
-                # Consistent with tiler env (no predictor)
+                # MINIMAL FIX here too
                 "CREATE_OPTS": "TILED=YES,BIGTIFF=IF_SAFER,COMPRESS=LZW",
             },
         )
@@ -187,7 +187,7 @@ class ServerlessJp2Stack(Stack):
                     tasks.TaskEnvironmentVariable(name="TILES_TOTAL",   value=sfn.JsonPath.string_at("$.params.tilesTotal")),
                     tasks.TaskEnvironmentVariable(name="TILES_GRID",    value=sfn.JsonPath.string_at("$.params.tilesGrid")),
                     tasks.TaskEnvironmentVariable(name="JOB_ID",        value=sfn.JsonPath.string_at("$.jobId")),
-                    # Removed PREDICTOR=2
+                    # MINIMAL FIX: remove PREDICTOR=2
                     tasks.TaskEnvironmentVariable(name="CREATE_OPTS",   value="TILED=YES,BIGTIFF=IF_SAFER,COMPRESS=LZW"),
                 ],
             )],
@@ -249,7 +249,7 @@ class ServerlessJp2Stack(Stack):
                     tasks.TaskEnvironmentVariable(name="OUTPUT_BUCKET", value=sfn.JsonPath.string_at("$.outputBucket")),
                     tasks.TaskEnvironmentVariable(name="FINAL_KEY",     value=sfn.JsonPath.string_at("$.finalKey")),
                     tasks.TaskEnvironmentVariable(name="FORMAT_OPTION", value=sfn.JsonPath.string_at("$.formatOption")),
-                    # Removed PREDICTOR=2
+                    # MINIMAL FIX: remove PREDICTOR=2
                     tasks.TaskEnvironmentVariable(name="CREATE_OPTS",   value="TILED=YES,BIGTIFF=IF_SAFER,COMPRESS=LZW"),
                 ],
             )],
@@ -296,7 +296,7 @@ class ServerlessJp2Stack(Stack):
         http_api = apigw.HttpApi(
             self, "HttpApi",
             cors_preflight=apigw.CorsPreflightOptions(
-                allow_headers=["*"],  # avoid browser 403 on preflight
+                allow_headers=["*"],
                 allow_methods=[
                     apigw.CorsHttpMethod.GET,
                     apigw.CorsHttpMethod.POST,
