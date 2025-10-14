@@ -136,7 +136,7 @@ class ServerlessJp2Stack(Stack):
         convert_fn = _lambda.Function(
             self, "ConvertFn",
             runtime=_lambda.Runtime.PYTHON_3_11,
-            handler="convert.handler",
+            handler="converter.handler",  # <<< FIXED: match your file 'converter.py'
             code=_lambda.Code.from_asset(lambda_code_dir),
             timeout=Duration.minutes(5),
             memory_size=2048,
@@ -292,7 +292,7 @@ class ServerlessJp2Stack(Stack):
         http_api = apigw.HttpApi(
             self, "HttpApi",
             cors_preflight=apigw.CorsPreflightOptions(
-                allow_headers=["*"],  # WIDENED to avoid browser 403 on preflight
+                allow_headers=["*"],
                 allow_methods=[
                     apigw.CorsHttpMethod.GET,
                     apigw.CorsHttpMethod.POST,
