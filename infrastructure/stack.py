@@ -125,7 +125,6 @@ class ServerlessJp2Stack(Stack):
             essential=True,
             logging=ecs.LogDriver.aws_logs(stream_prefix="tiler", log_group=tiler_logs),
             environment={
-                # Split mode; container עצמו יבצע חלוקה (-srcwin) לפי משתני הסביבה/פרמטרים
                 "CREATE_OPTS": "TILED=YES,BIGTIFF=IF_SAFER,COMPRESS=LZW,PREDICTOR=2"
             }
         )
@@ -133,41 +132,7 @@ class ServerlessJp2Stack(Stack):
         tiler_sg = ec2.SecurityGroup(self, "TilerTaskSG", vpc=vpc, allow_all_outbound=True)
         public_subnet_ids = [s.subnet_id for s in vpc.public_subnets]
 
-        # ---------------- ECS / Fargate (Converter — single file, NO spatial split) ----------------
-        converter_logs = logs.LogGroup(
-            self, "ConverterLogGroup",
-            log_group_name="/ecs/tsg-jp2-converter",
-            retention=logs.RetentionDays.ONE_MONTH
-        )
-
-        converter_taskdef = ecs.FargateTaskDefinition(
-            self, "ConverterTaskDef",
-            cpu=1024,
-            memory_limit_mib=2048,
-            runtime_platform=ecs.RuntimePlatform(
-                cpu_architecture=ecs.CpuArchitecture.X86_64
-            ),
-            task_role=tiler_task_role  # reuse S3 perms (read input, write output)
-        )
-
-        converter_taskdef.add_container(
-            "converter",
-            image=ecs.ContainerImage.from_registry(tiler_image_uri),
-            essential=True,
-            logging=ecs.LogDriver.aws_logs(stream_prefix="converter", log_group=converter_logs),
-            environment={
-                # מבטיח שלא יהיה פיצול מרחבי בהמרה
-                "MODE": "convert",
-                "CONVERT_SPATIAL_SPLIT": "false",
-                # ברירת מחדל ל-GTIFF (כאשר הפלט TIFF)
-                "CREATE_OPTS": "TILED=YES,BLOCKXSIZE=512,BLOCKYSIZE=512,BIGTIFF=IF_SAFER,COMPRESS=LZW,PREDICTOR=2",
-                # מיפוי סוגי המרות הנתמכים (מידע בלבד לקונטיינר)
-                "CONVERT_SUPPORTED": "jp2_to_tiff,tiff_to_raw,raw_to_tiff,tiff_to_jp2",
-            }
-            # אפשר להוסיף command=["convert"] אם האימג' משתמש בפקודות משנה
-        )
-
-        # ---------------- Convert Lambda (ECS launcher -> converter task) ----------------
+        # ---------------- Convert Lambda (ECS launcher) ----------------
         convert_fn = _lambda.Function(
             self, "ConvertFn",
             runtime=_lambda.Runtime.PYTHON_3_11,
@@ -179,15 +144,11 @@ class ServerlessJp2Stack(Stack):
                 "INPUT_BUCKET": input_bucket.bucket_name,
                 "OUTPUT_BUCKET": output_bucket.bucket_name,
                 "ECS_CLUSTER_ARN": cluster.cluster_arn,
-                # חשוב: מצביע למשימת ה-converter (לא ל-tiler)
-                "TASK_DEF_ARN": converter_taskdef.task_definition_arn,
+                "TASK_DEF_ARN": tiler_taskdef.task_definition_arn,
                 "SUBNET_IDS": ",".join(public_subnet_ids),
                 "SECURITY_GROUP_ID": tiler_sg.security_group_id,
                 "ASSIGN_PUBLIC_IP": "ENABLED",
-                "CREATE_OPTS": "TILED=YES,BLOCKXSIZE=512,BLOCKYSIZE=512,BIGTIFF=IF_SAFER,COMPRESS=LZW,PREDICTOR=2",
-                "MODE": "convert",
-                "CONVERT_SPATIAL_SPLIT": "false",
-                "CONVERT_SUPPORTED": "jp2_to_tiff,tiff_to_raw,raw_to_tiff,tiff_to_jp2",
+                "CREATE_OPTS": "TILED=YES,BIGTIFF=IF_SAFER,COMPRESS=LZW,PREDICTOR=2",
             },
         )
         convert_fn.add_to_role_policy(iam.PolicyStatement(
@@ -199,9 +160,10 @@ class ServerlessJp2Stack(Stack):
             resources=[tiler_task_role.role_arn],
             conditions={"StringEquals": {"iam:PassedToService": "ecs-tasks.amazonaws.com"}}
         ))
-        # Convert קורא מ-input וכותב ל-output
-        input_bucket.grant_read(convert_fn)
-        output_bucket.grant_read_write(convert_fn)
+        convert_fn.add_to_role_policy(iam.PolicyStatement(
+            actions=["s3:ListBucket", "s3:GetObject"],
+            resources=[output_bucket.bucket_arn, output_bucket.arn_for_objects("*")]
+        ))
 
         # ---------------- Step Function (Split via ECS) ----------------
         split_task = tasks.EcsRunTask(
@@ -330,7 +292,7 @@ class ServerlessJp2Stack(Stack):
         http_api = apigw.HttpApi(
             self, "HttpApi",
             cors_preflight=apigw.CorsPreflightOptions(
-                allow_headers=["*"],
+                allow_headers=["*"],  # WIDENED to avoid browser 403 on preflight
                 allow_methods=[
                     apigw.CorsHttpMethod.GET,
                     apigw.CorsHttpMethod.POST,
@@ -424,7 +386,7 @@ class ServerlessJp2Stack(Stack):
         status_progress_integ = apigw_int.HttpLambdaIntegration("StatusProgressInteg", handler=status_progress_fn)
         http_api.add_routes(path="/status-progress", methods=[apigw.HttpMethod.GET], integration=status_progress_integ)
 
-        # /status-history + /status-detail
+        # /status-history + /status-detail (supports both Split & Unite)
         status_history_fn = _lambda.Function(
             self, "StatusHistoryFn",
             runtime=_lambda.Runtime.PYTHON_3_11,
@@ -453,7 +415,6 @@ class ServerlessJp2Stack(Stack):
         CfnOutput(self, "ApiEndpoint", value=http_api.api_endpoint)
         CfnOutput(self, "EcsClusterArn", value=cluster.cluster_arn)
         CfnOutput(self, "TilerTaskDefArn", value=tiler_taskdef.task_definition_arn)
-        CfnOutput(self, "ConverterTaskDefArn", value=converter_taskdef.task_definition_arn)
         CfnOutput(self, "SplitStateMachineArn", value=split_state_machine.state_machine_arn)
         CfnOutput(self, "UniteStateMachineArn", value=unite_state_machine.state_machine_arn)
         CfnOutput(self, "StatusProgressRoute", value=f"{http_api.api_endpoint}/status-progress")
