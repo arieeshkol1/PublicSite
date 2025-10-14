@@ -119,14 +119,17 @@ class ServerlessJp2Stack(Stack):
             "edfcf89c0236c949848d9ccd83d731a69fd6fc85308fa3d3a3313ea50b05a526"
         )
 
+        # NOTE: CREATE_OPTS kept without PREDICTOR; add guard rails for worker logic.
         tiler_taskdef.add_container(
             "tiler",
             image=ecs.ContainerImage.from_registry(tiler_image_uri),
             essential=True,
             logging=ecs.LogDriver.aws_logs(stream_prefix="tiler", log_group=tiler_logs),
             environment={
-                # Removed PREDICTOR=2 to support 12-bit safely
-                "CREATE_OPTS": "TILED=YES,BIGTIFF=IF_SAFER,COMPRESS=LZW"
+                "CREATE_OPTS": "TILED=YES,BIGTIFF=IF_SAFER,COMPRESS=LZW",
+                # NEW: allow worker to decide predictor usage and/or normalize to 16-bit
+                "PREDICTOR_POLICY": "AUTO",   # AUTO|OFF|FORCE (worker interprets)
+                "TIFF_FORCE_16BIT": "true",   # if true -> worker may add -ot UInt16 -co NBITS=16
             }
         )
 
@@ -149,8 +152,10 @@ class ServerlessJp2Stack(Stack):
                 "SUBNET_IDS": ",".join(public_subnet_ids),
                 "SECURITY_GROUP_ID": tiler_sg.security_group_id,
                 "ASSIGN_PUBLIC_IP": "ENABLED",
-                # Consistent with tiler env (no predictor)
+                # keep predictor out; worker decides via policy:
                 "CREATE_OPTS": "TILED=YES,BIGTIFF=IF_SAFER,COMPRESS=LZW",
+                "PREDICTOR_POLICY": "AUTO",
+                "TIFF_FORCE_16BIT": "true",
             },
         )
         convert_fn.add_to_role_policy(iam.PolicyStatement(
@@ -187,8 +192,10 @@ class ServerlessJp2Stack(Stack):
                     tasks.TaskEnvironmentVariable(name="TILES_TOTAL",   value=sfn.JsonPath.string_at("$.params.tilesTotal")),
                     tasks.TaskEnvironmentVariable(name="TILES_GRID",    value=sfn.JsonPath.string_at("$.params.tilesGrid")),
                     tasks.TaskEnvironmentVariable(name="JOB_ID",        value=sfn.JsonPath.string_at("$.jobId")),
-                    # Removed PREDICTOR=2
+                    # Keep co opts generic; worker adds predictor only if legal
                     tasks.TaskEnvironmentVariable(name="CREATE_OPTS",   value="TILED=YES,BIGTIFF=IF_SAFER,COMPRESS=LZW"),
+                    tasks.TaskEnvironmentVariable(name="PREDICTOR_POLICY", value="AUTO"),
+                    tasks.TaskEnvironmentVariable(name="TIFF_FORCE_16BIT", value="true"),
                 ],
             )],
             result_path="$.ecsResult",
@@ -249,8 +256,10 @@ class ServerlessJp2Stack(Stack):
                     tasks.TaskEnvironmentVariable(name="OUTPUT_BUCKET", value=sfn.JsonPath.string_at("$.outputBucket")),
                     tasks.TaskEnvironmentVariable(name="FINAL_KEY",     value=sfn.JsonPath.string_at("$.finalKey")),
                     tasks.TaskEnvironmentVariable(name="FORMAT_OPTION", value=sfn.JsonPath.string_at("$.formatOption")),
-                    # Removed PREDICTOR=2
+                    # Same envs for consistency; worker may ignore where irrelevant
                     tasks.TaskEnvironmentVariable(name="CREATE_OPTS",   value="TILED=YES,BIGTIFF=IF_SAFER,COMPRESS=LZW"),
+                    tasks.TaskEnvironmentVariable(name="PREDICTOR_POLICY", value="AUTO"),
+                    tasks.TaskEnvironmentVariable(name="TIFF_FORCE_16BIT", value="true"),
                 ],
             )],
             result_path="$.ecsResult",
@@ -296,7 +305,7 @@ class ServerlessJp2Stack(Stack):
         http_api = apigw.HttpApi(
             self, "HttpApi",
             cors_preflight=apigw.CorsPreflightOptions(
-                allow_headers=["*"],  # avoid browser 403 on preflight
+                allow_headers=["*"],
                 allow_methods=[
                     apigw.CorsHttpMethod.GET,
                     apigw.CorsHttpMethod.POST,
