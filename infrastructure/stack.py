@@ -119,16 +119,14 @@ class ServerlessJp2Stack(Stack):
             "edfcf89c0236c949848d9ccd83d731a69fd6fc85308fa3d3a3313ea50b05a526"
         )
 
-        # IMPORTANT: add DISABLE_PREDICTOR + FORCE_COMPRESS and keep sane CREATE_OPTS
         tiler_taskdef.add_container(
             "tiler",
             image=ecs.ContainerImage.from_registry(tiler_image_uri),
             essential=True,
             logging=ecs.LogDriver.aws_logs(stream_prefix="tiler", log_group=tiler_logs),
             environment={
-                "CREATE_OPTS": "TILED=YES,BIGTIFF=IF_SAFER,COMPRESS=DEFLATE",
-                "DISABLE_PREDICTOR": "1",
-                "FORCE_COMPRESS": "DEFLATE",
+                # שינוי יחיד: בלי tiles ובלי Predictor=2
+                "CREATE_OPTS": "TILED=NO,BIGTIFF=IF_SAFER,COMPRESS=DEFLATE"
             }
         )
 
@@ -139,7 +137,7 @@ class ServerlessJp2Stack(Stack):
         convert_fn = _lambda.Function(
             self, "ConvertFn",
             runtime=_lambda.Runtime.PYTHON_3_11,
-            handler="converter.handler",  # matches your converter.py
+            handler="converter.handler",  # << תיקון כדי להתאים ל-converter.py
             code=_lambda.Code.from_asset(lambda_code_dir),
             timeout=Duration.minutes(5),
             memory_size=2048,
@@ -151,9 +149,8 @@ class ServerlessJp2Stack(Stack):
                 "SUBNET_IDS": ",".join(public_subnet_ids),
                 "SECURITY_GROUP_ID": tiler_sg.security_group_id,
                 "ASSIGN_PUBLIC_IP": "ENABLED",
-                "CREATE_OPTS": "TILED=YES,BIGTIFF=IF_SAFER,COMPRESS=DEFLATE",
-                "DISABLE_PREDICTOR": "1",
-                "FORCE_COMPRESS": "DEFLATE",
+                # אותו שינוי כמו בקונטיינר: קובץ יחיד, ללא Predictor=2
+                "CREATE_OPTS": "TILED=NO,BIGTIFF=IF_SAFER,COMPRESS=DEFLATE",
             },
         )
         convert_fn.add_to_role_policy(iam.PolicyStatement(
@@ -190,9 +187,8 @@ class ServerlessJp2Stack(Stack):
                     tasks.TaskEnvironmentVariable(name="TILES_TOTAL",   value=sfn.JsonPath.string_at("$.params.tilesTotal")),
                     tasks.TaskEnvironmentVariable(name="TILES_GRID",    value=sfn.JsonPath.string_at("$.params.tilesGrid")),
                     tasks.TaskEnvironmentVariable(name="JOB_ID",        value=sfn.JsonPath.string_at("$.jobId")),
-                    tasks.TaskEnvironmentVariable(name="CREATE_OPTS",   value="TILED=YES,BIGTIFF=IF_SAFER,COMPRESS=DEFLATE"),
-                    tasks.TaskEnvironmentVariable(name="DISABLE_PREDICTOR", value="1"),
-                    tasks.TaskEnvironmentVariable(name="FORCE_COMPRESS",   value="DEFLATE"),
+                    # קונסיסטנטי עם ההמרות: ללא tiles וללא Predictor=2
+                    tasks.TaskEnvironmentVariable(name="CREATE_OPTS",   value="TILED=NO,BIGTIFF=IF_SAFER,COMPRESS=DEFLATE"),
                 ],
             )],
             result_path="$.ecsResult",
@@ -253,9 +249,8 @@ class ServerlessJp2Stack(Stack):
                     tasks.TaskEnvironmentVariable(name="OUTPUT_BUCKET", value=sfn.JsonPath.string_at("$.outputBucket")),
                     tasks.TaskEnvironmentVariable(name="FINAL_KEY",     value=sfn.JsonPath.string_at("$.finalKey")),
                     tasks.TaskEnvironmentVariable(name="FORMAT_OPTION", value=sfn.JsonPath.string_at("$.formatOption")),
-                    tasks.TaskEnvironmentVariable(name="CREATE_OPTS",   value="TILED=YES,BIGTIFF=IF_SAFER,COMPRESS=DEFLATE"),
-                    tasks.TaskEnvironmentVariable(name="DISABLE_PREDICTOR", value="1"),
-                    tasks.TaskEnvironmentVariable(name="FORCE_COMPRESS",   value="DEFLATE"),
+                    # גם כאן שומרים על קובץ יחיד וללא Predictor=2
+                    tasks.TaskEnvironmentVariable(name="CREATE_OPTS",   value="TILED=NO,BIGTIFF=IF_SAFER,COMPRESS=DEFLATE"),
                 ],
             )],
             result_path="$.ecsResult",
@@ -301,7 +296,7 @@ class ServerlessJp2Stack(Stack):
         http_api = apigw.HttpApi(
             self, "HttpApi",
             cors_preflight=apigw.CorsPreflightOptions(
-                allow_headers=["*"],
+                allow_headers=["*"],  # WIDENED to avoid browser 403 on preflight
                 allow_methods=[
                     apigw.CorsHttpMethod.GET,
                     apigw.CorsHttpMethod.POST,
