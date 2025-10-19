@@ -17,6 +17,13 @@ import os
 
 
 class ServerlessJp2Stack(Stack):
+    """
+    Full stack with split/unite preserved. Convert/Tiler made predictor-safe.
+    - Forces TIFF PREDICTOR=1 (no horizontal differencing) to avoid GDAL error with 12-bit samples.
+    - Adds optional flags to upcast to 16-bit if your container supports it.
+    - Updates Step Functions EcsRunTask to include `launch_target=EcsFargateLaunchTarget()` per newer CDK.
+    """
+
     def __init__(self, scope: Construct, cid: str, **kwargs):
         super().__init__(scope, cid, **kwargs)
 
@@ -127,9 +134,12 @@ class ServerlessJp2Stack(Stack):
             essential=True,
             logging=ecs.LogDriver.aws_logs(stream_prefix="tiler", log_group=tiler_logs),
             environment={
+                # Critical fix: predictor-safe
                 "CREATE_OPTS": "TILED=YES,BIGTIFF=IF_SAFER,COMPRESS=LZW,PREDICTOR=1",
                 "PREDICTOR_POLICY": "FORCE_1",
                 "TIFF_FORCE_16BIT": "true",
+                # Optional: perf hints
+                "GDAL_NUM_THREADS": "ALL_CPUS",
             }
         )
 
@@ -152,6 +162,7 @@ class ServerlessJp2Stack(Stack):
                 "SUBNET_IDS": ",".join(public_subnet_ids),
                 "SECURITY_GROUP_ID": tiler_sg.security_group_id,
                 "ASSIGN_PUBLIC_IP": "ENABLED",
+                # Mirror predictor-safe options
                 "CREATE_OPTS": "TILED=YES,BIGTIFF=IF_SAFER,COMPRESS=LZW,PREDICTOR=1",
                 "PREDICTOR_POLICY": "FORCE_1",
                 "TIFF_FORCE_16BIT": "true",
@@ -171,11 +182,7 @@ class ServerlessJp2Stack(Stack):
             resources=[output_bucket.bucket_arn, output_bucket.arn_for_objects("*")]
         ))
 
-        # ---------------- Step Functions (Split/Unite Untouched) ----------------
-        # This preserves your existing split/unite flow but ensures any container
-        # run will inherit predictor-safe options.
-        #
-        # Split State Machine
+        # ---------------- Step Functions (Split/Unite preserved) ----------------
         split_taskdef = ecs.FargateTaskDefinition(
             self, "SplitTaskDef",
             cpu=512,
@@ -224,20 +231,20 @@ class ServerlessJp2Stack(Stack):
             integration_pattern=sfn.IntegrationPattern.RUN_JOB,
             cluster=cluster,
             task_definition=split_taskdef,
-            assign_public_ip=True,
-            security_groups=[tiler_sg],
-            subnets=ec2.SubnetSelection(subnets=vpc.public_subnets),
+            launch_target=tasks.EcsFargateLaunchTarget(),
             container_overrides=[
                 tasks.ContainerOverride(
                     container_definition=split_container,
                     environment=[
                         tasks.TaskEnvironmentVariable(name="JOB_ID", value=sfn.JsonPath.string_at("$.jobId")),
-                        tasks.TaskEnvironmentVariable(name="CREATE_OPTS",   value="TILED=YES,BIGTIFF=IF_SAFER,COMPRESS=LZW,PREDICTOR=1"),
+                        tasks.TaskEnvironmentVariable(name="CREATE_OPTS", value="TILED=YES,BIGTIFF=IF_SAFER,COMPRESS=LZW,PREDICTOR=1"),
                         tasks.TaskEnvironmentVariable(name="PREDICTOR_POLICY", value="FORCE_1"),
                         tasks.TaskEnvironmentVariable(name="TIFF_FORCE_16BIT", value="true"),
                     ],
                 )
             ],
+            task_subnets=ec2.SubnetSelection(subnets=vpc.public_subnets),
+            security_groups=[tiler_sg],
         )
 
         # Unite State
@@ -246,23 +253,23 @@ class ServerlessJp2Stack(Stack):
             integration_pattern=sfn.IntegrationPattern.RUN_JOB,
             cluster=cluster,
             task_definition=unite_taskdef,
-            assign_public_ip=True,
-            security_groups=[tiler_sg],
-            subnets=ec2.SubnetSelection(subnets=vpc.public_subnets),
+            launch_target=tasks.EcsFargateLaunchTarget(),
             container_overrides=[
                 tasks.ContainerOverride(
                     container_definition=unite_container,
                     environment=[
                         tasks.TaskEnvironmentVariable(name="JOB_ID", value=sfn.JsonPath.string_at("$.jobId")),
-                        tasks.TaskEnvironmentVariable(name="CREATE_OPTS",   value="TILED=YES,BIGTIFF=IF_SAFER,COMPRESS=LZW,PREDICTOR=1"),
+                        tasks.TaskEnvironmentVariable(name="CREATE_OPTS", value="TILED=YES,BIGTIFF=IF_SAFER,COMPRESS=LZW,PREDICTOR=1"),
                         tasks.TaskEnvironmentVariable(name="PREDICTOR_POLICY", value="FORCE_1"),
                         tasks.TaskEnvironmentVariable(name="TIFF_FORCE_16BIT", value="true"),
                     ],
                 )
             ],
+            task_subnets=ec2.SubnetSelection(subnets=vpc.public_subnets),
+            security_groups=[tiler_sg],
         )
 
-        # Simple chain (placeholder – your original definitions likely have more logic)
+        # Chain (placeholder for your original logic)
         definition = split_run_task.next(unite_run_task)
         sfn.StateMachine(
             self, "SplitUniteStateMachine",
@@ -288,9 +295,7 @@ class ServerlessJp2Stack(Stack):
         )
         convert_logs_fn.add_to_role_policy(iam.PolicyStatement(
             actions=["logs:FilterLogEvents"],
-            resources=[
-                f"arn:aws:logs:{region}:{account}:log-group:/ecs/tsg-jp2-tiler:*"
-            ],
+            resources=[f"arn:aws:logs:{region}:{account}:log-group:/ecs/tsg-jp2-tiler:*"]
         ))
 
         # ---------------- HTTP API ----------------
