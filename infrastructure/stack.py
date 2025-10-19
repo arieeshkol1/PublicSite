@@ -231,7 +231,7 @@ class ServerlessJp2Stack(Stack):
             integration_pattern=sfn.IntegrationPattern.RUN_JOB,
             cluster=cluster,
             task_definition=split_taskdef,
-            launch_target=tasks.EcsFargateLaunchTarget(),
+            launch_target=tasks.EcsFargateLaunchTarget(platform_version=ecs.FargatePlatformVersion.LATEST),
             container_overrides=[
                 tasks.ContainerOverride(
                     container_definition=split_container,
@@ -253,7 +253,7 @@ class ServerlessJp2Stack(Stack):
             integration_pattern=sfn.IntegrationPattern.RUN_JOB,
             cluster=cluster,
             task_definition=unite_taskdef,
-            launch_target=tasks.EcsFargateLaunchTarget(),
+            launch_target=tasks.EcsFargateLaunchTarget(platform_version=ecs.FargatePlatformVersion.LATEST),
             container_overrides=[
                 tasks.ContainerOverride(
                     container_definition=unite_container,
