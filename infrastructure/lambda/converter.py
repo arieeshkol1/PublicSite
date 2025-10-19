@@ -1,4 +1,3 @@
-# converter.py
 import os, json, time, uuid, base64
 from typing import Any, Dict, List, Tuple
 import boto3
@@ -46,6 +45,16 @@ REQ_ENVS = [
     "INPUT_BUCKET", "OUTPUT_BUCKET"
 ]
 
+# Hard-safe default create opts (prevents GDAL predictor error)
+SAFE_CREATE_OPTS = "TILED=YES,BIGTIFF=IF_SAFER,COMPRESS=LZW,PREDICTOR=1"
+
+# If the container supports it, these further enforce safety
+EXTRA_SAFETY_ENVS = {
+    "PREDICTOR_POLICY": "FORCE_1",      # ask entrypoint to drop any PREDICTOR=2 it might add
+    "TIFF_FORCE_16BIT": "true",         # upcast 12-bit → 16-bit when applicable
+    "SANITIZE_PREDICTOR": "1",          # generic flag many wrappers use
+}
+
 def _cfg() -> Tuple[Dict[str, Any], List[str]]:
     missing: List[str] = []
     env = os.environ
@@ -53,6 +62,17 @@ def _cfg() -> Tuple[Dict[str, Any], List[str]]:
         if not env.get(k): missing.append(k)
     subnets = [s for s in (env.get("SUBNET_IDS") or "").split(",") if s]
     if not subnets: missing.append("SUBNET_IDS(empty)")
+
+    # If CREATE_OPTS env exists but includes PREDICTOR=2, remove it here and force 1.
+    create_opts_raw = env.get("CREATE_OPTS", SAFE_CREATE_OPTS)
+    create_opts_clean = ",".join([
+        kv for kv in (x.strip() for x in create_opts_raw.split(","))
+        if kv and not kv.upper().startswith("PREDICTOR=")
+    ])
+    if create_opts_clean:
+        create_opts_clean = create_opts_clean + ",PREDICTOR=1"
+    else:
+        create_opts_clean = SAFE_CREATE_OPTS
 
     return {
         "cluster": env.get("ECS_CLUSTER_ARN"),
@@ -62,8 +82,9 @@ def _cfg() -> Tuple[Dict[str, Any], List[str]]:
         "assign_public_ip": env.get("ASSIGN_PUBLIC_IP", "DISABLED"),
         "input_bucket": env.get("INPUT_BUCKET"),
         "output_bucket": env.get("OUTPUT_BUCKET"),
-        "create_opts": env.get("CREATE_OPTS", "TILED=YES,BIGTIFF=IF_SAFER,COMPRESS=LZW"),
+        "create_opts": create_opts_clean,
     }, missing
+
 
 def _run_task(cfg: Dict[str, Any], key: str, fmt: str, tiles_total: int, tiles_grid: int, job_id: str) -> Dict[str, Any]:
     env = [
@@ -76,6 +97,11 @@ def _run_task(cfg: Dict[str, Any], key: str, fmt: str, tiles_total: int, tiles_g
         {"name": "JOB_ID",        "value": job_id},
         {"name": "CREATE_OPTS",   "value": cfg["create_opts"]},
     ]
+
+    # Add extra safety envs to override any hardcoded predictor=2 in the container
+    for k, v in EXTRA_SAFETY_ENVS.items():
+        env.append({"name": k, "value": v})
+
     params = {
         "cluster": cfg["cluster"],
         "taskDefinition": cfg["task_def"],
@@ -100,6 +126,7 @@ def _run_task(cfg: Dict[str, Any], key: str, fmt: str, tiles_total: int, tiles_g
     if not tasks:
         return {"key": key, "error": "RunTask returned no tasks"}
     return {"key": key, "taskArn": tasks[0].get("taskArn")}
+
 
 # ---------- handler ----------
 def handler(event, _ctx):
