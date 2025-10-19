@@ -12,6 +12,7 @@ from aws_cdk import (
     aws_stepfunctions as sfn,
     aws_stepfunctions_tasks as tasks,
 )
+from aws_cdk import aws_s3_notifications as s3n
 from constructs import Construct
 import os
 
@@ -340,7 +341,14 @@ class ServerlessJp2Stack(Stack):
             resources=[output_bucket.arn_for_objects("*")]
         ))
 
-        # Allow convert to invoke finalizer if desired
+        # Auto-finalize: trigger on creation of any ENVI .bin in the OUTPUT bucket
+        output_bucket.add_event_notification(
+            s3.EventType.OBJECT_CREATED,
+            s3n.LambdaDestination(rsjson_fn),
+            s3.NotificationKeyFilter(suffix=".bin"),
+        )
+
+        # Allow convert to invoke finalizer if desired (manual batches)
         convert_fn.add_to_role_policy(iam.PolicyStatement(
             actions=["lambda:InvokeFunction"],
             resources=[rsjson_fn.function_arn]
