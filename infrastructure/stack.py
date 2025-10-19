@@ -12,7 +12,6 @@ from aws_cdk import (
     aws_stepfunctions as sfn,
     aws_stepfunctions_tasks as tasks,
 )
-from aws_cdk import aws_s3_notifications as s3n
 from constructs import Construct
 import os
 
@@ -320,11 +319,11 @@ class ServerlessJp2Stack(Stack):
             ],
         ))
 
-        # ---------------- RS/JSON Finalizer Lambda (ENVI -> .rs + .json) ----------------
-        rsjson_fn = _lambda.Function(
-            self, "RsJsonFinalizeFn",
+        # ---------------- RAW/JSON Finalizer Lambda (ENVI .bin+.hdr -> .raw + .json) ----------------
+        rawjson_fn = _lambda.Function(
+            self, "RawJsonFinalizeFn",
             runtime=_lambda.Runtime.PYTHON_3_11,
-            handler="lambda_envi_to_rsjson.handler",
+            handler="lambda_envi_to_rawjson.handler",
             code=_lambda.Code.from_asset(lambda_code_dir),
             timeout=Duration.minutes(2),
             memory_size=512,
@@ -332,26 +331,19 @@ class ServerlessJp2Stack(Stack):
                 "DEFAULT_BUCKET": output_bucket.bucket_name,
             },
         )
-        rsjson_fn.add_to_role_policy(iam.PolicyStatement(
+        rawjson_fn.add_to_role_policy(iam.PolicyStatement(
             actions=["s3:ListBucket"],
             resources=[output_bucket.bucket_arn]
         ))
-        rsjson_fn.add_to_role_policy(iam.PolicyStatement(
+        rawjson_fn.add_to_role_policy(iam.PolicyStatement(
             actions=["s3:GetObject","s3:PutObject","s3:CopyObject","s3:DeleteObject"],
             resources=[output_bucket.arn_for_objects("*")]
         ))
 
-        # Auto-finalize: trigger on creation of any ENVI .bin in the OUTPUT bucket
-        output_bucket.add_event_notification(
-            s3.EventType.OBJECT_CREATED,
-            s3n.LambdaDestination(rsjson_fn),
-            s3.NotificationKeyFilter(suffix=".bin"),
-        )
-
-        # Allow convert to invoke finalizer if desired (manual batches)
+        # Allow convert to invoke finalizer if desired
         convert_fn.add_to_role_policy(iam.PolicyStatement(
             actions=["lambda:InvokeFunction"],
-            resources=[rsjson_fn.function_arn]
+            resources=[rawjson_fn.function_arn]
         ))
 
         # ---------------- HTTP API ----------------
@@ -375,7 +367,7 @@ class ServerlessJp2Stack(Stack):
         split_integ       = apigw_int.HttpLambdaIntegration("SplitIntegration", handler=split_controller_fn)
         unite_integ       = apigw_int.HttpLambdaIntegration("UniteIntegration", handler=unite_controller_fn)
         convert_logs_integ = apigw_int.HttpLambdaIntegration("ConvertLogsIntegration", handler=convert_logs_fn)
-        rsjson_integ      = apigw_int.HttpLambdaIntegration("RsJsonIntegration", handler=rsjson_fn)
+        rawjson_integ      = apigw_int.HttpLambdaIntegration("RawJsonIntegration", handler=rawjson_fn)
 
         http_api.add_routes(path="/list-input",   methods=[apigw.HttpMethod.GET],  integration=list_input_integ)
         http_api.add_routes(path="/list-output",  methods=[apigw.HttpMethod.GET],  integration=list_output_integ)
@@ -383,7 +375,7 @@ class ServerlessJp2Stack(Stack):
         http_api.add_routes(path="/split",        methods=[apigw.HttpMethod.POST], integration=split_integ)
         http_api.add_routes(path="/unite",        methods=[apigw.HttpMethod.POST], integration=unite_integ)
         http_api.add_routes(path="/convert/logs", methods=[apigw.HttpMethod.GET, apigw.HttpMethod.OPTIONS], integration=convert_logs_integ)
-        http_api.add_routes(path="/rawpair/finalize", methods=[apigw.HttpMethod.POST], integration=rsjson_integ)
+        http_api.add_routes(path="/rawpair/finalize", methods=[apigw.HttpMethod.POST], integration=rawjson_integ)
 
         # ---------------- File Manager Lambdas ----------------
         fm_env = {"INPUT_BUCKET": input_bucket.bucket_name, "OUTPUT_BUCKET": output_bucket.bucket_name}
@@ -488,4 +480,4 @@ class ServerlessJp2Stack(Stack):
         CfnOutput(self, "StatusProgressRoute", value=f"{http_api.api_endpoint}/status-progress")
         CfnOutput(self, "StatusHistoryRoute", value=f"{http_api.api_endpoint}/status-history/{{jobId}}")
         CfnOutput(self, "ConvertLogsRoute", value=f"{http_api.api_endpoint}/convert/logs")
-        CfnOutput(self, "RsJsonFinalizeRoute", value=f"{http_api.api_endpoint}/rawpair/finalize")
+        CfnOutput(self, "RawJsonFinalizeRoute", value=f"{http_api.api_endpoint}/rawpair/finalize")
