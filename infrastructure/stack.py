@@ -119,7 +119,6 @@ class ServerlessJp2Stack(Stack):
             "edfcf89c0236c949848d9ccd83d731a69fd6fc85308fa3d3a3313ea50b05a526"
         )
 
-        # NOTE: CREATE_OPTS kept without PREDICTOR; add guard rails for worker logic.
         tiler_taskdef.add_container(
             "tiler",
             image=ecs.ContainerImage.from_registry(tiler_image_uri),
@@ -127,9 +126,8 @@ class ServerlessJp2Stack(Stack):
             logging=ecs.LogDriver.aws_logs(stream_prefix="tiler", log_group=tiler_logs),
             environment={
                 "CREATE_OPTS": "TILED=YES,BIGTIFF=IF_SAFER,COMPRESS=LZW",
-                # NEW: allow worker to decide predictor usage and/or normalize to 16-bit
-                "PREDICTOR_POLICY": "AUTO",   # AUTO|OFF|FORCE (worker interprets)
-                "TIFF_FORCE_16BIT": "true",   # if true -> worker may add -ot UInt16 -co NBITS=16
+                "PREDICTOR_POLICY": "AUTO",
+                "TIFF_FORCE_16BIT": "true",
             }
         )
 
@@ -140,7 +138,7 @@ class ServerlessJp2Stack(Stack):
         convert_fn = _lambda.Function(
             self, "ConvertFn",
             runtime=_lambda.Runtime.PYTHON_3_11,
-            handler="converter.handler",  # match your converter.py
+            handler="converter.handler",
             code=_lambda.Code.from_asset(lambda_code_dir),
             timeout=Duration.minutes(5),
             memory_size=2048,
@@ -152,7 +150,6 @@ class ServerlessJp2Stack(Stack):
                 "SUBNET_IDS": ",".join(public_subnet_ids),
                 "SECURITY_GROUP_ID": tiler_sg.security_group_id,
                 "ASSIGN_PUBLIC_IP": "ENABLED",
-                # keep predictor out; worker decides via policy:
                 "CREATE_OPTS": "TILED=YES,BIGTIFF=IF_SAFER,COMPRESS=LZW",
                 "PREDICTOR_POLICY": "AUTO",
                 "TIFF_FORCE_16BIT": "true",
@@ -192,7 +189,6 @@ class ServerlessJp2Stack(Stack):
                     tasks.TaskEnvironmentVariable(name="TILES_TOTAL",   value=sfn.JsonPath.string_at("$.params.tilesTotal")),
                     tasks.TaskEnvironmentVariable(name="TILES_GRID",    value=sfn.JsonPath.string_at("$.params.tilesGrid")),
                     tasks.TaskEnvironmentVariable(name="JOB_ID",        value=sfn.JsonPath.string_at("$.jobId")),
-                    # Keep co opts generic; worker adds predictor only if legal
                     tasks.TaskEnvironmentVariable(name="CREATE_OPTS",   value="TILED=YES,BIGTIFF=IF_SAFER,COMPRESS=LZW"),
                     tasks.TaskEnvironmentVariable(name="PREDICTOR_POLICY", value="AUTO"),
                     tasks.TaskEnvironmentVariable(name="TIFF_FORCE_16BIT", value="true"),
@@ -256,7 +252,6 @@ class ServerlessJp2Stack(Stack):
                     tasks.TaskEnvironmentVariable(name="OUTPUT_BUCKET", value=sfn.JsonPath.string_at("$.outputBucket")),
                     tasks.TaskEnvironmentVariable(name="FINAL_KEY",     value=sfn.JsonPath.string_at("$.finalKey")),
                     tasks.TaskEnvironmentVariable(name="FORMAT_OPTION", value=sfn.JsonPath.string_at("$.formatOption")),
-                    # Same envs for consistency; worker may ignore where irrelevant
                     tasks.TaskEnvironmentVariable(name="CREATE_OPTS",   value="TILED=YES,BIGTIFF=IF_SAFER,COMPRESS=LZW"),
                     tasks.TaskEnvironmentVariable(name="PREDICTOR_POLICY", value="AUTO"),
                     tasks.TaskEnvironmentVariable(name="TIFF_FORCE_16BIT", value="true"),
@@ -293,7 +288,7 @@ class ServerlessJp2Stack(Stack):
             environment={
                 "OUTPUT_BUCKET": output_bucket.bucket_name,
                 "UNITE_SFN_ARN": unite_state_machine.state_machine_arn,
-                "SPLIT_SFN_ARN": split_state_machine.state_machine_arn,  # optional
+                "SPLIT_SFN_ARN": split_state_machine.state_machine_arn,
             },
         )
         unite_controller_fn.add_to_role_policy(iam.PolicyStatement(
@@ -301,7 +296,7 @@ class ServerlessJp2Stack(Stack):
             resources=[unite_state_machine.state_machine_arn]
         ))
 
-        # ---------------- Convert Logs Lambda (NEW) ----------------
+        # ---------------- Convert Logs Lambda (Reads ECS logs now) ----------------
         convert_logs_fn = _lambda.Function(
             self, "ConvertLogsFn",
             runtime=_lambda.Runtime.PYTHON_3_11,
@@ -310,14 +305,13 @@ class ServerlessJp2Stack(Stack):
             timeout=Duration.seconds(10),
             memory_size=256,
             environment={
-                # exact group used by ConvertFn
-                "LOG_GROUP_CONVERT": "/aws/lambda/ServerlessJp2-ConvertFnCAE452AA-9tlDFDo18tN3"
+                "LOG_GROUP_CONVERT": "/ecs/tsg-jp2-tiler"  # CHANGED: ECS log group
             },
         )
         convert_logs_fn.add_to_role_policy(iam.PolicyStatement(
             actions=["logs:FilterLogEvents"],
             resources=[
-                "arn:aws:logs:us-east-1:991105135552:log-group:/aws/lambda/ServerlessJp2-ConvertFnCAE452AA-9tlDFDo18tN3:*"
+                "arn:aws:logs:us-east-1:991105135552:log-group:/ecs/tsg-jp2-tiler:*"  # CHANGED: ECS group ARN
             ],
         ))
 
@@ -341,7 +335,6 @@ class ServerlessJp2Stack(Stack):
         convert_integ     = apigw_int.HttpLambdaIntegration("ConvertIntegration", handler=convert_fn)
         split_integ       = apigw_int.HttpLambdaIntegration("SplitIntegration", handler=split_controller_fn)
         unite_integ       = apigw_int.HttpLambdaIntegration("UniteIntegration", handler=unite_controller_fn)
-        # NEW: logs integration
         convert_logs_integ = apigw_int.HttpLambdaIntegration("ConvertLogsIntegration", handler=convert_logs_fn)
 
         http_api.add_routes(path="/list-input",   methods=[apigw.HttpMethod.GET],  integration=list_input_integ)
@@ -349,7 +342,6 @@ class ServerlessJp2Stack(Stack):
         http_api.add_routes(path="/convert",      methods=[apigw.HttpMethod.POST], integration=convert_integ)
         http_api.add_routes(path="/split",        methods=[apigw.HttpMethod.POST], integration=split_integ)
         http_api.add_routes(path="/unite",        methods=[apigw.HttpMethod.POST], integration=unite_integ)
-        # NEW: expose the logs tail route (supports GET + preflight OPTIONS)
         http_api.add_routes(path="/convert/logs", methods=[apigw.HttpMethod.GET, apigw.HttpMethod.OPTIONS], integration=convert_logs_integ)
 
         # ---------------- File Manager Lambdas ----------------
@@ -404,7 +396,6 @@ class ServerlessJp2Stack(Stack):
         http_api.add_routes(path="/download-file",methods=[apigw.HttpMethod.POST], integration=download_file_integ)
 
         # ---------------- Status Lambdas ----------------
-        # /status-progress
         status_progress_fn = _lambda.Function(
             self, "StatusProgressFn",
             runtime=_lambda.Runtime.PYTHON_3_11,
@@ -423,7 +414,6 @@ class ServerlessJp2Stack(Stack):
         status_progress_integ = apigw_int.HttpLambdaIntegration("StatusProgressInteg", handler=status_progress_fn)
         http_api.add_routes(path="/status-progress", methods=[apigw.HttpMethod.GET], integration=status_progress_integ)
 
-        # /status-history + /status-detail (supports both Split & Unite)
         status_history_fn = _lambda.Function(
             self, "StatusHistoryFn",
             runtime=_lambda.Runtime.PYTHON_3_11,
@@ -456,5 +446,4 @@ class ServerlessJp2Stack(Stack):
         CfnOutput(self, "UniteStateMachineArn", value=unite_state_machine.state_machine_arn)
         CfnOutput(self, "StatusProgressRoute", value=f"{http_api.api_endpoint}/status-progress")
         CfnOutput(self, "StatusHistoryRoute", value=f"{http_api.api_endpoint}/status-history/{{jobId}}")
-        # NEW:
         CfnOutput(self, "ConvertLogsRoute", value=f"{http_api.api_endpoint}/convert/logs")

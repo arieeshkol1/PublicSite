@@ -93,7 +93,7 @@
               <div class="bar"><i id="barFill"></i></div>
             </div>
             <div class="links">
-              <a id="linkLogs" href="#" target="_blank" rel="noreferrer noopener" style="display:none;">Lambda Logs (ConvertFn)</a>
+              <a id="linkLogs" href="#" target="_blank" rel="noreferrer noopener" style="display:none;">ECS Logs (tiler)</a>
             </div>
           </div>
         </div>
@@ -147,9 +147,11 @@
     const INPUT_BUCKET  = 'jp2-input-991105135552-us-east-1';
     const OUTPUT_BUCKET = 'jp2-output-991105135552-us-east-1';
 
-    // Correct Lambda log group (as requested)
+    // Correct ECS log group (as requested)
     const REGION = 'us-east-1';
-    const LOG_GROUP = '/aws/lambda/ServerlessJp2-ConvertFnCAE452AA-9tlDFDo18tN3';
+    const LOG_GROUP = '/ecs/tsg-jp2-tiler';
+    // Optional: if your org uses an account-scoped console host, set it at runtime, e.g.:
+    window.AWS_CONSOLE_HOST = "991105135552-r7h5rngs.us-east-1.console.aws.amazon.com";
 
     // ====== HELPERS ======
     const $ = (id) => document.getElementById(id);
@@ -159,10 +161,13 @@
 
     // CloudWatch Lambda console URL for this group, filtered by jobId
     function cloudWatchLambdaUrl(jobId){
-      const base = `https://${REGION}.console.aws.amazon.com/cloudwatch/home?region=${REGION}#logsV2:log-groups/log-group/${encodeURIComponent(LOG_GROUP)}/log-events`;
+      const host = (window.AWS_CONSOLE_HOST && typeof window.AWS_CONSOLE_HOST === 'string')
+        ? window.AWS_CONSOLE_HOST
+        : `${REGION}.console.aws.amazon.com`;
+      const groupEnc = encodeURIComponent(LOG_GROUP); // %2Faws%2Flambda%2F...
       const filter = jobId ? `?filterPattern=${encodeURIComponent(jobId)}` : '';
-      // console treats '?' in fragment specially; keep $3F to be safe
-      return `${base}${filter}`.replace('?', '$3F');
+      const url = `https://${host}/cloudwatch/home?region=${REGION}#logsV2:log-groups/log-group/${groupEnc}/log-events${filter}`;
+      return url;
     }
 
     // Robust JSON fetch that prints readable error text if backend returns HTML
@@ -222,10 +227,10 @@
       const out = $('filesLive'); if(!out) return;
       if(!objs || !objs.length){ out.textContent = '—'; return; }
       // include RAW (.bin) and its .hdr/.json sidecars
-      const rx = /_(\d+)\.(?:jp2|tif|tiff|bin|hdr|json|rs)$/i;
+      const rx = /(\d+)\.(?:jp2|tif|tiff|bin|hdr|json|rs)$/i;
       const lines = objs.slice().sort((a,b)=>{
         const ak=String(a.key||''), bk=String(b.key||'');
-        const am=ak.match(rx), bm=bk.match(rx);
+        const am=ak.match(/_(\d+)\./), bm=bk.match(/_(\d+)\./);
         const ai = am? parseInt(am[1],10) : Number.MAX_SAFE_INTEGER;
         const bi = bm? parseInt(bm[1],10) : Number.MAX_SAFE_INTEGER;
         return ai===bi ? ak.localeCompare(bk) : ai-bi;
@@ -272,7 +277,7 @@
         const logsA = $('linkLogs');
         logsA.href = cloudWatchLambdaUrl(jobId);
         logsA.style.display = 'inline-block';
-        logsA.textContent = 'Lambda Logs (ConvertFn)';
+        logsA.textContent = 'ECS Logs (tiler)';
 
         logln(`Convert started for ${selectedKey} — jobId=${jobId}`);
         startPolling();
@@ -352,8 +357,12 @@
     function selfTests(){
       try {
         console.assert(window.API_BASE && window.API_BASE.startsWith('http'), 'API_BASE must be an http(s) URL');
-        const testUrl = cloudWatchLambdaUrl('self-test-job');
-        console.assert(testUrl.includes(encodeURIComponent(LOG_GROUP)), 'CloudWatch URL must include log group');
+        const u0 = cloudWatchLambdaUrl('self-test-job');
+        console.assert(u0.includes(encodeURIComponent(LOG_GROUP)), 'CloudWatch URL must include log group');
+        console.assert(u0.startsWith('https://'), 'CloudWatch URL must be https');
+        // Additional test: when no jobId, URL must not contain filterPattern
+        const u1 = cloudWatchLambdaUrl('');
+        console.assert(!u1.includes('filterPattern='), 'URL without jobId should not contain filterPattern');
         logln('Self-test ✅ configuration OK');
       } catch(e){ errln('Self-test failed: '+ e.message); }
     }
