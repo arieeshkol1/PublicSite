@@ -39,14 +39,15 @@ class ServerlessJp2Stack(Stack):
 
         # ---------------- UI Deployment ----------------
         ui_dir = os.path.join(os.path.dirname(__file__), "..", "ui")
-        s3deploy.BucketDeployment(
-            self, "DeployStaticUI",
-            sources=[s3deploy.Source.asset(ui_dir)],
-            destination_bucket=ui_bucket,
-            destination_key_prefix="",
-            prune=True,
-            retain_on_delete=False,
-        )
+        if os.path.isdir(ui_dir):
+            s3deploy.BucketDeployment(
+                self, "DeployStaticUI",
+                sources=[s3deploy.Source.asset(ui_dir)],
+                destination_bucket=ui_bucket,
+                destination_key_prefix="",
+                prune=True,
+                retain_on_delete=False,
+            )
 
         lambda_code_dir = os.path.join(os.path.dirname(__file__), "lambda")
 
@@ -125,7 +126,7 @@ class ServerlessJp2Stack(Stack):
             essential=True,
             logging=ecs.LogDriver.aws_logs(stream_prefix="tiler", log_group=tiler_logs),
             environment={
-                # MINIMAL FIX: add PREDICTOR=1 and force policy
+                # predictor-safe
                 "CREATE_OPTS": "TILED=YES,BIGTIFF=IF_SAFER,COMPRESS=LZW,PREDICTOR=1",
                 "PREDICTOR_POLICY": "FORCE_1",
                 "TIFF_FORCE_16BIT": "true",
@@ -151,7 +152,7 @@ class ServerlessJp2Stack(Stack):
                 "SUBNET_IDS": ",".join(public_subnet_ids),
                 "SECURITY_GROUP_ID": tiler_sg.security_group_id,
                 "ASSIGN_PUBLIC_IP": "ENABLED",
-                # MINIMAL FIX: add PREDICTOR=1 and force policy
+                # predictor-safe
                 "CREATE_OPTS": "TILED=YES,BIGTIFF=IF_SAFER,COMPRESS=LZW,PREDICTOR=1",
                 "PREDICTOR_POLICY": "FORCE_1",
                 "TIFF_FORCE_16BIT": "true",
@@ -171,7 +172,8 @@ class ServerlessJp2Stack(Stack):
             resources=[output_bucket.bucket_arn, output_bucket.arn_for_objects("*")]
         ))
 
-        # ---------------- Step Function (Split via ECS) ----------------
+        # ---------------- Split/Unite State Machines (unchanged structure) ----------------
+        # Split via ECS
         split_task = tasks.EcsRunTask(
             self, "RunSplitOnFargate",
             cluster=cluster,
@@ -191,7 +193,7 @@ class ServerlessJp2Stack(Stack):
                     tasks.TaskEnvironmentVariable(name="TILES_TOTAL",   value=sfn.JsonPath.string_at("$.params.tilesTotal")),
                     tasks.TaskEnvironmentVariable(name="TILES_GRID",    value=sfn.JsonPath.string_at("$.params.tilesGrid")),
                     tasks.TaskEnvironmentVariable(name="JOB_ID",        value=sfn.JsonPath.string_at("$.jobId")),
-                    # MINIMAL FIX: add PREDICTOR=1 and force policy
+                    # predictor-safe
                     tasks.TaskEnvironmentVariable(name="CREATE_OPTS",   value="TILED=YES,BIGTIFF=IF_SAFER,COMPRESS=LZW,PREDICTOR=1"),
                     tasks.TaskEnvironmentVariable(name="PREDICTOR_POLICY", value="FORCE_1"),
                     tasks.TaskEnvironmentVariable(name="TIFF_FORCE_16BIT", value="true"),
@@ -217,7 +219,6 @@ class ServerlessJp2Stack(Stack):
             conditions={"StringEquals": {"iam:PassedToService": "ecs-tasks.amazonaws.com"}}
         ))
 
-        # ---------------- Split Controller Lambda ----------------
         split_controller_fn = _lambda.Function(
             self, "SplitControllerFn",
             runtime=_lambda.Runtime.PYTHON_3_11,
@@ -236,7 +237,7 @@ class ServerlessJp2Stack(Stack):
             resources=[split_state_machine.state_machine_arn]
         ))
 
-        # ---------------- Unite Step Function (via ECS) ----------------
+        # Unite via ECS
         unite_task = tasks.EcsRunTask(
             self, "RunUniteOnFargate",
             cluster=cluster,
@@ -255,7 +256,7 @@ class ServerlessJp2Stack(Stack):
                     tasks.TaskEnvironmentVariable(name="OUTPUT_BUCKET", value=sfn.JsonPath.string_at("$.outputBucket")),
                     tasks.TaskEnvironmentVariable(name="FINAL_KEY",     value=sfn.JsonPath.string_at("$.finalKey")),
                     tasks.TaskEnvironmentVariable(name="FORMAT_OPTION", value=sfn.JsonPath.string_at("$.formatOption")),
-                    # MINIMAL FIX: add PREDICTOR=1 and force policy
+                    # predictor-safe
                     tasks.TaskEnvironmentVariable(name="CREATE_OPTS",   value="TILED=YES,BIGTIFF=IF_SAFER,COMPRESS=LZW,PREDICTOR=1"),
                     tasks.TaskEnvironmentVariable(name="PREDICTOR_POLICY", value="FORCE_1"),
                     tasks.TaskEnvironmentVariable(name="TIFF_FORCE_16BIT", value="true"),
@@ -281,7 +282,6 @@ class ServerlessJp2Stack(Stack):
             conditions={"StringEquals": {"iam:PassedToService": "ecs-tasks.amazonaws.com"}}
         ))
 
-        # ---------------- Unite Controller Lambda ----------------
         unite_controller_fn = _lambda.Function(
             self, "UniteControllerFn",
             runtime=_lambda.Runtime.PYTHON_3_11,
@@ -300,7 +300,7 @@ class ServerlessJp2Stack(Stack):
             resources=[unite_state_machine.state_machine_arn]
         ))
 
-        # ---------------- Convert Logs Lambda (Reads ECS logs now) ----------------
+        # ---------------- Convert Logs Lambda ----------------
         convert_logs_fn = _lambda.Function(
             self, "ConvertLogsFn",
             runtime=_lambda.Runtime.PYTHON_3_11,
@@ -317,6 +317,33 @@ class ServerlessJp2Stack(Stack):
             resources=[
                 f"arn:aws:logs:{region}:{account}:log-group:/ecs/tsg-jp2-tiler:*"
             ],
+        ))
+
+        # ---------------- RS/JSON Finalizer Lambda (ENVI -> .rs + .json) ----------------
+        rsjson_fn = _lambda.Function(
+            self, "RsJsonFinalizeFn",
+            runtime=_lambda.Runtime.PYTHON_3_11,
+            handler="lambda_envi_to_rsjson.handler",
+            code=_lambda.Code.from_asset(lambda_code_dir),
+            timeout=Duration.minutes(2),
+            memory_size=512,
+            environment={
+                "DEFAULT_BUCKET": output_bucket.bucket_name,
+            },
+        )
+        rsjson_fn.add_to_role_policy(iam.PolicyStatement(
+            actions=["s3:ListBucket"],
+            resources=[output_bucket.bucket_arn]
+        ))
+        rsjson_fn.add_to_role_policy(iam.PolicyStatement(
+            actions=["s3:GetObject","s3:PutObject","s3:CopyObject","s3:DeleteObject"],
+            resources=[output_bucket.arn_for_objects("*")]
+        ))
+
+        # Allow convert to invoke finalizer if desired
+        convert_fn.add_to_role_policy(iam.PolicyStatement(
+            actions=["lambda:InvokeFunction"],
+            resources=[rsjson_fn.function_arn]
         ))
 
         # ---------------- HTTP API ----------------
@@ -340,6 +367,7 @@ class ServerlessJp2Stack(Stack):
         split_integ       = apigw_int.HttpLambdaIntegration("SplitIntegration", handler=split_controller_fn)
         unite_integ       = apigw_int.HttpLambdaIntegration("UniteIntegration", handler=unite_controller_fn)
         convert_logs_integ = apigw_int.HttpLambdaIntegration("ConvertLogsIntegration", handler=convert_logs_fn)
+        rsjson_integ      = apigw_int.HttpLambdaIntegration("RsJsonIntegration", handler=rsjson_fn)
 
         http_api.add_routes(path="/list-input",   methods=[apigw.HttpMethod.GET],  integration=list_input_integ)
         http_api.add_routes(path="/list-output",  methods=[apigw.HttpMethod.GET],  integration=list_output_integ)
@@ -347,6 +375,7 @@ class ServerlessJp2Stack(Stack):
         http_api.add_routes(path="/split",        methods=[apigw.HttpMethod.POST], integration=split_integ)
         http_api.add_routes(path="/unite",        methods=[apigw.HttpMethod.POST], integration=unite_integ)
         http_api.add_routes(path="/convert/logs", methods=[apigw.HttpMethod.GET, apigw.HttpMethod.OPTIONS], integration=convert_logs_integ)
+        http_api.add_routes(path="/rawpair/finalize", methods=[apigw.HttpMethod.POST], integration=rsjson_integ)
 
         # ---------------- File Manager Lambdas ----------------
         fm_env = {"INPUT_BUCKET": input_bucket.bucket_name, "OUTPUT_BUCKET": output_bucket.bucket_name}
@@ -451,3 +480,4 @@ class ServerlessJp2Stack(Stack):
         CfnOutput(self, "StatusProgressRoute", value=f"{http_api.api_endpoint}/status-progress")
         CfnOutput(self, "StatusHistoryRoute", value=f"{http_api.api_endpoint}/status-history/{{jobId}}")
         CfnOutput(self, "ConvertLogsRoute", value=f"{http_api.api_endpoint}/convert/logs")
+        CfnOutput(self, "RsJsonFinalizeRoute", value=f"{http_api.api_endpoint}/rawpair/finalize")
