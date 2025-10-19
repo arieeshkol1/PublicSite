@@ -3,460 +3,371 @@
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>TSG JP2 Pipeline — Convert (Single File, /convert API)</title>
+  <title>TSG JP2 Pipeline — Convert</title>
   <style>
-    :root { --bg:#000; --card:#111; --muted:#9ca3af; --text:#fff; --accent:#3b82f6; --ok:#16a34a; --warn:#f59e0b; --err:#ef4444; }
+    :root { --bg:#0b0f19; --card:#121826; --muted:#94a3b8; --text:#e5e7eb; --accent:#60a5fa; --ok:#22c55e; --warn:#f59e0b; --err:#ef4444; --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
     html,body { height:100%; background:var(--bg); color:var(--text); font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,"Helvetica Neue",Arial; margin:0; }
     .wrap { max-width:1200px; margin:24px auto; padding:0 16px; }
-    .card { background:var(--card); border-radius:16px; padding:20px; box-shadow:0 6px 24px rgba(255,255,255,.08); border:1px solid rgba(255,255,255,.1); color:var(--text); margin-bottom:20px; }
-    header { margin-bottom:8px; }
-    h1 { font-size:22px; margin:0; }
-    h2 { font-size:16px; margin:18px 0 10px; color:var(--muted); font-weight:600; }
-    .btn { border:1px solid rgba(255,255,255,.2); background:#1f2937; color:#fff; padding:8px 12px; border-radius:10px; cursor:pointer; }
-    .btn.primary { background:var(--accent); border-color:var(--accent); }
+    h1 { font-size:18px; margin:0 0 12px; font-weight:700; }
+    h2 { font-size:16px; margin:0 0 10px; font-weight:600; }
+    .grid { display:grid; grid-template-columns: 1.2fr 1fr; gap:16px; }
+    .card { background:var(--card); border:1px solid #1f2937; border-radius:14px; padding:12px 14px; box-shadow: 0 1px 0 rgba(255,255,255,0.03) inset, 0 8px 24px rgba(0,0,0,0.35); }
+    .muted { color:var(--muted); }
+    .row { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+    .btn { background:var(--accent); color:#06121f; border:0; border-radius:10px; padding:8px 12px; font-weight:600; cursor:pointer; }
     .btn:disabled { opacity:.6; cursor:not-allowed; }
+    input, select { background:#0d1423; color:var(--text); border:1px solid #253047; border-radius:10px; padding:8px 10px; }
     table { width:100%; border-collapse:collapse; }
-    th,td { border-bottom:1px solid rgba(255,255,255,.15); padding:8px 10px; text-align:left; vertical-align:top; }
-    th { color:var(--muted); font-weight:600; }
-    .mono { font-family:ui-monospace,Menlo,Consolas,monospace; }
-    .row-2 { display:grid; grid-template-columns:1fr 200px; gap:8px; align-items:end; }
-    .muted { color: var(--muted); font-size: 12px; margin-bottom: 6px; }
-    .pill { display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; line-height:18px; }
-    .pill.run { background:rgba(59,130,246,.12); border:1px solid rgba(59,130,246,.35); }
-    .pill.ok  { background:rgba(22,163,74,.12); border:1px solid rgba(22,163,74,.35); }
-    .pill.err { background:rgba(239,68,68,.12); border:1px solid rgba(239,68,68,.35); }
-    progress { width:120px; height:10px; }
-    a { color:#93c5fd; text-decoration:none; }
-    a:hover { text-decoration:underline; }
-    .small { font-size:12px; color:var(--muted); }
-    .right { text-align:right; }
-    .log { background:#0b1220; border:1px dashed rgba(255,255,255,.3); border-radius:10px; padding:10px; color:#fff; white-space:pre-wrap; min-height:60px; }
-    .details { background:#0b1220; border:1px dashed rgba(255,255,255,.25); border-radius:10px; padding:10px; margin-top:8px; }
-    .expand-btn { cursor:pointer; border:1px solid rgba(255,255,255,.2); background:#0f172a; border-radius:8px; padding:4px 8px; }
-    .expand-btn[aria-expanded="true"] { background:#13203a; }
-    .grid-cols-2 { display:grid; grid-template-columns:2fr 1fr; gap:20px; }
-    /* NEW: filter UI */
-    .filters{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
-    .chip{display:inline-flex;align-items:center;gap:6px;border:1px solid rgba(255,255,255,.2);background:#0f172a;padding:6px 10px;border-radius:999px}
-    .chip input{accent-color:var(--accent)}
-    .divider{height:1px;background:rgba(255,255,255,.1);margin:8px 0 0}
+    th, td { padding:8px; border-bottom:1px dashed #253047; }
+    tr:hover td { background:#0d1322; }
+    .mono { font-family:var(--mono); }
+    .tag { display:inline-block; border:1px solid #2b3859; border-radius:999px; padding:2px 8px; margin-right:6px; font-size:12px; }
+    .bar { height:8px; background:#0e1524; border-radius:999px; overflow:hidden; }
+    #barFill { display:block; height:100%; width:0%; background:var(--ok); }
+    .pill { padding:3px 8px; border-radius:999px; font-weight:700; font-size:12px; }
+    .pill.ok { background:#12351f; color:#5ef38c; }
+    .pill.err { background:#2a1113; color:#ff7b84; }
+    .pill.warn { background:#3a2a0e; color:#ffd27a; }
+    pre.well { background:#0b1220; border:1px solid #23304d; border-radius:12px; padding:10px; }
+    /* Roomier on-page log/diag areas */
+    #diagLog, #errorsBox, #liveLogsArea, pre.well.mono { max-height: 420px; overflow:auto; }
+    .links a { color:var(--accent); text-decoration:none; margin-right:12px; }
+    .links a:hover { text-decoration:underline; }
   </style>
-  <script>
-    // === Config ===
-    window.API_BASE = "https://qmiu91xhgk.execute-api.us-east-1.amazonaws.com"; // <- ensure correct stage URL
-    const INPUT_BUCKET  = 'jp2-input-991105135552-us-east-1';
-    const OUTPUT_BUCKET = 'jp2-output-991105135552-us-east-1';
-    // CloudWatch logs location for ECS tasks (from your TaskDef)
-    const REGION = "us-east-1";
-    const LOG_GROUP = "/ecs/tsg-jp2-tiler";
-  </script>
 </head>
 <body>
-  <div class="wrap grid-cols-2">
-    <div>
-      <header><h1>TSG JP2 Pipeline — Convert (Single File)</h1></header>
+  <div class="wrap">
+    <h1>TSG Secure JP2 Pipeline — <span class="muted">Convert</span></h1>
 
-      <!-- STEP 1: PICK FILE -->
+    <div class="grid">
+      <!-- LEFT: Input / Convert controls -->
       <div class="card">
-        <div style="display:flex;justify-content:space-between;align-items:center;">
-          <h2>1) Choose file from Bucket</h2>
+        <h2>1) Select Source & Configure</h2>
+        <div class="row" style="margin-bottom:8px;">
+          <span class="muted">Buckets</span>
+          <span class="tag mono">Input: <span id="inBucketLbl">—</span></span>
+          <span class="tag mono">Output: <span id="outBucketLbl">—</span></span>
           <button id="btnRefresh" class="btn">Refresh</button>
         </div>
-
-        <!-- NEW: source + type filters -->
-        <div class="filters" style="margin:8px 0 6px;">
-          <label class="chip">
-            <span style="min-width:62px;display:inline-block;">Bucket</span>
-            <select id="bucketSel" class="btn" style="padding:4px 8px;">
-              <option value="input" selected>Input</option>
-              <option value="output">Output</option>
-            </select>
-          </label>
-
-          <label class="chip">
-            <span style="min-width:52px;display:inline-block;">Prefix</span>
-            <input id="prefixTxt" type="text" placeholder="e.g. tiles/" style="background:#0f172a;color:#fff;border:none;outline:none;padding:6px;border-radius:6px;min-width:180px;">
-          </label>
-
-          <span class="small" style="margin-left:6px;">Show types:</span>
-          <label class="chip"><input type="checkbox" id="f_jp2" checked> JP2</label>
-          <label class="chip"><input type="checkbox" id="f_tif" checked> TIFF/TIF</label>
-          <label class="chip"><input type="checkbox" id="f_raw" checked> RAW (BIN/HDR)</label>
-          <label class="chip"><input type="checkbox" id="f_all"> All</label>
+        <div class="row" style="margin-bottom:8px;">
+          <input id="prefix" class="mono" placeholder="Prefix filter (e.g., input/)" style="min-width:280px;"/>
+          <select id="fileType">
+            <option value=".jp2" selected>JP2</option>
+            <option value=".tif">TIFF</option>
+            <option value=".tiff">TIFF (.tiff)</option>
+            <option value=".bin">RAW (.bin)</option>
+          </select>
+          <button class="btn" id="btnApplyFilter">Apply</button>
         </div>
-        <div class="divider"></div>
 
-        <table aria-label="Input objects" style="margin-top:6px;">
-          <thead><tr><th></th><th>Object Key</th><th>Size</th></tr></thead>
-          <tbody id="inputTbody"><tr><td colspan="3" class="muted">Click Refresh</td></tr></tbody>
-        </table>
-      </div>
-
-      <!-- STEP 2: FORMAT -->
-      <div class="card">
-        <h2>2) Select Output Format</h2>
-        <select id="format" class="btn">
-          <option value="JPEG2000">JPEG2000 (keep)</option>
-          <option value="TIFF" selected>TIFF</option>
-          <option value="RAW">RAW</option>
-        </select>
-        <div class="small" style="margin-top:6px;">UI sends both <span class="mono">params.format</span> (e.g. TIFF) and legacy <span class="mono">params.formatOption</span> (e.g. tiff).</div>
-      </div>
-
-      <!-- STEP 3: RUN -->
-      <div class="card">
-        <h2>3) Run Convert</h2>
-        <button id="btnConvert" class="btn primary" disabled>Convert</button>
-        <button id="btnDiag" class="btn" style="margin-left:8px;">Diagnose connectivity</button>
-        <div class="small" style="margin-top:6px;">Origin: <span class="mono" id="originTxt"></span> → API_BASE: <span class="mono" id="apiBaseTxt"></span></div>
-      </div>
-
-      <!-- PROGRESS -->
-      <div class="card">
-        <h2>Conversion Progress</h2>
         <table>
-          <thead><tr>
-            <th style="width:28px;"></th>
-            <th>#</th>
-            <th>Input</th>
-            <th>Job ID</th>
-            <th>Status</th>
-            <th style="width:140px;">Progress</th>
-            <th>Execution</th>
-          </tr></thead>
-          <tbody id="progTbody"><tr><td colspan="7" class="small">No jobs yet</td></tr></tbody>
+          <thead>
+            <tr><th>Key</th><th style="width:120px;">Size</th><th style="width:110px;">Action</th></tr>
+          </thead>
+          <tbody id="inputTbody"><tr><td colspan="3" class="muted">Loading…</td></tr></tbody>
         </table>
+
+        <div class="card" style="margin-top:12px;">
+          <h2>2) Convert</h2>
+          <div class="row" style="margin-bottom:8px;">
+            <div class="muted">Selected</div>
+            <div id="selKey" class="mono" style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:520px;">—</div>
+          </div>
+          <div class="row" style="margin-bottom:8px;">
+            <label>Format</label>
+            <select id="fmt">
+              <option value="tiff" selected>GeoTIFF (TFF)</option>
+              <option value="raw">RAW (+ JSON)</option>
+              <option value="keep">JPEG2000 (keep)</option>
+            </select>
+            <button id="btnConvert" class="btn">Convert</button>
+          </div>
+
+          <div class="row" style="margin-top:6px; gap:16px;">
+            <div>
+              <div class="muted">Job ID</div>
+              <div id="jobId" class="mono">—</div>
+            </div>
+            <div>
+              <div class="muted">Progress</div>
+              <div class="bar"><i id="barFill"></i></div>
+            </div>
+            <div class="links">
+              <a id="linkLogs" href="#" target="_blank" rel="noreferrer noopener" style="display:none;">Lambda Logs (ConvertFn)</a>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- RIGHT: Results / Logs / Diagnostics -->
+      <div class="card">
+        <h2>3) Live Output & Diagnostics</h2>
+        <div class="row" style="gap:16px; margin-bottom:10px;">
+          <button id="btnDiag" class="btn" style="background:#334155; color:#cbd5e1;">Diagnose connectivity</button>
+          <span id="diagStatus" class="pill warn">Idle</span>
+        </div>
+
+        <div class="row" style="margin-bottom:8px;">
+          <div>
+            <div class="muted">Files under <span class="mono">tiles/&lt;jobId&gt;/</span></div>
+            <pre id="filesLive" class="well mono" style="white-space:pre-wrap;">—</pre>
+          </div>
+        </div>
+
+        <div class="row" style="gap:16px;">
+          <div style="flex:1; min-width:260px;">
+            <div class="muted">Errors Captured</div>
+            <pre id="errorsBox" class="well mono" style="white-space:pre-wrap;">No errors yet.</pre>
+          </div>
+          <div style="flex:1; min-width:260px;">
+            <div class="muted">Log</div>
+            <pre id="diagLog" class="well mono" style="white-space:pre-wrap;">—</pre>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top:12px;">
+          <h2>4) Embedded Lambda Logs (Optional)</h2>
+          <div class="row" style="gap:8px;">
+            <input id="jobIdFilter" placeholder="Filter by jobId (auto-filled)" class="mono"/>
+            <button id="btnLogsStart" class="btn">Start Tail</button>
+            <button id="btnLogsStop" class="btn" style="background:#334155; color:#cbd5e1;">Stop</button>
+          </div>
+          <pre id="liveLogsArea" class="well mono" style="white-space:pre-wrap; margin-top:8px;">—</pre>
+          <div class="muted" id="liveLogsNote">Uses backend GET /convert/logs if available; otherwise use the link above.</div>
+        </div>
       </div>
     </div>
 
-    <div>
-      <div class="card">
-        <h2>Errors Captured</h2>
-        <div id="errorBox" class="log">No errors yet.</div>
-      </div>
-      <div class="card">
-        <h2>Log</h2>
-        <div id="logBox" class="log">—</div>
-      </div>
-    </div>
+    <div class="muted" style="text-align:center; margin:20px 0;">TSG © Secure JP2 Pipeline</div>
   </div>
 
   <script>
-    // ===== Utils =====
-    const $=id=>document.getElementById(id);
-    function logLine(s){ const b=$('logBox'); b.textContent=(b.textContent==='—'?'':b.textContent+'\n')+`[${new Date().toISOString()}] ${s}`; b.scrollTop=b.scrollHeight; }
-    function showError(e){ const b=$('errorBox'); b.textContent=(b.textContent==='No errors yet.'?'':b.textContent+'\n')+`[${new Date().toISOString()}] ${e}`; b.scrollTop=b.scrollHeight; logLine('ERROR: '+e); }
+    // ====== CONFIG ======
+    window.API_BASE = "https://qmiu91xhgk.execute-api.us-east-1.amazonaws.com"; // Current HTTP API base
+    const INPUT_BUCKET  = 'jp2-input-991105135552-us-east-1';
+    const OUTPUT_BUCKET = 'jp2-output-991105135552-us-east-1';
+
+    // Correct Lambda log group (as requested)
+    const REGION = 'us-east-1';
+    const LOG_GROUP = '/aws/lambda/ServerlessJp2-ConvertFnCAE452AA-9tlDFDo18tN3';
+
+    // ====== HELPERS ======
+    const $ = (id) => document.getElementById(id);
+    const setText = (id, v) => { const n=$(id); if(n) n.textContent = v ?? ''; };
     function humanSize(n){ if(n==null) return '—'; const kb=1024, mb=kb*1024, gb=mb*1024; if(n>=gb) return (n/gb).toFixed(2)+' GB'; if(n>=mb) return (n/mb).toFixed(2)+' MB'; if(n>=kb) return (n/kb).toFixed(2)+' KB'; return n+' B'; }
+    function nowIso(){ return new Date().toISOString(); }
 
-    function cloudWatchTaskUrl(taskArn){
-      const taskId = (taskArn||'').split('/').pop();
-      if(!taskId) return null;
-      const lg = encodeURIComponent(LOG_GROUP).replace(/%2F/g, '%252F'); // console double-escapes '/'
-      const stream = encodeURIComponent(`tiler/tiler/${taskId}`).replace(/%2F/g, '%252F');
-      return `https://${REGION}.console.aws.amazon.com/cloudwatch/home?region=${REGION}#logsV2:log-groups/log-group/${lg}/log-events/${stream}`;
-    }
-    function tailCliSnippet(taskArn){
-      const taskId=(taskArn||'').split('/').pop();
-      return `aws logs tail ${LOG_GROUP} --since 15m --follow --log-stream-name-prefix "tiler/tiler/${taskId}"`;
+    // CloudWatch Lambda console URL for this group, filtered by jobId
+    function cloudWatchLambdaUrl(jobId){
+      const base = `https://${REGION}.console.aws.amazon.com/cloudwatch/home?region=${REGION}#logsV2:log-groups/log-group/${encodeURIComponent(LOG_GROUP)}/log-events`;
+      const filter = jobId ? `?filterPattern=${encodeURIComponent(jobId)}` : '';
+      // console treats '?' in fragment specially; keep $3F to be safe
+      return `${base}${filter}`.replace('?', '$3F');
     }
 
+    // Robust JSON fetch that prints readable error text if backend returns HTML
     async function getJSON(url){
+      const r = await fetch(url);
+      const text = await r.text();
+      try { return JSON.parse(text); }
+      catch { throw new Error(`Expected JSON from ${url}. Got: ${text.slice(0,160).replace(/\s+/g,' ')}`); }
+    }
+
+    function logln(msg){ const el=$('diagLog'); el.textContent += (el.textContent==='—'? '' : '\n') + `[${nowIso()}] ${msg}`; el.scrollTop = el.scrollHeight; }
+    function errln(msg){ const el=$('errorsBox'); el.textContent += (el.textContent==='No errors yet.'? '' : '\n') + `[${nowIso()}] ${msg}`; el.scrollTop = el.scrollHeight; }
+
+    // ====== STATE ======
+    let selectedKey = null;
+    let jobId = null;
+    let tilesTotal = 1; // always 1 tile per requirement
+    let pollTimer = null;
+    let logsTimer = null;
+
+    // ====== INPUT LIST ======
+    async function listInput(){
+      setText('inBucketLbl', INPUT_BUCKET);
+      setText('outBucketLbl', OUTPUT_BUCKET);
+      $('inputTbody').innerHTML = '<tr><td colspan="3" class="muted">Loading…</td></tr>';
+      const prefix = $('prefix').value.trim();
+      const type = $('fileType').value;
       try{
-        const r=await fetch(url,{method:'GET',mode:'cors'});
-        const t=await r.text();
-        if(!r.ok){ throw new Error(`HTTP ${r.status} ${r.statusText} — ${t.slice(0,300)}`); }
-        return JSON.parse(t);
-      }catch(e){ showError(`[GET ${url}] ${e.message||String(e)}`); throw e; }
+        const j = await getJSON(`${window.API_BASE}/list-input?bucket=${encodeURIComponent(INPUT_BUCKET)}${prefix?`&prefix=${encodeURIComponent(prefix)}`:''}`);
+        const items = (j.objects||[]).filter(o => String(o.key||'').toLowerCase().endsWith(type));
+        if(!items.length){ $('inputTbody').innerHTML = '<tr><td colspan="3" class="muted">No matching objects</td></tr>'; return; }
+        $('inputTbody').innerHTML = items.map(o => `
+          <tr>
+            <td class="mono">${o.key}</td>
+            <td>${humanSize(o.size)}</td>
+            <td><button class="btn" data-key="${o.key}">Select</button></td>
+          </tr>`).join('');
+        $('inputTbody').onclick = (ev)=>{
+          const b = ev.target.closest('button[data-key]'); if(!b) return;
+          selectedKey = b.getAttribute('data-key'); setText('selKey', selectedKey);
+        };
+        logln(`Listed ${(items||[]).length} object(s) from list-input (${INPUT_BUCKET}${prefix?`/${prefix}`:''})`);
+      }catch(e){ errln(`list-input error: ${e.message}`); }
     }
-    async function postJSON(url,body){
+
+    // ====== FILES UNDER TILES/JOB ======
+    async function refreshFiles(jid){
+      if(!jid) return;
+      const prefix = `tiles/${jid}/`;
       try{
-        const r=await fetch(url,{method:'POST',mode:'cors',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-        const t=await r.text();
-        let j; try{ j=JSON.parse(t);}catch{ j={_raw:t}; }
-        if(!r.ok){
-          const et=r.headers.get('x-amzn-errortype')||'';
-          const rid=r.headers.get('x-amzn-requestid')||r.headers.get('x-amz-request-id')||'';
-          throw new Error(`${j.error||j.message||j._raw||('HTTP '+r.status)}${et?(' | '+et):''}${rid?(' | RequestId:'+rid):''}`);
-        }
-        return j;
-      }catch(e){ showError(`[POST ${url}] ${e.message||String(e)}`); throw e; }
+        const j = await getJSON(`${window.API_BASE}/list-output?bucket=${encodeURIComponent(OUTPUT_BUCKET)}&prefix=${encodeURIComponent(prefix)}`);
+        renderFiles(j.objects||[]);
+      }catch(e){ $('filesLive').textContent = `List error: ${e.message}`; }
     }
 
-    // ===== State =====
-    let selectedKey=null, jobs=[], pollTimer=null;
-    let lastListedItems = []; // keep raw list for re-filtering
-
-    // ===== Extension filtering (NEW) =====
-    function getExt(key){
-      const m = (key||'').toLowerCase().match(/\.([a-z0-9]+)$/);
-      return m ? m[1] : '';
-    }
-    function isAllowedByType(key){
-      const ext = getExt(key);
-      const all = $('f_all').checked;
-      const jp2 = $('f_jp2').checked;
-      const tif = $('f_tif').checked;
-      const raw = $('f_raw').checked;
-
-      if (all) return true;
-      if (ext === 'jp2') return jp2;
-      if (ext === 'tif' || ext === 'tiff' || ext === 'geotiff') return tif;
-      // RAW: treat .bin/.hdr as RAW
-      if (ext === 'bin' || ext === 'hdr') return raw;
-      return false;
-    }
-    function bindFilters(){
-      const filterIds = ['f_all','f_jp2','f_tif','f_raw'];
-      filterIds.forEach(id=>{
-        $(id).addEventListener('change', ()=>{
-          if (id==='f_all') {
-            const on=$('f_all').checked;
-            $('f_jp2').checked = on;
-            $('f_tif').checked = on;
-            $('f_raw').checked = on;
-          } else {
-            if (!$('f_jp2').checked || !$('f_tif').checked || !$('f_raw').checked) $('f_all').checked = false;
-            if ($('f_jp2').checked && $('f_tif').checked && $('f_raw').checked) $('f_all').checked = true;
-          }
-          renderList(lastListedItems);
-        });
-      });
-      $('f_all').checked = $('f_jp2').checked && $('f_tif').checked && $('f_raw').checked;
+    function renderFiles(objs){
+      const out = $('filesLive'); if(!out) return;
+      if(!objs || !objs.length){ out.textContent = '—'; return; }
+      // include RAW (.bin) and its .hdr/.json sidecars
+      const rx = /_(\d+)\.(?:jp2|tif|tiff|bin|hdr|json|rs)$/i;
+      const lines = objs.slice().sort((a,b)=>{
+        const ak=String(a.key||''), bk=String(b.key||'');
+        const am=ak.match(rx), bm=bk.match(rx);
+        const ai = am? parseInt(am[1],10) : Number.MAX_SAFE_INTEGER;
+        const bi = bm? parseInt(bm[1],10) : Number.MAX_SAFE_INTEGER;
+        return ai===bi ? ak.localeCompare(bk) : ai-bi;
+      }).map(o => `${o.key}${o.size!=null ? `  (${humanSize(o.size)})` : ''}`);
+      out.textContent = lines.join('\n');
     }
 
-    // ===== List Objects (Input/Output + prefix) =====
-    function renderList(objs){
-      const tbody=$('inputTbody');
-      if(!objs||!objs.length){tbody.innerHTML='<tr><td colspan="3" class="muted">No objects</td></tr>';return;}
-      const items=(objs||[]).map(o=>({key:o.key||o.Key,size:o.size||o.Size}));
-      const filtered = items.filter(o => isAllowedByType(o.key));
-
-      // Collapse RAW .hdr lines if a sibling .bin exists; show note on .bin row
-      const set = new Set(items.map(x=>x.key));
-      const rows = filtered.map(o=>{
-        const ext = getExt(o.key);
-        let note = '';
-        if (ext === 'bin') {
-          const hdrKey = o.key.replace(/\.bin$/i, '.hdr');
-          if (set.has(hdrKey)) note = ' <span class="small">(+ .hdr)</span>';
-        }
-        if (ext === 'hdr') {
-          const binKey = o.key.replace(/\.hdr$/i, '.bin');
-          if (set.has(binKey)) return null; // hide duplicate HDR line
-        }
-        return `<tr>
-          <td><input type="radio" name="pickone" class="pick" data-key="${o.key}"></td>
-          <td class="mono">${o.key}${note}</td>
-          <td>${humanSize(o.size)}</td>
-        </tr>`;
-      }).filter(Boolean);
-
-      if (rows.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="3" class="muted">No objects match the selected view</td></tr>';
-      } else {
-        tbody.innerHTML=rows.join('');
-        tbody.querySelectorAll('.pick').forEach(rb=>rb.addEventListener('change',updateSelection));
-      }
-    }
-    function updateSelection(){ const rb=document.querySelector('.pick:checked'); selectedKey = rb ? rb.dataset.key : null; $('btnConvert').disabled = !selectedKey; }
-
-    async function listObjects(){
-      const bucketChoice = $('bucketSel').value;  // "input" | "output"
-      const prefix = $('prefixTxt').value || '';
-      const bucket = bucketChoice === 'output' ? OUTPUT_BUCKET : INPUT_BUCKET;
-      const route  = bucketChoice === 'output' ? 'list-output' : 'list-input';
-
-      const url=`${window.API_BASE}/${route}?bucket=${encodeURIComponent(bucket)}&prefix=${encodeURIComponent(prefix)}`;
-      const tbody=$('inputTbody'); tbody.innerHTML='<tr><td colspan=3>Loading…</td></tr>';
-      try{
-        const j=await getJSON(url);
-        const items=j.objects||j.items||[];
-        lastListedItems = items;           // keep full list
-        renderList(items);                 // render with filters
-        logLine(`Listed ${items.length} object(s) from ${route} (${bucket}${prefix?'/'+prefix:''})`);
-      }catch(e){
-        tbody.innerHTML=`<tr><td colspan=3>Error: ${e.message}</td></tr>`;
-      }
-    }
-
-    // ===== Jobs table =====
-    function statusPill(s){ s=(s||'RUNNING').toUpperCase(); if(['SUCCEEDED','COMPLETED'].includes(s)) return `<span class="pill ok">${s}</span>`; if(s==='FAILED') return `<span class="pill err">FAILED</span>`; if(['PENDING','QUEUED'].includes(s)) return `<span class="pill run">QUEUED</span>`; return `<span class="pill run">${s}</span>`; }
-    function renderJobs(){
-      const tbody=$('progTbody');
-      if(jobs.length===0){ tbody.innerHTML='<tr><td colspan="7" class="small">No jobs yet</td></tr>'; return; }
-      tbody.innerHTML=jobs.map((j,i)=>`
-        <tr>
-          <td><button class="expand-btn" data-idx="${i}" aria-expanded="false">Details</button></td>
-          <td>${i+1}</td>
-          <td class="mono">${j.key}</td>
-          <td class="mono">${j.jobId||'—'}</td>
-          <td>${statusPill(j.status)}</td>
-          <td>
-            <progress max="100" value="${j.percent||0}"></progress>
-            <div class="small">${j.percent||0}%</div>
-          </td>
-          <td>${j.logsUrl ? `<a href="${j.logsUrl}" target="_blank" rel="noreferrer">Logs</a>` : (j.exec ? `<a href="${j.exec}" target="_blank" rel="noreferrer">Execution</a>`:'—')}</td>
-        </tr>
-        <tr class="detail-row" id="detail-${i}" style="display:none;">
-          <td></td>
-          <td colspan="6">
-            <div class="details">
-              <div class="small">Final file name:</div>
-              <div class="mono">${j.output_key || '—'}</div>
-              <div class="small" style="margin-top:6px;">Final file size:</div>
-              <div>${j.output_size!=null ? humanSize(j.output_size) : '—'}</div>
-              <div class="small" style="margin-top:6px;">Time to convert:</div>
-              <div>${j.duration_ms!=null ? `${Math.round(j.duration_ms/1000)}s (${j.duration_ms} ms)` : '—'}</div>
-              <div class="small" style="margin-top:6px;">ECS Task/Container ID:</div>
-              <div class="mono">${j.task_arn || '—'}</div>
-              ${j.error? `<div class="small" style="margin-top:6px; color: var(--err);">Last error:</div><div class="mono" style="color: var(--err); white-space:pre-wrap;">${j.error}</div>`: ''}
-              ${j.task_arn ? `
-                <div class="small" style="margin-top:8px;">Quick tail (CLI):</div>
-                <div class="mono" style="white-space:pre-wrap;">${tailCliSnippet(j.task_arn)}</div>
-              ` : ''}
-            </div>
-          </td>
-        </tr>
-      `).join('');
-      tbody.querySelectorAll('.expand-btn').forEach(btn=>{
-        btn.addEventListener('click',()=>{
-          const idx=btn.dataset.idx, row=$(`detail-${idx}`); const open=row.style.display!=='none';
-          row.style.display=open?'none':'table-row';
-          btn.setAttribute('aria-expanded', String(!open));
-          btn.textContent = !open ? 'Hide' : 'Details';
-        });
-      });
-    }
-
-    // ===== Convert (SINGLE FILE, /convert) =====
-    function fmtToOption(v){ if(v==='JPEG2000')return'keep'; if(v==='TIFF')return'tiff'; if(v==='RAW')return'raw'; return'keep'; }
-    function parseConvertResponse(res){
-      // Accept both shapes:
-      // A) {job_id, items:[{taskArn,key,...}], launched, failed}
-      // B) API GW wrapper {statusCode, body:"{...}"}
-      let body = res;
-      if (res && typeof res.body === 'string') {
-        try { body = JSON.parse(res.body); } catch { body = {}; }
-      }
-      return body || {};
-    }
+    // ====== CONVERT ======
     async function doConvert(){
-      if(!selectedKey) return;
-      $('btnConvert').disabled = true; // prevent double click
+      if(!selectedKey){ errln('No file selected'); return; }
+      const fmtSel = $('fmt');
+      const formatOption = (fmtSel && fmtSel.value) ? fmtSel.value : 'tiff';
+      tilesTotal = 1; // force 1 tile
+
+      $('btnConvert').disabled = true;
+      setText('jobId','—'); $('barFill').style.width = '0%'; $('filesLive').textContent = '—';
+
+      // Request body supports both new and legacy fields (backend can ignore extras)
+      const body = {
+        keys: [ selectedKey ],
+        tiles: tilesTotal,
+        target_format: formatOption.toUpperCase()==='KEEP' ? 'JPEG2000' : (formatOption.toUpperCase()==='RAW' ? 'RAW' : 'TIFF'),
+        inputBucket: INPUT_BUCKET,
+        inputKey: selectedKey,
+        outputBucket: OUTPUT_BUCKET,
+        outputKey: `final/${selectedKey.split('/').pop().replace(/\.(jp2|tif|tiff|bin)$/i,'')}.${formatOption==='raw'?'rs':formatOption==='keep'?'jp2':'tff'}`,
+        params: { format: (formatOption==='keep'?'JPEG2000':formatOption.toUpperCase()), formatOption }
+      };
+
       try{
-        const fmtUi = $('format').value;   // JPEG2000 | TIFF | RAW
-        const fmtOpt = fmtToOption(fmtUi); // keep | tiff | raw
+        const r = await fetch(`${window.API_BASE}/convert`, {
+          method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)
+        });
+        const text = await r.text();
+        let j; try { j = JSON.parse(text); } catch { throw new Error(`Bad JSON from /convert: ${text.slice(0,180).replace(/\s+/g,' ')}`); }
+        if(!r.ok){ throw new Error(j.error || j.message || 'convert failed'); }
 
-        // Use the Lambda contract used in your working backend now:
-        // For the new converter, it expects: { keys: [..], tiles, target_format }
-        // Keep legacy payload fields too (no harm).
-        const bodyNew = {
-          keys: [selectedKey],
-          tiles: 16,
-          target_format: fmtUi,
-          // legacy fields (ignored by new Lambda, harmless):
-          inputBucket: INPUT_BUCKET,
-          inputKey: selectedKey,
-          outputBucket: OUTPUT_BUCKET,
-          outputKey: `output/final/${selectedKey.split('/').pop().replace(/\.[^.]+$/,'')}.${fmtUi==='TIFF'?'tif':(fmtUi==='RAW'?'raw':'jp2')}`,
-          params: { format: fmtUi, formatOption: fmtOpt }
-        };
+        // Normalize various possible shapes { job_id, items:[{taskArn}] }
+        jobId = j.job_id || j.jobId || j.id || (j.items && j.items[0] && (j.items[0].jobId || j.items[0].job_id));
+        if(!jobId) jobId = `job-${Date.now()}`; // fallback
+        setText('jobId', jobId);
 
-        logLine(`Submitting convert for ${selectedKey} (${fmtUi})`);
-        const raw = await postJSON(`${window.API_BASE}/convert`, bodyNew);
-        const res = parseConvertResponse(raw);
+        // Point the Logs link to the Lambda ConvertFn log group, filtered by jobId
+        const logsA = $('linkLogs');
+        logsA.href = cloudWatchLambdaUrl(jobId);
+        logsA.style.display = 'inline-block';
+        logsA.textContent = 'Lambda Logs (ConvertFn)';
 
-        const jobId = res.job_id || res.jobId || null;
-        // Extract first item (single-file mode)
-        const it = (res.items && res.items[0]) || {};
-        const taskArn = it.taskArn || it.task_arn || null;
-        const logsUrl = taskArn ? cloudWatchTaskUrl(taskArn) : null;
-
-        const job = {
-          key: selectedKey,
-          jobId,
-          status: (res.launched > 0 ? 'RUNNING' : (res.failed > 0 ? 'FAILED' : 'QUEUED')),
-          percent: 0,
-          exec: null,
-          logsUrl,
-          output_key: null,
-          output_size: null,
-          duration_ms: null,
-          task_arn: taskArn,
-          error: it.error || res.error || null
-        };
-        jobs.push(job); renderJobs();
-        logLine(`Started convert job ${jobId || '(no-id)'}`);
+        logln(`Convert started for ${selectedKey} — jobId=${jobId}`);
         startPolling();
+        // Auto-fill embedded logs filter
+        const f = $('jobIdFilter'); if(f) f.value = jobId;
+      } catch(e){ errln(`convert error: ${e.message}`); }
+      finally { $('btnConvert').disabled = false; }
+    }
+
+    // ====== POLLING ======
+    function startPolling(){ stopPolling(); pollTimer = setInterval(tick, 1500); tick(); }
+    function stopPolling(){ if(pollTimer){ clearInterval(pollTimer); pollTimer = null; } }
+
+    async function tick(){
+      if(!jobId) return;
+      try{
+        const j1 = await getJSON(`${window.API_BASE}/status-progress?jobId=${encodeURIComponent(jobId)}`);
+        const done = j1.tilesCount||0; const expected = j1.expectedTiles || j1.expected || (j1.total||0);
+        const pct = j1.percent ?? (expected? Math.round((done/expected)*100): (j1.state?.toUpperCase()==='DONE'?100:0));
+        $('barFill').style.width = `${pct}%`;
+        await refreshFiles(jobId);
+      }catch(e){ $('filesLive').textContent = `Status error: ${e.message}`; }
+    }
+
+    // ====== DIAGNOSTICS ======
+    async function runDiagnostics(){
+      const status = $('diagStatus');
+      status.className = 'pill warn'; status.textContent = 'Running…';
+      try{
+        const prefix = $('prefix').value.trim();
+        // GET list-input
+        await getJSON(`${window.API_BASE}/list-input?bucket=${encodeURIComponent(INPUT_BUCKET)}${prefix?`&prefix=${encodeURIComponent(prefix)}`:''}`);
+        logln('GET /list-input ✅');
+        // OPTIONS list-input (CORS preflight)
+        await fetch(`${window.API_BASE}/list-input`, { method:'OPTIONS' });
+        logln('OPTIONS /list-input ✅');
+        // POST /convert (smoke)
+        const smoke = { _diag:true, inputBucket: INPUT_BUCKET, inputKey: selectedKey || 'input/placeholder.jp2', outputBucket: OUTPUT_BUCKET, tiles: 1, target_format: 'TIFF' };
+        const r = await fetch(`${window.API_BASE}/convert`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(smoke) });
+        logln(`POST /convert → ${r.status} ${r.ok?'OK':'ERR'}`);
+        // NEW: test /convert/logs CORS + reachability (if backend exists)
+        try{
+          const opt = await fetch(`${window.API_BASE}/convert/logs`, { method:'OPTIONS' });
+          logln(`OPTIONS /convert/logs → ${opt.status} ${opt.ok?'OK':'ERR'}`);
+          const test = await fetch(`${window.API_BASE}/convert/logs?sinceSec=60&limit=1`);
+          logln(`GET /convert/logs → ${test.status} ${test.ok?'OK':'ERR'}`);
+        }catch(_){ /* ignore if route not deployed */ }
+        status.className = 'pill ok'; status.textContent = 'OK';
+      }catch(e){ status.className='pill err'; status.textContent='Error'; errln(e.message); }
+    }
+
+    // ====== EMBEDDED LAMBDA LOGS (Optional backend) ======
+    async function fetchConvertLogs(){
+      const jobFilter = $('jobIdFilter').value.trim();
+      const url = `${window.API_BASE}/convert/logs?sinceSec=1800&limit=400${jobFilter?`&q=${encodeURIComponent(jobFilter)}`:''}`;
+      const area = $('liveLogsArea');
+      try{
+        const r = await fetch(url);
+        if(!r.ok){ area.textContent = 'Backend /convert/logs not available (HTTP '+r.status+'). Ensure the route exists.'; return; }
+        const text = await r.text(); let data; try{ data = JSON.parse(text); }catch{ area.textContent = text; return; }
+        if(data && Array.isArray(data.lines)){
+          const out = data.lines.sort((a,b)=>a.ts-b.ts).map(e=>`[${new Date(e.ts||0).toISOString()}] ${e.msg}`).join('\n');
+          area.textContent = out || 'No log lines yet…';
+          area.scrollTop = area.scrollHeight;
+        } else { area.textContent = 'No data'; }
       }catch(e){
-        const job={ key: selectedKey, jobId:null, status:'FAILED', percent:0, exec:null, error:String(e.message||e) };
-        jobs.push(job); renderJobs();
-      }finally{
-        $('btnConvert').disabled = !selectedKey; // re-enable for retry
+        // Common in browsers when CORS is missing -> TypeError: Failed to fetch
+        area.textContent = (String(e).includes('Failed to fetch'))
+          ? 'Error: Failed to fetch. Likely CORS is not enabled on /convert/logs or the route is unreachable.'
+          : `Error: ${e.message}`;
       }
     }
+    function startLogTail(){ stopLogTail(); fetchConvertLogs(); logsTimer = setInterval(fetchConvertLogs, 4000); }
+    function stopLogTail(){ if(logsTimer){ clearInterval(logsTimer); logsTimer=null; } }
 
-    // ===== Poll status =====
-    function startPolling(){
-      if(pollTimer) clearInterval(pollTimer);
-      pollTimer=setInterval(async()=>{
-        for(const j of jobs){
-          if(!j.jobId) continue;
-          try{
-            // If you have a backend status endpoint, keep using it:
-            const s=await getJSON(`${window.API_BASE}/status-progress?jobId=${encodeURIComponent(j.jobId)}`);
-            if (s.percent != null) j.percent = s.percent;
-            const st=(s.state||s.status||j.status||'RUNNING').toUpperCase();
-            j.status = st;
-            if (j.percent==null || j.percent===0) {
-              if (s.phase === 'DOWNLOADING') j.percent = 10;
-              else if (s.phase === 'CONVERTING') j.percent = 70;
-              else if (s.phase === 'UPLOADING') j.percent = 90;
-            }
-            j.output_key  = s.output_key  || s.final_key   || j.output_key;
-            j.output_size = s.output_size || s.size_final  || j.output_size;
-            j.duration_ms = s.duration_ms || s.time_ms     || j.duration_ms;
-            j.task_arn    = s.task_arn    || s.ecs_task_arn|| s.container_id || j.task_arn;
-
-            // if backend returns last error (e.g., GDAL STDERR), surface it
-            if (s.error || s.errorMessage) j.error = s.error || s.errorMessage;
-
-            // add logs URL if we learned task arn later
-            if (!j.logsUrl && j.task_arn) j.logsUrl = cloudWatchTaskUrl(j.task_arn);
-
-            if (st==='SUCCEEDED' || st==='COMPLETED') j.percent = 100;
-          }catch(e){
-            // keep polling but show a single-line error
-            showError(`status-progress ${j.jobId}: ${e.message||e}`);
-          }
-        }
-        renderJobs();
-        if(jobs.length>0 && jobs.every(x => ['SUCCEEDED','COMPLETED','FAILED','CANCELLED'].includes((x.status||'').toUpperCase()))){
-          clearInterval(pollTimer); pollTimer=null; logLine('All jobs finished.');
-        }
-      },1500);
+    // ====== SELF-TESTS (lightweight) ======
+    function selfTests(){
+      try {
+        console.assert(window.API_BASE && window.API_BASE.startsWith('http'), 'API_BASE must be an http(s) URL');
+        const testUrl = cloudWatchLambdaUrl('self-test-job');
+        console.assert(testUrl.includes(encodeURIComponent(LOG_GROUP)), 'CloudWatch URL must include log group');
+        logln('Self-test ✅ configuration OK');
+      } catch(e){ errln('Self-test failed: '+ e.message); }
     }
 
-    // ===== Wire up =====
-    $('btnRefresh').addEventListener('click', (e)=>{ e.preventDefault(); listObjects(); });
-    $('btnConvert').addEventListener('click', (e)=>{ e.preventDefault(); doConvert(); });
-    $('btnDiag').addEventListener('click', async (e)=>{
-      e.preventDefault();
-      logLine('Running connectivity diagnostics…');
-      $('originTxt').textContent = location.origin;
-      $('apiBaseTxt').textContent = window.API_BASE;
-      try{ await getJSON(`${window.API_BASE}/list-input?bucket=${encodeURIComponent(INPUT_BUCKET)}`); logLine('GET /list-input: OK'); }catch{ logLine('GET /list-input: FAILED'); }
-      try{ await fetch(`${window.API_BASE}/list-input`,{method:'OPTIONS',mode:'cors',headers:{'Access-Control-Request-Method':'GET','Origin':location.origin}}); logLine('OPTIONS /list-input: attempted (check CORS)'); }catch{ logLine('OPTIONS /list-input: FAILED (CORS blocked)'); }
-      try{ await postJSON(`${window.API_BASE}/convert`,{_diag:true}); logLine('POST /convert: OK (diag)'); }catch{ logLine('POST /convert: FAILED'); }
-      try{ await getJSON(`${window.API_BASE}/status-progress?jobId=diag`); logLine('GET /status-progress: OK'); }catch{ logLine('GET /status-progress: FAILED'); }
-      logLine('Diagnostics complete. Check Errors panel for details.');
-    });
+    // ====== WIRE UP ======
+    $('btnRefresh').addEventListener('click', listInput);
+    $('btnApplyFilter').addEventListener('click', listInput);
+    $('btnConvert').addEventListener('click', doConvert);
+    $('btnDiag').addEventListener('click', runDiagnostics);
+    $('btnLogsStart').addEventListener('click', startLogTail);
+    $('btnLogsStop').addEventListener('click', stopLogTail);
 
-    // initial load
-    $('originTxt').textContent = location.origin;
-    $('apiBaseTxt').textContent = window.API_BASE;
-    bindFilters();
-    listObjects();
+    // Init UI
+    (function init(){ listInput(); setText('inBucketLbl', INPUT_BUCKET); setText('outBucketLbl', OUTPUT_BUCKET); selfTests(); })();
   </script>
 </body>
 </html>

@@ -301,6 +301,26 @@ class ServerlessJp2Stack(Stack):
             resources=[unite_state_machine.state_machine_arn]
         ))
 
+        # ---------------- Convert Logs Lambda (NEW) ----------------
+        convert_logs_fn = _lambda.Function(
+            self, "ConvertLogsFn",
+            runtime=_lambda.Runtime.PYTHON_3_11,
+            handler="lambda_logs_fetch.handler",
+            code=_lambda.Code.from_asset(lambda_code_dir),
+            timeout=Duration.seconds(10),
+            memory_size=256,
+            environment={
+                # exact group used by ConvertFn
+                "LOG_GROUP_CONVERT": "/aws/lambda/ServerlessJp2-ConvertFnCAE452AA-9tlDFDo18tN3"
+            },
+        )
+        convert_logs_fn.add_to_role_policy(iam.PolicyStatement(
+            actions=["logs:FilterLogEvents"],
+            resources=[
+                "arn:aws:logs:us-east-1:991105135552:log-group:/aws/lambda/ServerlessJp2-ConvertFnCAE452AA-9tlDFDo18tN3:*"
+            ],
+        ))
+
         # ---------------- HTTP API ----------------
         http_api = apigw.HttpApi(
             self, "HttpApi",
@@ -321,12 +341,16 @@ class ServerlessJp2Stack(Stack):
         convert_integ     = apigw_int.HttpLambdaIntegration("ConvertIntegration", handler=convert_fn)
         split_integ       = apigw_int.HttpLambdaIntegration("SplitIntegration", handler=split_controller_fn)
         unite_integ       = apigw_int.HttpLambdaIntegration("UniteIntegration", handler=unite_controller_fn)
+        # NEW: logs integration
+        convert_logs_integ = apigw_int.HttpLambdaIntegration("ConvertLogsIntegration", handler=convert_logs_fn)
 
-        http_api.add_routes(path="/list-input",  methods=[apigw.HttpMethod.GET],  integration=list_input_integ)
-        http_api.add_routes(path="/list-output", methods=[apigw.HttpMethod.GET],  integration=list_output_integ)
-        http_api.add_routes(path="/convert",     methods=[apigw.HttpMethod.POST], integration=convert_integ)
-        http_api.add_routes(path="/split",       methods=[apigw.HttpMethod.POST], integration=split_integ)
-        http_api.add_routes(path="/unite",       methods=[apigw.HttpMethod.POST], integration=unite_integ)
+        http_api.add_routes(path="/list-input",   methods=[apigw.HttpMethod.GET],  integration=list_input_integ)
+        http_api.add_routes(path="/list-output",  methods=[apigw.HttpMethod.GET],  integration=list_output_integ)
+        http_api.add_routes(path="/convert",      methods=[apigw.HttpMethod.POST], integration=convert_integ)
+        http_api.add_routes(path="/split",        methods=[apigw.HttpMethod.POST], integration=split_integ)
+        http_api.add_routes(path="/unite",        methods=[apigw.HttpMethod.POST], integration=unite_integ)
+        # NEW: expose the logs tail route (supports GET + preflight OPTIONS)
+        http_api.add_routes(path="/convert/logs", methods=[apigw.HttpMethod.GET, apigw.HttpMethod.OPTIONS], integration=convert_logs_integ)
 
         # ---------------- File Manager Lambdas ----------------
         fm_env = {"INPUT_BUCKET": input_bucket.bucket_name, "OUTPUT_BUCKET": output_bucket.bucket_name}
@@ -432,3 +456,5 @@ class ServerlessJp2Stack(Stack):
         CfnOutput(self, "UniteStateMachineArn", value=unite_state_machine.state_machine_arn)
         CfnOutput(self, "StatusProgressRoute", value=f"{http_api.api_endpoint}/status-progress")
         CfnOutput(self, "StatusHistoryRoute", value=f"{http_api.api_endpoint}/status-history/{{jobId}}")
+        # NEW:
+        CfnOutput(self, "ConvertLogsRoute", value=f"{http_api.api_endpoint}/convert/logs")
