@@ -12,6 +12,7 @@ from aws_cdk import (
     aws_stepfunctions as sfn,
     aws_stepfunctions_tasks as tasks,
 )
+from aws_cdk import aws_s3_notifications as s3n  # <-- minimal addition
 from constructs import Construct
 import os
 
@@ -323,7 +324,7 @@ class ServerlessJp2Stack(Stack):
         rsjson_fn = _lambda.Function(
             self, "RsJsonFinalizeFn",
             runtime=_lambda.Runtime.PYTHON_3_11,
-            handler="lambda_envi_to_rsjson.handler",
+            handler="lambda_envi_to_rawjson.handler",  # <-- minimal change (new handler)
             code=_lambda.Code.from_asset(lambda_code_dir),
             timeout=Duration.minutes(2),
             memory_size=512,
@@ -339,6 +340,13 @@ class ServerlessJp2Stack(Stack):
             actions=["s3:GetObject","s3:PutObject","s3:CopyObject","s3:DeleteObject"],
             resources=[output_bucket.arn_for_objects("*")]
         ))
+
+        # Auto-finalize: trigger on creation of any ENVI .bin in the OUTPUT bucket
+        output_bucket.add_event_notification(
+            s3.EventType.OBJECT_CREATED,
+            s3n.LambdaDestination(rsjson_fn),        # <-- minimal addition (S3 trigger)
+            s3.NotificationKeyFilter(suffix=".bin"),
+        )
 
         # Allow convert to invoke finalizer if desired
         convert_fn.add_to_role_policy(iam.PolicyStatement(
