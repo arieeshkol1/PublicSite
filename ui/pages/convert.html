@@ -29,7 +29,6 @@
     .pill.err { background:#2a1113; color:#ff7b84; }
     .pill.warn { background:#3a2a0e; color:#ffd27a; }
     pre.well { background:#0b1220; border:1px solid #23304d; border-radius:12px; padding:10px; }
-    /* Roomier on-page log/diag areas */
     #diagLog, #errorsBox, #liveLogsArea, pre.well.mono { max-height: 420px; overflow:auto; }
     .links a { color:var(--accent); text-decoration:none; margin-right:12px; }
     .links a:hover { text-decoration:underline; }
@@ -42,7 +41,7 @@
     <div class="grid">
       <!-- LEFT: Input / Convert controls -->
       <div class="card">
-        <h2>1) Select Source & Configure</h2>
+        <h2>1) Select file type</h2>
         <div class="row" style="margin-bottom:8px;">
           <span class="muted">Buckets</span>
           <span class="tag mono">Input: <span id="inBucketLbl">—</span></span>
@@ -51,11 +50,10 @@
         </div>
         <div class="row" style="margin-bottom:8px;">
           <input id="prefix" class="mono" placeholder="Prefix filter (e.g., input/)" style="min-width:280px;"/>
-          <select id="fileType">
-            <option value=".jp2" selected>JP2</option>
-            <option value=".tif">TIFF</option>
-            <option value=".tiff">TIFF (.tiff)</option>
-            <option value=".bin">RAW (.bin)</option>
+          <select id="fileType" title="Select file type to list">
+            <option value="jp2" selected>JP2 files</option>
+            <option value="tif">Tif files</option>
+            <option value="raw">Raw files (.raw + .json)</option>
           </select>
           <button class="btn" id="btnApplyFilter">Apply</button>
         </div>
@@ -150,7 +148,6 @@
     // Correct ECS log group (as requested)
     const REGION = 'us-east-1';
     const LOG_GROUP = '/ecs/tsg-jp2-tiler';
-    // Optional: if your org uses an account-scoped console host, set it at runtime, e.g.:
     window.AWS_CONSOLE_HOST = "991105135552-r7h5rngs.us-east-1.console.aws.amazon.com";
 
     // ====== HELPERS ======
@@ -159,18 +156,16 @@
     function humanSize(n){ if(n==null) return '—'; const kb=1024, mb=kb*1024, gb=mb*1024; if(n>=gb) return (n/gb).toFixed(2)+' GB'; if(n>=mb) return (n/mb).toFixed(2)+' MB'; if(n>=kb) return (n/kb).toFixed(2)+' KB'; return n+' B'; }
     function nowIso(){ return new Date().toISOString(); }
 
-    // CloudWatch Lambda console URL for this group, filtered by jobId
     function cloudWatchLambdaUrl(jobId){
       const host = (window.AWS_CONSOLE_HOST && typeof window.AWS_CONSOLE_HOST === 'string')
         ? window.AWS_CONSOLE_HOST
         : `${REGION}.console.aws.amazon.com`;
-      const groupEnc = encodeURIComponent(LOG_GROUP); // %2Faws%2Flambda%2F...
+      const groupEnc = encodeURIComponent(LOG_GROUP);
       const filter = jobId ? `?filterPattern=${encodeURIComponent(jobId)}` : '';
       const url = `https://${host}/cloudwatch/home?region=${REGION}#logsV2:log-groups/log-group/${groupEnc}/log-events${filter}`;
       return url;
     }
 
-    // Robust JSON fetch that prints readable error text if backend returns HTML
     async function getJSON(url){
       const r = await fetch(url);
       const text = await r.text();
@@ -184,9 +179,18 @@
     // ====== STATE ======
     let selectedKey = null;
     let jobId = null;
-    let tilesTotal = 1; // always 1 tile per requirement
+    let tilesTotal = 1;
     let pollTimer = null;
     let logsTimer = null;
+
+    // Match file type per selection
+    function matchType(key, type){
+      key = String(key||'').toLowerCase();
+      if(type === 'jp2') return /\.jp2$/.test(key);
+      if(type === 'tif') return /\.(tif|tiff)$/.test(key);
+      if(type === 'raw') return /\.(raw|json)$/.test(key);
+      return true;
+    }
 
     // ====== INPUT LIST ======
     async function listInput(){
@@ -197,7 +201,7 @@
       const type = $('fileType').value;
       try{
         const j = await getJSON(`${window.API_BASE}/list-input?bucket=${encodeURIComponent(INPUT_BUCKET)}${prefix?`&prefix=${encodeURIComponent(prefix)}`:''}`);
-        const items = (j.objects||[]).filter(o => String(o.key||'').toLowerCase().endsWith(type));
+        const items = (j.objects||[]).filter(o => matchType(o.key, type));
         if(!items.length){ $('inputTbody').innerHTML = '<tr><td colspan="3" class="muted">No matching objects</td></tr>'; return; }
         $('inputTbody').innerHTML = items.map(o => `
           <tr>
@@ -226,8 +230,6 @@
     function renderFiles(objs){
       const out = $('filesLive'); if(!out) return;
       if(!objs || !objs.length){ out.textContent = '—'; return; }
-      // include RAW (.bin) and its .hdr/.json sidecars
-      const rx = /(\d+)\.(?:jp2|tif|tiff|bin|hdr|json|rs)$/i;
       const lines = objs.slice().sort((a,b)=>{
         const ak=String(a.key||''), bk=String(b.key||'');
         const am=ak.match(/_(\d+)\./), bm=bk.match(/_(\d+)\./);
@@ -243,12 +245,11 @@
       if(!selectedKey){ errln('No file selected'); return; }
       const fmtSel = $('fmt');
       const formatOption = (fmtSel && fmtSel.value) ? fmtSel.value : 'tiff';
-      tilesTotal = 1; // force 1 tile
+      tilesTotal = 1;
 
       $('btnConvert').disabled = true;
       setText('jobId','—'); $('barFill').style.width = '0%'; $('filesLive').textContent = '—';
 
-      // Request body supports both new and legacy fields (backend can ignore extras)
       const body = {
         keys: [ selectedKey ],
         tiles: tilesTotal,
@@ -268,12 +269,10 @@
         let j; try { j = JSON.parse(text); } catch { throw new Error(`Bad JSON from /convert: ${text.slice(0,180).replace(/\s+/g,' ')}`); }
         if(!r.ok){ throw new Error(j.error || j.message || 'convert failed'); }
 
-        // Normalize various possible shapes { job_id, items:[{taskArn}] }
         jobId = j.job_id || j.jobId || j.id || (j.items && j.items[0] && (j.items[0].jobId || j.items[0].job_id));
-        if(!jobId) jobId = `job-${Date.now()}`; // fallback
+        if(!jobId) jobId = `job-${Date.now()}`;
         setText('jobId', jobId);
 
-        // Point the Logs link to the Lambda ConvertFn log group, filtered by jobId
         const logsA = $('linkLogs');
         logsA.href = cloudWatchLambdaUrl(jobId);
         logsA.style.display = 'inline-block';
@@ -281,7 +280,6 @@
 
         logln(`Convert started for ${selectedKey} — jobId=${jobId}`);
         startPolling();
-        // Auto-fill embedded logs filter
         const f = $('jobIdFilter'); if(f) f.value = jobId;
       } catch(e){ errln(`convert error: ${e.message}`); }
       finally { $('btnConvert').disabled = false; }
@@ -308,28 +306,24 @@
       status.className = 'pill warn'; status.textContent = 'Running…';
       try{
         const prefix = $('prefix').value.trim();
-        // GET list-input
         await getJSON(`${window.API_BASE}/list-input?bucket=${encodeURIComponent(INPUT_BUCKET)}${prefix?`&prefix=${encodeURIComponent(prefix)}`:''}`);
         logln('GET /list-input ✅');
-        // OPTIONS list-input (CORS preflight)
         await fetch(`${window.API_BASE}/list-input`, { method:'OPTIONS' });
         logln('OPTIONS /list-input ✅');
-        // POST /convert (smoke)
         const smoke = { _diag:true, inputBucket: INPUT_BUCKET, inputKey: selectedKey || 'input/placeholder.jp2', outputBucket: OUTPUT_BUCKET, tiles: 1, target_format: 'TIFF' };
         const r = await fetch(`${window.API_BASE}/convert`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(smoke) });
         logln(`POST /convert → ${r.status} ${r.ok?'OK':'ERR'}`);
-        // NEW: test /convert/logs CORS + reachability (if backend exists)
         try{
           const opt = await fetch(`${window.API_BASE}/convert/logs`, { method:'OPTIONS' });
           logln(`OPTIONS /convert/logs → ${opt.status} ${opt.ok?'OK':'ERR'}`);
           const test = await fetch(`${window.API_BASE}/convert/logs?sinceSec=60&limit=1`);
           logln(`GET /convert/logs → ${test.status} ${test.ok?'OK':'ERR'}`);
-        }catch(_){ /* ignore if route not deployed */ }
+        }catch(_){ /* optional */ }
         status.className = 'pill ok'; status.textContent = 'OK';
       }catch(e){ status.className='pill err'; status.textContent='Error'; errln(e.message); }
     }
 
-    // ====== EMBEDDED LAMBDA LOGS (Optional backend) ======
+    // ====== EMBEDDED LAMBDA LOGS ======
     async function fetchConvertLogs(){
       const jobFilter = $('jobIdFilter').value.trim();
       const url = `${window.API_BASE}/convert/logs?sinceSec=1800&limit=400${jobFilter?`&q=${encodeURIComponent(jobFilter)}`:''}`;
@@ -344,7 +338,6 @@
           area.scrollTop = area.scrollHeight;
         } else { area.textContent = 'No data'; }
       }catch(e){
-        // Common in browsers when CORS is missing -> TypeError: Failed to fetch
         area.textContent = (String(e).includes('Failed to fetch'))
           ? 'Error: Failed to fetch. Likely CORS is not enabled on /convert/logs or the route is unreachable.'
           : `Error: ${e.message}`;
@@ -353,14 +346,13 @@
     function startLogTail(){ stopLogTail(); fetchConvertLogs(); logsTimer = setInterval(fetchConvertLogs, 4000); }
     function stopLogTail(){ if(logsTimer){ clearInterval(logsTimer); logsTimer=null; } }
 
-    // ====== SELF-TESTS (lightweight) ======
+    // ====== SELF-TESTS ======
     function selfTests(){
       try {
         console.assert(window.API_BASE && window.API_BASE.startsWith('http'), 'API_BASE must be an http(s) URL');
         const u0 = cloudWatchLambdaUrl('self-test-job');
         console.assert(u0.includes(encodeURIComponent(LOG_GROUP)), 'CloudWatch URL must include log group');
         console.assert(u0.startsWith('https://'), 'CloudWatch URL must be https');
-        // Additional test: when no jobId, URL must not contain filterPattern
         const u1 = cloudWatchLambdaUrl('');
         console.assert(!u1.includes('filterPattern='), 'URL without jobId should not contain filterPattern');
         logln('Self-test ✅ configuration OK');
@@ -375,7 +367,6 @@
     $('btnLogsStart').addEventListener('click', startLogTail);
     $('btnLogsStop').addEventListener('click', stopLogTail);
 
-    // Init UI
     (function init(){ listInput(); setText('inBucketLbl', INPUT_BUCKET); setText('outBucketLbl', OUTPUT_BUCKET); selfTests(); })();
   </script>
 </body>
