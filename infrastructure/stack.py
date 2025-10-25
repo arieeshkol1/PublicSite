@@ -12,7 +12,7 @@ from aws_cdk import (
     aws_stepfunctions as sfn,
     aws_stepfunctions_tasks as tasks,
 )
-from aws_cdk import aws_s3_notifications as s3n  # <-- minimal addition
+from aws_cdk import aws_s3_notifications as s3n
 from constructs import Construct
 import os
 
@@ -82,7 +82,7 @@ class ServerlessJp2Stack(Stack):
             resources=[output_bucket.bucket_arn, output_bucket.arn_for_objects("*")]
         ))
 
-        # ---------------- ECS / Fargate (Tiler) ----------------
+        # ---------------- ECS / Fargate (Cluster & Logs) ----------------
         vpc = ec2.Vpc.from_lookup(self, "Vpc", is_default=True)
         cluster = ecs.Cluster(self, "TilerCluster", vpc=vpc)
 
@@ -92,6 +92,7 @@ class ServerlessJp2Stack(Stack):
             retention=logs.RetentionDays.ONE_MONTH
         )
 
+        # ---------------- Common Roles ----------------
         tiler_task_role = iam.Role(
             self, "TilerTaskRole",
             assumed_by=iam.ServicePrincipal("ecs-tasks.amazonaws.com")
@@ -105,6 +106,7 @@ class ServerlessJp2Stack(Stack):
             resources=[output_bucket.bucket_arn, output_bucket.arn_for_objects("*")]
         ))
 
+        # ---------------- BASE TaskDef (used by split/unite; leave as-is) ----------------
         tiler_taskdef = ecs.FargateTaskDefinition(
             self, "TilerTaskDef",
             cpu=1024,
@@ -127,10 +129,39 @@ class ServerlessJp2Stack(Stack):
             essential=True,
             logging=ecs.LogDriver.aws_logs(stream_prefix="tiler", log_group=tiler_logs),
             environment={
-                # predictor-safe
+                # safe defaults for split/unite path (unchanged behavior)
                 "CREATE_OPTS": "TILED=YES,BIGTIFF=IF_SAFER,COMPRESS=LZW,PREDICTOR=1",
                 "PREDICTOR_POLICY": "FORCE_1",
                 "TIFF_FORCE_16BIT": "true",
+            }
+        )
+
+        # ---------------- Dedicated TaskDef for CONVERT (safe TIFF) ----------------
+        convert_taskdef = ecs.FargateTaskDefinition(
+            self, "ConvertTaskDef",
+            cpu=1024,
+            memory_limit_mib=2048,
+            runtime_platform=ecs.RuntimePlatform(
+                cpu_architecture=ecs.CpuArchitecture.X86_64
+            ),
+            task_role=tiler_task_role  # reuse same role/policies
+        )
+
+        convert_taskdef.add_container(
+            "converter",
+            image=ecs.ContainerImage.from_registry(tiler_image_uri),
+            essential=True,
+            logging=ecs.LogDriver.aws_logs(stream_prefix="converter", log_group=tiler_logs),
+            environment={
+                # FORCE SAFE TIFF for conversion path to avoid Predictor=2 issue on NBITS!=8/16/32/64
+                # NBITS=16 + Predictor=1 → valid for all inputs (even NBITS=15 sources)
+                "CREATE_OPTS": "TILED=YES,BIGTIFF=IF_SAFER,COMPRESS=LZW,NBITS=16,PREDICTOR=1",
+                "PREDICTOR_POLICY": "FORCE_1",
+                "TIFF_FORCE_16BIT": "true",
+                # Optional hints if the container honors them:
+                "GDAL_NUM_THREADS": "ALL_CPUS",
+                "GDAL_CACHEMAX": "512",  # MB
+                "MODE": "convert"
             }
         )
 
@@ -149,12 +180,13 @@ class ServerlessJp2Stack(Stack):
                 "INPUT_BUCKET": input_bucket.bucket_name,
                 "OUTPUT_BUCKET": output_bucket.bucket_name,
                 "ECS_CLUSTER_ARN": cluster.cluster_arn,
-                "TASK_DEF_ARN": tiler_taskdef.task_definition_arn,
+                # IMPORTANT: use the dedicated Convert task def
+                "TASK_DEF_ARN": convert_taskdef.task_definition_arn,
                 "SUBNET_IDS": ",".join(public_subnet_ids),
                 "SECURITY_GROUP_ID": tiler_sg.security_group_id,
                 "ASSIGN_PUBLIC_IP": "ENABLED",
-                # predictor-safe
-                "CREATE_OPTS": "TILED=YES,BIGTIFF=IF_SAFER,COMPRESS=LZW,PREDICTOR=1",
+                # predictor-safe envs (in case the launcher forwards them as overrides too)
+                "CREATE_OPTS": "TILED=YES,BIGTIFF=IF_SAFER,COMPRESS=LZW,NBITS=16,PREDICTOR=1",
                 "PREDICTOR_POLICY": "FORCE_1",
                 "TIFF_FORCE_16BIT": "true",
             },
@@ -173,8 +205,7 @@ class ServerlessJp2Stack(Stack):
             resources=[output_bucket.bucket_arn, output_bucket.arn_for_objects("*")]
         ))
 
-        # ---------------- Split/Unite State Machines (unchanged structure) ----------------
-        # Split via ECS
+        # ---------------- Split/Unite State Machines (UNCHANGED) ----------------
         split_task = tasks.EcsRunTask(
             self, "RunSplitOnFargate",
             cluster=cluster,
@@ -194,7 +225,6 @@ class ServerlessJp2Stack(Stack):
                     tasks.TaskEnvironmentVariable(name="TILES_TOTAL",   value=sfn.JsonPath.string_at("$.params.tilesTotal")),
                     tasks.TaskEnvironmentVariable(name="TILES_GRID",    value=sfn.JsonPath.string_at("$.params.tilesGrid")),
                     tasks.TaskEnvironmentVariable(name="JOB_ID",        value=sfn.JsonPath.string_at("$.jobId")),
-                    # predictor-safe
                     tasks.TaskEnvironmentVariable(name="CREATE_OPTS",   value="TILED=YES,BIGTIFF=IF_SAFER,COMPRESS=LZW,PREDICTOR=1"),
                     tasks.TaskEnvironmentVariable(name="PREDICTOR_POLICY", value="FORCE_1"),
                     tasks.TaskEnvironmentVariable(name="TIFF_FORCE_16BIT", value="true"),
@@ -238,7 +268,6 @@ class ServerlessJp2Stack(Stack):
             resources=[split_state_machine.state_machine_arn]
         ))
 
-        # Unite via ECS
         unite_task = tasks.EcsRunTask(
             self, "RunUniteOnFargate",
             cluster=cluster,
@@ -257,7 +286,6 @@ class ServerlessJp2Stack(Stack):
                     tasks.TaskEnvironmentVariable(name="OUTPUT_BUCKET", value=sfn.JsonPath.string_at("$.outputBucket")),
                     tasks.TaskEnvironmentVariable(name="FINAL_KEY",     value=sfn.JsonPath.string_at("$.finalKey")),
                     tasks.TaskEnvironmentVariable(name="FORMAT_OPTION", value=sfn.JsonPath.string_at("$.formatOption")),
-                    # predictor-safe
                     tasks.TaskEnvironmentVariable(name="CREATE_OPTS",   value="TILED=YES,BIGTIFF=IF_SAFER,COMPRESS=LZW,PREDICTOR=1"),
                     tasks.TaskEnvironmentVariable(name="PREDICTOR_POLICY", value="FORCE_1"),
                     tasks.TaskEnvironmentVariable(name="TIFF_FORCE_16BIT", value="true"),
@@ -320,11 +348,11 @@ class ServerlessJp2Stack(Stack):
             ],
         ))
 
-        # ---------------- RAW/JSON Finalizer Lambda (ENVI .bin+.hdr -> .raw + .json) ----------------
+        # ---------------- RAW/JSON Finalizer Lambda ----------------
         rsjson_fn = _lambda.Function(
             self, "RsJsonFinalizeFn",
             runtime=_lambda.Runtime.PYTHON_3_11,
-            handler="lambda_envi_to_rawjson.handler",  # <-- minimal change (new handler)
+            handler="lambda_envi_to_rawjson.handler",
             code=_lambda.Code.from_asset(lambda_code_dir),
             timeout=Duration.minutes(2),
             memory_size=512,
@@ -341,14 +369,12 @@ class ServerlessJp2Stack(Stack):
             resources=[output_bucket.arn_for_objects("*")]
         ))
 
-        # Auto-finalize: trigger on creation of any ENVI .bin in the OUTPUT bucket
         output_bucket.add_event_notification(
             s3.EventType.OBJECT_CREATED,
-            s3n.LambdaDestination(rsjson_fn),        # <-- minimal addition (S3 trigger)
+            s3n.LambdaDestination(rsjson_fn),
             s3.NotificationKeyFilter(suffix=".bin"),
         )
 
-        # Allow convert to invoke finalizer if desired
         convert_fn.add_to_role_policy(iam.PolicyStatement(
             actions=["lambda:InvokeFunction"],
             resources=[rsjson_fn.function_arn]
@@ -483,6 +509,7 @@ class ServerlessJp2Stack(Stack):
         CfnOutput(self, "ApiEndpoint", value=http_api.api_endpoint)
         CfnOutput(self, "EcsClusterArn", value=cluster.cluster_arn)
         CfnOutput(self, "TilerTaskDefArn", value=tiler_taskdef.task_definition_arn)
+        CfnOutput(self, "ConvertTaskDefArn", value=convert_taskdef.task_definition_arn)
         CfnOutput(self, "SplitStateMachineArn", value=split_state_machine.state_machine_arn)
         CfnOutput(self, "UniteStateMachineArn", value=unite_state_machine.state_machine_arn)
         CfnOutput(self, "StatusProgressRoute", value=f"{http_api.api_endpoint}/status-progress")
