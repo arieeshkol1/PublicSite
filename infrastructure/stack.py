@@ -101,8 +101,9 @@ class ServerlessJp2Stack(Stack):
             actions=["s3:GetObject", "s3:ListBucket"],
             resources=[input_bucket.bucket_arn, input_bucket.arn_for_objects("*")]
         ))
+        # ADD s3:GetObject for output (fix 403 on Head/Get)
         tiler_task_role.add_to_policy(iam.PolicyStatement(
-            actions=["s3:PutObject", "s3:AbortMultipartUpload", "s3:ListBucket"],
+            actions=["s3:GetObject", "s3:PutObject", "s3:AbortMultipartUpload", "s3:ListBucket"],
             resources=[output_bucket.bucket_arn, output_bucket.arn_for_objects("*")]
         ))
 
@@ -128,7 +129,7 @@ class ServerlessJp2Stack(Stack):
             essential=True,
             logging=ecs.LogDriver.aws_logs(stream_prefix="tiler", log_group=tiler_logs),
             environment={
-                # Safe defaults for all modes; container may still override internally
+                # Safe defaults (conversion honors these; split/unite unchanged)
                 "CREATE_OPTS": "TILED=YES,BIGTIFF=IF_SAFER,COMPRESS=LZW,NBITS=16,PREDICTOR=1",
                 "PREDICTOR_POLICY": "FORCE_1",
                 "TIFF_FORCE_16BIT": "true",
@@ -136,7 +137,7 @@ class ServerlessJp2Stack(Stack):
             }
         )
 
-        # Dedicated Convert TaskDef (same container name "tiler", to avoid override errors)
+        # Dedicated Convert TaskDef (same container name "tiler", isolates convert env)
         convert_taskdef = ecs.FargateTaskDefinition(
             self, "ConvertTaskDef",
             cpu=1024,
@@ -150,7 +151,6 @@ class ServerlessJp2Stack(Stack):
             essential=True,
             logging=ecs.LogDriver.aws_logs(stream_prefix="converter", log_group=tiler_logs),
             environment={
-                # Stronger convert-only safety (container reads env even if it ignores some):
                 "MODE": "convert",
                 "CREATE_OPTS": "TILED=YES,BIGTIFF=IF_SAFER,COMPRESS=LZW,NBITS=16,PREDICTOR=1",
                 "PREDICTOR_POLICY": "FORCE_1",
@@ -160,6 +160,32 @@ class ServerlessJp2Stack(Stack):
                 "GDAL_CACHEMAX": "512",
             }
         )
+
+        # ----- ECR PULL PERMISSIONS on EXECUTION ROLES (fix GetAuthorizationToken AccessDenied) -----
+        # Compute repo ARN from image URI
+        repo_name = tiler_image_uri.split("/", 1)[1].split(":")[0]
+        repo_arn = f"arn:aws:ecr:{region}:{account}:repository/{repo_name}"
+
+        exec_role_base = tiler_taskdef.obtain_execution_role()
+        exec_role_conv = convert_taskdef.obtain_execution_role()
+        for exec_role in (exec_role_base, exec_role_conv):
+            # standard managed policy for execution roles
+            exec_role.add_managed_policy(
+                iam.ManagedPolicy.from_aws_managed_policy_name("AmazonECSTaskExecutionRolePolicy")
+            )
+            # explicit ECR pulls (token + repo read)
+            exec_role.add_to_policy(iam.PolicyStatement(
+                actions=["ecr:GetAuthorizationToken"],
+                resources=["*"]
+            ))
+            exec_role.add_to_policy(iam.PolicyStatement(
+                actions=[
+                    "ecr:BatchCheckLayerAvailability",
+                    "ecr:BatchGetImage",
+                    "ecr:GetDownloadUrlForLayer",
+                ],
+                resources=[repo_arn]
+            ))
 
         tiler_sg = ec2.SecurityGroup(self, "TilerTaskSG", vpc=vpc, allow_all_outbound=True)
         public_subnet_ids = [s.subnet_id for s in vpc.public_subnets]
@@ -176,12 +202,10 @@ class ServerlessJp2Stack(Stack):
                 "INPUT_BUCKET": input_bucket.bucket_name,
                 "OUTPUT_BUCKET": output_bucket.bucket_name,
                 "ECS_CLUSTER_ARN": cluster.cluster_arn,
-                # Use dedicated ConvertTaskDef to isolate from split/unite and push safe env
-                "TASK_DEF_ARN": convert_taskdef.task_definition_arn,
+                "TASK_DEF_ARN": convert_taskdef.task_definition_arn,  # use dedicated convert TD
                 "SUBNET_IDS": ",".join(public_subnet_ids),
                 "SECURITY_GROUP_ID": tiler_sg.security_group_id,
                 "ASSIGN_PUBLIC_IP": "ENABLED",
-                # Echo safe env (launcher may pass overrides)
                 "CREATE_OPTS": "TILED=YES,BIGTIFF=IF_SAFER,COMPRESS=LZW,NBITS=16,PREDICTOR=1",
                 "PREDICTOR_POLICY": "FORCE_1",
                 "TIFF_FORCE_16BIT": "true",
@@ -189,18 +213,17 @@ class ServerlessJp2Stack(Stack):
                 "MODE": "convert",
             },
         )
-        # ECS permissions
         convert_fn.add_to_role_policy(iam.PolicyStatement(
             actions=["ecs:RunTask", "ecs:DescribeTasks"],
             resources=["*"]
         ))
-        # Allow PassRole for TASK ROLE
+        # Pass TASK ROLE
         convert_fn.add_to_role_policy(iam.PolicyStatement(
             actions=["iam:PassRole"],
             resources=[tiler_task_role.role_arn],
             conditions={"StringEquals": {"iam:PassedToService": "ecs-tasks.amazonaws.com"}}
         ))
-        # Allow PassRole for EXECUTION ROLE of ConvertTaskDef (required)
+        # Pass EXECUTION ROLE (convert taskdef)
         convert_exec_role = convert_taskdef.obtain_execution_role()
         convert_fn.add_to_role_policy(iam.PolicyStatement(
             actions=["iam:PassRole"],
@@ -252,9 +275,17 @@ class ServerlessJp2Stack(Stack):
             actions=["ecs:RunTask", "ecs:DescribeTasks"],
             resources=[tiler_taskdef.task_definition_arn]
         ))
+        # Pass TASK ROLE
         split_state_machine.add_to_role_policy(iam.PolicyStatement(
             actions=["iam:PassRole"],
             resources=[tiler_task_role.role_arn],
+            conditions={"StringEquals": {"iam:PassedToService": "ecs-tasks.amazonaws.com"}}
+        ))
+        # PASS EXECUTION ROLE (base taskdef)  <-- needed for ECS to pull image
+        split_exec_role = tiler_taskdef.obtain_execution_role()
+        split_state_machine.add_to_role_policy(iam.PolicyStatement(
+            actions=["iam:PassRole"],
+            resources=[split_exec_role.role_arn],
             conditions={"StringEquals": {"iam:PassedToService": "ecs-tasks.amazonaws.com"}}
         ))
 
@@ -313,9 +344,17 @@ class ServerlessJp2Stack(Stack):
             actions=["ecs:RunTask", "ecs:DescribeTasks"],
             resources=[tiler_taskdef.task_definition_arn]
         ))
+        # Pass TASK ROLE
         unite_state_machine.add_to_role_policy(iam.PolicyStatement(
             actions=["iam:PassRole"],
             resources=[tiler_task_role.role_arn],
+            conditions={"StringEquals": {"iam:PassedToService": "ecs-tasks.amazonaws.com"}}
+        ))
+        # PASS EXECUTION ROLE (base taskdef)
+        unite_exec_role = tiler_taskdef.obtain_execution_role()
+        unite_state_machine.add_to_role_policy(iam.PolicyStatement(
+            actions=["iam:PassRole"],
+            resources=[unite_exec_role.role_arn],
             conditions={"StringEquals": {"iam:PassedToService": "ecs-tasks.amazonaws.com"}}
         ))
 
