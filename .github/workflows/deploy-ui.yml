@@ -1,16 +1,18 @@
 name: Deploy UI to S3 (DISABLED)
 
 on:
-  # all triggers disabled
-  push: null
-  pull_request: null
-  workflow_dispatch: null
-  schedule: null
+  # Valid triggers that will never match
+  push:
+    branches-ignore:
+      - '**'
+  pull_request:
+    branches-ignore:
+      - '**'
+  # NOTE: no workflow_dispatch here, so it can't be started manually
 
 jobs:
   disabled:
+    if: ${{ false }}  # second guard; even if triggered, job is skipped
     runs-on: ubuntu-latest
     steps:
-      - name: This workflow is disabled
-        run: |
-          echo "⚠️ The 'Deploy UI to S3' workflow has been disabled and will not run."
+      - run: echo "This workflow is disabled."
