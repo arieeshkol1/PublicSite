@@ -101,7 +101,7 @@ class ServerlessJp2Stack(Stack):
             actions=["s3:GetObject", "s3:ListBucket"],
             resources=[input_bucket.bucket_arn, input_bucket.arn_for_objects("*")]
         ))
-        # ADD s3:GetObject for output (fix 403 on Head/Get)
+        # include GetObject for output (fix 403 on Head/Get)
         tiler_task_role.add_to_policy(iam.PolicyStatement(
             actions=["s3:GetObject", "s3:PutObject", "s3:AbortMultipartUpload", "s3:ListBucket"],
             resources=[output_bucket.bucket_arn, output_bucket.arn_for_objects("*")]
@@ -146,7 +146,7 @@ class ServerlessJp2Stack(Stack):
             task_role=tiler_task_role
         )
         convert_taskdef.add_container(
-            "tiler",  # keep the same name to match containerOverrides in your launcher
+            "tiler",  # must match overrides
             image=ecs.ContainerImage.from_registry(tiler_image_uri),
             essential=True,
             logging=ecs.LogDriver.aws_logs(stream_prefix="converter", log_group=tiler_logs),
@@ -161,30 +161,30 @@ class ServerlessJp2Stack(Stack):
             }
         )
 
-        # ----- ECR PULL PERMISSIONS on EXECUTION ROLES (fix GetAuthorizationToken AccessDenied) -----
-        # Compute repo ARN from image URI
+        # ----- EXECUTION ROLES: Inline perms (no managed policy attach) -----
+        # Repo ARN from the image URI
         repo_name = tiler_image_uri.split("/", 1)[1].split(":")[0]
         repo_arn = f"arn:aws:ecr:{region}:{account}:repository/{repo_name}"
+        # CW Logs ARNs for stream creation/puts
+        log_group_arn = f"arn:aws:logs:{region}:{account}:log-group:/ecs/tsg-jp2-tiler"
+        log_group_wild = f"{log_group_arn}:*"
 
         exec_role_base = tiler_taskdef.obtain_execution_role()
         exec_role_conv = convert_taskdef.obtain_execution_role()
         for exec_role in (exec_role_base, exec_role_conv):
-            # standard managed policy for execution roles
-            exec_role.add_managed_policy(
-                iam.ManagedPolicy.from_aws_managed_policy_name("AmazonECSTaskExecutionRolePolicy")
-            )
-            # explicit ECR pulls (token + repo read)
+            # ECR auth + pull
             exec_role.add_to_policy(iam.PolicyStatement(
                 actions=["ecr:GetAuthorizationToken"],
                 resources=["*"]
             ))
             exec_role.add_to_policy(iam.PolicyStatement(
-                actions=[
-                    "ecr:BatchCheckLayerAvailability",
-                    "ecr:BatchGetImage",
-                    "ecr:GetDownloadUrlForLayer",
-                ],
+                actions=["ecr:BatchCheckLayerAvailability", "ecr:BatchGetImage", "ecr:GetDownloadUrlForLayer"],
                 resources=[repo_arn]
+            ))
+            # CloudWatch Logs (log driver)
+            exec_role.add_to_policy(iam.PolicyStatement(
+                actions=["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents", "logs:DescribeLogStreams"],
+                resources=[log_group_arn, log_group_wild]
             ))
 
         tiler_sg = ec2.SecurityGroup(self, "TilerTaskSG", vpc=vpc, allow_all_outbound=True)
@@ -202,7 +202,7 @@ class ServerlessJp2Stack(Stack):
                 "INPUT_BUCKET": input_bucket.bucket_name,
                 "OUTPUT_BUCKET": output_bucket.bucket_name,
                 "ECS_CLUSTER_ARN": cluster.cluster_arn,
-                "TASK_DEF_ARN": convert_taskdef.task_definition_arn,  # use dedicated convert TD
+                "TASK_DEF_ARN": convert_taskdef.task_definition_arn,  # dedicated convert TD
                 "SUBNET_IDS": ",".join(public_subnet_ids),
                 "SECURITY_GROUP_ID": tiler_sg.security_group_id,
                 "ASSIGN_PUBLIC_IP": "ENABLED",
@@ -230,13 +230,13 @@ class ServerlessJp2Stack(Stack):
             resources=[convert_exec_role.role_arn],
             conditions={"StringEquals": {"iam:PassedToService": "ecs-tasks.amazonaws.com"}}
         ))
-        # S3 read if needed
+        # S3 read if needed by lambda
         convert_fn.add_to_role_policy(iam.PolicyStatement(
             actions=["s3:ListBucket", "s3:GetObject"],
             resources=[output_bucket.bucket_arn, output_bucket.arn_for_objects("*")]
         ))
 
-        # ---------------- Split/Unite State Machines (unchanged behavior) ----------------
+        # ---------------- Split/Unite State Machines (unchanged) ----------------
         split_task = tasks.EcsRunTask(
             self, "RunSplitOnFargate",
             cluster=cluster,
@@ -254,7 +254,7 @@ class ServerlessJp2Stack(Stack):
                     tasks.TaskEnvironmentVariable(name="TILES_TOTAL",   value=sfn.JsonPath.string_at("$.params.tilesTotal")),
                     tasks.TaskEnvironmentVariable(name="TILES_GRID",    value=sfn.JsonPath.string_at("$.params.tilesGrid")),
                     tasks.TaskEnvironmentVariable(name="JOB_ID",        value=sfn.JsonPath.string_at("$.jobId")),
-                    # predictor-safe
+                    # predictor-safe env
                     tasks.TaskEnvironmentVariable(name="CREATE_OPTS",   value="TILED=YES,BIGTIFF=IF_SAFER,COMPRESS=LZW,NBITS=16,PREDICTOR=1"),
                     tasks.TaskEnvironmentVariable(name="PREDICTOR_POLICY", value="FORCE_1"),
                     tasks.TaskEnvironmentVariable(name="TIFF_FORCE_16BIT", value="true"),
@@ -281,7 +281,7 @@ class ServerlessJp2Stack(Stack):
             resources=[tiler_task_role.role_arn],
             conditions={"StringEquals": {"iam:PassedToService": "ecs-tasks.amazonaws.com"}}
         ))
-        # PASS EXECUTION ROLE (base taskdef)  <-- needed for ECS to pull image
+        # Pass EXECUTION ROLE (base taskdef)
         split_exec_role = tiler_taskdef.obtain_execution_role()
         split_state_machine.add_to_role_policy(iam.PolicyStatement(
             actions=["iam:PassRole"],
@@ -323,7 +323,7 @@ class ServerlessJp2Stack(Stack):
                     tasks.TaskEnvironmentVariable(name="OUTPUT_BUCKET", value=sfn.JsonPath.string_at("$.outputBucket")),
                     tasks.TaskEnvironmentVariable(name="FINAL_KEY",     value=sfn.JsonPath.string_at("$.finalKey")),
                     tasks.TaskEnvironmentVariable(name="FORMAT_OPTION", value=sfn.JsonPath.string_at("$.formatOption")),
-                    # predictor-safe
+                    # predictor-safe env
                     tasks.TaskEnvironmentVariable(name="CREATE_OPTS",   value="TILED=YES,BIGTIFF=IF_SAFER,COMPRESS=LZW,NBITS=16,PREDICTOR=1"),
                     tasks.TaskEnvironmentVariable(name="PREDICTOR_POLICY", value="FORCE_1"),
                     tasks.TaskEnvironmentVariable(name="TIFF_FORCE_16BIT", value="true"),
@@ -350,7 +350,7 @@ class ServerlessJp2Stack(Stack):
             resources=[tiler_task_role.role_arn],
             conditions={"StringEquals": {"iam:PassedToService": "ecs-tasks.amazonaws.com"}}
         ))
-        # PASS EXECUTION ROLE (base taskdef)
+        # Pass EXECUTION ROLE (base taskdef)
         unite_exec_role = tiler_taskdef.obtain_execution_role()
         unite_state_machine.add_to_role_policy(iam.PolicyStatement(
             actions=["iam:PassRole"],
@@ -393,7 +393,7 @@ class ServerlessJp2Stack(Stack):
             resources=[f"arn:aws:logs:{region}:{account}:log-group:/ecs/tsg-jp2-tiler:*"],
         ))
 
-        # ---------------- RAW/JSON Finalizer Lambda (ENVI .bin+.hdr -> .raw + .json) ----------------
+        # ---------------- RAW/JSON Finalizer Lambda ----------------
         rsjson_fn = _lambda.Function(
             self, "RsJsonFinalizeFn",
             runtime=_lambda.Runtime.PYTHON_3_11,
