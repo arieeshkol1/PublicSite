@@ -121,16 +121,20 @@ class ServerlessJp2Stack(Stack):
             "edfcf89c0236c949848d9ccd83d731a69fd6fc85308fa3d3a3313ea50b05a526"
         )
 
+        # NOTE: keep container name "tiler"
         tiler_taskdef.add_container(
             "tiler",
             image=ecs.ContainerImage.from_registry(tiler_image_uri),
             essential=True,
             logging=ecs.LogDriver.aws_logs(stream_prefix="tiler", log_group=tiler_logs),
             environment={
-                # predictor-safe (add NBITS=16 to guarantee compatibility)
+                # predictor-safe defaults (also used by split/unite unless overridden)
+                # NBITS=16 + PREDICTOR=1 ensures GTiff creation works even if source NBITS=15
                 "CREATE_OPTS": "TILED=YES,BIGTIFF=IF_SAFER,COMPRESS=LZW,NBITS=16,PREDICTOR=1",
                 "PREDICTOR_POLICY": "FORCE_1",
                 "TIFF_FORCE_16BIT": "true",
+                # optional flag some images honor to sanitize predictor internally
+                "SANITIZE_PREDICTOR": "1",
             }
         )
 
@@ -149,14 +153,15 @@ class ServerlessJp2Stack(Stack):
                 "INPUT_BUCKET": input_bucket.bucket_name,
                 "OUTPUT_BUCKET": output_bucket.bucket_name,
                 "ECS_CLUSTER_ARN": cluster.cluster_arn,
-                "TASK_DEF_ARN": tiler_taskdef.task_definition_arn,
+                "TASK_DEF_ARN": tiler_taskdef.task_definition_arn,  # use original taskdef + container name
                 "SUBNET_IDS": ",".join(public_subnet_ids),
                 "SECURITY_GROUP_ID": tiler_sg.security_group_id,
                 "ASSIGN_PUBLIC_IP": "ENABLED",
-                # predictor-safe (match container defaults)
+                # predictor-safe env echoed to container overrides by the launcher
                 "CREATE_OPTS": "TILED=YES,BIGTIFF=IF_SAFER,COMPRESS=LZW,NBITS=16,PREDICTOR=1",
                 "PREDICTOR_POLICY": "FORCE_1",
                 "TIFF_FORCE_16BIT": "true",
+                "SANITIZE_PREDICTOR": "1",
             },
         )
         convert_fn.add_to_role_policy(iam.PolicyStatement(
@@ -169,7 +174,7 @@ class ServerlessJp2Stack(Stack):
             resources=[tiler_task_role.role_arn],
             conditions={"StringEquals": {"iam:PassedToService": "ecs-tasks.amazonaws.com"}}
         ))
-        # Allow passing EXECUTION ROLE (needed for RunTask)  <-- added
+        # Allow passing EXECUTION ROLE as well (required by RunTask)
         exec_role = tiler_taskdef.obtain_execution_role()
         convert_fn.add_to_role_policy(iam.PolicyStatement(
             actions=["iam:PassRole"],
@@ -206,6 +211,7 @@ class ServerlessJp2Stack(Stack):
                     tasks.TaskEnvironmentVariable(name="CREATE_OPTS",   value="TILED=YES,BIGTIFF=IF_SAFER,COMPRESS=LZW,NBITS=16,PREDICTOR=1"),
                     tasks.TaskEnvironmentVariable(name="PREDICTOR_POLICY", value="FORCE_1"),
                     tasks.TaskEnvironmentVariable(name="TIFF_FORCE_16BIT", value="true"),
+                    tasks.TaskEnvironmentVariable(name="SANITIZE_PREDICTOR", value="1"),
                 ],
             )],
             result_path="$.ecsResult",
@@ -269,6 +275,7 @@ class ServerlessJp2Stack(Stack):
                     tasks.TaskEnvironmentVariable(name="CREATE_OPTS",   value="TILED=YES,BIGTIFF=IF_SAFER,COMPRESS=LZW,NBITS=16,PREDICTOR=1"),
                     tasks.TaskEnvironmentVariable(name="PREDICTOR_POLICY", value="FORCE_1"),
                     tasks.TaskEnvironmentVariable(name="TIFF_FORCE_16BIT", value="true"),
+                    tasks.TaskEnvironmentVariable(name="SANITIZE_PREDICTOR", value="1"),
                 ],
             )],
             result_path="$.ecsResult",
