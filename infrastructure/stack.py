@@ -127,7 +127,7 @@ class ServerlessJp2Stack(Stack):
             essential=True,
             logging=ecs.LogDriver.aws_logs(stream_prefix="tiler", log_group=tiler_logs),
             environment={
-                # predictor-safe
+                # predictor-safe (unchanged)
                 "CREATE_OPTS": "TILED=YES,BIGTIFF=IF_SAFER,COMPRESS=LZW,PREDICTOR=1",
                 "PREDICTOR_POLICY": "FORCE_1",
                 "TIFF_FORCE_16BIT": "true",
@@ -153,10 +153,15 @@ class ServerlessJp2Stack(Stack):
                 "SUBNET_IDS": ",".join(public_subnet_ids),
                 "SECURITY_GROUP_ID": tiler_sg.security_group_id,
                 "ASSIGN_PUBLIC_IP": "ENABLED",
-                # predictor-safe
+                # predictor-safe (unchanged)
                 "CREATE_OPTS": "TILED=YES,BIGTIFF=IF_SAFER,COMPRESS=LZW,PREDICTOR=1",
                 "PREDICTOR_POLICY": "FORCE_1",
                 "TIFF_FORCE_16BIT": "true",
+                # ---- ADDED: ONLY for /convert path ----
+                "SANITIZE_PREDICTOR": "1",
+                "RAW_TWO_STAGE": "1",
+                "RAW_STAGE1_FMT": "bin",
+                "RAW_STAGE1_SUFFIX": ".bin",
             },
         )
         convert_fn.add_to_role_policy(iam.PolicyStatement(
@@ -194,7 +199,7 @@ class ServerlessJp2Stack(Stack):
                     tasks.TaskEnvironmentVariable(name="TILES_TOTAL",   value=sfn.JsonPath.string_at("$.params.tilesTotal")),
                     tasks.TaskEnvironmentVariable(name="TILES_GRID",    value=sfn.JsonPath.string_at("$.params.tilesGrid")),
                     tasks.TaskEnvironmentVariable(name="JOB_ID",        value=sfn.JsonPath.string_at("$.jobId")),
-                    # predictor-safe
+                    # predictor-safe (unchanged for SFN)
                     tasks.TaskEnvironmentVariable(name="CREATE_OPTS",   value="TILED=YES,BIGTIFF=IF_SAFER,COMPRESS=LZW,PREDICTOR=1"),
                     tasks.TaskEnvironmentVariable(name="PREDICTOR_POLICY", value="FORCE_1"),
                     tasks.TaskEnvironmentVariable(name="TIFF_FORCE_16BIT", value="true"),
@@ -257,7 +262,7 @@ class ServerlessJp2Stack(Stack):
                     tasks.TaskEnvironmentVariable(name="OUTPUT_BUCKET", value=sfn.JsonPath.string_at("$.outputBucket")),
                     tasks.TaskEnvironmentVariable(name="FINAL_KEY",     value=sfn.JsonPath.string_at("$.finalKey")),
                     tasks.TaskEnvironmentVariable(name="FORMAT_OPTION", value=sfn.JsonPath.string_at("$.formatOption")),
-                    # predictor-safe
+                    # predictor-safe (unchanged for SFN)
                     tasks.TaskEnvironmentVariable(name="CREATE_OPTS",   value="TILED=YES,BIGTIFF=IF_SAFER,COMPRESS=LZW,PREDICTOR=1"),
                     tasks.TaskEnvironmentVariable(name="PREDICTOR_POLICY", value="FORCE_1"),
                     tasks.TaskEnvironmentVariable(name="TIFF_FORCE_16BIT", value="true"),
@@ -341,14 +346,12 @@ class ServerlessJp2Stack(Stack):
             resources=[output_bucket.arn_for_objects("*")]
         ))
 
-        # Auto-finalize: trigger on creation of any ENVI .bin in the OUTPUT bucket
         output_bucket.add_event_notification(
             s3.EventType.OBJECT_CREATED,
-            s3n.LambdaDestination(rsjson_fn),        # <-- minimal addition (S3 trigger)
+            s3n.LambdaDestination(rsjson_fn),
             s3.NotificationKeyFilter(suffix=".bin"),
         )
 
-        # Allow convert to invoke finalizer if desired
         convert_fn.add_to_role_policy(iam.PolicyStatement(
             actions=["lambda:InvokeFunction"],
             resources=[rsjson_fn.function_arn]

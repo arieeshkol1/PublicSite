@@ -1,298 +1,231 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>TSG JP2 Pipeline</title>
-  <style>
-    :root { --bg:#ffffff; --card:#ffffff; --muted:#475569; --text:#0f172a; --accent:#1e40af; --danger:#b91c1c; }
-    html,body { height:100%; background:var(--bg); color:var(--text); font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,"Helvetica Neue",Arial,"Apple Color Emoji","Segoe UI Emoji"; }
-    .wrap { max-width:1080px; margin:24px auto; padding:0 16px; }
-    .card { background:var(--card); border-radius:16px; padding:20px; box-shadow:0 6px 24px rgba(2,6,23,.08); border:1px solid rgba(15,23,42,.08); }
-    header { display:flex; align-items:center; gap:10px; margin-bottom:8px; }
-    h1 { font-size:22px; margin:0; }
-    h2 { font-size:16px; margin:18px 0 10px; color:var(--muted); font-weight:600; }
-    .row { display:grid; grid-template-columns:1fr auto; gap:12px; align-items:center; }
-    .muted { color:var(--muted); }
-    .mono { font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace; }
-    .btn { appearance:none; border:1px solid rgba(15,23,42,.14); background:#f8fafc; padding:8px 12px; border-radius:10px; cursor:pointer; }
-    .btn.primary { background:#1e40af; color:#fff; border-color:#1e40af; }
-    .btn:disabled { opacity:.6; cursor:not-allowed; }
-    table { width:100%; border-collapse:collapse; }
-    th,td { border-bottom:1px solid rgba(15,23,42,.08); padding:8px 10px; text-align:left; }
-    th { color:var(--muted); font-weight:600; }
-    .grid { display:grid; grid-template-columns:repeat(6,minmax(0,1fr)); gap:6px; }
-    .opt { padding:8px 10px; border:1px solid rgba(15,23,42,.14); border-radius:10px; text-align:center; cursor:pointer; user-select:none; }
-    .opt.active { outline:2px solid var(--accent); }
-    .bar { height:10px; border-radius:999px; background:#f1f5f9; border:1px solid rgba(15,23,42,.12); overflow:hidden; }
-    .bar > i { display:block; height:100%; width:0%; background:linear-gradient(90deg,#60a5fa,#1e40af); }
-    .links { display:flex; gap:10px; flex-wrap:wrap; }
-    .links a { color:var(--accent); text-decoration:none; }
-    .well { background:#f8fafc; border:1px dashed rgba(15,23,42,.16); border-radius:10px; padding:10px; }
-  </style>
-  <!-- Hard-wire API base -->
-  <script>window.API_BASE="https://qmiu91xhgk.execute-api.us-east-1.amazonaws.com";</script>
-</head>
-<body>
-  <div class="wrap">
-    <header>
-      <img src="tsglogo.png" alt="TSG" height="24"/>
-      <h1>TSG JP2 Pipeline</h1>
-    </header>
-    <div class="muted">Using fixed configuration • API hidden • Output: <span id="outBucketLbl" class="mono"></span></div>
+import os, json, time, uuid, base64
+from typing import Any, Dict, List, Tuple
+import boto3
+from botocore.exceptions import BotoCoreError, ClientError
 
-    <div class="card">
-      <div class="row">
-        <h2>1) Choose a JP2 from Input Bucket</h2>
-        <button id="btnRefresh" class="btn">Refresh</button>
-      </div>
-      <div class="muted">Listing from <b id="inBucketLbl" class="mono"></b></div>
-      <div class="well" style="margin-top:10px;">
-        <table aria-label="Input objects">
-          <thead>
-            <tr><th>Object Key</th><th style="width:160px;">Size</th><th style="width:120px;"></th></tr>
-          </thead>
-          <tbody id="inputTbody"></tbody>
-        </table>
-      </div>
-    </div>
+ecs = boto3.client("ecs")
 
-    <div class="card">
-      <h2>2) Split Settings</h2>
-      <div class="grid" id="tileOpts" role="group" aria-label="Tiles"></div>
-      <div class="muted" style="margin-top:10px">Selected file: <span id="selectedKey" class="mono">—</span></div>
-
-      <!-- Output format selector (inside the card) -->
-      <div style="margin-top:10px; display:flex; gap:10px; align-items:center;">
-        <label class="muted">Output format:</label>
-        <select id="fmt" class="btn">
-          <option value="keep">Keep current (JP2)</option>
-          <option value="tiff" selected>Convert to TIFF</option>
-          <option value="raw">Convert to RAW (.bin + .hdr)</option>
-        </select>
-      </div>
-
-      <div style="margin-top:10px; display:flex; gap:10px; align-items:center;">
-        <button id="btnSplit" class="btn primary" disabled>Split</button>
-        <span id="splitMsg" class="muted"></span>
-      </div>
-    </div>
-
-    <div class="card">
-      <h2>3) Status</h2>
-      <div class="muted">Execution ARN</div>
-      <div id="execArn" class="mono">—</div>
-      <div class="muted" style="margin-top:6px;">Job ID</div>
-      <div id="jobId" class="mono">—</div>
-      <div style="margin:10px 0;" class="bar"><i id="barFill"></i></div>
-      <div>Tiles <span id="tilesCount" class="mono">0</span> / <span id="tilesExpected" class="mono">0</span></div>
-      <div class="links" style="margin-top:8px;">
-        <a id="linkExec" href="#" target="_blank" rel="noreferrer noopener">Execution</a>
-        <a id="linkLogs" href="#" target="_blank" rel="noreferrer noopener" style="display:none;">CloudWatch Logs</a>
-      </div>
-      <h3 style="margin-top:14px; font-size:14px; color:var(--muted);">Step Functions Events</h3>
-      <pre id="stepsLive" class="well mono" style="white-space:pre-wrap; max-height:220px; overflow:auto;">—</pre>
-    </div>
-
-    <div class="card">
-      <h2>Files under <span class="mono">tiles/&lt;jobId&gt;/</span></h2>
-      <pre id="filesLive" class="well mono" style="white-space:pre-wrap; max-height:240px; overflow:auto;">—</pre>
-    </div>
-
-    <div class="card">
-      <h2>4) Unite (simulate)</h2>
-      <div class="row">
-        <div>
-          <div class="muted">Job ID</div>
-          <div id="jobId2" class="mono">—</div>
-        </div>
-        <button id="btnUnite" class="btn">Unite</button>
-      </div>
-      <div class="muted" style="margin-top:8px;">Final file (expected)</div>
-      <div id="finalKey" class="mono">—</div>
-    </div>
-
-    <div class="muted" style="text-align:center; margin:20px 0;">TSG © Secure JP2 Pipeline</div>
-  </div>
-
-  <script>
-    // Prevent stray bottom text
-    document.write = function(){ console.warn('document.write blocked'); };
-
-    // Fixed buckets
-    const INPUT_BUCKET  = 'jp2-input-991105135552-us-east-1';
-    const OUTPUT_BUCKET = 'jp2-output-991105135552-us-east-1';
-
-    // Helpers
-    const $ = (id) => document.getElementById(id);
-    const setText = (id, v) => { const n=$(id); if(n) n.textContent = v ?? ''; };
-    function humanSize(n){ if(n==null) return '—'; const kb=1024, mb=kb*1024, gb=mb*1024; if(n>=gb) return (n/gb).toFixed(2)+' GB'; if(n>=mb) return (n/mb).toFixed(2)+' MB'; if(n>=kb) return (n/kb).toFixed(2)+' KB'; return n+' B'; }
-
-    // Robust JSON fetch (shows readable message if API ever returns HTML)
-    async function getJSON(url){
-      const r = await fetch(url);
-      const text = await r.text();
-      try { return JSON.parse(text); }
-      catch { throw new Error(`Expected JSON from ${url}. Got: ${text.slice(0,120).replace(/\s+/g,' ')}`); }
+# ------------- helpers -------------
+def _cors() -> Dict[str, str]:
+    return {
+        "Content-Type": "application/json",
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Headers": "Content-Type",
+        "Access-Control-Allow-Methods": "OPTIONS,GET,POST",
     }
 
-    // State
-    let selectedKey = null, tilesTotal = 16, jobId = null, expected = 0, pollTimer = null;
+def _resp(code: int, body: Dict[str, Any]) -> Dict[str, Any]:
+    return {"statusCode": code, "headers": _cors(), "body": json.dumps(body)}
 
-    function buildTileOptions(){
-      const root = $('tileOpts'); root.innerHTML = '';
-      [9,16,25,36].forEach(val => {
-        const d = document.createElement('div');
-        d.className = 'opt' + (val===tilesTotal ? ' active' : '');
-        d.textContent = `${val} (${Math.sqrt(val)}×${Math.sqrt(val)})`;
-        d.onclick = () => { tilesTotal = val; [...root.children].forEach(c=>c.classList.remove('active')); d.classList.add('active'); };
-        root.appendChild(d);
-      });
+def _parse_event(event: Dict[str, Any]) -> Dict[str, Any]:
+    body = event.get("body")
+    if body is None:
+        return {}
+    if event.get("isBase64Encoded"):
+        body = base64.b64decode(body).decode("utf-8", "ignore")
+    if isinstance(body, str):
+        body = json.loads(body or "{}")
+    return body if isinstance(body, dict) else {}
+
+def _grid(tiles: int) -> int:
+    if tiles <= 1: return 1
+    g = int(round(tiles ** 0.5))
+    return max(1, g)
+
+# ------------- config -------------
+REQ_ENVS = [
+    "ECS_CLUSTER_ARN", "TASK_DEF_ARN", "SUBNET_IDS", "SECURITY_GROUP_ID",
+    "INPUT_BUCKET", "OUTPUT_BUCKET"
+]
+
+SAFE_CREATE_OPTS = "TILED=YES,BIGTIFF=IF_SAFER,COMPRESS=LZW,PREDICTOR=1"
+
+def _cfg() -> Tuple[Dict[str, Any], List[str]]:
+    missing: List[str] = []
+    env = os.environ
+    for k in REQ_ENVS:
+        if not env.get(k): missing.append(k)
+    subnets = [s for s in (env.get("SUBNET_IDS") or "").split(",") if s]
+    if not subnets: missing.append("SUBNET_IDS(empty)")
+
+    # sanitize predictor to 1 at launcher level
+    create_opts_raw = env.get("CREATE_OPTS", SAFE_CREATE_OPTS)
+    create_opts_clean = ",".join([
+        kv for kv in (x.strip() for x in create_opts_raw.split(","))
+        if kv and not kv.upper().startswith("PREDICTOR=")
+    ])
+    create_opts_clean = (create_opts_clean + ",PREDICTOR=1") if create_opts_clean else SAFE_CREATE_OPTS
+
+    return {
+        "cluster": env.get("ECS_CLUSTER_ARN"),
+        "task_def": env.get("TASK_DEF_ARN"),
+        "subnets": subnets,
+        "sg": env.get("SECURITY_GROUP_ID"),
+        "assign_public_ip": env.get("ASSIGN_PUBLIC_IP", "DISABLED"),
+        "input_bucket": env.get("INPUT_BUCKET"),
+        "output_bucket": env.get("OUTPUT_BUCKET"),
+        "create_opts": create_opts_clean,
+
+        # two-step RAW hints (duplicated here for per-run overrides)
+        "raw_two_stage": env.get("RAW_TWO_STAGE", "1"),
+        "raw_stage1_fmt": env.get("RAW_STAGE1_FMT", "bin"),
+        "raw_stage1_suffix": env.get("RAW_STAGE1_SUFFIX", ".bin"),
+        "tiff_force_16": env.get("TIFF_FORCE_16BIT", "true"),
+        "predictor_policy": env.get("PREDICTOR_POLICY", "FORCE_1"),
+        "sanitize_predictor": env.get("SANITIZE_PREDICTOR", "1"),
+    }, missing
+
+def _run_task(cfg: Dict[str, Any], container_env: List[Dict[str,str]]) -> Dict[str, Any]:
+    params = {
+        "cluster": cfg["cluster"],
+        "taskDefinition": cfg["task_def"],
+        "launchType": "FARGATE",
+        "networkConfiguration": {
+            "awsvpcConfiguration": {
+                "subnets": cfg["subnets"],
+                "securityGroups": [cfg["sg"]],
+                "assignPublicIp": cfg["assign_public_ip"],
+            }
+        },
+        "overrides": {"containerOverrides": [{"name": "tiler", "environment": container_env}]}
     }
+    try:
+        r = ecs.run_task(**params)
+    except (BotoCoreError, ClientError) as e:
+        return {"error": f"ecs.run_task failed: {e.__class__.__name__}: {str(e)}"}
 
-    async function listInput(){
-      setText('inBucketLbl', INPUT_BUCKET);
-      setText('outBucketLbl', OUTPUT_BUCKET);
-      $('inputTbody').innerHTML = '<tr><td colspan="3" class="muted">Loading…</td></tr>';
-      try{
-        const j = await getJSON(`${window.API_BASE}/list-input?bucket=${encodeURIComponent(INPUT_BUCKET)}`);
-        const items = (j.objects||[]).filter(o => String(o.key||'').endsWith('.jp2'));
-        if(!items.length){ $('inputTbody').innerHTML = '<tr><td colspan="3" class="muted">No JP2 objects</td></tr>'; return; }
-        $('inputTbody').innerHTML = items.map(o => `
-          <tr>
-            <td class="mono">${o.key}</td>
-            <td>${humanSize(o.size)}</td>
-            <td><button class="btn" data-key="${o.key}">Select</button></td>
-          </tr>`).join('');
-        $('inputTbody').onclick = (ev)=>{
-          const b = ev.target.closest('button[data-key]'); if(!b) return;
-          selectedKey = b.getAttribute('data-key');
-          setText('selectedKey', selectedKey);
-          $('btnSplit').disabled = !selectedKey;
-        };
-      } catch(e){
-        $('inputTbody').innerHTML = `<tr><td colspan="3">Error: ${e.message}</td></tr>`;
-      }
-    }
+    if r.get("failures"):
+        return {"error": f"RunTask failure: {r['failures']}"}
+    tasks = r.get("tasks") or []
+    if not tasks:
+        return {"error": "RunTask returned no tasks"}
+    return {"taskArn": tasks[0].get("taskArn")}
 
-    async function doSplit(){
-      if(!selectedKey) return;
-      $('btnSplit').disabled = true; setText('splitMsg','Starting…');
-      try{
-        // read format selector (keep | tiff | raw), default to tiff
-        const fmtEl = $('fmt');
-        const formatOption = (fmtEl && fmtEl.value) ? fmtEl.value : 'tiff';
+# ------------- scenario mapping -------------
+# Supported scenarios:
+#  - jp2_to_tiff
+#  - tiff_to_rawjson   (two-step: TIFF->*.bin -> *.rs + *.json)
+#  - rawjson_to_tiff
+#  - tiff_to_jp2
+def _env_common(cfg: Dict[str,Any]) -> List[Dict[str,str]]:
+    base = [
+        {"name":"INPUT_BUCKET",  "value":cfg["input_bucket"]},
+        {"name":"OUTPUT_BUCKET", "value":cfg["output_bucket"]},
+        {"name":"CREATE_OPTS",   "value":cfg["create_opts"]},
 
-        const body = {
-          inputBucket: INPUT_BUCKET,
-          inputKey: selectedKey,
-          outputBucket: OUTPUT_BUCKET,
-          params: {
-            tilesTotal: tilesTotal,
-            tilesGrid: Math.sqrt(tilesTotal)|0,
-            formatOption: formatOption
-          }
-        };
+        # TIFF safety & predictor policy
+        {"name":"PREDICTOR_POLICY","value":cfg["predictor_policy"]},
+        {"name":"TIFF_FORCE_16BIT","value":cfg["tiff_force_16"]},
+        {"name":"SANITIZE_PREDICTOR","value":cfg["sanitize_predictor"]},
 
-        const r = await fetch(`${window.API_BASE}/split`, {
-          method:'POST',
-          headers:{'Content-Type':'application/json'},
-          body: JSON.stringify(body)
-        });
+        # Enforce two-step RAW flow consistently
+        {"name":"RAW_TWO_STAGE","value":cfg["raw_two_stage"]},
+        {"name":"RAW_STAGE1_FMT","value":cfg["raw_stage1_fmt"]},
+        {"name":"RAW_STAGE1_SUFFIX","value":cfg["raw_stage1_suffix"]},
+    ]
+    return base
 
-        const text = await r.text();
-        let j; try { j = JSON.parse(text); }
-        catch { throw new Error(`Bad JSON from /split: ${text.slice(0,120).replace(/\s+/g,' ')}`); }
+def _scenario_env(cfg: Dict[str,Any], body: Dict[str,Any], job_id: str) -> Tuple[List[Dict[str,str]], str]:
+    scenario = (body.get("scenario") or body.get("op") or "jp2_to_tiff").strip().lower()
+    tiles = int(body.get("tiles") or body.get("tilesTotal") or 1)
+    grid  = max(1, int(round(tiles ** 0.5)))
 
-        if(!r.ok) throw new Error(j.error||'split failed');
+    key           = body.get("key") or ""
+    keys          = body.get("keys") or []
+    tiles_prefix  = body.get("tilesPrefix") or body.get("source_prefix") or ""
+    final_key     = body.get("finalKey") or ""
 
-        setText('splitMsg','Split started.');
-        setText('execArn', j.executionArn||'—');
-        setText('jobId', j.jobId||'—'); setText('jobId2', j.jobId||'—');
-        expected = j.expectedTiles||tilesTotal; setText('tilesExpected', expected); setText('tilesCount','0');
-        jobId = j.jobId; $('linkExec').href = j.links?.execution || '#';
-        setText('finalKey', `final/unite-${jobId}.jp2`);
-        startPolling();
-      } catch(e){
-        setText('splitMsg', `Error: ${e.message}`);
-      } finally {
-        $('btnSplit').disabled = !selectedKey;
-      }
-    }
+    env = _env_common(cfg)
+    env += [
+        {"name":"JOB_ID",       "value":job_id},
+        {"name":"TILES_TOTAL",  "value":str(tiles)},
+        {"name":"TILES_GRID",   "value":str(grid)},
+    ]
 
-    function startPolling(){ stopPolling(); pollTimer = setInterval(tick, 1500); tick(); }
-    function stopPolling(){ if(pollTimer){ clearInterval(pollTimer); pollTimer = null; } }
+    if scenario == "jp2_to_tiff":
+        if not (key or keys):
+            raise ValueError("jp2_to_tiff requires 'key' or 'keys' (JP2 path(s))")
+        env += [
+            {"name":"MODE",           "value":"JP2_TO_TIFF"},
+            {"name":"FORMAT_OPTION",  "value":"tiff"},
+            {"name":"INPUT_KEY",      "value": key or ""},
+        ]
+        return env, "multi_keys_ok"
 
-    async function tick(){
-      if(!jobId) return;
-      try{
-        const j1 = await getJSON(`${window.API_BASE}/status-progress?jobId=${encodeURIComponent(jobId)}&expected=${expected}`);
-        const done = j1.tilesCount||0; const pct = j1.percent ?? (expected? Math.round((done/expected)*100): 0);
-        setText('tilesCount', done); $('barFill').style.width = `${pct}%`;
-        await refreshFiles(jobId);
-        await refreshHistory($('execArn').textContent);
-      }catch(e){ $('filesLive').textContent = `Status error: ${e.message}`; }
-    }
+    if scenario == "tiff_to_rawjson":
+        if not (key or keys):
+            raise ValueError("tiff_to_rawjson requires 'key' or 'keys' (TIFF path(s))")
+        env += [
+            {"name":"MODE",           "value":"TIFF_TO_RAWJSON"},
+            {"name":"FORMAT_OPTION",  "value":"raw"},
+            {"name":"INPUT_KEY",      "value": key or ""},
+        ]
+        return env, "multi_keys_ok"
 
-    async function refreshFiles(jid){
-      if(!jid) return;
-      const prefix = `tiles/${jid}/`;
-      try{
-        const j = await getJSON(`${window.API_BASE}/list-output?bucket=${encodeURIComponent(OUTPUT_BUCKET)}&prefix=${encodeURIComponent(prefix)}`);
-        renderFiles(j.objects||[]);
-      }catch(e){ $('filesLive').textContent = `List error: ${e.message}`; }
-    }
+    if scenario == "rawjson_to_tiff":
+        if not tiles_prefix:
+            raise ValueError("rawjson_to_tiff requires 'tilesPrefix' (folder with .rs + .json per tile)")
+        env += [
+            {"name":"MODE",           "value":"RAWJSON_TO_TIFF"},
+            {"name":"FORMAT_OPTION",  "value":"tiff"},
+            {"name":"TILES_PREFIX",   "value": tiles_prefix},
+        ]
+        return env, "single"
 
-    function renderFiles(objs){
-      const out = $('filesLive'); if(!out) return;
-      if(!objs || !objs.length){ out.textContent = '—'; return; }
-      // include RAW (.bin) and its .hdr sidecar
-      const rx = /_(\d+)\.(?:jp2|tif|tiff|bin|hdr)$/i;
-      const lines = objs.slice().sort((a,b)=>{
-        const ak=String(a.key||''), bk=String(b.key||'');
-        const am=ak.match(rx), bm=bk.match(rx);
-        const ai = am? parseInt(am[1],10) : Number.MAX_SAFE_INTEGER;
-        const bi = bm? parseInt(bm[1],10) : Number.MAX_SAFE_INTEGER;
-        return ai===bi ? ak.localeCompare(bk) : ai-bi;
-      }).map(o => `${o.key}${o.size!=null ? `  (${humanSize(o.size)})` : ''}`);
-      out.textContent = lines.join('\n');
-    }
+    if scenario == "tiff_to_jp2":
+        if not (key or tiles_prefix):
+            raise ValueError("tiff_to_jp2 requires 'key' (single .tif) or 'tilesPrefix' (tif tiles folder)")
+        env += [
+            {"name":"MODE",           "value":"TIFF_TO_JP2"},
+            {"name":"FORMAT_OPTION",  "value":"jp2"},
+            {"name":"INPUT_KEY",      "value": key or ""},
+            {"name":"TILES_PREFIX",   "value": tiles_prefix},
+            {"name":"FINAL_KEY",      "value": final_key},
+        ]
+        return env, "single"
 
-    async function refreshHistory(execArn){
-      if(!execArn || execArn==='—') return;
-      try {
-        const out = await getJSON(`${window.API_BASE}/status-history/${encodeURIComponent(execArn)}`);
-        const steps = Array.isArray(out?.events) ? out.events.map(e => `[${e.time}] ${e.type}${e.detail? ` — ${e.detail}`:''}`) : [];
-        renderSteps(steps);
-      } catch (_) { /* ignore */ }
-    }
+    raise ValueError(f"Unknown scenario '{scenario}'")
 
-    function renderSteps(steps){
-      const el = $('stepsLive'); if(!el) return;
-      if(!Array.isArray(steps) || !steps.length){ el.textContent = '—'; return; }
-      el.textContent = steps.join('\n');
-    }
+# ------------- handler -------------
+def handler(event, _ctx):
+    if event.get("requestContext", {}).get("http", {}).get("method") == "OPTIONS":
+        return _resp(200, {"ok": True})
 
-    async function doUnite(){
-      if(!jobId) return;
-      try{
-        const body = { outputBucket: OUTPUT_BUCKET, jobId };
-        const r = await fetch(`${window.API_BASE}/unite`, { method:'POST', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify(body) });
-        const text = await r.text(); const j = JSON.parse(text);
-        if(!r.ok) throw new Error(j.error||'unite failed');
-        setText('finalKey', j.expectedFinalKey || `final/unite-${jobId}.jp2`);
-        $('linkExec').href = j.links?.execution || '#';
-      } catch(e){ console.error(e); }
-    }
+    cfg, missing = _cfg()
+    if missing:
+        return _resp(500, {"error": "Missing required environment variables", "missing": missing})
 
-    // Wire
-    $('btnRefresh').addEventListener('click', listInput);
-    $('btnSplit').addEventListener('click', doSplit);
-    $('btnUnite').addEventListener('click', doUnite);
+    body = _parse_event(event)
+    job_id = f"convert-{int(time.time()*1000)}-{uuid.uuid4().hex[:6]}"
 
-    // Init
-    buildTileOptions();
-    listInput();
-  </script>
-</body>
-</html>
+    try:
+        base_env, mode = _scenario_env(cfg, body, job_id)
+    except ValueError as ve:
+        return _resp(400, {"error": str(ve)})
+
+    results: List[Dict[str, Any]] = []
+
+    if mode == "multi_keys_ok":
+        keys = body.get("keys") or ([] if not body.get("key") else [body["key"]])
+        if not keys:
+            return _resp(400, {"error": "No input keys provided"})
+        for k in keys:
+            env = [e for e in base_env if e["name"] != "INPUT_KEY"]
+            env.append({"name": "INPUT_KEY", "value": k})
+            r = _run_task(cfg, env)
+            r["key"] = k
+            results.append(r)
+    else:
+        r = _run_task(cfg, base_env)
+        results.append(r)
+
+    ok = [r for r in results if "taskArn" in r]
+    err = [r for r in results if "error" in r]
+    return _resp(200 if ok else 502, {
+        "job_id": job_id,
+        "scenario": body.get("scenario") or "jp2_to_tiff",
+        "submitted": len(results),
+        "launched": len(ok),
+        "failed": len(err),
+        "items": results
+    })
