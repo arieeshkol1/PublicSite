@@ -1,43 +1,16 @@
-name: Deploy UI to S3
+name: Deploy UI to S3 (DISABLED)
 
 on:
-  push:
-    branches: [ main ]          # every commit to main triggers
-    paths:
-      - 'ui/**'                 # only when UI files change
-  workflow_dispatch:            # manual trigger button
+  # all triggers disabled
+  push: null
+  pull_request: null
+  workflow_dispatch: null
+  schedule: null
 
 jobs:
-  deploy:
+  disabled:
     runs-on: ubuntu-latest
-    permissions:
-      id-token: write           # OIDC
-      contents: read
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-region: us-east-1
-          role-to-assume: arn:aws:iam::${{ github.repository_owner_id }}:role/${{ github.repository }}-deploy-role
-
-      - name: Upload HTML (no-cache)
+      - name: This workflow is disabled
         run: |
-          aws s3 cp ui/ s3://jp2-ui-991105135552-us-east-1/ \
-            --recursive --exclude "*" --include "*.html" \
-            --cache-control "no-cache" --content-type "text/html"
-
-      - name: Sync assets
-        run: |
-          aws s3 sync ui/ s3://jp2-ui-991105135552-us-east-1/ --delete \
-            --exclude "*.html"
-
-      # optional: invalidate CloudFront if you use it
-      - name: Invalidate CloudFront
-        if: env.CF_DIST_ID != ''
-        run: |
-          aws cloudfront create-invalidation \
-            --distribution-id $CF_DIST_ID --paths "/*"
-        env:
-          CF_DIST_ID: ${{ secrets.CF_DIST_ID }}
+          echo "⚠️ The 'Deploy UI to S3' workflow has been disabled and will not run."
