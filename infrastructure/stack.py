@@ -106,7 +106,7 @@ class ServerlessJp2Stack(Stack):
             resources=[output_bucket.bucket_arn, output_bucket.arn_for_objects("*")]
         ))
 
-        # ---------------- BASE TaskDef (used by split/unite; leave as-is) ----------------
+        # ---------------- BASE TaskDef (used by split/unite; unchanged) ----------------
         tiler_taskdef = ecs.FargateTaskDefinition(
             self, "TilerTaskDef",
             cpu=1024,
@@ -129,14 +129,13 @@ class ServerlessJp2Stack(Stack):
             essential=True,
             logging=ecs.LogDriver.aws_logs(stream_prefix="tiler", log_group=tiler_logs),
             environment={
-                # safe defaults for split/unite path (unchanged behavior)
                 "CREATE_OPTS": "TILED=YES,BIGTIFF=IF_SAFER,COMPRESS=LZW,PREDICTOR=1",
                 "PREDICTOR_POLICY": "FORCE_1",
                 "TIFF_FORCE_16BIT": "true",
             }
         )
 
-        # ---------------- Dedicated TaskDef for CONVERT (safe TIFF) ----------------
+        # ---------------- Dedicated TaskDef for CONVERT ----------------
         convert_taskdef = ecs.FargateTaskDefinition(
             self, "ConvertTaskDef",
             cpu=1024,
@@ -153,14 +152,11 @@ class ServerlessJp2Stack(Stack):
             essential=True,
             logging=ecs.LogDriver.aws_logs(stream_prefix="converter", log_group=tiler_logs),
             environment={
-                # FORCE SAFE TIFF for conversion path to avoid Predictor=2 issue on NBITS!=8/16/32/64
-                # NBITS=16 + Predictor=1 → valid for all inputs (even NBITS=15 sources)
                 "CREATE_OPTS": "TILED=YES,BIGTIFF=IF_SAFER,COMPRESS=LZW,NBITS=16,PREDICTOR=1",
                 "PREDICTOR_POLICY": "FORCE_1",
                 "TIFF_FORCE_16BIT": "true",
-                # Optional hints if the container honors them:
                 "GDAL_NUM_THREADS": "ALL_CPUS",
-                "GDAL_CACHEMAX": "512",  # MB
+                "GDAL_CACHEMAX": "512",
                 "MODE": "convert"
             }
         )
@@ -180,32 +176,40 @@ class ServerlessJp2Stack(Stack):
                 "INPUT_BUCKET": input_bucket.bucket_name,
                 "OUTPUT_BUCKET": output_bucket.bucket_name,
                 "ECS_CLUSTER_ARN": cluster.cluster_arn,
-                # IMPORTANT: use the dedicated Convert task def
-                "TASK_DEF_ARN": convert_taskdef.task_definition_arn,
+                "TASK_DEF_ARN": convert_taskdef.task_definition_arn,  # use dedicated convert TD
                 "SUBNET_IDS": ",".join(public_subnet_ids),
                 "SECURITY_GROUP_ID": tiler_sg.security_group_id,
                 "ASSIGN_PUBLIC_IP": "ENABLED",
-                # predictor-safe envs (in case the launcher forwards them as overrides too)
                 "CREATE_OPTS": "TILED=YES,BIGTIFF=IF_SAFER,COMPRESS=LZW,NBITS=16,PREDICTOR=1",
                 "PREDICTOR_POLICY": "FORCE_1",
                 "TIFF_FORCE_16BIT": "true",
             },
         )
+        # Allow RunTask/DescribeTasks
         convert_fn.add_to_role_policy(iam.PolicyStatement(
             actions=["ecs:RunTask", "ecs:DescribeTasks"],
             resources=["*"]
         ))
+        # Allow PassRole for TASK ROLE (existing)
         convert_fn.add_to_role_policy(iam.PolicyStatement(
             actions=["iam:PassRole"],
             resources=[tiler_task_role.role_arn],
             conditions={"StringEquals": {"iam:PassedToService": "ecs-tasks.amazonaws.com"}}
         ))
+        # NEW: allow passing EXECUTION ROLE for ConvertTaskDef (required for RunTask)
+        exec_role = convert_taskdef.obtain_execution_role()
+        convert_fn.add_to_role_policy(iam.PolicyStatement(
+            actions=["iam:PassRole"],
+            resources=[exec_role.role_arn],
+            conditions={"StringEquals": {"iam:PassedToService": "ecs-tasks.amazonaws.com"}}
+        ))
+        # S3 read of outputs if needed
         convert_fn.add_to_role_policy(iam.PolicyStatement(
             actions=["s3:ListBucket", "s3:GetObject"],
             resources=[output_bucket.bucket_arn, output_bucket.arn_for_objects("*")]
         ))
 
-        # ---------------- Split/Unite State Machines (UNCHANGED) ----------------
+        # ---------------- Split/Unite State Machines (unchanged) ----------------
         split_task = tasks.EcsRunTask(
             self, "RunSplitOnFargate",
             cluster=cluster,
