@@ -121,6 +121,7 @@ class ServerlessJp2Stack(Stack):
             "edfcf89c0236c949848d9ccd83d731a69fd6fc85308fa3d3a3313ea50b05a526"
         )
 
+        # NOTE: container env are general defaults; convert-specific verbosity comes from ConvertFn below
         tiler_taskdef.add_container(
             "tiler",
             image=ecs.ContainerImage.from_registry(tiler_image_uri),
@@ -131,6 +132,11 @@ class ServerlessJp2Stack(Stack):
                 "CREATE_OPTS": "TILED=YES,BIGTIFF=IF_SAFER,COMPRESS=LZW,PREDICTOR=1",
                 "PREDICTOR_POLICY": "FORCE_1",
                 "TIFF_FORCE_16BIT": "true",
+                # baseline logging defaults (container may ignore if not implemented)
+                "LOG_LEVEL": "INFO",
+                "TRACE_PARAMS": "0",
+                "ECHO_GDAL": "0",
+                "LOG_PARAMS_LIST": "INPUT_BUCKET,OUTPUT_BUCKET,INPUT_KEY,FORMAT_OPTION,TILES_TOTAL,TILES_GRID,JOB_ID,CREATE_OPTS,PREDICTOR_POLICY,TIFF_FORCE_16BIT"
             }
         )
 
@@ -157,7 +163,12 @@ class ServerlessJp2Stack(Stack):
                 "CREATE_OPTS": "TILED=YES,BIGTIFF=IF_SAFER,COMPRESS=LZW,PREDICTOR=1",
                 "PREDICTOR_POLICY": "FORCE_1",
                 "TIFF_FORCE_16BIT": "true",
-                # ---- ADDED: ONLY for /convert path ----
+                # ---- extended logging ONLY for /convert path ----
+                "LOG_LEVEL": "DEBUG",
+                "TRACE_PARAMS": "1",
+                "ECHO_GDAL": "1",
+                "LOG_PARAMS_LIST": "INPUT_BUCKET,OUTPUT_BUCKET,INPUT_KEY,FORMAT_OPTION,TILES_TOTAL,TILES_GRID,JOB_ID,CREATE_OPTS,PREDICTOR_POLICY,TIFF_FORCE_16BIT",
+                # keep 2-step TIFF->BIN->RAW+JSON for convert path
                 "SANITIZE_PREDICTOR": "1",
                 "RAW_TWO_STAGE": "1",
                 "RAW_STAGE1_FMT": "bin",
@@ -203,6 +214,7 @@ class ServerlessJp2Stack(Stack):
                     tasks.TaskEnvironmentVariable(name="CREATE_OPTS",   value="TILED=YES,BIGTIFF=IF_SAFER,COMPRESS=LZW,PREDICTOR=1"),
                     tasks.TaskEnvironmentVariable(name="PREDICTOR_POLICY", value="FORCE_1"),
                     tasks.TaskEnvironmentVariable(name="TIFF_FORCE_16BIT", value="true"),
+                    # NOTE: no extended logging added to SFN to keep behavior identical
                 ],
             )],
             result_path="$.ecsResult",
@@ -266,6 +278,7 @@ class ServerlessJp2Stack(Stack):
                     tasks.TaskEnvironmentVariable(name="CREATE_OPTS",   value="TILED=YES,BIGTIFF=IF_SAFER,COMPRESS=LZW,PREDICTOR=1"),
                     tasks.TaskEnvironmentVariable(name="PREDICTOR_POLICY", value="FORCE_1"),
                     tasks.TaskEnvironmentVariable(name="TIFF_FORCE_16BIT", value="true"),
+                    # NOTE: no extended logging added to SFN to keep behavior identical
                 ],
             )],
             result_path="$.ecsResult",
@@ -325,11 +338,11 @@ class ServerlessJp2Stack(Stack):
             ],
         ))
 
-        # ---------------- RAW/JSON Finalizer Lambda (ENVI .bin+.hdr -> .raw + .json) ----------------
+        # ---------------- RAW/JSON Finalizer Lambda ----------------
         rsjson_fn = _lambda.Function(
             self, "RsJsonFinalizeFn",
             runtime=_lambda.Runtime.PYTHON_3_11,
-            handler="lambda_envi_to_rawjson.handler",  # <-- minimal change (new handler)
+            handler="lambda_envi_to_rawjson.handler",
             code=_lambda.Code.from_asset(lambda_code_dir),
             timeout=Duration.minutes(2),
             memory_size=512,
