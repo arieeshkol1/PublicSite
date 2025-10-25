@@ -46,12 +46,13 @@ REQ_ENVS = [
 ]
 
 # Hard-safe default create opts (prevents GDAL predictor error)
-SAFE_CREATE_OPTS = "TILED=YES,BIGTIFF=IF_SAFER,COMPRESS=LZW,PREDICTOR=1"
+# 👈 ADD NBITS=16 so we upcast 12/15-bit inputs and keep PREDICTOR=1
+SAFE_CREATE_OPTS = "TILED=YES,BIGTIFF=IF_SAFER,COMPRESS=LZW,NBITS=16,PREDICTOR=1"  # 👈
 
 # If the container supports it, these further enforce safety
 EXTRA_SAFETY_ENVS = {
     "PREDICTOR_POLICY": "FORCE_1",      # ask entrypoint to drop any PREDICTOR=2 it might add
-    "TIFF_FORCE_16BIT": "true",         # upcast 12-bit → 16-bit when applicable
+    "TIFF_FORCE_16BIT": "true",         # upcast 12/15-bit → 16-bit when applicable
     "SANITIZE_PREDICTOR": "1",          # generic flag many wrappers use
 }
 
@@ -73,6 +74,10 @@ def _cfg() -> Tuple[Dict[str, Any], List[str]]:
         create_opts_clean = create_opts_clean + ",PREDICTOR=1"
     else:
         create_opts_clean = SAFE_CREATE_OPTS
+
+    # 👇 also ensure NBITS=16 present even if user-provided opts omitted it
+    if "NBITS=" not in create_opts_clean.upper():
+        create_opts_clean += ",NBITS=16"  # 👈
 
     return {
         "cluster": env.get("ECS_CLUSTER_ARN"),
@@ -96,6 +101,7 @@ def _run_task(cfg: Dict[str, Any], key: str, fmt: str, tiles_total: int, tiles_g
         {"name": "TILES_GRID",    "value": str(tiles_grid)},
         {"name": "JOB_ID",        "value": job_id},
         {"name": "CREATE_OPTS",   "value": cfg["create_opts"]},
+        {"name": "MODE",          "value": "convert"},  # 👈 FORCE convert path in the container
     ]
 
     # Add extra safety envs to override any hardcoded predictor=2 in the container
