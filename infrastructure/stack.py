@@ -11,10 +11,20 @@ from aws_cdk import (
     aws_logs as logs,
     aws_stepfunctions as sfn,
     aws_stepfunctions_tasks as tasks,
+    aws_ecr_assets as ecr_assets,
 )
 from aws_cdk import aws_s3_notifications as s3n  # minimal addition
 from constructs import Construct
 import os
+
+
+SAFE_CREATE_OPTS = "TILED=YES,BIGTIFF=IF_SAFER,COMPRESS=LZW,NBITS=16,PREDICTOR=1"
+SAFE_ENV_FLAGS = {
+    "CREATE_OPTS": SAFE_CREATE_OPTS,
+    "PREDICTOR_POLICY": "FORCE_1",
+    "TIFF_FORCE_16BIT": "true",
+    "SANITIZE_PREDICTOR": "1",
+}
 
 
 class ServerlessJp2Stack(Stack):
@@ -42,47 +52,7 @@ class ServerlessJp2Stack(Stack):
         ui_dir = os.path.join(os.path.dirname(__file__), "..", "ui")
         if os.path.isdir(ui_dir):
             s3deploy.BucketDeployment(
-                self, "DeployStaticUI",
-                sources=[s3deploy.Source.asset(ui_dir)],
-                destination_bucket=ui_bucket,
-                destination_key_prefix="",
-                prune=True,
-                retain_on_delete=False,
-            )
-
-        lambda_code_dir = os.path.join(os.path.dirname(__file__), "lambda")
-
-        # ---------------- List Input Lambda ----------------
-        list_input_fn = _lambda.Function(
-            self, "ListInputFn",
-            runtime=_lambda.Runtime.PYTHON_3_11,
-            handler="lambda_list_input.handler",
-            code=_lambda.Code.from_asset(lambda_code_dir),
-            timeout=Duration.seconds(15),
-            memory_size=256,
-            environment={"BUCKET": input_bucket.bucket_name},
-        )
-        list_input_fn.add_to_role_policy(iam.PolicyStatement(
-            actions=["s3:ListBucket", "s3:GetObject"],
-            resources=[input_bucket.bucket_arn, input_bucket.arn_for_objects("*")]
-        ))
-
-        # ---------------- List Output Lambda ----------------
-        list_output_fn = _lambda.Function(
-            self, "ListOutputFn",
-            runtime=_lambda.Runtime.PYTHON_3_11,
-            handler="lambda_list_input.handler",
-            code=_lambda.Code.from_asset(lambda_code_dir),
-            timeout=Duration.seconds(15),
-            memory_size=256,
-            environment={"BUCKET": output_bucket.bucket_name},
-        )
-        list_output_fn.add_to_role_policy(iam.PolicyStatement(
-            actions=["s3:ListBucket", "s3:GetObject"],
-            resources=[output_bucket.bucket_arn, output_bucket.arn_for_objects("*")]
-        ))
-
-        # ---------------- ECS / Fargate ----------------
+@@ -86,201 +96,184 @@ class ServerlessJp2Stack(Stack):
         vpc = ec2.Vpc.from_lookup(self, "Vpc", is_default=True)
         cluster = ecs.Cluster(self, "TilerCluster", vpc=vpc)
 
@@ -108,6 +78,10 @@ class ServerlessJp2Stack(Stack):
         ))
 
         # Base TaskDef (used by split/unite)
+        tiler_image_dir = os.path.join(os.path.dirname(__file__), "docker", "tiler")
+        tiler_image_asset = ecr_assets.DockerImageAsset(self, "TilerImageAsset", directory=tiler_image_dir)
+        tiler_container_image = ecs.ContainerImage.from_docker_image_asset(tiler_image_asset)
+
         tiler_taskdef = ecs.FargateTaskDefinition(
             self, "TilerTaskDef",
             cpu=1024,
@@ -126,6 +100,7 @@ class ServerlessJp2Stack(Stack):
         tiler_taskdef.add_container(
             "tiler",
             image=ecs.ContainerImage.from_registry(tiler_image_uri),
+            image=tiler_container_image,
             essential=True,
             logging=ecs.LogDriver.aws_logs(stream_prefix="tiler", log_group=tiler_logs),
             environment={
@@ -135,6 +110,7 @@ class ServerlessJp2Stack(Stack):
                 "TIFF_FORCE_16BIT": "true",
                 "SANITIZE_PREDICTOR": "1",
             }
+            environment={**SAFE_ENV_FLAGS},  # split/unite respect safe defaults
         )
 
         # Dedicated Convert TaskDef (same container name "tiler", isolates convert env)
@@ -148,9 +124,11 @@ class ServerlessJp2Stack(Stack):
         convert_taskdef.add_container(
             "tiler",  # must match overrides
             image=ecs.ContainerImage.from_registry(tiler_image_uri),
+            image=tiler_container_image,
             essential=True,
             logging=ecs.LogDriver.aws_logs(stream_prefix="converter", log_group=tiler_logs),
             environment={
+                **SAFE_ENV_FLAGS,
                 "MODE": "convert",
                 "CREATE_OPTS": "TILED=YES,BIGTIFF=IF_SAFER,COMPRESS=LZW,NBITS=16,PREDICTOR=1",
                 "PREDICTOR_POLICY": "FORCE_1",
@@ -165,6 +143,10 @@ class ServerlessJp2Stack(Stack):
         # Repo ARN from the image URI
         repo_name = tiler_image_uri.split("/", 1)[1].split(":")[0]
         repo_arn = f"arn:aws:ecr:{region}:{account}:repository/{repo_name}"
+        # Allow task execution roles to pull the asset image
+        tiler_image_asset.repository.grant_pull(tiler_taskdef.obtain_execution_role())
+        tiler_image_asset.repository.grant_pull(convert_taskdef.obtain_execution_role())
+
         # CW Logs ARNs for stream creation/puts
         log_group_arn = f"arn:aws:logs:{region}:{account}:log-group:/ecs/tsg-jp2-tiler"
         log_group_wild = f"{log_group_arn}:*"
@@ -199,6 +181,7 @@ class ServerlessJp2Stack(Stack):
             timeout=Duration.minutes(5),
             memory_size=2048,
             environment={
+                **SAFE_ENV_FLAGS,
                 "INPUT_BUCKET": input_bucket.bucket_name,
                 "OUTPUT_BUCKET": output_bucket.bucket_name,
                 "ECS_CLUSTER_ARN": cluster.cluster_arn,
@@ -259,6 +242,10 @@ class ServerlessJp2Stack(Stack):
                     tasks.TaskEnvironmentVariable(name="PREDICTOR_POLICY", value="FORCE_1"),
                     tasks.TaskEnvironmentVariable(name="TIFF_FORCE_16BIT", value="true"),
                     tasks.TaskEnvironmentVariable(name="SANITIZE_PREDICTOR", value="1"),
+                    tasks.TaskEnvironmentVariable(name="CREATE_OPTS",   value=SAFE_CREATE_OPTS),
+                    tasks.TaskEnvironmentVariable(name="PREDICTOR_POLICY", value=SAFE_ENV_FLAGS["PREDICTOR_POLICY"]),
+                    tasks.TaskEnvironmentVariable(name="TIFF_FORCE_16BIT", value=SAFE_ENV_FLAGS["TIFF_FORCE_16BIT"]),
+                    tasks.TaskEnvironmentVariable(name="SANITIZE_PREDICTOR", value=SAFE_ENV_FLAGS["SANITIZE_PREDICTOR"]),
                 ],
             )],
             result_path="$.ecsResult",
@@ -284,21 +271,7 @@ class ServerlessJp2Stack(Stack):
         # Pass EXECUTION ROLE (base taskdef)
         split_exec_role = tiler_taskdef.obtain_execution_role()
         split_state_machine.add_to_role_policy(iam.PolicyStatement(
-            actions=["iam:PassRole"],
-            resources=[split_exec_role.role_arn],
-            conditions={"StringEquals": {"iam:PassedToService": "ecs-tasks.amazonaws.com"}}
-        ))
-
-        split_controller_fn = _lambda.Function(
-            self, "SplitControllerFn",
-            runtime=_lambda.Runtime.PYTHON_3_11,
-            handler="controller_split.handler",
-            code=_lambda.Code.from_asset(lambda_code_dir),
-            timeout=Duration.minutes(5),
-            memory_size=512,
-            environment={
-                "INPUT_BUCKET": input_bucket.bucket_name,
-                "OUTPUT_BUCKET": output_bucket.bucket_name,
+@@ -302,54 +295,54 @@ class ServerlessJp2Stack(Stack):
                 "SPLIT_SFN_ARN": split_state_machine.state_machine_arn,
             },
         )
@@ -328,6 +301,10 @@ class ServerlessJp2Stack(Stack):
                     tasks.TaskEnvironmentVariable(name="PREDICTOR_POLICY", value="FORCE_1"),
                     tasks.TaskEnvironmentVariable(name="TIFF_FORCE_16BIT", value="true"),
                     tasks.TaskEnvironmentVariable(name="SANITIZE_PREDICTOR", value="1"),
+                    tasks.TaskEnvironmentVariable(name="CREATE_OPTS",   value=SAFE_CREATE_OPTS),
+                    tasks.TaskEnvironmentVariable(name="PREDICTOR_POLICY", value=SAFE_ENV_FLAGS["PREDICTOR_POLICY"]),
+                    tasks.TaskEnvironmentVariable(name="TIFF_FORCE_16BIT", value=SAFE_ENV_FLAGS["TIFF_FORCE_16BIT"]),
+                    tasks.TaskEnvironmentVariable(name="SANITIZE_PREDICTOR", value=SAFE_ENV_FLAGS["SANITIZE_PREDICTOR"]),
                 ],
             )],
             result_path="$.ecsResult",
@@ -353,70 +330,7 @@ class ServerlessJp2Stack(Stack):
         # Pass EXECUTION ROLE (base taskdef)
         unite_exec_role = tiler_taskdef.obtain_execution_role()
         unite_state_machine.add_to_role_policy(iam.PolicyStatement(
-            actions=["iam:PassRole"],
-            resources=[unite_exec_role.role_arn],
-            conditions={"StringEquals": {"iam:PassedToService": "ecs-tasks.amazonaws.com"}}
-        ))
-
-        unite_controller_fn = _lambda.Function(
-            self, "UniteControllerFn",
-            runtime=_lambda.Runtime.PYTHON_3_11,
-            handler="controller_unite.handler",
-            code=_lambda.Code.from_asset(lambda_code_dir),
-            timeout=Duration.minutes(5),
-            memory_size=512,
-            environment={
-                "OUTPUT_BUCKET": output_bucket.bucket_name,
-                "UNITE_SFN_ARN": unite_state_machine.state_machine_arn,
-                "SPLIT_SFN_ARN": split_state_machine.state_machine_arn,
-            },
-        )
-        unite_controller_fn.add_to_role_policy(iam.PolicyStatement(
-            actions=["states:StartExecution"],
-            resources=[unite_state_machine.state_machine_arn]
-        ))
-
-        # ---------------- Convert Logs Lambda ----------------
-        convert_logs_fn = _lambda.Function(
-            self, "ConvertLogsFn",
-            runtime=_lambda.Runtime.PYTHON_3_11,
-            handler="lambda_logs_fetch.handler",
-            code=_lambda.Code.from_asset(lambda_code_dir),
-            timeout=Duration.seconds(10),
-            memory_size=256,
-            environment={
-                "LOG_GROUP_CONVERT": "/ecs/tsg-jp2-tiler"
-            },
-        )
-        convert_logs_fn.add_to_role_policy(iam.PolicyStatement(
-            actions=["logs:FilterLogEvents"],
-            resources=[f"arn:aws:logs:{region}:{account}:log-group:/ecs/tsg-jp2-tiler:*"],
-        ))
-
-        # ---------------- RAW/JSON Finalizer Lambda ----------------
-        rsjson_fn = _lambda.Function(
-            self, "RsJsonFinalizeFn",
-            runtime=_lambda.Runtime.PYTHON_3_11,
-            handler="lambda_envi_to_rawjson.handler",
-            code=_lambda.Code.from_asset(lambda_code_dir),
-            timeout=Duration.minutes(2),
-            memory_size=512,
-            environment={"DEFAULT_BUCKET": output_bucket.bucket_name},
-        )
-        rsjson_fn.add_to_role_policy(iam.PolicyStatement(
-            actions=["s3:ListBucket"], resources=[output_bucket.bucket_arn]
-        ))
-        rsjson_fn.add_to_role_policy(iam.PolicyStatement(
-            actions=["s3:GetObject","s3:PutObject","s3:CopyObject","s3:DeleteObject"],
-            resources=[output_bucket.arn_for_objects("*")]
-        ))
-        output_bucket.add_event_notification(
-            s3.EventType.OBJECT_CREATED,
-            s3n.LambdaDestination(rsjson_fn),
-            s3.NotificationKeyFilter(suffix=".bin"),
-        )
-        convert_fn.add_to_role_policy(iam.PolicyStatement(
-            actions=["lambda:InvokeFunction"], resources=[rsjson_fn.function_arn]
+@@ -420,57 +413,85 @@ class ServerlessJp2Stack(Stack):
         ))
 
         # ---------------- HTTP API ----------------
@@ -449,6 +363,41 @@ class ServerlessJp2Stack(Stack):
         http_api.add_routes(path="/unite",        methods=[apigw.HttpMethod.POST], integration=unite_integ)
         http_api.add_routes(path="/convert/logs", methods=[apigw.HttpMethod.GET, apigw.HttpMethod.OPTIONS], integration=convert_logs_integ)
         http_api.add_routes(path="/rawpair/finalize", methods=[apigw.HttpMethod.POST], integration=rsjson_integ)
+        http_api.add_routes(
+            path="/list-input",
+            methods=[apigw.HttpMethod.GET],
+            integration=list_input_integ,
+        )
+        http_api.add_routes(
+            path="/list-output",
+            methods=[apigw.HttpMethod.GET],
+            integration=list_output_integ,
+        )
+        http_api.add_routes(
+            path="/convert",
+            methods=[apigw.HttpMethod.POST],
+            integration=convert_integ,
+        )
+        http_api.add_routes(
+            path="/split",
+            methods=[apigw.HttpMethod.POST],
+            integration=split_integ,
+        )
+        http_api.add_routes(
+            path="/unite",
+            methods=[apigw.HttpMethod.POST],
+            integration=unite_integ,
+        )
+        http_api.add_routes(
+            path="/convert/logs",
+            methods=[apigw.HttpMethod.GET, apigw.HttpMethod.OPTIONS],
+            integration=convert_logs_integ,
+        )
+        http_api.add_routes(
+            path="/rawpair/finalize",
+            methods=[apigw.HttpMethod.POST],
+            integration=rsjson_integ,
+        )
 
         # ---------------- File Manager Lambdas ----------------
         fm_env = {"INPUT_BUCKET": input_bucket.bucket_name, "OUTPUT_BUCKET": output_bucket.bucket_name}
@@ -474,84 +423,3 @@ class ServerlessJp2Stack(Stack):
         download_file_fn = _lambda.Function(
             self, "DownloadFileFn",
             runtime=_lambda.Runtime.PYTHON_3_11,
-            handler="lambda_download_file.handler",
-            code=_lambda.Code.from_asset(lambda_code_dir),
-            timeout=Duration.seconds(30),
-            memory_size=256,
-            environment=fm_env,
-        )
-        for fn in [copy_files_fn, delete_files_fn, download_file_fn]:
-            fn.add_to_role_policy(iam.PolicyStatement(
-                actions=["s3:ListBucket"],
-                resources=[input_bucket.bucket_arn, output_bucket.bucket_arn]
-            ))
-            fn.add_to_role_policy(iam.PolicyStatement(
-                actions=[
-                    "s3:GetObject", "s3:PutObject", "s3:DeleteObject",
-                    "s3:AbortMultipartUpload", "s3:CreateMultipartUpload",
-                    "s3:UploadPart", "s3:CompleteMultipartUpload"
-                ],
-                resources=[input_bucket.arn_for_objects("*"), output_bucket.arn_for_objects("*")]
-            ))
-
-        copy_files_integ     = apigw_int.HttpLambdaIntegration("CopyFilesIntegration", handler=copy_files_fn)
-        delete_files_integ   = apigw_int.HttpLambdaIntegration("DeleteFilesIntegration", handler=delete_files_fn)
-        download_file_integ  = apigw_int.HttpLambdaIntegration("DownloadFileIntegration", handler=download_file_fn)
-        http_api.add_routes(path="/copy-files",   methods=[apigw.HttpMethod.POST], integration=copy_files_integ)
-        http_api.add_routes(path="/delete-files", methods=[apigw.HttpMethod.POST], integration=delete_files_integ)
-        http_api.add_routes(path="/download-file",methods=[apigw.HttpMethod.POST], integration=download_file_integ)
-
-        # ---------------- Status Lambdas ----------------
-        status_progress_fn = _lambda.Function(
-            self, "StatusProgressFn",
-            runtime=_lambda.Runtime.PYTHON_3_11,
-            handler="status_progress.handler",
-            code=_lambda.Code.from_asset(lambda_code_dir),
-            timeout=Duration.seconds(20),
-            memory_size=256,
-            environment={"OUTPUT_BUCKET": output_bucket.bucket_name},
-        )
-        status_progress_fn.add_to_role_policy(iam.PolicyStatement(
-            actions=["s3:ListBucket"], resources=[output_bucket.bucket_arn]
-        ))
-        status_progress_fn.add_to_role_policy(iam.PolicyStatement(
-            actions=["s3:GetObject"], resources=[output_bucket.arn_for_objects("*")]
-        ))
-        status_progress_integ = apigw_int.HttpLambdaIntegration("StatusProgressInteg", handler=status_progress_fn)
-        http_api.add_routes(path="/status-progress", methods=[apigw.HttpMethod.GET], integration=status_progress_integ)
-
-        status_history_fn = _lambda.Function(
-            self, "StatusHistoryFn",
-            runtime=_lambda.Runtime.PYTHON_3_11,
-            handler="status_history.handler",
-            code=_lambda.Code.from_asset(lambda_code_dir),
-            timeout=Duration.seconds(30),
-            memory_size=256,
-            environment={
-                "SPLIT_SFN_ARN": split_state_machine.state_machine_arn,
-                "UNITE_SFN_ARN": unite_state_machine.state_machine_arn,
-            },
-        )
-        status_history_fn.add_to_role_policy(iam.PolicyStatement(
-            actions=["states:GetExecutionHistory", "states:DescribeExecution"],
-            resources=["*"]
-        ))
-        status_history_integ_hist = apigw_int.HttpLambdaIntegration("StatusHistoryInteg", handler=status_history_fn)
-        status_history_integ_det  = apigw_int.HttpLambdaIntegration("StatusDetailInteg",  handler=status_history_fn)
-        http_api.add_routes(path="/status-history/{jobId}", methods=[apigw.HttpMethod.GET, apigw.HttpMethod.OPTIONS], integration=status_history_integ_hist)
-        http_api.add_routes(path="/status-detail/{executionArn}", methods=[apigw.HttpMethod.GET, apigw.HttpMethod.OPTIONS], integration=status_history_integ_det)
-
-        # ---------------- Outputs ----------------
-        CfnOutput(self, "UiBucketName", value="jp2-ui-991105135552-us-east-1")
-        CfnOutput(self, "InputBucketName", value=input_bucket.bucket_name)
-        CfnOutput(self, "OutputBucketName", value=output_bucket.bucket_name)
-        CfnOutput(self, "ApiEndpoint", value=http_api.api_endpoint)
-        CfnOutput(self, "EcsClusterArn", value=cluster.cluster_arn)
-        CfnOutput(self, "TilerTaskDefArn", value=tiler_taskdef.task_definition_arn)
-        CfnOutput(self, "ConvertTaskDefArn", value=convert_taskdef.task_definition_arn)
-        CfnOutput(self, "SplitStateMachineArn", value=split_state_machine.state_machine_arn)
-        CfnOutput(self, "UniteStateMachineArn", value=unite_state_machine.state_machine_arn)
-        CfnOutput(self, "StatusProgressRoute", value=f"{http_api.api_endpoint}/status-progress")
-        CfnOutput(self, "StatusHistoryRoute", value=f"{http_api.api_endpoint}/status-history/{{jobId}}")
-        CfnOutput(self, "ConvertLogsRoute", value=f"{http_api.api_endpoint}/convert/logs")
-        CfnOutput(self, "RsJsonFinalizeRoute", value=f"{http_api.api_endpoint}/rawpair/finalize")

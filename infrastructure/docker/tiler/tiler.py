@@ -203,6 +203,28 @@ def _convert_to_tiff(src: str, dst: str, create_opts: List[str]) -> None:
         cmd += ["-ot", "UInt16"]
     cmd += create_opts
     cmd += [src, dst]
+
+    # Belt-and-braces: even after upstream sanitisation, double-check no caller
+    # managed to smuggle PREDICTOR=2 or an unexpected NBITS into the command.
+    safe_cmd: List[str] = []
+    i = 0
+    while i < len(cmd):
+        token = cmd[i]
+        if token.lower() == "-co" and i + 1 < len(cmd):
+            value = cmd[i + 1]
+            upper = value.upper()
+            if upper.startswith("PREDICTOR=") and upper != "PREDICTOR=1":
+                safe_cmd.extend(["-co", "PREDICTOR=1"])
+            elif upper.startswith("NBITS=") and upper != "NBITS=16":
+                safe_cmd.extend(["-co", "NBITS=16"])
+            else:
+                safe_cmd.extend(["-co", value])
+            i += 2
+            continue
+        safe_cmd.append(token)
+        i += 1
+
+    cmd = safe_cmd
     _run(cmd)
     if os.path.getsize(dst) < 1024:
         raise RuntimeError("TIFF output suspiciously small")
@@ -452,3 +474,4 @@ if __name__ == "__main__":
     except Exception as exc:  # pragma: no cover - top-level fail-safe logging
         _log(f"ERROR: {exc}")
         raise
+infrastructure/stack.py

@@ -18,6 +18,23 @@ This is a **fail-proof minimal** serverless baseline for a JP2 Split/Unite pipel
 
 > This starter returns stub job IDs and `SUCCEEDED` status. Add real JP2 processing later with a Lambda container + Step Functions.
 
+### Committing and pushing from GitHub Desktop
+If you need to publish local changes (for example, adding `infrastructure/docker/tiler/tiler.py`) directly to the `main` branch on GitHub, follow these steps:
+
+1. **Make sure you're on `main`.**
+   - In GitHub Desktop, open the branch selector (top center) and choose `main`.
+   - If you do not see `main`, fetch the latest branches with **Repository ▸ Fetch origin**.
+2. **Pull the latest remote history.**
+   - Click **Repository ▸ Pull** (or press `Ctrl/Cmd+Shift+P`) to ensure your local `main` matches GitHub.
+3. **Add or update your files locally.**
+   - Create missing folders if needed (e.g., `infrastructure/docker/tiler/`) and copy in the updated files.
+4. **Commit the changes.**
+   - Review the **Changes** tab, enter a descriptive summary, and click **Commit to main**.
+5. **Push to GitHub.**
+   - Click **Push origin** (top right) so the commit appears on GitHub’s `main` branch.
+6. **Verify on GitHub.**
+   - Visit the repository in your browser to confirm the new commit and files are present.
+
 ### Locating the tiler worker
 - The ECS task image expects the Python worker at `infrastructure/docker/tiler/tiler.py`.
 - If you do not see this file locally, make sure you have checked out the branch that contains the change (for example the `work` branch used for development in this repository).
