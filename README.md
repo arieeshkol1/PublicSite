@@ -17,3 +17,8 @@ This is a **fail-proof minimal** serverless baseline for a JP2 Split/Unite pipel
 - Paste **ApiEndpoint** into the page and test the forms.
 
 > This starter returns stub job IDs and `SUCCEEDED` status. Add real JP2 processing later with a Lambda container + Step Functions.
+
+### Locating the tiler worker
+- The ECS task image expects the Python worker at `infrastructure/docker/tiler/tiler.py`.
+- If you do not see this file locally, make sure you have checked out the branch that contains the change (for example the `work` branch used for development in this repository).
+- After switching branches run `git pull` (or use **Fetch origin**/**Pull** in GitHub Desktop) so your local checkout matches the remote branch before building the container image.
