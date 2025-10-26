@@ -474,4 +474,3 @@ if __name__ == "__main__":
     except Exception as exc:  # pragma: no cover - top-level fail-safe logging
         _log(f"ERROR: {exc}")
         raise
-infrastructure/stack.py

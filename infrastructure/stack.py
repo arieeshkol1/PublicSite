@@ -26,6 +26,11 @@ SAFE_ENV_FLAGS = {
     "SANITIZE_PREDICTOR": "1",
 }
 
+PASS_ROLE_CONDITION_KEY = "StringEquals"
+PASS_ROLE_CONDITION_VALUE = {
+    "iam:PassedToService": "ecs-tasks.amazonaws.com"
+}
+
 
 class ServerlessJp2Stack(Stack):
     def __init__(self, scope: Construct, cid: str, **kwargs):
@@ -52,7 +57,7 @@ class ServerlessJp2Stack(Stack):
         ui_dir = os.path.join(os.path.dirname(__file__), "..", "ui")
         if os.path.isdir(ui_dir):
             s3deploy.BucketDeployment(
-@@ -86,201 +96,184 @@ class ServerlessJp2Stack(Stack):
+@@ -86,299 +101,288 @@ class ServerlessJp2Stack(Stack):
         vpc = ec2.Vpc.from_lookup(self, "Vpc", is_default=True)
         cluster = ecs.Cluster(self, "TilerCluster", vpc=vpc)
 
@@ -202,17 +207,25 @@ class ServerlessJp2Stack(Stack):
         ))
         # Pass TASK ROLE
         convert_fn.add_to_role_policy(iam.PolicyStatement(
+        convert_pass_task = iam.PolicyStatement(
             actions=["iam:PassRole"],
             resources=[tiler_task_role.role_arn],
             conditions={"StringEquals": {"iam:PassedToService": "ecs-tasks.amazonaws.com"}}
         ))
+        )
+        convert_pass_task.add_condition(PASS_ROLE_CONDITION_KEY, PASS_ROLE_CONDITION_VALUE)
+        convert_fn.add_to_role_policy(convert_pass_task)
         # Pass EXECUTION ROLE (convert taskdef)
         convert_exec_role = convert_taskdef.obtain_execution_role()
         convert_fn.add_to_role_policy(iam.PolicyStatement(
+        convert_pass_exec = iam.PolicyStatement(
             actions=["iam:PassRole"],
             resources=[convert_exec_role.role_arn],
             conditions={"StringEquals": {"iam:PassedToService": "ecs-tasks.amazonaws.com"}}
         ))
+        )
+        convert_pass_exec.add_condition(PASS_ROLE_CONDITION_KEY, PASS_ROLE_CONDITION_VALUE)
+        convert_fn.add_to_role_policy(convert_pass_exec)
         # S3 read if needed by lambda
         convert_fn.add_to_role_policy(iam.PolicyStatement(
             actions=["s3:ListBucket", "s3:GetObject"],
@@ -264,14 +277,36 @@ class ServerlessJp2Stack(Stack):
         ))
         # Pass TASK ROLE
         split_state_machine.add_to_role_policy(iam.PolicyStatement(
+        split_pass_task = iam.PolicyStatement(
             actions=["iam:PassRole"],
             resources=[tiler_task_role.role_arn],
             conditions={"StringEquals": {"iam:PassedToService": "ecs-tasks.amazonaws.com"}}
         ))
+        )
+        split_pass_task.add_condition(PASS_ROLE_CONDITION_KEY, PASS_ROLE_CONDITION_VALUE)
+        split_state_machine.add_to_role_policy(split_pass_task)
         # Pass EXECUTION ROLE (base taskdef)
         split_exec_role = tiler_taskdef.obtain_execution_role()
         split_state_machine.add_to_role_policy(iam.PolicyStatement(
-@@ -302,54 +295,54 @@ class ServerlessJp2Stack(Stack):
+        split_pass_exec = iam.PolicyStatement(
+            actions=["iam:PassRole"],
+            resources=[split_exec_role.role_arn],
+            conditions={"StringEquals": {"iam:PassedToService": "ecs-tasks.amazonaws.com"}}
+        ))
+        )
+        split_pass_exec.add_condition(PASS_ROLE_CONDITION_KEY, PASS_ROLE_CONDITION_VALUE)
+        split_state_machine.add_to_role_policy(split_pass_exec)
+
+        split_controller_fn = _lambda.Function(
+            self, "SplitControllerFn",
+            runtime=_lambda.Runtime.PYTHON_3_11,
+            handler="controller_split.handler",
+            code=_lambda.Code.from_asset(lambda_code_dir),
+            timeout=Duration.minutes(5),
+            memory_size=512,
+            environment={
+                "INPUT_BUCKET": input_bucket.bucket_name,
+                "OUTPUT_BUCKET": output_bucket.bucket_name,
                 "SPLIT_SFN_ARN": split_state_machine.state_machine_arn,
             },
         )
@@ -323,14 +358,51 @@ class ServerlessJp2Stack(Stack):
         ))
         # Pass TASK ROLE
         unite_state_machine.add_to_role_policy(iam.PolicyStatement(
+        unite_pass_task = iam.PolicyStatement(
             actions=["iam:PassRole"],
             resources=[tiler_task_role.role_arn],
             conditions={"StringEquals": {"iam:PassedToService": "ecs-tasks.amazonaws.com"}}
         ))
+        )
+        unite_pass_task.add_condition(PASS_ROLE_CONDITION_KEY, PASS_ROLE_CONDITION_VALUE)
+        unite_state_machine.add_to_role_policy(unite_pass_task)
         # Pass EXECUTION ROLE (base taskdef)
         unite_exec_role = tiler_taskdef.obtain_execution_role()
         unite_state_machine.add_to_role_policy(iam.PolicyStatement(
-@@ -420,57 +413,85 @@ class ServerlessJp2Stack(Stack):
+        unite_pass_exec = iam.PolicyStatement(
+            actions=["iam:PassRole"],
+            resources=[unite_exec_role.role_arn],
+            conditions={"StringEquals": {"iam:PassedToService": "ecs-tasks.amazonaws.com"}}
+        ))
+        )
+        unite_pass_exec.add_condition(PASS_ROLE_CONDITION_KEY, PASS_ROLE_CONDITION_VALUE)
+        unite_state_machine.add_to_role_policy(unite_pass_exec)
+
+        unite_controller_fn = _lambda.Function(
+            self, "UniteControllerFn",
+            runtime=_lambda.Runtime.PYTHON_3_11,
+            handler="controller_unite.handler",
+            code=_lambda.Code.from_asset(lambda_code_dir),
+            timeout=Duration.minutes(5),
+            memory_size=512,
+            environment={
+                "OUTPUT_BUCKET": output_bucket.bucket_name,
+                "UNITE_SFN_ARN": unite_state_machine.state_machine_arn,
+                "SPLIT_SFN_ARN": split_state_machine.state_machine_arn,
+            },
+        )
+        unite_controller_fn.add_to_role_policy(iam.PolicyStatement(
+            actions=["states:StartExecution"],
+            resources=[unite_state_machine.state_machine_arn]
+        ))
+
+        # ---------------- Convert Logs Lambda ----------------
+        convert_logs_fn = _lambda.Function(
+            self, "ConvertLogsFn",
+            runtime=_lambda.Runtime.PYTHON_3_11,
+            handler="lambda_logs_fetch.handler",
+            code=_lambda.Code.from_asset(lambda_code_dir),
+@@ -420,57 +424,85 @@ class ServerlessJp2Stack(Stack):
         ))
 
         # ---------------- HTTP API ----------------
