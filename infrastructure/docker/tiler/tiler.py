@@ -76,6 +76,15 @@ def _split_opts(raw: str | None) -> List[str]:
         chunk = chunk.strip()
         if not chunk:
             continue
+        lowered = chunk.lower()
+        if lowered == "-co":
+            continue
+        if lowered.startswith("-co="):
+            chunk = chunk[4:]
+        elif lowered.startswith("-co") and len(chunk) > 3:
+            chunk = chunk[3:]
+            if chunk.startswith("="):
+                chunk = chunk[1:]
         if chunk.startswith("-co "):
             chunk = chunk[4:]
         parts.append(chunk)
@@ -143,6 +152,49 @@ def _create_opts_args(fmt: str, raw_opts: str | None, *, sanitize: bool = True) 
     ensure_nbits = force_16bit or fmt == "tiff"
     force_predictor = sanitize_predictor or predictor_policy.upper() == "FORCE_1"
     return _sanitize_create_opts(raw_opts, predictor_policy, ensure_nbits, force_predictor)
+
+
+def _enforce_tiff_safety(args: List[str]) -> List[str]:
+    """Ensure Predictor=1 and NBITS=16 are present (and override conflicting values)."""
+    if not args:
+        return ["-co", "PREDICTOR=1", "-co", "NBITS=16"]
+
+    normalised: List[str] = []
+    seen_predictor = False
+    seen_nbits = False
+    i = 0
+    while i < len(args):
+        token = args[i]
+        if token.lower() == "-co" and i + 1 < len(args):
+            value = args[i + 1]
+            upper = value.upper()
+            if upper.startswith("PREDICTOR="):
+                normalised.extend(["-co", "PREDICTOR=1"])
+                seen_predictor = True
+            elif upper.startswith("NBITS="):
+                normalised.extend(["-co", "NBITS=16"])
+                seen_nbits = True
+            else:
+                normalised.extend(["-co", value])
+            i += 2
+            continue
+
+        upper = token.upper()
+        if upper.startswith("PREDICTOR="):
+            normalised.extend(["-co", "PREDICTOR=1"])
+            seen_predictor = True
+        elif upper.startswith("NBITS="):
+            normalised.extend(["-co", "NBITS=16"])
+            seen_nbits = True
+        else:
+            normalised.append(token)
+        i += 1
+
+    if not seen_predictor:
+        normalised.extend(["-co", "PREDICTOR=1"])
+    if not seen_nbits:
+        normalised.extend(["-co", "NBITS=16"])
+    return normalised
 
 
 def _convert_to_tiff(src: str, dst: str, create_opts: List[str]) -> None:
@@ -258,6 +310,8 @@ def _run_convert() -> None:
     grid = int(os.getenv("TILES_GRID") or _tiles_from_grid(tiles_total))
     job_id = os.getenv("JOB_ID") or f"convert-{int(time.time()*1000)}"
     create_opts = _create_opts_args(fmt, os.getenv("CREATE_OPTS"))
+    if fmt == "tiff":
+        create_opts = _enforce_tiff_safety(create_opts)
 
     if not bucket_in or not bucket_out or not key:
         raise RuntimeError("INPUT_BUCKET, OUTPUT_BUCKET and INPUT_KEY are required")
