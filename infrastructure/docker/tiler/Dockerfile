@@ -1,5 +1,5 @@
 # Small-ish Ubuntu GDAL image; includes gdal_translate, Python
-FROM osgeo/gdal:ubuntu-small-latest
+FROM ghcr.io/osgeo/gdal:ubuntu-small-latest
 
 # Tools: awscli + boto3 for S3 upload; pip kept minimal
 RUN apt-get update && \
