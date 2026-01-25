@@ -118,10 +118,10 @@ class ServerlessJp2Stack(Stack):
         vpc = ec2.Vpc.from_lookup(self, "Vpc", is_default=True)
         cluster = ecs.Cluster(self, "TilerCluster", vpc=vpc)
 
-        tiler_logs = logs.LogGroup(
-            self, "TilerLogGroup",
+        tiler_logs = logs.LogGroup.from_log_group_name(
+            self,
+            "TilerLogGroup",
             log_group_name="/ecs/tsg-jp2-tiler",
-            retention=logs.RetentionDays.ONE_MONTH,
         )
 
         # Task role shared
