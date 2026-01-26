@@ -1,8 +1,7 @@
 name: Deploy-Serverless-JP2
 
 on:
-  push:                # run on ANY branch push
-  workflow_dispatch:   # allow manual runs too
+  workflow_dispatch:   # manual runs only
 
 permissions:
   id-token: write
@@ -39,7 +38,7 @@ jobs:
       - name: CDK Bootstrap (idempotent)
         run: cdk bootstrap aws://$AWS_ACCOUNT_ID/$AWS_REGION
 
-      - name: CDK Deploy
+      - name: CDK Deploy (Lambda/API)
         run: cdk deploy --all --require-approval never
 
       - name: Upload UI

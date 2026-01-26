@@ -5,7 +5,7 @@ This is a **fail-proof minimal** serverless baseline for a JP2 Split/Unite pipel
 ### Deploy (GitHub Actions)
 1) Push to a **new GitHub repo**.
 2) Add secret **AWS_ROLE_ARN** with your OIDC deploy role ARN.
-3) Run the workflow: **Actions → Deploy-Serverless-JP2 → Run workflow**.
+3) Run the manual workflow (deploys Lambda/API + UI): **Actions → Deploy-Serverless-JP2 → Run workflow**.
 
 ### What gets created
 - S3: `jp2-input-<acct>-<region>`, `jp2-output-<acct>-<region>`, `jp2-ui-<acct>-<region>`
