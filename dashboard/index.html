@@ -62,6 +62,41 @@
             font-size: 1.5em;
         }
 
+        .broadcast-container {
+            position: relative;
+            border-radius: 8px;
+            overflow: hidden;
+            background: #000;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+        }
+
+        .broadcast-container video {
+            width: 100%;
+            height: auto;
+            display: block;
+        }
+
+        .broadcast-overlay {
+            position: absolute;
+            top: 15px;
+            left: 15px;
+        }
+
+        .live-badge {
+            background: rgba(239, 68, 68, 0.9);
+            color: white;
+            padding: 8px 15px;
+            border-radius: 20px;
+            font-weight: bold;
+            font-size: 0.9em;
+            animation: blink 1.5s infinite;
+        }
+
+        @keyframes blink {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.6; }
+        }
+
         .video-grid {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
@@ -106,12 +141,6 @@
             color: #10b981;
             font-size: 0.9em;
             font-weight: bold;
-            animation: blink 1.5s infinite;
-        }
-
-        @keyframes blink {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.3; }
         }
 
         .status-bar {
@@ -273,28 +302,26 @@
         <header>
             <h1>🎥 TAG Video Systems</h1>
             <div class="subtitle">Real-Time Probe Monitoring Dashboard</div>
-            <div class="connection-status" id="connectionStatus">Connected to API: https://vxqx34id6g.execute-api.us-east-1.amazonaws.com/prod</div>
+            <div class="connection-status">Connected to API: https://vxqx34id6g.execute-api.us-east-1.amazonaws.com/prod</div>
         </header>
 
-        <!-- Live Stream Section -->
+        <!-- Live Broadcast Section -->
         <div class="live-stream-section">
-            <h2>📡 Live Video Feeds</h2>
-            <div class="video-grid">
-                <div class="video-feed">
-                    <div class="video-placeholder">
-                        <div class="video-icon">🎥</div>
-                        <div class="video-label">Probe A - Encoder Feed</div>
-                        <div class="video-status">● LIVE</div>
-                    </div>
-                </div>
-                <div class="video-feed">
-                    <div class="video-placeholder">
-                        <div class="video-icon">📹</div>
-                        <div class="video-label">Probe B - CDN Feed</div>
-                        <div class="video-status">● LIVE</div>
-                    </div>
+            <h2>📡 Live Broadcast Monitor</h2>
+            <div class="broadcast-container">
+                <video autoplay muted loop playsinline>
+                    <source src="https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4" type="video/mp4">
+                </video>
+                <div class="broadcast-overlay">
+                    <span class="live-badge">● LIVE</span>
                 </div>
             </div>
+        </div>
+
+        <!-- Probe Video Feeds (Dynamic - only shows when probes are active) -->
+        <div id="videoFeedsSection" class="live-stream-section" style="display: none;">
+            <h2>📹 Probe Video Feeds</h2>
+            <div class="video-grid" id="videoFeedsGrid"></div>
         </div>
 
         <div id="error" class="error" style="display: none;"></div>
@@ -326,14 +353,12 @@
     </div>
 
     <script>
-        // Hardcoded API endpoint
         const apiEndpoint = 'https://vxqx34id6g.execute-api.us-east-1.amazonaws.com/prod';
         let refreshInterval;
         const probeCharts = {};
         const probeHistory = {};
         const MAX_HISTORY_POINTS = 20;
 
-        // Start monitoring on page load
         window.onload = function() {
             startMonitoring();
         };
@@ -363,14 +388,32 @@
 
         function renderProbes(probes) {
             const container = document.getElementById('probesContainer');
+            const videoFeedsSection = document.getElementById('videoFeedsSection');
+            const videoFeedsGrid = document.getElementById('videoFeedsGrid');
             
             if (probes.length === 0) {
                 container.innerHTML = '<div class="loading">No probes detected. Start the Python simulator.</div>';
+                videoFeedsSection.style.display = 'none';
                 return;
             }
 
+            // Show video feeds section when probes are active
+            videoFeedsSection.style.display = 'block';
+            
+            // Render video feeds
+            videoFeedsGrid.innerHTML = probes.map(probe => `
+                <div class="video-feed">
+                    <div class="video-placeholder">
+                        <div class="video-icon">${probe.ProbeID.includes('Encoder') ? '🎥' : '📹'}</div>
+                        <div class="video-label">${probe.ProbeID}</div>
+                        <div class="video-status">● LIVE</div>
+                    </div>
+                </div>
+            `).join('');
+
+            // Render probe cards
             container.innerHTML = probes.map(probe => `
-                <div class="probe-card" id="probe-${probe.ProbeID}">
+                <div class="probe-card">
                     <div class="probe-header">
                         <div class="probe-name">${probe.ProbeID}</div>
                         <div class="status-indicator ${probe.Color}">
@@ -402,7 +445,6 @@
                 </div>
             `).join('');
 
-            // Update charts for each probe
             probes.forEach(probe => {
                 updateProbeHistory(probe);
                 renderChart(probe);
@@ -421,7 +463,6 @@
                 status: probe.Status
             });
 
-            // Keep only last MAX_HISTORY_POINTS
             if (history.length > MAX_HISTORY_POINTS) {
                 history.shift();
             }
@@ -433,12 +474,10 @@
 
             const history = probeHistory[probe.ProbeID] || [];
             
-            // Destroy existing chart if it exists
             if (probeCharts[probe.ProbeID]) {
                 probeCharts[probe.ProbeID].destroy();
             }
 
-            // Create new chart
             probeCharts[probe.ProbeID] = new Chart(ctx, {
                 type: 'line',
                 data: {
@@ -460,54 +499,13 @@
                     maintainAspectRatio: true,
                     aspectRatio: 2.5,
                     plugins: {
-                        legend: {
-                            display: false
-                        },
-                        tooltip: {
-                            callbacks: {
-                                label: function(context) {
-                                    return `FPS: ${context.parsed.y.toFixed(2)}`;
-                                }
-                            }
-                        }
+                        legend: { display: false }
                     },
                     scales: {
                         y: {
                             beginAtZero: true,
-                            max: 40,
-                            grid: {
-                                color: 'rgba(0, 0, 0, 0.05)'
-                            },
-                            ticks: {
-                                callback: function(value) {
-                                    return value.toFixed(0);
-                                }
-                            }
-                        },
-                        x: {
-                            grid: {
-                                display: false
-                            },
-                            ticks: {
-                                maxRotation: 45,
-                                minRotation: 45
-                            }
+                            max: 40
                         }
-                    },
-                    annotation: {
-                        annotations: [{
-                            type: 'line',
-                            yMin: 25,
-                            yMax: 25,
-                            borderColor: '#f59e0b',
-                            borderWidth: 2,
-                            borderDash: [5, 5],
-                            label: {
-                                content: 'Threshold (25 FPS)',
-                                enabled: true,
-                                position: 'end'
-                            }
-                        }]
                     }
                 }
             });
