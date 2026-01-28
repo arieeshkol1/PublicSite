@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TAG Video Systems - Probe Monitor</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        header {
+            text-align: center;
+            color: white;
+            margin-bottom: 40px;
+        }
+
+        h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+
+        .subtitle {
+            font-size: 1.2em;
+            opacity: 0.9;
+        }
+
+        .config-panel {
+            background: white;
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 30px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+
+        .config-panel label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+            color: #333;
+        }
+
+        .config-panel input {
+            width: 100%;
+            padding: 10px;
+            border: 2px solid #ddd;
+            border-radius: 5px;
+            font-size: 1em;
+        }
+
+        .config-panel button {
+            margin-top: 10px;
+            padding: 10px 20px;
+            background: #667eea;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 1em;
+        }
+
+        .config-panel button:hover {
+            background: #5568d3;
+        }
+
+        .status-bar {
+            background: white;
+            border-radius: 10px;
+            padding: 15px;
+            margin-bottom: 30px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+
+        .status-item {
+            text-align: center;
+        }
+
+        .status-label {
+            font-size: 0.9em;
+            color: #666;
+            margin-bottom: 5px;
+        }
+
+        .status-value {
+            font-size: 1.5em;
+            font-weight: bold;
+            color: #333;
+        }
+
+        .probes-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+        }
+
+        .probe-card {
+            background: white;
+            border-radius: 10px;
+            padding: 25px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+        }
+
+        .probe-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 8px 12px rgba(0,0,0,0.15);
+        }
+
+        .probe-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+
+        .probe-name {
+            font-size: 1.3em;
+            font-weight: bold;
+            color: #333;
+        }
+
+        .status-indicator {
+            width: 60px;
+            height: 60px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 2em;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+            transition: all 0.3s ease;
+        }
+
+        .status-indicator.green {
+            background: #10b981;
+            animation: pulse-green 2s infinite;
+        }
+
+        .status-indicator.red {
+            background: #ef4444;
+            animation: pulse-red 1s infinite;
+        }
+
+        @keyframes pulse-green {
+            0%, 100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); }
+            50% { box-shadow: 0 0 0 10px rgba(16, 185, 129, 0); }
+        }
+
+        @keyframes pulse-red {
+            0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); }
+            50% { box-shadow: 0 0 0 10px rgba(239, 68, 68, 0); }
+        }
+
+        .probe-metrics {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+        }
+
+        .metric {
+            background: #f3f4f6;
+            padding: 10px;
+            border-radius: 5px;
+        }
+
+        .metric-label {
+            font-size: 0.85em;
+            color: #666;
+            margin-bottom: 5px;
+        }
+
+        .metric-value {
+            font-size: 1.2em;
+            font-weight: bold;
+            color: #333;
+        }
+
+        .loading {
+            text-align: center;
+            color: white;
+            font-size: 1.2em;
+            padding: 40px;
+        }
+
+        .error {
+            background: #fee2e2;
+            border: 2px solid #ef4444;
+            color: #991b1b;
+            padding: 15px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+        }
+
+        .timestamp {
+            text-align: center;
+            color: white;
+            margin-top: 20px;
+            font-size: 0.9em;
+            opacity: 0.8;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🎥 TAG Video Systems</h1>
+            <div class="subtitle">Real-Time Probe Monitoring Dashboard</div>
+        </header>
+
+        <div class="config-panel">
+            <label for="apiEndpoint">API Endpoint:</label>
+            <input type="text" id="apiEndpoint" placeholder="https://your-api-gateway-url/prod">
+            <button onclick="saveConfig()">Save & Connect</button>
+        </div>
+
+        <div id="error" class="error" style="display: none;"></div>
+
+        <div class="status-bar">
+            <div class="status-item">
+                <div class="status-label">Total Probes</div>
+                <div class="status-value" id="totalProbes">0</div>
+            </div>
+            <div class="status-item">
+                <div class="status-label">Healthy</div>
+                <div class="status-value" style="color: #10b981;" id="healthyCount">0</div>
+            </div>
+            <div class="status-item">
+                <div class="status-label">Critical</div>
+                <div class="status-value" style="color: #ef4444;" id="criticalCount">0</div>
+            </div>
+            <div class="status-item">
+                <div class="status-label">Refresh Rate</div>
+                <div class="status-value" style="font-size: 1.2em;">2s</div>
+            </div>
+        </div>
+
+        <div id="probesContainer" class="probes-grid">
+            <div class="loading">Waiting for configuration...</div>
+        </div>
+
+        <div class="timestamp" id="lastUpdate"></div>
+    </div>
+
+    <script>
+        let apiEndpoint = localStorage.getItem('apiEndpoint') || '';
+        let refreshInterval;
+
+        // Load saved config on page load
+        window.onload = function() {
+            if (apiEndpoint) {
+                document.getElementById('apiEndpoint').value = apiEndpoint;
+                startMonitoring();
+            }
+        };
+
+        function saveConfig() {
+            apiEndpoint = document.getElementById('apiEndpoint').value.trim();
+            if (!apiEndpoint) {
+                showError('Please enter an API endpoint');
+                return;
+            }
+            localStorage.setItem('apiEndpoint', apiEndpoint);
+            hideError();
+            startMonitoring();
+        }
+
+        function startMonitoring() {
+            if (refreshInterval) {
+                clearInterval(refreshInterval);
+            }
+            fetchProbes();
+            refreshInterval = setInterval(fetchProbes, 2000); // Poll every 2 seconds
+        }
+
+        async function fetchProbes() {
+            if (!apiEndpoint) return;
+
+            try {
+                const response = await fetch(`${apiEndpoint}/probes`);
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+
+                const data = await response.json();
+                renderProbes(data.probes || []);
+                updateStats(data.probes || []);
+                updateTimestamp();
+                hideError();
+            } catch (error) {
+                console.error('Error fetching probes:', error);
+                showError(`Failed to fetch probe data: ${error.message}`);
+            }
+        }
+
+        function renderProbes(probes) {
+            const container = document.getElementById('probesContainer');
+            
+            if (probes.length === 0) {
+                container.innerHTML = '<div class="loading">No probes detected. Start the Python simulator.</div>';
+                return;
+            }
+
+            container.innerHTML = probes.map(probe => `
+                <div class="probe-card">
+                    <div class="probe-header">
+                        <div class="probe-name">${probe.ProbeID}</div>
+                        <div class="status-indicator ${probe.Color}">
+                            ${probe.Status === 'HEALTHY' ? '✓' : '⚠'}
+                        </div>
+                    </div>
+                    <div class="probe-metrics">
+                        <div class="metric">
+                            <div class="metric-label">Status</div>
+                            <div class="metric-value">${probe.Status}</div>
+                        </div>
+                        <div class="metric">
+                            <div class="metric-label">FPS</div>
+                            <div class="metric-value">${probe.FPS}</div>
+                        </div>
+                        <div class="metric">
+                            <div class="metric-label">Resolution</div>
+                            <div class="metric-value">${probe.Resolution}</div>
+                        </div>
+                        <div class="metric">
+                            <div class="metric-label">Last Update</div>
+                            <div class="metric-value" style="font-size: 0.9em;">${formatTime(probe.Timestamp)}</div>
+                        </div>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function updateStats(probes) {
+            const total = probes.length;
+            const healthy = probes.filter(p => p.Status === 'HEALTHY').length;
+            const critical = total - healthy;
+
+            document.getElementById('totalProbes').textContent = total;
+            document.getElementById('healthyCount').textContent = healthy;
+            document.getElementById('criticalCount').textContent = critical;
+        }
+
+        function updateTimestamp() {
+            const now = new Date();
+            document.getElementById('lastUpdate').textContent = 
+                `Last updated: ${now.toLocaleTimeString()}`;
+        }
+
+        function formatTime(timestamp) {
+            const date = new Date(timestamp);
+            return date.toLocaleTimeString();
+        }
+
+        function showError(message) {
+            const errorDiv = document.getElementById('error');
+            errorDiv.textContent = message;
+            errorDiv.style.display = 'block';
+        }
+
+        function hideError() {
+            document.getElementById('error').style.display = 'none';
+        }
+    </script>
+</body>
+</html>
