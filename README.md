@@ -1,43 +1,51 @@
-# TSG Serverless JP2 (Clean Starter)
+# AWS CDK Deployment Pipeline
 
-This is a **fail-proof minimal** serverless baseline for a JP2 Split/Unite pipeline.
+This repository contains a GitHub Actions pipeline for deploying AWS CDK infrastructure.
 
-### Deploy (GitHub Actions)
-1) Push to a **new GitHub repo**.
-2) Add secret **AWS_ROLE_ARN** with your OIDC deploy role ARN.
-3) Run the manual workflow (deploys Lambda/API + UI): **Actions → Deploy-Serverless-JP2 → Run workflow**.
+## Overview
 
-### What gets created
-- S3: `jp2-input-<acct>-<region>`, `jp2-output-<acct>-<region>`, `jp2-ui-<acct>-<region>`
-- API Gateway HTTP API: `/split`, `/unite`, `/status/{jobId}` (Lambda stub)
-- UI uploaded to the UI bucket (S3 static website)
+Clean starter repository with automated CDK deployment pipeline configured for AWS.
 
-### After deploy
-- Open **UiBucketWebsiteUrl** (from stack outputs).
-- Paste **ApiEndpoint** into the page and test the forms.
+## Prerequisites
 
-> This starter returns stub job IDs and `SUCCEEDED` status. Add real JP2 processing later with a Lambda container + Step Functions.
+- AWS Account with appropriate permissions
+- GitHub repository with OIDC configured
+- AWS IAM role for GitHub Actions deployment
 
-### Committing and pushing from GitHub Desktop
-If you need to publish local changes (for example, adding `infrastructure/docker/tiler/tiler.py`) directly to the `main` branch on GitHub, follow these steps:
+## Setup
 
-1. **Make sure you're on `main`.**
-   - In GitHub Desktop, open the branch selector (top center) and choose `main`.
-   - If you do not see `main`, fetch the latest branches with **Repository ▸ Fetch origin**.
-2. **Pull the latest remote history.**
-   - Click **Repository ▸ Pull** (or press `Ctrl/Cmd+Shift+P`) to ensure your local `main` matches GitHub.
-3. **Add or update your files locally.**
-   - Create missing folders if needed (e.g., `infrastructure/docker/tiler/`) and copy in the updated files.
-4. **Commit the changes.**
-   - Review the **Changes** tab, enter a descriptive summary, and click **Commit to main**.
-5. **Push to GitHub.**
-   - Click **Push origin** (top right) so the commit appears on GitHub’s `main` branch.
-6. **Verify on GitHub.**
-   - Visit the repository in your browser to confirm the new commit and files are present.
+1. **Configure AWS OIDC Role**
+   - Create an IAM role with trust relationship for GitHub Actions
+   - Add the role ARN as a GitHub secret: `AWS_ROLE_ARN`
 
-### Locating the tiler worker
-- The ECS task image expects the Python worker at `infrastructure/docker/tiler/tiler.py`.
-- If you do not see this file locally, make sure you have checked out the branch that contains the change (for example the `work` branch used for development in this repository).
-- After switching branches run `git pull` (or use **Fetch origin**/**Pull** in GitHub Desktop) so your local checkout matches the remote branch before building the container image.
-infrastructure/docker/tiler/tiler.py
-New
+2. **Deploy Infrastructure**
+   - Push your CDK infrastructure code to this repository
+   - The GitHub Actions pipeline will automatically deploy on push to main
+   - Or manually trigger deployment from Actions tab
+
+## Repository Structure
+
+```
+.github/workflows/  # GitHub Actions deployment pipeline
+.kiro/             # Kiro AI assistant configuration
+```
+
+## Deployment Pipeline
+
+The deployment pipeline is located in `.github/workflows/` and handles:
+- AWS authentication via OIDC
+- CDK bootstrap (if needed)
+- CDK deployment to your AWS account
+
+## Getting Started
+
+1. Add your CDK infrastructure code
+2. Configure stack parameters as needed
+3. Push to main branch or manually trigger deployment
+4. Monitor deployment in GitHub Actions tab
+
+## Notes
+
+- AWS resources are deployed to account: 960915223703
+- Default region: us-east-1
+- Ensure your CDK code follows AWS best practices
