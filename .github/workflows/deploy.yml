@@ -1,14 +1,17 @@
-name: Deploy-Serverless-JP2
+name: Deploy-CDK-Infrastructure
 
 on:
   workflow_dispatch:   # manual runs only
+  push:
+    branches:
+      - main
 
 permissions:
   id-token: write
   contents: read
 
 env:
-  AWS_ACCOUNT_ID: "991105135552"
+  AWS_ACCOUNT_ID: "960915223703"
   AWS_REGION: "us-east-1"
 
 jobs:
@@ -23,29 +26,33 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install CDK & deps
+      - name: Install CDK
         run: |
           npm install -g aws-cdk@latest
           python -m pip install --upgrade pip
-          pip install -r infrastructure/requirements.txt
+
+      - name: Install Python dependencies
+        run: |
+          if [ -f infrastructure/requirements.txt ]; then
+            pip install -r infrastructure/requirements.txt
+          else
+            echo "No requirements.txt found - skipping Python dependencies"
+          fi
 
       - name: Configure AWS Credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}   # existing role, unchanged
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: CDK Bootstrap (idempotent)
         run: cdk bootstrap aws://$AWS_ACCOUNT_ID/$AWS_REGION
 
-      - name: CDK Deploy (Lambda/API)
-        run: cdk deploy --all --require-approval never
-
-      - name: Upload UI
+      - name: CDK Deploy
         run: |
-          aws s3 sync ui/ s3://jp2-ui-${{ env.AWS_ACCOUNT_ID }}-${{ env.AWS_REGION }}/ --delete --follow-symlinks
-          # set short cache for HTML so updates show fast
-          aws s3 cp s3://jp2-ui-${{ env.AWS_ACCOUNT_ID }}-${{ env.AWS_REGION }}/index.html s3://jp2-ui-${{ env.AWS_ACCOUNT_ID }}-${{ env.AWS_REGION }}/index.html \
-            --metadata-directive REPLACE \
-            --cache-control "max-age=60" \
-            --content-type "text/html"
+          if [ -f cdk.json ]; then
+            cdk deploy --all --require-approval never
+          else
+            echo "No cdk.json found - skipping CDK deployment"
+            echo "Add your CDK infrastructure code to enable deployment"
+          fi
