@@ -405,7 +405,7 @@
                 <div class="status-value" style="color: #10b981;" id="healthyCount">0</div>
             </div>
             <div class="status-item">
-                <div class="status-label">Critical</div>
+                <div class="status-label">Not Healthy</div>
                 <div class="status-value" style="color: #ef4444;" id="criticalCount">0</div>
             </div>
             <div class="status-item">
@@ -511,7 +511,9 @@
             }).join('');
 
             // Render probe cards
-            container.innerHTML = probes.map(probe => `
+            container.innerHTML = probes.map(probe => {
+                const displayStatus = probe.Status === 'HEALTHY' ? 'Healthy' : 'Not Healthy';
+                return `
                 <div class="probe-card">
                     <div class="probe-header">
                         <div class="probe-name">${probe.ProbeID}</div>
@@ -522,7 +524,7 @@
                     <div class="probe-metrics">
                         <div class="metric">
                             <div class="metric-label">Status</div>
-                            <div class="metric-value">${probe.Status}</div>
+                            <div class="metric-value">${displayStatus}</div>
                         </div>
                         <div class="metric">
                             <div class="metric-label">FPS</div>
@@ -552,7 +554,8 @@
                         </div>
                     </div>
                 </div>
-            `).join('');
+            `;
+            }).join('');
 
             probes.forEach(probe => {
                 updateProbeHistory(probe);
@@ -707,7 +710,7 @@
                         },
                         annotation: {
                             annotations: {
-                                threshold: {
+                                fpsThreshold: {
                                     type: 'line',
                                     yMin: 25,
                                     yMax: 25,
@@ -717,12 +720,33 @@
                                     borderDash: [8, 4],
                                     label: {
                                         display: true,
-                                        content: 'Threshold: 25 FPS',
+                                        content: 'FPS: 25',
                                         position: 'start',
                                         backgroundColor: 'rgba(239, 68, 68, 0.9)',
                                         color: 'white',
                                         font: {
-                                            size: 11,
+                                            size: 10,
+                                            weight: 'bold'
+                                        },
+                                        padding: 4
+                                    }
+                                },
+                                resolutionThreshold: {
+                                    type: 'line',
+                                    yMin: 2.0,
+                                    yMax: 2.0,
+                                    yScaleID: 'y1',
+                                    borderColor: '#f59e0b',
+                                    borderWidth: 2,
+                                    borderDash: [8, 4],
+                                    label: {
+                                        display: true,
+                                        content: 'Res: 2.0 MP',
+                                        position: 'end',
+                                        backgroundColor: 'rgba(245, 158, 11, 0.9)',
+                                        color: 'white',
+                                        font: {
+                                            size: 10,
                                             weight: 'bold'
                                         },
                                         padding: 4

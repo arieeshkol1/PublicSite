@@ -28,7 +28,7 @@ exports.handler = async (event) => {
       }
 
       // Evaluate health status based on FPS
-      const status = payload.FPS >= 25 ? "HEALTHY" : "CRITICAL";
+      const status = payload.FPS >= 25 ? "HEALTHY" : "NOT_HEALTHY";
       const color = status === "HEALTHY" ? "green" : "red";
 
       // Prepare DynamoDB item

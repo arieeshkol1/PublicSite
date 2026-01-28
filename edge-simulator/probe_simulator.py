@@ -73,8 +73,8 @@ class VideoProbeSimulator:
             )
             
             if response.status_code == 200:
-                status = "🟢 HEALTHY" if payload["FPS"] >= 25 else "🔴 CRITICAL"
-                print(f"[{payload['Timestamp']}] {self.probe_id}: FPS={payload['FPS']:.2f} {status}")
+                status = "🟢 HEALTHY" if payload["FPS"] >= 25 else "🔴 Not Healthy"
+                print(f"[{payload['Timestamp']}] {self.probe_id}: FPS={payload['FPS']:.2f} Resolution={payload['Resolution']} {status}")
                 return True
             else:
                 print(f"❌ Error: HTTP {response.status_code} - {response.text}")
