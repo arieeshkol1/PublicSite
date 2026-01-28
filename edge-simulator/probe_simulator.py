@@ -20,10 +20,25 @@ class VideoProbeSimulator:
         self.chaos_mode = False
         self.jitter_enabled = False
         self.packet_loss_enabled = False
+        self.variance_enabled = True  # Always enable variance for realistic simulation
+        
+        # Resolution options for variance
+        self.resolutions = [
+            "1920x1080", "1280x720", "3840x2160", "2560x1440", "1024x576"
+        ]
 
     def generate_telemetry(self):
-        """Generate telemetry payload with optional chaos"""
+        """Generate telemetry payload with optional chaos and variance"""
         fps = self.base_fps
+        resolution = self.resolution
+
+        # Add natural variance (±2 FPS) for realistic simulation
+        if self.variance_enabled:
+            fps += random.uniform(-2, 2)
+            
+            # Occasionally change resolution (10% chance)
+            if random.random() < 0.1:
+                resolution = random.choice(self.resolutions)
 
         if self.chaos_mode:
             if self.jitter_enabled:
@@ -42,7 +57,7 @@ class VideoProbeSimulator:
             "ProbeID": self.probe_id,
             "Timestamp": datetime.utcnow().isoformat() + "Z",
             "FPS": round(fps, 2),
-            "Resolution": self.resolution
+            "Resolution": resolution
         }
 
         return payload
@@ -79,6 +94,7 @@ class VideoProbeSimulator:
         print(f"Base FPS: {self.base_fps}")
         print(f"Resolution: {self.resolution}")
         print(f"Interval: {interval}s")
+        print(f"Variance: ENABLED (±2 FPS, occasional resolution changes)")
         print(f"Chaos Mode: {'ENABLED' if self.chaos_mode else 'DISABLED'}")
         if self.chaos_mode:
             print(f"  - Jitter: {'ON' if self.jitter_enabled else 'OFF'}")

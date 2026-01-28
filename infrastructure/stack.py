@@ -74,6 +74,17 @@ class TagVideoProbeStack(Stack):
             rest_api_name="TAG Video Probe API",
             description="Ingestion API for video probe telemetry",
             deploy_options=apigw.StageOptions(stage_name="prod"),
+            default_cors_preflight_options=apigw.CorsOptions(
+                allow_origins=apigw.Cors.ALL_ORIGINS,
+                allow_methods=apigw.Cors.ALL_METHODS,
+                allow_headers=[
+                    "Content-Type",
+                    "X-Amz-Date",
+                    "Authorization",
+                    "X-Api-Key",
+                    "X-Amz-Security-Token",
+                ],
+            ),
         )
 
         # POST /telemetry endpoint - sends to SQS
@@ -106,11 +117,21 @@ class TagVideoProbeStack(Stack):
                         apigw.IntegrationResponse(
                             status_code="200",
                             response_templates={"application/json": '{"status":"queued"}'},
+                            response_parameters={
+                                "method.response.header.Access-Control-Allow-Origin": "'*'",
+                            },
                         )
                     ],
                 ),
             ),
-            method_responses=[apigw.MethodResponse(status_code="200")],
+            method_responses=[
+                apigw.MethodResponse(
+                    status_code="200",
+                    response_parameters={
+                        "method.response.header.Access-Control-Allow-Origin": True,
+                    },
+                )
+            ],
         )
 
         # GET /probes endpoint - reads from DynamoDB

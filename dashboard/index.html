@@ -428,8 +428,8 @@
         function isProbeOnline(probeId) {
             const lastSeen = lastProbeUpdate[probeId];
             if (!lastSeen) return false;
-            // Consider offline if no update in last 10 seconds
-            return (Date.now() - lastSeen) < 10000;
+            // Consider offline if no update in last 4 seconds
+            return (Date.now() - lastSeen) < 4000;
         }
 
         function parseResolution(resolution) {
@@ -547,10 +547,17 @@
 
             const history = probeHistory[probe.ProbeID] || [];
             
+            // If chart exists, update data instead of destroying
             if (probeCharts[probe.ProbeID]) {
-                probeCharts[probe.ProbeID].destroy();
+                const chart = probeCharts[probe.ProbeID];
+                chart.data.labels = history.map(h => h.timestamp.toLocaleTimeString());
+                chart.data.datasets[0].data = history.map(h => h.fps);
+                chart.data.datasets[1].data = history.map(h => h.resolution);
+                chart.update('none'); // Update without animation for smooth refresh
+                return;
             }
 
+            // Create new chart only if it doesn't exist
             probeCharts[probe.ProbeID] = new Chart(ctx, {
                 type: 'line',
                 data: {
@@ -586,6 +593,7 @@
                     responsive: true,
                     maintainAspectRatio: true,
                     aspectRatio: 2.5,
+                    animation: false, // Disable animations for smoother updates
                     interaction: {
                         mode: 'index',
                         intersect: false
