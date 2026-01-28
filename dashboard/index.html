@@ -260,13 +260,13 @@
     </div>
 
     <script>
-        let apiEndpoint = localStorage.getItem('apiEndpoint') || '';
+        let apiEndpoint = localStorage.getItem('apiEndpoint') || 'https://vxqx34id6g.execute-api.us-east-1.amazonaws.com/prod';
         let refreshInterval;
 
         // Load saved config on page load
         window.onload = function() {
+            document.getElementById('apiEndpoint').value = apiEndpoint;
             if (apiEndpoint) {
-                document.getElementById('apiEndpoint').value = apiEndpoint;
                 startMonitoring();
             }
         };
