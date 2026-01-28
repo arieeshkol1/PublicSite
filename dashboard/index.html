@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>TAG Video Systems - Probe Monitor</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <style>
         * {
             margin: 0;
@@ -19,7 +20,7 @@
         }
 
         .container {
-            max-width: 1200px;
+            max-width: 1400px;
             margin: 0 auto;
         }
 
@@ -45,6 +46,38 @@
             color: rgba(255, 255, 255, 0.7);
             font-size: 0.85em;
             margin-top: 5px;
+        }
+
+        .live-stream-section {
+            background: white;
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 30px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+
+        .live-stream-section h2 {
+            margin-bottom: 15px;
+            color: #333;
+            font-size: 1.5em;
+        }
+
+        .stream-container {
+            position: relative;
+            padding-bottom: 56.25%;
+            height: 0;
+            overflow: hidden;
+            border-radius: 8px;
+            background: #000;
+        }
+
+        .stream-container iframe {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            border: none;
         }
 
         .status-bar {
@@ -76,7 +109,7 @@
 
         .probes-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
             gap: 20px;
         }
 
@@ -142,6 +175,7 @@
             display: grid;
             grid-template-columns: 1fr 1fr;
             gap: 15px;
+            margin-bottom: 20px;
         }
 
         .metric {
@@ -160,6 +194,19 @@
             font-size: 1.2em;
             font-weight: bold;
             color: #333;
+        }
+
+        .chart-container {
+            margin-top: 20px;
+            padding-top: 20px;
+            border-top: 2px solid #e5e7eb;
+        }
+
+        .chart-title {
+            font-size: 0.9em;
+            color: #666;
+            margin-bottom: 10px;
+            font-weight: bold;
         }
 
         .loading {
@@ -195,6 +242,14 @@
             <div class="connection-status" id="connectionStatus">Connected to API: https://vxqx34id6g.execute-api.us-east-1.amazonaws.com/prod</div>
         </header>
 
+        <!-- Live Stream Section -->
+        <div class="live-stream-section">
+            <h2>📡 Live Stream Monitor</h2>
+            <div class="stream-container">
+                <iframe src="https://www.kan.org.il/live/" allowfullscreen></iframe>
+            </div>
+        </div>
+
         <div id="error" class="error" style="display: none;"></div>
 
         <div class="status-bar">
@@ -217,7 +272,7 @@
         </div>
 
         <div id="probesContainer" class="probes-grid">
-            <div class="loading">Waiting for configuration...</div>
+            <div class="loading">Waiting for probe data...</div>
         </div>
 
         <div class="timestamp" id="lastUpdate"></div>
@@ -227,6 +282,9 @@
         // Hardcoded API endpoint
         const apiEndpoint = 'https://vxqx34id6g.execute-api.us-east-1.amazonaws.com/prod';
         let refreshInterval;
+        const probeCharts = {};
+        const probeHistory = {};
+        const MAX_HISTORY_POINTS = 20;
 
         // Start monitoring on page load
         window.onload = function() {
@@ -235,7 +293,7 @@
 
         function startMonitoring() {
             fetchProbes();
-            refreshInterval = setInterval(fetchProbes, 2000); // Poll every 2 seconds
+            refreshInterval = setInterval(fetchProbes, 2000);
         }
 
         async function fetchProbes() {
@@ -265,7 +323,7 @@
             }
 
             container.innerHTML = probes.map(probe => `
-                <div class="probe-card">
+                <div class="probe-card" id="probe-${probe.ProbeID}">
                     <div class="probe-header">
                         <div class="probe-name">${probe.ProbeID}</div>
                         <div class="status-indicator ${probe.Color}">
@@ -290,8 +348,122 @@
                             <div class="metric-value" style="font-size: 0.9em;">${formatTime(probe.Timestamp)}</div>
                         </div>
                     </div>
+                    <div class="chart-container">
+                        <div class="chart-title">FPS History (Last ${MAX_HISTORY_POINTS} readings)</div>
+                        <canvas id="chart-${probe.ProbeID}"></canvas>
+                    </div>
                 </div>
             `).join('');
+
+            // Update charts for each probe
+            probes.forEach(probe => {
+                updateProbeHistory(probe);
+                renderChart(probe);
+            });
+        }
+
+        function updateProbeHistory(probe) {
+            if (!probeHistory[probe.ProbeID]) {
+                probeHistory[probe.ProbeID] = [];
+            }
+
+            const history = probeHistory[probe.ProbeID];
+            history.push({
+                fps: probe.FPS,
+                timestamp: new Date(probe.Timestamp),
+                status: probe.Status
+            });
+
+            // Keep only last MAX_HISTORY_POINTS
+            if (history.length > MAX_HISTORY_POINTS) {
+                history.shift();
+            }
+        }
+
+        function renderChart(probe) {
+            const ctx = document.getElementById(`chart-${probe.ProbeID}`);
+            if (!ctx) return;
+
+            const history = probeHistory[probe.ProbeID] || [];
+            
+            // Destroy existing chart if it exists
+            if (probeCharts[probe.ProbeID]) {
+                probeCharts[probe.ProbeID].destroy();
+            }
+
+            // Create new chart
+            probeCharts[probe.ProbeID] = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: history.map(h => h.timestamp.toLocaleTimeString()),
+                    datasets: [{
+                        label: 'FPS',
+                        data: history.map(h => h.fps),
+                        borderColor: probe.Status === 'HEALTHY' ? '#10b981' : '#ef4444',
+                        backgroundColor: probe.Status === 'HEALTHY' ? 'rgba(16, 185, 129, 0.1)' : 'rgba(239, 68, 68, 0.1)',
+                        borderWidth: 2,
+                        tension: 0.4,
+                        fill: true,
+                        pointRadius: 4,
+                        pointBackgroundColor: history.map(h => h.status === 'HEALTHY' ? '#10b981' : '#ef4444')
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: true,
+                    aspectRatio: 2.5,
+                    plugins: {
+                        legend: {
+                            display: false
+                        },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    return `FPS: ${context.parsed.y.toFixed(2)}`;
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            max: 40,
+                            grid: {
+                                color: 'rgba(0, 0, 0, 0.05)'
+                            },
+                            ticks: {
+                                callback: function(value) {
+                                    return value.toFixed(0);
+                                }
+                            }
+                        },
+                        x: {
+                            grid: {
+                                display: false
+                            },
+                            ticks: {
+                                maxRotation: 45,
+                                minRotation: 45
+                            }
+                        }
+                    },
+                    annotation: {
+                        annotations: [{
+                            type: 'line',
+                            yMin: 25,
+                            yMax: 25,
+                            borderColor: '#f59e0b',
+                            borderWidth: 2,
+                            borderDash: [5, 5],
+                            label: {
+                                content: 'Threshold (25 FPS)',
+                                enabled: true,
+                                position: 'end'
+                            }
+                        }]
+                    }
+                }
+            });
         }
 
         function updateStats(probes) {
