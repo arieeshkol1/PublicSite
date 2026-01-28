@@ -62,22 +62,56 @@
             font-size: 1.5em;
         }
 
-        .stream-container {
-            position: relative;
-            padding-bottom: 56.25%;
-            height: 0;
-            overflow: hidden;
-            border-radius: 8px;
-            background: #000;
+        .video-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
         }
 
-        .stream-container iframe {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            border: none;
+        .video-feed {
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .video-placeholder {
+            background: linear-gradient(135deg, #1e293b 0%, #334155 100%);
+            aspect-ratio: 16/9;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            position: relative;
+        }
+
+        .video-icon {
+            font-size: 4em;
+            margin-bottom: 10px;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.6; }
+        }
+
+        .video-label {
+            font-size: 1.1em;
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+
+        .video-status {
+            color: #10b981;
+            font-size: 0.9em;
+            font-weight: bold;
+            animation: blink 1.5s infinite;
+        }
+
+        @keyframes blink {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.3; }
         }
 
         .status-bar {
@@ -244,9 +278,22 @@
 
         <!-- Live Stream Section -->
         <div class="live-stream-section">
-            <h2>📡 Live Stream Monitor</h2>
-            <div class="stream-container">
-                <iframe src="https://www.kan.org.il/live/" allowfullscreen></iframe>
+            <h2>📡 Live Video Feeds</h2>
+            <div class="video-grid">
+                <div class="video-feed">
+                    <div class="video-placeholder">
+                        <div class="video-icon">🎥</div>
+                        <div class="video-label">Probe A - Encoder Feed</div>
+                        <div class="video-status">● LIVE</div>
+                    </div>
+                </div>
+                <div class="video-feed">
+                    <div class="video-placeholder">
+                        <div class="video-icon">📹</div>
+                        <div class="video-label">Probe B - CDN Feed</div>
+                        <div class="video-status">● LIVE</div>
+                    </div>
+                </div>
             </div>
         </div>
 
