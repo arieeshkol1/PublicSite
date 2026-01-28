@@ -529,15 +529,22 @@
             }
 
             const history = probeHistory[probe.ProbeID];
-            history.push({
-                fps: probe.FPS,
-                resolution: parseResolution(probe.Resolution),
-                timestamp: new Date(probe.Timestamp),
-                status: probe.Status
-            });
+            
+            // Only add if this is a new timestamp (avoid duplicates)
+            const lastEntry = history[history.length - 1];
+            const newTimestamp = new Date(probe.Timestamp).getTime();
+            
+            if (!lastEntry || newTimestamp !== lastEntry.timestamp.getTime()) {
+                history.push({
+                    fps: probe.FPS,
+                    resolution: parseResolution(probe.Resolution),
+                    timestamp: new Date(probe.Timestamp),
+                    status: probe.Status
+                });
 
-            if (history.length > MAX_HISTORY_POINTS) {
-                history.shift();
+                if (history.length > MAX_HISTORY_POINTS) {
+                    history.shift();
+                }
             }
         }
 
@@ -547,14 +554,25 @@
 
             const history = probeHistory[probe.ProbeID] || [];
             
+            // If no history yet, don't render
+            if (history.length === 0) return;
+            
             // If chart exists, update data instead of destroying
             if (probeCharts[probe.ProbeID]) {
                 const chart = probeCharts[probe.ProbeID];
-                chart.data.labels = history.map(h => h.timestamp.toLocaleTimeString());
-                chart.data.datasets[0].data = history.map(h => h.fps);
-                chart.data.datasets[1].data = history.map(h => h.resolution);
-                chart.update('none'); // Update without animation for smooth refresh
-                return;
+                
+                // Check if the chart's canvas still exists in the DOM
+                if (!chart.canvas || !document.contains(chart.canvas)) {
+                    // Canvas was removed, delete the chart reference
+                    delete probeCharts[probe.ProbeID];
+                } else {
+                    // Update existing chart
+                    chart.data.labels = history.map(h => h.timestamp.toLocaleTimeString());
+                    chart.data.datasets[0].data = history.map(h => h.fps);
+                    chart.data.datasets[1].data = history.map(h => h.resolution);
+                    chart.update('none'); // Update without animation for smooth refresh
+                    return;
+                }
             }
 
             // Create new chart only if it doesn't exist
