@@ -410,9 +410,9 @@
 
                 const data = await response.json();
                 
-                // Update last seen timestamp for each probe
+                // Store the actual probe timestamp (not when we fetched it)
                 (data.probes || []).forEach(probe => {
-                    lastProbeUpdate[probe.ProbeID] = Date.now();
+                    lastProbeUpdate[probe.ProbeID] = new Date(probe.Timestamp).getTime();
                 });
 
                 renderProbes(data.probes || []);
@@ -428,7 +428,7 @@
         function isProbeOnline(probeId) {
             const lastSeen = lastProbeUpdate[probeId];
             if (!lastSeen) return false;
-            // Consider offline if no update in last 4 seconds
+            // Consider offline if probe's last transmission was more than 4 seconds ago
             return (Date.now() - lastSeen) < 4000;
         }
 
