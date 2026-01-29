@@ -4,8 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>TAG Video Systems - Login</title>
-    <script src="https://cdn.jsdelivr.net/npm/amazon-cognito-identity-js@6.3.7/dist/amazon-cognito-identity.min.js">
-</script>
+    <script src="https://cdn.jsdelivr.net/npm/amazon-cognito-identity-js@6.3.7/dist/amazon-cognito-identity.min.js"></script>
     <style>
         * {
             margin: 0;
@@ -154,7 +153,7 @@
         <form id="loginForm">
             <div class="form-group">
                 <label for="username">Username</label>
-                <input type="text" id="username" name="username" required autocomplete="username">
+                <input type="text" id="username" name="username" required autocomplete="username" autofocus>
             </div>
 
             <div class="form-group">
@@ -174,10 +173,10 @@
     </div>
 
     <script>
-        // Cognito configuration - will be set after deployment
+        // Cognito configuration - REPLACE THESE VALUES AFTER CDK DEPLOYMENT
         const COGNITO_CONFIG = {
-            UserPoolId: 'YOUR_USER_POOL_ID',
-            ClientId: 'YOUR_CLIENT_ID',
+            UserPoolId: 'REPLACE_WITH_USER_POOL_ID',
+            ClientId: 'REPLACE_WITH_CLIENT_ID',
             Region: 'us-east-1'
         };
 
@@ -186,16 +185,26 @@
         const loadingDiv = document.getElementById('loading');
         const loginBtn = document.getElementById('loginBtn');
 
+        // Check if already logged in
+        if (sessionStorage.getItem('accessToken')) {
+            window.location.href = 'index.html';
+        }
+
         form.addEventListener('submit', async (e) => {
             e.preventDefault();
             
-            const username = document.getElementById('username').value;
+            const username = document.getElementById('username').value.trim();
             const password = document.getElementById('password').value;
 
             hideError();
             showLoading();
 
             try {
+                // Check if Cognito is configured
+                if (COGNITO_CONFIG.UserPoolId === 'REPLACE_WITH_USER_POOL_ID') {
+                    throw new Error('Cognito not configured. Please run: cdk deploy and update login.html with Cognito IDs');
+                }
+
                 // Configure Cognito
                 const poolData = {
                     UserPoolId: COGNITO_CONFIG.UserPoolId,
@@ -219,27 +228,32 @@
                     onSuccess: function(result) {
                         const accessToken = result.getAccessToken().getJwtToken();
                         const idToken = result.getIdToken().getJwtToken();
+                        const refreshToken = result.getRefreshToken().getToken();
                         
                         // Store tokens
                         sessionStorage.setItem('accessToken', accessToken);
                         sessionStorage.setItem('idToken', idToken);
+                        sessionStorage.setItem('refreshToken', refreshToken);
                         sessionStorage.setItem('username', username);
+                        sessionStorage.setItem('loginTime', new Date().toISOString());
                         
                         // Redirect to dashboard
                         window.location.href = 'index.html';
                     },
                     onFailure: function(err) {
                         hideLoading();
-                        showError(err.message || 'Authentication failed');
+                        console.error('Authentication error:', err);
+                        showError(err.message || 'Authentication failed. Please check your credentials.');
                     },
                     newPasswordRequired: function(userAttributes, requiredAttributes) {
                         hideLoading();
-                        showError('Password change required. Please contact administrator.');
+                        showError('Password change required. Please use AWS Console to set a permanent password for this user.');
                     }
                 });
 
             } catch (error) {
                 hideLoading();
+                console.error('Login error:', error);
                 showError(error.message || 'An error occurred during login');
             }
         });

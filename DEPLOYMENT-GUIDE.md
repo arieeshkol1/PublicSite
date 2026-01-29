@@ -53,20 +53,22 @@ TagVideoProbeStack.TableName = TagVideoProbeStack-ProbeStatusTableXXX
 
 ### 5. Configure Cognito in Login Page
 
-After deployment, update the login page with your Cognito credentials:
+After the first deployment, you'll get Cognito outputs. Update the login page:
 
-```bash
-# Update login.html with Cognito IDs from CDK output
-./update-cognito-config.sh <USER_POOL_ID> <CLIENT_ID>
-
-# Re-deploy dashboard
-cd infrastructure
-cdk deploy
+**Windows (PowerShell):**
+```powershell
+.\update-cognito-config.ps1 -UserPoolId "<USER_POOL_ID>" -ClientId "<CLIENT_ID>"
 ```
 
-### 6. Create Admin User Password
+**Linux/Mac:**
+```bash
+chmod +x update-cognito-config.sh
+./update-cognito-config.sh <USER_POOL_ID> <CLIENT_ID>
+```
 
-The default user `admin` is created automatically. Set the password:
+### 6. Set Admin User Password
+
+The admin user is created automatically but needs a permanent password:
 
 ```bash
 aws cognito-idp admin-set-user-password \
@@ -77,7 +79,15 @@ aws cognito-idp admin-set-user-password \
   --region us-east-1
 ```
 
-### 7. Access Dashboard
+### 7. Re-deploy Dashboard with Cognito Configuration
+
+```bash
+cdk deploy
+```
+
+This will update the S3 bucket with the configured login page.
+
+### 8. Access Dashboard
 
 1. Open the **DashboardUrl** in your browser
 2. You'll be redirected to the login page
