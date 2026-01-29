@@ -41,6 +41,8 @@ cdk deploy
 ✅  TagVideoProbeStack
 
 Outputs:
+TagVideoProbeStack.UserPoolId = us-east-1_XXXXXXXXX
+TagVideoProbeStack.UserPoolClientId = XXXXXXXXXXXXXXXXXXXXXXXXXX
 TagVideoProbeStack.ApiEndpoint = https://xxx.execute-api.us-east-1.amazonaws.com/prod/
 TagVideoProbeStack.DashboardUrl = http://xxx.s3-website-us-east-1.amazonaws.com
 TagVideoProbeStack.QueueUrl = https://sqs.us-east-1.amazonaws.com/991105135552/xxx
@@ -49,13 +51,42 @@ TagVideoProbeStack.TableName = TagVideoProbeStack-ProbeStatusTableXXX
 
 **Save these outputs!** You'll need them for the next steps.
 
-### 5. Configure Dashboard
+### 5. Configure Cognito in Login Page
+
+After deployment, update the login page with your Cognito credentials:
+
+```bash
+# Update login.html with Cognito IDs from CDK output
+./update-cognito-config.sh <USER_POOL_ID> <CLIENT_ID>
+
+# Re-deploy dashboard
+cd infrastructure
+cdk deploy
+```
+
+### 6. Create Admin User Password
+
+The default user `admin` is created automatically. Set the password:
+
+```bash
+aws cognito-idp admin-set-user-password \
+  --user-pool-id <USER_POOL_ID> \
+  --username admin \
+  --password "TagVideo2024!" \
+  --permanent \
+  --region us-east-1
+```
+
+### 7. Access Dashboard
 
 1. Open the **DashboardUrl** in your browser
-2. Paste the **ApiEndpoint** into the input field
-3. Click "Save & Connect"
+2. You'll be redirected to the login page
+3. Login with:
+   - Username: `admin`
+   - Password: `TagVideo2024!`
+4. After successful login, you'll see the monitoring dashboard
 
-### 6. Run Edge Simulator
+### 8. Run Edge Simulator
 
 ```bash
 cd edge-simulator
@@ -71,9 +102,11 @@ chmod +x run-demo.sh
 
 ### 7. Verify System
 
-1. **Dashboard**: Should show 2 green probes (Probe-A-Encoder, Probe-B-CDN)
-2. **CloudWatch Logs**: Check Lambda logs for processing
-3. **DynamoDB**: Verify probe records exist
+1. **Login Page**: Should show TAG branding and login form
+2. **Dashboard**: Should show 2 green probes after login (Probe-A-Encoder, Probe-B-CDN)
+3. **CloudWatch Logs**: Check Lambda logs for processing
+4. **DynamoDB**: Verify probe records exist
+5. **Logout**: Test logout button functionality
 
 ## Testing Chaos Engineering
 

@@ -15,6 +15,7 @@ from aws_cdk import (
     aws_s3_deployment as s3deploy,
     aws_lambda_event_sources as lambda_events,
     aws_iam as iam,
+    aws_cognito as cognito,
 )
 from constructs import Construct
 
@@ -22,6 +23,51 @@ from constructs import Construct
 class TagVideoProbeStack(Stack):
     def __init__(self, scope: Construct, construct_id: str, **kwargs) -> None:
         super().__init__(scope, construct_id, **kwargs)
+
+        # ========== Cognito User Pool ==========
+        # User authentication
+        user_pool = cognito.UserPool(
+            self,
+            "TagUserPool",
+            user_pool_name="tag-video-users",
+            self_sign_up_enabled=False,  # Admin creates users
+            sign_in_aliases=cognito.SignInAliases(username=True, email=True),
+            password_policy=cognito.PasswordPolicy(
+                min_length=8,
+                require_lowercase=True,
+                require_uppercase=True,
+                require_digits=True,
+                require_symbols=False,
+            ),
+            removal_policy=RemovalPolicy.DESTROY,
+        )
+
+        # Create a default user (admin/TagVideo2024!)
+        cognito.CfnUserPoolUser(
+            self,
+            "DefaultUser",
+            user_pool_id=user_pool.user_pool_id,
+            username="admin",
+            user_attributes=[
+                cognito.CfnUserPoolUser.AttributeTypeProperty(
+                    name="email",
+                    value="admin@tagvideo.local"
+                )
+            ],
+            desired_delivery_mediums=["EMAIL"],
+        )
+
+        # User Pool Client
+        user_pool_client = cognito.UserPoolClient(
+            self,
+            "TagUserPoolClient",
+            user_pool=user_pool,
+            auth_flows=cognito.AuthFlow(
+                user_password=True,
+                user_srp=True,
+            ),
+            generate_secret=False,
+        )
 
         # ========== DynamoDB Table ==========
         # Hot store for latest probe status
@@ -182,6 +228,20 @@ class TagVideoProbeStack(Stack):
         )
 
         # ========== Outputs ==========
+        CfnOutput(
+            self,
+            "UserPoolId",
+            value=user_pool.user_pool_id,
+            description="Cognito User Pool ID",
+        )
+
+        CfnOutput(
+            self,
+            "UserPoolClientId",
+            value=user_pool_client.user_pool_client_id,
+            description="Cognito User Pool Client ID",
+        )
+
         CfnOutput(
             self,
             "ApiEndpoint",

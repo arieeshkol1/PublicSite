@@ -422,16 +422,50 @@
     </div>
 
     <script>
+        // Check authentication on page load
+        window.onload = function() {
+            checkAuthentication();
+        };
+
+        function checkAuthentication() {
+            const accessToken = sessionStorage.getItem('accessToken');
+            const username = sessionStorage.getItem('username');
+            
+            if (!accessToken) {
+                // Not authenticated, redirect to login
+                window.location.href = 'login.html';
+                return;
+            }
+            
+            // Add logout button to header
+            addLogoutButton(username);
+            
+            // Start monitoring
+            startMonitoring();
+        }
+
+        function addLogoutButton(username) {
+            const header = document.querySelector('header');
+            const logoutDiv = document.createElement('div');
+            logoutDiv.style.cssText = 'margin-top: 10px; font-size: 0.9em;';
+            logoutDiv.innerHTML = `
+                <span style="color: rgba(255,255,255,0.8);">Logged in as: <strong>${username}</strong></span>
+                <button onclick="logout()" style="margin-left: 15px; padding: 5px 15px; background: rgba(255,255,255,0.2); border: 1px solid white; color: white; border-radius: 5px; cursor: pointer; font-size: 0.9em;">Logout</button>
+            `;
+            header.appendChild(logoutDiv);
+        }
+
+        function logout() {
+            sessionStorage.clear();
+            window.location.href = 'login.html';
+        }
+
         const apiEndpoint = 'https://vxqx34id6g.execute-api.us-east-1.amazonaws.com/prod';
         let refreshInterval;
         const probeCharts = {};
         const probeHistory = {};
         const MAX_HISTORY_POINTS = 20;
         let lastProbeUpdate = {};
-
-        window.onload = function() {
-            startMonitoring();
-        };
 
         function startMonitoring() {
             fetchProbes();
