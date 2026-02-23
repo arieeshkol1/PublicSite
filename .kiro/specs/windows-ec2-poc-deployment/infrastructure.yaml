@@ -65,24 +65,90 @@ Resources:
         - Key: Name
           Value: made4net-poc-private-subnet
 
-  # NAT Gateway for Private Subnet
-  NATGatewayEIP:
-    Type: AWS::EC2::EIP
-    DependsOn: AttachGateway
+  # VPC Endpoints for SSM (Best Practice - keeps traffic within AWS network)
+  SSMEndpointSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
     Properties:
-      Domain: vpc
+      GroupName: made4net-poc-vpce-sg
+      GroupDescription: Security group for VPC endpoints
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          SourceSecurityGroupId: !Ref BackendSecurityGroup
+          Description: HTTPS from backend instances
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          SourceSecurityGroupId: !Ref FrontendSecurityGroup
+          Description: HTTPS from frontend instances
       Tags:
         - Key: Name
-          Value: made4net-poc-nat-eip
+          Value: made4net-poc-vpce-sg
 
-  NATGateway:
-    Type: AWS::EC2::NatGateway
+  # SSM VPC Endpoint
+  SSMEndpoint:
+    Type: AWS::EC2::VPCEndpoint
     Properties:
-      AllocationId: !GetAtt NATGatewayEIP.AllocationId
-      SubnetId: !Ref PublicSubnet
-      Tags:
-        - Key: Name
-          Value: made4net-poc-nat-gw
+      VpcId: !Ref VPC
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.ssm'
+      VpcEndpointType: Interface
+      PrivateDnsEnabled: true
+      SubnetIds:
+        - !Ref PrivateSubnet
+      SecurityGroupIds:
+        - !Ref SSMEndpointSecurityGroup
+
+  # SSM Messages VPC Endpoint
+  SSMMessagesEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref VPC
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.ssmmessages'
+      VpcEndpointType: Interface
+      PrivateDnsEnabled: true
+      SubnetIds:
+        - !Ref PrivateSubnet
+      SecurityGroupIds:
+        - !Ref SSMEndpointSecurityGroup
+
+  # EC2 Messages VPC Endpoint
+  EC2MessagesEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref VPC
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.ec2messages'
+      VpcEndpointType: Interface
+      PrivateDnsEnabled: true
+      SubnetIds:
+        - !Ref PrivateSubnet
+      SecurityGroupIds:
+        - !Ref SSMEndpointSecurityGroup
+
+  # S3 Gateway Endpoint (for backups - no additional cost)
+  S3Endpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref VPC
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.s3'
+      VpcEndpointType: Gateway
+      RouteTableIds:
+        - !Ref PrivateRouteTable
+        - !Ref PublicRouteTable
+
+  # CloudWatch Logs VPC Endpoint
+  CloudWatchLogsEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref VPC
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.logs'
+      VpcEndpointType: Interface
+      PrivateDnsEnabled: true
+      SubnetIds:
+        - !Ref PrivateSubnet
+      SecurityGroupIds:
+        - !Ref SSMEndpointSecurityGroup
 
   # Route Tables
   PublicRouteTable:
@@ -114,13 +180,6 @@ Resources:
       Tags:
         - Key: Name
           Value: made4net-poc-private-rt
-
-  PrivateRoute:
-    Type: AWS::EC2::Route
-    Properties:
-      RouteTableId: !Ref PrivateRouteTable
-      DestinationCidrBlock: 0.0.0.0/0
-      NatGatewayId: !Ref NATGateway
 
   PrivateSubnetRouteTableAssociation:
     Type: AWS::EC2::SubnetRouteTableAssociation
