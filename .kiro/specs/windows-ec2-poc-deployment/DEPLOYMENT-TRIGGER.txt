@@ -1,0 +1,13 @@
+Deployment triggered at 2026-02-23 to deploy WMS POC with VPC Endpoints
+Stack: made4net-wms-poc
+Account: 991105135552
+Region: us-east-1
+
+VPC Endpoints configured:
+- SSM (com.amazonaws.us-east-1.ssm)
+- SSM Messages (com.amazonaws.us-east-1.ssmmessages)
+- EC2 Messages (com.amazonaws.us-east-1.ec2messages)
+- CloudWatch Logs (com.amazonaws.us-east-1.logs)
+- S3 Gateway (com.amazonaws.us-east-1.s3)
+
+This ensures backend instance can connect to SSM without NAT Gateway.
