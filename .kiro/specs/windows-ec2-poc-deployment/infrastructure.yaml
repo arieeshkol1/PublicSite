@@ -350,7 +350,7 @@ Resources:
               <style>
                   body {
                       font-family: Arial, sans-serif;
-                      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                      background: linear-gradient^(135deg, #667eea 0%%, #764ba2 100%%^);
                       display: flex;
                       justify-content: center;
                       align-items: center;
@@ -361,7 +361,7 @@ Resources:
                       background: white;
                       padding: 40px;
                       border-radius: 10px;
-                      box-shadow: 0 10px 25px rgba(0,0,0,0.2);
+                      box-shadow: 0 10px 25px rgba^(0,0,0,0.2^);
                       width: 350px;
                   }
                   h1 {
@@ -385,7 +385,7 @@ Resources:
                       font-weight: bold;
                   }
                   input[type="text"], input[type="password"] {
-                      width: 100%;
+                      width: 100%%;
                       padding: 10px;
                       border: 1px solid #ddd;
                       border-radius: 5px;
@@ -397,7 +397,7 @@ Resources:
                       border-color: #667eea;
                   }
                   button {
-                      width: 100%;
+                      width: 100%%;
                       padding: 12px;
                       background: #667eea;
                       color: white;
@@ -416,13 +416,38 @@ Resources:
                       color: #999;
                       font-size: 12px;
                   }
+                  .error {
+                      background: #f8d7da;
+                      color: #721c24;
+                      padding: 10px;
+                      border-radius: 5px;
+                      margin-bottom: 15px;
+                      display: none;
+                  }
+                  .demo-creds {
+                      background: #d1ecf1;
+                      color: #0c5460;
+                      padding: 10px;
+                      border-radius: 5px;
+                      margin-bottom: 15px;
+                      font-size: 12px;
+                  }
               </style>
           </head>
           <body>
               <div class="login-container">
                   <h1>Made4Net WMS</h1>
                   <p class="subtitle">Warehouse Management System</p>
-                  <form action="/login" method="post">
+                  
+                  <div class="demo-creds">
+                      <strong>Demo Credentials:</strong><br>
+                      Username: admin<br>
+                      Password: demo123
+                  </div>
+                  
+                  <div class="error" id="error-message"></div>
+                  
+                  <form id="loginForm">
                       <div class="form-group">
                           <label for="username">Username</label>
                           <input type="text" id="username" name="username" placeholder="Enter your username" required>
@@ -437,6 +462,27 @@ Resources:
                       &copy; 2026 Made4Net - POC Environment
                   </div>
               </div>
+              
+              <script>
+                  document.getElementById^('loginForm'^).addEventListener^('submit', function^(e^) {
+                      e.preventDefault^(^);
+                      
+                      const username = document.getElementById^('username'^).value;
+                      const password = document.getElementById^('password'^).value;
+                      const errorDiv = document.getElementById^('error-message'^);
+                      
+                      // Demo authentication
+                      if ^(^(username === 'admin' || username === 'warehouse'^) && password === 'demo123'^) {
+                          // Store user info
+                          sessionStorage.setItem^('user', username^);
+                          // Redirect to dashboard
+                          window.location.href = 'dashboard.html';
+                      } else {
+                          errorDiv.textContent = 'Invalid username or password';
+                          errorDiv.style.display = 'block';
+                      }
+                  }^);
+              </script>
           </body>
           </html>
           "@
