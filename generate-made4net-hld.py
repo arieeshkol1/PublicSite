@@ -247,14 +247,15 @@ def create_hld_document():
         "detection and proactive health monitoring."
     )
     
-    monitoring_table = doc.add_table(rows=4, cols=3)
+    monitoring_table = doc.add_table(rows=5, cols=3)
     monitoring_table.style = 'Medium Grid 3 Accent 1'
     
     monitoring_data = [
         ('Component', 'Role', 'Best Practice'),
         ('Amazon GuardDuty', 'Intelligent threat detection', 'Spots bitcoin mining, malicious IPs'),
         ('CloudWatch Canaries', 'Synthetic monitoring', 'Simulate user transactions every minute'),
-        ('AWS X-Ray', 'Distributed tracing', 'Trace latency: Wi-Fi, VPN, or SQL query?')
+        ('AWS X-Ray', 'Distributed tracing', 'Trace latency: Wi-Fi, VPN, or SQL query?'),
+        ('CloudFront + S3', 'Dashboard hosting', 'Global CDN for operational excellence dashboard')
     ]
     
     for i, row_data in enumerate(monitoring_data):
@@ -269,6 +270,182 @@ def create_hld_document():
     doc.add_paragraph(
         "Proactive Alerting: Canaries page on-call team via PagerDuty/OpsGenie before "
         "warehouse customers call helpdesk."
+    ).italic = True
+    
+    doc.add_paragraph()
+    
+    # CloudFront Dashboard Hosting
+    doc.add_heading('2.4.1 CloudFront Dashboard Hosting', 3)
+    
+    cloudfront_details = [
+        "The operational excellence dashboard is hosted using Amazon CloudFront with S3 origin:",
+        
+        "Architecture:",
+        "• S3 Bucket: Static website hosting for dashboard HTML/CSS/JavaScript",
+        "• CloudFront Distribution: Global CDN with HTTPS-only access",
+        "• API Gateway: Backend API for real-time metrics generation",
+        "• Lambda Function: Serverless metrics generator",
+        "• DynamoDB: Metrics storage and retrieval",
+        
+        "Security Features:",
+        "• TLS 1.2+ minimum protocol version",
+        "• S3 bucket with block public access enabled",
+        "• CloudFront Origin Access Identity (OAI) for secure S3 access",
+        "• HTTPS redirect for all HTTP requests",
+        
+        "Performance Benefits:",
+        "• Global edge locations for low-latency access",
+        "• Automatic compression (gzip/brotli)",
+        "• Browser caching with cache-control headers",
+        "• Sub-second dashboard load times worldwide",
+        
+        "Dashboard Features:",
+        "• Real-time security posture (GuardDuty, WAF, compliance)",
+        "• Operational health metrics (availability, patches, MTTR)",
+        "• Cost optimization tracking (savings, idle resources)",
+        "• Multi-region status (primary/DR health)",
+        "• Interview talking points for leadership presentations"
+    ]
+    
+    for point in cloudfront_details:
+        if point.startswith('•'):
+            doc.add_paragraph(point, style='List Bullet')
+        elif point.endswith(':'):
+            p = doc.add_paragraph(point)
+            p.runs[0].font.bold = True
+        else:
+            doc.add_paragraph(point)
+    
+    doc.add_paragraph()
+    
+    doc.add_paragraph(
+        "Access: Dashboard URL is provided via CloudFormation output after deployment. "
+        "No authentication required for read-only metrics viewing."
+    ).italic = True
+    
+    doc.add_paragraph()
+    
+    # Windows EC2 POC Deployment
+    doc.add_heading('2.5 Windows EC2 POC Deployment with SSM Integration', 2)
+    
+    doc.add_paragraph(
+        "The Made4Net Warehouse Management System (WMS) runs on a Windows-based infrastructure "
+        "deployed on AWS EC2 instances. This POC deployment demonstrates the complete integration "
+        "of Windows Server 2022 instances with AWS Systems Manager for secure management and monitoring."
+    )
+    
+    doc.add_paragraph()
+    
+    doc.add_heading('2.5.1 WMS Architecture Overview', 3)
+    
+    wms_arch = [
+        "The WMS POC consists of two Windows Server 2022 t2.micro instances:",
+        
+        "Frontend Instance (Public Subnet):",
+        "IIS 10.0 web server hosting Made4Net WMS user interface",
+        ".NET Framework 4.8 or .NET 6 runtime",
+        "CloudWatch Agent for metrics and log collection",
+        "Elastic IP for public internet access",
+        "HTTPS-only access (TLS 1.2+)",
+        
+        "Backend Instance (Private Subnet):",
+        "SQL Server Express 2019 database (InventoryDB)",
+        ".NET application layer for business logic",
+        "CloudWatch Agent for metrics and log collection",
+        "Private IP only - no direct internet access",
+        "Automated daily backups to S3",
+        
+        "VPC Endpoints (AWS PrivateLink - Best Practice):",
+        "SSM Endpoint (com.amazonaws.us-east-1.ssm)",
+        "SSM Messages Endpoint (com.amazonaws.us-east-1.ssmmessages)",
+        "EC2 Messages Endpoint (com.amazonaws.us-east-1.ec2messages)",
+        "CloudWatch Logs Endpoint (com.amazonaws.us-east-1.logs)",
+        "S3 Gateway Endpoint (com.amazonaws.us-east-1.s3)",
+        "All traffic stays within AWS network - no internet routing required",
+        "Enhanced security: no NAT Gateway or internet exposure",
+        
+        "Key Features:",
+        "100% AWS Free Tier compliant (2x t2.micro, 60GB EBS total)",
+        "SSM Session Manager for secure access (no RDP ports exposed)",
+        "VPC Endpoints ensure zero internet exposure for backend",
+        "Automated patch management via SSM Patch Manager",
+        "CloudWatch alarms for CPU, memory, disk, and CPU credits",
+        "Encrypted EBS volumes and S3 backups (AES-256)",
+        "Network isolation with security group rules"
+    ]
+    
+    for point in wms_arch:
+        if point.endswith(':'):
+            p = doc.add_paragraph(point)
+            p.runs[0].font.bold = True
+        elif point in ["The WMS POC consists of two Windows Server 2022 t2.micro instances:"]:
+            doc.add_paragraph(point)
+        else:
+            doc.add_paragraph(point, style='List Bullet')
+    
+    doc.add_paragraph()
+    
+    doc.add_heading('2.5.2 SSM Integration Benefits', 3)
+    
+    ssm_benefits_table = doc.add_table(rows=5, cols=2)
+    ssm_benefits_table.style = 'Light Shading Accent 1'
+    
+    ssm_benefits_data = [
+        ('SSM Feature', 'WMS Benefit'),
+        ('Fleet Manager', 'Centralized view of all WMS instances across warehouses'),
+        ('Session Manager', 'Secure PowerShell access without exposing RDP port 3389'),
+        ('Patch Manager', 'Automated Windows updates during maintenance windows'),
+        ('State Manager', 'Ensure CloudWatch Agent and services remain configured')
+    ]
+    
+    for i, (feature, benefit) in enumerate(ssm_benefits_data):
+        ssm_benefits_table.rows[i].cells[0].text = feature
+        ssm_benefits_table.rows[i].cells[1].text = benefit
+        if i == 0:
+            for cell in ssm_benefits_table.rows[i].cells:
+                cell.paragraphs[0].runs[0].font.bold = True
+    
+    doc.add_paragraph()
+    
+    doc.add_heading('2.5.3 Monitoring and Backup Strategy', 3)
+    
+    monitoring_backup = [
+        "CloudWatch Monitoring:",
+        "CPU utilization (alarm at >80% for 5 minutes)",
+        "Memory utilization (alarm at >85% for 5 minutes)",
+        "Disk free space (alarm at <15% for 2 data points)",
+        "CPU credit balance (alarm at <10 credits for t2.micro burst monitoring)",
+        "Windows event logs (System and Application ERROR/WARNING levels)",
+        "IIS access logs from frontend instance",
+        
+        "Automated Backup System:",
+        "Daily SQL Server backups at 02:00 UTC",
+        "Compressed backups with CHECKSUM validation",
+        "Automatic upload to S3 with AES-256 encryption",
+        "Local retention of last 3 backups",
+        "S3 lifecycle policy deletes backups older than 30 days",
+        "CloudWatch Logs integration for backup success/failure tracking",
+        
+        "Disaster Recovery:",
+        "Backup files stored in S3 with cross-region replication option",
+        "Documented restore procedure with CHECKSUM validation",
+        "Service auto-recovery configured for IIS, SQL Server, SSM Agent, CloudWatch Agent",
+        "Elastic IP persistence across instance stop/start cycles"
+    ]
+    
+    for point in monitoring_backup:
+        if point.endswith(':'):
+            p = doc.add_paragraph(point)
+            p.runs[0].font.bold = True
+        else:
+            doc.add_paragraph(point, style='List Bullet')
+    
+    doc.add_paragraph()
+    
+    doc.add_paragraph(
+        "Cost Efficiency: The entire WMS POC infrastructure runs within AWS Free Tier limits, "
+        "costing $0-$5/month for the first 12 months. This demonstrates Made4Net's commitment "
+        "to cost optimization while maintaining enterprise-grade security and monitoring."
     ).italic = True
     
     doc.add_page_break()
@@ -394,7 +571,7 @@ def create_hld_document():
     
     doc.add_heading('4.1 AWS Services Utilized', 2)
     
-    services_table = doc.add_table(rows=13, cols=3)
+    services_table = doc.add_table(rows=15, cols=3)
     services_table.style = 'Medium List 1 Accent 1'
     
     services_data = [
@@ -410,7 +587,9 @@ def create_hld_document():
         ('GuardDuty', 'Threat detection', 'Continuous monitoring, ML-based'),
         ('CloudWatch', 'Monitoring & logging', 'Canaries, alarms, dashboards'),
         ('AWS X-Ray', 'Distributed tracing', 'Latency analysis, bottleneck identification'),
-        ('AWS Config', 'Configuration tracking', 'Compliance rules, change history')
+        ('AWS Config', 'Configuration tracking', 'Compliance rules, change history'),
+        ('CloudFront', 'CDN for dashboard', 'Global edge locations, HTTPS-only, TLS 1.2+'),
+        ('S3', 'Dashboard hosting & backups', 'Static website hosting, versioning enabled')
     ]
     
     for i, row_data in enumerate(services_data):
@@ -698,7 +877,187 @@ def create_hld_document():
     
     doc.add_paragraph()
     
-    doc.add_heading('Appendix B: References', 1)
+    doc.add_heading('Appendix B: User Access Guide', 1)
+    
+    doc.add_paragraph(
+        'This appendix provides step-by-step instructions for different user roles to access '
+        'and interact with the Made4Net WMS infrastructure and operational dashboards.'
+    )
+    
+    # Operational Dashboard Access
+    doc.add_heading('B.1 Operational Excellence Dashboard', 2)
+    doc.add_paragraph(
+        'The Operational Excellence Dashboard provides real-time visibility into security posture, '
+        'system health, cost optimization, and multi-region status.'
+    )
+    
+    doc.add_heading('Access Instructions:', 3)
+    p = doc.add_paragraph()
+    p.add_run('Dashboard URL: ').bold = True
+    p.add_run('https://d1rbdi6o0tq85l.cloudfront.net')
+    
+    p = doc.add_paragraph()
+    p.add_run('Target Users: ').bold = True
+    p.add_run('Operations Team, Security Team, Management')
+    
+    doc.add_heading('Key Features:', 3)
+    dashboard_features = [
+        'Real-time security metrics (GuardDuty findings, WAF blocks, compliance scores)',
+        'Operational health monitoring (availability, patch compliance, MTTR)',
+        'Cost optimization tracking (monthly savings, idle resources)',
+        'Multi-region status and replication monitoring',
+        'Interactive charts and automated metric generation'
+    ]
+    for feature in dashboard_features:
+        doc.add_paragraph(feature, style='List Bullet')
+    
+    # WMS POC System Access
+    doc.add_heading('B.2 WMS POC System Access', 2)
+    doc.add_paragraph(
+        'The WMS POC consists of two Windows Server 2022 EC2 instances (frontend and backend) '
+        'accessible via AWS Systems Manager Session Manager for secure, audited access.'
+    )
+    
+    doc.add_heading('System Architecture:', 3)
+    p = doc.add_paragraph()
+    p.add_run('Frontend Instance: ').bold = True
+    p.add_run('i-0afda2abace682f7e (Public Subnet)')
+    
+    p = doc.add_paragraph()
+    p.add_run('Frontend Public IP: ').bold = True
+    p.add_run('34.194.134.204')
+    
+    p = doc.add_paragraph()
+    p.add_run('Backend Instance: ').bold = True
+    p.add_run('i-00005393dae5f6efa (Private Subnet)')
+    
+    p = doc.add_paragraph()
+    p.add_run('Backend Private IP: ').bold = True
+    p.add_run('10.0.2.103')
+    
+    doc.add_heading('B.3 Accessing EC2 Instances via SSM', 2)
+    
+    doc.add_heading('Prerequisites:', 3)
+    prereqs = [
+        'AWS CLI installed and configured',
+        'Session Manager plugin installed',
+        'IAM permissions for SSM access',
+        'AWS account credentials for account 991105135552'
+    ]
+    for prereq in prereqs:
+        doc.add_paragraph(prereq, style='List Bullet')
+    
+    doc.add_heading('Installation Steps:', 3)
+    doc.add_paragraph('1. Install AWS CLI:')
+    p = doc.add_paragraph('   Windows: Download from https://aws.amazon.com/cli/')
+    p.style = 'Normal'
+    
+    doc.add_paragraph('2. Install Session Manager Plugin:')
+    p = doc.add_paragraph('   https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html')
+    p.style = 'Normal'
+    
+    doc.add_heading('Connecting to Frontend Instance:', 3)
+    p = doc.add_paragraph()
+    p.add_run('Command: ').bold = True
+    code_run = p.add_run('aws ssm start-session --target i-0afda2abace682f7e --region us-east-1')
+    code_run.font.name = 'Courier New'
+    code_run.font.size = Pt(10)
+    
+    doc.add_heading('Connecting to Backend Instance:', 3)
+    p = doc.add_paragraph()
+    p.add_run('Command: ').bold = True
+    code_run = p.add_run('aws ssm start-session --target i-00005393dae5f6efa --region us-east-1')
+    code_run.font.name = 'Courier New'
+    code_run.font.size = Pt(10)
+    
+    doc.add_heading('B.4 CloudWatch Monitoring Access', 2)
+    
+    doc.add_paragraph(
+        'CloudWatch provides comprehensive monitoring, logging, and alerting for the WMS infrastructure.'
+    )
+    
+    doc.add_heading('Access Instructions:', 3)
+    p = doc.add_paragraph()
+    p.add_run('Console URL: ').bold = True
+    p.add_run('https://console.aws.amazon.com/cloudwatch/home?region=us-east-1')
+    
+    doc.add_heading('Key Metrics to Monitor:', 3)
+    metrics = [
+        'EC2 CPU Utilization (Alarms configured at 80% threshold)',
+        'Disk Space Usage (Alarms configured at 80% threshold)',
+        'SSM Agent Status (Ensures connectivity)',
+        'Network In/Out (Traffic monitoring)',
+        'System logs in CloudWatch Logs'
+    ]
+    for metric in metrics:
+        doc.add_paragraph(metric, style='List Bullet')
+    
+    doc.add_heading('B.5 S3 Backup Access', 2)
+    
+    p = doc.add_paragraph()
+    p.add_run('Backup Bucket: ').bold = True
+    p.add_run('made4net-poc-backups-960915223703')
+    
+    p = doc.add_paragraph()
+    p.add_run('Console URL: ').bold = True
+    p.add_run('https://s3.console.aws.amazon.com/s3/buckets/made4net-poc-backups-960915223703')
+    
+    doc.add_paragraph(
+        'This bucket stores automated backups and can be accessed by users with appropriate IAM permissions.'
+    )
+    
+    doc.add_heading('B.6 GitHub Repository Access', 2)
+    
+    p = doc.add_paragraph()
+    p.add_run('Repository: ').bold = True
+    p.add_run('https://github.com/arieeshkol1/TAG-SYSTEM-POC')
+    
+    doc.add_paragraph(
+        'The GitHub repository contains all infrastructure code, deployment scripts, and documentation. '
+        'GitHub Actions automatically deploys changes to AWS when code is pushed to the main branch.'
+    )
+    
+    doc.add_heading('Key Files:', 3)
+    repo_files = [
+        '.github/workflows/deploy.yml - CI/CD pipeline configuration',
+        '.kiro/specs/windows-ec2-poc-deployment/infrastructure.yaml - CloudFormation template',
+        'dashboard/index.html - Operational Excellence Dashboard',
+        'infrastructure/stack.py - CDK infrastructure code'
+    ]
+    for file in repo_files:
+        doc.add_paragraph(file, style='List Bullet')
+    
+    doc.add_heading('B.7 Role-Based Access Summary', 2)
+    
+    # Create access matrix table
+    access_table = doc.add_table(rows=5, cols=4)
+    access_table.style = 'Light Grid Accent 1'
+    
+    # Header row
+    header_cells = access_table.rows[0].cells
+    header_cells[0].text = 'User Role'
+    header_cells[1].text = 'Dashboard Access'
+    header_cells[2].text = 'EC2 Access'
+    header_cells[3].text = 'CloudWatch Access'
+    
+    # Data rows
+    access_data = [
+        ('Operations Team', 'Full', 'SSM Session Manager', 'Full'),
+        ('Security Team', 'Full', 'Read-Only', 'Full'),
+        ('Management', 'View Only', 'No Access', 'View Only'),
+        ('Developers', 'View Only', 'SSM Session Manager', 'Logs Only')
+    ]
+    
+    for i, (role, dashboard, ec2, cloudwatch) in enumerate(access_data, 1):
+        cells = access_table.rows[i].cells
+        cells[0].text = role
+        cells[1].text = dashboard
+        cells[2].text = ec2
+        cells[3].text = cloudwatch
+    
+    doc.add_paragraph()
+    
+    doc.add_heading('Appendix C: References', 1)
     
     references = [
         "1. AWS Well-Architected Framework - Security Pillar",
@@ -714,11 +1073,11 @@ def create_hld_document():
         p.style = 'List Number'
     
     # Save document
-    doc.save('Made4Net-Fortress-Factory-HLD.docx')
-    print("✓ HLD document generated: Made4Net-Fortress-Factory-HLD.docx")
+    doc.save('Made4Net-Fortress-Factory-HLD-Final.docx')
+    print("✓ HLD document generated: Made4Net-Fortress-Factory-HLD-Final.docx")
     print(f"  Document size: {len(doc.element.xml)} bytes")
-    print("  Sections: 9 main sections + 2 appendices")
-    print("  Ready for Sagi Van presentation")
+    print("  Sections: 9 main sections + 3 appendices (including User Access Guide)")
+    print("  Ready for presentation")
 
 if __name__ == '__main__':
     create_hld_document()

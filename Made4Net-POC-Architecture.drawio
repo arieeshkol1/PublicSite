@@ -104,6 +104,31 @@
           <mxGeometry x="820" y="730" width="220" height="60" as="geometry" />
         </mxCell>
         
+        <!-- VPC Endpoints (Best Practice) -->
+        <mxCell id="vpc-endpoints-box" value="VPC ENDPOINTS (AWS PrivateLink)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E6F2FF;strokeColor=#0066CC;verticalAlign=top;fontSize=12;fontStyle=1;strokeWidth=2" vertex="1" parent="1">
+          <mxGeometry x="900" y="240" width="280" height="100" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="ssm-endpoint" value="SSM" style="sketch=0;outlineConnect=0;fontColor=#232F3E;fillColor=#8C4FFF;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=10;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.endpoint;" vertex="1" parent="1">
+          <mxGeometry x="920" y="270" width="40" height="40" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="ssmmsg-endpoint" value="SSM&#xa;Messages" style="sketch=0;outlineConnect=0;fontColor=#232F3E;fillColor=#8C4FFF;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=10;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.endpoint;" vertex="1" parent="1">
+          <mxGeometry x="980" y="270" width="40" height="40" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="ec2msg-endpoint" value="EC2&#xa;Messages" style="sketch=0;outlineConnect=0;fontColor=#232F3E;fillColor=#8C4FFF;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=10;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.endpoint;" vertex="1" parent="1">
+          <mxGeometry x="1040" y="270" width="40" height="40" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="logs-endpoint" value="CloudWatch&#xa;Logs" style="sketch=0;outlineConnect=0;fontColor=#232F3E;fillColor=#8C4FFF;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=10;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.endpoint;" vertex="1" parent="1">
+          <mxGeometry x="1100" y="270" width="40" height="40" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="vpc-endpoint-note" value="✓ All traffic stays within AWS network&#xa;✓ No internet routing required" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=9;fontColor=#0066CC" vertex="1" parent="1">
+          <mxGeometry x="920" y="315" width="240" height="20" as="geometry" />
+        </mxCell>
+        
         <!-- Private Subnet -->
         <mxCell id="private-subnet" value="PRIVATE SUBNET (10.0.2.0/24)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF4E6;strokeColor=#D79B00;verticalAlign=top;fontSize=14;fontStyle=1;strokeWidth=2" vertex="1" parent="1">
           <mxGeometry x="1180" y="380" width="540" height="500" as="geometry" />
@@ -142,8 +167,17 @@
           <mxGeometry x="1260" y="730" width="120" height="60" as="geometry" />
         </mxCell>
         
-        <mxCell id="backend-sg" value="Security Group:&#xa;HTTPS (443) ← Frontend Only&#xa;SQL (1433) ← Frontend Only" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFE6CC;strokeColor=#FF6600;fontSize=10;align=left" vertex="1" parent="1">
+        <mxCell id="backend-sg" value="Security Group:&#xa;HTTPS (443) ← Frontend Only&#xa;SQL (1433) ← Frontend Only&#xa;HTTPS (443) ← VPC Endpoints" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFE6CC;strokeColor=#FF6600;fontSize=10;align=left" vertex="1" parent="1">
           <mxGeometry x="1420" y="730" width="220" height="60" as="geometry" />
+        </mxCell>
+        
+        <!-- Arrow: VPC Endpoints to Backend -->
+        <mxCell id="arrow-vpce-backend" edge="1" parent="1" source="vpc-endpoints-box" target="backend-icon" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#8C4FFF;strokeWidth=2;fontSize=11;fontColor=#8C4FFF;dashed=1;dashPattern=8 8">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="label-vpce" value="⑤ SSM/CloudWatch&#xa;via PrivateLink" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=10;fontColor=#8C4FFF;fontStyle=1" vertex="1" parent="1">
+          <mxGeometry x="1080" y="340" width="120" height="40" as="geometry" />
         </mxCell>
         
         <!-- S3 Backup -->
