@@ -163,7 +163,7 @@ class Made4NetFortressStack(Stack):
             auto_delete_objects=True,
             encryption=s3.BucketEncryption.S3_MANAGED,
             block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
-            versioning=True  # Best practice for compliance
+            versioned=True  # Best practice for compliance
         )
 
         # CloudFront distribution
