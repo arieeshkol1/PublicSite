@@ -1,0 +1,500 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Made4Net POC - 2 Windows EC2 instances with SSM monitoring (Free Tier)'
+
+Parameters:
+  AdminIP:
+    Type: String
+    Default: '0.0.0.0/0'
+    Description: 'IP address range for admin access (optional, Session Manager recommended)'
+    AllowedPattern: '(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})'
+
+  LatestWindowsAMI:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-windows-latest/Windows_Server-2022-English-Full-Base
+    Description: 'Latest Windows Server 2022 AMI'
+
+Resources:
+  # VPC
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: made4net-poc-vpc
+        - Key: Environment
+          Value: POC
+
+  # Internet Gateway
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: made4net-poc-igw
+
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+  # Public Subnet
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.1.0/24
+      AvailabilityZone: !Select [0, !GetAZs '']
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: made4net-poc-public-subnet
+
+  # Private Subnet
+  PrivateSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.2.0/24
+      AvailabilityZone: !Select [0, !GetAZs '']
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: made4net-poc-private-subnet
+
+  # Route Tables
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: made4net-poc-public-rt
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: AttachGateway
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet
+      RouteTableId: !Ref PublicRouteTable
+
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: made4net-poc-private-rt
+
+  PrivateSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet
+      RouteTableId: !Ref PrivateRouteTable
+
+  # Security Groups
+  FrontendSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: made4net-poc-frontend-sg
+      GroupDescription: Security group for frontend web server
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+          Description: HTTPS from internet
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+          Description: HTTP redirect to HTTPS
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+          Description: All outbound traffic
+      Tags:
+        - Key: Name
+          Value: made4net-poc-frontend-sg
+
+  BackendSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: made4net-poc-backend-sg
+      GroupDescription: Security group for backend app server
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          SourceSecurityGroupId: !Ref FrontendSecurityGroup
+          Description: HTTPS from frontend only
+        - IpProtocol: tcp
+          FromPort: 1433
+          ToPort: 1433
+          SourceSecurityGroupId: !Ref FrontendSecurityGroup
+          Description: SQL Server from frontend only
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+          Description: All outbound traffic
+      Tags:
+        - Key: Name
+          Value: made4net-poc-backend-sg
+
+  # IAM Role for SSM
+  SSMRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: made4net-poc-ssm-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+        - arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy
+      Policies:
+        - PolicyName: S3BackupAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                  - s3:ListBucket
+                Resource:
+                  - !GetAtt BackupBucket.Arn
+                  - !Sub '${BackupBucket.Arn}/*'
+
+  SSMInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: made4net-poc-ssm-profile
+      Roles:
+        - !Ref SSMRole
+
+  # S3 Bucket for Backups
+  BackupBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub 'made4net-poc-backups-${AWS::AccountId}'
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      LifecycleConfiguration:
+        Rules:
+          - Id: DeleteOldBackups
+            Status: Enabled
+            ExpirationInDays: 30
+      Tags:
+        - Key: Name
+          Value: made4net-poc-backups
+
+  # Frontend EC2 Instance
+  FrontendInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t2.micro
+      ImageId: !Ref LatestWindowsAMI
+      IamInstanceProfile: !Ref SSMInstanceProfile
+      SubnetId: !Ref PublicSubnet
+      SecurityGroupIds:
+        - !Ref FrontendSecurityGroup
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+            VolumeType: gp3
+            VolumeSize: 30
+            DeleteOnTermination: false
+            Encrypted: true
+      UserData:
+        Fn::Base64: !Sub |
+          <powershell>
+          # Install CloudWatch Agent
+          $cwAgentUrl = "https://s3.amazonaws.com/amazoncloudwatch-agent/windows/amd64/latest/amazon-cloudwatch-agent.msi"
+          Invoke-WebRequest -Uri $cwAgentUrl -OutFile "C:\cloudwatch-agent.msi"
+          Start-Process msiexec.exe -ArgumentList '/i C:\cloudwatch-agent.msi /quiet' -Wait
+
+          # Install IIS
+          Install-WindowsFeature -Name Web-Server -IncludeManagementTools
+          Install-WindowsFeature -Name Web-Asp-Net45
+
+          # Create website directory
+          New-Item -Path "C:\inetpub\made4net" -ItemType Directory -Force
+
+          # Configure CloudWatch Agent
+          $cwConfig = @"
+          {
+            "metrics": {
+              "namespace": "Made4Net/POC/Frontend",
+              "metrics_collected": {
+                "LogicalDisk": {
+                  "measurement": [{"name": "% Free Space", "unit": "Percent"}],
+                  "metrics_collection_interval": 60,
+                  "resources": ["*"]
+                },
+                "Memory": {
+                  "measurement": [{"name": "% Committed Bytes In Use", "unit": "Percent"}],
+                  "metrics_collection_interval": 60
+                },
+                "Processor": {
+                  "measurement": [{"name": "% Processor Time", "unit": "Percent"}],
+                  "metrics_collection_interval": 60,
+                  "resources": ["_Total"]
+                }
+              }
+            },
+            "logs": {
+              "logs_collected": {
+                "windows_events": {
+                  "collect_list": [
+                    {
+                      "event_name": "System",
+                      "event_levels": ["ERROR", "WARNING"],
+                      "log_group_name": "/aws/ec2/windows/frontend/system",
+                      "log_stream_name": "{instance_id}"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+          "@
+          $cwConfig | Out-File -FilePath "C:\cloudwatch-config.json"
+          & "C:\Program Files\Amazon\AmazonCloudWatchAgent\amazon-cloudwatch-agent-ctl.ps1" -a fetch-config -m ec2 -s -c file:C:\cloudwatch-config.json
+
+          Write-Host "Frontend setup complete"
+          </powershell>
+      Tags:
+        - Key: Name
+          Value: made4net-poc-frontend
+        - Key: Role
+          Value: WebServer
+        - Key: Environment
+          Value: POC
+
+  # Elastic IP for Frontend
+  FrontendEIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+      InstanceId: !Ref FrontendInstance
+      Tags:
+        - Key: Name
+          Value: made4net-poc-frontend-eip
+
+  # Backend EC2 Instance
+  BackendInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t2.micro
+      ImageId: !Ref LatestWindowsAMI
+      IamInstanceProfile: !Ref SSMInstanceProfile
+      SubnetId: !Ref PrivateSubnet
+      SecurityGroupIds:
+        - !Ref BackendSecurityGroup
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+            VolumeType: gp3
+            VolumeSize: 30
+            DeleteOnTermination: false
+            Encrypted: true
+      UserData:
+        Fn::Base64: !Sub |
+          <powershell>
+          # Install CloudWatch Agent
+          $cwAgentUrl = "https://s3.amazonaws.com/amazoncloudwatch-agent/windows/amd64/latest/amazon-cloudwatch-agent.msi"
+          Invoke-WebRequest -Uri $cwAgentUrl -OutFile "C:\cloudwatch-agent.msi"
+          Start-Process msiexec.exe -ArgumentList '/i C:\cloudwatch-agent.msi /quiet' -Wait
+
+          # Create backup directory
+          New-Item -Path "C:\SQLBackups" -ItemType Directory -Force
+
+          # Create backup script
+          $backupScript = @'
+          $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
+          $backupFile = "C:\SQLBackups\InventoryDB_$timestamp.bak"
+          $s3Bucket = "${BackupBucket}"
+
+          # Backup database (SQL Server must be installed first)
+          # Invoke-Sqlcmd -Query "BACKUP DATABASE InventoryDB TO DISK = '$backupFile' WITH COMPRESSION, CHECKSUM" -ServerInstance "localhost\SQLEXPRESS"
+
+          # Upload to S3
+          aws s3 cp $backupFile s3://$s3Bucket/backups/ --sse AES256
+
+          # Clean up old local backups (keep last 3)
+          Get-ChildItem "C:\SQLBackups\*.bak" | Sort-Object LastWriteTime -Descending | Select-Object -Skip 3 | Remove-Item
+
+          Write-Host "Backup completed: $backupFile"
+          '@
+          $backupScript | Out-File -FilePath "C:\SQLBackups\backup-database.ps1"
+
+          # Schedule daily backup at 2 AM
+          $action = New-ScheduledTaskAction -Execute "PowerShell.exe" -Argument "-File C:\SQLBackups\backup-database.ps1"
+          $trigger = New-ScheduledTaskTrigger -Daily -At 2am
+          Register-ScheduledTask -TaskName "DailyDatabaseBackup" -Action $action -Trigger $trigger -User "SYSTEM"
+
+          # Configure CloudWatch Agent
+          $cwConfig = @"
+          {
+            "metrics": {
+              "namespace": "Made4Net/POC/Backend",
+              "metrics_collected": {
+                "LogicalDisk": {
+                  "measurement": [{"name": "% Free Space", "unit": "Percent"}],
+                  "metrics_collection_interval": 60,
+                  "resources": ["*"]
+                },
+                "Memory": {
+                  "measurement": [{"name": "% Committed Bytes In Use", "unit": "Percent"}],
+                  "metrics_collection_interval": 60
+                },
+                "Processor": {
+                  "measurement": [{"name": "% Processor Time", "unit": "Percent"}],
+                  "metrics_collection_interval": 60,
+                  "resources": ["_Total"]
+                }
+              }
+            },
+            "logs": {
+              "logs_collected": {
+                "windows_events": {
+                  "collect_list": [
+                    {
+                      "event_name": "System",
+                      "event_levels": ["ERROR", "WARNING"],
+                      "log_group_name": "/aws/ec2/windows/backend/system",
+                      "log_stream_name": "{instance_id}"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+          "@
+          $cwConfig | Out-File -FilePath "C:\cloudwatch-config.json"
+          & "C:\Program Files\Amazon\AmazonCloudWatchAgent\amazon-cloudwatch-agent-ctl.ps1" -a fetch-config -m ec2 -s -c file:C:\cloudwatch-config.json
+
+          Write-Host "Backend setup complete"
+          </powershell>
+      Tags:
+        - Key: Name
+          Value: made4net-poc-backend
+        - Key: Role
+          Value: AppServer
+        - Key: Environment
+          Value: POC
+
+  # CloudWatch Log Groups
+  FrontendSystemLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/ec2/windows/frontend/system
+      RetentionInDays: 7
+
+  BackendSystemLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/ec2/windows/backend/system
+      RetentionInDays: 7
+
+  # CloudWatch Alarms
+  FrontendCPUAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: made4net-poc-frontend-high-cpu
+      AlarmDescription: Alert when frontend CPU exceeds 80%
+      MetricName: CPUUtilization
+      Namespace: AWS/EC2
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 80
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: InstanceId
+          Value: !Ref FrontendInstance
+
+  BackendCPUAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: made4net-poc-backend-high-cpu
+      AlarmDescription: Alert when backend CPU exceeds 80%
+      MetricName: CPUUtilization
+      Namespace: AWS/EC2
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 80
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: InstanceId
+          Value: !Ref BackendInstance
+
+Outputs:
+  VPCId:
+    Description: VPC ID
+    Value: !Ref VPC
+    Export:
+      Name: !Sub '${AWS::StackName}-VPC'
+
+  FrontendInstanceId:
+    Description: Frontend EC2 Instance ID
+    Value: !Ref FrontendInstance
+    Export:
+      Name: !Sub '${AWS::StackName}-FrontendInstance'
+
+  FrontendPublicIP:
+    Description: Frontend Public IP Address
+    Value: !Ref FrontendEIP
+    Export:
+      Name: !Sub '${AWS::StackName}-FrontendPublicIP'
+
+  BackendInstanceId:
+    Description: Backend EC2 Instance ID
+    Value: !Ref BackendInstance
+    Export:
+      Name: !Sub '${AWS::StackName}-BackendInstance'
+
+  BackendPrivateIP:
+    Description: Backend Private IP Address
+    Value: !GetAtt BackendInstance.PrivateIp
+    Export:
+      Name: !Sub '${AWS::StackName}-BackendPrivateIP'
+
+  BackupBucketName:
+    Description: S3 Backup Bucket Name
+    Value: !Ref BackupBucket
+    Export:
+      Name: !Sub '${AWS::StackName}-BackupBucket'
+
+  SSMConnectFrontend:
+    Description: Command to connect to frontend via Session Manager
+    Value: !Sub 'aws ssm start-session --target ${FrontendInstance}'
+
+  SSMConnectBackend:
+    Description: Command to connect to backend via Session Manager
+    Value: !Sub 'aws ssm start-session --target ${BackendInstance}'
