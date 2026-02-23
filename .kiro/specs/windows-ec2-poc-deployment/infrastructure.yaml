@@ -930,6 +930,8 @@ Resources:
           Value: AppServer
         - Key: Environment
           Value: POC
+        - Key: Version
+          Value: v2-with-sqlserver
 
   # CloudWatch Log Groups
   FrontendSystemLogGroup:
