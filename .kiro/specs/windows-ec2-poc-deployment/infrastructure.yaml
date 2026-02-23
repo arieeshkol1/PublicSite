@@ -65,6 +65,25 @@ Resources:
         - Key: Name
           Value: made4net-poc-private-subnet
 
+  # NAT Gateway for Private Subnet
+  NATGatewayEIP:
+    Type: AWS::EC2::EIP
+    DependsOn: AttachGateway
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: made4net-poc-nat-eip
+
+  NATGateway:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NATGatewayEIP.AllocationId
+      SubnetId: !Ref PublicSubnet
+      Tags:
+        - Key: Name
+          Value: made4net-poc-nat-gw
+
   # Route Tables
   PublicRouteTable:
     Type: AWS::EC2::RouteTable
@@ -95,6 +114,13 @@ Resources:
       Tags:
         - Key: Name
           Value: made4net-poc-private-rt
+
+  PrivateRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NATGateway
 
   PrivateSubnetRouteTableAssociation:
     Type: AWS::EC2::SubnetRouteTableAssociation
