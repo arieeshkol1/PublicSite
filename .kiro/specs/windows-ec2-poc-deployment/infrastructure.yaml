@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'Made4Net POC - 2 Windows EC2 instances with SSM monitoring (Free Tier)'
+Description: 'Made4Net POC - 2 Windows EC2 instances with SSM monitoring (Free Tier) - Redeployment'
 
 Parameters:
   AdminIP:
