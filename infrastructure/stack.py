@@ -1,271 +1,225 @@
-"""
-TAG Video Systems - CDK Stack
-Serverless Video Probe Monitoring System
-"""
 from aws_cdk import (
     Stack,
-    Duration,
-    CfnOutput,
-    RemovalPolicy,
-    aws_dynamodb as dynamodb,
-    aws_sqs as sqs,
     aws_lambda as lambda_,
     aws_apigateway as apigw,
+    aws_dynamodb as dynamodb,
     aws_s3 as s3,
     aws_s3_deployment as s3deploy,
-    aws_lambda_event_sources as lambda_events,
-    aws_iam as iam,
+    aws_cloudfront as cloudfront,
+    aws_cloudfront_origins as origins,
     aws_cognito as cognito,
+    aws_iam as iam,
+    Duration,
+    RemovalPolicy,
+    CfnOutput
 )
 from constructs import Construct
+import json
 
-
-class TagVideoProbeStack(Stack):
+class Made4NetFortressStack(Stack):
     def __init__(self, scope: Construct, construct_id: str, **kwargs) -> None:
         super().__init__(scope, construct_id, **kwargs)
 
-        # ========== Cognito User Pool ==========
-        # User authentication
+        # ========================================
+        # 1. COGNITO - Enterprise SSO Simulation
+        # ========================================
         user_pool = cognito.UserPool(
-            self,
-            "TagUserPool",
-            user_pool_name="tag-video-users",
-            self_sign_up_enabled=False,  # Admin creates users
+            self, "Made4NetUserPool",
+            user_pool_name="made4net-fortress-users",
+            self_sign_up_enabled=False,
             sign_in_aliases=cognito.SignInAliases(username=True, email=True),
             password_policy=cognito.PasswordPolicy(
-                min_length=8,
-                require_lowercase=True,
+                min_length=12,
                 require_uppercase=True,
+                require_lowercase=True,
                 require_digits=True,
-                require_symbols=False,
+                require_symbols=True
             ),
-            removal_policy=RemovalPolicy.DESTROY,
+            mfa=cognito.Mfa.OPTIONAL,
+            removal_policy=RemovalPolicy.DESTROY
         )
 
-        # Create a default user (admin/TagVideo2024!)
-        cognito.CfnUserPoolUser(
-            self,
-            "DefaultUser",
-            user_pool_id=user_pool.user_pool_id,
-            username="admin",
-            user_attributes=[
-                cognito.CfnUserPoolUser.AttributeTypeProperty(
-                    name="email",
-                    value="admin@tagvideo.local"
-                )
-            ],
-            desired_delivery_mediums=["EMAIL"],
+        user_pool_client = user_pool.add_client(
+            "Made4NetWebClient",
+            auth_flows=cognito.AuthFlow(user_password=True),
+            generate_secret=False
         )
 
-        # User Pool Client
-        user_pool_client = cognito.UserPoolClient(
-            self,
-            "TagUserPoolClient",
-            user_pool=user_pool,
-            auth_flows=cognito.AuthFlow(
-                user_password=True,
-                user_srp=True,
-            ),
-            generate_secret=False,
-        )
-
-        # ========== DynamoDB Table ==========
-        # Hot store for latest probe status
-        probe_table = dynamodb.Table(
-            self,
-            "ProbeStatusTable",
+        # ========================================
+        # 2. DYNAMODB - Operational Metrics Store
+        # ========================================
+        metrics_table = dynamodb.Table(
+            self, "MetricsTable",
+            table_name="made4net-fortress-metrics",
             partition_key=dynamodb.Attribute(
-                name="ProbeID", type=dynamodb.AttributeType.STRING
+                name="metricType",
+                type=dynamodb.AttributeType.STRING
+            ),
+            sort_key=dynamodb.Attribute(
+                name="timestamp",
+                type=dynamodb.AttributeType.NUMBER
             ),
             billing_mode=dynamodb.BillingMode.PAY_PER_REQUEST,
             removal_policy=RemovalPolicy.DESTROY,
+            point_in_time_recovery=True,  # DR best practice
+            encryption=dynamodb.TableEncryption.AWS_MANAGED  # KMS encryption
         )
 
-        # ========== SQS Queue ==========
-        # Shock absorber for telemetry ingestion
-        telemetry_queue = sqs.Queue(
-            self,
-            "TelemetryQueue",
-            visibility_timeout=Duration.seconds(30),
-            retention_period=Duration.days(1),
-        )
-
-        # ========== Lambda Function (Processor) ==========
-        # Processes telemetry from SQS and writes to DynamoDB
-        processor_lambda = lambda_.Function(
-            self,
-            "TelemetryProcessor",
+        # ========================================
+        # 3. LAMBDA - Metrics Generator
+        # ========================================
+        metrics_lambda = lambda_.Function(
+            self, "MetricsGenerator",
+            function_name="made4net-metrics-generator",
             runtime=lambda_.Runtime.NODEJS_18_X,
             handler="index.handler",
             code=lambda_.Code.from_asset("infrastructure/lambda"),
-            timeout=Duration.seconds(10),
             environment={
-                "TABLE_NAME": probe_table.table_name,
+                "METRICS_TABLE": metrics_table.table_name
             },
+            timeout=Duration.seconds(30),
+            memory_size=256
         )
 
-        # Grant Lambda permissions to write to DynamoDB
-        probe_table.grant_write_data(processor_lambda)
+        metrics_table.grant_read_write_data(metrics_lambda)
 
-        # Add SQS as event source for Lambda
-        processor_lambda.add_event_source(
-            lambda_events.SqsEventSource(telemetry_queue, batch_size=10)
-        )
-
-        # ========== API Gateway (Ingestion) ==========
-        # Public REST API for telemetry ingestion
-        api = apigw.RestApi(
-            self,
-            "TelemetryAPI",
-            rest_api_name="TAG Video Probe API",
-            description="Ingestion API for video probe telemetry",
-            deploy_options=apigw.StageOptions(stage_name="prod"),
-            default_cors_preflight_options=apigw.CorsOptions(
-                allow_origins=apigw.Cors.ALL_ORIGINS,
-                allow_methods=apigw.Cors.ALL_METHODS,
-                allow_headers=[
-                    "Content-Type",
-                    "X-Amz-Date",
-                    "Authorization",
-                    "X-Api-Key",
-                    "X-Amz-Security-Token",
-                ],
-            ),
-        )
-
-        # POST /telemetry endpoint - sends to SQS
-        telemetry_resource = api.root.add_resource("telemetry")
-        
-        # Create IAM role for API Gateway to send to SQS
-        api_role = iam.Role(
-            self,
-            "ApiGatewaySqsRole",
-            assumed_by=iam.ServicePrincipal("apigateway.amazonaws.com"),
-        )
-        telemetry_queue.grant_send_messages(api_role)
-
-        # Direct SQS integration (no Lambda)
-        telemetry_resource.add_method(
-            "POST",
-            apigw.AwsIntegration(
-                service="sqs",
-                path=f"{self.account}/{telemetry_queue.queue_name}",
-                integration_http_method="POST",
-                options=apigw.IntegrationOptions(
-                    credentials_role=api_role,
-                    request_parameters={
-                        "integration.request.header.Content-Type": "'application/x-www-form-urlencoded'"
-                    },
-                    request_templates={
-                        "application/json": "Action=SendMessage&MessageBody=$input.body"
-                    },
-                    integration_responses=[
-                        apigw.IntegrationResponse(
-                            status_code="200",
-                            response_templates={"application/json": '{"status":"queued"}'},
-                            response_parameters={
-                                "method.response.header.Access-Control-Allow-Origin": "'*'",
-                            },
-                        )
-                    ],
-                ),
-            ),
-            method_responses=[
-                apigw.MethodResponse(
-                    status_code="200",
-                    response_parameters={
-                        "method.response.header.Access-Control-Allow-Origin": True,
-                    },
-                )
-            ],
-        )
-
-        # GET /probes endpoint - reads from DynamoDB
-        probes_resource = api.root.add_resource("probes")
-        
-        # Lambda for reading probe status
+        # Lambda for reading metrics
         reader_lambda = lambda_.Function(
-            self,
-            "ProbeReader",
+            self, "MetricsReader",
+            function_name="made4net-metrics-reader",
             runtime=lambda_.Runtime.NODEJS_18_X,
             handler="reader.handler",
             code=lambda_.Code.from_asset("infrastructure/lambda"),
-            timeout=Duration.seconds(5),
             environment={
-                "TABLE_NAME": probe_table.table_name,
+                "METRICS_TABLE": metrics_table.table_name
             },
-        )
-        probe_table.grant_read_data(reader_lambda)
-
-        probes_resource.add_method(
-            "GET",
-            apigw.LambdaIntegration(reader_lambda),
+            timeout=Duration.seconds(10),
+            memory_size=128
         )
 
-        # ========== S3 Dashboard ==========
-        # Static website hosting for dashboard
-        dashboard_bucket = s3.Bucket(
-            self,
-            "DashboardBucket",
-            website_index_document="index.html",
-            public_read_access=True,
-            block_public_access=s3.BlockPublicAccess(
-                block_public_acls=False,
-                block_public_policy=False,
-                ignore_public_acls=False,
-                restrict_public_buckets=False,
+        metrics_table.grant_read_data(reader_lambda)
+
+        # ========================================
+        # 4. API GATEWAY - REST API
+        # ========================================
+        api = apigw.RestApi(
+            self, "Made4NetAPI",
+            rest_api_name="made4net-fortress-api",
+            description="Made4Net Fortress & Factory Monitoring API",
+            default_cors_preflight_options=apigw.CorsOptions(
+                allow_origins=apigw.Cors.ALL_ORIGINS,
+                allow_methods=apigw.Cors.ALL_METHODS,
+                allow_headers=["Content-Type", "Authorization"]
             ),
+            deploy_options=apigw.StageOptions(
+                stage_name="prod",
+                throttling_rate_limit=1000,
+                throttling_burst_limit=2000
+            )
+        )
+
+        # POST /metrics - Generate new metrics
+        metrics_resource = api.root.add_resource("metrics")
+        metrics_resource.add_method(
+            "POST",
+            apigw.LambdaIntegration(metrics_lambda)
+        )
+
+        # GET /metrics - Read metrics
+        metrics_resource.add_method(
+            "GET",
+            apigw.LambdaIntegration(reader_lambda)
+        )
+
+        # GET /health - Health check
+        health_resource = api.root.add_resource("health")
+        health_resource.add_method(
+            "GET",
+            apigw.MockIntegration(
+                integration_responses=[{
+                    "statusCode": "200",
+                    "responseTemplates": {
+                        "application/json": json.dumps({
+                            "status": "healthy",
+                            "service": "Made4Net Fortress & Factory",
+                            "timestamp": "$context.requestTime"
+                        })
+                    }
+                }],
+                request_templates={
+                    "application/json": json.dumps({"statusCode": 200})
+                }
+            ),
+            method_responses=[{"statusCode": "200"}]
+        )
+
+        # ========================================
+        # 5. S3 + CLOUDFRONT - Dashboard Hosting
+        # ========================================
+        dashboard_bucket = s3.Bucket(
+            self, "DashboardBucket",
+            bucket_name=f"made4net-fortress-dashboard-{self.account}",
             removal_policy=RemovalPolicy.DESTROY,
             auto_delete_objects=True,
+            encryption=s3.BucketEncryption.S3_MANAGED,
+            block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
+            versioning=True  # Best practice for compliance
+        )
+
+        # CloudFront distribution
+        distribution = cloudfront.Distribution(
+            self, "DashboardDistribution",
+            default_behavior=cloudfront.BehaviorOptions(
+                origin=origins.S3Origin(dashboard_bucket),
+                viewer_protocol_policy=cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+                allowed_methods=cloudfront.AllowedMethods.ALLOW_GET_HEAD,
+                cached_methods=cloudfront.CachedMethods.CACHE_GET_HEAD,
+                compress=True
+            ),
+            default_root_object="index.html",
+            error_responses=[
+                cloudfront.ErrorResponse(
+                    http_status=404,
+                    response_http_status=200,
+                    response_page_path="/index.html"
+                )
+            ],
+            minimum_protocol_version=cloudfront.SecurityPolicyProtocol.TLS_V1_2_2021  # Security best practice
         )
 
         # Deploy dashboard files
         s3deploy.BucketDeployment(
-            self,
-            "DeployDashboard",
+            self, "DeployDashboard",
             sources=[s3deploy.Source.asset("dashboard")],
             destination_bucket=dashboard_bucket,
+            distribution=distribution,
+            distribution_paths=["/*"]
         )
 
-        # ========== Outputs ==========
-        CfnOutput(
-            self,
-            "UserPoolId",
-            value=user_pool.user_pool_id,
-            description="Cognito User Pool ID",
-        )
-
-        CfnOutput(
-            self,
-            "UserPoolClientId",
-            value=user_pool_client.user_pool_client_id,
-            description="Cognito User Pool Client ID",
-        )
-
-        CfnOutput(
-            self,
-            "ApiEndpoint",
+        # ========================================
+        # OUTPUTS
+        # ========================================
+        CfnOutput(self, "APIEndpoint",
             value=api.url,
-            description="API Gateway endpoint for telemetry ingestion",
+            description="API Gateway endpoint"
         )
 
-        CfnOutput(
-            self,
-            "DashboardUrl",
-            value=dashboard_bucket.bucket_website_url,
-            description="Dashboard URL (S3 static website)",
+        CfnOutput(self, "DashboardURL",
+            value=f"https://{distribution.distribution_domain_name}",
+            description="CloudFront dashboard URL"
         )
 
-        CfnOutput(
-            self,
-            "TableName",
-            value=probe_table.table_name,
-            description="DynamoDB table name",
+        CfnOutput(self, "UserPoolId",
+            value=user_pool.user_pool_id,
+            description="Cognito User Pool ID"
         )
 
-        CfnOutput(
-            self,
-            "QueueUrl",
-            value=telemetry_queue.queue_url,
-            description="SQS queue URL",
+        CfnOutput(self, "UserPoolClientId",
+            value=user_pool_client.user_pool_client_id,
+            description="Cognito Client ID"
+        )
+
+        CfnOutput(self, "MetricsTableName",
+            value=metrics_table.table_name,
+            description="DynamoDB Metrics Table"
         )

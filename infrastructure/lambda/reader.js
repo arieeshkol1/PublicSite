@@ -1,56 +1,70 @@
-/**
- * TAG Video Systems - Probe Reader Lambda
- * Reads current status of all probes from DynamoDB
- */
-const { DynamoDBClient, ScanCommand } = require("@aws-sdk/client-dynamodb");
-const { unmarshall } = require("@aws-sdk/util-dynamodb");
-
-const client = new DynamoDBClient({});
-const TABLE_NAME = process.env.TABLE_NAME;
+const AWS = require('aws-sdk');
+const dynamodb = new AWS.DynamoDB.DocumentClient();
 
 exports.handler = async (event) => {
-  console.log("Reading probe status...");
-
-  try {
-    // Scan DynamoDB table for all probes
-    const response = await client.send(
-      new ScanCommand({
-        TableName: TABLE_NAME,
-      })
-    );
-
-    // Convert DynamoDB format to plain JSON
-    const probes = response.Items.map((item) => unmarshall(item));
-
-    console.log(`Found ${probes.length} probes`);
-
-    return {
-      statusCode: 200,
-      headers: {
-        "Content-Type": "application/json",
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Headers": "Content-Type",
-        "Access-Control-Allow-Methods": "GET,OPTIONS",
-      },
-      body: JSON.stringify({
-        probes,
-        count: probes.length,
-        timestamp: new Date().toISOString(),
-      }),
-    };
-  } catch (error) {
-    console.error("Error reading probes:", error);
-
-    return {
-      statusCode: 500,
-      headers: {
-        "Content-Type": "application/json",
-        "Access-Control-Allow-Origin": "*",
-      },
-      body: JSON.stringify({
-        error: "Failed to read probe status",
-        message: error.message,
-      }),
-    };
-  }
+    const tableName = process.env.METRICS_TABLE;
+    
+    // Get the latest metrics for each type
+    const metricTypes = [
+        'SECURITY_THREATS',
+        'OPERATIONAL_HEALTH',
+        'COST_OPTIMIZATION',
+        'MULTI_REGION',
+        'WAF_DETAILS',
+        'PATCH_MANAGEMENT',
+        'INCIDENT_RESPONSE'
+    ];
+    
+    try {
+        const queryPromises = metricTypes.map(async (metricType) => {
+            const result = await dynamodb.query({
+                TableName: tableName,
+                KeyConditionExpression: 'metricType = :mt',
+                ExpressionAttributeValues: {
+                    ':mt': metricType
+                },
+                ScanIndexForward: false, // Sort descending by timestamp
+                Limit: 1
+            }).promise();
+            
+            return result.Items[0] || null;
+        });
+        
+        const metrics = await Promise.all(queryPromises);
+        const metricsMap = {};
+        
+        metrics.forEach(metric => {
+            if (metric) {
+                metricsMap[metric.metricType] = metric;
+            }
+        });
+        
+        return {
+            statusCode: 200,
+            headers: {
+                'Content-Type': 'application/json',
+                'Access-Control-Allow-Origin': '*',
+                'Cache-Control': 'no-cache'
+            },
+            body: JSON.stringify({
+                success: true,
+                timestamp: Date.now(),
+                metrics: metricsMap
+            })
+        };
+    } catch (error) {
+        console.error('Error reading metrics:', error);
+        return {
+            statusCode: 500,
+            headers: {
+                'Content-Type': 'application/json',
+                'Access-Control-Allow-Origin': '*'
+            },
+            body: JSON.stringify({
+                success: false,
+                error: 'Failed to read metrics',
+                details: error.message
+            })
+        };
+    }
 };
