@@ -66,25 +66,27 @@ jobs:
             echo "Deploying WMS POC EC2 infrastructure..."
             
             # Check if stack exists
-            if aws cloudformation describe-stacks --stack-name $STACK_NAME 2>/dev/null; then
+            if aws cloudformation describe-stacks --stack-name $STACK_NAME --region $AWS_REGION 2>/dev/null; then
               echo "Stack exists - updating..."
               aws cloudformation update-stack \
                 --stack-name $STACK_NAME \
                 --template-body file://$TEMPLATE_FILE \
-                --capabilities CAPABILITY_IAM \
+                --capabilities CAPABILITY_NAMED_IAM \
                 --region $AWS_REGION || echo "No updates to perform"
+              
+              echo "Waiting for stack update to complete..."
+              aws cloudformation wait stack-update-complete --stack-name $STACK_NAME --region $AWS_REGION 2>/dev/null || true
             else
               echo "Stack does not exist - creating..."
               aws cloudformation create-stack \
                 --stack-name $STACK_NAME \
                 --template-body file://$TEMPLATE_FILE \
-                --capabilities CAPABILITY_IAM \
+                --capabilities CAPABILITY_NAMED_IAM \
                 --region $AWS_REGION
+              
+              echo "Waiting for stack creation to complete..."
+              aws cloudformation wait stack-create-complete --stack-name $STACK_NAME --region $AWS_REGION
             fi
-            
-            echo "Waiting for stack operation to complete..."
-            aws cloudformation wait stack-create-complete --stack-name $STACK_NAME --region $AWS_REGION 2>/dev/null || \
-            aws cloudformation wait stack-update-complete --stack-name $STACK_NAME --region $AWS_REGION 2>/dev/null || true
             
             echo "Stack deployment complete!"
             aws cloudformation describe-stacks --stack-name $STACK_NAME --query "Stacks[0].Outputs" --region $AWS_REGION
