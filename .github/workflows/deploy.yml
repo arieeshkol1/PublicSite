@@ -68,26 +68,25 @@ jobs:
             
             # Check if stack exists
             if aws cloudformation describe-stacks --stack-name $STACK_NAME --region $AWS_REGION 2>/dev/null; then
-              echo "Stack exists - updating..."
-              aws cloudformation update-stack \
+              echo "Stack exists - deleting to force full recreation..."
+              aws cloudformation delete-stack \
                 --stack-name $STACK_NAME \
-                --template-body file://$TEMPLATE_FILE \
-                --capabilities CAPABILITY_NAMED_IAM \
-                --region $AWS_REGION || echo "No updates to perform"
-              
-              echo "Waiting for stack update to complete..."
-              aws cloudformation wait stack-update-complete --stack-name $STACK_NAME --region $AWS_REGION 2>/dev/null || true
-            else
-              echo "Stack does not exist - creating..."
-              aws cloudformation create-stack \
-                --stack-name $STACK_NAME \
-                --template-body file://$TEMPLATE_FILE \
-                --capabilities CAPABILITY_NAMED_IAM \
                 --region $AWS_REGION
               
-              echo "Waiting for stack creation to complete..."
-              aws cloudformation wait stack-create-complete --stack-name $STACK_NAME --region $AWS_REGION
+              echo "Waiting for stack deletion to complete (this may take 5-10 minutes)..."
+              aws cloudformation wait stack-delete-complete --stack-name $STACK_NAME --region $AWS_REGION
+              echo "Stack deleted successfully"
             fi
+            
+            echo "Creating fresh stack..."
+            aws cloudformation create-stack \
+              --stack-name $STACK_NAME \
+              --template-body file://$TEMPLATE_FILE \
+              --capabilities CAPABILITY_NAMED_IAM \
+              --region $AWS_REGION
+            
+            echo "Waiting for stack creation to complete (this may take 15-20 minutes)..."
+            aws cloudformation wait stack-create-complete --stack-name $STACK_NAME --region $AWS_REGION
             
             echo "Stack deployment complete!"
             aws cloudformation describe-stacks --stack-name $STACK_NAME --query "Stacks[0].Outputs" --region $AWS_REGION
