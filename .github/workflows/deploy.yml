@@ -56,3 +56,38 @@ jobs:
             echo "No cdk.json found - skipping CDK deployment"
             echo "Add your CDK infrastructure code to enable deployment"
           fi
+
+      - name: Deploy WMS POC EC2 Infrastructure
+        run: |
+          STACK_NAME="made4net-wms-poc"
+          TEMPLATE_FILE=".kiro/specs/windows-ec2-poc-deployment/infrastructure.yaml"
+          
+          if [ -f "$TEMPLATE_FILE" ]; then
+            echo "Deploying WMS POC EC2 infrastructure..."
+            
+            # Check if stack exists
+            if aws cloudformation describe-stacks --stack-name $STACK_NAME 2>/dev/null; then
+              echo "Stack exists - updating..."
+              aws cloudformation update-stack \
+                --stack-name $STACK_NAME \
+                --template-body file://$TEMPLATE_FILE \
+                --capabilities CAPABILITY_IAM \
+                --region $AWS_REGION || echo "No updates to perform"
+            else
+              echo "Stack does not exist - creating..."
+              aws cloudformation create-stack \
+                --stack-name $STACK_NAME \
+                --template-body file://$TEMPLATE_FILE \
+                --capabilities CAPABILITY_IAM \
+                --region $AWS_REGION
+            fi
+            
+            echo "Waiting for stack operation to complete..."
+            aws cloudformation wait stack-create-complete --stack-name $STACK_NAME --region $AWS_REGION 2>/dev/null || \
+            aws cloudformation wait stack-update-complete --stack-name $STACK_NAME --region $AWS_REGION 2>/dev/null || true
+            
+            echo "Stack deployment complete!"
+            aws cloudformation describe-stacks --stack-name $STACK_NAME --query "Stacks[0].Outputs" --region $AWS_REGION
+          else
+            echo "WMS POC template not found - skipping EC2 deployment"
+          fi
