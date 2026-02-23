@@ -375,32 +375,30 @@
         </div>
     </div>
 
-    <!-- Interview Talking Points -->
-    <div class="talking-points">
-        <h2>💼 Interview Talking Points for Sagi Van</h2>
-        
-        <div class="talking-point">
-            <h3>1. Patching Mixed OS Fleets (Linux/Windows)</h3>
-            <p><strong>Challenge:</strong> "How do we patch Windows servers without downtime?"<br>
-            <strong>Solution:</strong> "I utilize AWS Systems Manager to orchestrate rolling patches. For complex environments, I group instances by 'Patch Baselines'—ensuring production is only patched after non-production passes health checks. This dashboard shows <span id="talkPatchCompliance">95%+</span> compliance with zero downtime."</p>
+    <!-- WMS System Information -->
+    <div class="card" style="margin-top: 30px;">
+        <h2>📦 Warehouse Management System (WMS)</h2>
+        <div class="architecture-layer">
+            <h3>System Overview</h3>
+            <p>Made4Net WMS provides comprehensive warehouse management capabilities including inventory tracking, order fulfillment, and real-time visibility across all warehouse operations.</p>
         </div>
-        
-        <div class="talking-point">
-            <h3>2. Cost Efficiency vs. Availability</h3>
-            <p><strong>Challenge:</strong> "Our AWS bill is too high."<br>
-            <strong>Solution:</strong> "I managed this at the Israel Securities Authority where I reduced costs by 30%. My strategy is 'Trusted Advisor + Automation'. I use AWS Instance Scheduler to automatically stop non-production environments on nights and weekends. This dashboard shows <span id="talkMonthlySavings">$15k+</span> monthly savings."</p>
+        <div class="metric-row">
+            <span class="metric-label">System Status</span>
+            <span class="metric-value">
+                <span class="status-badge status-healthy">OPERATIONAL</span>
+            </span>
         </div>
-        
-        <div class="talking-point">
-            <h3>3. Incident Resolution & Observability</h3>
-            <p><strong>Challenge:</strong> "What happens when the system is slow?"<br>
-            <strong>Solution:</strong> "I focus on Observability. At Shekel Brainweigh, I monitored 1,000+ IoT devices. I implement X-Ray or APM tools to trace latency. Is it the Warehouse Wi-Fi? The VPN? Or a slow SQL query? Current MTTR: <span id="talkMTTR">8-15</span> minutes."</p>
+        <div class="metric-row">
+            <span class="metric-label">Active Warehouses</span>
+            <span class="metric-value" id="activeWarehouses">Multiple Sites</span>
         </div>
-        
-        <div class="talking-point">
-            <h3>4. Security Compliance for Banking & Retail</h3>
-            <p><strong>Challenge:</strong> "Our customers are banks and large retailers; they audit us."<br>
-            <strong>Solution:</strong> "I have architected compliant solutions for the banking sector (Bank Leumi). I use AWS Config to continuously record configuration changes. If an auditor asks, 'Who changed this Security Group last Tuesday?', we have the log instantly. Current compliance score: <span id="talkComplianceScore">95+</span>/100."</p>
+        <div class="metric-row">
+            <span class="metric-label">Architecture</span>
+            <span class="metric-value">Multi-Tier Windows EC2</span>
+        </div>
+        <div class="metric-row">
+            <span class="metric-label">Monitoring</span>
+            <span class="metric-value">AWS Systems Manager + CloudWatch</span>
         </div>
     </div>
 
@@ -496,7 +494,6 @@
                 document.getElementById('failedAuth').textContent = sec.failedAuthAttempts;
                 document.getElementById('encryption').textContent = sec.encryptionCoverage + '%';
                 document.getElementById('complianceScore').textContent = sec.complianceScore + '/100';
-                document.getElementById('talkComplianceScore').textContent = sec.complianceScore;
             }
             
             // Operational Health
@@ -507,8 +504,7 @@
                 document.getElementById('canarySuccess').textContent = ops.canarySuccessRate + '%';
                 document.getElementById('mttr').textContent = ops.mttrMinutes + ' min';
                 document.getElementById('activeServers').textContent = ops.activeServers;
-                document.getElementById('talkPatchCompliance').textContent = ops.patchCompliance + '%';
-                document.getElementById('talkMTTR').textContent = ops.mttrMinutes;
+
             }
             
             // Cost Optimization
@@ -519,7 +515,7 @@
                 document.getElementById('schedulerSavings').textContent = '$' + cost.schedulerSavings.toLocaleString();
                 document.getElementById('costReduction').textContent = cost.costReductionPercent + '%';
                 document.getElementById('trustedAdvisor').textContent = cost.trustedAdvisorRecommendations;
-                document.getElementById('talkMonthlySavings').textContent = '$' + (cost.monthlySavings / 1000).toFixed(0) + 'k+';
+
             }
             
             // Multi-Region
