@@ -1,0 +1,146 @@
+name: Deploy Mobile Knowledge Assistant
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_ACCOUNT_ID: "991105135552"
+  AWS_REGION: "us-east-1"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run tests
+        run: |
+          pytest tests/ -v --tb=short
+
+  deploy-infrastructure:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Deploy DynamoDB Stack
+        run: |
+          echo "Deploying DynamoDB tables..."
+          aws cloudformation deploy \
+            --template-file cloudformation/dynamodb.yaml \
+            --stack-name mobile-ka-dynamodb \
+            --region ${{ env.AWS_REGION }} \
+            --no-fail-on-empty-changeset
+          
+          echo "DynamoDB stack deployed successfully"
+
+      - name: Deploy S3 Stack
+        run: |
+          echo "Deploying S3 bucket..."
+          aws cloudformation deploy \
+            --template-file cloudformation/s3.yaml \
+            --stack-name mobile-ka-s3 \
+            --region ${{ env.AWS_REGION }} \
+            --no-fail-on-empty-changeset
+          
+          echo "S3 stack deployed successfully"
+
+      - name: Get Stack Outputs
+        id: stack-outputs
+        run: |
+          KB_TABLE_ARN=$(aws cloudformation describe-stacks \
+            --stack-name mobile-ka-dynamodb \
+            --query "Stacks[0].Outputs[?OutputKey=='KnowledgeBaseTableArn'].OutputValue" \
+            --output text \
+            --region ${{ env.AWS_REGION }})
+          
+          TRANSCRIPTS_TABLE_ARN=$(aws cloudformation describe-stacks \
+            --stack-name mobile-ka-dynamodb \
+            --query "Stacks[0].Outputs[?OutputKey=='TranscriptsTableArn'].OutputValue" \
+            --output text \
+            --region ${{ env.AWS_REGION }})
+          
+          DOCS_BUCKET_ARN=$(aws cloudformation describe-stacks \
+            --stack-name mobile-ka-s3 \
+            --query "Stacks[0].Outputs[?OutputKey=='DocumentsBucketArn'].OutputValue" \
+            --output text \
+            --region ${{ env.AWS_REGION }})
+          
+          echo "KB_TABLE_ARN=$KB_TABLE_ARN" >> $GITHUB_OUTPUT
+          echo "TRANSCRIPTS_TABLE_ARN=$TRANSCRIPTS_TABLE_ARN" >> $GITHUB_OUTPUT
+          echo "DOCS_BUCKET_ARN=$DOCS_BUCKET_ARN" >> $GITHUB_OUTPUT
+
+      - name: Deploy IAM Stack
+        run: |
+          echo "Deploying IAM roles..."
+          aws cloudformation deploy \
+            --template-file cloudformation/iam.yaml \
+            --stack-name mobile-ka-iam \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --region ${{ env.AWS_REGION }} \
+            --parameter-overrides \
+              KnowledgeBaseTableArn=${{ steps.stack-outputs.outputs.KB_TABLE_ARN }} \
+              TranscriptsTableArn=${{ steps.stack-outputs.outputs.TRANSCRIPTS_TABLE_ARN }} \
+              DocumentsBucketArn=${{ steps.stack-outputs.outputs.DOCS_BUCKET_ARN }} \
+            --no-fail-on-empty-changeset
+          
+          echo "IAM stack deployed successfully"
+
+      - name: Display Stack Outputs
+        run: |
+          echo "=== DynamoDB Stack Outputs ==="
+          aws cloudformation describe-stacks \
+            --stack-name mobile-ka-dynamodb \
+            --query "Stacks[0].Outputs" \
+            --region ${{ env.AWS_REGION }}
+          
+          echo "=== S3 Stack Outputs ==="
+          aws cloudformation describe-stacks \
+            --stack-name mobile-ka-s3 \
+            --query "Stacks[0].Outputs" \
+            --region ${{ env.AWS_REGION }}
+          
+          echo "=== IAM Stack Outputs ==="
+          aws cloudformation describe-stacks \
+            --stack-name mobile-ka-iam \
+            --query "Stacks[0].Outputs" \
+            --region ${{ env.AWS_REGION }}
+
+      - name: Deployment Summary
+        run: |
+          echo "✅ Infrastructure deployment complete!"
+          echo ""
+          echo "Deployed stacks:"
+          echo "  - mobile-ka-dynamodb (DynamoDB tables)"
+          echo "  - mobile-ka-s3 (S3 bucket)"
+          echo "  - mobile-ka-iam (IAM roles)"
+          echo ""
+          echo "Next steps:"
+          echo "  1. Deploy Lambda functions (Task 3-6)"
+          echo "  2. Deploy API Gateway (Task 8)"
+          echo "  3. Create iOS Shortcuts (Task 10)"

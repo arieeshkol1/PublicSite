@@ -16,7 +16,7 @@ This implementation plan breaks down the Mobile-to-Cloud Personal Knowledge Assi
 
 ## Tasks
 
-- [-] 1. Set up project structure and CloudFormation infrastructure
+- [x] 1. Set up project structure and CloudFormation infrastructure
   - Create directory structure for Lambda functions, CloudFormation templates, and tests
   - Create CloudFormation template for DynamoDB tables (KnowledgeBase, Transcripts)
   - Create CloudFormation template for S3 bucket with lifecycle policies
@@ -24,8 +24,8 @@ This implementation plan breaks down the Mobile-to-Cloud Personal Knowledge Assi
   - Set up Python project with requirements.txt (boto3, hypothesis, pytest, langdetect, PyPDF2, python-docx)
   - _Requirements: 13.1, 13.2, 18.1, 18.2, 18.3_
 
-- [ ] 2. Implement API Gateway and authentication infrastructure
-  - [ ] 2.1 Create CloudFormation template for API Gateway REST API
+- [x] 2. Implement API Gateway and authentication infrastructure
+  - [x] 2.1 Create CloudFormation template for API Gateway REST API
     - Define /query POST endpoint with request validation
     - Define /health GET endpoint
     - Configure API key authentication with usage plans (100 req/hour)
