@@ -1,9 +1,0 @@
-{
-  "name": "made4net-fortress-lambda",
-  "version": "1.0.0",
-  "description": "Made4Net Fortress & Factory Lambda Functions",
-  "main": "index.js",
-  "dependencies": {
-    "aws-sdk": "^2.1400.0"
-  }
-}

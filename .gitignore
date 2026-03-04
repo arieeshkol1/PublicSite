@@ -4,9 +4,6 @@ __pycache__/
 *$py.class
 *.so
 .Python
-env/
-venv/
-ENV/
 build/
 develop-eggs/
 dist/
@@ -22,24 +19,18 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+MANIFEST
 
-# Draw.io backup files
-.*.drawio.bkp
-.*.drawio.dtmp
-*.drawio.bkp
-*.drawio.dtmp
+# Virtual Environment
+venv/
+ENV/
+env/
 
-# Microsoft Office temporary files
-~$*.doc*
-~$*.xls*
-~$*.ppt*
-
-# Temporary files
-*.tmp
-*.temp
-temp-*
-.DS_Store
-Thumbs.db
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.hypothesis/
 
 # IDE
 .vscode/
@@ -48,22 +39,17 @@ Thumbs.db
 *.swo
 *~
 
-# AWS CDK
-cdk.out/
-.cdk.staging/
+# AWS
+.aws-sam/
+samconfig.toml
 
-# Node modules
-node_modules/
+# OS
+.DS_Store
+Thumbs.db
 
 # Logs
 *.log
-logs/
 
 # Environment variables
 .env
 .env.local
-.env.*.local
-
-# Kiro (keep specs but exclude other temp files)
-.kiro/cache/
-.kiro/temp/
