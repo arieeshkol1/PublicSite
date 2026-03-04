@@ -111,6 +111,204 @@ jobs:
           
           echo "IAM stack deployed successfully"
 
+      - name: Package Lambda Functions
+        run: |
+          echo "Packaging Lambda functions..."
+          mkdir -p lambda-packages
+          
+          # Package Document Ingestion Lambda
+          cd lambda/document_ingestion
+          pip install -r ../../requirements.txt -t .
+          zip -r ../../lambda-packages/document-ingestion.zip . -x "*.pyc" -x "__pycache__/*"
+          cd ../..
+          
+          # Package Answer Retrieval Lambda
+          cd lambda/answer_retrieval
+          pip install -r ../../requirements.txt -t .
+          zip -r ../../lambda-packages/answer-retrieval.zip . -x "*.pyc" -x "__pycache__/*"
+          cd ../..
+          
+          # Package Query Handler Lambda
+          cd lambda/query_handler
+          pip install -r ../../requirements.txt -t .
+          zip -r ../../lambda-packages/query-handler.zip . -x "*.pyc" -x "__pycache__/*"
+          cd ../..
+          
+          echo "Lambda packages created successfully"
+
+      - name: Upload Lambda Packages to S3
+        id: upload-lambdas
+        run: |
+          DOCS_BUCKET=$(aws cloudformation describe-stacks \
+            --stack-name mobile-ka-s3 \
+            --query "Stacks[0].Outputs[?OutputKey=='DocumentsBucketName'].OutputValue" \
+            --output text \
+            --region ${{ env.AWS_REGION }})
+          
+          echo "Uploading Lambda packages to S3..."
+          aws s3 cp lambda-packages/document-ingestion.zip s3://$DOCS_BUCKET/lambda/document-ingestion.zip
+          aws s3 cp lambda-packages/answer-retrieval.zip s3://$DOCS_BUCKET/lambda/answer-retrieval.zip
+          aws s3 cp lambda-packages/query-handler.zip s3://$DOCS_BUCKET/lambda/query-handler.zip
+          
+          echo "DOCS_BUCKET=$DOCS_BUCKET" >> $GITHUB_OUTPUT
+
+      - name: Get Additional Stack Outputs
+        id: additional-outputs
+        run: |
+          KB_TABLE_NAME=$(aws cloudformation describe-stacks \
+            --stack-name mobile-ka-dynamodb \
+            --query "Stacks[0].Outputs[?OutputKey=='KnowledgeBaseTableName'].OutputValue" \
+            --output text \
+            --region ${{ env.AWS_REGION }})
+          
+          TRANSCRIPTS_TABLE_NAME=$(aws cloudformation describe-stacks \
+            --stack-name mobile-ka-dynamodb \
+            --query "Stacks[0].Outputs[?OutputKey=='TranscriptsTableName'].OutputValue" \
+            --output text \
+            --region ${{ env.AWS_REGION }})
+          
+          DOC_INGESTION_ROLE=$(aws cloudformation describe-stacks \
+            --stack-name mobile-ka-iam \
+            --query "Stacks[0].Outputs[?OutputKey=='DocumentIngestionRoleArn'].OutputValue" \
+            --output text \
+            --region ${{ env.AWS_REGION }})
+          
+          ANSWER_RETRIEVAL_ROLE=$(aws cloudformation describe-stacks \
+            --stack-name mobile-ka-iam \
+            --query "Stacks[0].Outputs[?OutputKey=='AnswerRetrievalRoleArn'].OutputValue" \
+            --output text \
+            --region ${{ env.AWS_REGION }})
+          
+          QUERY_HANDLER_ROLE=$(aws cloudformation describe-stacks \
+            --stack-name mobile-ka-iam \
+            --query "Stacks[0].Outputs[?OutputKey=='QueryHandlerRoleArn'].OutputValue" \
+            --output text \
+            --region ${{ env.AWS_REGION }})
+          
+          echo "KB_TABLE_NAME=$KB_TABLE_NAME" >> $GITHUB_OUTPUT
+          echo "TRANSCRIPTS_TABLE_NAME=$TRANSCRIPTS_TABLE_NAME" >> $GITHUB_OUTPUT
+          echo "DOC_INGESTION_ROLE=$DOC_INGESTION_ROLE" >> $GITHUB_OUTPUT
+          echo "ANSWER_RETRIEVAL_ROLE=$ANSWER_RETRIEVAL_ROLE" >> $GITHUB_OUTPUT
+          echo "QUERY_HANDLER_ROLE=$QUERY_HANDLER_ROLE" >> $GITHUB_OUTPUT
+
+      - name: Deploy Lambda Stack
+        run: |
+          echo "Deploying Lambda functions..."
+          aws cloudformation deploy \
+            --template-file cloudformation/lambda.yaml \
+            --stack-name mobile-ka-lambda \
+            --region ${{ env.AWS_REGION }} \
+            --parameter-overrides \
+              KnowledgeBaseTableName=${{ steps.additional-outputs.outputs.KB_TABLE_NAME }} \
+              TranscriptsTableName=${{ steps.additional-outputs.outputs.TRANSCRIPTS_TABLE_NAME }} \
+              DocumentsBucketName=${{ steps.upload-lambdas.outputs.DOCS_BUCKET }} \
+              DocumentIngestionRoleArn=${{ steps.additional-outputs.outputs.DOC_INGESTION_ROLE }} \
+              AnswerRetrievalRoleArn=${{ steps.additional-outputs.outputs.ANSWER_RETRIEVAL_ROLE }} \
+              QueryHandlerRoleArn=${{ steps.additional-outputs.outputs.QUERY_HANDLER_ROLE }} \
+            --no-fail-on-empty-changeset
+          
+          echo "Lambda stack deployed successfully"
+
+      - name: Update Lambda Function Code
+        run: |
+          echo "Updating Lambda function code from S3..."
+          
+          aws lambda update-function-code \
+            --function-name mobile-ka-document-ingestion \
+            --s3-bucket ${{ steps.upload-lambdas.outputs.DOCS_BUCKET }} \
+            --s3-key lambda/document-ingestion.zip \
+            --region ${{ env.AWS_REGION }}
+          
+          aws lambda update-function-code \
+            --function-name mobile-ka-answer-retrieval \
+            --s3-bucket ${{ steps.upload-lambdas.outputs.DOCS_BUCKET }} \
+            --s3-key lambda/answer-retrieval.zip \
+            --region ${{ env.AWS_REGION }}
+          
+          aws lambda update-function-code \
+            --function-name mobile-ka-query-handler \
+            --s3-bucket ${{ steps.upload-lambdas.outputs.DOCS_BUCKET }} \
+            --s3-key lambda/query-handler.zip \
+            --region ${{ env.AWS_REGION }}
+          
+          echo "Lambda function code updated successfully"
+
+      - name: Configure S3 Event Notification
+        run: |
+          DOCS_BUCKET=${{ steps.upload-lambdas.outputs.DOCS_BUCKET }}
+          DOC_INGESTION_ARN=$(aws cloudformation describe-stacks \
+            --stack-name mobile-ka-lambda \
+            --query "Stacks[0].Outputs[?OutputKey=='DocumentIngestionFunctionArn'].OutputValue" \
+            --output text \
+            --region ${{ env.AWS_REGION }})
+          
+          echo "Configuring S3 event notification..."
+          aws s3api put-bucket-notification-configuration \
+            --bucket $DOCS_BUCKET \
+            --notification-configuration '{
+              "LambdaFunctionConfigurations": [
+                {
+                  "LambdaFunctionArn": "'"$DOC_INGESTION_ARN"'",
+                  "Events": ["s3:ObjectCreated:*"],
+                  "Filter": {
+                    "Key": {
+                      "FilterRules": [
+                        {"Name": "prefix", "Value": "documents/"},
+                        {"Name": "suffix", "Value": ".txt"}
+                      ]
+                    }
+                  }
+                },
+                {
+                  "LambdaFunctionArn": "'"$DOC_INGESTION_ARN"'",
+                  "Events": ["s3:ObjectCreated:*"],
+                  "Filter": {
+                    "Key": {
+                      "FilterRules": [
+                        {"Name": "prefix", "Value": "documents/"},
+                        {"Name": "suffix", "Value": ".pdf"}
+                      ]
+                    }
+                  }
+                },
+                {
+                  "LambdaFunctionArn": "'"$DOC_INGESTION_ARN"'",
+                  "Events": ["s3:ObjectCreated:*"],
+                  "Filter": {
+                    "Key": {
+                      "FilterRules": [
+                        {"Name": "prefix", "Value": "documents/"},
+                        {"Name": "suffix", "Value": ".docx"}
+                      ]
+                    }
+                  }
+                }
+              ]
+            }' \
+            --region ${{ env.AWS_REGION }}
+          
+          echo "S3 event notification configured successfully"
+
+      - name: Deploy API Gateway Stack
+        run: |
+          QUERY_HANDLER_ARN=$(aws cloudformation describe-stacks \
+            --stack-name mobile-ka-lambda \
+            --query "Stacks[0].Outputs[?OutputKey=='QueryHandlerFunctionArn'].OutputValue" \
+            --output text \
+            --region ${{ env.AWS_REGION }})
+          
+          echo "Deploying API Gateway..."
+          aws cloudformation deploy \
+            --template-file cloudformation/api-gateway.yaml \
+            --stack-name mobile-ka-api \
+            --capabilities CAPABILITY_IAM \
+            --region ${{ env.AWS_REGION }} \
+            --parameter-overrides \
+              QueryHandlerLambdaArn=$QUERY_HANDLER_ARN \
+            --no-fail-on-empty-changeset
+          
+          echo "API Gateway stack deployed successfully"
+
       - name: Display Stack Outputs
         run: |
           echo "=== DynamoDB Stack Outputs ==="
@@ -130,17 +328,39 @@ jobs:
             --stack-name mobile-ka-iam \
             --query "Stacks[0].Outputs" \
             --region ${{ env.AWS_REGION }}
+          
+          echo "=== Lambda Stack Outputs ==="
+          aws cloudformation describe-stacks \
+            --stack-name mobile-ka-lambda \
+            --query "Stacks[0].Outputs" \
+            --region ${{ env.AWS_REGION }}
+          
+          echo "=== API Gateway Stack Outputs ==="
+          aws cloudformation describe-stacks \
+            --stack-name mobile-ka-api \
+            --query "Stacks[0].Outputs" \
+            --region ${{ env.AWS_REGION }}
 
       - name: Deployment Summary
         run: |
-          echo "✅ Infrastructure deployment complete!"
+          API_ENDPOINT=$(aws cloudformation describe-stacks \
+            --stack-name mobile-ka-api \
+            --query "Stacks[0].Outputs[?OutputKey=='APIEndpoint'].OutputValue" \
+            --output text \
+            --region ${{ env.AWS_REGION }})
+          
+          echo "✅ Full deployment complete!"
           echo ""
           echo "Deployed stacks:"
           echo "  - mobile-ka-dynamodb (DynamoDB tables)"
           echo "  - mobile-ka-s3 (S3 bucket)"
           echo "  - mobile-ka-iam (IAM roles)"
+          echo "  - mobile-ka-lambda (Lambda functions)"
+          echo "  - mobile-ka-api (API Gateway)"
+          echo ""
+          echo "API Endpoint: $API_ENDPOINT"
           echo ""
           echo "Next steps:"
-          echo "  1. Deploy Lambda functions (Task 3-6)"
-          echo "  2. Deploy API Gateway (Task 8)"
-          echo "  3. Create iOS Shortcuts (Task 10)"
+          echo "  1. Retrieve API key from AWS Console: API Gateway > API Keys"
+          echo "  2. Upload test documents to S3 bucket"
+          echo "  3. Create iOS Shortcuts with API endpoint and key"

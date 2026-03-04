@@ -84,26 +84,26 @@ This implementation plan breaks down the Mobile-to-Cloud Personal Knowledge Assi
     - Test documents with special characters and encodings
     - _Requirements: 6.1, 16.1_
 
-- [ ] 4. Checkpoint - Test document ingestion end-to-end
+- [x] 4. Checkpoint - Test document ingestion end-to-end
   - Upload test documents to S3 and verify records in DynamoDB
   - Ensure all tests pass, ask the user if questions arise
 
-- [ ] 5. Implement Answer Retrieval Lambda function
-  - [ ] 5.1 Create Lambda function handler for answer retrieval
+- [x] 5. Implement Answer Retrieval Lambda function
+  - [x] 5.1 Create Lambda function handler for answer retrieval
     - Implement DynamoDB query with language filter
     - Implement keyword extraction from questions
     - Implement relevance scoring and ranking
     - Handle "no answer found" case
     - _Requirements: 7.1, 7.3, 7.4, 7.5, 9.5_
   
-  - [ ] 5.2 Implement response formatting logic
+  - [x] 5.2 Implement response formatting logic
     - Multiple choice short format (letter only)
     - Multiple choice long format (letter + option + explanation)
     - Conversation short format (brief answer, max 2 sentences)
     - Conversation long format (detailed explanation)
     - _Requirements: 8.1, 8.2, 8.3, 8.4, 19.4_
   
-  - [ ] 5.3 Implement transcript storage in DynamoDB
+  - [x] 5.3 Implement transcript storage in DynamoDB
     - Store question, answer, timestamp, language, mode, format
     - Associate with source document ID and record ID
     - Store within 1 second of generating response
@@ -135,8 +135,8 @@ This implementation plan breaks down the Mobile-to-Cloud Personal Knowledge Assi
     - Test DynamoDB throttling and retry logic
     - _Requirements: 7.5, 14.1_
 
-- [ ] 6. Implement Query Handler Lambda function
-  - [ ] 6.1 Create Lambda function handler for API Gateway integration
+- [x] 6. Implement Query Handler Lambda function
+  - [x] 6.1 Create Lambda function handler for API Gateway integration
     - Parse API Gateway proxy event
     - Validate request body (question, mode, format)
     - Implement language detection (Hebrew/English with fallback to English)
@@ -144,7 +144,7 @@ This implementation plan breaks down the Mobile-to-Cloud Personal Knowledge Assi
     - Format response for API Gateway
     - _Requirements: 4.2, 4.3, 9.3, 9.4_
   
-  - [ ] 6.2 Implement error handling and logging
+  - [x] 6.2 Implement error handling and logging
     - Handle Lambda invocation failures
     - Handle timeout scenarios
     - Log request metadata (no full question content)
@@ -166,13 +166,13 @@ This implementation plan breaks down the Mobile-to-Cloud Personal Knowledge Assi
     - Test Lambda timeout and retry scenarios
     - _Requirements: 14.1, 14.5_
 
-- [ ] 7. Checkpoint - Test query processing end-to-end
+- [x] 7. Checkpoint - Test query processing end-to-end
   - Test API Gateway → Query Handler → Answer Retrieval → DynamoDB flow
   - Verify transcript storage and response formatting
   - Ensure all tests pass, ask the user if questions arise
 
-- [ ] 8. Create CloudFormation deployment template
-  - [ ] 8.1 Create master CloudFormation template
+- [x] 8. Create CloudFormation deployment template
+  - [x] 8.1 Create master CloudFormation template
     - Integrate all resource templates (DynamoDB, S3, Lambda, API Gateway)
     - Define Lambda function resources with Python 3.11 runtime
     - Configure Lambda environment variables
@@ -180,7 +180,7 @@ This implementation plan breaks down the Mobile-to-Cloud Personal Knowledge Assi
     - Configure API Gateway integration with Query Handler Lambda
     - _Requirements: 13.1, 13.2, 13.4_
   
-  - [ ] 8.2 Add CloudWatch monitoring and alarms
+  - [x] 8.2 Add CloudWatch monitoring and alarms
     - Lambda error rate alarm (> 5% over 5 minutes)
     - API Gateway 5xx error rate alarm (> 1% over 5 minutes)
     - DynamoDB throttling alarm (> 10 per minute)
@@ -192,8 +192,8 @@ This implementation plan breaks down the Mobile-to-Cloud Personal Knowledge Assi
     - Test IAM policy least privilege
     - _Requirements: 13.1_
 
-- [ ] 9. Implement GitHub Actions CI/CD pipeline
-  - [ ] 9.1 Create GitHub Actions workflow for deployment
+- [x] 9. Implement GitHub Actions CI/CD pipeline
+  - [x] 9.1 Create GitHub Actions workflow for deployment
     - Configure AWS credentials (account 991105135552, region us-east-1)
     - Add step to run pytest with Hypothesis tests
     - Add step to package Lambda functions
@@ -207,21 +207,21 @@ This implementation plan breaks down the Mobile-to-Cloud Personal Knowledge Assi
     - Test query processing with real DynamoDB data
     - _Requirements: 3.1, 4.2, 7.1_
 
-- [ ] 10. Create iOS Shortcuts workflow
-  - [ ] 10.1 Create camera capture shortcut
+- [x] 10. Create iOS Shortcuts workflow
+  - [x] 10.1 Create camera capture shortcut
     - Take photo action
     - Extract text from image using iOS OCR
     - Display extracted text for confirmation
     - Store extracted text in variable
     - _Requirements: 1.1, 1.2, 1.3_
   
-  - [ ] 10.2 Create voice capture shortcut
+  - [x] 10.2 Create voice capture shortcut
     - Dictate text action with language auto-detection
     - Display transcribed text for confirmation
     - Store transcribed text in variable
     - _Requirements: 2.1, 2.2, 2.3, 2.5, 2.6_
   
-  - [ ] 10.3 Create API request shortcut
+  - [x] 10.3 Create API request shortcut
     - Get API key from user input (first run) or stored variable
     - Prompt user to select mode (Multiple Choice / Conversation)
     - Prompt user to select format (Short / Long)
@@ -230,14 +230,14 @@ This implementation plan breaks down the Mobile-to-Cloud Personal Knowledge Assi
     - Parse JSON response
     - _Requirements: 3.5, 4.1, 4.4, 8.5, 8.6_
   
-  - [ ] 10.4 Create text-to-speech playback shortcut
+  - [x] 10.4 Create text-to-speech playback shortcut
     - Detect response language (Hebrew/English)
     - Configure voice based on language
     - Speak text action with appropriate voice
     - Handle earphone routing automatically
     - _Requirements: 10.1, 10.2, 10.5, 10.6, 10.7_
   
-  - [ ] 10.5 Create error handling in shortcuts
+  - [x] 10.5 Create error handling in shortcuts
     - Display error messages for OCR failures
     - Display error messages for speech recognition failures
     - Display error messages for network failures
@@ -245,7 +245,7 @@ This implementation plan breaks down the Mobile-to-Cloud Personal Knowledge Assi
     - Speak error messages using TTS
     - _Requirements: 1.4, 2.4, 4.5, 14.1, 14.2, 14.3, 14.4_
   
-  - [ ] 10.6 Create main workflow shortcut
+  - [x] 10.6 Create main workflow shortcut
     - Prompt user to select capture mode (Camera / Voice)
     - Call appropriate capture shortcut
     - Call API request shortcut with captured text
@@ -262,13 +262,13 @@ This implementation plan breaks down the Mobile-to-Cloud Personal Knowledge Assi
     - Test preference persistence across runs
     - _Requirements: 1.1-1.5, 2.1-2.6, 8.1-8.6, 10.1-10.9_
 
-- [ ] 11. Checkpoint - Test complete end-to-end flow
+- [x] 11. Checkpoint - Test complete end-to-end flow
   - Test iOS Shortcuts → API Gateway → Lambda → DynamoDB → Response → TTS
   - Verify all error handling paths work correctly
   - Ensure all tests pass, ask the user if questions arise
 
-- [ ] 12. Create deployment documentation
-  - [ ] 12.1 Write README with setup instructions
+- [x] 12. Create deployment documentation
+  - [x] 12.1 Write README with setup instructions
     - AWS account setup and credentials configuration
     - CloudFormation stack deployment steps
     - API key creation and configuration
@@ -276,29 +276,29 @@ This implementation plan breaks down the Mobile-to-Cloud Personal Knowledge Assi
     - Testing and validation steps
     - _Requirements: 16.4_
   
-  - [ ] 12.2 Create sample documents for testing
+  - [x] 12.2 Create sample documents for testing
     - Create sample multiple choice documents in Hebrew
     - Create sample multiple choice documents in English
     - Create sample conversation documents in both languages
     - Upload to S3 for initial testing
     - _Requirements: 5.4, 6.4, 19.1_
   
-  - [ ] 12.3 Document cost optimization settings
+  - [x] 12.3 Document cost optimization settings
     - Document usage plan limits and cost caps
     - Document CloudWatch log retention settings
     - Document S3 lifecycle policies
     - Document DynamoDB on-demand pricing expectations
     - _Requirements: 13.2, 13.3_
 
-- [ ] 13. Final validation and cleanup
-  - [ ] 13.1 Run full test suite
+- [-] 13. Final validation and cleanup
+  - [-] 13.1 Run full test suite
     - Run all pytest unit tests
     - Run all Hypothesis property tests (100+ iterations each)
     - Run integration tests against deployed infrastructure
     - Verify all 68 correctness properties are tested
     - _Requirements: All_
   
-  - [ ] 13.2 Validate privacy and security requirements
+  - [x] 13.2 Validate privacy and security requirements
     - Verify no PII in CloudWatch logs
     - Verify API keys are not logged
     - Verify HTTPS-only communication
@@ -306,7 +306,7 @@ This implementation plan breaks down the Mobile-to-Cloud Personal Knowledge Assi
     - Test log retention and TTL policies
     - _Requirements: 3.1, 15.1, 15.3, 15.4, 15.5_
   
-  - [ ] 13.3 Performance validation
+  - [x] 13.3 Performance validation
     - Measure OCR processing time (target < 3s for 95%)
     - Measure speech recognition time (target < 2s for 95%)
     - Measure answer retrieval time (target < 2s for 95%)
