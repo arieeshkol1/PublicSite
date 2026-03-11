@@ -1,0 +1,56 @@
+name: Deploy Website to S3
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'index.html'
+      - 'styles.css'
+      - '*.js'
+      - '*.css'
+      - '*.html'
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+  S3_BUCKET: arieleshkolwebsite22feb2026
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Deploy HTML and CSS to S3
+        run: |
+          echo "Deploying website files to S3..."
+          aws s3 cp index.html s3://${{ env.S3_BUCKET }}/ --cache-control "max-age=300"
+          aws s3 cp styles.css s3://${{ env.S3_BUCKET }}/ --cache-control "max-age=86400"
+          echo "✓ Deployment complete!"
+
+      - name: Verify deployment
+        run: |
+          echo "Verifying files in S3..."
+          aws s3 ls s3://${{ env.S3_BUCKET }}/ --human-readable
+          echo "✓ Verification complete!"
+
+      - name: Deployment summary
+        run: |
+          echo "=== Deployment Summary ==="
+          echo "Bucket: ${{ env.S3_BUCKET }}"
+          echo "Region: ${{ env.AWS_REGION }}"
+          echo "Files deployed: index.html, styles.css"
+          echo "Status: Success ✓"
