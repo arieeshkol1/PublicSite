@@ -54,3 +54,4 @@ jobs:
           echo "Region: ${{ env.AWS_REGION }}"
           echo "Files deployed: index.html, styles.css"
           echo "Status: Success ✓"
+
