@@ -76,11 +76,165 @@ jobs:
           aws s3 ls s3://${{ env.S3_BUCKET }}/ --human-readable
           echo "✓ Verification complete!"
 
+name: Deploy Website to S3
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'index.html'
+      - 'styles.css'
+      - '*.js'
+      - '*.css'
+      - '*.html'
+      - '*.png'
+      - '*.jpg'
+      - '*.jpeg'
+      - '*.gif'
+      - '*.svg'
+      - '*.ico'
+      - 'infrastructure/complete-stack.yaml'
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+  S3_BUCKET: arieleshkolwebsite22feb2026
+  STACK_NAME: eshkol-ai-complete-stack
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::991105135552:role/GitHubDeployRole
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Get Route 53 Hosted Zone ID
+        id: get-zone
+        run: |
+          echo "Fetching Route 53 Hosted Zone ID for eshkol.ai..."
+          ZONE_ID=$(aws route53 list-hosted-zones-by-name \
+            --dns-name "eshkol.ai" \
+            --query "HostedZones[?Name=='eshkol.ai.'].Id" \
+            --output text | cut -d'/' -f3)
+          
+          if [ -z "$ZONE_ID" ]; then
+            echo "⚠ Hosted zone for eshkol.ai not found - skipping infrastructure deployment"
+            echo "ZONE_ID=" >> $GITHUB_OUTPUT
+          else
+            echo "ZONE_ID=$ZONE_ID" >> $GITHUB_OUTPUT
+            echo "✓ Found Hosted Zone ID: $ZONE_ID"
+          fi
+
+      - name: Deploy Infrastructure Stack
+        if: steps.get-zone.outputs.ZONE_ID != ''
+        run: |
+          echo "Deploying infrastructure stack..."
+          aws cloudformation deploy \
+            --template-file infrastructure/complete-stack.yaml \
+            --stack-name ${{ env.STACK_NAME }} \
+            --region ${{ env.AWS_REGION }} \
+            --parameter-overrides \
+              DomainName=eshkol.ai \
+              HostedZoneId=${{ steps.get-zone.outputs.ZONE_ID }} \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --no-fail-on-empty-changeset
+          
+          echo "✓ Infrastructure stack deployed!"
+
+      - name: Deploy HTML and CSS to S3
+        run: |
+          echo "Deploying website files to S3..."
+          aws s3 cp index.html s3://${{ env.S3_BUCKET }}/ --cache-control "max-age=300"
+          aws s3 cp styles.css s3://${{ env.S3_BUCKET }}/ --cache-control "max-age=86400"
+          
+          # Deploy additional HTML files
+          for file in *.html; do
+            if [ "$file" != "index.html" ]; then
+              echo "Deploying $file..."
+              aws s3 cp "$file" s3://${{ env.S3_BUCKET }}/ --cache-control "max-age=300"
+            fi
+          done
+          
+          # Deploy JavaScript files
+          for file in *.js; do
+            echo "Deploying $file..."
+            aws s3 cp "$file" s3://${{ env.S3_BUCKET }}/ --cache-control "max-age=86400" --content-type "application/javascript"
+          done
+          
+          # Deploy image files
+          for file in *.png *.jpg *.jpeg *.gif *.svg *.ico; do
+            if [ -f "$file" ]; then
+              echo "Deploying $file..."
+              aws s3 cp "$file" s3://${{ env.S3_BUCKET }}/ --cache-control "max-age=2592000"
+            fi
+          done
+          
+          echo "✓ Deployment complete!"
+
+      - name: Verify deployment
+        run: |
+          echo "Verifying files in S3..."
+          aws s3 ls s3://${{ env.S3_BUCKET }}/ --human-readable
+          echo "✓ Verification complete!"
+
+      - name: Invalidate CloudFront Cache
+        run: |
+          echo "Invalidating CloudFront cache..."
+          DISTRIBUTION_ID=$(aws cloudformation describe-stacks \
+            --stack-name ${{ env.STACK_NAME }} \
+            --region ${{ env.AWS_REGION }} \
+            --query 'Stacks[0].Outputs[?OutputKey==`CloudFrontDistributionId`].OutputValue' \
+            --output text 2>/dev/null || echo "")
+          
+          if [ -n "$DISTRIBUTION_ID" ]; then
+            aws cloudfront create-invalidation \
+              --distribution-id $DISTRIBUTION_ID \
+              --paths "/*"
+            echo "✓ CloudFront cache invalidated!"
+          else
+            echo "⚠ CloudFront not deployed yet - skipping cache invalidation"
+          fi
+
       - name: Deployment summary
         run: |
           echo "=== Deployment Summary ==="
           echo "Bucket: ${{ env.S3_BUCKET }}"
           echo "Region: ${{ env.AWS_REGION }}"
-          echo "Files deployed: All HTML, CSS, and JS files"
+          echo "Files deployed: All HTML, CSS, JS, and image files"
           echo "Status: Success ✓"
+          echo ""
+          echo "Website URLs:"
+          echo "- S3: http://${{ env.S3_BUCKET }}.s3-website-${{ env.AWS_REGION }}.amazonaws.com"
+          echo "- Domain: https://eshkol.ai (if CloudFront deployed)"
+
+
+      - name: Invalidate CloudFront Cache
+        run: |
+          echo "Invalidating CloudFront cache..."
+          DISTRIBUTION_ID=$(aws cloudformation describe-stacks \
+            --stack-name eshkol-ai-cloudfront-stack \
+            --region us-east-1 \
+            --query 'Stacks[0].Outputs[?OutputKey==`CloudFrontDistributionId`].OutputValue' \
+            --output text 2>/dev/null || echo "")
+          
+          if [ -n "$DISTRIBUTION_ID" ]; then
+            aws cloudfront create-invalidation \
+              --distribution-id $DISTRIBUTION_ID \
+              --paths "/*"
+            echo "✓ CloudFront cache invalidated!"
+          else
+            echo "⚠ CloudFront stack not found - skipping cache invalidation"
+          fi
 
