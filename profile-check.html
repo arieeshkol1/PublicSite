@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Check your customer profile - IP, location, browser, and system information">
+    <title>Customer Profile Check - Cloud Consulting Services</title>
+    <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        .profile-check-hero {
+            min-height: 50vh;
+            padding: 140px 0 80px;
+        }
+        
+        .info-card {
+            background: var(--white);
+            padding: 32px;
+            border-radius: 20px;
+            border: 2px solid var(--gray-light);
+            margin-bottom: 24px;
+            transition: all 0.3s;
+        }
+        
+        .info-card:hover {
+            border-color: var(--primary);
+            box-shadow: 0 8px 24px rgba(0, 102, 255, 0.1);
+        }
+        
+        .info-card h3 {
+            color: var(--dark);
+            font-size: 24px;
+            font-weight: 700;
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        
+        .info-card h3 i {
+            color: var(--primary);
+        }
+        
+        .info-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 12px 0;
+            border-bottom: 1px solid var(--gray-light);
+        }
+        
+        .info-row:last-child {
+            border-bottom: none;
+        }
+        
+        .info-label {
+            color: var(--gray);
+            font-weight: 600;
+            font-size: 14px;
+        }
+        
+        .info-value {
+            color: var(--dark);
+            font-weight: 600;
+            text-align: right;
+            font-family: 'Courier New', monospace;
+        }
+        
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: var(--gray);
+        }
+        
+        .spinner {
+            border: 3px solid var(--gray-light);
+            border-top: 3px solid var(--primary);
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 16px;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .grid-2 {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+            gap: 24px;
+        }
+        
+        @media (max-width: 768px) {
+            .grid-2 {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Navigation -->
+    <nav class="navbar">
+        <div class="container">
+            <div class="nav-brand">
+                <i class="fas fa-cloud"></i>
+                <span>CloudConsult</span>
+            </div>
+            <ul class="nav-menu">
+                <li><a href="index.html">Home</a></li>
+                <li><a href="index.html#services">Services</a></li>
+                <li><a href="index.html#expertise">Expertise</a></li>
+                <li><a href="index.html#results">Results</a></li>
+                <li><a href="profile-check.html" class="nav-cta">Profile Check</a></li>
+            </ul>
+        </div>
+    </nav>
+
+    <!-- Hero Section -->
+    <section class="hero profile-check-hero">
+        <div class="hero-content">
+            <h1>Customer Profile<br><span class="gradient-text">Check</span></h1>
+            <p class="hero-subtitle">See what information websites can detect about you</p>
+        </div>
+    </section>
+
+    <!-- Profile Information Section -->
+    <section class="services">
+        <div class="container">
+            <div class="info-card">
+                <h3><i class="fas fa-network-wired"></i> Your IP Information</h3>
+                <div id="ip-info" class="loading">
+                    <div class="spinner"></div>
+                    <p>Detecting your IP address...</p>
+                </div>
+            </div>
+
+            <div class="grid-2">
+                <div class="info-card">
+                    <h3><i class="fas fa-browser"></i> Browser Information</h3>
+                    <div id="browser-info"></div>
+                </div>
+
+                <div class="info-card">
+                    <h3><i class="fas fa-desktop"></i> System Information</h3>
+                    <div id="system-info"></div>
+                </div>
+            </div>
+
+            <div class="info-card">
+                <h3><i class="fas fa-code"></i> HTTP Headers</h3>
+                <div id="headers-info"></div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="footer">
+        <div class="container">
+            <div class="footer-content">
+                <div class="footer-brand">
+                    <i class="fas fa-cloud"></i>
+                    <span>CloudConsult</span>
+                </div>
+                <p>&copy; 2024 Cloud Consulting Services. All rights reserved.</p>
+            </div>
+        </div>
+    </footer>
+
+    <script src="profile-check.js"></script>
+</body>
+</html>
