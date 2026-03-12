@@ -1,0 +1,262 @@
+<mxfile host="app.diagrams.net" modified="2026-03-11T00:00:00.000Z" agent="draw.io" version="24.0.0" etag="aws-bill-analyzer" type="device">
+  <diagram name="AWS Bill Analyzer Architecture" id="aws-bill-analyzer-arch">
+    <mxGraphModel dx="1434" dy="844" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1169" pageHeight="827" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        
+        <!-- Title -->
+        <mxCell id="title" value="AWS Bill Analyzer - High Level Architecture" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=20;fontStyle=1" vertex="1" parent="1">
+          <mxGeometry x="320" y="20" width="530" height="40" as="geometry" />
+        </mxCell>
+        
+        <!-- User Browser Container -->
+        <mxCell id="browser-container" value="User Browser" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E1F5FF;strokeColor=#0277BD;verticalAlign=top;fontSize=14;fontStyle=1;align=center;" vertex="1" parent="1">
+          <mxGeometry x="80" y="100" width="200" height="120" as="geometry" />
+        </mxCell>
+        
+        <!-- Bill Analyzer UI -->
+        <mxCell id="ui" value="Bill Analyzer UI&#xa;(JavaScript + HTML)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#BBDEFB;strokeColor=#0277BD;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="100" y="140" width="160" height="60" as="geometry" />
+        </mxCell>
+        
+        <!-- AWS Cloud Container -->
+        <mxCell id="aws-container" value="AWS Cloud (us-east-1) - Account: 991105135552" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF4E6;strokeColor=#E65100;verticalAlign=top;fontSize=14;fontStyle=1;align=center;" vertex="1" parent="1">
+          <mxGeometry x="360" y="80" width="760" height="680" as="geometry" />
+        </mxCell>
+        
+        <!-- Static Hosting Section -->
+        <mxCell id="hosting-section" value="Static Hosting" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF9C4;strokeColor=#F57F17;verticalAlign=top;fontSize=12;fontStyle=1;dashed=1;dashPattern=8 8;" vertex="1" parent="1">
+          <mxGeometry x="380" y="120" width="200" height="100" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="s3-web" value="S3 Bucket&#xa;arieleshkolwebsite22feb2026&#xa;(Static Website Hosting)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFE082;strokeColor=#F57F17;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="400" y="150" width="160" height="60" as="geometry" />
+        </mxCell>
+        
+        <!-- API Layer Section -->
+        <mxCell id="api-section" value="API Layer" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F3E5F5;strokeColor=#7B1FA2;verticalAlign=top;fontSize=12;fontStyle=1;dashed=1;dashPattern=8 8;" vertex="1" parent="1">
+          <mxGeometry x="380" y="260" width="200" height="120" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="api-gateway" value="API Gateway&#xa;REST API&#xa;&#xa;POST /upload&#xa;POST /question&#xa;&#xa;CORS Enabled" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E1BEE7;strokeColor=#7B1FA2;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="400" y="290" width="160" height="80" as="geometry" />
+        </mxCell>
+        
+        <!-- Processing Layer Section -->
+        <mxCell id="processing-section" value="Processing Layer (Lambda Functions)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E8F5E9;strokeColor=#2E7D32;verticalAlign=top;fontSize=12;fontStyle=1;dashed=1;dashPattern=8 8;" vertex="1" parent="1">
+          <mxGeometry x="640" y="260" width="220" height="280" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="upload-lambda" value="Upload Handler&#xa;Lambda Function&#xa;&#xa;Python 3.11&#xa;512 MB / 30s&#xa;&#xa;• File validation&#xa;• Session ID generation&#xa;• S3 storage" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#C8E6C9;strokeColor=#2E7D32;fontSize=10;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="660" y="290" width="180" height="110" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="question-lambda" value="Question Processor&#xa;Lambda Function&#xa;&#xa;Python 3.11&#xa;1024 MB / 60s&#xa;&#xa;• Bill parsing (CSV/PDF)&#xa;• Bedrock integration&#xa;• Response formatting" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#C8E6C9;strokeColor=#2E7D32;fontSize=10;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="660" y="420" width="180" height="110" as="geometry" />
+        </mxCell>
+        
+        <!-- Storage Layer Section -->
+        <mxCell id="storage-section" value="Storage Layer" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF9C4;strokeColor=#F57F17;verticalAlign=top;fontSize=12;fontStyle=1;dashed=1;dashPattern=8 8;" vertex="1" parent="1">
+          <mxGeometry x="900" y="260" width="200" height="140" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="s3-bills" value="S3 Bucket&#xa;Bill Storage&#xa;&#xa;aws-bill-analyzer-storage-&#xa;991105135552&#xa;&#xa;Key: bills/{session_id}/&#xa;{filename}&#xa;&#xa;Lifecycle: 24h expiration" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFE082;strokeColor=#F57F17;fontSize=10;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="920" y="290" width="160" height="100" as="geometry" />
+        </mxCell>
+        
+        <!-- AI Layer Section -->
+        <mxCell id="ai-section" value="AI Layer" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FCE4EC;strokeColor=#C2185B;verticalAlign=top;fontSize=12;fontStyle=1;dashed=1;dashPattern=8 8;" vertex="1" parent="1">
+          <mxGeometry x="900" y="440" width="200" height="120" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="bedrock" value="Amazon Bedrock&#xa;&#xa;Model:&#xa;amazon.nova-lite-v1:0&#xa;&#xa;Region: us-east-1&#xa;&#xa;Max Tokens: 2000" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F8BBD0;strokeColor=#C2185B;fontSize=10;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="920" y="470" width="160" height="80" as="geometry" />
+        </mxCell>
+        
+        <!-- Security Section -->
+        <mxCell id="security-section" value="Security &amp; IAM" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFECB3;strokeColor=#FF6F00;verticalAlign=top;fontSize=12;fontStyle=1;dashed=1;dashPattern=8 8;" vertex="1" parent="1">
+          <mxGeometry x="640" y="600" width="460" height="140" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="iam-upload" value="IAM Role&#xa;Upload Handler&#xa;&#xa;• S3 PutObject&#xa;• CloudWatch Logs" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFE082;strokeColor=#FF6F00;fontSize=10;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="660" y="640" width="180" height="80" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="iam-question" value="IAM Role&#xa;Question Processor&#xa;&#xa;• S3 GetObject&#xa;• Bedrock InvokeModel&#xa;• CloudWatch Logs" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFE082;strokeColor=#FF6F00;fontSize=10;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="900" y="640" width="180" height="80" as="geometry" />
+        </mxCell>
+        
+        <!-- Flow Arrows -->
+        
+        <!-- User to S3 Web -->
+        <mxCell id="arrow1" value="1. Load Website" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;strokeColor=#0277BD;fontSize=10;" edge="1" parent="1" source="ui" target="s3-web">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        
+        <!-- UI to API Gateway -->
+        <mxCell id="arrow2" value="2. Upload Bill /&#xa;7. Ask Question" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;strokeColor=#7B1FA2;fontSize=10;" edge="1" parent="1" source="ui" target="api-gateway">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="180" y="240" />
+              <mxPoint x="320" y="240" />
+              <mxPoint x="320" y="330" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        
+        <!-- API Gateway to Upload Lambda -->
+        <mxCell id="arrow3" value="3. Invoke" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;strokeColor=#2E7D32;fontSize=10;" edge="1" parent="1" source="api-gateway" target="upload-lambda">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        
+        <!-- Upload Lambda to S3 Bills -->
+        <mxCell id="arrow4" value="4. Store File" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;strokeColor=#F57F17;fontSize=10;" edge="1" parent="1" source="upload-lambda" target="s3-bills">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        
+        <!-- S3 Bills to Upload Lambda -->
+        <mxCell id="arrow5" value="5. Confirm" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;strokeColor=#F57F17;dashed=1;fontSize=10;" edge="1" parent="1" source="s3-bills" target="upload-lambda">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        
+        <!-- Upload Lambda to API Gateway -->
+        <mxCell id="arrow6" value="6. Session ID" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;strokeColor=#2E7D32;dashed=1;fontSize=10;" edge="1" parent="1" source="upload-lambda" target="api-gateway">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        
+        <!-- API Gateway to Question Lambda -->
+        <mxCell id="arrow8" value="8. Invoke" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;strokeColor=#2E7D32;fontSize=10;" edge="1" parent="1" source="api-gateway" target="question-lambda">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        
+        <!-- Question Lambda to S3 Bills -->
+        <mxCell id="arrow9" value="9. Retrieve Bill" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;strokeColor=#F57F17;fontSize=10;" edge="1" parent="1" source="question-lambda" target="s3-bills">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="750" y="560" />
+              <mxPoint x="880" y="560" />
+              <mxPoint x="880" y="340" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        
+        <!-- Question Lambda to Bedrock -->
+        <mxCell id="arrow10" value="10. Send Prompt" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;strokeColor=#C2185B;fontSize=10;" edge="1" parent="1" source="question-lambda" target="bedrock">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        
+        <!-- Bedrock to Question Lambda -->
+        <mxCell id="arrow11" value="11. AI Response" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;strokeColor=#C2185B;dashed=1;fontSize=10;" edge="1" parent="1" source="bedrock" target="question-lambda">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        
+        <!-- Question Lambda to API Gateway -->
+        <mxCell id="arrow12" value="12. Formatted&#xa;Response" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;strokeColor=#2E7D32;dashed=1;fontSize=10;" edge="1" parent="1" source="question-lambda" target="api-gateway">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="620" y="475" />
+              <mxPoint x="620" y="330" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        
+        <!-- API Gateway to UI -->
+        <mxCell id="arrow13" value="13. Display Answer" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;strokeColor=#7B1FA2;dashed=1;fontSize=10;" edge="1" parent="1" source="api-gateway" target="ui">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="320" y="330" />
+              <mxPoint x="320" y="240" />
+              <mxPoint x="180" y="240" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        
+        <!-- IAM Permissions (dashed lines) -->
+        <mxCell id="iam-arrow1" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=1;strokeColor=#FF6F00;dashed=1;dashPattern=4 4;" edge="1" parent="1" source="iam-upload" target="upload-lambda">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="iam-arrow2" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=1;strokeColor=#FF6F00;dashed=1;dashPattern=4 4;" edge="1" parent="1" source="iam-question" target="question-lambda">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        
+        <!-- Legend -->
+        <mxCell id="legend-container" value="Legend" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;verticalAlign=top;fontSize=12;fontStyle=1;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="80" y="280" width="200" height="140" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="legend1" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;strokeColor=#000000;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="100" y="310" as="sourcePoint" />
+            <mxPoint x="140" y="310" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="legend1-text" value="Request Flow" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="150" y="300" width="100" height="20" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="legend2" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;strokeColor=#000000;dashed=1;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="100" y="340" as="sourcePoint" />
+            <mxPoint x="140" y="340" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="legend2-text" value="Response Flow" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="150" y="330" width="100" height="20" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="legend3" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=1;strokeColor=#FF6F00;dashed=1;dashPattern=4 4;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="100" y="370" as="sourcePoint" />
+            <mxPoint x="140" y="370" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="legend3-text" value="IAM Permissions" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="150" y="360" width="100" height="20" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="legend4" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E8F5E9;strokeColor=#2E7D32;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="100" y="390" width="40" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="legend4-text" value="Lambda Function" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="150" y="390" width="100" height="20" as="geometry" />
+        </mxCell>
+        
+        <!-- Key Features Box -->
+        <mxCell id="features-container" value="Key Features" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#000000;verticalAlign=top;fontSize=12;fontStyle=1;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="80" y="460" width="200" height="180" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="feature1" value="✓ Upload AWS bills (CSV/PDF)" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="90" y="490" width="180" height="20" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="feature2" value="✓ AI-powered bill analysis" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="90" y="510" width="180" height="20" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="feature3" value="✓ Natural language Q&amp;A" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="90" y="530" width="180" height="20" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="feature4" value="✓ Session-based storage" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="90" y="550" width="180" height="20" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="feature5" value="✓ 24-hour auto cleanup" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="90" y="570" width="180" height="20" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="feature6" value="✓ Serverless architecture" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="90" y="590" width="180" height="20" as="geometry" />
+        </mxCell>
+        
+        <mxCell id="feature7" value="✓ Responsive web UI" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=10;" vertex="1" parent="1">
+          <mxGeometry x="90" y="610" width="180" height="20" as="geometry" />
+        </mxCell>
+        
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
