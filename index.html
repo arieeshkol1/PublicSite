@@ -3,58 +3,310 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Ariel Eshkol - Personal Website</title>
+    <meta name="description" content="Cloud Architecture, FinOps, and Generative AI Consulting Services">
+    <title>Cloud Consulting Services - Scalable Architecture & FinOps</title>
     <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 </head>
 <body>
-    <header>
-        <nav>
-            <div class="container">
-                <h1>Ariel Eshkol</h1>
-                <ul>
-                    <li><a href="#home">Home</a></li>
-                    <li><a href="#about">About</a></li>
-                    <li><a href="#projects">Projects</a></li>
-                    <li><a href="#contact">Contact</a></li>
-                </ul>
-            </div>
-        </nav>
-    </header>
-
-    <main>
-        <section id="home" class="hero">
-            <div class="container">
-                <h2>Welcome to My Website</h2>
-                <p>This is the baseline for future changes</p>
-            </div>
-        </section>
-
-        <section id="about" class="section">
-            <div class="container">
-                <h2>About Me</h2>
-                <p>Content coming soon...</p>
-            </div>
-        </section>
-
-        <section id="projects" class="section">
-            <div class="container">
-                <h2>Projects</h2>
-                <p>Content coming soon...</p>
-            </div>
-        </section>
-
-        <section id="contact" class="section">
-            <div class="container">
-                <h2>Contact</h2>
-                <p>Content coming soon...</p>
-            </div>
-        </section>
-    </main>
-
-    <footer>
+    <!-- Navigation -->
+    <nav class="navbar">
         <div class="container">
-            <p>&copy; 2026 Ariel Eshkol. All rights reserved.</p>
+            <div class="nav-brand">
+                <i class="fas fa-cloud"></i>
+                <span>CloudConsult</span>
+            </div>
+            <ul class="nav-menu">
+                <li><a href="#services">Services</a></li>
+                <li><a href="#expertise">Expertise</a></li>
+                <li><a href="#results">Results</a></li>
+                <li><a href="#contact" class="nav-cta">Get Started</a></li>
+            </ul>
+        </div>
+    </nav>
+
+    <!-- Hero Section -->
+    <section class="hero">
+        <div class="hero-content">
+            <div class="hero-badge">
+                <i class="fas fa-award"></i>
+                <span>10+ Years Excellence</span>
+            </div>
+            <h1>Cloud Architecture<br><span class="gradient-text">Redefined</span></h1>
+            <p class="hero-subtitle">Scalable • Secure • Cost-Optimized</p>
+            <div class="hero-stats">
+                <div class="stat">
+                    <div class="stat-number">30%</div>
+                    <div class="stat-label">Cost Reduction</div>
+                </div>
+                <div class="stat">
+                    <div class="stat-number">99.99%</div>
+                    <div class="stat-label">Uptime</div>
+                </div>
+                <div class="stat">
+                    <div class="stat-number">1000+</div>
+                    <div class="stat-label">Devices Managed</div>
+                </div>
+            </div>
+            <div class="hero-buttons">
+                <a href="#contact" class="btn btn-primary">
+                    <span>Start Your Journey</span>
+                    <i class="fas fa-arrow-right"></i>
+                </a>
+                <a href="#services" class="btn btn-secondary">
+                    <i class="fas fa-play-circle"></i>
+                    <span>Explore Services</span>
+                </a>
+            </div>
+        </div>
+        <div class="hero-visual">
+            <div class="floating-card"><i class="fab fa-aws"></i></div>
+            <div class="floating-card"><i class="fab fa-google"></i></div>
+            <div class="floating-card"><i class="fab fa-microsoft"></i></div>
+            <div class="floating-card"><i class="fas fa-robot"></i></div>
+        </div>
+    </section>
+
+    <!-- Services Section -->
+    <section id="services" class="services">
+        <div class="container">
+            <div class="section-header">
+                <span class="section-tag">What We Do</span>
+                <h2>Services</h2>
+            </div>
+            <div class="services-grid">
+                <div class="service-card">
+                    <div class="service-icon-wrapper">
+                        <i class="fas fa-cloud-upload-alt"></i>
+                    </div>
+                    <h3>Cloud Architecture</h3>
+                    <p>AWS • GCP • Azure • Multi-Cloud</p>
+                    <ul class="service-features">
+                        <li><i class="fas fa-check"></i> Migration & Modernization</li>
+                        <li><i class="fas fa-check"></i> Landing Zone Setup</li>
+                        <li><i class="fas fa-check"></i> Microservices Design</li>
+                    </ul>
+                </div>
+                <div class="service-card featured">
+                    <div class="featured-badge">Most Popular</div>
+                    <div class="service-icon-wrapper">
+                        <i class="fas fa-chart-line"></i>
+                    </div>
+                    <h3>FinOps Excellence</h3>
+                    <p>Cost Optimization • Budget Control</p>
+                    <ul class="service-features">
+                        <li><i class="fas fa-check"></i> 30% Average Savings</li>
+                        <li><i class="fas fa-check"></i> Resource Rightsizing</li>
+                        <li><i class="fas fa-check"></i> Reserved Capacity Planning</li>
+                    </ul>
+                </div>
+                <div class="service-card">
+                    <div class="service-icon-wrapper">
+                        <i class="fas fa-brain"></i>
+                    </div>
+                    <h3>Generative AI</h3>
+                    <p>Bedrock • Serverless • Automation</p>
+                    <ul class="service-features">
+                        <li><i class="fas fa-check"></i> Custom AI Agents</li>
+                        <li><i class="fas fa-check"></i> IaC Auto-Generation</li>
+                        <li><i class="fas fa-check"></i> WhatsApp Smart Bots</li>
+                    </ul>
+                </div>
+                <div class="service-card">
+                    <div class="service-icon-wrapper">
+                        <i class="fas fa-infinity"></i>
+                    </div>
+                    <h3>DevOps & K8s</h3>
+                    <p>CI/CD • GitOps • Automation</p>
+                    <ul class="service-features">
+                        <li><i class="fas fa-check"></i> Infrastructure as Code</li>
+                        <li><i class="fas fa-check"></i> EKS Engineering</li>
+                        <li><i class="fas fa-check"></i> Pipeline Automation</li>
+                    </ul>
+                </div>
+                <div class="service-card">
+                    <div class="service-icon-wrapper">
+                        <i class="fas fa-shield-alt"></i>
+                    </div>
+                    <h3>Security & Compliance</h3>
+                    <p>CIS • NIST • GDPR</p>
+                    <ul class="service-features">
+                        <li><i class="fas fa-check"></i> CISO-Level Reviews</li>
+                        <li><i class="fas fa-check"></i> Environment Hardening</li>
+                        <li><i class="fas fa-check"></i> Secure Architecture</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Expertise Section -->
+    <section id="expertise" class="expertise">
+        <div class="container">
+            <div class="section-header">
+                <span class="section-tag">Our Edge</span>
+                <h2>Why Choose Us</h2>
+            </div>
+            <div class="expertise-grid">
+                <div class="expertise-card">
+                    <div class="expertise-icon">
+                        <i class="fas fa-graduation-cap"></i>
+                    </div>
+                    <h3>Tech + Business</h3>
+                    <p>MBA + Economics background ensures ROI-driven decisions</p>
+                </div>
+                <div class="expertise-card">
+                    <div class="expertise-icon">
+                        <i class="fas fa-building"></i>
+                    </div>
+                    <h3>Enterprise Grade</h3>
+                    <p>Telecom, Government, Financial sector experience</p>
+                </div>
+                <div class="expertise-card">
+                    <div class="expertise-icon">
+                        <i class="fas fa-hands-helping"></i>
+                    </div>
+                    <h3>Hands-On</h3>
+                    <p>We don't just advise—we implement</p>
+                </div>
+                <div class="expertise-card">
+                    <div class="expertise-icon">
+                        <i class="fas fa-globe"></i>
+                    </div>
+                    <h3>Global Reach</h3>
+                    <p>Serving clients worldwide from Israel</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Results Section -->
+    <section id="results" class="results">
+        <div class="container">
+            <div class="section-header">
+                <span class="section-tag">Proven Track Record</span>
+                <h2>Results That Matter</h2>
+            </div>
+            <div class="results-grid">
+                <div class="result-card">
+                    <div class="result-icon">
+                        <i class="fas fa-piggy-bank"></i>
+                    </div>
+                    <div class="result-content">
+                        <h3>30% Cost Reduction</h3>
+                        <p>Regulatory Authority</p>
+                        <div class="result-tags">
+                            <span><i class="fas fa-tag"></i> FinOps</span>
+                            <span><i class="fas fa-tag"></i> AWS</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="result-card">
+                    <div class="result-icon">
+                        <i class="fas fa-rocket"></i>
+                    </div>
+                    <div class="result-content">
+                        <h3>Months → Days</h3>
+                        <p>Major Bank Digital Transformation</p>
+                        <div class="result-tags">
+                            <span><i class="fas fa-tag"></i> FinTech</span>
+                            <span><i class="fas fa-tag"></i> Microservices</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="result-card">
+                    <div class="result-icon">
+                        <i class="fas fa-server"></i>
+                    </div>
+                    <div class="result-content">
+                        <h3>99.99% Uptime</h3>
+                        <p>1000+ IoT Devices Platform</p>
+                        <div class="result-tags">
+                            <span><i class="fas fa-tag"></i> IoT</span>
+                            <span><i class="fas fa-tag"></i> High-Volume</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Contact Section -->
+    <section id="contact" class="contact">
+        <div class="container">
+            <div class="contact-wrapper">
+                <div class="contact-content">
+                    <div class="section-header">
+                        <span class="section-tag">Let's Connect</span>
+                        <h2>Ready to Transform?</h2>
+                    </div>
+                    <p>Build a scalable, secure, and cost-efficient cloud architecture</p>
+                    <div class="contact-methods">
+                        <a href="mailto:ariel.eshkol@gmail.com" class="contact-method">
+                            <div class="method-icon">
+                                <i class="fas fa-envelope"></i>
+                            </div>
+                            <div class="method-info">
+                                <span class="method-label">Email</span>
+                                <span class="method-value">ariel.eshkol@gmail.com</span>
+                            </div>
+                        </a>
+                        <a href="tel:+972524347196" class="contact-method">
+                            <div class="method-icon">
+                                <i class="fas fa-phone"></i>
+                            </div>
+                            <div class="method-info">
+                                <span class="method-label">Phone</span>
+                                <span class="method-value">+972-(0)52-434-7196</span>
+                            </div>
+                        </a>
+                        <a href="https://linkedin.com/in/arieleshkol" target="_blank" class="contact-method">
+                            <div class="method-icon">
+                                <i class="fab fa-linkedin"></i>
+                            </div>
+                            <div class="method-info">
+                                <span class="method-label">LinkedIn</span>
+                                <span class="method-value">arieleshkol</span>
+                            </div>
+                        </a>
+                        <div class="contact-method">
+                            <div class="method-icon">
+                                <i class="fas fa-map-marker-alt"></i>
+                            </div>
+                            <div class="method-info">
+                                <span class="method-label">Location</span>
+                                <span class="method-value">Israel • Global Services</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="contact-visual">
+                    <div class="tech-stack">
+                        <div class="tech-item"><i class="fab fa-aws"></i></div>
+                        <div class="tech-item"><i class="fab fa-google"></i></div>
+                        <div class="tech-item"><i class="fab fa-microsoft"></i></div>
+                        <div class="tech-item"><i class="fab fa-docker"></i></div>
+                        <div class="tech-item"><i class="fab fa-kubernetes"></i></div>
+                        <div class="tech-item"><i class="fab fa-python"></i></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="footer">
+        <div class="container">
+            <div class="footer-content">
+                <div class="footer-brand">
+                    <i class="fas fa-cloud"></i>
+                    <span>CloudConsult</span>
+                </div>
+                <p>&copy; 2024 Cloud Consulting Services. All rights reserved.</p>
+            </div>
         </div>
     </footer>
+
+    <script src="script.js"></script>
 </body>
 </html>
