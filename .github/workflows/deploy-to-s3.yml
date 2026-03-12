@@ -78,10 +78,38 @@ jobs:
           aws s3 ls s3://${{ env.S3_BUCKET }}/ --human-readable
           echo "✓ Verification complete!"
 
+      - name: Get CloudFront distribution ID
+        id: get-cf-id
+        run: |
+          DIST_ID=$(aws cloudfront list-distributions \
+            --query "DistributionList.Items[?Aliases.Items[0]=='www.eshkolai.com'].Id" \
+            --output text)
+          
+          if [ -n "$DIST_ID" ]; then
+            echo "CloudFront distribution found: $DIST_ID"
+            echo "dist_id=$DIST_ID" >> $GITHUB_OUTPUT
+            echo "has_cloudfront=true" >> $GITHUB_OUTPUT
+          else
+            echo "No CloudFront distribution found"
+            echo "has_cloudfront=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Invalidate CloudFront cache
+        if: steps.get-cf-id.outputs.has_cloudfront == 'true'
+        run: |
+          echo "Invalidating CloudFront cache..."
+          aws cloudfront create-invalidation \
+            --distribution-id ${{ steps.get-cf-id.outputs.dist_id }} \
+            --paths "/*"
+          echo "✓ CloudFront cache invalidated"
+
       - name: Deployment summary
         run: |
           echo "=== Deployment Summary ==="
           echo "Bucket: ${{ env.S3_BUCKET }}"
           echo "Region: ${{ env.AWS_REGION }}"
           echo "Files deployed: All HTML, CSS, JS, and image files"
+          if [ "${{ steps.get-cf-id.outputs.has_cloudfront }}" == "true" ]; then
+            echo "CloudFront: Cache invalidated"
+          fi
           echo "Status: Success ✓"

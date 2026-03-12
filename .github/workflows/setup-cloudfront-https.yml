@@ -1,0 +1,388 @@
+name: Setup CloudFront with HTTPS
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type "setup" to confirm CloudFront and SSL certificate setup'
+        required: true
+        default: 'no'
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+  DOMAIN_NAME: www.eshkolai.com
+  ROOT_DOMAIN: eshkolai.com
+  S3_BUCKET: www.eshkolai.com
+  HOSTED_ZONE_ID: Z07144662HMOSSEBOKGII
+
+jobs:
+  setup-cloudfront:
+    runs-on: ubuntu-latest
+    if: github.event.inputs.confirm == 'setup'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::991105135552:role/GitHubDeployRole
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Check if certificate already exists
+        id: check-cert
+        run: |
+          echo "Checking for existing certificate..."
+          
+          CERT_ARN=$(aws acm list-certificates \
+            --region us-east-1 \
+            --query "CertificateSummaryList[?DomainName=='${{ env.DOMAIN_NAME }}'].CertificateArn" \
+            --output text)
+          
+          if [ -n "$CERT_ARN" ]; then
+            echo "Certificate already exists: $CERT_ARN"
+            echo "cert_arn=$CERT_ARN" >> $GITHUB_OUTPUT
+            echo "cert_exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "No existing certificate found"
+            echo "cert_exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Request SSL certificate
+        id: request-cert
+        if: steps.check-cert.outputs.cert_exists == 'false'
+        run: |
+          echo "Requesting SSL certificate for ${{ env.DOMAIN_NAME }}..."
+          
+          CERT_ARN=$(aws acm request-certificate \
+            --domain-name ${{ env.DOMAIN_NAME }} \
+            --validation-method DNS \
+            --region us-east-1 \
+            --query 'CertificateArn' \
+            --output text)
+          
+          echo "Certificate requested: $CERT_ARN"
+          echo "cert_arn=$CERT_ARN" >> $GITHUB_OUTPUT
+          
+          # Wait for certificate details to be available
+          sleep 10
+
+      - name: Get certificate validation records
+        id: get-validation
+        run: |
+          if [ "${{ steps.check-cert.outputs.cert_exists }}" == "true" ]; then
+            CERT_ARN="${{ steps.check-cert.outputs.cert_arn }}"
+          else
+            CERT_ARN="${{ steps.request-cert.outputs.cert_arn }}"
+          fi
+          
+          echo "Getting validation records for certificate: $CERT_ARN"
+          
+          # Wait for validation options to be available
+          for i in {1..30}; do
+            VALIDATION_RECORD=$(aws acm describe-certificate \
+              --certificate-arn $CERT_ARN \
+              --region us-east-1 \
+              --query 'Certificate.DomainValidationOptions[0].ResourceRecord' \
+              --output json)
+            
+            if [ "$VALIDATION_RECORD" != "null" ] && [ -n "$VALIDATION_RECORD" ]; then
+              echo "Validation record found"
+              echo "$VALIDATION_RECORD" > validation-record.json
+              cat validation-record.json
+              break
+            fi
+            
+            echo "Waiting for validation record... (attempt $i/30)"
+            sleep 10
+          done
+          
+          if [ ! -f validation-record.json ]; then
+            echo "ERROR: Validation record not available after 5 minutes"
+            exit 1
+          fi
+          
+          RECORD_NAME=$(cat validation-record.json | jq -r '.Name')
+          RECORD_VALUE=$(cat validation-record.json | jq -r '.Value')
+          
+          echo "record_name=$RECORD_NAME" >> $GITHUB_OUTPUT
+          echo "record_value=$RECORD_VALUE" >> $GITHUB_OUTPUT
+
+      - name: Create DNS validation record
+        run: |
+          echo "Creating DNS validation record in Route 53..."
+          
+          cat > change-batch.json << EOF
+          {
+            "Changes": [
+              {
+                "Action": "UPSERT",
+                "ResourceRecordSet": {
+                  "Name": "${{ steps.get-validation.outputs.record_name }}",
+                  "Type": "CNAME",
+                  "TTL": 300,
+                  "ResourceRecords": [
+                    {
+                      "Value": "${{ steps.get-validation.outputs.record_value }}"
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+          EOF
+          
+          aws route53 change-resource-record-sets \
+            --hosted-zone-id ${{ env.HOSTED_ZONE_ID }} \
+            --change-batch file://change-batch.json
+          
+          echo "✓ DNS validation record created"
+
+      - name: Wait for certificate validation
+        run: |
+          if [ "${{ steps.check-cert.outputs.cert_exists }}" == "true" ]; then
+            CERT_ARN="${{ steps.check-cert.outputs.cert_arn }}"
+          else
+            CERT_ARN="${{ steps.request-cert.outputs.cert_arn }}"
+          fi
+          
+          echo "Waiting for certificate validation..."
+          echo "This can take 5-30 minutes..."
+          
+          for i in {1..60}; do
+            STATUS=$(aws acm describe-certificate \
+              --certificate-arn $CERT_ARN \
+              --region us-east-1 \
+              --query 'Certificate.Status' \
+              --output text)
+            
+            echo "Certificate status: $STATUS (check $i/60)"
+            
+            if [ "$STATUS" == "ISSUED" ]; then
+              echo "✓ Certificate validated and issued!"
+              break
+            fi
+            
+            if [ "$STATUS" == "FAILED" ]; then
+              echo "✗ Certificate validation failed"
+              exit 1
+            fi
+            
+            sleep 30
+          done
+          
+          if [ "$STATUS" != "ISSUED" ]; then
+            echo "Certificate validation timed out after 30 minutes"
+            echo "The certificate will continue validating in the background"
+            echo "You can check status in ACM console and re-run this workflow later"
+            exit 1
+          fi
+
+      - name: Check if CloudFront distribution exists
+        id: check-cf
+        run: |
+          echo "Checking for existing CloudFront distribution..."
+          
+          DIST_ID=$(aws cloudfront list-distributions \
+            --query "DistributionList.Items[?Aliases.Items[0]=='${{ env.DOMAIN_NAME }}'].Id" \
+            --output text)
+          
+          if [ -n "$DIST_ID" ]; then
+            echo "Distribution already exists: $DIST_ID"
+            echo "dist_id=$DIST_ID" >> $GITHUB_OUTPUT
+            echo "dist_exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "No existing distribution found"
+            echo "dist_exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create CloudFront distribution
+        id: create-cf
+        if: steps.check-cf.outputs.dist_exists == 'false'
+        run: |
+          if [ "${{ steps.check-cert.outputs.cert_exists }}" == "true" ]; then
+            CERT_ARN="${{ steps.check-cert.outputs.cert_arn }}"
+          else
+            CERT_ARN="${{ steps.request-cert.outputs.cert_arn }}"
+          fi
+          
+          echo "Creating CloudFront distribution..."
+          
+          cat > distribution-config.json << 'EOF'
+          {
+            "CallerReference": "github-actions-$(date +%s)",
+            "Aliases": {
+              "Quantity": 1,
+              "Items": ["${{ env.DOMAIN_NAME }}"]
+            },
+            "DefaultRootObject": "index.html",
+            "Origins": {
+              "Quantity": 1,
+              "Items": [
+                {
+                  "Id": "S3-${{ env.S3_BUCKET }}",
+                  "DomainName": "${{ env.S3_BUCKET }}.s3-website-${{ env.AWS_REGION }}.amazonaws.com",
+                  "CustomOriginConfig": {
+                    "HTTPPort": 80,
+                    "HTTPSPort": 443,
+                    "OriginProtocolPolicy": "http-only"
+                  }
+                }
+              ]
+            },
+            "DefaultCacheBehavior": {
+              "TargetOriginId": "S3-${{ env.S3_BUCKET }}",
+              "ViewerProtocolPolicy": "redirect-to-https",
+              "AllowedMethods": {
+                "Quantity": 2,
+                "Items": ["GET", "HEAD"],
+                "CachedMethods": {
+                  "Quantity": 2,
+                  "Items": ["GET", "HEAD"]
+                }
+              },
+              "Compress": true,
+              "ForwardedValues": {
+                "QueryString": false,
+                "Cookies": {
+                  "Forward": "none"
+                }
+              },
+              "MinTTL": 0,
+              "DefaultTTL": 86400,
+              "MaxTTL": 31536000
+            },
+            "Comment": "CloudFront distribution for ${{ env.DOMAIN_NAME }}",
+            "Enabled": true,
+            "ViewerCertificate": {
+              "ACMCertificateArn": "CERT_ARN_PLACEHOLDER",
+              "SSLSupportMethod": "sni-only",
+              "MinimumProtocolVersion": "TLSv1.2_2021"
+            },
+            "CustomErrorResponses": {
+              "Quantity": 1,
+              "Items": [
+                {
+                  "ErrorCode": 404,
+                  "ResponsePagePath": "/index.html",
+                  "ResponseCode": "200",
+                  "ErrorCachingMinTTL": 300
+                }
+              ]
+            }
+          }
+          EOF
+          
+          # Replace certificate ARN
+          sed -i "s|CERT_ARN_PLACEHOLDER|$CERT_ARN|g" distribution-config.json
+          
+          # Create distribution
+          DIST_OUTPUT=$(aws cloudfront create-distribution \
+            --distribution-config file://distribution-config.json \
+            --output json)
+          
+          DIST_ID=$(echo $DIST_OUTPUT | jq -r '.Distribution.Id')
+          DIST_DOMAIN=$(echo $DIST_OUTPUT | jq -r '.Distribution.DomainName')
+          
+          echo "✓ CloudFront distribution created"
+          echo "Distribution ID: $DIST_ID"
+          echo "Distribution domain: $DIST_DOMAIN"
+          
+          echo "dist_id=$DIST_ID" >> $GITHUB_OUTPUT
+          echo "dist_domain=$DIST_DOMAIN" >> $GITHUB_OUTPUT
+
+      - name: Get CloudFront distribution domain
+        id: get-cf-domain
+        run: |
+          if [ "${{ steps.check-cf.outputs.dist_exists }}" == "true" ]; then
+            DIST_ID="${{ steps.check-cf.outputs.dist_id }}"
+          else
+            DIST_ID="${{ steps.create-cf.outputs.dist_id }}"
+          fi
+          
+          DIST_DOMAIN=$(aws cloudfront get-distribution \
+            --id $DIST_ID \
+            --query 'Distribution.DomainName' \
+            --output text)
+          
+          echo "dist_domain=$DIST_DOMAIN" >> $GITHUB_OUTPUT
+
+      - name: Update Route 53 to point to CloudFront
+        run: |
+          echo "Updating Route 53 CNAME record to point to CloudFront..."
+          
+          cat > change-batch.json << EOF
+          {
+            "Changes": [
+              {
+                "Action": "UPSERT",
+                "ResourceRecordSet": {
+                  "Name": "${{ env.DOMAIN_NAME }}",
+                  "Type": "CNAME",
+                  "TTL": 300,
+                  "ResourceRecords": [
+                    {
+                      "Value": "${{ steps.get-cf-domain.outputs.dist_domain }}"
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+          EOF
+          
+          aws route53 change-resource-record-sets \
+            --hosted-zone-id ${{ env.HOSTED_ZONE_ID }} \
+            --change-batch file://change-batch.json
+          
+          echo "✓ Route 53 updated"
+
+      - name: Wait for CloudFront deployment
+        run: |
+          if [ "${{ steps.check-cf.outputs.dist_exists }}" == "true" ]; then
+            DIST_ID="${{ steps.check-cf.outputs.dist_id }}"
+          else
+            DIST_ID="${{ steps.create-cf.outputs.dist_id }}"
+          fi
+          
+          echo "Waiting for CloudFront distribution to deploy..."
+          echo "This can take 10-20 minutes..."
+          
+          aws cloudfront wait distribution-deployed --id $DIST_ID
+          
+          echo "✓ CloudFront distribution deployed"
+
+      - name: Deployment summary
+        run: |
+          if [ "${{ steps.check-cert.outputs.cert_exists }}" == "true" ]; then
+            CERT_ARN="${{ steps.check-cert.outputs.cert_arn }}"
+          else
+            CERT_ARN="${{ steps.request-cert.outputs.cert_arn }}"
+          fi
+          
+          if [ "${{ steps.check-cf.outputs.dist_exists }}" == "true" ]; then
+            DIST_ID="${{ steps.check-cf.outputs.dist_id }}"
+          else
+            DIST_ID="${{ steps.create-cf.outputs.dist_id }}"
+          fi
+          
+          echo "=== HTTPS Setup Complete ==="
+          echo ""
+          echo "SSL Certificate:"
+          echo "  ARN: $CERT_ARN"
+          echo "  Status: ISSUED"
+          echo ""
+          echo "CloudFront Distribution:"
+          echo "  ID: $DIST_ID"
+          echo "  Domain: ${{ steps.get-cf-domain.outputs.dist_domain }}"
+          echo ""
+          echo "Your website is now available at:"
+          echo "  https://${{ env.DOMAIN_NAME }}"
+          echo ""
+          echo "DNS propagation may take a few minutes"
+          echo "Test with: curl -I https://${{ env.DOMAIN_NAME }}"
