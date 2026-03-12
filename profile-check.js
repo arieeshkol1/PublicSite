@@ -1,10 +1,17 @@
-// Fetch IP information from ipapi.co
+// Fetch IP information - try multiple services for reliability
 async function getIPInfo() {
+    const ipInfoDiv = document.getElementById('ip-info');
+    
     try {
+        // Try ipapi.co first
         const response = await fetch('https://ipapi.co/json/');
+        
+        if (!response.ok) {
+            throw new Error('ipapi.co failed');
+        }
+        
         const data = await response.json();
         
-        const ipInfoDiv = document.getElementById('ip-info');
         ipInfoDiv.innerHTML = `
             <div class="info-row">
                 <span class="info-label">IP Address</span>
@@ -36,12 +43,57 @@ async function getIPInfo() {
             </div>
         `;
     } catch (error) {
-        document.getElementById('ip-info').innerHTML = `
-            <div class="info-row">
-                <span class="info-label">Error</span>
-                <span class="info-value">Unable to fetch IP information</span>
-            </div>
-        `;
+        // Fallback to ipify + ip-api.com
+        try {
+            const ipResponse = await fetch('https://api.ipify.org?format=json');
+            const ipData = await ipResponse.json();
+            const ip = ipData.ip;
+            
+            const geoResponse = await fetch(`https://ip-api.com/json/${ip}`);
+            const geoData = await geoResponse.json();
+            
+            ipInfoDiv.innerHTML = `
+                <div class="info-row">
+                    <span class="info-label">IP Address</span>
+                    <span class="info-value">${ip || 'N/A'}</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">ISP</span>
+                    <span class="info-value">${geoData.isp || 'N/A'}</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">Country</span>
+                    <span class="info-value">${geoData.country || 'N/A'}</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">Region</span>
+                    <span class="info-value">${geoData.regionName || 'N/A'}</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">City</span>
+                    <span class="info-value">${geoData.city || 'N/A'}</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">Timezone</span>
+                    <span class="info-value">${geoData.timezone || 'N/A'}</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">Latitude / Longitude</span>
+                    <span class="info-value">${geoData.lat || 'N/A'} / ${geoData.lon || 'N/A'}</span>
+                </div>
+            `;
+        } catch (fallbackError) {
+            ipInfoDiv.innerHTML = `
+                <div class="info-row">
+                    <span class="info-label">Status</span>
+                    <span class="info-value">Unable to fetch IP information</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">Note</span>
+                    <span class="info-value">API service may be temporarily unavailable</span>
+                </div>
+            `;
+        }
     }
 }
 
@@ -207,132 +259,10 @@ function getCookieInfo() {
     cookieInfoDiv.innerHTML = cookieHTML;
 }
 
-// Detect social media login status
-async function detectSocialMedia() {
-    const socialInfoDiv = document.getElementById('social-info');
-    
-    socialInfoDiv.innerHTML = '<div class="loading"><div class="spinner"></div><p>Checking social media login status...</p></div>';
-    
-    const socialChecks = {
-        'Facebook': async () => {
-            try {
-                const response = await fetch('https://www.facebook.com/favicon.ico', { mode: 'no-cors', credentials: 'include' });
-                return { platform: 'Facebook', loggedIn: 'Possibly logged in (cookies present)' };
-            } catch {
-                return { platform: 'Facebook', loggedIn: 'Not detected' };
-            }
-        },
-        'Twitter/X': async () => {
-            try {
-                const response = await fetch('https://twitter.com/favicon.ico', { mode: 'no-cors', credentials: 'include' });
-                return { platform: 'Twitter/X', loggedIn: 'Possibly logged in (cookies present)' };
-            } catch {
-                return { platform: 'Twitter/X', loggedIn: 'Not detected' };
-            }
-        },
-        'LinkedIn': async () => {
-            try {
-                const response = await fetch('https://www.linkedin.com/favicon.ico', { mode: 'no-cors', credentials: 'include' });
-                return { platform: 'LinkedIn', loggedIn: 'Possibly logged in (cookies present)' };
-            } catch {
-                return { platform: 'LinkedIn', loggedIn: 'Not detected' };
-            }
-        },
-        'Instagram': async () => {
-            try {
-                const response = await fetch('https://www.instagram.com/favicon.ico', { mode: 'no-cors', credentials: 'include' });
-                return { platform: 'Instagram', loggedIn: 'Possibly logged in (cookies present)' };
-            } catch {
-                return { platform: 'Instagram', loggedIn: 'Not detected' };
-            }
-        },
-        'YouTube/Google': async () => {
-            try {
-                const response = await fetch('https://www.youtube.com/favicon.ico', { mode: 'no-cors', credentials: 'include' });
-                return { platform: 'YouTube/Google', loggedIn: 'Possibly logged in (cookies present)' };
-            } catch {
-                return { platform: 'YouTube/Google', loggedIn: 'Not detected' };
-            }
-        },
-        'Reddit': async () => {
-            try {
-                const response = await fetch('https://www.reddit.com/favicon.ico', { mode: 'no-cors', credentials: 'include' });
-                return { platform: 'Reddit', loggedIn: 'Possibly logged in (cookies present)' };
-            } catch {
-                return { platform: 'Reddit', loggedIn: 'Not detected' };
-            }
-        },
-        'GitHub': async () => {
-            try {
-                const response = await fetch('https://github.com/favicon.ico', { mode: 'no-cors', credentials: 'include' });
-                return { platform: 'GitHub', loggedIn: 'Possibly logged in (cookies present)' };
-            } catch {
-                return { platform: 'GitHub', loggedIn: 'Not detected' };
-            }
-        },
-        'Amazon': async () => {
-            try {
-                const response = await fetch('https://www.amazon.com/favicon.ico', { mode: 'no-cors', credentials: 'include' });
-                return { platform: 'Amazon', loggedIn: 'Possibly logged in (cookies present)' };
-            } catch {
-                return { platform: 'Amazon', loggedIn: 'Not detected' };
-            }
-        }
-    };
-    
-    try {
-        const results = await Promise.all(Object.values(socialChecks).map(fn => fn()));
-        
-        let socialHTML = `
-            <div class="info-row">
-                <span class="info-label">Detection Method</span>
-                <span class="info-value">Cookie & Session Analysis</span>
-            </div>
-        `;
-        
-        let detectedCount = 0;
-        results.forEach(result => {
-            const isLoggedIn = result.loggedIn.includes('logged in');
-            if (isLoggedIn) detectedCount++;
-            
-            socialHTML += `
-                <div class="info-row">
-                    <span class="info-label">${result.platform}</span>
-                    <span class="info-value" style="color: ${isLoggedIn ? '#10b981' : '#6b7280'}">
-                        ${result.loggedIn}
-                    </span>
-                </div>
-            `;
-        });
-        
-        socialHTML = `
-            <div class="info-row">
-                <span class="info-label">Platforms Detected</span>
-                <span class="info-value">${detectedCount} / ${results.length}</span>
-            </div>
-        ` + socialHTML;
-        
-        socialInfoDiv.innerHTML = socialHTML;
-    } catch (error) {
-        socialInfoDiv.innerHTML = `
-            <div class="info-row">
-                <span class="info-label">Status</span>
-                <span class="info-value">Unable to detect social media login status</span>
-            </div>
-            <div class="info-row">
-                <span class="info-label">Note</span>
-                <span class="info-value">Browser privacy settings may block detection</span>
-            </div>
-        `;
-    }
-}
-
 // Initialize all checks
 document.addEventListener('DOMContentLoaded', () => {
     getIPInfo();
     getBrowserInfo();
     getSystemInfo();
-    getHeadersInfo();
     getCookieInfo();
-    detectSocialMedia();
 });
