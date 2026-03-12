@@ -1,6 +1,9 @@
 // Fetch IP information - try multiple services for reliability
 async function getIPInfo() {
     const ipInfoDiv = document.getElementById('ip-info');
+    let latitude = null;
+    let longitude = null;
+    let city = 'Unknown';
     
     try {
         // Try ipapi.co first
@@ -11,6 +14,9 @@ async function getIPInfo() {
         }
         
         const data = await response.json();
+        latitude = data.latitude;
+        longitude = data.longitude;
+        city = data.city || 'Unknown';
         
         ipInfoDiv.innerHTML = `
             <div class="info-row">
@@ -42,6 +48,11 @@ async function getIPInfo() {
                 <span class="info-value">${data.latitude || 'N/A'} / ${data.longitude || 'N/A'}</span>
             </div>
         `;
+        
+        // Initialize map if we have coordinates
+        if (latitude && longitude) {
+            initMap(latitude, longitude, city);
+        }
     } catch (error) {
         // Fallback to ipify + ip-api.com
         try {
@@ -51,6 +62,10 @@ async function getIPInfo() {
             
             const geoResponse = await fetch(`https://ip-api.com/json/${ip}`);
             const geoData = await geoResponse.json();
+            
+            latitude = geoData.lat;
+            longitude = geoData.lon;
+            city = geoData.city || 'Unknown';
             
             ipInfoDiv.innerHTML = `
                 <div class="info-row">
@@ -82,6 +97,11 @@ async function getIPInfo() {
                     <span class="info-value">${geoData.lat || 'N/A'} / ${geoData.lon || 'N/A'}</span>
                 </div>
             `;
+            
+            // Initialize map if we have coordinates
+            if (latitude && longitude) {
+                initMap(latitude, longitude, city);
+            }
         } catch (fallbackError) {
             ipInfoDiv.innerHTML = `
                 <div class="info-row">
@@ -94,6 +114,35 @@ async function getIPInfo() {
                 </div>
             `;
         }
+    }
+}
+
+// Initialize map with location
+function initMap(lat, lon, city) {
+    try {
+        // Create map centered on the location
+        const map = L.map('map').setView([lat, lon], 10);
+        
+        // Add OpenStreetMap tiles
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+            maxZoom: 19
+        }).addTo(map);
+        
+        // Add marker at the location
+        const marker = L.marker([lat, lon]).addTo(map);
+        marker.bindPopup(`<b>Your Estimated Location</b><br>${city}`).openPopup();
+        
+        // Add circle to show approximate area
+        L.circle([lat, lon], {
+            color: '#0066ff',
+            fillColor: '#0066ff',
+            fillOpacity: 0.2,
+            radius: 5000 // 5km radius
+        }).addTo(map);
+    } catch (error) {
+        console.error('Error initializing map:', error);
+        document.getElementById('map').innerHTML = '<p style="text-align: center; padding: 20px; color: #6b7280;">Unable to load map</p>';
     }
 }
 

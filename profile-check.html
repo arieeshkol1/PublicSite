@@ -8,6 +8,8 @@
     <link rel="icon" type="image/png" href="eshkolai.png">
     <link rel="stylesheet" href="styles.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <style>
         .profile-check-hero {
             min-height: 50vh;
@@ -98,6 +100,13 @@
                 grid-template-columns: 1fr;
             }
         }
+        
+        #map {
+            height: 400px;
+            width: 100%;
+            border-radius: 12px;
+            margin-top: 16px;
+        }
     </style>
 </head>
 <body>
@@ -135,6 +144,7 @@
                     <div class="spinner"></div>
                     <p>Detecting your IP address...</p>
                 </div>
+                <div id="map"></div>
             </div>
 
             <div class="grid-2">
