@@ -24,7 +24,7 @@ permissions:
 
 env:
   AWS_REGION: us-east-1
-  S3_BUCKET: www.eshkol.ai
+  S3_BUCKET: www.eshkolai.com
 
 jobs:
   deploy:
