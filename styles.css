@@ -65,6 +65,12 @@ body {
     color: var(--dark);
 }
 
+.nav-brand img {
+    height: 36px;
+    width: auto;
+    object-fit: contain;
+}
+
 .nav-brand i {
     color: var(--primary);
     font-size: 28px;
@@ -675,6 +681,12 @@ section {
     gap: 12px;
     font-size: 20px;
     font-weight: 700;
+}
+
+.footer-brand img {
+    height: 28px;
+    width: auto;
+    object-fit: contain;
 }
 
 .footer-brand i {
