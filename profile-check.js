@@ -134,10 +134,136 @@ function getHeadersInfo() {
     `;
 }
 
+// Get cookie information
+function getCookieInfo() {
+    const cookieInfoDiv = document.getElementById('cookie-info');
+    const cookies = document.cookie.split(';').filter(c => c.trim());
+    
+    if (cookies.length === 0) {
+        cookieInfoDiv.innerHTML = `
+            <div class="info-row">
+                <span class="info-label">Status</span>
+                <span class="info-value">No cookies found</span>
+            </div>
+            <div class="info-row">
+                <span class="info-label">Cookies Enabled</span>
+                <span class="info-value">${navigator.cookieEnabled ? 'Yes' : 'No'}</span>
+            </div>
+        `;
+    } else {
+        let cookieHTML = `
+            <div class="info-row">
+                <span class="info-label">Total Cookies</span>
+                <span class="info-value">${cookies.length}</span>
+            </div>
+            <div class="info-row">
+                <span class="info-label">Cookies Enabled</span>
+                <span class="info-value">${navigator.cookieEnabled ? 'Yes' : 'No'}</span>
+            </div>
+        `;
+        
+        cookies.forEach((cookie, index) => {
+            const [name, value] = cookie.split('=').map(c => c.trim());
+            cookieHTML += `
+                <div class="info-row">
+                    <span class="info-label">Cookie ${index + 1}</span>
+                    <span class="info-value">${name}: ${value ? value.substring(0, 30) + (value.length > 30 ? '...' : '') : 'empty'}</span>
+                </div>
+            `;
+        });
+        
+        cookieInfoDiv.innerHTML = cookieHTML;
+    }
+    
+    // Add localStorage and sessionStorage info
+    const localStorageCount = localStorage.length;
+    const sessionStorageCount = sessionStorage.length;
+    
+    cookieInfoDiv.innerHTML += `
+        <div class="info-row">
+            <span class="info-label">Local Storage Items</span>
+            <span class="info-value">${localStorageCount}</span>
+        </div>
+        <div class="info-row">
+            <span class="info-label">Session Storage Items</span>
+            <span class="info-value">${sessionStorageCount}</span>
+        </div>
+    `;
+}
+
+// Detect social media presence
+function detectSocialMedia() {
+    const socialInfoDiv = document.getElementById('social-info');
+    
+    // Check for common social media tracking pixels/scripts
+    const socialChecks = {
+        'Facebook': () => {
+            return !!(window.FB || window.fbq || document.querySelector('[src*="facebook.com"]') || document.querySelector('[src*="fbcdn.net"]'));
+        },
+        'Twitter/X': () => {
+            return !!(window.twttr || document.querySelector('[src*="twitter.com"]') || document.querySelector('[src*="twimg.com"]'));
+        },
+        'LinkedIn': () => {
+            return !!(window.IN || document.querySelector('[src*="linkedin.com"]') || document.querySelector('[src*="licdn.com"]'));
+        },
+        'Google Analytics': () => {
+            return !!(window.ga || window.gtag || document.querySelector('[src*="google-analytics.com"]') || document.querySelector('[src*="googletagmanager.com"]'));
+        },
+        'Instagram': () => {
+            return !!(document.querySelector('[src*="instagram.com"]') || document.querySelector('[src*="cdninstagram.com"]'));
+        },
+        'TikTok': () => {
+            return !!(window.ttq || document.querySelector('[src*="tiktok.com"]'));
+        },
+        'Pinterest': () => {
+            return !!(window.pintrk || document.querySelector('[src*="pinterest.com"]'));
+        },
+        'YouTube': () => {
+            return !!(document.querySelector('[src*="youtube.com"]') || document.querySelector('[src*="ytimg.com"]'));
+        }
+    };
+    
+    let socialHTML = '';
+    let detectedCount = 0;
+    
+    for (const [platform, checkFn] of Object.entries(socialChecks)) {
+        const detected = checkFn();
+        if (detected) detectedCount++;
+        
+        socialHTML += `
+            <div class="info-row">
+                <span class="info-label">${platform}</span>
+                <span class="info-value" style="color: ${detected ? '#10b981' : '#ef4444'}">
+                    ${detected ? '✓ Detected' : '✗ Not detected'}
+                </span>
+            </div>
+        `;
+    }
+    
+    socialHTML = `
+        <div class="info-row">
+            <span class="info-label">Total Detected</span>
+            <span class="info-value">${detectedCount} / ${Object.keys(socialChecks).length}</span>
+        </div>
+    ` + socialHTML;
+    
+    // Check for third-party cookies
+    socialHTML += `
+        <div class="info-row">
+            <span class="info-label">Third-Party Cookies</span>
+            <span class="info-value">${navigator.cookieEnabled ? 'Allowed' : 'Blocked'}</span>
+        </div>
+    `;
+    
+    socialInfoDiv.innerHTML = socialHTML;
+}
+
 // Initialize all checks
 document.addEventListener('DOMContentLoaded', () => {
     getIPInfo();
     getBrowserInfo();
     getSystemInfo();
     getHeadersInfo();
+    getCookieInfo();
+    detectSocialMedia();
 });
