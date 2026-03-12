@@ -139,47 +139,44 @@ function getCookieInfo() {
     const cookieInfoDiv = document.getElementById('cookie-info');
     const cookies = document.cookie.split(';').filter(c => c.trim());
     
+    let cookieHTML = `
+        <div class="info-row">
+            <span class="info-label">Cookies Enabled</span>
+            <span class="info-value">${navigator.cookieEnabled ? 'Yes' : 'No'}</span>
+        </div>
+        <div class="info-row">
+            <span class="info-label">Total Cookies</span>
+            <span class="info-value">${cookies.length}</span>
+        </div>
+    `;
+    
     if (cookies.length === 0) {
-        cookieInfoDiv.innerHTML = `
+        cookieHTML += `
             <div class="info-row">
                 <span class="info-label">Status</span>
-                <span class="info-value">No cookies found</span>
-            </div>
-            <div class="info-row">
-                <span class="info-label">Cookies Enabled</span>
-                <span class="info-value">${navigator.cookieEnabled ? 'Yes' : 'No'}</span>
+                <span class="info-value">No cookies found on this domain</span>
             </div>
         `;
     } else {
-        let cookieHTML = `
-            <div class="info-row">
-                <span class="info-label">Total Cookies</span>
-                <span class="info-value">${cookies.length}</span>
-            </div>
-            <div class="info-row">
-                <span class="info-label">Cookies Enabled</span>
-                <span class="info-value">${navigator.cookieEnabled ? 'Yes' : 'No'}</span>
-            </div>
-        `;
-        
         cookies.forEach((cookie, index) => {
-            const [name, value] = cookie.split('=').map(c => c.trim());
+            const [name, ...valueParts] = cookie.split('=');
+            const value = valueParts.join('=').trim();
+            const displayValue = value ? (value.length > 40 ? value.substring(0, 40) + '...' : value) : 'empty';
+            
             cookieHTML += `
                 <div class="info-row">
-                    <span class="info-label">Cookie ${index + 1}</span>
-                    <span class="info-value">${name}: ${value ? value.substring(0, 30) + (value.length > 30 ? '...' : '') : 'empty'}</span>
+                    <span class="info-label">${name.trim()}</span>
+                    <span class="info-value">${displayValue}</span>
                 </div>
             `;
         });
-        
-        cookieInfoDiv.innerHTML = cookieHTML;
     }
     
     // Add localStorage and sessionStorage info
     const localStorageCount = localStorage.length;
     const sessionStorageCount = sessionStorage.length;
     
-    cookieInfoDiv.innerHTML += `
+    cookieHTML += `
         <div class="info-row">
             <span class="info-label">Local Storage Items</span>
             <span class="info-value">${localStorageCount}</span>
@@ -189,73 +186,145 @@ function getCookieInfo() {
             <span class="info-value">${sessionStorageCount}</span>
         </div>
     `;
-}
-
-// Detect social media presence
-function detectSocialMedia() {
-    const socialInfoDiv = document.getElementById('social-info');
     
-    // Check for common social media tracking pixels/scripts
-    const socialChecks = {
-        'Facebook': () => {
-            return !!(window.FB || window.fbq || document.querySelector('[src*="facebook.com"]') || document.querySelector('[src*="fbcdn.net"]'));
-        },
-        'Twitter/X': () => {
-            return !!(window.twttr || document.querySelector('[src*="twitter.com"]') || document.querySelector('[src*="twimg.com"]'));
-        },
-        'LinkedIn': () => {
-            return !!(window.IN || document.querySelector('[src*="linkedin.com"]') || document.querySelector('[src*="licdn.com"]'));
-        },
-        'Google Analytics': () => {
-            return !!(window.ga || window.gtag || document.querySelector('[src*="google-analytics.com"]') || document.querySelector('[src*="googletagmanager.com"]'));
-        },
-        'Instagram': () => {
-            return !!(document.querySelector('[src*="instagram.com"]') || document.querySelector('[src*="cdninstagram.com"]'));
-        },
-        'TikTok': () => {
-            return !!(window.ttq || document.querySelector('[src*="tiktok.com"]'));
-        },
-        'Pinterest': () => {
-            return !!(window.pintrk || document.querySelector('[src*="pinterest.com"]'));
-        },
-        'YouTube': () => {
-            return !!(document.querySelector('[src*="youtube.com"]') || document.querySelector('[src*="ytimg.com"]'));
-        }
-    };
-    
-    let socialHTML = '';
-    let detectedCount = 0;
-    
-    for (const [platform, checkFn] of Object.entries(socialChecks)) {
-        const detected = checkFn();
-        if (detected) detectedCount++;
-        
-        socialHTML += `
-            <div class="info-row">
-                <span class="info-label">${platform}</span>
-                <span class="info-value" style="color: ${detected ? '#10b981' : '#ef4444'}">
-                    ${detected ? '✓ Detected' : '✗ Not detected'}
-                </span>
-            </div>
-        `;
-    }
-    
-    socialHTML = `
-        <div class="info-row">
-            <span class="info-label">Total Detected</span>
-            <span class="info-value">${detectedCount} / ${Object.keys(socialChecks).length}</span>
-        </div>
-    ` + socialHTML;
-    
-    // Check for third-party cookies
-    socialHTML += `
+    // Show if third-party cookies are blocked
+    cookieHTML += `
         <div class="info-row">
             <span class="info-label">Third-Party Cookies</span>
-            <span class="info-value">${navigator.cookieEnabled ? 'Allowed' : 'Blocked'}</span>
+            <span class="info-value">${navigator.cookieEnabled ? 'Enabled' : 'Blocked'}</span>
         </div>
     `;
     
-    socialInfoDiv.innerHTML = socialHTML;
+    // Check for Do Not Track
+    const dnt = navigator.doNotTrack || navigator.msDoNotTrack || window.doNotTrack;
+    cookieHTML += `
+        <div class="info-row">
+            <span class="info-label">Do Not Track</span>
+            <span class="info-value">${dnt === '1' || dnt === 'yes' ? 'Enabled' : 'Disabled'}</span>
+        </div>
+    `;
+    
+    cookieInfoDiv.innerHTML = cookieHTML;
+}
+
+// Detect social media login status
+async function detectSocialMedia() {
+    const socialInfoDiv = document.getElementById('social-info');
+    
+    socialInfoDiv.innerHTML = '<div class="loading"><div class="spinner"></div><p>Checking social media login status...</p></div>';
+    
+    const socialChecks = {
+        'Facebook': async () => {
+            try {
+                const response = await fetch('https://www.facebook.com/favicon.ico', { mode: 'no-cors', credentials: 'include' });
+                return { platform: 'Facebook', loggedIn: 'Possibly logged in (cookies present)' };
+            } catch {
+                return { platform: 'Facebook', loggedIn: 'Not detected' };
+            }
+        },
+        'Twitter/X': async () => {
+            try {
+                const response = await fetch('https://twitter.com/favicon.ico', { mode: 'no-cors', credentials: 'include' });
+                return { platform: 'Twitter/X', loggedIn: 'Possibly logged in (cookies present)' };
+            } catch {
+                return { platform: 'Twitter/X', loggedIn: 'Not detected' };
+            }
+        },
+        'LinkedIn': async () => {
+            try {
+                const response = await fetch('https://www.linkedin.com/favicon.ico', { mode: 'no-cors', credentials: 'include' });
+                return { platform: 'LinkedIn', loggedIn: 'Possibly logged in (cookies present)' };
+            } catch {
+                return { platform: 'LinkedIn', loggedIn: 'Not detected' };
+            }
+        },
+        'Instagram': async () => {
+            try {
+                const response = await fetch('https://www.instagram.com/favicon.ico', { mode: 'no-cors', credentials: 'include' });
+                return { platform: 'Instagram', loggedIn: 'Possibly logged in (cookies present)' };
+            } catch {
+                return { platform: 'Instagram', loggedIn: 'Not detected' };
+            }
+        },
+        'YouTube/Google': async () => {
+            try {
+                const response = await fetch('https://www.youtube.com/favicon.ico', { mode: 'no-cors', credentials: 'include' });
+                return { platform: 'YouTube/Google', loggedIn: 'Possibly logged in (cookies present)' };
+            } catch {
+                return { platform: 'YouTube/Google', loggedIn: 'Not detected' };
+            }
+        },
+        'Reddit': async () => {
+            try {
+                const response = await fetch('https://www.reddit.com/favicon.ico', { mode: 'no-cors', credentials: 'include' });
+                return { platform: 'Reddit', loggedIn: 'Possibly logged in (cookies present)' };
+            } catch {
+                return { platform: 'Reddit', loggedIn: 'Not detected' };
+            }
+        },
+        'GitHub': async () => {
+            try {
+                const response = await fetch('https://github.com/favicon.ico', { mode: 'no-cors', credentials: 'include' });
+                return { platform: 'GitHub', loggedIn: 'Possibly logged in (cookies present)' };
+            } catch {
+                return { platform: 'GitHub', loggedIn: 'Not detected' };
+            }
+        },
+        'Amazon': async () => {
+            try {
+                const response = await fetch('https://www.amazon.com/favicon.ico', { mode: 'no-cors', credentials: 'include' });
+                return { platform: 'Amazon', loggedIn: 'Possibly logged in (cookies present)' };
+            } catch {
+                return { platform: 'Amazon', loggedIn: 'Not detected' };
+            }
+        }
+    };
+    
+    try {
+        const results = await Promise.all(Object.values(socialChecks).map(fn => fn()));
+        
+        let socialHTML = `
+            <div class="info-row">
+                <span class="info-label">Detection Method</span>
+                <span class="info-value">Cookie & Session Analysis</span>
+            </div>
+        `;
+        
+        let detectedCount = 0;
+        results.forEach(result => {
+            const isLoggedIn = result.loggedIn.includes('logged in');
+            if (isLoggedIn) detectedCount++;
+            
+            socialHTML += `
+                <div class="info-row">
+                    <span class="info-label">${result.platform}</span>
+                    <span class="info-value" style="color: ${isLoggedIn ? '#10b981' : '#6b7280'}">
+                        ${result.loggedIn}
+                    </span>
+                </div>
+            `;
+        });
+        
+        socialHTML = `
+            <div class="info-row">
+                <span class="info-label">Platforms Detected</span>
+                <span class="info-value">${detectedCount} / ${results.length}</span>
+            </div>
+        ` + socialHTML;
+        
+        socialInfoDiv.innerHTML = socialHTML;
+    } catch (error) {
+        socialInfoDiv.innerHTML = `
+            <div class="info-row">
+                <span class="info-label">Status</span>
+                <span class="info-value">Unable to detect social media login status</span>
+            </div>
+            <div class="info-row">
+                <span class="info-label">Note</span>
+                <span class="info-value">Browser privacy settings may block detection</span>
+            </div>
+        `;
+    }
 }
 
 // Initialize all checks
