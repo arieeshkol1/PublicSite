@@ -37,21 +37,21 @@ jobs:
       - name: Deploy HTML and CSS to S3
         run: |
           echo "Deploying website files to S3..."
-          aws s3 cp index.html s3://${{ env.S3_BUCKET }}/ --cache-control "max-age=300" --acl public-read
-          aws s3 cp styles.css s3://${{ env.S3_BUCKET }}/ --cache-control "max-age=86400" --acl public-read
+          aws s3 cp index.html s3://${{ env.S3_BUCKET }}/ --cache-control "max-age=300"
+          aws s3 cp styles.css s3://${{ env.S3_BUCKET }}/ --cache-control "max-age=86400"
           
           # Deploy additional HTML files
           for file in *.html; do
             if [ "$file" != "index.html" ]; then
               echo "Deploying $file..."
-              aws s3 cp "$file" s3://${{ env.S3_BUCKET }}/ --cache-control "max-age=300" --acl public-read
+              aws s3 cp "$file" s3://${{ env.S3_BUCKET }}/ --cache-control "max-age=300"
             fi
           done
           
           # Deploy JavaScript files
           for file in *.js; do
             echo "Deploying $file..."
-            aws s3 cp "$file" s3://${{ env.S3_BUCKET }}/ --cache-control "max-age=86400" --content-type "application/javascript" --acl public-read
+            aws s3 cp "$file" s3://${{ env.S3_BUCKET }}/ --cache-control "max-age=86400" --content-type "application/javascript"
           done
           
           echo "✓ Deployment complete!"
