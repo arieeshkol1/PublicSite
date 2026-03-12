@@ -10,24 +10,13 @@ Parameters:
   HostedZoneId:
     Type: String
     Description: The Route 53 Hosted Zone ID for eshkol.ai
+  
+  S3BucketName:
+    Type: String
+    Default: 'arieleshkolwebsite22feb2026'
+    Description: Existing S3 bucket name hosting the website
 
 Resources:
-  # S3 Bucket for Website Hosting
-  WebsiteBucket:
-    Type: AWS::S3::Bucket
-    Properties:
-      BucketName: arieleshkolwebsite22feb2026
-      PublicAccessBlockConfiguration:
-        BlockPublicAcls: true
-        BlockPublicPolicy: false
-        IgnorePublicAcls: true
-        RestrictPublicBuckets: false
-      Tags:
-        - Key: Project
-          Value: PublicSite
-        - Key: Environment
-          Value: Production
-
   # ACM Certificate for HTTPS
   Certificate:
     Type: AWS::CertificateManager::Certificate
@@ -67,7 +56,7 @@ Resources:
           MinimumProtocolVersion: TLSv1.2_2021
         Origins:
           - Id: S3Origin
-            DomainName: !GetAtt WebsiteBucket.RegionalDomainName
+            DomainName: !Sub '${S3BucketName}.s3.${AWS::Region}.amazonaws.com'
             S3OriginConfig:
               OriginAccessIdentity: !Sub 'origin-access-identity/cloudfront/${CloudFrontOAI}'
         DefaultCacheBehavior:
@@ -105,7 +94,7 @@ Resources:
   BucketPolicy:
     Type: AWS::S3::BucketPolicy
     Properties:
-      Bucket: !Ref WebsiteBucket
+      Bucket: !Ref S3BucketName
       PolicyDocument:
         Statement:
           - Sid: AllowCloudFrontOAI
@@ -113,7 +102,7 @@ Resources:
             Principal:
               AWS: !Sub 'arn:aws:iam::cloudfront:user/CloudFront Origin Access Identity ${CloudFrontOAI}'
             Action: 's3:GetObject'
-            Resource: !Sub '${WebsiteBucket.Arn}/*'
+            Resource: !Sub 'arn:aws:s3:::${S3BucketName}/*'
 
   # Route 53 Record for root domain
   RootDomainRecord:
@@ -142,7 +131,7 @@ Resources:
 Outputs:
   BucketName:
     Description: S3 Bucket Name
-    Value: !Ref WebsiteBucket
+    Value: !Ref S3BucketName
 
   CertificateArn:
     Description: ACM Certificate ARN
