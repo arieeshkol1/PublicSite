@@ -1,0 +1,173 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Domain setup for eshkol.ai with Route 53, CloudFront, and ACM Certificate'
+
+Parameters:
+  DomainName:
+    Type: String
+    Default: 'eshkol.ai'
+    Description: The domain name for the website
+  
+  S3BucketName:
+    Type: String
+    Default: 'arieleshkolwebsite22feb2026'
+    Description: The S3 bucket hosting the website
+
+Resources:
+  # Route 53 Hosted Zone
+  HostedZone:
+    Type: AWS::Route53::HostedZone
+    Properties:
+      Name: !Ref DomainName
+      HostedZoneConfig:
+        Comment: !Sub 'Hosted zone for ${DomainName}'
+      Tags:
+        - Key: Project
+          Value: PublicSite
+        - Key: Environment
+          Value: Production
+
+  # ACM Certificate for HTTPS
+  Certificate:
+    Type: AWS::CertificateManager::Certificate
+    Properties:
+      DomainName: !Ref DomainName
+      SubjectAlternativeNames:
+        - !Sub 'www.${DomainName}'
+      ValidationMethod: DNS
+      DomainValidationOptions:
+        - DomainName: !Ref DomainName
+          HostedZoneId: !Ref HostedZone
+      Tags:
+        - Key: Project
+          Value: PublicSite
+        - Key: Environment
+          Value: Production
+
+  # CloudFront Origin Access Identity
+  CloudFrontOAI:
+    Type: AWS::CloudFront::CloudFrontOriginAccessIdentity
+    Properties:
+      CloudFrontOriginAccessIdentityConfig:
+        Comment: !Sub 'OAI for ${DomainName}'
+
+  # CloudFront Distribution
+  CloudFrontDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: !Sub 'CloudFront distribution for ${DomainName}'
+        DefaultRootObject: index.html
+        Aliases:
+          - !Ref DomainName
+          - !Sub 'www.${DomainName}'
+        ViewerCertificate:
+          AcmCertificateArn: !Ref Certificate
+          SslSupportMethod: sni-only
+          MinimumProtocolVersion: TLSv1.2_2021
+        Origins:
+          - Id: S3Origin
+            DomainName: !Sub '${S3BucketName}.s3.${AWS::Region}.amazonaws.com'
+            S3OriginConfig:
+              OriginAccessIdentity: !Sub 'origin-access-identity/cloudfront/${CloudFrontOAI}'
+        DefaultCacheBehavior:
+          TargetOriginId: S3Origin
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods:
+            - GET
+            - HEAD
+            - OPTIONS
+          CachedMethods:
+            - GET
+            - HEAD
+          Compress: true
+          ForwardedValues:
+            QueryString: false
+            Cookies:
+              Forward: none
+          MinTTL: 0
+          DefaultTTL: 300
+          MaxTTL: 86400
+        CustomErrorResponses:
+          - ErrorCode: 403
+            ResponseCode: 404
+            ResponsePagePath: /index.html
+          - ErrorCode: 404
+            ResponseCode: 404
+            ResponsePagePath: /index.html
+        HttpVersion: http2
+        PriceClass: PriceClass_100
+      Tags:
+        - Key: Project
+          Value: PublicSite
+        - Key: Environment
+          Value: Production
+
+  # Route 53 Record for root domain
+  RootDomainRecord:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref HostedZone
+      Name: !Ref DomainName
+      Type: A
+      AliasTarget:
+        HostedZoneId: Z2FDTNDATAQYW2  # CloudFront hosted zone ID (constant)
+        DNSName: !GetAtt CloudFrontDistribution.DomainName
+        EvaluateTargetHealth: false
+
+  # Route 53 Record for www subdomain
+  WWWDomainRecord:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref HostedZone
+      Name: !Sub 'www.${DomainName}'
+      Type: A
+      AliasTarget:
+        HostedZoneId: Z2FDTNDATAQYW2  # CloudFront hosted zone ID (constant)
+        DNSName: !GetAtt CloudFrontDistribution.DomainName
+        EvaluateTargetHealth: false
+
+  # S3 Bucket Policy to allow CloudFront access
+  BucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref S3BucketName
+      PolicyDocument:
+        Statement:
+          - Sid: AllowCloudFrontOAI
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::cloudfront:user/CloudFront Origin Access Identity ${CloudFrontOAI}'
+            Action: 's3:GetObject'
+            Resource: !Sub 'arn:aws:s3:::${S3BucketName}/*'
+
+Outputs:
+  HostedZoneId:
+    Description: Route 53 Hosted Zone ID
+    Value: !Ref HostedZone
+    Export:
+      Name: !Sub '${AWS::StackName}-HostedZoneId'
+
+  HostedZoneNameServers:
+    Description: Name servers for the hosted zone (update these at your domain registrar)
+    Value: !Join [', ', !GetAtt HostedZone.NameServers]
+
+  CertificateArn:
+    Description: ACM Certificate ARN
+    Value: !Ref Certificate
+    Export:
+      Name: !Sub '${AWS::StackName}-CertificateArn'
+
+  CloudFrontDistributionId:
+    Description: CloudFront Distribution ID
+    Value: !Ref CloudFrontDistribution
+    Export:
+      Name: !Sub '${AWS::StackName}-CloudFrontDistributionId'
+
+  CloudFrontDomainName:
+    Description: CloudFront Distribution Domain Name
+    Value: !GetAtt CloudFrontDistribution.DomainName
+
+  WebsiteURL:
+    Description: Website URL
+    Value: !Sub 'https://${DomainName}'
