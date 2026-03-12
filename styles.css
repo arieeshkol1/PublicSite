@@ -6,26 +6,29 @@
 }
 
 :root {
-    --primary: #2563eb;
-    --primary-dark: #1e40af;
-    --secondary: #8b5cf6;
-    --accent: #06b6d4;
-    --dark: #0f172a;
-    --dark-light: #1e293b;
-    --gray: #64748b;
-    --gray-light: #cbd5e1;
-    --light: #f8fafc;
+    --primary: #0066ff;
+    --primary-dark: #0052cc;
+    --secondary: #00d4ff;
+    --accent: #ff6b35;
+    --dark: #0a0e27;
+    --dark-light: #1a1f3a;
+    --gray: #6b7280;
+    --gray-light: #e5e7eb;
+    --light: #f9fafb;
     --white: #ffffff;
-    --gradient: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    --gradient-2: linear-gradient(135deg, #2563eb 0%, #8b5cf6 100%);
+    --gradient: linear-gradient(135deg, #0066ff 0%, #00d4ff 100%);
+    --gradient-2: linear-gradient(135deg, #0066ff 0%, #00d4ff 100%);
 }
 
 body {
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    line-height: 1.6;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
+    line-height: 1.7;
     color: var(--dark);
     overflow-x: hidden;
     background: var(--white);
+    font-size: 16px;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
 }
 
 .container {
@@ -36,15 +39,15 @@ body {
 
 /* Navigation */
 .navbar {
-    background: rgba(255, 255, 255, 0.95);
-    backdrop-filter: blur(10px);
-    padding: 20px 0;
+    background: var(--white);
+    padding: 24px 0;
     position: fixed;
     top: 0;
     left: 0;
     right: 0;
     z-index: 1000;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+    transition: all 0.3s;
 }
 
 .navbar .container {
@@ -104,7 +107,7 @@ body {
     min-height: 100vh;
     display: flex;
     align-items: center;
-    padding: 120px 0 80px;
+    padding: 140px 0 100px;
     background: var(--gradient);
     position: relative;
     overflow: hidden;
@@ -117,8 +120,9 @@ body {
     left: 0;
     right: 0;
     bottom: 0;
-    background: url('data:image/svg+xml,<svg width="60" height="60" xmlns="http://www.w3.org/2000/svg"><circle cx="30" cy="30" r="1" fill="rgba(255,255,255,0.1)"/></svg>');
-    opacity: 0.3;
+    background: radial-gradient(circle at 20% 50%, rgba(0, 212, 255, 0.2) 0%, transparent 50%),
+                radial-gradient(circle at 80% 80%, rgba(0, 102, 255, 0.2) 0%, transparent 50%);
+    opacity: 0.6;
 }
 
 .hero-content {
@@ -145,16 +149,16 @@ body {
 }
 
 .hero h1 {
-    font-size: 72px;
-    font-weight: 800;
+    font-size: 80px;
+    font-weight: 900;
     color: var(--white);
-    margin-bottom: 24px;
+    margin-bottom: 32px;
     line-height: 1.1;
-    letter-spacing: -2px;
+    letter-spacing: -3px;
 }
 
 .gradient-text {
-    background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%);
+    background: linear-gradient(135deg, #00d4ff 0%, #ffffff 100%);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     background-clip: text;
@@ -213,13 +217,15 @@ body {
 }
 
 .btn-primary {
-    background: var(--white);
-    color: var(--primary);
+    background: var(--primary);
+    color: var(--white);
+    box-shadow: 0 4px 14px rgba(0, 102, 255, 0.4);
 }
 
 .btn-primary:hover {
     transform: translateY(-3px);
-    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.2);
+    box-shadow: 0 8px 24px rgba(0, 102, 255, 0.5);
+    background: var(--primary-dark);
 }
 
 .btn-secondary {
@@ -276,7 +282,7 @@ body {
 
 /* Section Styles */
 section {
-    padding: 100px 0;
+    padding: 120px 0;
 }
 
 .section-header {
@@ -298,10 +304,11 @@ section {
 }
 
 .section-header h2 {
-    font-size: 48px;
-    font-weight: 800;
+    font-size: 56px;
+    font-weight: 900;
     color: var(--dark);
-    letter-spacing: -1px;
+    letter-spacing: -2px;
+    line-height: 1.1;
 }
 
 /* Services Section */
@@ -317,16 +324,16 @@ section {
 
 .service-card {
     background: var(--white);
-    padding: 40px 32px;
-    border-radius: 16px;
-    border: 1px solid var(--gray-light);
-    transition: all 0.3s;
+    padding: 48px 40px;
+    border-radius: 20px;
+    border: 2px solid var(--gray-light);
+    transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
     position: relative;
 }
 
 .service-card:hover {
-    transform: translateY(-8px);
-    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+    transform: translateY(-12px);
+    box-shadow: 0 24px 48px rgba(0, 102, 255, 0.12);
     border-color: var(--primary);
 }
 
