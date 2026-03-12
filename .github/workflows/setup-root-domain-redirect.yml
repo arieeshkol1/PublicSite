@@ -1,0 +1,185 @@
+name: Setup Root Domain Redirect
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type "create" to confirm creating the redirect bucket and A record'
+        required: true
+        default: 'no'
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+  ROOT_BUCKET: eshkol.ai
+  WWW_BUCKET: www.eshkol.ai
+  HOSTED_ZONE_ID: Z06481861W6WD32QMETRV
+
+jobs:
+  setup-redirect:
+    runs-on: ubuntu-latest
+    if: github.event.inputs.confirm == 'create'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::991105135552:role/GitHubDeployRole
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Check if root bucket name is available
+        id: check-bucket
+        run: |
+          echo "Checking if bucket name ${{ env.ROOT_BUCKET }} is available..."
+          
+          if aws s3api head-bucket --bucket ${{ env.ROOT_BUCKET }} 2>&1 | grep -q "404\|NoSuchBucket"; then
+            echo "✓ Bucket name is available!"
+            echo "available=true" >> $GITHUB_OUTPUT
+          elif aws s3api head-bucket --bucket ${{ env.ROOT_BUCKET }} 2>&1 | grep -q "403\|Forbidden"; then
+            echo "✗ Bucket name is still reserved in another account"
+            echo "available=false" >> $GITHUB_OUTPUT
+            exit 1
+          else
+            echo "✓ Bucket already exists in your account"
+            echo "available=exists" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create redirect bucket
+        if: steps.check-bucket.outputs.available == 'true'
+        run: |
+          echo "Creating bucket ${{ env.ROOT_BUCKET }}..."
+          aws s3api create-bucket \
+            --bucket ${{ env.ROOT_BUCKET }} \
+            --region ${{ env.AWS_REGION }}
+          
+          echo "✓ Bucket created"
+
+      - name: Configure bucket redirect
+        if: steps.check-bucket.outputs.available == 'true' || steps.check-bucket.outputs.available == 'exists'
+        run: |
+          echo "Configuring redirect to ${{ env.WWW_BUCKET }}..."
+          
+          cat > redirect-config.json << EOF
+          {
+            "RedirectAllRequestsTo": {
+              "HostName": "${{ env.WWW_BUCKET }}",
+              "Protocol": "http"
+            }
+          }
+          EOF
+          
+          aws s3api put-bucket-website \
+            --bucket ${{ env.ROOT_BUCKET }} \
+            --website-configuration file://redirect-config.json
+          
+          echo "✓ Redirect configured"
+
+      - name: Set bucket policy
+        if: steps.check-bucket.outputs.available == 'true' || steps.check-bucket.outputs.available == 'exists'
+        run: |
+          echo "Setting bucket policy..."
+          
+          cat > bucket-policy.json << EOF
+          {
+            "Version": "2012-10-17",
+            "Statement": [
+              {
+                "Sid": "PublicReadGetObject",
+                "Effect": "Allow",
+                "Principal": "*",
+                "Action": "s3:GetObject",
+                "Resource": "arn:aws:s3:::${{ env.ROOT_BUCKET }}/*"
+              }
+            ]
+          }
+          EOF
+          
+          aws s3api put-bucket-policy \
+            --bucket ${{ env.ROOT_BUCKET }} \
+            --policy file://bucket-policy.json
+          
+          echo "✓ Bucket policy set"
+
+      - name: Configure public access
+        if: steps.check-bucket.outputs.available == 'true' || steps.check-bucket.outputs.available == 'exists'
+        run: |
+          echo "Configuring public access..."
+          
+          aws s3api put-public-access-block \
+            --bucket ${{ env.ROOT_BUCKET }} \
+            --public-access-block-configuration \
+              "BlockPublicAcls=false,IgnorePublicAcls=false,BlockPublicPolicy=false,RestrictPublicBuckets=false"
+          
+          echo "✓ Public access configured"
+
+      - name: Check if A record exists
+        id: check-record
+        run: |
+          echo "Checking for existing A record..."
+          
+          RECORDS=$(aws route53 list-resource-record-sets \
+            --hosted-zone-id ${{ env.HOSTED_ZONE_ID }} \
+            --query "ResourceRecordSets[?Name=='${{ env.ROOT_BUCKET }}.' && Type=='A']" \
+            --output json)
+          
+          if [ "$RECORDS" == "[]" ]; then
+            echo "No A record exists"
+            echo "exists=false" >> $GITHUB_OUTPUT
+          else
+            echo "A record already exists"
+            echo "exists=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create A record alias
+        if: steps.check-record.outputs.exists == 'false'
+        run: |
+          echo "Creating A record alias for root domain..."
+          
+          cat > change-batch.json << EOF
+          {
+            "Changes": [
+              {
+                "Action": "CREATE",
+                "ResourceRecordSet": {
+                  "Name": "${{ env.ROOT_BUCKET }}",
+                  "Type": "A",
+                  "AliasTarget": {
+                    "HostedZoneId": "Z3AQBSTGFYJSTF",
+                    "DNSName": "s3-website-us-east-1.amazonaws.com",
+                    "EvaluateTargetHealth": false
+                  }
+                }
+              }
+            ]
+          }
+          EOF
+          
+          aws route53 change-resource-record-sets \
+            --hosted-zone-id ${{ env.HOSTED_ZONE_ID }} \
+            --change-batch file://change-batch.json
+          
+          echo "✓ A record created"
+
+      - name: Deployment summary
+        run: |
+          echo "=== Setup Complete ==="
+          echo "Root bucket: ${{ env.ROOT_BUCKET }}"
+          echo "Redirects to: ${{ env.WWW_BUCKET }}"
+          echo "S3 endpoint: http://${{ env.ROOT_BUCKET }}.s3-website-${{ env.AWS_REGION }}.amazonaws.com"
+          echo ""
+          echo "DNS Configuration:"
+          echo "- A record for ${{ env.ROOT_BUCKET }} → S3 website endpoint"
+          echo "- CNAME record for ${{ env.WWW_BUCKET }} → S3 website endpoint"
+          echo ""
+          echo "Test URLs:"
+          echo "- http://${{ env.ROOT_BUCKET }} (should redirect to www)"
+          echo "- http://${{ env.WWW_BUCKET }} (main site)"
+          echo ""
+          echo "Note: DNS propagation can take a few minutes"
+          echo "✓ All done!"
