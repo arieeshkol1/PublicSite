@@ -31,7 +31,7 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::991105135552:role/GitHubActionsDeploymentRole
+          role-to-assume: arn:aws:iam::991105135552:role/GitHubDeployRole
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Deploy HTML and CSS to S3
