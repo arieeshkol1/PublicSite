@@ -81,9 +81,18 @@ jobs:
       - name: Get CloudFront distribution ID
         id: get-cf-id
         run: |
-          DIST_ID=$(aws cloudfront list-distributions \
-            --query "DistributionList.Items[?Aliases.Items[0]=='www.eshkolai.com'].Id" \
-            --output text)
+          # Try to get CloudFront ID from CloudFormation stack first
+          DIST_ID=$(aws cloudformation describe-stacks \
+            --stack-name eshkolai-com-website-stack \
+            --query 'Stacks[0].Outputs[?OutputKey==`CloudFrontDistributionId`].OutputValue' \
+            --output text 2>/dev/null || echo "")
+          
+          # If not found in stack, search by alias
+          if [ -z "$DIST_ID" ]; then
+            DIST_ID=$(aws cloudfront list-distributions \
+              --query "DistributionList.Items[?Aliases.Items[0]=='www.eshkolai.com'].Id" \
+              --output text)
+          fi
           
           if [ -n "$DIST_ID" ]; then
             echo "CloudFront distribution found: $DIST_ID"

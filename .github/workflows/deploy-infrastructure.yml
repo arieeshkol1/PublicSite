@@ -1,0 +1,179 @@
+name: Deploy Infrastructure Stack
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Action to perform'
+        required: true
+        type: choice
+        options:
+          - create
+          - update
+          - delete
+        default: 'update'
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+  STACK_NAME: eshkolai-com-website-stack
+
+jobs:
+  deploy-stack:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::991105135552:role/GitHubDeployRole
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Check if stack exists
+        id: check-stack
+        run: |
+          if aws cloudformation describe-stacks --stack-name ${{ env.STACK_NAME }} 2>/dev/null; then
+            echo "Stack exists"
+            echo "stack_exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "Stack does not exist"
+            echo "stack_exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create Stack
+        if: github.event.inputs.action == 'create' && steps.check-stack.outputs.stack_exists == 'false'
+        run: |
+          echo "Creating CloudFormation stack..."
+          
+          aws cloudformation create-stack \
+            --stack-name ${{ env.STACK_NAME }} \
+            --template-body file://infrastructure/unified-stack.yaml \
+            --capabilities CAPABILITY_IAM \
+            --tags \
+              Key=ManagedBy,Value=CloudFormation \
+              Key=Project,Value=EshkolaiWebsite
+          
+          echo "Waiting for stack creation to complete..."
+          echo "This will take 20-40 minutes (certificate validation + CloudFront deployment)"
+          
+          aws cloudformation wait stack-create-complete \
+            --stack-name ${{ env.STACK_NAME }}
+          
+          echo "✓ Stack created successfully"
+
+      - name: Update Stack
+        if: github.event.inputs.action == 'update' && steps.check-stack.outputs.stack_exists == 'true'
+        run: |
+          echo "Updating CloudFormation stack..."
+          
+          # Try to update the stack
+          UPDATE_OUTPUT=$(aws cloudformation update-stack \
+            --stack-name ${{ env.STACK_NAME }} \
+            --template-body file://infrastructure/unified-stack.yaml \
+            --capabilities CAPABILITY_IAM 2>&1) || UPDATE_EXIT_CODE=$?
+          
+          # Check if no updates are needed
+          if echo "$UPDATE_OUTPUT" | grep -q "No updates are to be performed"; then
+            echo "✓ No updates needed - stack is already up to date"
+            exit 0
+          fi
+          
+          # Check for other errors
+          if [ ! -z "$UPDATE_EXIT_CODE" ]; then
+            echo "Error updating stack:"
+            echo "$UPDATE_OUTPUT"
+            exit $UPDATE_EXIT_CODE
+          fi
+          
+          echo "Waiting for stack update to complete..."
+          aws cloudformation wait stack-update-complete \
+            --stack-name ${{ env.STACK_NAME }}
+          
+          echo "✓ Stack updated successfully"
+
+      - name: Create or Update Stack (Auto-detect)
+        if: github.event.inputs.action == 'update' && steps.check-stack.outputs.stack_exists == 'false'
+        run: |
+          echo "Stack doesn't exist, creating it..."
+          
+          aws cloudformation create-stack \
+            --stack-name ${{ env.STACK_NAME }} \
+            --template-body file://infrastructure/unified-stack.yaml \
+            --capabilities CAPABILITY_IAM \
+            --tags \
+              Key=ManagedBy,Value=CloudFormation \
+              Key=Project,Value=EshkolaiWebsite
+          
+          echo "Waiting for stack creation to complete..."
+          echo "This will take 20-40 minutes (certificate validation + CloudFront deployment)"
+          
+          aws cloudformation wait stack-create-complete \
+            --stack-name ${{ env.STACK_NAME }}
+          
+          echo "✓ Stack created successfully"
+
+      - name: Delete Stack
+        if: github.event.inputs.action == 'delete' && steps.check-stack.outputs.stack_exists == 'true'
+        run: |
+          echo "Deleting CloudFormation stack..."
+          echo "WARNING: This will delete all resources (S3, CloudFront, Certificate, DNS records)"
+          
+          aws cloudformation delete-stack \
+            --stack-name ${{ env.STACK_NAME }}
+          
+          echo "Waiting for stack deletion to complete..."
+          aws cloudformation wait stack-delete-complete \
+            --stack-name ${{ env.STACK_NAME }}
+          
+          echo "✓ Stack deleted successfully"
+
+      - name: Get Stack Outputs
+        if: github.event.inputs.action != 'delete'
+        run: |
+          echo "=== Stack Outputs ==="
+          aws cloudformation describe-stacks \
+            --stack-name ${{ env.STACK_NAME }} \
+            --query 'Stacks[0].Outputs[*].[OutputKey,OutputValue]' \
+            --output table
+
+      - name: Get Stack Resources
+        if: github.event.inputs.action != 'delete'
+        run: |
+          echo "=== Stack Resources ==="
+          aws cloudformation describe-stack-resources \
+            --stack-name ${{ env.STACK_NAME }} \
+            --query 'StackResources[*].[LogicalResourceId,ResourceType,ResourceStatus]' \
+            --output table
+
+      - name: Deployment Summary
+        if: github.event.inputs.action != 'delete'
+        run: |
+          WEBSITE_URL=$(aws cloudformation describe-stacks \
+            --stack-name ${{ env.STACK_NAME }} \
+            --query 'Stacks[0].Outputs[?OutputKey==`WebsiteURL`].OutputValue' \
+            --output text)
+          
+          CF_DIST_ID=$(aws cloudformation describe-stacks \
+            --stack-name ${{ env.STACK_NAME }} \
+            --query 'Stacks[0].Outputs[?OutputKey==`CloudFrontDistributionId`].OutputValue' \
+            --output text)
+          
+          S3_BUCKET=$(aws cloudformation describe-stacks \
+            --stack-name ${{ env.STACK_NAME }} \
+            --query 'Stacks[0].Outputs[?OutputKey==`S3BucketName`].OutputValue' \
+            --output text)
+          
+          echo "=== Deployment Complete ==="
+          echo ""
+          echo "Website URL: $WEBSITE_URL"
+          echo "S3 Bucket: $S3_BUCKET"
+          echo "CloudFront Distribution ID: $CF_DIST_ID"
+          echo ""
+          echo "Your website is now live with HTTPS!"
+          echo "Test with: curl -I $WEBSITE_URL"
