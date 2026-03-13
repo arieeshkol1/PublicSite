@@ -1,0 +1,70 @@
+name: Setup Contact Form Backend
+
+on:
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::991105135552:role/GitHubDeployRole
+          aws-region: us-east-1
+
+      - name: Deploy CloudFormation Stack
+        id: deploy-stack
+        run: |
+          aws cloudformation deploy \
+            --template-file infrastructure/contact-form-stack.yaml \
+            --stack-name contact-form-stack \
+            --parameter-overrides \
+              RecipientEmail=ariel.eshkol@gmail.com \
+              SenderEmail=ariel.eshkol@gmail.com \
+              DomainName=www.eshkolai.com \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --region us-east-1
+
+      - name: Get API Endpoint
+        id: get-endpoint
+        run: |
+          API_ENDPOINT=$(aws cloudformation describe-stacks \
+            --stack-name contact-form-stack \
+            --query 'Stacks[0].Outputs[?OutputKey==`ApiEndpoint`].OutputValue' \
+            --output text \
+            --region us-east-1)
+          echo "API_ENDPOINT=$API_ENDPOINT" >> $GITHUB_OUTPUT
+          echo "=========================================="
+          echo "API Endpoint: $API_ENDPOINT"
+          echo "=========================================="
+
+      - name: Verify Email in SES
+        run: |
+          echo "Verifying email in SES..."
+          aws ses verify-email-identity \
+            --email-address ariel.eshkol@gmail.com \
+            --region us-east-1 || true
+
+      - name: Display Instructions
+        run: |
+          echo ""
+          echo "=========================================="
+          echo "Contact Form Backend Deployed!"
+          echo "=========================================="
+          echo ""
+          echo "API Endpoint: ${{ steps.get-endpoint.outputs.API_ENDPOINT }}"
+          echo ""
+          echo "NEXT STEPS:"
+          echo "1. Check ariel.eshkol@gmail.com for SES verification email"
+          echo "2. Click the verification link"
+          echo "3. Update script.js with this API endpoint:"
+          echo "   ${{ steps.get-endpoint.outputs.API_ENDPOINT }}"
+          echo ""
