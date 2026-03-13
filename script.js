@@ -21,8 +21,8 @@ document.addEventListener('DOMContentLoaded', () => {
             formStatus.textContent = 'Sending your message...';
             
             try {
-                // Replace this URL with your API Gateway endpoint after deployment
-                const apiEndpoint = 'YOUR_API_GATEWAY_ENDPOINT_HERE';
+                // API Gateway endpoint for contact form
+                const apiEndpoint = 'https://nyppohkc65.execute-api.us-east-1.amazonaws.com/prod/contact';
                 
                 const response = await fetch(apiEndpoint, {
                     method: 'POST',
