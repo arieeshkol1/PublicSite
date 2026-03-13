@@ -1,0 +1,343 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Contact Form Infrastructure - SES, Lambda, and API Gateway'
+
+Parameters:
+  RecipientEmail:
+    Type: String
+    Default: ariel.eshkol@gmail.com
+    Description: Email address to receive contact form submissions
+  
+  SenderEmail:
+    Type: String
+    Default: noreply@eshkolai.com
+    Description: Email address to send from (must be verified in SES)
+  
+  DomainName:
+    Type: String
+    Default: www.eshkolai.com
+    Description: Website domain name for CORS configuration
+
+Resources:
+  # Lambda Execution Role
+  ContactFormLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: ContactFormLambdaRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: SESEmailPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ses:SendEmail
+                  - ses:SendRawEmail
+                Resource: '*'
+
+  # Lambda Function
+  ContactFormFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: ContactFormHandler
+      Runtime: python3.11
+      Handler: lambda_function.lambda_handler
+      Role: !GetAtt ContactFormLambdaRole.Arn
+      Timeout: 30
+      Environment:
+        Variables:
+          RECIPIENT_EMAIL: !Ref RecipientEmail
+          SENDER_EMAIL: !Ref SenderEmail
+      Code:
+        ZipFile: |
+          import json
+          import boto3
+          import os
+          from datetime import datetime
+
+          ses_client = boto3.client('ses', region_name='us-east-1')
+
+          def lambda_handler(event, context):
+              """
+              Lambda function to handle contact form submissions and send emails via SES
+              """
+              
+              # Handle CORS preflight
+              if event.get('httpMethod') == 'OPTIONS':
+                  return {
+                      'statusCode': 200,
+                      'headers': {
+                          'Access-Control-Allow-Origin': '*',
+                          'Access-Control-Allow-Headers': 'Content-Type',
+                          'Access-Control-Allow-Methods': 'POST, OPTIONS'
+                      },
+                      'body': ''
+                  }
+              
+              try:
+                  # Parse request body
+                  body = json.loads(event.get('body', '{}'))
+                  
+                  # Extract form data
+                  name = body.get('name', 'Unknown')
+                  email = body.get('email', 'no-email@provided.com')
+                  phone = body.get('phone', 'Not provided')
+                  company = body.get('company', 'Not provided')
+                  message = body.get('message', 'No message provided')
+                  
+                  # Validate required fields
+                  if not name or not email or not message:
+                      return {
+                          'statusCode': 400,
+                          'headers': {
+                              'Access-Control-Allow-Origin': '*',
+                              'Content-Type': 'application/json'
+                          },
+                          'body': json.dumps({
+                              'error': 'Missing required fields: name, email, and message are required'
+                          })
+                      }
+                  
+                  # Get recipient email from environment variable
+                  recipient_email = os.environ.get('RECIPIENT_EMAIL', 'ariel.eshkol@gmail.com')
+                  sender_email = os.environ.get('SENDER_EMAIL', 'noreply@eshkolai.com')
+                  
+                  # Prepare email content
+                  timestamp = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')
+                  
+                  email_subject = f"New Contact Form Submission from {name}"
+                  
+                  email_body_text = f"""
+          New Contact Form Submission
+          ============================
+
+          Submitted: {timestamp}
+
+          Contact Information:
+          -------------------
+          Name: {name}
+          Email: {email}
+          Phone: {phone}
+          Company: {company}
+
+          Message:
+          --------
+          {message}
+
+          ---
+          This email was sent from the contact form at www.eshkolai.com
+          """
+                  
+                  email_body_html = f"""
+          <html>
+          <head>
+              <style>
+                  body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; }}
+                  .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
+                  .header {{ background: linear-gradient(135deg, #0066ff 0%, #00d4ff 100%); color: white; padding: 20px; border-radius: 8px 8px 0 0; }}
+                  .content {{ background: #f9fafb; padding: 20px; border: 1px solid #e5e7eb; border-radius: 0 0 8px 8px; }}
+                  .field {{ margin-bottom: 15px; }}
+                  .label {{ font-weight: bold; color: #0066ff; }}
+                  .value {{ margin-top: 5px; }}
+                  .message-box {{ background: white; padding: 15px; border-left: 4px solid #0066ff; margin-top: 10px; }}
+                  .footer {{ margin-top: 20px; padding-top: 20px; border-top: 1px solid #e5e7eb; font-size: 12px; color: #6b7280; }}
+              </style>
+          </head>
+          <body>
+              <div class="container">
+                  <div class="header">
+                      <h2>New Contact Form Submission</h2>
+                      <p style="margin: 0; opacity: 0.9;">Submitted: {timestamp}</p>
+                  </div>
+                  <div class="content">
+                      <div class="field">
+                          <div class="label">Name:</div>
+                          <div class="value">{name}</div>
+                      </div>
+                      <div class="field">
+                          <div class="label">Email:</div>
+                          <div class="value"><a href="mailto:{email}">{email}</a></div>
+                      </div>
+                      <div class="field">
+                          <div class="label">Phone:</div>
+                          <div class="value">{phone}</div>
+                      </div>
+                      <div class="field">
+                          <div class="label">Company:</div>
+                          <div class="value">{company}</div>
+                      </div>
+                      <div class="field">
+                          <div class="label">Message:</div>
+                          <div class="message-box">{message}</div>
+                      </div>
+                      <div class="footer">
+                          This email was sent from the contact form at <a href="https://www.eshkolai.com">www.eshkolai.com</a>
+                      </div>
+                  </div>
+              </div>
+          </body>
+          </html>
+          """
+                  
+                  # Send email via SES
+                  response = ses_client.send_email(
+                      Source=sender_email,
+                      Destination={
+                          'ToAddresses': [recipient_email]
+                      },
+                      Message={
+                          'Subject': {
+                              'Data': email_subject,
+                              'Charset': 'UTF-8'
+                          },
+                          'Body': {
+                              'Text': {
+                                  'Data': email_body_text,
+                                  'Charset': 'UTF-8'
+                              },
+                              'Html': {
+                                  'Data': email_body_html,
+                                  'Charset': 'UTF-8'
+                              }
+                          }
+                      },
+                      ReplyToAddresses=[email]
+                  )
+                  
+                  return {
+                      'statusCode': 200,
+                      'headers': {
+                          'Access-Control-Allow-Origin': '*',
+                          'Content-Type': 'application/json'
+                      },
+                      'body': json.dumps({
+                          'message': 'Email sent successfully',
+                          'messageId': response['MessageId']
+                      })
+                  }
+                  
+              except Exception as e:
+                  print(f"Error: {str(e)}")
+                  return {
+                      'statusCode': 500,
+                      'headers': {
+                          'Access-Control-Allow-Origin': '*',
+                          'Content-Type': 'application/json'
+                      },
+                      'body': json.dumps({
+                          'error': 'Failed to send email',
+                          'details': str(e)
+                      })
+                  }
+
+  # API Gateway REST API
+  ContactFormApi:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: ContactFormAPI
+      Description: API for contact form submissions
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
+
+  # API Gateway Resource
+  ContactFormResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ContactFormApi
+      ParentId: !GetAtt ContactFormApi.RootResourceId
+      PathPart: contact
+
+  # API Gateway Method - POST
+  ContactFormMethodPost:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ContactFormApi
+      ResourceId: !Ref ContactFormResource
+      HttpMethod: POST
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${ContactFormFunction.Arn}/invocations
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+
+  # API Gateway Method - OPTIONS (for CORS)
+  ContactFormMethodOptions:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ContactFormApi
+      ResourceId: !Ref ContactFormResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'POST,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+            ResponseTemplates:
+              application/json: ''
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+
+  # API Gateway Deployment
+  ContactFormApiDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+      - ContactFormMethodPost
+      - ContactFormMethodOptions
+    Properties:
+      RestApiId: !Ref ContactFormApi
+      StageName: prod
+
+  # Lambda Permission for API Gateway
+  ContactFormLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref ContactFormFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ContactFormApi}/*/*
+
+Outputs:
+  ApiEndpoint:
+    Description: API Gateway endpoint URL for contact form
+    Value: !Sub https://${ContactFormApi}.execute-api.${AWS::Region}.amazonaws.com/prod/contact
+    Export:
+      Name: ContactFormApiEndpoint
+  
+  LambdaFunctionArn:
+    Description: Lambda function ARN
+    Value: !GetAtt ContactFormFunction.Arn
+  
+  ApiId:
+    Description: API Gateway ID
+    Value: !Ref ContactFormApi
+  
+  SetupInstructions:
+    Description: Next steps to complete setup
+    Value: |
+      1. Verify sender email in SES: aws ses verify-email-identity --email-address noreply@eshkolai.com
+      2. Verify recipient email in SES: aws ses verify-email-identity --email-address ariel.eshkol@gmail.com
+      3. Update script.js with the API endpoint URL shown above
+      4. Deploy the updated website files
