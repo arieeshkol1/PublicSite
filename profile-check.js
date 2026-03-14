@@ -559,6 +559,10 @@ async function getIPInfo() {
 
     // Cross-check: if secondary IP differs from primary, we have a split-tunnel VPN
     let splitTunnel = false, vpnGeoData = null;
+    // Browser-extension VPNs (Hola etc.) proxy fetch() calls through VPN,
+    // so primaryData = VPN IP, while Cloudflare trace = real IP.
+    // System-level VPNs are the opposite: primaryData = real, trace = VPN.
+    const isExtensionVPN = vpnReasons.some(r => r.includes('extension detected') || r.includes('watermark'));
     if (secondaryIP && secondaryIP !== primaryData.ip) {
         splitTunnel = true;
         vpnDetected = true;
@@ -576,6 +580,27 @@ async function getIPInfo() {
             } catch (e2) { /* ignore */ }
         }
     }
+
+    // Resolve which data is real vs VPN for display
+    let realData, realIP, vpnDisplayIP, vpnDisplayGeo;
+    if (splitTunnel && isExtensionVPN && vpnGeoData) {
+        // Extension VPN: fetch is proxied (primaryData = VPN), trace is real (vpnGeoData = real)
+        realData = vpnGeoData;
+        realIP = secondaryIP;
+        vpnDisplayIP = primaryData.ip;
+        vpnDisplayGeo = primaryData;
+    } else if (splitTunnel && vpnGeoData) {
+        // System VPN leak: primaryData = real, secondaryIP = VPN
+        realData = primaryData;
+        realIP = primaryData.ip;
+        vpnDisplayIP = secondaryIP;
+        vpnDisplayGeo = vpnGeoData;
+    } else {
+        realData = primaryData;
+        realIP = primaryData.ip;
+        vpnDisplayIP = null;
+        vpnDisplayGeo = null;
+    }
     
     // Build IP info display
     let infoHTML = '';
@@ -585,33 +610,33 @@ async function getIPInfo() {
             <span class="info-value" style="color: #065f46; font-family: inherit; font-size: 13px;">${vpnReasons.join(' • ')}</span>
         </div>`;
     }
-    if (splitTunnel && vpnGeoData) {
+    if (splitTunnel && vpnDisplayGeo) {
         infoHTML += `<div class="info-row" style="background: #fef3c7; border-radius: 8px; padding: 12px; margin-bottom: 8px;">
             <span class="info-label" style="color: #92400e;">⚠️ VPN Leak Detected</span>
-            <span class="info-value" style="color: #92400e; font-family: inherit; font-size: 13px;">Your VPN shows ${vpnGeoData.country_name || 'unknown'} but API calls leak your real IP in ${primaryData.country_name || 'unknown'}</span>
+            <span class="info-value" style="color: #92400e; font-family: inherit; font-size: 13px;">Your VPN shows ${vpnDisplayGeo.country_name || 'unknown'} but your real IP is in ${realData.country_name || 'unknown'}</span>
         </div>`;
         infoHTML += `<div class="info-row" style="background: #eff6ff; border-radius: 8px; padding: 8px 12px; margin-bottom: 4px;">
             <span class="info-label" style="color: #1e40af;">🌐 VPN IP</span>
-            <span class="info-value" style="color: #1e40af;">${secondaryIP} (${vpnGeoData.country_name || 'N/A'}, ${vpnGeoData.city || 'N/A'})</span>
+            <span class="info-value" style="color: #1e40af;">${vpnDisplayIP} (${vpnDisplayGeo.country_name || 'N/A'}, ${vpnDisplayGeo.city || 'N/A'})</span>
         </div>`;
     }
 
     infoHTML += `
-        <div class="info-row"><span class="info-label">${splitTunnel ? '🔓 Real IP Address' : 'IP Address'}</span><span class="info-value">${primaryData.ip || 'N/A'}</span></div>
-        <div class="info-row"><span class="info-label">ISP</span><span class="info-value">${primaryData.org || 'N/A'}</span></div>
-        <div class="info-row"><span class="info-label">Country</span><span class="info-value">${primaryData.country_name || 'N/A'} (${primaryData.country || 'N/A'})</span></div>
-        <div class="info-row"><span class="info-label">Region</span><span class="info-value">${primaryData.region || 'N/A'}</span></div>
-        <div class="info-row"><span class="info-label">City</span><span class="info-value">${primaryData.city || 'N/A'}</span></div>
-        <div class="info-row"><span class="info-label">Timezone</span><span class="info-value">${primaryData.timezone || 'N/A'}</span></div>
-        <div class="info-row"><span class="info-label">Latitude / Longitude</span><span class="info-value">${primaryData.latitude || 'N/A'} / ${primaryData.longitude || 'N/A'}</span></div>
+        <div class="info-row"><span class="info-label">${splitTunnel ? '🔓 Real IP Address' : 'IP Address'}</span><span class="info-value">${realIP || 'N/A'}</span></div>
+        <div class="info-row"><span class="info-label">ISP</span><span class="info-value">${realData.org || 'N/A'}</span></div>
+        <div class="info-row"><span class="info-label">Country</span><span class="info-value">${realData.country_name || 'N/A'} (${realData.country || 'N/A'})</span></div>
+        <div class="info-row"><span class="info-label">Region</span><span class="info-value">${realData.region || 'N/A'}</span></div>
+        <div class="info-row"><span class="info-label">City</span><span class="info-value">${realData.city || 'N/A'}</span></div>
+        <div class="info-row"><span class="info-label">Timezone</span><span class="info-value">${realData.timezone || 'N/A'}</span></div>
+        <div class="info-row"><span class="info-label">Latitude / Longitude</span><span class="info-value">${realData.latitude || 'N/A'} / ${realData.longitude || 'N/A'}</span></div>
     `;
     ipInfoDiv.innerHTML = infoHTML;
     
-    // Initialize map
-    if (splitTunnel && vpnGeoData && vpnGeoData.latitude && vpnGeoData.longitude) {
+    // Initialize map with correct real/VPN coordinates
+    if (splitTunnel && vpnDisplayGeo && vpnDisplayGeo.latitude && vpnDisplayGeo.longitude) {
         initMapDual(
-            primaryData.latitude, primaryData.longitude, primaryData.city || 'Unknown',
-            vpnGeoData.latitude, vpnGeoData.longitude, vpnGeoData.city || vpnGeoData.country_name || 'VPN'
+            realData.latitude, realData.longitude, realData.city || 'Unknown',
+            vpnDisplayGeo.latitude, vpnDisplayGeo.longitude, vpnDisplayGeo.city || vpnDisplayGeo.country_name || 'VPN'
         );
     } else if (latitude && longitude) {
         initMap(latitude, longitude, city, vpnDetected);
