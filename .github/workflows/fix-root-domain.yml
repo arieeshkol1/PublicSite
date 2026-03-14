@@ -20,18 +20,25 @@ jobs:
       - name: Request new certificate for both domains
         id: new-cert
         run: |
-          echo "=== Requesting new certificate ==="
+          echo "=== Checking for certificate covering BOTH eshkolai.com and www.eshkolai.com ==="
           
-          # Check if there's already a cert covering eshkolai.com
           EXISTING=""
           for ARN in $(aws acm list-certificates --certificate-statuses ISSUED --query "CertificateSummaryList[*].CertificateArn" --output text); do
-            DOMAIN=$(aws acm describe-certificate --certificate-arn $ARN --query "Certificate.DomainName" --output text)
-            SANS=$(aws acm describe-certificate --certificate-arn $ARN --query "Certificate.SubjectAlternativeNames" --output text)
-            echo "Cert $ARN: domain=$DOMAIN sans=$SANS"
-            if [ "$DOMAIN" = "eshkolai.com" ] || (echo "$SANS" | grep -qw "eshkolai.com" && echo "$SANS" | grep -qw "www.eshkolai.com"); then
+            # Get SANs as JSON array for exact matching
+            SANS_JSON=$(aws acm describe-certificate --certificate-arn $ARN \
+              --query "Certificate.SubjectAlternativeNames" --output json)
+            echo "Cert $ARN SANs: $SANS_JSON"
+            
+            # Check for EXACT match - must have eshkolai.com (not just www.eshkolai.com)
+            HAS_ROOT=$(echo "$SANS_JSON" | jq -r '.[] | select(. == "eshkolai.com")' | head -1)
+            HAS_WWW=$(echo "$SANS_JSON" | jq -r '.[] | select(. == "www.eshkolai.com")' | head -1)
+            
+            if [ "$HAS_ROOT" = "eshkolai.com" ] && [ "$HAS_WWW" = "www.eshkolai.com" ]; then
               EXISTING=$ARN
-              echo "Found existing cert covering both domains: $ARN"
+              echo "Found existing cert covering BOTH domains: $ARN"
               break
+            else
+              echo "  -> Skipping: root=$HAS_ROOT www=$HAS_WWW (need both)"
             fi
           done
           
@@ -40,18 +47,20 @@ jobs:
             echo "Using existing cert: $EXISTING"
             echo "NEED_WAIT=false" >> $GITHUB_OUTPUT
           else
-            # Also check pending certs
+            # Check pending certs
             for ARN in $(aws acm list-certificates --certificate-statuses PENDING_VALIDATION --query "CertificateSummaryList[*].CertificateArn" --output text 2>/dev/null); do
-              DOMAIN=$(aws acm describe-certificate --certificate-arn $ARN --query "Certificate.DomainName" --output text)
-              if [ "$DOMAIN" = "eshkolai.com" ]; then
-                echo "Found pending cert for eshkolai.com: $ARN"
+              SANS_JSON=$(aws acm describe-certificate --certificate-arn $ARN \
+                --query "Certificate.SubjectAlternativeNames" --output json)
+              HAS_ROOT=$(echo "$SANS_JSON" | jq -r '.[] | select(. == "eshkolai.com")' | head -1)
+              if [ "$HAS_ROOT" = "eshkolai.com" ]; then
+                echo "Found pending cert covering eshkolai.com: $ARN"
                 echo "CERT_ARN=$ARN" >> $GITHUB_OUTPUT
                 echo "NEED_WAIT=true" >> $GITHUB_OUTPUT
                 exit 0
               fi
             done
             
-            echo "Requesting new certificate..."
+            echo "No existing cert covers both domains. Requesting new certificate..."
             NEW_ARN=$(aws acm request-certificate \
               --domain-name "eshkolai.com" \
               --subject-alternative-names "www.eshkolai.com" \
