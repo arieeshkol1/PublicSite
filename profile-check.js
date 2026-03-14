@@ -308,14 +308,28 @@ async function detectAdBlocker() {
 
 // ─── Incognito / Private Mode Detection ───
 async function detectIncognito() {
-    // Method 1: Storage quota (Chrome incognito has limited quota)
+    // Method 1: Storage quota — Chrome incognito caps quota much lower than normal mode
+    // Normal Chrome: quota is typically > 1GB. Incognito: typically < 300MB
     if (navigator.storage && navigator.storage.estimate) {
         try {
             const est = await navigator.storage.estimate();
-            if (est.quota && est.quota < 120000000) return true; // ~120MB = incognito
+            if (est.quota && est.quota < 300000000) return true;
         } catch (e) { /* ignore */ }
     }
-    // Method 2: FileSystem API (not available in incognito on older Chrome)
+    // Method 2: StorageManager.persist() — in incognito, persist is auto-denied
+    if (navigator.storage && navigator.storage.persist) {
+        try {
+            const persisted = await navigator.storage.persist();
+            // In incognito, persist() returns false immediately without prompting
+            // But this alone isn't conclusive, so combine with quota check
+            if (!persisted) {
+                const est = await navigator.storage.estimate();
+                // If persist denied AND quota is under 1GB, likely incognito
+                if (est.quota && est.quota < 1000000000) return true;
+            }
+        } catch (e) { /* ignore */ }
+    }
+    // Method 3: FileSystem API (older Chrome)
     return new Promise((resolve) => {
         if (window.webkitRequestFileSystem) {
             window.webkitRequestFileSystem(window.TEMPORARY, 100, () => resolve(false), () => resolve(true));
