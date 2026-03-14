@@ -1,0 +1,190 @@
+name: Fix Root Domain SSL
+
+on:
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::991105135552:role/GitHubDeployRole
+          aws-region: us-east-1
+
+      - name: Step 1 - List all certificates
+        id: list-certs
+        run: |
+          echo "=== All Certificates ==="
+          aws acm list-certificates --output json
+          echo ""
+          
+          # Check each cert
+          for ARN in $(aws acm list-certificates --query "CertificateSummaryList[*].CertificateArn" --output text); do
+            echo "--- $ARN ---"
+            aws acm describe-certificate --certificate-arn $ARN \
+              --query "Certificate.{Domain:DomainName,SANs:SubjectAlternativeNames,Status:Status}" \
+              --output json
+          done
+
+      - name: Step 2 - Find or create valid certificate
+        id: get-cert
+        run: |
+          # Look for an ISSUED cert that covers eshkolai.com
+          VALID_CERT=""
+          for ARN in $(aws acm list-certificates --certificate-statuses ISSUED --query "CertificateSummaryList[*].CertificateArn" --output text); do
+            SANS=$(aws acm describe-certificate --certificate-arn $ARN --query "Certificate.SubjectAlternativeNames" --output text)
+            if echo "$SANS" | grep -qw "eshkolai.com"; then
+              VALID_CERT=$ARN
+              echo "Found ISSUED cert covering eshkolai.com: $ARN"
+              break
+            fi
+          done
+          
+          # Look for PENDING cert
+          if [ -z "$VALID_CERT" ]; then
+            PENDING_CERT=""
+            for ARN in $(aws acm list-certificates --certificate-statuses PENDING_VALIDATION --query "CertificateSummaryList[*].CertificateArn" --output text); do
+              SANS=$(aws acm describe-certificate --certificate-arn $ARN --query "Certificate.SubjectAlternativeNames" --output text)
+              if echo "$SANS" | grep -qw "eshkolai.com"; then
+                PENDING_CERT=$ARN
+                echo "Found PENDING cert: $ARN"
+                break
+              fi
+            done
+            
+            if [ -n "$PENDING_CERT" ]; then
+              echo "Adding DNS validation records for pending cert..."
+              VALIDATIONS=$(aws acm describe-certificate --certificate-arn $PENDING_CERT --query "Certificate.DomainValidationOptions" --output json)
+              echo "Validations: $VALIDATIONS"
+              
+              echo "$VALIDATIONS" | jq -c '.[]' | while read row; do
+                RNAME=$(echo $row | jq -r '.ResourceRecord.Name // empty')
+                RVALUE=$(echo $row | jq -r '.ResourceRecord.Value // empty')
+                VSTATUS=$(echo $row | jq -r '.ValidationStatus')
+                
+                if [ -n "$RNAME" ] && [ -n "$RVALUE" ]; then
+                  echo "Adding validation: $RNAME -> $RVALUE (status: $VSTATUS)"
+                  aws route53 change-resource-record-sets \
+                    --hosted-zone-id Z07144662HMOSSEBOKGII \
+                    --change-batch "{\"Changes\":[{\"Action\":\"UPSERT\",\"ResourceRecordSet\":{\"Name\":\"$RNAME\",\"Type\":\"CNAME\",\"TTL\":300,\"ResourceRecords\":[{\"Value\":\"$RVALUE\"}]}}]}"
+                fi
+              done
+              
+              echo "Waiting for validation (up to 5 min)..."
+              for i in $(seq 1 30); do
+                STATUS=$(aws acm describe-certificate --certificate-arn $PENDING_CERT --query "Certificate.Status" --output text)
+                echo "  Attempt $i: $STATUS"
+                if [ "$STATUS" = "ISSUED" ]; then
+                  VALID_CERT=$PENDING_CERT
+                  break
+                fi
+                sleep 10
+              done
+            fi
+          fi
+          
+          # If still no valid cert, request new one
+          if [ -z "$VALID_CERT" ]; then
+            echo "No valid cert found. Requesting new one..."
+            VALID_CERT=$(aws acm request-certificate \
+              --domain-name "eshkolai.com" \
+              --subject-alternative-names "www.eshkolai.com" \
+              --validation-method DNS \
+              --query 'CertificateArn' \
+              --output text)
+            echo "New cert: $VALID_CERT"
+            
+            sleep 20
+            
+            VALIDATIONS=$(aws acm describe-certificate --certificate-arn $VALID_CERT --query "Certificate.DomainValidationOptions" --output json)
+            echo "Validations: $VALIDATIONS"
+            
+            echo "$VALIDATIONS" | jq -c '.[]' | while read row; do
+              RNAME=$(echo $row | jq -r '.ResourceRecord.Name // empty')
+              RVALUE=$(echo $row | jq -r '.ResourceRecord.Value // empty')
+              if [ -n "$RNAME" ] && [ -n "$RVALUE" ]; then
+                echo "Adding: $RNAME -> $RVALUE"
+                aws route53 change-resource-record-sets \
+                  --hosted-zone-id Z07144662HMOSSEBOKGII \
+                  --change-batch "{\"Changes\":[{\"Action\":\"UPSERT\",\"ResourceRecordSet\":{\"Name\":\"$RNAME\",\"Type\":\"CNAME\",\"TTL\":300,\"ResourceRecords\":[{\"Value\":\"$RVALUE\"}]}}]}"
+              fi
+            done
+            
+            echo "Waiting for validation..."
+            aws acm wait certificate-validated --certificate-arn $VALID_CERT || true
+            
+            STATUS=$(aws acm describe-certificate --certificate-arn $VALID_CERT --query "Certificate.Status" --output text)
+            echo "Final status: $STATUS"
+            if [ "$STATUS" != "ISSUED" ]; then
+              echo "ERROR: Certificate not yet issued. Run workflow again in a few minutes."
+              exit 1
+            fi
+          fi
+          
+          echo "VALID_CERT=$VALID_CERT" >> $GITHUB_OUTPUT
+          echo "Using certificate: $VALID_CERT"
+
+      - name: Step 3 - Update CloudFront
+        run: |
+          VALID_CERT="${{ steps.get-cert.outputs.VALID_CERT }}"
+          echo "Updating CloudFront with cert: $VALID_CERT"
+          
+          aws cloudfront get-distribution-config --id E12JIHGHK40OLE > cf-full.json
+          ETAG=$(cat cf-full.json | jq -r '.ETag')
+          cat cf-full.json | jq '.DistributionConfig' > cf-config.json
+          
+          echo "Current config:"
+          cat cf-config.json | jq '{Aliases: .Aliases, Cert: .ViewerCertificate.ACMCertificateArn}'
+          
+          # Update aliases and cert
+          cat cf-config.json | jq \
+            --arg cert "$VALID_CERT" \
+            '.Aliases = {"Quantity": 2, "Items": ["www.eshkolai.com", "eshkolai.com"]} | .ViewerCertificate.ACMCertificateArn = $cert' \
+            > updated.json
+          
+          echo "Updated config:"
+          cat updated.json | jq '{Aliases: .Aliases, Cert: .ViewerCertificate.ACMCertificateArn}'
+          
+          aws cloudfront update-distribution \
+            --id E12JIHGHK40OLE \
+            --if-match $ETAG \
+            --distribution-config file://updated.json
+          
+          echo "CloudFront update initiated! Takes 5-15 minutes to deploy."
+
+      - name: Step 4 - Ensure Route 53 records
+        run: |
+          echo "Ensuring A record for eshkolai.com..."
+          aws route53 change-resource-record-sets \
+            --hosted-zone-id Z07144662HMOSSEBOKGII \
+            --change-batch '{
+              "Changes": [{
+                "Action": "UPSERT",
+                "ResourceRecordSet": {
+                  "Name": "eshkolai.com",
+                  "Type": "A",
+                  "AliasTarget": {
+                    "HostedZoneId": "Z2FDTNDATAQYW2",
+                    "DNSName": "d13k71im98zj35.cloudfront.net",
+                    "EvaluateTargetHealth": false
+                  }
+                }
+              }]
+            }'
+          echo "Done!"
+
+      - name: Summary
+        run: |
+          echo "=========================================="
+          echo "Fix Complete!"
+          echo "=========================================="
+          echo "Certificate: ${{ steps.get-cert.outputs.VALID_CERT }}"
+          echo "CloudFront will take 5-15 minutes to deploy"
+          echo "After that, eshkolai.com should work"
+          echo "=========================================="
