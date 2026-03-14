@@ -307,36 +307,60 @@ async function detectAdBlocker() {
 }
 
 // ─── Incognito / Private Mode Detection ───
+// Returns: 'yes' (incognito confirmed), 'no' (normal mode confirmed), 'unknown' (can't determine)
 async function detectIncognito() {
-    // Method 1: Storage quota — Chrome incognito caps quota much lower than normal mode
-    // Normal Chrome: quota is typically > 1GB. Incognito: typically < 300MB
+    // Firefox: FileSystem API is not available
+    if (typeof InstallTrigger !== 'undefined' || navigator.userAgent.includes('Firefox')) {
+        try {
+            const db = indexedDB.open('test');
+            return new Promise((resolve) => {
+                db.onerror = () => resolve('yes');
+                db.onsuccess = () => resolve('no');
+                setTimeout(() => resolve('unknown'), 1000);
+            });
+        } catch (e) { return 'yes'; }
+    }
+
+    // Safari: Safari still denies storage in private mode
+    if (/^((?!chrome|android).)*safari/i.test(navigator.userAgent)) {
+        try {
+            localStorage.setItem('_test_private', '1');
+            localStorage.removeItem('_test_private');
+            return 'no';
+        } catch (e) { return 'yes'; }
+    }
+
+    // Chrome / Chromium-based: Modern Chrome (v120+) has patched all reliable
+    // client-side incognito detection methods. The "predictable-reported-quota"
+    // flag makes storage quota identical in both modes. We try legacy methods
+    // first, but if they're inconclusive we honestly report "unknown".
+
+    // Legacy method: FileSystem API (works on older Chrome < 120)
+    const fsResult = await new Promise((resolve) => {
+        if (window.webkitRequestFileSystem) {
+            window.webkitRequestFileSystem(window.TEMPORARY, 100, () => resolve('no'), () => resolve('yes'));
+        } else {
+            resolve(null);
+        }
+    });
+    if (fsResult === 'yes') return 'yes';
+
+    // Legacy method: Storage quota check (works on older Chrome < 120)
     if (navigator.storage && navigator.storage.estimate) {
         try {
             const est = await navigator.storage.estimate();
-            if (est.quota && est.quota < 300000000) return true;
+            // Old incognito: quota < 300MB. Normal: > 1GB.
+            // New Chrome: reports usage + 10GB in both modes — can't distinguish.
+            if (est.quota && est.quota < 300000000) return 'yes';
         } catch (e) { /* ignore */ }
     }
-    // Method 2: StorageManager.persist() — in incognito, persist is auto-denied
-    if (navigator.storage && navigator.storage.persist) {
-        try {
-            const persisted = await navigator.storage.persist();
-            // In incognito, persist() returns false immediately without prompting
-            // But this alone isn't conclusive, so combine with quota check
-            if (!persisted) {
-                const est = await navigator.storage.estimate();
-                // If persist denied AND quota is under 1GB, likely incognito
-                if (est.quota && est.quota < 1000000000) return true;
-            }
-        } catch (e) { /* ignore */ }
-    }
-    // Method 3: FileSystem API (older Chrome)
-    return new Promise((resolve) => {
-        if (window.webkitRequestFileSystem) {
-            window.webkitRequestFileSystem(window.TEMPORARY, 100, () => resolve(false), () => resolve(true));
-        } else {
-            resolve(false);
-        }
-    });
+
+    // If FileSystem said 'no' (normal mode confirmed on older Chrome), trust it
+    if (fsResult === 'no') return 'no';
+
+    // Modern Chrome 120+: all detection methods are patched.
+    // Honestly report that we cannot determine the browsing mode.
+    return 'unknown';
 }
 
 // ─── Connection / Network Info ───
@@ -404,13 +428,22 @@ async function runAdvancedChecks() {
         </span>
     </div>`;
 
-    // Incognito Mode
+    // Incognito Mode (returns 'yes', 'no', or 'unknown')
     const incognito = await detectIncognito();
-    if (!incognito) visibilityFactors.notIncognito = true;
+    if (incognito === 'no') visibilityFactors.notIncognito = true;
+    // 'unknown' = can't determine, don't penalize the user
+    let incognitoStatus, incognitoColor;
+    if (incognito === 'yes') {
+        incognitoStatus = '🛡️ Active'; incognitoColor = '#10b981';
+    } else if (incognito === 'unknown') {
+        incognitoStatus = 'ℹ️ Unable to determine — modern browsers block detection'; incognitoColor = '#6b7280';
+    } else {
+        incognitoStatus = '⚠️ Not in private mode'; incognitoColor = '#f59e0b';
+    }
     html += `<div class="info-row">
         <span class="info-label">Private / Incognito Mode</span>
-        <span class="info-value" style="color:${incognito ? '#10b981' : '#f59e0b'}">
-            ${incognito ? '🛡️ Active' : '⚠️ Not in private mode'}
+        <span class="info-value" style="color:${incognitoColor}">
+            ${incognitoStatus}
         </span>
     </div>`;
 
