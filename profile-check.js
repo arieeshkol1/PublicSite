@@ -284,10 +284,13 @@ async function detectAdBlocker() {
             getComputedStyle(testAd).display === 'none';
         document.body.removeChild(testAd);
         if (blocked) return true;
-        // Also try fetching a known ad script URL
+        // Also try fetching a known ad script URL with timeout
         try {
-            const resp = await fetch('https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js', 
-                { method: 'HEAD', mode: 'no-cors' });
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(), 2000);
+            await fetch('https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js', 
+                { method: 'HEAD', mode: 'no-cors', signal: controller.signal });
+            clearTimeout(timer);
             return false;
         } catch (e) {
             return true;
@@ -334,6 +337,7 @@ async function runAdvancedChecks() {
     if (!advDiv) return;
     let html = '';
 
+  try {
     // WebRTC Leak
     const webrtc = await detectWebRTCLeak();
     let webrtcStatus, webrtcColor;
@@ -446,6 +450,11 @@ async function runAdvancedChecks() {
 
     advDiv.innerHTML = html;
     updateMeter();
+  } catch (err) {
+    console.error('Advanced checks error:', err);
+    advDiv.innerHTML = html || '<div class="info-row"><span class="info-label">Status</span><span class="info-value">Some checks could not complete</span></div>';
+    updateMeter();
+  }
 }
 
 // Fetch IP information - try multiple services and cross-check for VPN leaks
