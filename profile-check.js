@@ -158,7 +158,8 @@ function calculateVisibilityScore() {
 function updateMeter() {
     const visibilityScore = calculateVisibilityScore();
     const score = 100 - visibilityScore; // Invert: 100% = invisible, 0% = easy target
-    const angle = 90 - (score / 100) * 180;
+    // 0% (easy target) = left side (-90°), 100% (invisible) = right side (+90°)
+    const angle = -90 + (score / 100) * 180;
     const needle = document.getElementById('meter-needle');
     if (needle) {
         needle.setAttribute('transform', `rotate(${angle}, 150, 160)`);
@@ -168,28 +169,23 @@ function updateMeter() {
     const detail = document.getElementById('meter-score-detail');
     if (!label || !detail) return;
 
-    let labelText, detailText, color;
+    let labelText, color;
     if (score >= 80) {
         labelText = 'Invisible'; color = '#10b981';
-        detailText = 'You are well hidden — very little is exposed';
     } else if (score >= 60) {
         labelText = 'Low Profile'; color = '#84cc16';
-        detailText = 'Minimal information is visible about you';
     } else if (score >= 40) {
         labelText = 'Moderate'; color = '#f59e0b';
-        detailText = 'A fair amount of your profile is detectable';
     } else if (score >= 20) {
         labelText = 'Exposed'; color = '#f97316';
-        detailText = 'Most of your information is visible to websites';
     } else {
         labelText = 'Easy Target'; color = '#ef4444';
-        detailText = 'Your full profile is exposed — consider using a VPN';
     }
     label.textContent = `${score}% — ${labelText}`;
     label.style.color = color;
-    detail.textContent = vpnDetected
-        ? `🛡️ VPN Detected — ${detailText}`
-        : detailText;
+    detail.innerHTML = vpnDetected
+        ? '🛡️ VPN Detected — <a href="#recommendations" style="color:' + color + ';text-decoration:underline;">See our recommendations</a>'
+        : '<a href="#recommendations" style="color:' + color + ';text-decoration:underline;">See our recommendations to improve your score</a>';
 }
 
 // ─── WebRTC Local IP Leak Detection ───
