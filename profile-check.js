@@ -899,11 +899,134 @@ function getCookieInfo() {
     updateMeter();
 }
 
+// ─── Dynamic Recommendations based on actual findings ───
+function buildRecommendations() {
+    const el = document.getElementById('recommendations-list');
+    if (!el) return;
+    const recs = [];
+    const sev = { high: '#fef2f2;border:1px solid #fecaca', med: '#fefce8;border:1px solid #fde68a', low: '#eff6ff;border:1px solid #bfdbfe' };
+    const tc = { high: ['#991b1b','#7f1d1d'], med: ['#92400e','#78350f'], low: ['#1e40af','#1e3a5f'] };
+
+    if (visibilityFactors.ipDetected && !vpnDetected) {
+        recs.push({ s: 'high', icon: '🛡️', title: 'Your Real IP is Exposed', text: 'Your IP address (' + (document.querySelector('#ip-info .info-value')?.textContent || '') + ') is fully visible. Use a system-level VPN like NordVPN, Mullvad, or ProtonVPN to mask it.' });
+    }
+    if (vpnDetected && vpnReasons.some(r => r.includes('leak') || r.includes('Leak') || r.includes('Split'))) {
+        recs.push({ s: 'high', icon: '⚠️', title: 'Your VPN is Leaking', text: 'Your VPN has a split-tunnel leak — API calls bypass it and expose your real IP. Switch to a system-level VPN instead of a browser extension.' });
+    }
+    if (visibilityFactors.webrtcLeaking) {
+        recs.push({ s: 'high', icon: '📡', title: 'WebRTC is Leaking Your Local IP', text: 'Your browser is exposing local network IPs via WebRTC. Disable WebRTC in browser settings or install the WebRTC Leak Prevent extension.' });
+    }
+    if (visibilityFactors.canvasFingerprint) {
+        recs.push({ s: 'med', icon: '🎨', title: 'Canvas Fingerprint is Trackable', text: 'Websites can generate a unique fingerprint from your browser\'s canvas rendering. Use CanvasBlocker (Firefox) or Brave browser to randomize it.' });
+    }
+    if (visibilityFactors.audioFingerprint) {
+        recs.push({ s: 'med', icon: '🔊', title: 'Audio Fingerprint is Detectable', text: 'Your browser\'s audio processing creates a unique signature. Brave browser blocks this by default, or use the AudioContext Fingerprint Defender extension.' });
+    }
+    if (visibilityFactors.noAdBlocker) {
+        recs.push({ s: 'med', icon: '🧹', title: 'No Ad Blocker Detected', text: 'Without an ad blocker, tracking scripts and ads can profile you across sites. Install uBlock Origin — it\'s free and blocks ads, trackers, and fingerprinting scripts.' });
+    }
+    if (visibilityFactors.notIncognito) {
+        recs.push({ s: 'low', icon: '🕵️', title: 'Not Using Private Browsing', text: 'You\'re in a normal browsing session — cookies and history persist. Use Incognito/Private mode (Ctrl+Shift+N) for sensitive browsing.' });
+    }
+    if (visibilityFactors.dntDisabled) {
+        recs.push({ s: 'low', icon: '🔒', title: 'Do Not Track is Disabled', text: 'Your browser isn\'t sending DNT signals. Enable it in Settings → Privacy to signal your tracking preference to websites.' });
+    }
+    if (visibilityFactors.cookiesEnabled) {
+        recs.push({ s: 'low', icon: '🍪', title: 'Cookies are Enabled', text: 'Cookies allow sites to track your sessions. Block third-party cookies in browser settings and consider Cookie AutoDelete to auto-clear them.' });
+    }
+    if (visibilityFactors.connectionExposed) {
+        recs.push({ s: 'low', icon: '📶', title: 'Network Info is Exposed', text: 'Your connection type, speed, and latency are visible via the Network Information API. Firefox blocks this by default; consider switching browsers.' });
+    }
+    if (visibilityFactors.locationDetected && !vpnDetected) {
+        recs.push({ s: 'med', icon: '📍', title: 'Your Location is Visible', text: 'Your city and region are detectable from your IP. A VPN will mask your geographic location and show the VPN server\'s location instead.' });
+    }
+
+    if (recs.length === 0) {
+        el.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:24px;color:#065f46;"><h4 style="margin:0;font-size:18px;">✅ Great job! No major vulnerabilities found.</h4><p style="margin:8px 0 0;color:#064e3b;">Your privacy setup is solid. Keep your tools updated.</p></div>';
+        return;
+    }
+
+    el.innerHTML = recs.map(r => {
+        const [h, t] = tc[r.s];
+        return `<div style="padding:16px;border-radius:12px;background:${sev[r.s]};">
+            <h4 style="margin:0 0 8px;color:${h};font-size:16px;">${r.icon} ${r.title}</h4>
+            <p style="margin:0;color:${t};font-size:14px;line-height:1.6;">${r.text}</p>
+        </div>`;
+    }).join('');
+}
+
+// ─── Contact Form Handler + Auto-fill ───
+function initContactForm() {
+    const form = document.getElementById('contact-form');
+    if (!form) return;
+
+    // Auto-fill hidden fields with score and details
+    const score = 100 - calculateVisibilityScore();
+    const scoreField = document.getElementById('privacy-score');
+    const detailsField = document.getElementById('privacy-details');
+    if (scoreField) scoreField.value = score + '% Privacy Score';
+
+    const findings = [];
+    if (visibilityFactors.ipDetected) findings.push('IP exposed');
+    if (visibilityFactors.canvasFingerprint) findings.push('Canvas trackable');
+    if (visibilityFactors.audioFingerprint) findings.push('Audio trackable');
+    if (visibilityFactors.webrtcLeaking) findings.push('WebRTC leaking');
+    if (visibilityFactors.noAdBlocker) findings.push('No ad blocker');
+    if (visibilityFactors.notIncognito) findings.push('Not incognito');
+    if (visibilityFactors.dntDisabled) findings.push('DNT disabled');
+    if (visibilityFactors.connectionExposed) findings.push('Network exposed');
+    if (vpnDetected) findings.push('VPN: ' + vpnReasons.join(', '));
+    if (detailsField) detailsField.value = findings.join(' | ');
+
+    // Pre-fill message with score context
+    const msgField = document.getElementById('message');
+    if (msgField && !msgField.value) {
+        msgField.value = 'Hi, my privacy score is ' + score + '%. I\'d like to discuss hardening our organization\'s security posture.';
+    }
+
+    const formStatus = document.getElementById('form-status');
+    form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const formData = new FormData(form);
+        formStatus.className = 'form-status loading';
+        formStatus.textContent = 'Sending your message...';
+        try {
+            const response = await fetch('https://formsubmit.co/ajax/ariel.eshkol@gmail.com', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+                body: JSON.stringify({
+                    name: formData.get('name'),
+                    email: formData.get('email'),
+                    phone: formData.get('phone') || 'Not provided',
+                    company: formData.get('company') || 'Not provided',
+                    message: formData.get('message'),
+                    privacy_score: formData.get('privacy_score'),
+                    privacy_details: formData.get('privacy_details'),
+                    _subject: 'Security Inquiry from Profile Check — ' + formData.get('privacy_score'),
+                    _template: 'table'
+                })
+            });
+            const data = await response.json();
+            if (data.success === 'true' || response.ok) {
+                formStatus.className = 'form-status success';
+                formStatus.textContent = '✓ Message sent! We\'ll get back to you soon.';
+                form.reset();
+                setTimeout(() => { formStatus.style.display = 'none'; }, 5000);
+            } else { throw new Error('Send failed'); }
+        } catch (error) {
+            formStatus.className = 'form-status error';
+            formStatus.textContent = '✗ Failed to send. Please email us directly at ariel.eshkol@gmail.com';
+        }
+    });
+}
+
 // Initialize all checks
-document.addEventListener('DOMContentLoaded', () => {
-    getIPInfo();
+document.addEventListener('DOMContentLoaded', async () => {
+    await getIPInfo();
     getBrowserInfo();
     getSystemInfo();
     getCookieInfo();
-    runAdvancedChecks();
+    await runAdvancedChecks();
+    buildRecommendations();
+    initContactForm();
 });
