@@ -432,14 +432,15 @@ async function runAdvancedChecks() {
     // Incognito Mode (returns 'yes', 'no', or 'unknown')
     const incognito = await detectIncognito();
     if (incognito === 'no') visibilityFactors.notIncognito = true;
-    // 'unknown' = can't determine, don't penalize the user
+    // 'unknown' on Chrome 120+ = detection is blocked in BOTH modes, don't penalize
     let incognitoStatus, incognitoColor;
     if (incognito === 'yes') {
-        incognitoStatus = '🛡️ Active'; incognitoColor = '#10b981';
-    } else if (incognito === 'unknown') {
-        incognitoStatus = 'ℹ️ Unable to determine — modern browsers block detection'; incognitoColor = '#6b7280';
-    } else {
+        incognitoStatus = '🛡️ Private browsing active'; incognitoColor = '#10b981';
+    } else if (incognito === 'no') {
         incognitoStatus = '⚠️ Not in private mode'; incognitoColor = '#f59e0b';
+    } else {
+        // Chrome 120+ blocks detection — show as a neutral tip, not a finding
+        incognitoStatus = '💡 Use Incognito (Ctrl+Shift+N) for sensitive browsing'; incognitoColor = '#6b7280';
     }
     html += `<div class="info-row">
         <span class="info-label">Private / Incognito Mode</span>
