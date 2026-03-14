@@ -27,7 +27,7 @@ const VPN_KEYWORDS = [
     'fortinet', 'palo alto', 'cisco', 'anyconnect', 'openconnect',
     'm247', 'datacamp', 'leaseweb', 'choopa', 'frantech', 'buyvm',
     'quadranet', 'psychz', 'cogent', 'zenlayer', 'i2ts', 'tzulo',
-    'privax', 'kape', 'aura', 'pango', 'hotspot shield'
+    'privax', 'kape', 'aura', 'pango', 'hotspot shield', 'hola'
 ];
 
 function detectVPN(org, ipTimezone, extraData) {
@@ -63,6 +63,22 @@ function detectVPN(org, ipTimezone, extraData) {
     } catch (e) {
         reasons.push('WebRTC blocked');
     }
+    
+    // Detect browser-extension VPNs (Hola, etc.) by checking for known extensions
+    try {
+        const holaExtIds = ['gkojfkhlekighikafcpjkiklfbnlmeio'];
+        for (const extId of holaExtIds) {
+            if (document.querySelector(`[src*="${extId}"]`) || 
+                document.querySelector(`link[href*="${extId}"]`)) {
+                reasons.push('Hola VPN extension detected (⚠️ leaks real IP on API calls)');
+                break;
+            }
+        }
+        // Also check if Hola injects its watermark
+        if (document.querySelector('[class*="hola"]') || document.querySelector('[id*="hola"]')) {
+            reasons.push('Hola VPN watermark detected');
+        }
+    } catch (e) { /* ignore */ }
     
     vpnReasons = reasons;
     return reasons.length > 0;
