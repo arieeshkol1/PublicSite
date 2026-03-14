@@ -1,0 +1,179 @@
+name: Setup Root Domain (eshkolai.com)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::991105135552:role/GitHubDeployRole
+          aws-region: us-east-1
+
+      - name: Get current certificate ARN
+        id: get-cert
+        run: |
+          CERT_ARN=$(aws acm list-certificates \
+            --query "CertificateSummaryList[?DomainName=='www.eshkolai.com'].CertificateArn" \
+            --output text \
+            --region us-east-1)
+          echo "CERT_ARN=$CERT_ARN" >> $GITHUB_OUTPUT
+          echo "Current certificate: $CERT_ARN"
+          
+          # Check if cert covers eshkolai.com
+          SANS=$(aws acm describe-certificate \
+            --certificate-arn $CERT_ARN \
+            --query "Certificate.SubjectAlternativeNames" \
+            --output text \
+            --region us-east-1)
+          echo "SANs: $SANS"
+          
+          if echo "$SANS" | grep -q "eshkolai.com"; then
+            echo "CERT_COVERS_ROOT=true" >> $GITHUB_OUTPUT
+          else
+            echo "CERT_COVERS_ROOT=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Request new certificate if needed
+        id: new-cert
+        if: steps.get-cert.outputs.CERT_COVERS_ROOT == 'false'
+        run: |
+          echo "Requesting new certificate covering both domains..."
+          NEW_CERT_ARN=$(aws acm request-certificate \
+            --domain-name eshkolai.com \
+            --subject-alternative-names "www.eshkolai.com" \
+            --validation-method DNS \
+            --query 'CertificateArn' \
+            --output text \
+            --region us-east-1)
+          echo "NEW_CERT_ARN=$NEW_CERT_ARN" >> $GITHUB_OUTPUT
+          echo "New certificate ARN: $NEW_CERT_ARN"
+          
+          # Wait for DNS validation details
+          sleep 10
+          
+          # Get DNS validation records
+          VALIDATIONS=$(aws acm describe-certificate \
+            --certificate-arn $NEW_CERT_ARN \
+            --query "Certificate.DomainValidationOptions" \
+            --output json \
+            --region us-east-1)
+          echo "Validation records: $VALIDATIONS"
+          
+          # Create DNS validation records in Route 53
+          for row in $(echo "$VALIDATIONS" | jq -c '.[]'); do
+            RECORD_NAME=$(echo $row | jq -r '.ResourceRecord.Name')
+            RECORD_VALUE=$(echo $row | jq -r '.ResourceRecord.Value')
+            
+            echo "Adding validation record: $RECORD_NAME -> $RECORD_VALUE"
+            
+            aws route53 change-resource-record-sets \
+              --hosted-zone-id Z07144662HMOSSEBOKGII \
+              --change-batch "{
+                \"Changes\": [{
+                  \"Action\": \"UPSERT\",
+                  \"ResourceRecordSet\": {
+                    \"Name\": \"$RECORD_NAME\",
+                    \"Type\": \"CNAME\",
+                    \"TTL\": 300,
+                    \"ResourceRecords\": [{\"Value\": \"$RECORD_VALUE\"}]
+                  }
+                }]
+              }"
+          done
+          
+          echo "Waiting for certificate validation..."
+          aws acm wait certificate-validated \
+            --certificate-arn $NEW_CERT_ARN \
+            --region us-east-1 || echo "Still validating, continuing..."
+
+      - name: Determine certificate to use
+        id: cert-to-use
+        run: |
+          if [ "${{ steps.get-cert.outputs.CERT_COVERS_ROOT }}" == "true" ]; then
+            echo "CERT=${{ steps.get-cert.outputs.CERT_ARN }}" >> $GITHUB_OUTPUT
+          else
+            echo "CERT=${{ steps.new-cert.outputs.NEW_CERT_ARN }}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Add eshkolai.com to CloudFront
+        run: |
+          DIST_ID="E12JIHGHK40OLE"
+          CERT_ARN="${{ steps.cert-to-use.outputs.CERT }}"
+          
+          # Get current config
+          ETAG=$(aws cloudfront get-distribution-config \
+            --id $DIST_ID \
+            --query 'ETag' \
+            --output text)
+          
+          aws cloudfront get-distribution-config \
+            --id $DIST_ID \
+            --query 'DistributionConfig' > dist-config.json
+          
+          # Check if eshkolai.com is already in aliases
+          CURRENT_ALIASES=$(cat dist-config.json | jq '.Aliases.Items')
+          echo "Current aliases: $CURRENT_ALIASES"
+          
+          if echo "$CURRENT_ALIASES" | grep -q "eshkolai.com"; then
+            echo "eshkolai.com already in CloudFront aliases"
+          else
+            echo "Adding eshkolai.com to CloudFront aliases..."
+            
+            # Update aliases to include both domains
+            cat dist-config.json | jq '.Aliases = {"Quantity": 2, "Items": ["www.eshkolai.com", "eshkolai.com"]}' > updated-config.json
+            
+            # Update certificate if we have a new one
+            if [ -n "$CERT_ARN" ]; then
+              cat updated-config.json | jq --arg cert "$CERT_ARN" '.ViewerCertificate.ACMCertificateArn = $cert' > final-config.json
+              mv final-config.json updated-config.json
+            fi
+            
+            aws cloudfront update-distribution \
+              --id $DIST_ID \
+              --if-match $ETAG \
+              --distribution-config file://updated-config.json
+            
+            echo "CloudFront updated with eshkolai.com"
+          fi
+
+      - name: Add Route 53 A record for eshkolai.com
+        run: |
+          echo "Adding A alias record for eshkolai.com -> CloudFront..."
+          
+          aws route53 change-resource-record-sets \
+            --hosted-zone-id Z07144662HMOSSEBOKGII \
+            --change-batch '{
+              "Changes": [{
+                "Action": "UPSERT",
+                "ResourceRecordSet": {
+                  "Name": "eshkolai.com",
+                  "Type": "A",
+                  "AliasTarget": {
+                    "HostedZoneId": "Z2FDTNDATAQYW2",
+                    "DNSName": "d13k71im98zj35.cloudfront.net",
+                    "EvaluateTargetHealth": false
+                  }
+                }
+              }]
+            }'
+          
+          echo "Route 53 A record created for eshkolai.com"
+
+      - name: Summary
+        run: |
+          echo "=========================================="
+          echo "Root Domain Setup Complete!"
+          echo "=========================================="
+          echo ""
+          echo "eshkolai.com -> CloudFront -> www.eshkolai.com"
+          echo ""
+          echo "DNS propagation may take a few minutes."
+          echo "=========================================="
