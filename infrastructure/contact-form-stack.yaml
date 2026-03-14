@@ -9,7 +9,7 @@ Parameters:
   
   SenderEmail:
     Type: String
-    Default: noreply@eshkolai.com
+    Default: ariel.eshkol@gmail.com
     Description: Email address to send from (must be verified in SES)
   
   DomainName:
