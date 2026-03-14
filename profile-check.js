@@ -1,3 +1,72 @@
+// Visibility score tracker
+const visibilityFactors = {
+    ipDetected: false,
+    locationDetected: false,
+    ispDetected: false,
+    browserDetailed: false,
+    platformDetected: false,
+    screenDetected: false,
+    cookiesEnabled: false,
+    languageDetected: false,
+    hardwareDetected: false,
+    dntDisabled: false
+};
+
+function calculateVisibilityScore() {
+    let score = 0;
+    const weights = {
+        ipDetected: 20,
+        locationDetected: 15,
+        ispDetected: 10,
+        browserDetailed: 10,
+        platformDetected: 10,
+        screenDetected: 5,
+        cookiesEnabled: 10,
+        languageDetected: 5,
+        hardwareDetected: 5,
+        dntDisabled: 10
+    };
+    for (const [key, detected] of Object.entries(visibilityFactors)) {
+        if (detected) score += weights[key] || 0;
+    }
+    return Math.min(score, 100);
+}
+
+function updateMeter() {
+    const score = calculateVisibilityScore();
+    // Map 0-100 score to -90 to 90 degrees rotation
+    const angle = -90 + (score / 100) * 180;
+    const needle = document.getElementById('meter-needle');
+    if (needle) {
+        needle.setAttribute('transform', `rotate(${angle}, 150, 160)`);
+    }
+
+    const label = document.getElementById('meter-score-label');
+    const detail = document.getElementById('meter-score-detail');
+    if (!label || !detail) return;
+
+    let labelText, detailText, color;
+    if (score <= 20) {
+        labelText = 'Invisible'; color = '#10b981';
+        detailText = 'You are well hidden — very little is exposed';
+    } else if (score <= 40) {
+        labelText = 'Low Profile'; color = '#84cc16';
+        detailText = 'Minimal information is visible about you';
+    } else if (score <= 60) {
+        labelText = 'Moderate'; color = '#f59e0b';
+        detailText = 'A fair amount of your profile is detectable';
+    } else if (score <= 80) {
+        labelText = 'Exposed'; color = '#f97316';
+        detailText = 'Most of your information is visible to websites';
+    } else {
+        labelText = 'Easy Target'; color = '#ef4444';
+        detailText = 'Your full profile is exposed — consider using a VPN';
+    }
+    label.textContent = `${score}% — ${labelText}`;
+    label.style.color = color;
+    detail.textContent = detailText;
+}
+
 // Fetch IP information - try multiple services for reliability
 async function getIPInfo() {
     const ipInfoDiv = document.getElementById('ip-info');
@@ -53,6 +122,12 @@ async function getIPInfo() {
         if (latitude && longitude) {
             initMap(latitude, longitude, city);
         }
+
+        // Update visibility score
+        if (data.ip) visibilityFactors.ipDetected = true;
+        if (data.city || data.region) visibilityFactors.locationDetected = true;
+        if (data.org) visibilityFactors.ispDetected = true;
+        updateMeter();
     } catch (error) {
         // Fallback to ipify + ip-api.com
         try {
@@ -102,6 +177,12 @@ async function getIPInfo() {
             if (latitude && longitude) {
                 initMap(latitude, longitude, city);
             }
+
+            // Update visibility score
+            if (ip) visibilityFactors.ipDetected = true;
+            if (geoData.city || geoData.regionName) visibilityFactors.locationDetected = true;
+            if (geoData.isp) visibilityFactors.ispDetected = true;
+            updateMeter();
         } catch (fallbackError) {
             ipInfoDiv.innerHTML = `
                 <div class="info-row">
@@ -177,6 +258,13 @@ function getBrowserInfo() {
             <span class="info-value">${navigator.onLine ? 'Online' : 'Offline'}</span>
         </div>
     `;
+
+    // Update visibility score
+    if (ua && ua.length > 10) visibilityFactors.browserDetailed = true;
+    if (navigator.language) visibilityFactors.languageDetected = true;
+    const dnt = navigator.doNotTrack || window.doNotTrack;
+    if (!dnt || dnt === '0' || dnt === 'unspecified') visibilityFactors.dntDisabled = true;
+    updateMeter();
 }
 
 // Get system information
@@ -209,6 +297,12 @@ function getSystemInfo() {
             <span class="info-value">${navigator.hardwareConcurrency || 'N/A'} cores</span>
         </div>
     `;
+
+    // Update visibility score
+    if (navigator.platform) visibilityFactors.platformDetected = true;
+    if (screen.width && screen.height) visibilityFactors.screenDetected = true;
+    if (navigator.hardwareConcurrency) visibilityFactors.hardwareDetected = true;
+    updateMeter();
 }
 
 // Get HTTP headers information
@@ -306,6 +400,10 @@ function getCookieInfo() {
     `;
     
     cookieInfoDiv.innerHTML = cookieHTML;
+
+    // Update visibility score
+    if (navigator.cookieEnabled) visibilityFactors.cookiesEnabled = true;
+    updateMeter();
 }
 
 // Initialize all checks
