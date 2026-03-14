@@ -147,10 +147,16 @@ function calculateVisibilityScore() {
         if (detected) score += weights[key] || 0;
     }
     // VPN hides real IP, location, and ISP — reduce those contributions
+    // But only if VPN actually masks the IP (not browser-extension VPNs that leak on fetch)
     if (vpnDetected) {
-        if (visibilityFactors.ipDetected) score -= 12;
-        if (visibilityFactors.locationDetected) score -= 10;
-        if (visibilityFactors.ispDetected) score -= 6;
+        const isLeakyVPN = vpnReasons.some(r => r.includes('leaks real IP') || r.includes('Split-tunnel') || r.includes('watermark'));
+        if (!isLeakyVPN) {
+            // Full VPN — IP/location/ISP are masked
+            if (visibilityFactors.ipDetected) score -= 12;
+            if (visibilityFactors.locationDetected) score -= 10;
+            if (visibilityFactors.ispDetected) score -= 6;
+        }
+        // Leaky VPNs get no deduction — your real IP is still exposed
     }
     return Math.max(0, Math.min(score, 100));
 }
@@ -916,8 +922,10 @@ function buildRecommendations() {
     const sev = { high: '#fef2f2;border:1px solid #fecaca', med: '#fefce8;border:1px solid #fde68a', low: '#eff6ff;border:1px solid #bfdbfe' };
     const tc = { high: ['#991b1b','#7f1d1d'], med: ['#92400e','#78350f'], low: ['#1e40af','#1e3a5f'] };
 
-    if (visibilityFactors.ipDetected && !vpnDetected) {
-        recs.push({ s: 'high', icon: '🛡️', title: 'Your Real IP is Exposed', text: 'Your IP address (' + (document.querySelector('#ip-info .info-value')?.textContent || '') + ') is fully visible. Use a system-level VPN like NordVPN, Mullvad, or ProtonVPN to mask it.' });
+    const leakyVPN = vpnDetected && vpnReasons.some(r => r.includes('leaks real IP') || r.includes('Split-tunnel') || r.includes('watermark'));
+
+    if (visibilityFactors.ipDetected && (!vpnDetected || leakyVPN)) {
+        recs.push({ s: 'high', icon: '🛡️', title: 'Your Real IP is Exposed', text: 'Your IP address (' + (document.querySelector('#ip-info .info-value')?.textContent || '') + ') is fully visible.' + (leakyVPN ? ' Your browser VPN extension does NOT protect API calls — switch to a system-level VPN.' : ' Use a system-level VPN like NordVPN, Mullvad, or ProtonVPN to mask it.') });
     }
     if (vpnDetected && vpnReasons.some(r => r.includes('leak') || r.includes('Leak') || r.includes('Split'))) {
         recs.push({ s: 'high', icon: '⚠️', title: 'Your VPN is Leaking', text: 'Your VPN has a split-tunnel leak — API calls bypass it and expose your real IP. Switch to a system-level VPN instead of a browser extension.' });
@@ -946,7 +954,7 @@ function buildRecommendations() {
     if (visibilityFactors.connectionExposed) {
         recs.push({ s: 'low', icon: '📶', title: 'Network Info is Exposed', text: 'Your connection type, speed, and latency are visible via the Network Information API. Firefox blocks this by default; consider switching browsers.' });
     }
-    if (visibilityFactors.locationDetected && !vpnDetected) {
+    if (visibilityFactors.locationDetected && (!vpnDetected || leakyVPN)) {
         recs.push({ s: 'med', icon: '📍', title: 'Your Location is Visible', text: 'Your city and region are detectable from your IP. A VPN will mask your geographic location and show the VPN server\'s location instead.' });
     }
 
