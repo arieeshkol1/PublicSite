@@ -64,9 +64,11 @@ function calculateVisibilityScore() {
 }
 
 function updateMeter() {
-    const score = calculateVisibilityScore();
+    const visibilityScore = calculateVisibilityScore();
+    const score = 100 - visibilityScore; // Invert: 100% = invisible, 0% = easy target
     // Map 0-100 score to -90 to 90 degrees rotation
-    const angle = -90 + (score / 100) * 180;
+    // 0% (easy target) = right side (90°), 100% (invisible) = left side (-90°)
+    const angle = 90 - (score / 100) * 180;
     const needle = document.getElementById('meter-needle');
     if (needle) {
         needle.setAttribute('transform', `rotate(${angle}, 150, 160)`);
@@ -77,16 +79,16 @@ function updateMeter() {
     if (!label || !detail) return;
 
     let labelText, detailText, color;
-    if (score <= 20) {
+    if (score >= 80) {
         labelText = 'Invisible'; color = '#10b981';
         detailText = 'You are well hidden — very little is exposed';
-    } else if (score <= 40) {
+    } else if (score >= 60) {
         labelText = 'Low Profile'; color = '#84cc16';
         detailText = 'Minimal information is visible about you';
-    } else if (score <= 60) {
+    } else if (score >= 40) {
         labelText = 'Moderate'; color = '#f59e0b';
         detailText = 'A fair amount of your profile is detectable';
-    } else if (score <= 80) {
+    } else if (score >= 20) {
         labelText = 'Exposed'; color = '#f97316';
         detailText = 'Most of your information is visible to websites';
     } else {
@@ -151,13 +153,14 @@ async function getIPInfo() {
             </div>
         `;
         
+        // Detect VPN first (before map)
+        vpnDetected = detectVPN(data.org, data.timezone);
+        
         // Initialize map if we have coordinates
         if (latitude && longitude) {
-            initMap(latitude, longitude, city);
+            initMap(latitude, longitude, city, vpnDetected);
         }
 
-        // Detect VPN
-        vpnDetected = detectVPN(data.org, data.timezone);
         if (vpnDetected) {
             ipInfoDiv.innerHTML = `
                 <div class="info-row" style="background: #fef3c7; border-radius: 8px; padding: 12px; margin-bottom: 8px;">
@@ -217,13 +220,14 @@ async function getIPInfo() {
                 </div>
             `;
             
+            // Detect VPN first (before map)
+            vpnDetected = detectVPN(geoData.isp, geoData.timezone);
+            
             // Initialize map if we have coordinates
             if (latitude && longitude) {
-                initMap(latitude, longitude, city);
+                initMap(latitude, longitude, city, vpnDetected);
             }
 
-            // Detect VPN
-            vpnDetected = detectVPN(geoData.isp, geoData.timezone);
             if (vpnDetected) {
                 ipInfoDiv.innerHTML = `
                     <div class="info-row" style="background: #fef3c7; border-radius: 8px; padding: 12px; margin-bottom: 8px;">
@@ -254,32 +258,130 @@ async function getIPInfo() {
 }
 
 // Initialize map with location
-function initMap(lat, lon, city) {
+function initMap(lat, lon, city, isVPN) {
     try {
-        // Create map centered on the location
-        const map = L.map('map').setView([lat, lon], 10);
+        const map = L.map('map').setView([lat, lon], isVPN ? 4 : 10);
         
-        // Add OpenStreetMap tiles
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
             attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
             maxZoom: 19
         }).addTo(map);
-        
-        // Add marker at the location
-        const marker = L.marker([lat, lon]).addTo(map);
-        marker.bindPopup(`<b>Your Estimated Location</b><br>${city}`).openPopup();
-        
-        // Add circle to show approximate area
-        L.circle([lat, lon], {
-            color: '#0066ff',
-            fillColor: '#0066ff',
-            fillOpacity: 0.2,
-            radius: 5000 // 5km radius
-        }).addTo(map);
+
+        if (isVPN) {
+            // VPN location marker (orange)
+            const vpnIcon = L.divIcon({
+                html: '<div style="background:#f59e0b;width:16px;height:16px;border-radius:50%;border:3px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,0.3);"></div>',
+                iconSize: [16, 16], iconAnchor: [8, 8], className: ''
+            });
+            const vpnMarker = L.marker([lat, lon], { icon: vpnIcon }).addTo(map);
+            vpnMarker.bindPopup(`<b>🛡️ VPN Server Location</b><br>${city}<br><span style="color:#92400e;font-size:12px;">This is NOT your real location</span>`).openPopup();
+            
+            L.circle([lat, lon], {
+                color: '#f59e0b', fillColor: '#f59e0b', fillOpacity: 0.15, radius: 20000,
+                dashArray: '8, 8'
+            }).addTo(map);
+
+            // Try to estimate real location from browser timezone
+            const browserTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+            const tzCoords = getTimezoneCoords(browserTz);
+            if (tzCoords) {
+                const realIcon = L.divIcon({
+                    html: '<div style="background:#10b981;width:16px;height:16px;border-radius:50%;border:3px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,0.3);"></div>',
+                    iconSize: [16, 16], iconAnchor: [8, 8], className: ''
+                });
+                const realMarker = L.marker([tzCoords.lat, tzCoords.lon], { icon: realIcon }).addTo(map);
+                realMarker.bindPopup(`<b>📍 Estimated Real Location</b><br>${browserTz.replace('_', ' ')}<br><span style="color:#065f46;font-size:12px;">Based on your browser timezone</span>`);
+                
+                L.circle([tzCoords.lat, tzCoords.lon], {
+                    color: '#10b981', fillColor: '#10b981', fillOpacity: 0.15, radius: 50000
+                }).addTo(map);
+
+                // Draw dashed line between VPN and real location
+                L.polyline([[lat, lon], [tzCoords.lat, tzCoords.lon]], {
+                    color: '#6b7280', weight: 2, dashArray: '6, 8', opacity: 0.6
+                }).addTo(map);
+
+                // Fit map to show both markers
+                map.fitBounds([[lat, lon], [tzCoords.lat, tzCoords.lon]], { padding: [40, 40] });
+            }
+
+            // Add legend
+            const legend = L.control({ position: 'bottomright' });
+            legend.onAdd = function() {
+                const div = L.DomUtil.create('div');
+                div.style.cssText = 'background:white;padding:8px 12px;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,0.15);font-size:12px;line-height:1.8;';
+                div.innerHTML = '<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#f59e0b;margin-right:6px;"></span>VPN Location<br>' +
+                    '<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#10b981;margin-right:6px;"></span>Estimated Real';
+                return div;
+            };
+            legend.addTo(map);
+        } else {
+            // Normal (no VPN) marker
+            const marker = L.marker([lat, lon]).addTo(map);
+            marker.bindPopup(`<b>Your Detected Location</b><br>${city}`).openPopup();
+            
+            L.circle([lat, lon], {
+                color: '#ef4444', fillColor: '#ef4444', fillOpacity: 0.2, radius: 5000
+            }).addTo(map);
+        }
     } catch (error) {
         console.error('Error initializing map:', error);
         document.getElementById('map').innerHTML = '<p style="text-align: center; padding: 20px; color: #6b7280;">Unable to load map</p>';
     }
+}
+
+// Map common timezones to approximate coordinates
+function getTimezoneCoords(tz) {
+    const tzMap = {
+        'Asia/Jerusalem': { lat: 31.77, lon: 35.22 },
+        'Asia/Tel_Aviv': { lat: 32.07, lon: 34.77 },
+        'Europe/London': { lat: 51.51, lon: -0.13 },
+        'Europe/Paris': { lat: 48.86, lon: 2.35 },
+        'Europe/Berlin': { lat: 52.52, lon: 13.41 },
+        'Europe/Amsterdam': { lat: 52.37, lon: 4.90 },
+        'Europe/Rome': { lat: 41.90, lon: 12.50 },
+        'Europe/Madrid': { lat: 40.42, lon: -3.70 },
+        'Europe/Moscow': { lat: 55.76, lon: 37.62 },
+        'Europe/Istanbul': { lat: 41.01, lon: 28.98 },
+        'Europe/Warsaw': { lat: 52.23, lon: 21.01 },
+        'Europe/Zurich': { lat: 47.38, lon: 8.54 },
+        'Europe/Vienna': { lat: 48.21, lon: 16.37 },
+        'Europe/Stockholm': { lat: 59.33, lon: 18.07 },
+        'Europe/Oslo': { lat: 59.91, lon: 10.75 },
+        'Europe/Helsinki': { lat: 60.17, lon: 24.94 },
+        'Europe/Athens': { lat: 37.98, lon: 23.73 },
+        'Europe/Bucharest': { lat: 44.43, lon: 26.10 },
+        'Europe/Prague': { lat: 50.08, lon: 14.44 },
+        'Europe/Dublin': { lat: 53.35, lon: -6.26 },
+        'Europe/Lisbon': { lat: 38.72, lon: -9.14 },
+        'America/New_York': { lat: 40.71, lon: -74.01 },
+        'America/Chicago': { lat: 41.88, lon: -87.63 },
+        'America/Denver': { lat: 39.74, lon: -104.99 },
+        'America/Los_Angeles': { lat: 34.05, lon: -118.24 },
+        'America/Toronto': { lat: 43.65, lon: -79.38 },
+        'America/Vancouver': { lat: 49.28, lon: -123.12 },
+        'America/Sao_Paulo': { lat: -23.55, lon: -46.63 },
+        'America/Mexico_City': { lat: 19.43, lon: -99.13 },
+        'America/Buenos_Aires': { lat: -34.60, lon: -58.38 },
+        'America/Bogota': { lat: 4.71, lon: -74.07 },
+        'America/Lima': { lat: -12.05, lon: -77.04 },
+        'Asia/Tokyo': { lat: 35.68, lon: 139.69 },
+        'Asia/Shanghai': { lat: 31.23, lon: 121.47 },
+        'Asia/Hong_Kong': { lat: 22.32, lon: 114.17 },
+        'Asia/Singapore': { lat: 1.35, lon: 103.82 },
+        'Asia/Dubai': { lat: 25.20, lon: 55.27 },
+        'Asia/Kolkata': { lat: 22.57, lon: 88.36 },
+        'Asia/Seoul': { lat: 37.57, lon: 126.98 },
+        'Asia/Bangkok': { lat: 13.76, lon: 100.50 },
+        'Asia/Taipei': { lat: 25.03, lon: 121.57 },
+        'Australia/Sydney': { lat: -33.87, lon: 151.21 },
+        'Australia/Melbourne': { lat: -37.81, lon: 144.96 },
+        'Pacific/Auckland': { lat: -36.85, lon: 174.76 },
+        'Africa/Cairo': { lat: 30.04, lon: 31.24 },
+        'Africa/Johannesburg': { lat: -26.20, lon: 28.05 },
+        'Africa/Lagos': { lat: 6.52, lon: 3.38 }
+    };
+    return tzMap[tz] || null;
 }
 
 // Get browser information
