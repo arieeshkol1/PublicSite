@@ -408,6 +408,14 @@ section {
     font-size: 12px;
 }
 
+.btn-service {
+    margin-top: 20px;
+    padding: 10px 20px;
+    font-size: 14px;
+    width: 100%;
+    justify-content: center;
+}
+
 /* Expertise Section */
 .expertise {
     background: var(--white);
