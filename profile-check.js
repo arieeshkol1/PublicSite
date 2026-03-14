@@ -12,6 +12,31 @@ const visibilityFactors = {
     dntDisabled: false
 };
 
+let vpnDetected = false;
+
+// Common VPN/proxy provider keywords
+const VPN_KEYWORDS = [
+    'vpn', 'proxy', 'tunnel', 'private', 'express', 'nord', 'surfshark',
+    'cyberghost', 'mullvad', 'proton', 'windscribe', 'pia ', 'ipvanish',
+    'hotspot', 'hide.me', 'torguard', 'astrill', 'purevpn', 'strongvpn',
+    'hosting', 'datacenter', 'data center', 'cloud', 'server', 'colocation',
+    'digitalocean', 'linode', 'vultr', 'hetzner', 'ovh', 'amazon', 'google cloud',
+    'microsoft azure', 'cloudflare warp'
+];
+
+function detectVPN(org, ipTimezone) {
+    if (!org) return false;
+    const orgLower = org.toLowerCase();
+    // Check ISP name against known VPN/datacenter keywords
+    if (VPN_KEYWORDS.some(kw => orgLower.includes(kw))) return true;
+    // Check timezone mismatch: browser timezone vs IP-reported timezone
+    if (ipTimezone) {
+        const browserTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        if (browserTz && ipTimezone !== browserTz) return true;
+    }
+    return false;
+}
+
 function calculateVisibilityScore() {
     let score = 0;
     const weights = {
@@ -29,7 +54,13 @@ function calculateVisibilityScore() {
     for (const [key, detected] of Object.entries(visibilityFactors)) {
         if (detected) score += weights[key] || 0;
     }
-    return Math.min(score, 100);
+    // VPN hides real IP, location, and ISP — reduce those contributions
+    if (vpnDetected) {
+        if (visibilityFactors.ipDetected) score -= 15;      // IP is masked
+        if (visibilityFactors.locationDetected) score -= 12; // Location is fake
+        if (visibilityFactors.ispDetected) score -= 8;       // ISP is VPN provider
+    }
+    return Math.max(0, Math.min(score, 100));
 }
 
 function updateMeter() {
@@ -64,7 +95,9 @@ function updateMeter() {
     }
     label.textContent = `${score}% — ${labelText}`;
     label.style.color = color;
-    detail.textContent = detailText;
+    detail.textContent = vpnDetected
+        ? `🛡️ VPN Detected — ${detailText}`
+        : detailText;
 }
 
 // Fetch IP information - try multiple services for reliability
@@ -123,6 +156,17 @@ async function getIPInfo() {
             initMap(latitude, longitude, city);
         }
 
+        // Detect VPN
+        vpnDetected = detectVPN(data.org, data.timezone);
+        if (vpnDetected) {
+            ipInfoDiv.innerHTML = `
+                <div class="info-row" style="background: #fef3c7; border-radius: 8px; padding: 12px; margin-bottom: 8px;">
+                    <span class="info-label" style="color: #92400e;">🛡️ VPN / Proxy Detected</span>
+                    <span class="info-value" style="color: #92400e;">Your real IP and location are hidden</span>
+                </div>
+            ` + ipInfoDiv.innerHTML;
+        }
+
         // Update visibility score
         if (data.ip) visibilityFactors.ipDetected = true;
         if (data.city || data.region) visibilityFactors.locationDetected = true;
@@ -176,6 +220,17 @@ async function getIPInfo() {
             // Initialize map if we have coordinates
             if (latitude && longitude) {
                 initMap(latitude, longitude, city);
+            }
+
+            // Detect VPN
+            vpnDetected = detectVPN(geoData.isp, geoData.timezone);
+            if (vpnDetected) {
+                ipInfoDiv.innerHTML = `
+                    <div class="info-row" style="background: #fef3c7; border-radius: 8px; padding: 12px; margin-bottom: 8px;">
+                        <span class="info-label" style="color: #92400e;">🛡️ VPN / Proxy Detected</span>
+                        <span class="info-value" style="color: #92400e;">Your real IP and location are hidden</span>
+                    </div>
+                ` + ipInfoDiv.innerHTML;
             }
 
             // Update visibility score
