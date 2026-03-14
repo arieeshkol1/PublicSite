@@ -21,21 +21,54 @@ const VPN_KEYWORDS = [
     'hotspot', 'hide.me', 'torguard', 'astrill', 'purevpn', 'strongvpn',
     'hosting', 'datacenter', 'data center', 'cloud', 'server', 'colocation',
     'digitalocean', 'linode', 'vultr', 'hetzner', 'ovh', 'amazon', 'google cloud',
-    'microsoft azure', 'cloudflare warp'
+    'microsoft azure', 'cloudflare warp', 'warp', 'anonine', 'perfect privacy',
+    'zenmate', 'tunnelbear', 'avast', 'kaspersky', 'bitdefender', 'f-secure',
+    'freedome', 'encrypt.me', 'getflix', 'unlocator', 'smartdns', 'zscaler',
+    'fortinet', 'palo alto', 'cisco', 'anyconnect', 'openconnect',
+    'm247', 'datacamp', 'leaseweb', 'choopa', 'frantech', 'buyvm',
+    'quadranet', 'psychz', 'cogent', 'zenlayer', 'i2ts', 'tzulo',
+    'privax', 'kape', 'aura', 'pango', 'hotspot shield'
 ];
 
-function detectVPN(org, ipTimezone) {
-    if (!org) return false;
-    const orgLower = org.toLowerCase();
+function detectVPN(org, ipTimezone, extraData) {
+    let reasons = [];
+    
     // Check ISP name against known VPN/datacenter keywords
-    if (VPN_KEYWORDS.some(kw => orgLower.includes(kw))) return true;
+    if (org) {
+        const orgLower = org.toLowerCase();
+        if (VPN_KEYWORDS.some(kw => orgLower.includes(kw))) {
+            reasons.push('ISP matches known VPN/datacenter');
+        }
+    }
+    
     // Check timezone mismatch: browser timezone vs IP-reported timezone
     if (ipTimezone) {
         const browserTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-        if (browserTz && ipTimezone !== browserTz) return true;
+        if (browserTz && ipTimezone !== browserTz) {
+            reasons.push('Timezone mismatch (browser: ' + browserTz + ', IP: ' + ipTimezone + ')');
+        }
     }
-    return false;
+    
+    // Check extra API flags if available (ipapi.co provides these)
+    if (extraData) {
+        if (extraData.proxy === true) reasons.push('Proxy flag detected');
+        if (extraData.hosting === true) reasons.push('Hosting/datacenter IP');
+    }
+    
+    // Try WebRTC leak detection — if WebRTC is blocked, likely VPN/privacy tool
+    try {
+        if (typeof RTCPeerConnection === 'undefined' && typeof webkitRTCPeerConnection === 'undefined') {
+            reasons.push('WebRTC disabled');
+        }
+    } catch (e) {
+        reasons.push('WebRTC blocked');
+    }
+    
+    vpnReasons = reasons;
+    return reasons.length > 0;
 }
+
+let vpnReasons = [];
 
 function calculateVisibilityScore() {
     let score = 0;
@@ -154,7 +187,7 @@ async function getIPInfo() {
         `;
         
         // Detect VPN first (before map)
-        vpnDetected = detectVPN(data.org, data.timezone);
+        vpnDetected = detectVPN(data.org, data.timezone, data);
         
         // Initialize map if we have coordinates
         if (latitude && longitude) {
@@ -163,9 +196,9 @@ async function getIPInfo() {
 
         if (vpnDetected) {
             ipInfoDiv.innerHTML = `
-                <div class="info-row" style="background: #fef3c7; border-radius: 8px; padding: 12px; margin-bottom: 8px;">
-                    <span class="info-label" style="color: #92400e;">🛡️ VPN / Proxy Detected</span>
-                    <span class="info-value" style="color: #92400e;">Your real IP and location are hidden</span>
+                <div class="info-row" style="background: #d1fae5; border-radius: 8px; padding: 12px; margin-bottom: 8px;">
+                    <span class="info-label" style="color: #065f46;">🛡️ VPN / Proxy Detected</span>
+                    <span class="info-value" style="color: #065f46; font-family: inherit; font-size: 13px;">${vpnReasons.join(' • ')}</span>
                 </div>
             ` + ipInfoDiv.innerHTML;
         }
@@ -221,7 +254,7 @@ async function getIPInfo() {
             `;
             
             // Detect VPN first (before map)
-            vpnDetected = detectVPN(geoData.isp, geoData.timezone);
+            vpnDetected = detectVPN(geoData.isp, geoData.timezone, geoData);
             
             // Initialize map if we have coordinates
             if (latitude && longitude) {
@@ -230,9 +263,9 @@ async function getIPInfo() {
 
             if (vpnDetected) {
                 ipInfoDiv.innerHTML = `
-                    <div class="info-row" style="background: #fef3c7; border-radius: 8px; padding: 12px; margin-bottom: 8px;">
-                        <span class="info-label" style="color: #92400e;">🛡️ VPN / Proxy Detected</span>
-                        <span class="info-value" style="color: #92400e;">Your real IP and location are hidden</span>
+                    <div class="info-row" style="background: #d1fae5; border-radius: 8px; padding: 12px; margin-bottom: 8px;">
+                        <span class="info-label" style="color: #065f46;">🛡️ VPN / Proxy Detected</span>
+                        <span class="info-value" style="color: #065f46; font-family: inherit; font-size: 13px;">${vpnReasons.join(' • ')}</span>
                     </div>
                 ` + ipInfoDiv.innerHTML;
             }
