@@ -330,12 +330,19 @@ async function detectIncognito() {
         } catch (e) { return 'yes'; }
     }
 
-    // Chrome / Chromium-based: Modern Chrome (v120+) has patched all reliable
-    // client-side incognito detection methods. The "predictable-reported-quota"
-    // flag makes storage quota identical in both modes. We try legacy methods
-    // first, but if they're inconclusive we honestly report "unknown".
+    // Chrome / Chromium-based: Detect version to choose strategy
+    const chromeMatch = navigator.userAgent.match(/Chrom(?:e|ium)\/([\d]+)/);
+    const chromeVersion = chromeMatch ? parseInt(chromeMatch[1], 10) : 0;
 
-    // Legacy method: FileSystem API (works on older Chrome < 120)
+    // Chrome 120+: ALL client-side incognito detection methods are patched.
+    // FileSystem API succeeds in both modes, storage quota reports identical
+    // values (usage + 10GB) via the "predictable-reported-quota" flag.
+    // No reliable detection is possible — honestly report "unknown".
+    if (chromeVersion >= 120) {
+        return 'unknown';
+    }
+
+    // Legacy Chrome (< 120): FileSystem API and quota still work
     const fsResult = await new Promise((resolve) => {
         if (window.webkitRequestFileSystem) {
             window.webkitRequestFileSystem(window.TEMPORARY, 100, () => resolve('no'), () => resolve('yes'));
@@ -344,22 +351,16 @@ async function detectIncognito() {
         }
     });
     if (fsResult === 'yes') return 'yes';
+    if (fsResult === 'no') return 'no';
 
-    // Legacy method: Storage quota check (works on older Chrome < 120)
+    // Fallback: storage quota (older Chromium forks)
     if (navigator.storage && navigator.storage.estimate) {
         try {
             const est = await navigator.storage.estimate();
-            // Old incognito: quota < 300MB. Normal: > 1GB.
-            // New Chrome: reports usage + 10GB in both modes — can't distinguish.
             if (est.quota && est.quota < 300000000) return 'yes';
         } catch (e) { /* ignore */ }
     }
 
-    // If FileSystem said 'no' (normal mode confirmed on older Chrome), trust it
-    if (fsResult === 'no') return 'no';
-
-    // Modern Chrome 120+: all detection methods are patched.
-    // Honestly report that we cannot determine the browsing mode.
     return 'unknown';
 }
 
