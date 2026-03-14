@@ -58,7 +58,7 @@ jobs:
           for file in *.js; do
             if [ -f "$file" ]; then
               echo "Deploying $file..."
-              aws s3 cp "$file" s3://${{ env.S3_BUCKET }}/ --cache-control "max-age=86400" --content-type "application/javascript"
+              aws s3 cp "$file" s3://${{ env.S3_BUCKET }}/ --cache-control "max-age=300" --content-type "application/javascript"
             fi
           done
           
