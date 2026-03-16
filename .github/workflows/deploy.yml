@@ -1,0 +1,117 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '*.html'
+      - '*.css'
+      - '*.js'
+      - '*.png'
+      - '*.jpg'
+      - '*.jpeg'
+      - '*.gif'
+      - '*.svg'
+      - '*.ico'
+      - 'infrastructure/unified-stack.yaml'
+      - 'infrastructure/stack-parameters.json'
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+  S3_BUCKET: www.eshkolai.com
+  STACK_NAME: eshkolai-com-website-stack
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::991105135552:role/GitHubDeployRole
+          aws-region: ${{ env.AWS_REGION }}
+
+      # ─── Infrastructure (only if stack template or params changed) ───
+      - name: Check for infrastructure changes
+        id: infra-check
+        run: |
+          # Check if infrastructure files changed in this push
+          CHANGED=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || echo "all")
+          if echo "$CHANGED" | grep -qE "infrastructure/unified-stack.yaml|infrastructure/stack-parameters.json|all"; then
+            echo "infra_changed=true" >> $GITHUB_OUTPUT
+          else
+            echo "infra_changed=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Deploy CloudFormation stack
+        if: steps.infra-check.outputs.infra_changed == 'true'
+        run: |
+          echo "Deploying infrastructure stack..."
+          aws cloudformation deploy \
+            --template-file infrastructure/unified-stack.yaml \
+            --stack-name ${{ env.STACK_NAME }} \
+            --parameter-overrides file://infrastructure/stack-parameters.json \
+            --capabilities CAPABILITY_IAM \
+            --no-fail-on-empty-changeset \
+            --tags ManagedBy=CloudFormation Project=EshkolaiWebsite
+          echo "✓ Infrastructure deployed"
+
+      - name: Get CloudFront distribution ID
+        id: cf
+        run: |
+          DIST_ID=$(aws cloudformation describe-stacks \
+            --stack-name ${{ env.STACK_NAME }} \
+            --query 'Stacks[0].Outputs[?OutputKey==`CloudFrontDistributionId`].OutputValue' \
+            --output text 2>/dev/null || echo "")
+          if [ -z "$DIST_ID" ]; then
+            DIST_ID=$(aws cloudfront list-distributions \
+              --query "DistributionList.Items[?Aliases.Items[0]=='www.eshkolai.com'].Id" \
+              --output text)
+          fi
+          echo "dist_id=$DIST_ID" >> $GITHUB_OUTPUT
+          echo "CloudFront: $DIST_ID"
+
+      # ─── Website Files ───
+      - name: Deploy website to S3
+        run: |
+          echo "Deploying website files..."
+          # HTML — short cache
+          for file in *.html; do
+            [ -f "$file" ] && aws s3 cp "$file" s3://${{ env.S3_BUCKET }}/ --cache-control "max-age=300"
+          done
+          # CSS — short cache
+          for file in *.css; do
+            [ -f "$file" ] && aws s3 cp "$file" s3://${{ env.S3_BUCKET }}/ --cache-control "max-age=300"
+          done
+          # JS — short cache
+          for file in *.js; do
+            [ -f "$file" ] && aws s3 cp "$file" s3://${{ env.S3_BUCKET }}/ --cache-control "max-age=300" --content-type "application/javascript"
+          done
+          # Images — long cache
+          for file in *.png *.jpg *.jpeg *.gif *.svg *.ico; do
+            [ -f "$file" ] && aws s3 cp "$file" s3://${{ env.S3_BUCKET }}/ --cache-control "max-age=2592000"
+          done
+          echo "✓ Website deployed"
+
+      - name: Invalidate CloudFront cache
+        if: steps.cf.outputs.dist_id != ''
+        run: |
+          aws cloudfront create-invalidation \
+            --distribution-id ${{ steps.cf.outputs.dist_id }} \
+            --paths "/*"
+          echo "✓ Cache invalidated"
+
+      - name: Summary
+        run: |
+          echo "=== Deploy Complete ==="
+          echo "S3: ${{ env.S3_BUCKET }}"
+          echo "CloudFront: ${{ steps.cf.outputs.dist_id }}"
+          echo "URLs: https://www.eshkolai.com | https://eshkolai.com"

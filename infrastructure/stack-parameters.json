@@ -1,0 +1,14 @@
+[
+  {
+    "ParameterKey": "DomainName",
+    "ParameterValue": "www.eshkolai.com"
+  },
+  {
+    "ParameterKey": "RootDomainName",
+    "ParameterValue": "eshkolai.com"
+  },
+  {
+    "ParameterKey": "HostedZoneId",
+    "ParameterValue": "Z07144662HMOSSEBOKGII"
+  }
+]

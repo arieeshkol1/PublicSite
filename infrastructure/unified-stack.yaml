@@ -1,24 +1,19 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'Unified stack for www.eshkolai.com - S3, CloudFront, ACM Certificate, and Route 53'
+Description: 'Eshkolai.com - Complete website infrastructure: S3, CloudFront, ACM, Route 53'
 
 Parameters:
   DomainName:
     Type: String
     Default: www.eshkolai.com
-    Description: The domain name for the website
-  
   RootDomainName:
     Type: String
     Default: eshkolai.com
-    Description: The root domain name
-  
   HostedZoneId:
     Type: String
     Default: Z07144662HMOSSEBOKGII
-    Description: Route 53 Hosted Zone ID
 
 Resources:
-  # S3 Bucket for website content
+  # ─── S3 Bucket ───
   WebsiteBucket:
     Type: AWS::S3::Bucket
     Properties:
@@ -32,12 +27,9 @@ Resources:
         IgnorePublicAcls: false
         RestrictPublicBuckets: false
       Tags:
-        - Key: Name
-          Value: !Sub '${DomainName}-website'
         - Key: ManagedBy
           Value: CloudFormation
 
-  # S3 Bucket Policy for public read access
   WebsiteBucketPolicy:
     Type: AWS::S3::BucketPolicy
     Properties:
@@ -50,22 +42,24 @@ Resources:
             Action: s3:GetObject
             Resource: !Sub '${WebsiteBucket.Arn}/*'
 
-  # ACM Certificate for HTTPS
+  # ─── SSL Certificate (covers both www and root) ───
   SSLCertificate:
     Type: AWS::CertificateManager::Certificate
     Properties:
-      DomainName: !Ref DomainName
+      DomainName: !Ref RootDomainName
+      SubjectAlternativeNames:
+        - !Ref DomainName
       ValidationMethod: DNS
       DomainValidationOptions:
+        - DomainName: !Ref RootDomainName
+          HostedZoneId: !Ref HostedZoneId
         - DomainName: !Ref DomainName
           HostedZoneId: !Ref HostedZoneId
       Tags:
-        - Key: Name
-          Value: !Sub '${DomainName}-certificate'
         - Key: ManagedBy
           Value: CloudFormation
 
-  # CloudFront Distribution
+  # ─── CloudFront Distribution (serves both www and root) ───
   CloudFrontDistribution:
     Type: AWS::CloudFront::Distribution
     DependsOn:
@@ -74,9 +68,10 @@ Resources:
     Properties:
       DistributionConfig:
         Enabled: true
-        Comment: !Sub 'CloudFront distribution for ${DomainName}'
+        Comment: !Sub 'Distribution for ${RootDomainName}'
         Aliases:
           - !Ref DomainName
+          - !Ref RootDomainName
         DefaultRootObject: index.html
         Origins:
           - Id: S3Origin
@@ -88,13 +83,8 @@ Resources:
         DefaultCacheBehavior:
           TargetOriginId: S3Origin
           ViewerProtocolPolicy: redirect-to-https
-          AllowedMethods:
-            - GET
-            - HEAD
-            - OPTIONS
-          CachedMethods:
-            - GET
-            - HEAD
+          AllowedMethods: [GET, HEAD, OPTIONS]
+          CachedMethods: [GET, HEAD]
           Compress: true
           ForwardedValues:
             QueryString: false
@@ -119,13 +109,11 @@ Resources:
         HttpVersion: http2
         PriceClass: PriceClass_100
       Tags:
-        - Key: Name
-          Value: !Sub '${DomainName}-distribution'
         - Key: ManagedBy
           Value: CloudFormation
 
-  # Route 53 Record pointing to CloudFront
-  DNSRecord:
+  # ─── Route 53 DNS Records ───
+  WWWRecord:
     Type: AWS::Route53::RecordSet
     DependsOn: CloudFrontDistribution
     Properties:
@@ -133,37 +121,32 @@ Resources:
       Name: !Ref DomainName
       Type: A
       AliasTarget:
-        HostedZoneId: Z2FDTNDATAQYW2  # CloudFront hosted zone ID (constant)
+        HostedZoneId: Z2FDTNDATAQYW2
+        DNSName: !GetAtt CloudFrontDistribution.DomainName
+        EvaluateTargetHealth: false
+
+  RootRecord:
+    Type: AWS::Route53::RecordSet
+    DependsOn: CloudFrontDistribution
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Ref RootDomainName
+      Type: A
+      AliasTarget:
+        HostedZoneId: Z2FDTNDATAQYW2
         DNSName: !GetAtt CloudFrontDistribution.DomainName
         EvaluateTargetHealth: false
 
 Outputs:
   WebsiteURL:
-    Description: Website URL
     Value: !Sub 'https://${DomainName}'
-    Export:
-      Name: !Sub '${AWS::StackName}-WebsiteURL'
-
+  RootURL:
+    Value: !Sub 'https://${RootDomainName}'
   S3BucketName:
-    Description: S3 Bucket Name
     Value: !Ref WebsiteBucket
-    Export:
-      Name: !Sub '${AWS::StackName}-S3BucketName'
-
   CloudFrontDistributionId:
-    Description: CloudFront Distribution ID
     Value: !Ref CloudFrontDistribution
-    Export:
-      Name: !Sub '${AWS::StackName}-CloudFrontDistributionId'
-
   CloudFrontDomainName:
-    Description: CloudFront Domain Name
     Value: !GetAtt CloudFrontDistribution.DomainName
-    Export:
-      Name: !Sub '${AWS::StackName}-CloudFrontDomainName'
-
   CertificateArn:
-    Description: ACM Certificate ARN
     Value: !Ref SSLCertificate
-    Export:
-      Name: !Sub '${AWS::StackName}-CertificateArn'
