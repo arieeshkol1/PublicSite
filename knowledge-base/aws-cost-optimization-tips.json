@@ -1,0 +1,289 @@
+{
+  "version": "1.0",
+  "lastUpdated": "2026-03-16",
+  "sources": [
+    "https://aws.amazon.com/getting-started/cost-optimization-essentials/",
+    "https://awsforengineers.com/blog/10-aws-cost-optimization-strategies-2024/"
+  ],
+  "tips": [
+    {
+      "id": "ec2-001",
+      "service": "EC2",
+      "category": "right-sizing",
+      "title": "Right-size EC2 instances",
+      "description": "Use AWS Compute Optimizer to analyze historical utilization and identify underutilized instances. Switch to smaller instance types that match actual workload needs.",
+      "estimatedSavings": "20-40%",
+      "difficulty": "easy"
+    },
+    {
+      "id": "ec2-002",
+      "service": "EC2",
+      "category": "pricing-model",
+      "title": "Use Reserved Instances or Savings Plans",
+      "description": "For steady-state workloads, commit to 1-year or 3-year Reserved Instances or Savings Plans. Savings Plans offer more flexibility across instance families and regions.",
+      "estimatedSavings": "30-72%",
+      "difficulty": "medium"
+    },
+    {
+      "id": "ec2-003",
+      "service": "EC2",
+      "category": "pricing-model",
+      "title": "Use Spot Instances for fault-tolerant workloads",
+      "description": "Spot Instances offer up to 90% discount for interruptible workloads like batch processing, CI/CD, and dev/test environments. Use mixed instance fleets with Auto Scaling.",
+      "estimatedSavings": "60-90%",
+      "difficulty": "medium"
+    },
+    {
+      "id": "ec2-004",
+      "service": "EC2",
+      "category": "scheduling",
+      "title": "Schedule non-production instances",
+      "description": "Stop dev/test/staging instances outside business hours. Use AWS Instance Scheduler or Lambda functions to automate start/stop schedules.",
+      "estimatedSavings": "40-70%",
+      "difficulty": "easy"
+    },
+    {
+      "id": "ec2-005",
+      "service": "EC2",
+      "category": "auto-scaling",
+      "title": "Implement Auto Scaling",
+      "description": "Configure Auto Scaling groups with scaling policies based on CPU, memory, or custom metrics. Use predictive scaling for workloads with predictable patterns.",
+      "estimatedSavings": "20-50%",
+      "difficulty": "medium"
+    },
+    {
+      "id": "ec2-006",
+      "service": "EC2",
+      "category": "instance-type",
+      "title": "Use Graviton (ARM) instances",
+      "description": "AWS Graviton processors offer up to 40% better price-performance than x86 instances. Consider migrating compatible workloads to Graviton-based instance types.",
+      "estimatedSavings": "20-40%",
+      "difficulty": "medium"
+    },
+    {
+      "id": "s3-001",
+      "service": "S3",
+      "category": "storage-class",
+      "title": "Use S3 Intelligent-Tiering",
+      "description": "Enable S3 Intelligent-Tiering for data with unknown or changing access patterns. It automatically moves objects between access tiers based on usage.",
+      "estimatedSavings": "40-70%",
+      "difficulty": "easy"
+    },
+    {
+      "id": "s3-002",
+      "service": "S3",
+      "category": "lifecycle",
+      "title": "Implement lifecycle policies",
+      "description": "Create lifecycle rules to transition objects to cheaper storage classes (Standard-IA, Glacier) or delete them after a retention period.",
+      "estimatedSavings": "30-60%",
+      "difficulty": "easy"
+    },
+    {
+      "id": "s3-003",
+      "service": "S3",
+      "category": "cleanup",
+      "title": "Delete incomplete multipart uploads",
+      "description": "Incomplete multipart uploads accumulate storage costs. Create a lifecycle rule to abort incomplete uploads after 7 days.",
+      "estimatedSavings": "5-15%",
+      "difficulty": "easy"
+    },
+    {
+      "id": "s3-004",
+      "service": "S3",
+      "category": "versioning",
+      "title": "Manage object versions",
+      "description": "If versioning is enabled, set lifecycle rules to delete old versions or transition them to Glacier. Noncurrent versions can accumulate significant costs.",
+      "estimatedSavings": "20-40%",
+      "difficulty": "easy"
+    },
+    {
+      "id": "rds-001",
+      "service": "RDS",
+      "category": "right-sizing",
+      "title": "Right-size RDS instances",
+      "description": "Monitor CPU, memory, and I/O utilization. Downsize over-provisioned instances or switch to burstable (T-class) instances for variable workloads.",
+      "estimatedSavings": "20-50%",
+      "difficulty": "medium"
+    },
+    {
+      "id": "rds-002",
+      "service": "RDS",
+      "category": "pricing-model",
+      "title": "Use Reserved Instances for RDS",
+      "description": "For production databases with steady usage, purchase RDS Reserved Instances for 1 or 3 years to reduce costs significantly.",
+      "estimatedSavings": "30-60%",
+      "difficulty": "medium"
+    },
+    {
+      "id": "rds-003",
+      "service": "RDS",
+      "category": "serverless",
+      "title": "Consider Aurora Serverless v2",
+      "description": "For variable database workloads, Aurora Serverless v2 scales automatically and charges only for capacity used. Ideal for dev/test and unpredictable traffic.",
+      "estimatedSavings": "30-70%",
+      "difficulty": "medium"
+    },
+    {
+      "id": "rds-004",
+      "service": "RDS",
+      "category": "storage",
+      "title": "Optimize RDS storage",
+      "description": "Use gp3 storage instead of gp2 for better price-performance. Delete old snapshots and reduce allocated storage if over-provisioned.",
+      "estimatedSavings": "10-30%",
+      "difficulty": "easy"
+    },
+    {
+      "id": "lambda-001",
+      "service": "Lambda",
+      "category": "memory",
+      "title": "Right-size Lambda memory",
+      "description": "Use AWS Lambda Power Tuning to find the optimal memory configuration. More memory means more CPU, which can reduce execution time and cost.",
+      "estimatedSavings": "10-50%",
+      "difficulty": "easy"
+    },
+    {
+      "id": "lambda-002",
+      "service": "Lambda",
+      "category": "architecture",
+      "title": "Use Graviton for Lambda",
+      "description": "Configure Lambda functions to use ARM64 architecture (Graviton2). It offers up to 34% better price-performance than x86.",
+      "estimatedSavings": "20-34%",
+      "difficulty": "easy"
+    },
+    {
+      "id": "lambda-003",
+      "service": "Lambda",
+      "category": "provisioned",
+      "title": "Avoid unnecessary Provisioned Concurrency",
+      "description": "Provisioned Concurrency eliminates cold starts but adds cost. Use it only for latency-sensitive production workloads, not dev/test.",
+      "estimatedSavings": "varies",
+      "difficulty": "easy"
+    },
+    {
+      "id": "nat-001",
+      "service": "NAT Gateway",
+      "category": "architecture",
+      "title": "Use VPC Endpoints instead of NAT Gateway",
+      "description": "NAT Gateway charges $0.045/GB for data processing. Use VPC Gateway Endpoints (free for S3/DynamoDB) or Interface Endpoints to reduce costs.",
+      "estimatedSavings": "40-80%",
+      "difficulty": "medium"
+    },
+    {
+      "id": "nat-002",
+      "service": "NAT Gateway",
+      "category": "architecture",
+      "title": "Consolidate NAT Gateways",
+      "description": "Each NAT Gateway costs ~$32/month plus data processing. Consider using a single NAT Gateway for non-production environments or a NAT instance for low traffic.",
+      "estimatedSavings": "30-60%",
+      "difficulty": "medium"
+    },
+    {
+      "id": "cloudfront-001",
+      "service": "CloudFront",
+      "category": "caching",
+      "title": "Optimize CloudFront cache hit ratio",
+      "description": "Increase cache TTLs, normalize query strings, and use Origin Shield to improve cache hit ratio. Higher cache hits mean fewer origin requests and lower costs.",
+      "estimatedSavings": "20-50%",
+      "difficulty": "medium"
+    },
+    {
+      "id": "cloudfront-002",
+      "service": "CloudFront",
+      "category": "pricing",
+      "title": "Use CloudFront Security Savings Bundle",
+      "description": "If using CloudFront with WAF, the Security Savings Bundle offers up to 30% savings with a 1-year commitment.",
+      "estimatedSavings": "up to 30%",
+      "difficulty": "easy"
+    },
+    {
+      "id": "ebs-001",
+      "service": "EBS",
+      "category": "volume-type",
+      "title": "Use gp3 instead of gp2",
+      "description": "gp3 volumes are 20% cheaper than gp2 and allow independent IOPS/throughput configuration. Migrate existing gp2 volumes to gp3.",
+      "estimatedSavings": "20%",
+      "difficulty": "easy"
+    },
+    {
+      "id": "ebs-002",
+      "service": "EBS",
+      "category": "snapshots",
+      "title": "Delete unused EBS snapshots",
+      "description": "Old snapshots accumulate costs. Implement a retention policy and use AWS Backup or Lambda to delete snapshots older than the retention period.",
+      "estimatedSavings": "10-40%",
+      "difficulty": "easy"
+    },
+    {
+      "id": "ebs-003",
+      "service": "EBS",
+      "category": "snapshots",
+      "title": "Use EBS Snapshots Archive",
+      "description": "For snapshots accessed less than once per quarter, move them to Snapshots Archive tier for up to 75% cost reduction.",
+      "estimatedSavings": "up to 75%",
+      "difficulty": "easy"
+    },
+    {
+      "id": "data-transfer-001",
+      "service": "Data Transfer",
+      "category": "architecture",
+      "title": "Keep traffic within the same region",
+      "description": "Cross-region data transfer costs $0.02/GB. Co-locate resources in the same region and use regional endpoints to minimize transfer costs.",
+      "estimatedSavings": "varies",
+      "difficulty": "medium"
+    },
+    {
+      "id": "data-transfer-002",
+      "service": "Data Transfer",
+      "category": "architecture",
+      "title": "Use CloudFront for internet egress",
+      "description": "CloudFront data transfer to internet is cheaper than direct EC2/S3 egress. Use CloudFront even for dynamic content to reduce data transfer costs.",
+      "estimatedSavings": "20-40%",
+      "difficulty": "medium"
+    },
+    {
+      "id": "general-001",
+      "service": "General",
+      "category": "visibility",
+      "title": "Enable AWS Cost Explorer",
+      "description": "Use Cost Explorer to visualize spending patterns, identify cost drivers, and forecast future costs. Enable hourly granularity for detailed analysis.",
+      "estimatedSavings": "varies",
+      "difficulty": "easy"
+    },
+    {
+      "id": "general-002",
+      "service": "General",
+      "category": "budgets",
+      "title": "Set up AWS Budgets with alerts",
+      "description": "Create budgets with alert thresholds at 50%, 75%, and 100% of expected spend. Use SNS for real-time notifications.",
+      "estimatedSavings": "varies",
+      "difficulty": "easy"
+    },
+    {
+      "id": "general-003",
+      "service": "General",
+      "category": "anomaly",
+      "title": "Enable Cost Anomaly Detection",
+      "description": "AWS Cost Anomaly Detection uses ML to identify unusual spending patterns. Configure alerts to catch unexpected cost spikes early.",
+      "estimatedSavings": "varies",
+      "difficulty": "easy"
+    },
+    {
+      "id": "general-004",
+      "service": "General",
+      "category": "cleanup",
+      "title": "Audit and remove unused resources",
+      "description": "Regularly audit for idle resources: unattached EBS volumes, unused Elastic IPs, old snapshots, stopped instances. Use AWS Trusted Advisor for recommendations.",
+      "estimatedSavings": "10-30%",
+      "difficulty": "easy"
+    },
+    {
+      "id": "general-005",
+      "service": "General",
+      "category": "tagging",
+      "title": "Implement cost allocation tags",
+      "description": "Tag all resources with project, environment, and owner tags. Enable cost allocation tags in Billing to track costs by team or application.",
+      "estimatedSavings": "varies",
+      "difficulty": "easy"
+    }
+  ]
+}

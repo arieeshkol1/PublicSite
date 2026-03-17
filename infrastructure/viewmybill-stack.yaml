@@ -1,0 +1,322 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'ViewMyBill - AWS Bill Analysis Tool infrastructure'
+
+Parameters:
+  BillStorageBucket:
+    Type: String
+    Default: 'aws-bill-analyzer-storage-991105135552'
+    Description: Existing S3 bucket for bill storage and reports
+
+  BedrockModelId:
+    Type: String
+    Default: 'amazon.nova-lite-v1:0'
+    Description: Bedrock model ID for bill analysis
+
+  LambdaCodeBucket:
+    Type: String
+    Default: 'aws-bill-analyzer-storage-991105135552'
+    Description: S3 bucket containing Lambda deployment packages
+
+  BillAnalyzerCodeKey:
+    Type: String
+    Default: 'lambda-packages/bill-analyzer.zip'
+    Description: S3 key for Bill Analyzer Lambda deployment package
+
+  UploadHandlerCodeKey:
+    Type: String
+    Default: 'lambda-packages/upload-handler.zip'
+    Description: S3 key for Upload Handler Lambda deployment package
+
+Resources:
+
+  # ============================================================
+  # DynamoDB Table - Cost Optimization Tips (RAG Knowledge Base)
+  # ============================================================
+  CostOptimizationTipsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: ViewMyBill-CostOptimizationTips
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: service
+          AttributeType: S
+        - AttributeName: tipId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: service
+          KeyType: HASH
+        - AttributeName: tipId
+          KeyType: RANGE
+      SSESpecification:
+        SSEEnabled: true
+      Tags:
+        - Key: Project
+          Value: ViewMyBill
+
+  # ============================================================
+  # IAM Role - Bill Analyzer Lambda
+  # ============================================================
+  BillAnalyzerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: aws-bill-analyzer-viewmybill-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: S3ReadWriteAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:ListBucket
+                Resource:
+                  - !Sub 'arn:aws:s3:::${BillStorageBucket}'
+                  - !Sub 'arn:aws:s3:::${BillStorageBucket}/*'
+        - PolicyName: BedrockInvokeAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                Resource:
+                  - !Sub 'arn:aws:bedrock:us-east-1::foundation-model/${BedrockModelId}'
+        - PolicyName: DynamoDBReadAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:Query
+                  - dynamodb:BatchGetItem
+                Resource:
+                  - !GetAtt CostOptimizationTipsTable.Arn
+      Tags:
+        - Key: Project
+          Value: ViewMyBill
+
+  # ============================================================
+  # IAM Role - Upload Handler Lambda
+  # ============================================================
+  UploadHandlerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: aws-bill-analyzer-upload-handler-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: S3WriteAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                Resource:
+                  - !Sub 'arn:aws:s3:::${BillStorageBucket}/bills/*'
+      Tags:
+        - Key: Project
+          Value: ViewMyBill
+
+  # ============================================================
+  # Lambda Function - Bill Analyzer
+  # ============================================================
+  BillAnalyzerFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: aws-bill-analyzer-viewmybill
+      Runtime: python3.12
+      Handler: lambda_function.lambda_handler
+      MemorySize: 512
+      Timeout: 120
+      Role: !GetAtt BillAnalyzerRole.Arn
+      Code:
+        S3Bucket: !Ref LambdaCodeBucket
+        S3Key: !Ref BillAnalyzerCodeKey
+      Environment:
+        Variables:
+          BILL_STORAGE_BUCKET: !Ref BillStorageBucket
+          TIPS_TABLE_NAME: !Ref CostOptimizationTipsTable
+          BEDROCK_MODEL_ID: !Ref BedrockModelId
+          MAX_TOKENS: '4000'
+          PRESIGNED_URL_EXPIRY: '86400'
+      Tags:
+        - Key: Project
+          Value: ViewMyBill
+
+  # ============================================================
+  # Lambda Function - Upload Handler
+  # ============================================================
+  UploadHandlerFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: aws-bill-analyzer-upload-handler
+      Runtime: python3.12
+      Handler: lambda_function.lambda_handler
+      MemorySize: 256
+      Timeout: 30
+      Role: !GetAtt UploadHandlerRole.Arn
+      Code:
+        S3Bucket: !Ref LambdaCodeBucket
+        S3Key: !Ref UploadHandlerCodeKey
+      Environment:
+        Variables:
+          BILL_STORAGE_BUCKET: !Ref BillStorageBucket
+      Tags:
+        - Key: Project
+          Value: ViewMyBill
+
+  # ============================================================
+  # API Gateway - HTTP API
+  # ============================================================
+  ViewMyBillApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: ViewMyBill-API
+      ProtocolType: HTTP
+      Description: HTTP API for ViewMyBill bill analysis tool
+      CorsConfiguration:
+        AllowOrigins:
+          - 'https://eshkolai.com'
+          - 'https://www.eshkolai.com'
+        AllowMethods:
+          - POST
+          - OPTIONS
+        AllowHeaders:
+          - Content-Type
+          - X-Filename
+        MaxAge: 86400
+      Tags:
+        Project: ViewMyBill
+
+  # ============================================================
+  # API Gateway - Stage (auto-deploy)
+  # ============================================================
+  ApiStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      StageName: '$default'
+      AutoDeploy: true
+      Tags:
+        Project: ViewMyBill
+
+  # ============================================================
+  # API Gateway - Lambda Integrations
+  # ============================================================
+  UploadIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !GetAtt UploadHandlerFunction.Arn
+      PayloadFormatVersion: '2.0'
+
+  AnalyzeIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !GetAtt BillAnalyzerFunction.Arn
+      PayloadFormatVersion: '2.0'
+
+  # ============================================================
+  # API Gateway - Routes
+  # ============================================================
+  UploadRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'POST /upload'
+      Target: !Sub 'integrations/${UploadIntegration}'
+
+  AnalyzeRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'POST /analyze'
+      Target: !Sub 'integrations/${AnalyzeIntegration}'
+
+  # ============================================================
+  # Lambda Permissions - Allow API Gateway to invoke Lambdas
+  # ============================================================
+  UploadHandlerInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref UploadHandlerFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ViewMyBillApi}/*'
+
+  BillAnalyzerInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref BillAnalyzerFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ViewMyBillApi}/*'
+
+  # ============================================================
+  # S3 Lifecycle Rule for reports/ prefix
+  # NOTE: The bucket aws-bill-analyzer-storage-991105135552 already exists
+  # and is NOT managed by this stack. Apply this lifecycle rule manually:
+  #
+  #   aws s3api put-bucket-lifecycle-configuration \
+  #     --bucket aws-bill-analyzer-storage-991105135552 \
+  #     --lifecycle-configuration '{
+  #       "Rules": [
+  #         {
+  #           "ID": "DeleteReportsAfter1Day",
+  #           "Filter": { "Prefix": "reports/" },
+  #           "Status": "Enabled",
+  #           "Expiration": { "Days": 1 }
+  #         }
+  #       ]
+  #     }'
+  #
+  # ============================================================
+
+Outputs:
+  ApiEndpoint:
+    Description: API Gateway endpoint URL
+    Value: !GetAtt ViewMyBillApi.ApiEndpoint
+    Export:
+      Name: ViewMyBill-ApiEndpoint
+
+  BillAnalyzerFunctionArn:
+    Description: Bill Analyzer Lambda function ARN
+    Value: !GetAtt BillAnalyzerFunction.Arn
+
+  UploadHandlerFunctionArn:
+    Description: Upload Handler Lambda function ARN
+    Value: !GetAtt UploadHandlerFunction.Arn
+
+  CostOptimizationTipsTableName:
+    Description: DynamoDB table name for cost optimization tips
+    Value: !Ref CostOptimizationTipsTable
+
+  CostOptimizationTipsTableArn:
+    Description: DynamoDB table ARN
+    Value: !GetAtt CostOptimizationTipsTable.Arn
+
+  ApiId:
+    Description: API Gateway ID
+    Value: !Ref ViewMyBillApi

@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <!-- Google tag (gtag.js) -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-SLW7ZXWV23"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+      gtag('config', 'G-SLW7ZXWV23');
+    </script>
+    <meta name="description" content="Upload your AWS bill and get AI-powered analysis with cost-saving recommendations">
+    <title>View My Bill - AI-Powered AWS Bill Analysis | Cloud and AI</title>
+    <link rel="icon" type="image/png" href="../eshkolai.png">
+    <link rel="stylesheet" href="../styles.css">
+    <link rel="stylesheet" href="viewMyBill.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+    <!-- Navigation -->
+    <nav class="navbar">
+        <div class="container">
+            <a href="../index.html" class="nav-brand">
+                <img src="../eshkolai.png" alt="Eshkol Logo">
+                <span>Cloud and AI</span>
+            </a>
+            <button class="hamburger" aria-label="Toggle menu" onclick="this.classList.toggle('active'); document.querySelector('.nav-menu').classList.toggle('active');">
+                <span></span>
+                <span></span>
+                <span></span>
+            </button>
+            <ul class="nav-menu">
+                <li><a href="../index.html#services" onclick="document.querySelector('.hamburger').classList.remove('active'); document.querySelector('.nav-menu').classList.remove('active');">Services</a></li>
+                <li><a href="../index.html#expertise" onclick="document.querySelector('.hamburger').classList.remove('active'); document.querySelector('.nav-menu').classList.remove('active');">Expertise</a></li>
+                <li><a href="../index.html#results" onclick="document.querySelector('.hamburger').classList.remove('active'); document.querySelector('.nav-menu').classList.remove('active');">Results</a></li>
+                <li><a href="../profile-check.html">Profile Check</a></li>
+                <li><a href="index.html" class="nav-active">View My Bill</a></li>
+                <li><a href="../index.html#contact" class="nav-cta" onclick="document.querySelector('.hamburger').classList.remove('active'); document.querySelector('.nav-menu').classList.remove('active');">Get Started</a></li>
+            </ul>
+        </div>
+    </nav>
+
+    <!-- Hero Section -->
+    <section class="hero vmb-hero">
+        <div class="hero-content">
+            <div class="hero-badge">
+                <i class="fas fa-file-invoice-dollar"></i>
+                <span>AI-Powered Analysis</span>
+            </div>
+            <h1>View My <span class="gradient-text">Bill</span></h1>
+            <p class="hero-subtitle">Upload your AWS invoice and get a detailed analysis with cost-saving recommendations, powered by Amazon Bedrock AI</p>
+        </div>
+    </section>
+
+    <!-- Upload Form Section -->
+    <section class="vmb-form-section">
+        <div class="container">
+            <form id="vmb-form" class="vmb-form" novalidate>
+                <div class="form-group">
+                    <label for="vmb-email">
+                        <i class="fas fa-envelope"></i> Email Address
+                    </label>
+                    <input
+                        type="email"
+                        id="vmb-email"
+                        name="email"
+                        required
+                        placeholder="your.email@example.com"
+                        autocomplete="email"
+                        aria-describedby="vmb-email-error"
+                    >
+                    <span id="vmb-email-error" class="vmb-field-error" role="alert" aria-live="polite"></span>
+                </div>
+
+                <div class="form-group">
+                    <label for="vmb-file">
+                        <i class="fas fa-file-pdf"></i> AWS Invoice (PDF)
+                    </label>
+                    <div class="vmb-file-picker">
+                        <input
+                            type="file"
+                            id="vmb-file"
+                            name="bill"
+                            accept=".pdf"
+                            required
+                            aria-describedby="vmb-file-error"
+                        >
+                        <label for="vmb-file" class="vmb-file-label">
+                            <i class="fas fa-cloud-upload-alt"></i>
+                            <span class="vmb-file-text">Choose a PDF file or drag it here</span>
+                        </label>
+                        <span id="vmb-filename" class="vmb-filename"></span>
+                    </div>
+                    <span id="vmb-file-error" class="vmb-field-error" role="alert" aria-live="polite"></span>
+                </div>
+
+                <button type="submit" id="vmb-submit" class="btn btn-primary vmb-submit" disabled>
+                    <i class="fas fa-search-dollar"></i>
+                    <span>Revise My Bill</span>
+                </button>
+            </form>
+        </div>
+    </section>
+
+    <!-- Loading Section -->
+    <section id="vmb-loading" class="vmb-loading" hidden>
+        <div class="container">
+            <div class="vmb-loading-content">
+                <div class="vmb-spinner" aria-label="Loading"></div>
+                <h3>Analyzing your bill...</h3>
+                <p>Our AI is reviewing your AWS invoice and preparing cost-saving recommendations. This may take a moment.</p>
+            </div>
+        </div>
+    </section>
+
+    <!-- Results Section -->
+    <section id="vmb-results" class="vmb-results" hidden>
+        <div class="container">
+            <div class="vmb-results-content">
+                <div class="vmb-success-icon">
+                    <i class="fas fa-check-circle"></i>
+                </div>
+                <h3>Your report is ready!</h3>
+                <p id="vmb-summary" class="vmb-summary"></p>
+                <a id="vmb-download" href="#" class="btn btn-primary vmb-download" download>
+                    <i class="fas fa-download"></i>
+                    <span>Download Report (PDF)</span>
+                </a>
+            </div>
+        </div>
+    </section>
+
+    <!-- Error Section -->
+    <section id="vmb-error" class="vmb-error" hidden>
+        <div class="container">
+            <div class="vmb-error-content">
+                <div class="vmb-error-icon">
+                    <i class="fas fa-exclamation-triangle"></i>
+                </div>
+                <h3>Something went wrong</h3>
+                <p id="vmb-error-message" class="vmb-error-message"></p>
+                <button id="vmb-retry" class="btn btn-primary vmb-retry">
+                    <i class="fas fa-redo"></i>
+                    <span>Try Again</span>
+                </button>
+            </div>
+        </div>
+    </section>
+
+    <!-- How It Works Section -->
+    <section class="vmb-how-it-works">
+        <div class="container">
+            <div class="section-header">
+                <span class="section-tag">Simple Process</span>
+                <h2>How It Works</h2>
+            </div>
+            <div class="vmb-steps">
+                <div class="vmb-step">
+                    <div class="vmb-step-icon">
+                        <i class="fas fa-upload"></i>
+                        <span class="vmb-step-number">1</span>
+                    </div>
+                    <h3>Upload</h3>
+                    <p>Enter your email and upload your AWS invoice PDF from the AWS Billing Console</p>
+                </div>
+                <div class="vmb-step-arrow">
+                    <i class="fas fa-arrow-right"></i>
+                </div>
+                <div class="vmb-step">
+                    <div class="vmb-step-icon">
+                        <i class="fas fa-robot"></i>
+                        <span class="vmb-step-number">2</span>
+                    </div>
+                    <h3>Analyze</h3>
+                    <p>Our AI reviews your bill, identifies spending patterns, and finds cost-saving opportunities</p>
+                </div>
+                <div class="vmb-step-arrow">
+                    <i class="fas fa-arrow-right"></i>
+                </div>
+                <div class="vmb-step">
+                    <div class="vmb-step-icon">
+                        <i class="fas fa-download"></i>
+                        <span class="vmb-step-number">3</span>
+                    </div>
+                    <h3>Download</h3>
+                    <p>Get a comprehensive PDF report with summaries, explanations, and actionable recommendations</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Privacy Notice Section -->
+    <section class="vmb-privacy">
+        <div class="container">
+            <div class="vmb-privacy-content">
+                <i class="fas fa-shield-alt"></i>
+                <div>
+                    <h4>Your data is safe</h4>
+                    <p>Your bill data is processed securely and deleted within 24 hours. All data is transmitted over HTTPS and encrypted at rest. We do not store or share your billing information beyond the analysis session.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="footer">
+        <div class="container">
+            <div class="footer-content">
+                <div class="footer-brand">
+                    <img src="../eshkolai.png" alt="Eshkol Logo">
+                    <span>Cloud and AI</span>
+                </div>
+                <p>&copy; 2026 eshkolai cloud and AI services. All rights reserved.</p>
+            </div>
+        </div>
+    </footer>
+
+    <script src="viewMyBill.js"></script>
+</body>
+</html>

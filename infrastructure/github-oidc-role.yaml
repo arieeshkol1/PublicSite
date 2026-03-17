@@ -99,6 +99,8 @@ Resources:
               - arn:aws:s3:::arieleshkolwebsite22feb2026/*
               - arn:aws:s3:::aws-bill-analyzer-storage-991105135552
               - arn:aws:s3:::aws-bill-analyzer-storage-991105135552/*
+              - arn:aws:s3:::www.eshkolai.com
+              - arn:aws:s3:::www.eshkolai.com/*
           
           - Sid: S3ListAllBuckets
             Effect: Allow
@@ -167,6 +169,37 @@ Resources:
             Resource:
               - arn:aws:apigateway:us-east-1::/restapis
               - arn:aws:apigateway:us-east-1::/restapis/*
+              - arn:aws:apigateway:us-east-1::/apis
+              - arn:aws:apigateway:us-east-1::/apis/*
+              - arn:aws:apigateway:us-east-1::/tags/*
+
+          # DynamoDB Permissions
+          - Sid: DynamoDBManagement
+            Effect: Allow
+            Action:
+              - dynamodb:CreateTable
+              - dynamodb:DeleteTable
+              - dynamodb:DescribeTable
+              - dynamodb:UpdateTable
+              - dynamodb:PutItem
+              - dynamodb:GetItem
+              - dynamodb:Query
+              - dynamodb:BatchWriteItem
+              - dynamodb:BatchGetItem
+              - dynamodb:TagResource
+              - dynamodb:UntagResource
+              - dynamodb:ListTagsOfResource
+            Resource:
+              - !Sub 'arn:aws:dynamodb:us-east-1:${AWSAccountId}:table/ViewMyBill-*'
+
+          # CloudFront Permissions
+          - Sid: CloudFrontManagement
+            Effect: Allow
+            Action:
+              - cloudfront:CreateInvalidation
+              - cloudfront:GetDistribution
+              - cloudfront:ListDistributions
+            Resource: '*'
           
           # CloudFormation Permissions
           - Sid: CloudFormationManagement
@@ -182,6 +215,11 @@ Resources:
               - cloudformation:ValidateTemplate
               - cloudformation:ListStacks
               - cloudformation:ListStackResources
+              - cloudformation:CreateChangeSet
+              - cloudformation:DescribeChangeSet
+              - cloudformation:ExecuteChangeSet
+              - cloudformation:DeleteChangeSet
+              - cloudformation:GetTemplateSummary
             Resource:
               - !Sub 'arn:aws:cloudformation:us-east-1:${AWSAccountId}:stack/aws-bill-analyzer-*/*'
           

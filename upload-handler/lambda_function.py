@@ -42,7 +42,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         print(f"Received upload request")
         
         # Extract file data from event
-        file_content, filename, content_type = extract_file_from_event(event)
+        file_content, filename, content_type, email = extract_file_from_event(event)
         
         # Validate file
         validation_error = validate_file(file_content, filename)
@@ -66,7 +66,8 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 Metadata={
                     'session-id': session_id,
                     'upload-timestamp': upload_timestamp,
-                    'original-filename': filename
+                    'original-filename': filename,
+                    'user-email': email
                 },
                 Tagging=f'session-id={session_id}&upload-timestamp={upload_timestamp}&expiration=24h'
             )
@@ -104,15 +105,15 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         )
 
 
-def extract_file_from_event(event: Dict[str, Any]) -> Tuple[bytes, str, str]:
+def extract_file_from_event(event: Dict[str, Any]) -> Tuple[bytes, str, str, str]:
     """
-    Extract file content, filename, and content type from API Gateway event.
+    Extract file content, filename, content type, and email from API Gateway event.
     
     Args:
         event: API Gateway proxy event
         
     Returns:
-        Tuple of (file_content, filename, content_type)
+        Tuple of (file_content, filename, content_type, email)
         
     Raises:
         ValueError: If file data cannot be extracted
@@ -139,12 +140,12 @@ def extract_file_from_event(event: Dict[str, Any]) -> Tuple[bytes, str, str]:
         boundary = content_type_header.split('boundary=')[-1].strip()
         
         # Parse multipart data
-        file_content, filename = parse_multipart_form_data(body, boundary)
+        file_content, filename, email = parse_multipart_form_data(body, boundary)
         
         # Detect content type from filename
         content_type = mimetypes.guess_type(filename)[0] or 'application/octet-stream'
         
-        return file_content, filename, content_type
+        return file_content, filename, content_type, email
     
     else:
         # Direct binary upload
@@ -157,40 +158,58 @@ def extract_file_from_event(event: Dict[str, Any]) -> Tuple[bytes, str, str]:
         filename = event.get('headers', {}).get('x-filename', 'uploaded-bill.csv')
         content_type = event.get('headers', {}).get('content-type', 'application/octet-stream')
         
-        return file_content, filename, content_type
+        return file_content, filename, content_type, ''
 
 
-def parse_multipart_form_data(body: bytes, boundary: str) -> Tuple[bytes, str]:
+
+def parse_multipart_form_data(body: bytes, boundary: str) -> Tuple[bytes, str, str]:
     """
-    Parse multipart/form-data to extract file content and filename.
-    
+    Parse multipart/form-data to extract file content, filename, and email.
+
     Args:
         body: Raw request body
         boundary: Multipart boundary string
-        
+
     Returns:
-        Tuple of (file_content, filename)
+        Tuple of (file_content, filename, email)
     """
     # Split by boundary
     boundary_bytes = f'--{boundary}'.encode('utf-8')
     parts = body.split(boundary_bytes)
-    
+
+    file_content = None
+    filename = None
+    email = ''
+
     for part in parts:
-        if b'Content-Disposition' in part and b'filename=' in part:
+        if b'Content-Disposition' not in part:
+            continue
+
+        disposition_line = part.split(b'\r\n')[1].decode('utf-8')
+
+        if 'filename=' in disposition_line:
             # Extract filename
-            disposition_line = part.split(b'\r\n')[1].decode('utf-8')
             filename_start = disposition_line.find('filename="') + 10
             filename_end = disposition_line.find('"', filename_start)
             filename = disposition_line[filename_start:filename_end]
-            
+
             # Extract file content (after double CRLF)
             content_start = part.find(b'\r\n\r\n') + 4
             content_end = part.rfind(b'\r\n')
             file_content = part[content_start:content_end]
-            
-            return file_content, filename
-    
-    raise ValueError("No file found in multipart data")
+
+        elif 'name="email"' in disposition_line:
+            # Extract email field value
+            content_start = part.find(b'\r\n\r\n') + 4
+            content_end = part.rfind(b'\r\n')
+            email = part[content_start:content_end].decode('utf-8').strip()
+
+    if file_content is None or filename is None:
+        raise ValueError("No file found in multipart data")
+
+    return file_content, filename, email
+
+
 
 
 def validate_file(file_content: bytes, filename: str) -> Dict[str, Any] | None:

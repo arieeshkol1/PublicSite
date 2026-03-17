@@ -13,6 +13,11 @@ on:
       - '*.gif'
       - '*.svg'
       - '*.ico'
+      - 'viewMyBill/**'
+      - 'infrastructure/viewmybill-stack.yaml'
+      - 'bill-analyzer/**'
+      - 'upload-handler/**'
+      - 'knowledge-base/**'
   workflow_dispatch:
 
 permissions:
@@ -23,6 +28,8 @@ env:
   AWS_REGION: us-east-1
   S3_BUCKET: www.eshkolai.com
   CLOUDFRONT_ID: E12JIHGHK40OLE
+  STORAGE_BUCKET: aws-bill-analyzer-storage-991105135552
+  STACK_NAME: aws-bill-analyzer-viewmybill
 
 jobs:
   deploy:
@@ -37,26 +44,113 @@ jobs:
           role-to-assume: arn:aws:iam::991105135552:role/GitHubDeployRole
           aws-region: ${{ env.AWS_REGION }}
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # ---- ViewMyBill Infrastructure ----
+      - name: Package Bill Analyzer Lambda
+        run: |
+          echo "Packaging Bill Analyzer Lambda..."
+          pip install -r bill-analyzer/requirements.txt -t .build-bill-analyzer/ --quiet
+          cp bill-analyzer/*.py .build-bill-analyzer/
+          cd .build-bill-analyzer && zip -r ../bill-analyzer-lambda.zip . -q
+          cd ..
+          aws s3 cp bill-analyzer-lambda.zip s3://${{ env.STORAGE_BUCKET }}/lambda-packages/bill-analyzer.zip
+          echo "✓ Bill Analyzer packaged"
+
+      - name: Package Upload Handler Lambda
+        run: |
+          echo "Packaging Upload Handler Lambda..."
+          mkdir -p .build-upload-handler
+          cp upload-handler/lambda_function.py .build-upload-handler/
+          cd .build-upload-handler && zip -r ../upload-handler-lambda.zip . -q
+          cd ..
+          aws s3 cp upload-handler-lambda.zip s3://${{ env.STORAGE_BUCKET }}/lambda-packages/upload-handler.zip
+          echo "✓ Upload Handler packaged"
+
+      - name: Deploy ViewMyBill CloudFormation stack
+        run: |
+          echo "Deploying ViewMyBill infrastructure..."
+          aws cloudformation deploy \
+            --template-file infrastructure/viewmybill-stack.yaml \
+            --stack-name ${{ env.STACK_NAME }} \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --no-fail-on-empty-changeset \
+            --tags Project=ViewMyBill
+          echo "✓ Infrastructure deployed"
+
+      - name: Update Lambda function code
+        run: |
+          aws lambda update-function-code \
+            --function-name aws-bill-analyzer-viewmybill \
+            --s3-bucket ${{ env.STORAGE_BUCKET }} \
+            --s3-key lambda-packages/bill-analyzer.zip > /dev/null
+          aws lambda update-function-code \
+            --function-name aws-bill-analyzer-upload-handler \
+            --s3-bucket ${{ env.STORAGE_BUCKET }} \
+            --s3-key lambda-packages/upload-handler.zip > /dev/null
+          echo "✓ Lambda functions updated"
+
+      - name: Seed DynamoDB knowledge base
+        run: |
+          pip install boto3 --quiet
+          python knowledge-base/seed-dynamodb.py
+          echo "✓ DynamoDB seeded"
+
+      - name: Get API Gateway URL
+        id: api-url
+        run: |
+          API_URL=$(aws cloudformation describe-stacks \
+            --stack-name ${{ env.STACK_NAME }} \
+            --query "Stacks[0].Outputs[?OutputKey=='ApiEndpoint'].OutputValue" \
+            --output text)
+          echo "API Gateway URL: $API_URL"
+          echo "api_endpoint=$API_URL" >> $GITHUB_OUTPUT
+
+      - name: Configure S3 lifecycle rules
+        run: |
+          aws s3api put-bucket-lifecycle-configuration \
+            --bucket ${{ env.STORAGE_BUCKET }} \
+            --lifecycle-configuration '{
+              "Rules": [
+                {"ID":"DeleteReportsAfter1Day","Filter":{"Prefix":"reports/"},"Status":"Enabled","Expiration":{"Days":1}},
+                {"ID":"DeleteBillsAfter1Day","Filter":{"Prefix":"bills/"},"Status":"Enabled","Expiration":{"Days":1}}
+              ]
+            }'
+          echo "✓ Lifecycle rules set"
+
+      # ---- Website Deployment ----
       - name: Deploy website to S3
         run: |
           echo "Deploying website files..."
-          # HTML — short cache
           for file in *.html; do
             [ -f "$file" ] && aws s3 cp "$file" s3://${{ env.S3_BUCKET }}/ --cache-control "max-age=300"
           done
-          # CSS — short cache
           for file in *.css; do
             [ -f "$file" ] && aws s3 cp "$file" s3://${{ env.S3_BUCKET }}/ --cache-control "max-age=300"
           done
-          # JS — short cache
           for file in *.js; do
             [ -f "$file" ] && aws s3 cp "$file" s3://${{ env.S3_BUCKET }}/ --cache-control "max-age=300" --content-type "application/javascript"
           done
-          # Images — long cache
           for file in *.png *.jpg *.jpeg *.gif *.svg *.ico; do
             [ -f "$file" ] && aws s3 cp "$file" s3://${{ env.S3_BUCKET }}/ --cache-control "max-age=2592000"
           done
           echo "✓ Website deployed"
+
+      - name: Deploy ViewMyBill frontend
+        run: |
+          API_URL="${{ steps.api-url.outputs.api_endpoint }}"
+          echo "Injecting API URL: $API_URL"
+          sed -i "s|https://YOUR_API_GATEWAY_URL|${API_URL}|g" viewMyBill/viewMyBill.js
+          aws s3 cp viewMyBill/index.html s3://${{ env.S3_BUCKET }}/viewMyBill/index.html \
+            --cache-control "max-age=300" --content-type "text/html"
+          aws s3 cp viewMyBill/viewMyBill.css s3://${{ env.S3_BUCKET }}/viewMyBill/viewMyBill.css \
+            --cache-control "max-age=300" --content-type "text/css"
+          aws s3 cp viewMyBill/viewMyBill.js s3://${{ env.S3_BUCKET }}/viewMyBill/viewMyBill.js \
+            --cache-control "max-age=300" --content-type "application/javascript"
+          echo "✓ ViewMyBill frontend deployed"
 
       - name: Invalidate CloudFront cache
         run: |
@@ -68,6 +162,6 @@ jobs:
       - name: Summary
         run: |
           echo "=== Deploy Complete ==="
-          echo "S3: ${{ env.S3_BUCKET }}"
-          echo "CloudFront: ${{ env.CLOUDFRONT_ID }}"
-          echo "URLs: https://www.eshkolai.com | https://eshkolai.com"
+          echo "Website: https://www.eshkolai.com"
+          echo "ViewMyBill: https://www.eshkolai.com/viewMyBill/"
+          echo "API: ${{ steps.api-url.outputs.api_endpoint }}"

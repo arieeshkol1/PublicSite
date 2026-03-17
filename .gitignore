@@ -43,6 +43,13 @@ htmlcov/
 .aws-sam/
 samconfig.toml
 
+# Build artifacts
+.build-*/
+*-lambda.zip
+
+# Draw.io temp files
+.$*.dtmp
+
 # OS
 .DS_Store
 Thumbs.db
@@ -53,3 +60,6 @@ Thumbs.db
 # Environment variables
 .env
 .env.local
+
+# User uploaded files
+EUINIL26-*.pdf
