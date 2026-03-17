@@ -68,13 +68,14 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                     'upload-timestamp': upload_timestamp,
                     'original-filename': filename,
                     'user-email': email
-                },
-                Tagging=f'session-id={session_id}&upload-timestamp={upload_timestamp}&expiration=24h'
+                }
             )
             print(f"File uploaded successfully to s3://{BILL_STORAGE_BUCKET}/{s3_key}")
             
         except ClientError as e:
-            print(f"S3 upload error: {str(e)}")
+            error_code = e.response['Error']['Code']
+            error_msg = e.response['Error']['Message']
+            print(f"S3 upload error: {error_code} - {error_msg}")
             return create_error_response(
                 500,
                 "Failed to store file. Please try again."

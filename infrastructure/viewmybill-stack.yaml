@@ -130,6 +130,7 @@ Resources:
               - Effect: Allow
                 Action:
                   - s3:PutObject
+                  - s3:PutObjectTagging
                 Resource:
                   - !Sub 'arn:aws:s3:::${BillStorageBucket}/bills/*'
       Tags:
