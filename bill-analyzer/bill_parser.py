@@ -59,6 +59,22 @@ MONTH_MAP = {
 # Cost pattern: matches dollar amounts like $1,234.56 or 1234.56
 COST_PATTERN = re.compile(r"\$?\s*([\d,]+\.\d{2})")
 
+# Currency codes to strip from service names
+CURRENCY_CODES = {"USD", "EUR", "GBP", "JPY", "AUD", "CAD", "CHF", "CNY", "INR", "BRL"}
+
+
+def _clean_service_name(name: str) -> str:
+    """Remove trailing currency codes and clean up service names."""
+    cleaned = name.strip()
+    # Remove trailing currency code (e.g., "Amazon EC2 USD" -> "Amazon EC2")
+    for code in CURRENCY_CODES:
+        if cleaned.upper().endswith(f" {code}"):
+            cleaned = cleaned[: -(len(code) + 1)].strip()
+            break
+    # Remove leading/trailing dashes and whitespace
+    cleaned = cleaned.strip(" -")
+    return cleaned
+
 
 def parse_bill(pdf_bytes: bytes) -> ParsedBill:
     """
@@ -244,9 +260,9 @@ def _parse_line_items_from_tables(
                     description = " - ".join(desc_parts) if desc_parts else service_name
 
                     items.append({
-                        "service": service_name,
+                        "service": _clean_service_name(service_name),
                         "cost": cost_val,
-                        "description": description,
+                        "description": _clean_service_name(description),
                     })
         else:
             # No header match — scan rows for cost patterns
@@ -283,9 +299,9 @@ def _scan_table_rows_for_costs(
 
             if service_name:
                 items.append({
-                    "service": service_name,
+                    "service": _clean_service_name(service_name),
                     "cost": cost_val,
-                    "description": service_name,
+                    "description": _clean_service_name(service_name),
                 })
     return items
 
@@ -315,9 +331,9 @@ def _parse_line_items_from_text(text: str) -> List[Dict[str, Any]]:
             cost_val = Decimal(cost_str)
             if cost_val > Decimal("0"):
                 items.append({
-                    "service": service_name,
+                    "service": _clean_service_name(service_name),
                     "cost": cost_val,
-                    "description": service_name,
+                    "description": _clean_service_name(service_name),
                 })
         except InvalidOperation:
             continue
@@ -335,9 +351,9 @@ def _parse_line_items_from_text(text: str) -> List[Dict[str, Any]]:
                 cost_val = Decimal(cost_str)
                 if cost_val > Decimal("0"):
                     items.append({
-                        "service": service_name,
+                        "service": _clean_service_name(service_name),
                         "cost": cost_val,
-                        "description": service_name,
+                        "description": _clean_service_name(service_name),
                     })
             except InvalidOperation:
                 continue

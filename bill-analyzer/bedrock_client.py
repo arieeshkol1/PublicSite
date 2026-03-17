@@ -38,7 +38,9 @@ ANALYSIS_PROMPT = """You are an AWS billing expert. Analyze this AWS bill and pr
 Based on the bill data and the optimization tips above, provide:
 
 1. SUMMARY: A 2-3 sentence overview of the bill highlighting total cost and top spending services
-2. EXPLANATIONS: For each service in the bill, explain what the charges represent in plain language
+2. EXPLANATIONS: For each service in the bill, explain what the charges represent in plain language. \
+Also describe how the service is billed (e.g., per hour, per GB, per request) and provide one specific \
+cost-saving tip for that service.
 3. RECOMMENDATIONS: 3-5 specific, actionable cost-saving recommendations. Prioritize tips that match \
 the services in this bill. Include estimated savings percentages where applicable.
 
@@ -46,7 +48,7 @@ Respond in this exact JSON format:
 {{
   "summary": "...",
   "explanations": [
-    {{"service": "...", "cost": "...", "explanation": "..."}}
+    {{"service": "...", "cost": "...", "explanation": "...", "billing_model": "...", "savings_tip": "..."}}
   ],
   "recommendations": [
     {{"title": "...", "description": "...", "estimated_savings": "...", "difficulty": "..."}}

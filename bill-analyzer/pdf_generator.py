@@ -133,6 +133,15 @@ def _build_styles() -> Dict[str, ParagraphStyle]:
             textColor=colors.HexColor("#999999"),
             alignment=1,
         ),
+        "table_header": ParagraphStyle(
+            "TableHeader",
+            parent=base["Normal"],
+            fontName="Helvetica-Bold",
+            fontSize=10,
+            textColor=WHITE,
+            leading=14,
+            spaceAfter=0,
+        ),
     }
 
 
@@ -267,11 +276,13 @@ def _build_header(
         TableStyle(
             [
                 ("BACKGROUND", (0, 0), (-1, -1), AWS_DARK),
-                ("TOPPADDING", (0, 0), (-1, 0), 18),
-                ("BOTTOMPADDING", (0, -1), (-1, -1), 14),
+                ("TOPPADDING", (0, 0), (-1, 0), 20),
+                ("BOTTOMPADDING", (0, 0), (0, 0), 4),
+                ("TOPPADDING", (0, 1), (0, 1), 2),
+                ("BOTTOMPADDING", (0, 1), (-1, -1), 16),
                 ("LEFTPADDING", (0, 0), (-1, -1), 12),
                 ("RIGHTPADDING", (0, 0), (-1, -1), 12),
-                ("LINEBELOW", (0, 0), (-1, 0), 3, AWS_ORANGE),
+                ("LINEBELOW", (0, -1), (-1, -1), 3, AWS_ORANGE),
             ]
         )
     )
@@ -355,8 +366,8 @@ def _build_summary_section(
     service_totals = parsed_bill.get("service_totals", {})
     if service_totals:
         svc_header = [
-            Paragraph("<b>Service</b>", styles["body_bold"]),
-            Paragraph(f"<b>Cost ({currency})</b>", styles["body_bold"]),
+            Paragraph("<b>Service</b>", styles["table_header"]),
+            Paragraph(f"<b>Cost ({currency})</b>", styles["table_header"]),
         ]
         svc_rows = [svc_header]
         for svc, cost in sorted(
@@ -369,6 +380,15 @@ def _build_summary_section(
                 ]
             )
 
+        # Add totals row
+        svc_rows.append(
+            [
+                Paragraph("<b>Total</b>", styles["body_bold"]),
+                Paragraph(f"<b>{total_cost}</b>", styles["body_bold"]),
+            ]
+        )
+
+        num_rows = len(svc_rows)
         svc_table = Table(svc_rows, colWidths=[5 * inch, 2 * inch])
         svc_table.setStyle(
             TableStyle(
@@ -377,7 +397,9 @@ def _build_summary_section(
                     ("TEXTCOLOR", (0, 0), (-1, 0), WHITE),
                     ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
                     ("FONTSIZE", (0, 0), (-1, 0), 10),
-                    ("ROWBACKGROUNDS", (0, 1), (-1, -1), [WHITE, LIGHT_GRAY]),
+                    ("ROWBACKGROUNDS", (0, 1), (-1, -2), [WHITE, LIGHT_GRAY]),
+                    ("BACKGROUND", (0, -1), (-1, -1), LIGHT_GRAY),
+                    ("LINEABOVE", (0, -1), (-1, -1), 1.5, AWS_DARK),
                     ("GRID", (0, 0), (-1, -1), 0.5, MEDIUM_GRAY),
                     ("TOPPADDING", (0, 0), (-1, -1), 5),
                     ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
@@ -399,7 +421,7 @@ def _build_explanations_section(
     ai_analysis: Dict[str, Any],
     styles: Dict[str, ParagraphStyle],
 ) -> List[Any]:
-    """Build the charge explanations section."""
+    """Build the charge explanations section with billing model and savings tips."""
     elements: List[Any] = []
 
     elements.append(_section_heading("Charge Explanations", styles))
@@ -414,47 +436,69 @@ def _build_explanations_section(
 
     currency = parsed_bill.get("currency", "USD")
 
-    # Table header
-    header = [
-        Paragraph("<b>Service</b>", styles["body_bold"]),
-        Paragraph(f"<b>Cost ({currency})</b>", styles["body_bold"]),
-        Paragraph("<b>Explanation</b>", styles["body_bold"]),
-    ]
-    rows = [header]
-
     for exp in explanations:
         service = str(exp.get("service", "Unknown"))
         cost = str(exp.get("cost", "N/A"))
         explanation = str(exp.get("explanation", ""))
-        rows.append(
-            [
-                Paragraph(service, styles["body"]),
-                Paragraph(cost, styles["body"]),
-                Paragraph(explanation, styles["body"]),
-            ]
-        )
+        billing_model = str(exp.get("billing_model", ""))
+        savings_tip = str(exp.get("savings_tip", ""))
 
-    exp_table = Table(rows, colWidths=[1.5 * inch, 1 * inch, 4.5 * inch])
-    exp_table.setStyle(
-        TableStyle(
+        # Service header row
+        card_data = [
             [
-                ("BACKGROUND", (0, 0), (-1, 0), AWS_DARK),
-                ("TEXTCOLOR", (0, 0), (-1, 0), WHITE),
-                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-                ("FONTSIZE", (0, 0), (-1, 0), 10),
-                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [WHITE, LIGHT_GRAY]),
-                ("GRID", (0, 0), (-1, -1), 0.5, MEDIUM_GRAY),
-                ("TOPPADDING", (0, 0), (-1, -1), 5),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
-                ("LEFTPADDING", (0, 0), (-1, -1), 6),
-                ("RIGHTPADDING", (0, 0), (-1, -1), 6),
-                ("VALIGN", (0, 0), (-1, -1), "TOP"),
-            ]
-        )
-    )
-    elements.append(exp_table)
-    elements.append(Spacer(1, 12))
+                Paragraph(f"<b>{service}</b>", styles["table_header"]),
+                Paragraph(f"<b>{cost}</b>", styles["table_header"]),
+            ],
+            [
+                Paragraph(explanation, styles["body"]),
+                "",
+            ],
+        ]
+
+        # Add billing model row if available
+        if billing_model:
+            card_data.append([
+                Paragraph(
+                    f'<b>Billing Model:</b> {billing_model}',
+                    styles["body"],
+                ),
+                "",
+            ])
+
+        # Add savings tip row if available
+        if savings_tip:
+            card_data.append([
+                Paragraph(
+                    f'<b>Savings Tip:</b> {savings_tip}',
+                    styles["rec_savings"],
+                ),
+                "",
+            ])
+
+        card_table = Table(card_data, colWidths=[5.5 * inch, 1.5 * inch])
+        card_style = [
+            ("BACKGROUND", (0, 0), (-1, 0), AWS_DARK),
+            ("TEXTCOLOR", (0, 0), (-1, 0), WHITE),
+            ("SPAN", (0, 1), (-1, 1)),  # explanation spans full width
+            ("TOPPADDING", (0, 0), (-1, -1), 5),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+            ("LEFTPADDING", (0, 0), (-1, -1), 8),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+            ("BOX", (0, 0), (-1, -1), 0.5, MEDIUM_GRAY),
+            ("LINEBELOW", (0, 0), (-1, 0), 1, AWS_ORANGE),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ]
+        # Span billing model and savings tip rows too
+        for i in range(2, len(card_data)):
+            card_style.append(("SPAN", (0, i), (-1, i)))
+
+        card_table.setStyle(TableStyle(card_style))
+        elements.append(card_table)
+        elements.append(Spacer(1, 8))
+
+    elements.append(Spacer(1, 4))
     return elements
+
 
 
 def _build_recommendations_section(
