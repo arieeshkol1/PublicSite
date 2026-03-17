@@ -37,21 +37,28 @@ ANALYSIS_PROMPT = """You are an AWS billing expert. Analyze this AWS bill and pr
 
 Based on the bill data and the optimization tips above, provide:
 
-1. SUMMARY: A 2-3 sentence overview of the bill highlighting total cost and top spending services
-2. EXPLANATIONS: For each service in the bill, explain what the charges represent in plain language. \
-Also describe how the service is billed (e.g., per hour, per GB, per request) and provide one specific \
-cost-saving tip for that service.
-3. RECOMMENDATIONS: 3-5 specific, actionable cost-saving recommendations. Prioritize tips that match \
-the services in this bill. Include estimated savings percentages where applicable.
+1. SUMMARY: A 2-3 sentence overview of the bill highlighting total cost and top spending services.
+
+2. SERVICE_ANALYSIS: For EACH service in the bill, provide a unified analysis containing:
+   - explanation: What the charges represent in plain language
+   - billing_details: How this service is actually billed with real units from the invoice \
+(e.g., "750 hours of t3.medium instances at $0.0416/hr", "50 GB of gp3 storage at $0.08/GB/month", \
+"1.2 million API requests at $3.50 per million"). Use the actual quantities and unit prices from the bill data.
+   - recommendations: 1-3 specific cost-saving recommendations for THIS service, each with estimated savings
 
 Respond in this exact JSON format:
 {{
   "summary": "...",
-  "explanations": [
-    {{"service": "...", "cost": "...", "explanation": "...", "billing_model": "...", "savings_tip": "..."}}
-  ],
-  "recommendations": [
-    {{"title": "...", "description": "...", "estimated_savings": "...", "difficulty": "..."}}
+  "service_analysis": [
+    {{
+      "service": "...",
+      "cost": "...",
+      "explanation": "...",
+      "billing_details": "...",
+      "recommendations": [
+        {{"title": "...", "description": "...", "estimated_savings": "..."}}
+      ]
+    }}
   ]
 }}"""
 
@@ -254,12 +261,12 @@ def _parse_analysis_response(response_text: str) -> AIAnalysis:
         response_text: Raw JSON string from Bedrock.
 
     Returns:
-        AIAnalysis dict.
+        AIAnalysis dict with summary and service_analysis.
 
     Raises:
         ValueError: If the response is not valid JSON or missing required fields.
     """
-    # Strip markdown code fences if present (LLMs sometimes wrap JSON in ```json ... ```)
+    # Strip markdown code fences if present
     cleaned = response_text.strip()
     json_match = re.search(r'```(?:json)?\s*([\s\S]*?)```', cleaned)
     if json_match:
@@ -270,31 +277,47 @@ def _parse_analysis_response(response_text: str) -> AIAnalysis:
     except json.JSONDecodeError as e:
         raise ValueError(f"Bedrock response is not valid JSON: {str(e)}") from e
 
-    # Validate required top-level fields
     if not isinstance(analysis, dict):
         raise ValueError("Bedrock response is not a JSON object")
 
     if "summary" not in analysis or not isinstance(analysis["summary"], str):
         raise ValueError("Bedrock response missing required 'summary' string field")
 
-    if "explanations" not in analysis or not isinstance(analysis["explanations"], list):
-        raise ValueError("Bedrock response missing required 'explanations' array field")
-
-    for i, exp in enumerate(analysis["explanations"]):
-        for field in ("service", "cost", "explanation"):
-            if field not in exp:
-                raise ValueError(
-                    f"Explanation at index {i} missing required field '{field}'"
-                )
-
-    if "recommendations" not in analysis or not isinstance(analysis["recommendations"], list):
-        raise ValueError("Bedrock response missing required 'recommendations' array field")
-
-    for i, rec in enumerate(analysis["recommendations"]):
-        for field in ("title", "description", "estimated_savings"):
-            if field not in rec:
-                raise ValueError(
-                    f"Recommendation at index {i} missing required field '{field}'"
-                )
+    # Support both new format (service_analysis) and legacy (explanations + recommendations)
+    if "service_analysis" in analysis and isinstance(analysis["service_analysis"], list):
+        for i, svc in enumerate(analysis["service_analysis"]):
+            for field in ("service", "cost", "explanation"):
+                if field not in svc:
+                    raise ValueError(
+                        f"service_analysis at index {i} missing required field '{field}'"
+                    )
+        # Also build legacy fields for backward compatibility
+        if "explanations" not in analysis:
+            analysis["explanations"] = [
+                {
+                    "service": s.get("service", ""),
+                    "cost": s.get("cost", ""),
+                    "explanation": s.get("explanation", ""),
+                }
+                for s in analysis["service_analysis"]
+            ]
+        if "recommendations" not in analysis:
+            all_recs = []
+            for s in analysis["service_analysis"]:
+                for r in s.get("recommendations", []):
+                    all_recs.append(r)
+            analysis["recommendations"] = all_recs
+    else:
+        # Legacy format validation
+        if "explanations" not in analysis or not isinstance(analysis["explanations"], list):
+            raise ValueError("Bedrock response missing 'service_analysis' or 'explanations'")
+        for i, exp in enumerate(analysis["explanations"]):
+            for field in ("service", "cost", "explanation"):
+                if field not in exp:
+                    raise ValueError(
+                        f"Explanation at index {i} missing required field '{field}'"
+                    )
+        if "recommendations" not in analysis:
+            analysis["recommendations"] = []
 
     return analysis

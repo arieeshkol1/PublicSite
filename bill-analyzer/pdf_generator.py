@@ -249,9 +249,6 @@ def _generate_analysis_pages(
     # --- Service Breakdown & Explanations ---
     elements.extend(_build_explanations_section(parsed_bill, ai_analysis, styles))
 
-    # --- Recommendations ---
-    elements.extend(_build_recommendations_section(ai_analysis, styles))
-
     # --- Footer disclaimer ---
     elements.append(Spacer(1, 20))
     elements.extend(_build_footer(timestamp, styles))
@@ -416,132 +413,101 @@ def _build_summary_section(
     return elements
 
 
+
 def _build_explanations_section(
     parsed_bill: Dict[str, Any],
     ai_analysis: Dict[str, Any],
     styles: Dict[str, ParagraphStyle],
 ) -> List[Any]:
-    """Build the charge explanations section with billing model and savings tips."""
+    """Build unified per-service cards with explanation, billing details, and recommendations."""
     elements: List[Any] = []
 
-    elements.append(_section_heading("Charge Explanations", styles))
+    elements.append(_section_heading("Service Analysis", styles))
 
-    explanations = ai_analysis.get("explanations", [])
-    if not explanations:
-        elements.append(
-            Paragraph("No charge explanations available.", styles["body"])
-        )
+    # Prefer new service_analysis format, fall back to legacy explanations
+    service_items = ai_analysis.get("service_analysis", [])
+    if not service_items:
+        service_items = ai_analysis.get("explanations", [])
+    if not service_items:
+        elements.append(Paragraph("No charge explanations available.", styles["body"]))
         elements.append(Spacer(1, 12))
         return elements
 
-    currency = parsed_bill.get("currency", "USD")
+    for item in service_items:
+        service = str(item.get("service", "Unknown"))
+        cost = str(item.get("cost", "N/A"))
+        explanation = str(item.get("explanation", ""))
+        billing_details = str(item.get("billing_details", ""))
+        recommendations = item.get("recommendations", [])
 
-    for exp in explanations:
-        service = str(exp.get("service", "Unknown"))
-        cost = str(exp.get("cost", "N/A"))
-        explanation = str(exp.get("explanation", ""))
-        billing_model = str(exp.get("billing_model", ""))
-        savings_tip = str(exp.get("savings_tip", ""))
-
-        # Service header row
-        card_data = [
-            [
-                Paragraph(f"<b>{service}</b>", styles["table_header"]),
-                Paragraph(f"<b>{cost}</b>", styles["table_header"]),
-            ],
-            [
-                Paragraph(explanation, styles["body"]),
-                "",
-            ],
-        ]
-
-        # Add billing model row if available
-        if billing_model:
-            card_data.append([
-                Paragraph(
-                    f'<b>Billing Model:</b> {billing_model}',
-                    styles["body"],
-                ),
-                "",
-            ])
-
-        # Add savings tip row if available
-        if savings_tip:
-            card_data.append([
-                Paragraph(
-                    f'<b>Savings Tip:</b> {savings_tip}',
-                    styles["rec_savings"],
-                ),
-                "",
-            ])
-
-        card_table = Table(card_data, colWidths=[5.5 * inch, 1.5 * inch])
-        card_style = [
-            ("BACKGROUND", (0, 0), (-1, 0), AWS_DARK),
-            ("TEXTCOLOR", (0, 0), (-1, 0), WHITE),
-            ("SPAN", (0, 1), (-1, 1)),  # explanation spans full width
-            ("TOPPADDING", (0, 0), (-1, -1), 5),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+        # --- Service header bar ---
+        header_data = [[
+            Paragraph(f"<b>{service}</b>", styles["table_header"]),
+            Paragraph(f"<b>{cost}</b>", styles["table_header"]),
+        ]]
+        header_table = Table(header_data, colWidths=[5.5 * inch, 1.5 * inch])
+        header_table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, -1), AWS_DARK),
+            ("TEXTCOLOR", (0, 0), (-1, -1), WHITE),
+            ("TOPPADDING", (0, 0), (-1, -1), 6),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
             ("LEFTPADDING", (0, 0), (-1, -1), 8),
             ("RIGHTPADDING", (0, 0), (-1, -1), 8),
-            ("BOX", (0, 0), (-1, -1), 0.5, MEDIUM_GRAY),
-            ("LINEBELOW", (0, 0), (-1, 0), 1, AWS_ORANGE),
+            ("LINEBELOW", (0, 0), (-1, -1), 2, AWS_ORANGE),
+            ("ALIGN", (1, 0), (1, 0), "RIGHT"),
+        ]))
+        elements.append(header_table)
+
+        # --- Two-column body: left = explanation + billing, right = recommendations ---
+        # Build left column content
+        left_parts: List[Any] = []
+        left_parts.append(Paragraph(explanation, styles["body"]))
+        if billing_details:
+            left_parts.append(Spacer(1, 4))
+            left_parts.append(Paragraph(
+                f'<b>How you are charged:</b> {billing_details}',
+                styles["body"],
+            ))
+
+        # Build right column content
+        right_parts: List[Any] = []
+        if recommendations:
+            right_parts.append(Paragraph("<b>How to save:</b>", styles["body_bold"]))
+            right_parts.append(Spacer(1, 2))
+            for rec in recommendations:
+                title = str(rec.get("title", ""))
+                desc = str(rec.get("description", ""))
+                savings = str(rec.get("estimated_savings", ""))
+                right_parts.append(Paragraph(f"\u2022 <b>{title}</b>", styles["body_bold"]))
+                if desc:
+                    right_parts.append(Paragraph(f"  {desc}", styles["small"]))
+                if savings:
+                    right_parts.append(Paragraph(f"  Savings: {savings}", styles["rec_savings"]))
+        else:
+            right_parts.append(Paragraph("<i>No specific recommendations.</i>", styles["small"]))
+
+        body_data = [[left_parts, right_parts]]
+        body_table = Table(body_data, colWidths=[3.5 * inch, 3.5 * inch])
+        body_table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, -1), LIGHT_GRAY),
             ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ]
-        # Span billing model and savings tip rows too
-        for i in range(2, len(card_data)):
-            card_style.append(("SPAN", (0, i), (-1, i)))
-
-        card_table.setStyle(TableStyle(card_style))
-        elements.append(card_table)
-        elements.append(Spacer(1, 8))
-
-    elements.append(Spacer(1, 4))
-    return elements
-
-
-
-def _build_recommendations_section(
-    ai_analysis: Dict[str, Any], styles: Dict[str, ParagraphStyle]
-) -> List[Any]:
-    """Build the cost-saving recommendations section."""
-    elements: List[Any] = []
-
-    elements.append(_section_heading("Cost-Saving Recommendations", styles))
-
-    recommendations = ai_analysis.get("recommendations", [])
-    if not recommendations:
-        elements.append(
-            Paragraph("No recommendations available.", styles["body"])
-        )
-        return elements
-
-    for idx, rec in enumerate(recommendations, 1):
-        title = str(rec.get("title", "Recommendation"))
-        description = str(rec.get("description", ""))
-        savings = str(rec.get("estimated_savings", ""))
-        difficulty = str(rec.get("difficulty", ""))
-
-        # Numbered title
-        elements.append(
-            Paragraph(f"{idx}. {title}", styles["rec_title"])
-        )
-        elements.append(Paragraph(description, styles["rec_body"]))
-
-        # Savings + difficulty badge line
-        badge_parts = []
-        if savings:
-            badge_parts.append(f"Estimated Savings: {savings}")
-        if difficulty:
-            badge_parts.append(f"Difficulty: {difficulty}")
-        if badge_parts:
-            elements.append(
-                Paragraph(" | ".join(badge_parts), styles["rec_savings"])
-            )
-
-        elements.append(Spacer(1, 4))
+            ("TOPPADDING", (0, 0), (-1, -1), 8),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+            ("LEFTPADDING", (0, 0), (-1, -1), 8),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+            ("LINEBEFORE", (1, 0), (1, -1), 0.5, MEDIUM_GRAY),
+            ("BOX", (0, 0), (-1, -1), 0.5, MEDIUM_GRAY),
+        ]))
+        elements.append(body_table)
+        elements.append(Spacer(1, 10))
 
     return elements
+
+
+
+
+
+
 
 
 def _build_footer(timestamp: str, styles: Dict[str, ParagraphStyle]) -> List[Any]:
