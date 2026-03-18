@@ -269,6 +269,9 @@ def _generate_analysis_pages(
     # --- Service Analysis (explanations + recommendations) ---
     elements.extend(_build_explanations_section(parsed_bill, ai_analysis, styles))
 
+    # --- Savings Plans & Reserved Instances Analysis ---
+    elements.extend(_build_savings_plan_section(ai_analysis, styles))
+
     # --- Footer disclaimer ---
     elements.append(Spacer(1, 20))
     elements.extend(_build_footer(timestamp, styles))
@@ -283,23 +286,41 @@ def _build_header(
     """Build the title banner with branding and billing period summary."""
     elements: List[Any] = []
 
-    # Title banner - dark blue background
-    banner_data = [
-        [Paragraph("Bill Analysis Report", styles["banner"])],
-        [Paragraph(f"Generated: {timestamp}", styles["banner_sub"])],
-    ]
-    banner_table = Table(banner_data, colWidths=[7 * inch])
-    banner_table.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, -1), DARK_BG),
-        ("TOPPADDING", (0, 0), (-1, 0), 16),
-        ("BOTTOMPADDING", (0, 0), (0, 0), 4),
-        ("TOPPADDING", (0, 1), (0, 1), 2),
-        ("BOTTOMPADDING", (0, 1), (-1, -1), 14),
+    # Title banner - white background with blue text
+    title_data = [[Paragraph("Bill Analysis Report", ParagraphStyle(
+        "BannerTitle",
+        fontName="Helvetica-Bold",
+        fontSize=22,
+        textColor=DARK_BLUE,
+        alignment=1,
+        spaceAfter=0,
+    ))]]
+    title_table = Table(title_data, colWidths=[7 * inch])
+    title_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), WHITE),
+        ("TOPPADDING", (0, 0), (-1, -1), 14),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
         ("LEFTPADDING", (0, 0), (-1, -1), 12),
         ("RIGHTPADDING", (0, 0), (-1, -1), 12),
-        ("LINEBELOW", (0, -1), (-1, -1), 3, PRIMARY_BLUE),
+        ("LINEBELOW", (0, 0), (-1, -1), 3, PRIMARY_BLUE),
     ]))
-    elements.append(banner_table)
+    elements.append(title_table)
+
+    # Date line - separate row below the title
+    date_data = [[Paragraph(f"Generated: {timestamp}", ParagraphStyle(
+        "BannerDate",
+        fontName="Helvetica",
+        fontSize=9,
+        textColor=colors.HexColor("#666666"),
+        alignment=1,
+    ))]]
+    date_table = Table(date_data, colWidths=[7 * inch])
+    date_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), LIGHT_BG),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+    ]))
+    elements.append(date_table)
     elements.append(Spacer(1, 14))
 
     # Billing period info row
@@ -502,6 +523,77 @@ def _build_explanations_section(
         elements.append(body_table)
         elements.append(Spacer(1, 10))
 
+    return elements
+
+
+def _build_savings_plan_section(
+    ai_analysis: Dict[str, Any],
+    styles: Dict[str, ParagraphStyle],
+) -> List[Any]:
+    """Build the Savings Plans & Reserved Instances recommendation section."""
+    elements: List[Any] = []
+
+    sp_analysis = ai_analysis.get("savings_plan_analysis", {})
+    if not sp_analysis:
+        return elements
+
+    elements.append(_section_heading("Savings Plans & Reserved Instances", styles))
+
+    recommendation = sp_analysis.get("recommendation", "")
+    potential_savings = sp_analysis.get("potential_savings_percent", "")
+    how_to_purchase = sp_analysis.get("how_to_purchase", "")
+    has_sp = sp_analysis.get("has_savings_plans", False)
+    has_ri = sp_analysis.get("has_reserved_instances", False)
+
+    # Status indicators
+    sp_status = "Active" if has_sp else "Not detected"
+    ri_status = "Active" if has_ri else "Not detected"
+    sp_color = "#067D62" if has_sp else "#CC5500"
+    ri_color = "#067D62" if has_ri else "#CC5500"
+
+    status_data = [[
+        Paragraph(
+            f'<b>Savings Plans:</b> <font color="{sp_color}">{sp_status}</font>',
+            styles["body"],
+        ),
+        Paragraph(
+            f'<b>Reserved Instances:</b> <font color="{ri_color}">{ri_status}</font>',
+            styles["body"],
+        ),
+    ]]
+    if potential_savings:
+        status_data[0].append(
+            Paragraph(
+                f'<b>Potential Savings:</b> <font color="#067D62">{potential_savings}</font>',
+                styles["body"],
+            )
+        )
+    else:
+        status_data[0].append(Paragraph("", styles["body"]))
+
+    status_table = Table(status_data, colWidths=[2.3 * inch, 2.3 * inch, 2.4 * inch])
+    status_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), LIGHT_BG),
+        ("BOX", (0, 0), (-1, -1), 0.5, MEDIUM_GRAY),
+        ("TOPPADDING", (0, 0), (-1, -1), 8),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+        ("LEFTPADDING", (0, 0), (-1, -1), 8),
+    ]))
+    elements.append(status_table)
+    elements.append(Spacer(1, 8))
+
+    # Recommendation text
+    if recommendation:
+        elements.append(Paragraph(recommendation, styles["body"]))
+        elements.append(Spacer(1, 6))
+
+    # How to purchase
+    if how_to_purchase:
+        elements.append(Paragraph("<b>How to get started:</b>", styles["body_bold"]))
+        elements.append(Paragraph(how_to_purchase, styles["body"]))
+        elements.append(Spacer(1, 6))
+
+    elements.append(Spacer(1, 8))
     return elements
 
 

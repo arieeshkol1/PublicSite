@@ -50,12 +50,36 @@ Based on the bill data and the optimization tips above, provide:
 or "Charges for". Instead, describe the actual pricing dimensions and how the service bills \
 (e.g., "EC2 bills per instance-hour based on instance type and region. On-Demand t3.medium costs $0.0416/hr in us-east-1. \
 Additional charges apply for EBS volumes, data transfer, and Elastic IPs."). \
-If calculation parameters are available from the bill, include them \
-(e.g., "6,784 hours x $0.0416/hr = $282.34 for compute, plus $43.40 for 500 GB gp3 storage").
+Use the line item details from the bill to explain what was actually charged. \
+For example, if the bill shows "NatGateway-Hours: 24.00" and "NatGateway-Bytes: 1.50", \
+explain in plain language: "You ran a NAT Gateway for 24 hours at $0.045/hr = $1.08, \
+plus 1.5 GB of data processed at $0.045/GB = $0.07." \
+Always ground your explanation in the actual bill data provided.
    - billing_details: A concise one-line formula showing the actual calculation if quantities are available \
 (e.g., "6,784 hrs x $0.0416/hr + 500 GB x $0.08/GB/mo"). If exact quantities are not in the bill, \
 describe the typical billing units (e.g., "Billed per instance-hour + GB of storage + GB of data transfer").
    - recommendations: 1-3 specific cost-saving recommendations for THIS service, each with estimated savings percentage.
+
+3. SAVINGS_PLAN_ANALYSIS: Based on the "Commitment Discount Status" in the bill data:
+   - If Savings Plans are NOT detected: Explain what Savings Plans are and how the customer could benefit. \
+AWS offers four types: Compute Savings Plans (up to 66% off, covers EC2/Lambda/Fargate, most flexible), \
+EC2 Instance Savings Plans (up to 72% off, locked to instance family+region), \
+Database Savings Plans (up to 35% off, covers Aurora/RDS/DynamoDB/ElastiCache), \
+and SageMaker Savings Plans (up to 64% off). \
+Recommend the best type based on the services in this bill. \
+Explain how to purchase: go to AWS Cost Explorer console > Savings Plans > Purchase Savings Plans. \
+Choose hourly commitment ($/hr), term (1 or 3 years), and payment option (All Upfront for max discount, Partial Upfront, or No Upfront).
+   - If Savings Plans ARE detected: Acknowledge they are already using Savings Plans. \
+Suggest reviewing coverage in Cost Explorer to ensure optimal utilization. \
+Recommend checking if additional Savings Plans could cover remaining On-Demand usage.
+   - If Reserved Instances are NOT detected and EC2/RDS usage is significant: \
+Explain that Reserved Instances offer up to 72% savings for steady-state workloads. \
+Standard RIs are locked to instance family+region but offer deeper discounts. \
+Convertible RIs (up to 66% off) allow changing instance family/OS/tenancy. \
+Three payment options: All Upfront (biggest discount), Partial Upfront, No Upfront. \
+Purchase via EC2 Console > Reserved Instances > Purchase. \
+Note: AWS now recommends Savings Plans over RIs for most use cases due to greater flexibility.
+   - If Reserved Instances ARE detected: Acknowledge usage and suggest reviewing utilization in Cost Explorer.
 
 Respond in this exact JSON format:
 {{
@@ -70,7 +94,14 @@ Respond in this exact JSON format:
         {{"title": "...", "description": "...", "estimated_savings": "..."}}
       ]
     }}
-  ]
+  ],
+  "savings_plan_analysis": {{
+    "has_savings_plans": true/false,
+    "has_reserved_instances": true/false,
+    "recommendation": "Detailed recommendation text about Savings Plans and/or Reserved Instances...",
+    "potential_savings_percent": "estimated overall savings percentage if commitment pricing is adopted",
+    "how_to_purchase": "Step-by-step instructions for purchasing the recommended commitment type"
+  }}
 }}"""
 
 
@@ -113,6 +144,7 @@ def analyze_bill(parsed_bill: Dict[str, Any]) -> AIAnalysis:
     batches = _split_services_into_batches(services, MAX_SERVICES_PER_BATCH)
     all_service_analyses: List[Dict[str, Any]] = []
     batch_summaries: List[str] = []
+    savings_plan_analysis: Dict[str, Any] | None = None
 
     for i, batch_services in enumerate(batches):
         logger.info("Processing batch %d/%d: %s", i + 1, len(batches), batch_services)
@@ -124,9 +156,12 @@ def analyze_bill(parsed_bill: Dict[str, Any]) -> AIAnalysis:
 
         all_service_analyses.extend(batch_result.get("service_analysis", []))
         batch_summaries.append(batch_result.get("summary", ""))
+        # Capture savings_plan_analysis from first batch (it has the full bill context)
+        if i == 0 and "savings_plan_analysis" in batch_result:
+            savings_plan_analysis = batch_result["savings_plan_analysis"]
 
     # Merge all batch results into a single response
-    return _merge_batch_results(parsed_bill, all_service_analyses, batch_summaries)
+    return _merge_batch_results(parsed_bill, all_service_analyses, batch_summaries, savings_plan_analysis)
 
 def _split_services_into_batches(services: List[str], batch_size: int) -> List[List[str]]:
     """Split a list of services into batches of the given size."""
@@ -154,6 +189,7 @@ def _merge_batch_results(
     parsed_bill: Dict[str, Any],
     all_service_analyses: List[Dict[str, Any]],
     batch_summaries: List[str],
+    savings_plan_analysis: Dict[str, Any] | None = None,
 ) -> AIAnalysis:
     """Merge results from multiple batch calls into a single AIAnalysis."""
     total_cost = parsed_bill.get("total_cost", 0)
@@ -179,12 +215,15 @@ def _merge_batch_results(
     for s in all_service_analyses:
         all_recs.extend(s.get("recommendations", []))
 
-    return {
+    result = {
         "summary": summary,
         "service_analysis": all_service_analyses,
         "explanations": explanations,
         "recommendations": all_recs,
     }
+    if savings_plan_analysis:
+        result["savings_plan_analysis"] = savings_plan_analysis
+    return result
 
 
 def _extract_cost_value(cost_str: str) -> float:
@@ -270,8 +309,8 @@ def _build_prompt(parsed_bill: Dict[str, Any], tips: List[Dict[str, Any]]) -> st
     Returns:
         Formatted prompt string for Bedrock.
     """
-    # Format bill data as readable text — use service_totals only to keep prompt compact.
-    # Line items are too verbose for large bills and can blow up the prompt size.
+    # Format bill data as readable text — include service_totals and line items
+    # so Bedrock can explain how charges were calculated from the actual bill data.
     bill_lines = [
         f"Invoice Number: {parsed_bill.get('invoice_number', 'N/A')}",
         f"Account ID: {parsed_bill.get('account_id', 'N/A')}",
@@ -283,6 +322,44 @@ def _build_prompt(parsed_bill: Dict[str, Any], tips: List[Dict[str, Any]]) -> st
     ]
     for service, cost in parsed_bill.get("service_totals", {}).items():
         bill_lines.append(f"  - {service}: {cost}")
+
+    # Include line items grouped by service for calculation details
+    line_items = parsed_bill.get("line_items", [])
+    if line_items:
+        bill_lines.append("")
+        bill_lines.append("Line Item Details (from the bill):")
+        items_by_svc: Dict[str, List[str]] = {}
+        for item in line_items:
+            svc = item.get("service", "Unknown")
+            desc = item.get("description", "")
+            cost = item.get("cost", 0)
+            if svc not in items_by_svc:
+                items_by_svc[svc] = []
+            items_by_svc[svc].append(f"{desc}: {cost}")
+        for svc, details in items_by_svc.items():
+            bill_lines.append(f"  {svc}:")
+            for d in details[:5]:  # cap at 5 line items per service
+                bill_lines.append(f"    - {d}")
+
+    # Include commitment discount detection results
+    discounts = parsed_bill.get("commitment_discounts", {})
+    if discounts:
+        bill_lines.append("")
+        bill_lines.append("Commitment Discount Status:")
+        if discounts.get("has_savings_plans"):
+            bill_lines.append("  - Savings Plans: ACTIVE (detected in bill)")
+            for detail in discounts.get("savings_plan_details", [])[:5]:
+                bill_lines.append(f"    > {detail}")
+        else:
+            bill_lines.append("  - Savings Plans: NOT DETECTED (customer is likely paying On-Demand rates)")
+        if discounts.get("has_reserved_instances"):
+            bill_lines.append("  - Reserved Instances: ACTIVE (detected in bill)")
+            for detail in discounts.get("reserved_instance_details", [])[:5]:
+                bill_lines.append(f"    > {detail}")
+        else:
+            bill_lines.append("  - Reserved Instances: NOT DETECTED")
+        if discounts.get("savings_amount"):
+            bill_lines.append(f"  - Total savings shown in bill: {discounts['savings_amount']}")
 
     bill_data = "\n".join(bill_lines)
 

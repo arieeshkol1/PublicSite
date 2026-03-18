@@ -141,7 +141,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     # 7. Return success
     summary = analysis.get('summary', '')
     logger.info("Analysis complete for session %s", session_id)
-    return _create_success_response(download_url, summary, session_id)
+    return _create_success_response(download_url, summary, session_id, filename)
 
 
 
@@ -272,7 +272,7 @@ def _upload_report_to_s3(session_id: str, report_bytes: bytes) -> str:
 
 
 def _create_success_response(
-    download_url: str, summary: str, session_id: str
+    download_url: str, summary: str, session_id: str, original_filename: str = ""
 ) -> Dict[str, Any]:
     """
     Create a success response with download URL and summary.
@@ -281,6 +281,7 @@ def _create_success_response(
         download_url: Pre-signed S3 URL for the report.
         summary: Brief AI-generated bill summary.
         session_id: Session identifier.
+        original_filename: Original uploaded filename.
 
     Returns:
         API Gateway proxy response dict.
@@ -292,6 +293,7 @@ def _create_success_response(
             'downloadUrl': download_url,
             'summary': summary,
             'sessionId': session_id,
+            'originalFilename': original_filename,
         }),
     }
 

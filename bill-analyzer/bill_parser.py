@@ -143,6 +143,7 @@ def parse_bill(pdf_bytes: bytes) -> ParsedBill:
 
     total_cost = sum(item["cost"] for item in line_items)
     service_totals = _aggregate_service_totals(line_items)
+    commitment_discounts = _detect_commitment_discounts(text)
 
     return {
         "line_items": line_items,
@@ -153,7 +154,105 @@ def parse_bill(pdf_bytes: bytes) -> ParsedBill:
         "invoice_number": metadata.get("invoice_number", "N/A"),
         "account_id": metadata.get("account_id", "N/A"),
         "service_totals": service_totals,
+        "commitment_discounts": commitment_discounts,
     }
+
+
+def _detect_commitment_discounts(text: str) -> Dict[str, Any]:
+    """
+    Detect whether Savings Plans or Reserved Instances are used in the bill.
+
+    Scans the full bill text for indicators such as:
+        - "Savings Plans" section or line items
+        - "Reserved" pricing mentions
+        - Savings/discount amounts
+
+    Returns:
+        Dict with:
+            "has_savings_plans": bool,
+            "has_reserved_instances": bool,
+            "savings_plan_details": list of detected SP references,
+            "reserved_instance_details": list of detected RI references,
+            "savings_amount": Decimal or None (total savings shown in bill),
+    """
+    result: Dict[str, Any] = {
+        "has_savings_plans": False,
+        "has_reserved_instances": False,
+        "savings_plan_details": [],
+        "reserved_instance_details": [],
+        "savings_amount": None,
+    }
+
+    # --- Savings Plans detection ---
+    sp_indicators = [
+        re.compile(r"Savings\s+Plans?\b", re.IGNORECASE),
+        re.compile(r"SavingsPlan", re.IGNORECASE),
+        re.compile(r"Compute\s+Savings\s+Plan", re.IGNORECASE),
+        re.compile(r"EC2\s+Instance\s+Savings\s+Plan", re.IGNORECASE),
+        re.compile(r"Database\s+Savings\s+Plan", re.IGNORECASE),
+        re.compile(r"SageMaker\s+Savings\s+Plan", re.IGNORECASE),
+    ]
+    sp_details = []
+    for pattern in sp_indicators:
+        for match in pattern.finditer(text):
+            # Grab surrounding context (up to 120 chars after match)
+            start = match.start()
+            end = min(match.end() + 120, len(text))
+            context = text[start:end].replace("\n", " ").strip()
+            sp_details.append(context)
+
+    if sp_details:
+        result["has_savings_plans"] = True
+        # Deduplicate similar entries
+        seen = set()
+        unique = []
+        for d in sp_details:
+            key = d[:60]
+            if key not in seen:
+                seen.add(key)
+                unique.append(d)
+        result["savings_plan_details"] = unique[:10]
+
+    # --- Reserved Instances detection ---
+    ri_indicators = [
+        re.compile(r"Reserved\s+Instance", re.IGNORECASE),
+        re.compile(r"\bRI\s+(?:fee|charge|discount|coverage)", re.IGNORECASE),
+        re.compile(r"Reserved\s+(?:capacity|pricing)", re.IGNORECASE),
+        re.compile(r"Reservation\s+(?:applied|discount)", re.IGNORECASE),
+    ]
+    ri_details = []
+    for pattern in ri_indicators:
+        for match in pattern.finditer(text):
+            start = match.start()
+            end = min(match.end() + 120, len(text))
+            context = text[start:end].replace("\n", " ").strip()
+            ri_details.append(context)
+
+    if ri_details:
+        result["has_reserved_instances"] = True
+        seen = set()
+        unique = []
+        for d in ri_details:
+            key = d[:60]
+            if key not in seen:
+                seen.add(key)
+                unique.append(d)
+        result["reserved_instance_details"] = unique[:10]
+
+    # --- Savings amount detection ---
+    # Look for "Savings (XX.XX)" or "Total savings: XX.XX"
+    savings_pattern = re.compile(
+        r"(?:Savings|Total\s+savings|You\s+saved)[:\s]*\$?\s*([\d,]+\.\d{2})",
+        re.IGNORECASE,
+    )
+    savings_match = savings_pattern.search(text)
+    if savings_match:
+        try:
+            result["savings_amount"] = Decimal(savings_match.group(1).replace(",", ""))
+        except InvalidOperation:
+            pass
+
+    return result
 
 
 def _is_billing_console_format(text: str) -> bool:
@@ -188,6 +287,7 @@ def _parse_billing_console(text: str, tables: List[List[List[str]]]) -> ParsedBi
 
     total_cost = sum(item["cost"] for item in line_items)
     service_totals = _aggregate_service_totals(line_items)
+    commitment_discounts = _detect_commitment_discounts(text)
 
     return {
         "line_items": line_items,
@@ -198,6 +298,7 @@ def _parse_billing_console(text: str, tables: List[List[List[str]]]) -> ParsedBi
         "invoice_number": metadata.get("invoice_number", "N/A"),
         "account_id": metadata.get("account_id", "N/A"),
         "service_totals": service_totals,
+        "commitment_discounts": commitment_discounts,
     }
 
 

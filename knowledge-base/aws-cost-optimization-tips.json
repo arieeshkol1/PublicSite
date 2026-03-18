@@ -284,6 +284,51 @@
       "description": "Tag all resources with project, environment, and owner tags. Enable cost allocation tags in Billing to track costs by team or application.",
       "estimatedSavings": "varies",
       "difficulty": "easy"
+    },
+    {
+      "id": "general-006",
+      "service": "General",
+      "category": "commitment",
+      "title": "Compute Savings Plans",
+      "description": "Commit to a consistent $/hr spend for 1 or 3 years. Covers EC2, Lambda, and Fargate across any region, instance family, OS, or tenancy. Most flexible commitment option. Purchase via Cost Explorer > Savings Plans. Choose All Upfront for maximum discount.",
+      "estimatedSavings": "up to 66%",
+      "difficulty": "medium"
+    },
+    {
+      "id": "general-007",
+      "service": "General",
+      "category": "commitment",
+      "title": "EC2 Instance Savings Plans",
+      "description": "Commit to a specific EC2 instance family in a chosen region for 1 or 3 years. Deeper discount than Compute SP but less flexible. Applies regardless of instance size, OS, or tenancy within the family. Best for stable, predictable EC2 workloads.",
+      "estimatedSavings": "up to 72%",
+      "difficulty": "medium"
+    },
+    {
+      "id": "general-008",
+      "service": "General",
+      "category": "commitment",
+      "title": "Database Savings Plans",
+      "description": "Commit to a consistent $/hr spend on database services for 1 or 3 years. Covers Aurora, RDS, DynamoDB, ElastiCache, DocumentDB, Neptune, Keyspaces, Timestream, DMS, and OpenSearch. Applies across instance families, sizes, regions, and engines.",
+      "estimatedSavings": "up to 35%",
+      "difficulty": "medium"
+    },
+    {
+      "id": "general-009",
+      "service": "General",
+      "category": "commitment",
+      "title": "Standard Reserved Instances",
+      "description": "Commit to a specific instance type in a specific region for 1 or 3 years. Deepest discount available. Three payment options: All Upfront (max savings), Partial Upfront, No Upfront. Can be resold on RI Marketplace if no longer needed. Best for steady-state workloads that won't change.",
+      "estimatedSavings": "up to 72%",
+      "difficulty": "medium"
+    },
+    {
+      "id": "general-010",
+      "service": "General",
+      "category": "commitment",
+      "title": "Convertible Reserved Instances",
+      "description": "Like Standard RIs but allow changing instance family, OS, and tenancy during the term. Lower discount than Standard RIs but more flexibility. Cannot be sold on RI Marketplace. Good for workloads that may evolve but will remain on EC2.",
+      "estimatedSavings": "up to 66%",
+      "difficulty": "medium"
     }
   ]
 }
