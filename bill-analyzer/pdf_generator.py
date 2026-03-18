@@ -2,8 +2,8 @@
 AWS Bill Analyzer - PDF Report Generator Module
 
 Uses PyPDF2 to read the original invoice PDF and ReportLab to generate
-analysis pages. Merges original invoice pages with analysis pages into
-a single PDF output.
+analysis pages. Merges analysis pages first, then appends the original
+invoice as an appendix.
 """
 
 import io
@@ -22,16 +22,21 @@ from reportlab.platypus import (
     Spacer,
     Table,
     TableStyle,
+    PageBreak,
 )
+from reportlab.pdfgen import canvas
 
-# AWS-inspired color palette
-AWS_ORANGE = colors.HexColor("#FF9900")
-AWS_DARK = colors.HexColor("#232F3E")
-HEADER_BG = colors.HexColor("#232F3E")
+# eshkolai.com theme colors (matching website CSS variables)
+PRIMARY_BLUE = colors.HexColor("#0066FF")
+DARK_BLUE = colors.HexColor("#0052CC")
+SECONDARY_BLUE = colors.HexColor("#00D4FF")
+DARK_BG = colors.HexColor("#0A0E27")
+LIGHT_BG = colors.HexColor("#F0F4FF")
 LIGHT_GRAY = colors.HexColor("#F5F5F5")
 MEDIUM_GRAY = colors.HexColor("#DDDDDD")
 TEXT_COLOR = colors.HexColor("#333333")
 WHITE = colors.white
+ACCENT_ORANGE = colors.HexColor("#FF6B35")
 
 
 def _format_cost(value: Any) -> str:
@@ -42,6 +47,45 @@ def _format_cost(value: Any) -> str:
         return str(value)
 
 
+def _page_header_footer(canvas_obj, doc):
+    """Draw header and footer on every page with eshkolai.com branding."""
+    canvas_obj.saveState()
+    width, height = letter
+
+    # --- Header bar ---
+    bar_height = 28
+    canvas_obj.setFillColor(DARK_BG)
+    canvas_obj.rect(0, height - bar_height, width, bar_height, fill=1, stroke=0)
+    # Accent line under header
+    canvas_obj.setStrokeColor(PRIMARY_BLUE)
+    canvas_obj.setLineWidth(2)
+    canvas_obj.line(0, height - bar_height, width, height - bar_height)
+    # Logo text
+    canvas_obj.setFillColor(WHITE)
+    canvas_obj.setFont("Helvetica-Bold", 10)
+    canvas_obj.drawString(doc.leftMargin, height - 19, "eshkolai.com")
+    # Right side text
+    canvas_obj.setFont("Helvetica", 8)
+    canvas_obj.setFillColor(colors.HexColor("#AABBDD"))
+    canvas_obj.drawRightString(width - doc.rightMargin, height - 19, "Bill Analysis Report")
+
+    # --- Footer bar ---
+    footer_y = 30
+    canvas_obj.setStrokeColor(MEDIUM_GRAY)
+    canvas_obj.setLineWidth(0.5)
+    canvas_obj.line(doc.leftMargin, footer_y, width - doc.rightMargin, footer_y)
+    # Footer text
+    canvas_obj.setFillColor(colors.HexColor("#999999"))
+    canvas_obj.setFont("Helvetica", 7)
+    canvas_obj.drawString(doc.leftMargin, footer_y - 12, "eshkolai.com \u2022 Cloud and AI")
+    canvas_obj.drawRightString(
+        width - doc.rightMargin, footer_y - 12,
+        "Confidential \u2022 Generated for authorized use only"
+    )
+
+    canvas_obj.restoreState()
+
+
 def _build_styles() -> Dict[str, ParagraphStyle]:
     """Build custom paragraph styles for the analysis pages."""
     base = getSampleStyleSheet()
@@ -50,17 +94,17 @@ def _build_styles() -> Dict[str, ParagraphStyle]:
             "Banner",
             parent=base["Normal"],
             fontName="Helvetica-Bold",
-            fontSize=22,
+            fontSize=20,
             textColor=WHITE,
-            alignment=1,  # center
+            alignment=1,
             spaceAfter=0,
         ),
         "banner_sub": ParagraphStyle(
             "BannerSub",
             parent=base["Normal"],
             fontName="Helvetica",
-            fontSize=10,
-            textColor=colors.HexColor("#CCCCCC"),
+            fontSize=9,
+            textColor=colors.HexColor("#AABBDD"),
             alignment=1,
             spaceAfter=0,
         ),
@@ -69,7 +113,7 @@ def _build_styles() -> Dict[str, ParagraphStyle]:
             parent=base["Normal"],
             fontName="Helvetica-Bold",
             fontSize=14,
-            textColor=AWS_DARK,
+            textColor=DARK_BLUE,
             spaceBefore=16,
             spaceAfter=8,
             borderPadding=(0, 0, 4, 0),
@@ -105,7 +149,7 @@ def _build_styles() -> Dict[str, ParagraphStyle]:
             parent=base["Normal"],
             fontName="Helvetica-Bold",
             fontSize=11,
-            textColor=AWS_DARK,
+            textColor=DARK_BLUE,
             spaceAfter=2,
         ),
         "rec_body": ParagraphStyle(
@@ -153,7 +197,7 @@ def generate_report(
     email: str,
 ) -> bytes:
     """
-    Generate a merged PDF report: original invoice pages + analysis pages.
+    Generate a merged PDF report: analysis pages first, then original invoice as appendix.
 
     Args:
         original_pdf_bytes: Raw bytes of the uploaded AWS invoice PDF.
@@ -163,37 +207,24 @@ def generate_report(
         email: User's email address.
 
     Returns:
-        Merged PDF as bytes (original invoice + analysis pages).
+        Merged PDF as bytes (analysis pages + original invoice appendix).
 
     Raises:
         ValueError: If the original PDF cannot be read.
         RuntimeError: If PDF generation or merging fails.
     """
-    # Validate original PDF
     _read_original_pdf(original_pdf_bytes)
 
-    # Generate analysis pages
     analysis_pdf_bytes = _generate_analysis_pages(
         parsed_bill, ai_analysis, session_id, email
     )
 
-    # Merge original + analysis
-    return _merge_pdfs(original_pdf_bytes, analysis_pdf_bytes)
+    # Analysis first, original as appendix
+    return _merge_pdfs(analysis_pdf_bytes, original_pdf_bytes)
 
 
 def _read_original_pdf(pdf_bytes: bytes):
-    """
-    Read the original invoice PDF using PyPDF2.
-
-    Args:
-        pdf_bytes: Raw bytes of the original PDF.
-
-    Returns:
-        PyPDF2 PdfReader instance.
-
-    Raises:
-        ValueError: If the bytes are not a valid PDF.
-    """
+    """Read and validate the original invoice PDF."""
     if not pdf_bytes:
         raise ValueError("Original PDF is empty")
     try:
@@ -213,18 +244,7 @@ def _generate_analysis_pages(
     session_id: str,
     email: str,
 ) -> bytes:
-    """
-    Generate the analysis pages as a PDF using ReportLab.
-
-    Args:
-        parsed_bill: ParsedBill dict.
-        ai_analysis: AIAnalysis dict.
-        session_id: Unique session identifier.
-        email: User's email address.
-
-    Returns:
-        Analysis pages PDF as bytes.
-    """
+    """Generate the analysis pages as a PDF using ReportLab."""
     buf = io.BytesIO()
     styles = _build_styles()
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
@@ -232,87 +252,75 @@ def _generate_analysis_pages(
     doc = SimpleDocTemplate(
         buf,
         pagesize=letter,
-        topMargin=0.5 * inch,
-        bottomMargin=0.75 * inch,
+        topMargin=0.75 * inch,  # room for header bar
+        bottomMargin=0.75 * inch,  # room for footer
         leftMargin=0.75 * inch,
         rightMargin=0.75 * inch,
     )
 
     elements: List[Any] = []
 
-    # --- Header / Banner ---
+    # --- Title Banner ---
     elements.extend(_build_header(parsed_bill, timestamp, styles))
 
     # --- Bill Summary ---
     elements.extend(_build_summary_section(parsed_bill, ai_analysis, styles))
 
-    # --- Service Breakdown & Explanations ---
+    # --- Service Analysis (explanations + recommendations) ---
     elements.extend(_build_explanations_section(parsed_bill, ai_analysis, styles))
 
     # --- Footer disclaimer ---
     elements.append(Spacer(1, 20))
     elements.extend(_build_footer(timestamp, styles))
 
-    doc.build(elements)
+    doc.build(elements, onFirstPage=_page_header_footer, onLaterPages=_page_header_footer)
     return buf.getvalue()
 
 
 def _build_header(
     parsed_bill: Dict[str, Any], timestamp: str, styles: Dict[str, ParagraphStyle]
 ) -> List[Any]:
-    """Build the header banner with branding and billing period summary."""
+    """Build the title banner with branding and billing period summary."""
     elements: List[Any] = []
 
-    # Orange + dark banner table
+    # Title banner - dark blue background
     banner_data = [
-        [Paragraph("eshkolai.com Bill Analysis", styles["banner"])],
+        [Paragraph("Bill Analysis Report", styles["banner"])],
         [Paragraph(f"Generated: {timestamp}", styles["banner_sub"])],
     ]
     banner_table = Table(banner_data, colWidths=[7 * inch])
-    banner_table.setStyle(
-        TableStyle(
-            [
-                ("BACKGROUND", (0, 0), (-1, -1), AWS_DARK),
-                ("TOPPADDING", (0, 0), (-1, 0), 20),
-                ("BOTTOMPADDING", (0, 0), (0, 0), 4),
-                ("TOPPADDING", (0, 1), (0, 1), 2),
-                ("BOTTOMPADDING", (0, 1), (-1, -1), 16),
-                ("LEFTPADDING", (0, 0), (-1, -1), 12),
-                ("RIGHTPADDING", (0, 0), (-1, -1), 12),
-                ("LINEBELOW", (0, -1), (-1, -1), 3, AWS_ORANGE),
-            ]
-        )
-    )
+    banner_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), DARK_BG),
+        ("TOPPADDING", (0, 0), (-1, 0), 16),
+        ("BOTTOMPADDING", (0, 0), (0, 0), 4),
+        ("TOPPADDING", (0, 1), (0, 1), 2),
+        ("BOTTOMPADDING", (0, 1), (-1, -1), 14),
+        ("LEFTPADDING", (0, 0), (-1, -1), 12),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 12),
+        ("LINEBELOW", (0, -1), (-1, -1), 3, PRIMARY_BLUE),
+    ]))
     elements.append(banner_table)
-    elements.append(Spacer(1, 12))
+    elements.append(Spacer(1, 14))
 
-    # Billing period summary row
+    # Billing period info row
     period_start = parsed_bill.get("period_start", "N/A")
     period_end = parsed_bill.get("period_end", "N/A")
     invoice_num = parsed_bill.get("invoice_number", "N/A")
     account_id = parsed_bill.get("account_id", "N/A")
 
-    info_data = [
-        [
-            Paragraph(f"<b>Invoice:</b> {invoice_num}", styles["body"]),
-            Paragraph(f"<b>Account:</b> {account_id}", styles["body"]),
-            Paragraph(
-                f"<b>Period:</b> {period_start} to {period_end}", styles["body"]
-            ),
-        ]
-    ]
+    info_data = [[
+        Paragraph(f"<b>Invoice:</b> {invoice_num}", styles["body"]),
+        Paragraph(f"<b>Account:</b> {account_id}", styles["body"]),
+        Paragraph(f"<b>Period:</b> {period_start} to {period_end}", styles["body"]),
+    ]]
     info_table = Table(info_data, colWidths=[2.3 * inch, 2.3 * inch, 2.4 * inch])
-    info_table.setStyle(
-        TableStyle(
-            [
-                ("BACKGROUND", (0, 0), (-1, -1), LIGHT_GRAY),
-                ("BOX", (0, 0), (-1, -1), 0.5, MEDIUM_GRAY),
-                ("TOPPADDING", (0, 0), (-1, -1), 6),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
-                ("LEFTPADDING", (0, 0), (-1, -1), 8),
-            ]
-        )
-    )
+    info_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), LIGHT_BG),
+        ("BOX", (0, 0), (-1, -1), 0.5, MEDIUM_GRAY),
+        ("TOPPADDING", (0, 0), (-1, -1), 8),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+        ("LEFTPADDING", (0, 0), (-1, -1), 8),
+    ]))
     elements.append(info_table)
     elements.append(Spacer(1, 16))
 
@@ -324,33 +332,26 @@ def _build_summary_section(
     ai_analysis: Dict[str, Any],
     styles: Dict[str, ParagraphStyle],
 ) -> List[Any]:
-    """Build the bill summary section."""
+    """Build the bill summary section with total cost and service breakdown table."""
     elements: List[Any] = []
 
-    # Section heading with orange left border
     elements.append(_section_heading("Bill Summary", styles))
 
     total_cost = _format_cost(parsed_bill.get("total_cost", 0))
     currency = parsed_bill.get("currency", "USD")
 
-    # Total cost highlight
-    total_data = [
-        [
-            Paragraph(f"<b>Total Cost:</b> {currency} {total_cost}", styles["body_bold"]),
-        ]
-    ]
+    # Total cost highlight box
+    total_data = [[
+        Paragraph(f"<b>Total Cost:</b> {currency} {total_cost}", styles["body_bold"]),
+    ]]
     total_table = Table(total_data, colWidths=[7 * inch])
-    total_table.setStyle(
-        TableStyle(
-            [
-                ("BACKGROUND", (0, 0), (-1, -1), LIGHT_GRAY),
-                ("LINEBELOW", (0, 0), (-1, -1), 2, AWS_ORANGE),
-                ("TOPPADDING", (0, 0), (-1, -1), 8),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
-                ("LEFTPADDING", (0, 0), (-1, -1), 10),
-            ]
-        )
-    )
+    total_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), LIGHT_BG),
+        ("LINEBELOW", (0, 0), (-1, -1), 2, PRIMARY_BLUE),
+        ("TOPPADDING", (0, 0), (-1, -1), 8),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+        ("LEFTPADDING", (0, 0), (-1, -1), 10),
+    ]))
     elements.append(total_table)
     elements.append(Spacer(1, 8))
 
@@ -359,7 +360,7 @@ def _build_summary_section(
     elements.append(Paragraph(summary_text, styles["body"]))
     elements.append(Spacer(1, 8))
 
-    # Service totals mini-table
+    # Service totals table
     service_totals = parsed_bill.get("service_totals", {})
     if service_totals:
         svc_header = [
@@ -370,41 +371,32 @@ def _build_summary_section(
         for svc, cost in sorted(
             service_totals.items(), key=lambda x: float(x[1]), reverse=True
         ):
-            svc_rows.append(
-                [
-                    Paragraph(str(svc), styles["body"]),
-                    Paragraph(_format_cost(cost), styles["body"]),
-                ]
-            )
+            svc_rows.append([
+                Paragraph(str(svc), styles["body"]),
+                Paragraph(_format_cost(cost), styles["body"]),
+            ])
 
-        # Add totals row
-        svc_rows.append(
-            [
-                Paragraph("<b>Total</b>", styles["body_bold"]),
-                Paragraph(f"<b>{total_cost}</b>", styles["body_bold"]),
-            ]
-        )
+        # Totals row
+        svc_rows.append([
+            Paragraph("<b>Total</b>", styles["body_bold"]),
+            Paragraph(f"<b>{total_cost}</b>", styles["body_bold"]),
+        ])
 
-        num_rows = len(svc_rows)
         svc_table = Table(svc_rows, colWidths=[5 * inch, 2 * inch])
-        svc_table.setStyle(
-            TableStyle(
-                [
-                    ("BACKGROUND", (0, 0), (-1, 0), AWS_DARK),
-                    ("TEXTCOLOR", (0, 0), (-1, 0), WHITE),
-                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-                    ("FONTSIZE", (0, 0), (-1, 0), 10),
-                    ("ROWBACKGROUNDS", (0, 1), (-1, -2), [WHITE, LIGHT_GRAY]),
-                    ("BACKGROUND", (0, -1), (-1, -1), LIGHT_GRAY),
-                    ("LINEABOVE", (0, -1), (-1, -1), 1.5, AWS_DARK),
-                    ("GRID", (0, 0), (-1, -1), 0.5, MEDIUM_GRAY),
-                    ("TOPPADDING", (0, 0), (-1, -1), 5),
-                    ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
-                    ("LEFTPADDING", (0, 0), (-1, -1), 8),
-                    ("RIGHTPADDING", (0, 0), (-1, -1), 8),
-                ]
-            )
-        )
+        svc_table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), DARK_BLUE),
+            ("TEXTCOLOR", (0, 0), (-1, 0), WHITE),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("FONTSIZE", (0, 0), (-1, 0), 10),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -2), [WHITE, LIGHT_BG]),
+            ("BACKGROUND", (0, -1), (-1, -1), LIGHT_BG),
+            ("LINEABOVE", (0, -1), (-1, -1), 1.5, DARK_BLUE),
+            ("GRID", (0, 0), (-1, -1), 0.5, MEDIUM_GRAY),
+            ("TOPPADDING", (0, 0), (-1, -1), 5),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+            ("LEFTPADDING", (0, 0), (-1, -1), 8),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+        ]))
         elements.append(svc_table)
     else:
         elements.append(Paragraph("No service breakdown available.", styles["body"]))
@@ -413,13 +405,12 @@ def _build_summary_section(
     return elements
 
 
-
 def _build_explanations_section(
     parsed_bill: Dict[str, Any],
     ai_analysis: Dict[str, Any],
     styles: Dict[str, ParagraphStyle],
 ) -> List[Any]:
-    """Build unified per-service cards with explanation, billing details, and recommendations."""
+    """Build unified per-service cards sorted by cost descending (most expensive first)."""
     elements: List[Any] = []
 
     elements.append(_section_heading("Service Analysis", styles))
@@ -433,33 +424,44 @@ def _build_explanations_section(
         elements.append(Spacer(1, 12))
         return elements
 
-    for item in service_items:
+    # Sort by cost descending (most expensive first)
+    def _extract_cost(item):
+        cost_str = str(item.get("cost", "0"))
+        # Strip $ and commas
+        cleaned = cost_str.replace("$", "").replace(",", "").strip()
+        try:
+            return float(cleaned)
+        except ValueError:
+            return 0.0
+
+    sorted_items = sorted(service_items, key=_extract_cost, reverse=True)
+
+    for item in sorted_items:
         service = str(item.get("service", "Unknown"))
         cost = str(item.get("cost", "N/A"))
         explanation = str(item.get("explanation", ""))
         billing_details = str(item.get("billing_details", ""))
         recommendations = item.get("recommendations", [])
 
-        # --- Service header bar ---
+        # --- Service header bar (dark blue) ---
         header_data = [[
             Paragraph(f"<b>{service}</b>", styles["table_header"]),
             Paragraph(f"<b>{cost}</b>", styles["table_header"]),
         ]]
         header_table = Table(header_data, colWidths=[5.5 * inch, 1.5 * inch])
         header_table.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, -1), AWS_DARK),
+            ("BACKGROUND", (0, 0), (-1, -1), DARK_BLUE),
             ("TEXTCOLOR", (0, 0), (-1, -1), WHITE),
             ("TOPPADDING", (0, 0), (-1, -1), 6),
             ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
             ("LEFTPADDING", (0, 0), (-1, -1), 8),
             ("RIGHTPADDING", (0, 0), (-1, -1), 8),
-            ("LINEBELOW", (0, 0), (-1, -1), 2, AWS_ORANGE),
+            ("LINEBELOW", (0, 0), (-1, -1), 2, PRIMARY_BLUE),
             ("ALIGN", (1, 0), (1, 0), "RIGHT"),
         ]))
         elements.append(header_table)
 
         # --- Two-column body: left = explanation + billing, right = recommendations ---
-        # Build left column content
         left_parts: List[Any] = []
         left_parts.append(Paragraph(explanation, styles["body"]))
         if billing_details:
@@ -469,7 +471,6 @@ def _build_explanations_section(
                 styles["body"],
             ))
 
-        # Build right column content
         right_parts: List[Any] = []
         if recommendations:
             right_parts.append(Paragraph("<b>How to save:</b>", styles["body_bold"]))
@@ -489,7 +490,7 @@ def _build_explanations_section(
         body_data = [[left_parts, right_parts]]
         body_table = Table(body_data, colWidths=[3.5 * inch, 3.5 * inch])
         body_table.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, -1), LIGHT_GRAY),
+            ("BACKGROUND", (0, 0), (-1, -1), LIGHT_BG),
             ("VALIGN", (0, 0), (-1, -1), "TOP"),
             ("TOPPADDING", (0, 0), (-1, -1), 8),
             ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
@@ -504,96 +505,63 @@ def _build_explanations_section(
     return elements
 
 
-
-
-
-
-
-
 def _build_footer(timestamp: str, styles: Dict[str, ParagraphStyle]) -> List[Any]:
     """Build the footer with branding and disclaimer."""
     elements: List[Any] = []
 
-    # Separator line
     sep_data = [[""]]
     sep_table = Table(sep_data, colWidths=[7 * inch])
-    sep_table.setStyle(
-        TableStyle(
-            [
-                ("LINEABOVE", (0, 0), (-1, -1), 1, MEDIUM_GRAY),
-                ("TOPPADDING", (0, 0), (-1, -1), 0),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-            ]
-        )
-    )
+    sep_table.setStyle(TableStyle([
+        ("LINEABOVE", (0, 0), (-1, -1), 1, MEDIUM_GRAY),
+        ("TOPPADDING", (0, 0), (-1, -1), 0),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+    ]))
     elements.append(sep_table)
 
-    elements.append(
-        Paragraph(
-            "Generated by eshkolai.com Bill Analysis Service",
-            styles["footer"],
-        )
-    )
-    elements.append(
-        Paragraph(
-            f"Report generated at {timestamp}",
-            styles["footer"],
-        )
-    )
-    elements.append(
-        Paragraph(
-            "Disclaimer: This analysis is provided for informational purposes only. "
-            "Actual savings may vary. Please verify recommendations with your AWS account team.",
-            styles["footer"],
-        )
-    )
+    elements.append(Paragraph(
+        "Generated by eshkolai.com Bill Analysis Service",
+        styles["footer"],
+    ))
+    elements.append(Paragraph(
+        f"Report generated at {timestamp}",
+        styles["footer"],
+    ))
+    elements.append(Paragraph(
+        "Disclaimer: This analysis is provided for informational purposes only. "
+        "Actual savings may vary. Please verify recommendations with your AWS account team.",
+        styles["footer"],
+    ))
     return elements
 
 
 def _section_heading(text: str, styles: Dict[str, ParagraphStyle]) -> Table:
-    """Create a section heading with an orange left border accent."""
+    """Create a section heading with a blue left border accent."""
     data = [[Paragraph(text, styles["section_heading"])]]
     table = Table(data, colWidths=[7 * inch])
-    table.setStyle(
-        TableStyle(
-            [
-                ("LINEBEFORE", (0, 0), (0, -1), 3, AWS_ORANGE),
-                ("LEFTPADDING", (0, 0), (-1, -1), 10),
-                ("TOPPADDING", (0, 0), (-1, -1), 4),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-            ]
-        )
-    )
+    table.setStyle(TableStyle([
+        ("LINEBEFORE", (0, 0), (0, -1), 3, PRIMARY_BLUE),
+        ("LEFTPADDING", (0, 0), (-1, -1), 10),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+    ]))
     return table
 
 
-def _merge_pdfs(original_pdf_bytes: bytes, analysis_pdf_bytes: bytes) -> bytes:
+def _merge_pdfs(first_pdf_bytes: bytes, second_pdf_bytes: bytes) -> bytes:
     """
-    Merge original invoice PDF with analysis pages PDF.
+    Merge two PDFs: first PDF pages followed by second PDF pages.
 
-    Original pages come first, followed by analysis pages.
-
-    Args:
-        original_pdf_bytes: Raw bytes of the original invoice PDF.
-        analysis_pdf_bytes: Raw bytes of the generated analysis pages.
-
-    Returns:
-        Merged PDF as bytes.
-
-    Raises:
-        RuntimeError: If merging fails.
+    In our case: analysis pages first, then original invoice as appendix.
     """
     try:
         writer = PdfWriter()
 
-        # Add original pages
-        original_reader = PdfReader(io.BytesIO(original_pdf_bytes))
-        for page in original_reader.pages:
+        first_reader = PdfReader(io.BytesIO(first_pdf_bytes))
+        for page in first_reader.pages:
             writer.add_page(page)
 
-        # Add analysis pages
-        analysis_reader = PdfReader(io.BytesIO(analysis_pdf_bytes))
-        for page in analysis_reader.pages:
+        second_reader = PdfReader(io.BytesIO(second_pdf_bytes))
+        for page in second_reader.pages:
             writer.add_page(page)
 
         output = io.BytesIO()

@@ -40,11 +40,16 @@ Based on the bill data and the optimization tips above, provide:
 1. SUMMARY: A 2-3 sentence overview of the bill highlighting total cost and top spending services.
 
 2. SERVICE_ANALYSIS: For EACH service in the bill, provide a unified analysis containing:
-   - explanation: What the charges represent in plain language
-   - billing_details: How this service is actually billed with real units from the invoice \
-(e.g., "750 hours of t3.medium instances at $0.0416/hr", "50 GB of gp3 storage at $0.08/GB/month", \
-"1.2 million API requests at $3.50 per million"). Use the actual quantities and unit prices from the bill data.
-   - recommendations: 1-3 specific cost-saving recommendations for THIS service, each with estimated savings
+   - explanation: The AWS pricing model for this service. Do NOT start with "This represents the cost for" \
+or "Charges for". Instead, describe the actual pricing dimensions and how the service bills \
+(e.g., "EC2 bills per instance-hour based on instance type and region. On-Demand t3.medium costs $0.0416/hr in us-east-1. \
+Additional charges apply for EBS volumes, data transfer, and Elastic IPs."). \
+If calculation parameters are available from the bill, include them \
+(e.g., "6,784 hours x $0.0416/hr = $282.34 for compute, plus $43.40 for 500 GB gp3 storage").
+   - billing_details: A concise one-line formula showing the actual calculation if quantities are available \
+(e.g., "6,784 hrs x $0.0416/hr + 500 GB x $0.08/GB/mo"). If exact quantities are not in the bill, \
+describe the typical billing units (e.g., "Billed per instance-hour + GB of storage + GB of data transfer").
+   - recommendations: 1-3 specific cost-saving recommendations for THIS service, each with estimated savings percentage.
 
 Respond in this exact JSON format:
 {{
