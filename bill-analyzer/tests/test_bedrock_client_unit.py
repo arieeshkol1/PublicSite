@@ -209,7 +209,7 @@ class TestInvokeBedrock:
         body = json.loads(call_kwargs["body"])
         assert body["messages"][0]["role"] == "user"
         assert body["messages"][0]["content"][0]["text"] == "test prompt"
-        assert body["inferenceConfig"]["temperature"] == 0.7
+        assert body["inferenceConfig"]["temperature"] == 0.3
 
     @patch("bedrock_client.boto3.client")
     def test_throttling_raises_runtime_error(self, mock_boto_client):

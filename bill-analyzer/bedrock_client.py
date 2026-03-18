@@ -22,10 +22,10 @@ logger = logging.getLogger(__name__)
 # Environment variables
 TIPS_TABLE_NAME = os.environ.get('TIPS_TABLE_NAME', 'ViewMyBill-CostOptimizationTips')
 BEDROCK_MODEL_ID = os.environ.get('BEDROCK_MODEL_ID', 'amazon.nova-lite-v1:0')
-MAX_TOKENS = int(os.environ.get('MAX_TOKENS', '4000'))
+MAX_TOKENS = int(os.environ.get('MAX_TOKENS', '8000'))
 
 # Chunking and retry configuration
-MAX_SERVICES_PER_BATCH = int(os.environ.get('MAX_SERVICES_PER_BATCH', '8'))
+MAX_SERVICES_PER_BATCH = int(os.environ.get('MAX_SERVICES_PER_BATCH', '20'))
 MAX_RETRIES = int(os.environ.get('MAX_RETRIES', '2'))
 RETRY_BASE_DELAY = 1  # seconds (keep short — API Gateway has 29s hard limit)
 
@@ -323,7 +323,7 @@ def _invoke_bedrock(prompt: str) -> str:
         "messages": [{"role": "user", "content": [{"text": prompt}]}],
         "inferenceConfig": {
             "max_new_tokens": MAX_TOKENS,
-            "temperature": 0.7,
+            "temperature": 0.3,
             "top_p": 0.9,
         },
     }
