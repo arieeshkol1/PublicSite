@@ -25,7 +25,7 @@ BEDROCK_MODEL_ID = os.environ.get('BEDROCK_MODEL_ID', 'amazon.nova-lite-v1:0')
 MAX_TOKENS = int(os.environ.get('MAX_TOKENS', '4000'))
 
 # Chunking and retry configuration
-MAX_SERVICES_PER_BATCH = int(os.environ.get('MAX_SERVICES_PER_BATCH', '5'))
+MAX_SERVICES_PER_BATCH = int(os.environ.get('MAX_SERVICES_PER_BATCH', '8'))
 MAX_RETRIES = int(os.environ.get('MAX_RETRIES', '2'))
 RETRY_BASE_DELAY = 1  # seconds (keep short — API Gateway has 29s hard limit)
 
@@ -270,7 +270,8 @@ def _build_prompt(parsed_bill: Dict[str, Any], tips: List[Dict[str, Any]]) -> st
     Returns:
         Formatted prompt string for Bedrock.
     """
-    # Format bill data as readable text
+    # Format bill data as readable text — use service_totals only to keep prompt compact.
+    # Line items are too verbose for large bills and can blow up the prompt size.
     bill_lines = [
         f"Invoice Number: {parsed_bill.get('invoice_number', 'N/A')}",
         f"Account ID: {parsed_bill.get('account_id', 'N/A')}",
@@ -283,21 +284,12 @@ def _build_prompt(parsed_bill: Dict[str, Any], tips: List[Dict[str, Any]]) -> st
     for service, cost in parsed_bill.get("service_totals", {}).items():
         bill_lines.append(f"  - {service}: {cost}")
 
-    if parsed_bill.get("line_items"):
-        bill_lines.append("")
-        bill_lines.append("Line Items:")
-        for item in parsed_bill["line_items"]:
-            bill_lines.append(
-                f"  - {item.get('service', 'Unknown')}: {item.get('cost', 0)} "
-                f"({item.get('description', '')})"
-            )
-
     bill_data = "\n".join(bill_lines)
 
-    # Format tips as readable text
+    # Format tips as readable text (limit to 3 per service to keep prompt compact)
     if tips:
         tip_lines = []
-        for tip in tips:
+        for tip in tips[:15]:  # cap total tips to avoid bloating prompt
             tip_lines.append(
                 f"- [{tip.get('service', 'General')}] {tip.get('title', '')}: "
                 f"{tip.get('description', '')} "

@@ -167,10 +167,14 @@ class TestBuildPrompt:
         prompt = _build_prompt(SAMPLE_PARSED_BILL, [])
         assert "No specific tips available" in prompt
 
-    def test_includes_line_items(self):
+    def test_uses_service_totals_not_line_items(self):
+        """Prompt should include service totals but not individual line item descriptions."""
         prompt = _build_prompt(SAMPLE_PARSED_BILL, [])
-        assert "Running instances" in prompt
-        assert "Storage" in prompt
+        # Service totals are included
+        assert "Amazon EC2" in prompt
+        assert "Amazon S3" in prompt
+        # Line item descriptions are NOT included (trimmed for prompt size)
+        assert "Running instances" not in prompt
 
     def test_includes_billing_period(self):
         prompt = _build_prompt(SAMPLE_PARSED_BILL, [])
