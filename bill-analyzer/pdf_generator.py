@@ -270,7 +270,7 @@ def _generate_analysis_pages(
     elements.extend(_build_explanations_section(parsed_bill, ai_analysis, styles))
 
     # --- Savings Plans & Reserved Instances Analysis ---
-    elements.extend(_build_savings_plan_section(ai_analysis, styles))
+    elements.extend(_build_savings_plan_section(ai_analysis, parsed_bill, styles))
 
     # --- Footer disclaimer ---
     elements.append(Spacer(1, 20))
@@ -528,6 +528,7 @@ def _build_explanations_section(
 
 def _build_savings_plan_section(
     ai_analysis: Dict[str, Any],
+    parsed_bill: Dict[str, Any],
     styles: Dict[str, ParagraphStyle],
 ) -> List[Any]:
     """Build the Savings Plans & Reserved Instances recommendation section."""
@@ -535,7 +536,10 @@ def _build_savings_plan_section(
 
     sp_analysis = ai_analysis.get("savings_plan_analysis", {})
     if not sp_analysis:
-        return elements
+        # Fallback: build section from parsed bill commitment_discounts data
+        sp_analysis = _build_fallback_savings_analysis(parsed_bill)
+        if not sp_analysis:
+            return elements
 
     elements.append(_section_heading("Savings Plans & Reserved Instances", styles))
 
@@ -595,6 +599,60 @@ def _build_savings_plan_section(
 
     elements.append(Spacer(1, 8))
     return elements
+
+def _build_fallback_savings_analysis(parsed_bill: Dict[str, Any]) -> Dict[str, Any]:
+    """Build a fallback savings_plan_analysis dict from parsed bill commitment_discounts."""
+    discounts = parsed_bill.get("commitment_discounts", {})
+    has_sp = discounts.get("has_savings_plans", False)
+    has_ri = discounts.get("has_reserved_instances", False)
+
+    # Always show this section — it's valuable even when no SP/RI detected
+    recommendation = ""
+    how_to_purchase = ""
+    potential_savings = ""
+
+    if not has_sp and not has_ri:
+        recommendation = (
+            "No Savings Plans or Reserved Instances were detected in this bill. "
+            "You are likely paying On-Demand rates for all services. "
+            "AWS offers Compute Savings Plans (up to 66% off EC2/Lambda/Fargate), "
+            "EC2 Instance Savings Plans (up to 72% off), "
+            "and Database Savings Plans (up to 35% off RDS/DynamoDB/ElastiCache). "
+            "For steady-state EC2 workloads, Standard Reserved Instances offer up to 72% savings, "
+            "while Convertible RIs offer up to 66% with more flexibility."
+        )
+        how_to_purchase = (
+            "Go to AWS Cost Explorer console > Savings Plans > Purchase Savings Plans. "
+            "Choose your hourly commitment ($/hr), term (1 or 3 years), and payment option "
+            "(All Upfront for maximum discount, Partial Upfront, or No Upfront). "
+            "For Reserved Instances: EC2 Console > Reserved Instances > Purchase."
+        )
+        potential_savings = "30-72% on committed usage"
+    elif has_sp and not has_ri:
+        recommendation = (
+            "Savings Plans are active on this account. "
+            "Review your coverage in Cost Explorer to ensure optimal utilization. "
+            "Consider Reserved Instances for steady-state EC2/RDS workloads for deeper discounts."
+        )
+    elif has_ri and not has_sp:
+        recommendation = (
+            "Reserved Instances are active on this account. "
+            "Consider Savings Plans for additional flexibility across services and regions."
+        )
+    else:
+        recommendation = (
+            "Both Savings Plans and Reserved Instances are active. "
+            "Review utilization in Cost Explorer to ensure you are maximizing coverage."
+        )
+
+    return {
+        "has_savings_plans": has_sp,
+        "has_reserved_instances": has_ri,
+        "recommendation": recommendation,
+        "potential_savings_percent": potential_savings,
+        "how_to_purchase": how_to_purchase,
+    }
+
 
 
 def _build_footer(timestamp: str, styles: Dict[str, ParagraphStyle]) -> List[Any]:

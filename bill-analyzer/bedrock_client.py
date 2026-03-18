@@ -46,18 +46,18 @@ Based on the bill data and the optimization tips above, provide:
 1. SUMMARY: A 2-3 sentence overview of the bill highlighting total cost and top spending services.
 
 2. SERVICE_ANALYSIS: For EACH service in the bill, provide a unified analysis containing:
-   - explanation: The AWS pricing model for this service. Do NOT start with "This represents the cost for" \
-or "Charges for". Instead, describe the actual pricing dimensions and how the service bills \
-(e.g., "EC2 bills per instance-hour based on instance type and region. On-Demand t3.medium costs $0.0416/hr in us-east-1. \
-Additional charges apply for EBS volumes, data transfer, and Elastic IPs."). \
-Use the line item details from the bill to explain what was actually charged. \
-For example, if the bill shows "NatGateway-Hours: 24.00" and "NatGateway-Bytes: 1.50", \
-explain in plain language: "You ran a NAT Gateway for 24 hours at $0.045/hr = $1.08, \
-plus 1.5 GB of data processed at $0.045/GB = $0.07." \
-Always ground your explanation in the actual bill data provided.
-   - billing_details: A concise one-line formula showing the actual calculation if quantities are available \
-(e.g., "6,784 hrs x $0.0416/hr + 500 GB x $0.08/GB/mo"). If exact quantities are not in the bill, \
-describe the typical billing units (e.g., "Billed per instance-hour + GB of storage + GB of data transfer").
+   - explanation: CRITICAL — you MUST use the actual line item details provided in "Line Item Details" above. \
+Do NOT give generic pricing descriptions. Instead, reference the specific quantities, rates, and amounts from the bill. \
+For example, if the line items show "USE1-NatGateway-Hours: 672.00" and "USE1-NatGateway-Bytes: 45.23", \
+write: "You ran a NAT Gateway for 672 hours at $0.045/hr = $30.24, plus 45.23 GB processed at $0.045/GB = $2.04." \
+If the line items show "db.t3.medium Single-AZ: 672 Hrs", write: "You ran a db.t3.medium SQL Server Express \
+instance for 672 hours at $0.097/hr = $65.18." \
+ALWAYS cite the actual numbers from the bill. Do NOT start with "This represents" or "Charges for". \
+If no line items are available for a service, then describe the pricing model briefly.
+   - billing_details: A concise one-line formula using ACTUAL quantities from the bill \
+(e.g., "672 hrs x $0.097/hr + 100 GB x $0.115/GB/mo = $65.18 + $11.50"). \
+This MUST reflect real data from the line items, not generic formulas. \
+Only use generic units if no line item details are available for this service.
    - recommendations: 1-3 specific cost-saving recommendations for THIS service, each with estimated savings percentage.
 
 3. SAVINGS_PLAN_ANALYSIS: Based on the "Commitment Discount Status" in the bill data:
@@ -338,7 +338,7 @@ def _build_prompt(parsed_bill: Dict[str, Any], tips: List[Dict[str, Any]]) -> st
             items_by_svc[svc].append(f"{desc}: {cost}")
         for svc, details in items_by_svc.items():
             bill_lines.append(f"  {svc}:")
-            for d in details[:5]:  # cap at 5 line items per service
+            for d in details[:10]:  # cap at 10 line items per service for detailed explanations
                 bill_lines.append(f"    - {d}")
 
     # Include commitment discount detection results
