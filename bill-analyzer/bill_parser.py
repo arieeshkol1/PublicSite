@@ -49,11 +49,18 @@ BILLING_PERIOD_PATTERNS = [
     ),
 ]
 
-# Month name to number mapping
+# Month name to number mapping (full names)
 MONTH_MAP = {
     "january": "01", "february": "02", "march": "03", "april": "04",
     "may": "05", "june": "06", "july": "07", "august": "08",
     "september": "09", "october": "10", "november": "11", "december": "12",
+}
+
+# Abbreviated month name to number mapping
+MONTH_ABBREV_MAP = {
+    "jan": "01", "feb": "02", "mar": "03", "apr": "04",
+    "may": "05", "jun": "06", "jul": "07", "aug": "08",
+    "sep": "09", "oct": "10", "nov": "11", "dec": "12",
 }
 
 # Cost pattern: matches dollar amounts like $1,234.56 or 1234.56
@@ -80,8 +87,9 @@ def parse_bill(pdf_bytes: bytes) -> ParsedBill:
     """
     Parse an AWS invoice PDF and extract billing information.
 
-    Uses pdfplumber to extract text and tables from the PDF, then parses
-    the content to identify services, costs, dates, and other metadata.
+    Supports two formats:
+        1. Traditional AWS Tax Invoice (EMEA SARL style)
+        2. AWS Billing Console export ("Charges by service" style)
 
     Args:
         pdf_bytes: Raw bytes of the uploaded AWS invoice PDF.
@@ -115,6 +123,10 @@ def parse_bill(pdf_bytes: bytes) -> ParsedBill:
             "Please upload a valid AWS invoice PDF."
         )
 
+    # Detect format: billing console export vs traditional invoice
+    if _is_billing_console_format(text):
+        return _parse_billing_console(text, tables)
+
     metadata = _extract_metadata(text)
     line_items = _parse_line_items(text, tables)
 
@@ -137,6 +149,237 @@ def parse_bill(pdf_bytes: bytes) -> ParsedBill:
         "account_id": metadata.get("account_id", "N/A"),
         "service_totals": service_totals,
     }
+
+
+def _is_billing_console_format(text: str) -> bool:
+    """Detect if the PDF is an AWS Billing Console export."""
+    indicators = [
+        "Charges by service",
+        "AWS bill summary",
+        "Grand total:",
+        "Billing period Account ID Bill status",
+    ]
+    score = sum(1 for ind in indicators if ind in text)
+    return score >= 2
+
+
+def _parse_billing_console(text: str, tables: List[List[List[str]]]) -> ParsedBill:
+    """
+    Parse an AWS Billing Console export PDF.
+
+    This format has:
+        - Header: "Billing period Account ID Bill status ..."
+        - "Charges by service" section with per-service totals and line items
+        - "Taxes by service" section at the end
+    """
+    metadata = _extract_billing_console_metadata(text)
+    line_items = _extract_billing_console_services(text)
+
+    if not line_items:
+        raise ValueError(
+            "No billing line items found in the PDF. "
+            "Please ensure this is a valid AWS bill."
+        )
+
+    total_cost = sum(item["cost"] for item in line_items)
+    service_totals = _aggregate_service_totals(line_items)
+
+    return {
+        "line_items": line_items,
+        "total_cost": total_cost,
+        "currency": metadata.get("currency", "USD"),
+        "period_start": metadata.get("period_start", "N/A"),
+        "period_end": metadata.get("period_end", "N/A"),
+        "invoice_number": metadata.get("invoice_number", "N/A"),
+        "account_id": metadata.get("account_id", "N/A"),
+        "service_totals": service_totals,
+    }
+
+
+def _extract_billing_console_metadata(text: str) -> Dict[str, str]:
+    """Extract metadata from billing console format."""
+    metadata: Dict[str, str] = {
+        "invoice_number": "N/A",
+        "account_id": "N/A",
+        "period_start": "N/A",
+        "period_end": "N/A",
+        "currency": "USD",
+    }
+
+    # Account ID: 12-digit number on first page near header
+    acct_match = re.search(r"\b(\d{12})\b", text)
+    if acct_match:
+        metadata["account_id"] = acct_match.group(1)
+
+    # Invoice IDs from payment section (e.g., "EUINIL26-167895" or "2544926965")
+    invoice_match = re.search(r"Invoice\s+(?:ID\s+)?([A-Z]{2,}[A-Z0-9]*-\d+)", text)
+    if invoice_match:
+        metadata["invoice_number"] = invoice_match.group(1)
+    else:
+        # Try numeric invoice ID
+        inv_num_match = re.search(r"Invoice\s+(\d{7,})", text)
+        if inv_num_match:
+            metadata["invoice_number"] = inv_num_match.group(1)
+
+    # Billing period: "Feb 1 - Feb 28, 2026" (abbreviated months)
+    abbrev_range = re.compile(
+        r"(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(\d{1,2})\s*"
+        r"[-\u2013\u2014]\s*"
+        r"(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(\d{1,2}),?\s+(\d{4})",
+        re.IGNORECASE,
+    )
+    period_match = abbrev_range.search(text)
+    if period_match:
+        sm = MONTH_ABBREV_MAP[period_match.group(1).lower()]
+        sd = period_match.group(2).zfill(2)
+        em = MONTH_ABBREV_MAP[period_match.group(3).lower()]
+        ed = period_match.group(4).zfill(2)
+        year = period_match.group(5)
+        metadata["period_start"] = f"{year}-{sm}-{sd}"
+        metadata["period_end"] = f"{year}-{em}-{ed}"
+    else:
+        # Fallback to full month name extraction
+        period_start, period_end = _extract_billing_period(text)
+        metadata["period_start"] = period_start
+        metadata["period_end"] = period_end
+
+    # Currency detection
+    if "EUR" in text and "USD" not in text:
+        metadata["currency"] = "EUR"
+    elif "GBP" in text and "USD" not in text:
+        metadata["currency"] = "GBP"
+
+    return metadata
+
+
+def _extract_billing_console_services(text: str) -> List[Dict[str, Any]]:
+    """
+    Extract top-level service charges from the 'Charges by service' section.
+
+    Looks for lines like:
+        "Elastic Compute Cloud USD 300.26"
+        "Virtual Private Cloud USD 132.05"
+
+    Only captures the top-level service totals (not sub-items or regions).
+    Stops at "Total tax" or "Charges by account" or "Invoices" sections.
+    """
+    items: List[Dict[str, Any]] = []
+
+    # Find the "Charges by service" section
+    charges_match = re.search(r"Charges by service\b", text)
+    if not charges_match:
+        return items
+
+    charges_text = text[charges_match.end():]
+
+    # Cut off at known section boundaries
+    for boundary in [
+        "Charges by account",
+        "Invoices\n",
+        "Tax Invoices and Additional Documents",
+        "Savings \\(",
+    ]:
+        boundary_match = re.search(boundary, charges_text)
+        if boundary_match:
+            charges_text = charges_text[:boundary_match.start()]
+
+    # Match all lines ending with "USD amount"
+    line_pattern = re.compile(
+        r"^(.+?)\s+USD\s+([\d,]+\.\d{2})\s*$",
+        re.MULTILINE,
+    )
+
+    # Region prefixes and sub-item indicators to skip
+    skip_prefixes = (
+        "EU (", "US ", "Israel", "Asia", "Africa", "Canada", "South America",
+        "Middle East", "Global", "Any", "Bandwidth", "EBS",
+    )
+    sub_item_indicators = (
+        "EUC1-", "USE1-", "EU-", "ILC1-", "APN1-", "EUN1-", "USW2-",
+        "NatGateway", "running Linux", "T3CPUCredits", "Provisioned Storage",
+        "Public IPv4", "TimedStorage", "Requests-Tier", "ByteHrs",
+        "Fargate-", "Fargate -", "vCPU-Hours", "GB-Hours", "DashboardHour",
+        "Outbound", "MessageFees", "MessageCount", "DNS-Queries",
+        "HostedZone", "Automation-", "Lambda-GB",
+        "KMS-Requests", "ApiGateway", "Invalidations",
+        "for MySQL", "for PostgreSQL", "for Aurora",
+        "- Application", "- Network",
+        "ScriptDuration", "StepCount",
+        "AWS Fargate", "AmazonCloudWatch ", "Amazon CloudWatch",
+        "Amazon Elastic Compute Cloud ",
+        "Amazon Virtual Private Cloud ",
+        "Amazon Relational Database Service ",
+        "Amazon Simple Storage Service ",
+        "Amazon EC2 Container Registry ",
+        "Amazon Simple Queue Service ",
+        "Amazon Simple Email Service ",
+        "AWS End User Messaging ",
+        "AWS Systems Manager ",
+        "AWS Secrets Manager ",
+        "AWS Data Transfer ",
+        "Amazon Route 53 ",
+        "AWS Certificate Manager ",
+        "Amazon CloudFront ",
+        "AWS Key Management Service ",
+        "AWS Lambda ",
+        "Amazon Elastic Container Service ",
+        "Elastic Load Balancing -",
+        "AWS Glue ",
+    )
+
+    seen_services: Dict[str, bool] = {}
+
+    for match in line_pattern.finditer(charges_text):
+        service_name = match.group(1).strip()
+        cost_str = match.group(2).replace(",", "")
+
+        # Skip pricing descriptions, regions, sub-items, totals, headers
+        if service_name.startswith(("$", "USD")):
+            continue
+        if service_name.startswith(skip_prefixes):
+            continue
+        if any(ind in service_name for ind in sub_item_indicators):
+            continue
+        if "Total" in service_name:
+            continue
+        if "Amazon Web Services" in service_name:
+            continue
+        if "Description" in service_name:
+            continue
+        # Skip lines with pipe chars (usage descriptions)
+        if "|" in service_name:
+            continue
+        # Skip pricing/usage description lines
+        if "per " in service_name.lower() and "Count" in service_name:
+            continue
+        if service_name.startswith("Cost per"):
+            continue
+        # Must start with a letter
+        if not service_name[0].isalpha():
+            continue
+
+        try:
+            cost_val = Decimal(cost_str)
+        except InvalidOperation:
+            continue
+
+        if cost_val <= Decimal("0"):
+            continue
+
+        cleaned_name = _clean_service_name(service_name)
+
+        # Deduplicate: keep only the first (highest-level) occurrence
+        if cleaned_name in seen_services:
+            continue
+        seen_services[cleaned_name] = True
+
+        items.append({
+            "service": cleaned_name,
+            "cost": cost_val,
+            "description": cleaned_name,
+        })
+
+    return items
 
 
 def _extract_text_and_tables(pdf_bytes: bytes) -> Dict[str, Any]:
