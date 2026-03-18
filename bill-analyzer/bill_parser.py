@@ -113,9 +113,9 @@ def parse_bill(pdf_bytes: bytes) -> ParsedBill:
     if not pdf_bytes:
         raise ValueError("Empty file provided. Please upload a valid AWS invoice PDF.")
 
-    extracted = _extract_text_and_tables(pdf_bytes)
-    text = extracted["text"]
-    tables = extracted["tables"]
+    # First pass: extract text only (fast — skips expensive table extraction)
+    text_only = _extract_text_and_tables(pdf_bytes, text_only=True)
+    text = text_only["text"]
 
     if not text.strip():
         raise ValueError(
@@ -125,7 +125,12 @@ def parse_bill(pdf_bytes: bytes) -> ParsedBill:
 
     # Detect format: billing console export vs traditional invoice
     if _is_billing_console_format(text):
-        return _parse_billing_console(text, tables)
+        # Billing console format only needs text, no tables
+        return _parse_billing_console(text, [])
+
+    # Traditional invoice format — need tables too (second pass)
+    extracted = _extract_text_and_tables(pdf_bytes)
+    tables = extracted["tables"]
 
     metadata = _extract_metadata(text)
     line_items = _parse_line_items(text, tables)
@@ -382,15 +387,16 @@ def _extract_billing_console_services(text: str) -> List[Dict[str, Any]]:
     return items
 
 
-def _extract_text_and_tables(pdf_bytes: bytes) -> Dict[str, Any]:
+def _extract_text_and_tables(pdf_bytes: bytes, text_only: bool = False) -> Dict[str, Any]:
     """
-    Extract raw text and table data from a PDF using pdfplumber.
+    Extract raw text and optionally table data from a PDF using pdfplumber.
 
     Args:
         pdf_bytes: Raw bytes of the PDF file.
+        text_only: If True, skip expensive table extraction.
 
     Returns:
-        Dict with 'text' (full extracted text) and 'tables' (list of tables).
+        Dict with 'text' (full extracted text) and 'tables' (list of tables, empty if text_only).
 
     Raises:
         ValueError: If the file is not a valid PDF or cannot be read.
@@ -411,16 +417,17 @@ def _extract_text_and_tables(pdf_bytes: bytes) -> Dict[str, Any]:
                 page_text = page.extract_text() or ""
                 all_text_parts.append(page_text)
 
-                page_tables = page.extract_tables() or []
-                for table in page_tables:
-                    # Normalize None cells to empty strings
-                    cleaned_table = [
-                        [cell if cell is not None else "" for cell in row]
-                        for row in table
-                        if row is not None
-                    ]
-                    if cleaned_table:
-                        all_tables.append(cleaned_table)
+                if not text_only:
+                    page_tables = page.extract_tables() or []
+                    for table in page_tables:
+                        # Normalize None cells to empty strings
+                        cleaned_table = [
+                            [cell if cell is not None else "" for cell in row]
+                            for row in table
+                            if row is not None
+                        ]
+                        if cleaned_table:
+                            all_tables.append(cleaned_table)
 
             return {
                 "text": "\n".join(all_text_parts),
