@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 # Environment variables
 TIPS_TABLE_NAME = os.environ.get('TIPS_TABLE_NAME', 'ViewMyBill-CostOptimizationTips')
 BEDROCK_MODEL_ID = os.environ.get('BEDROCK_MODEL_ID', 'amazon.nova-lite-v1:0')
-MAX_TOKENS = int(os.environ.get('MAX_TOKENS', '8000'))
+MAX_TOKENS = int(os.environ.get('MAX_TOKENS', '5000'))
 
 # Chunking and retry configuration
 MAX_SERVICES_PER_BATCH = int(os.environ.get('MAX_SERVICES_PER_BATCH', '20'))
@@ -38,50 +38,21 @@ ANALYSIS_PROMPT = """You are an AWS billing expert. Analyze this AWS bill and pr
 ## Bill Data:
 {bill_data}
 
-## Relevant Cost Optimization Tips (from AWS best practices):
+## Cost Optimization Tips:
 {retrieved_tips}
 
-Based on the bill data and the optimization tips above, provide:
+Provide analysis in this JSON format:
 
-1. SUMMARY: A 2-3 sentence overview of the bill highlighting total cost and top spending services.
+1. SUMMARY: 2-3 sentences about total cost and top spenders.
 
-2. SERVICE_ANALYSIS: For EACH service in the bill, provide a unified analysis containing:
-   - explanation: CRITICAL — you MUST use the actual line item details provided in "Line Item Details" above. \
-Do NOT give generic pricing descriptions. Instead, reference the specific quantities, rates, and amounts from the bill. \
-For example, if the line items show "USE1-NatGateway-Hours: 672.00" and "USE1-NatGateway-Bytes: 45.23", \
-write: "You ran a NAT Gateway for 672 hours at $0.045/hr = $30.24, plus 45.23 GB processed at $0.045/GB = $2.04." \
-If the line items show "db.t3.medium Single-AZ: 672 Hrs", write: "You ran a db.t3.medium SQL Server Express \
-instance for 672 hours at $0.097/hr = $65.18." \
-ALWAYS cite the actual numbers from the bill. Do NOT start with "This represents" or "Charges for". \
-If no line items are available for a service, then describe the pricing model briefly.
-   - billing_details: A concise one-line formula using ACTUAL quantities from the bill \
-(e.g., "672 hrs x $0.097/hr + 100 GB x $0.115/GB/mo = $65.18 + $11.50"). \
-This MUST reflect real data from the line items, not generic formulas. \
-Only use generic units if no line item details are available for this service.
-   - recommendations: 1-3 specific cost-saving recommendations for THIS service, each with estimated savings percentage.
+2. SERVICE_ANALYSIS: For each service:
+   - explanation: Use actual line item data if available (cite quantities, rates, amounts). If line items show "NatGateway-Hours: 672", write "You ran a NAT Gateway for 672 hours at $0.045/hr = $30.24". If no line items, briefly describe the pricing model. Do NOT start with "This represents" or "Charges for".
+   - billing_details: One-line formula with actual quantities if available (e.g., "672 hrs x $0.045/hr = $30.24"). Use generic units only if no line items exist.
+   - recommendations: 1-2 cost-saving tips with estimated savings %.
 
-3. SAVINGS_PLAN_ANALYSIS: Based on the "Commitment Discount Status" in the bill data:
-   - If Savings Plans are NOT detected: Explain what Savings Plans are and how the customer could benefit. \
-AWS offers four types: Compute Savings Plans (up to 66% off, covers EC2/Lambda/Fargate, most flexible), \
-EC2 Instance Savings Plans (up to 72% off, locked to instance family+region), \
-Database Savings Plans (up to 35% off, covers Aurora/RDS/DynamoDB/ElastiCache), \
-and SageMaker Savings Plans (up to 64% off). \
-Recommend the best type based on the services in this bill. \
-Explain how to purchase: go to AWS Cost Explorer console > Savings Plans > Purchase Savings Plans. \
-Choose hourly commitment ($/hr), term (1 or 3 years), and payment option (All Upfront for max discount, Partial Upfront, or No Upfront).
-   - If Savings Plans ARE detected: Acknowledge they are already using Savings Plans. \
-Suggest reviewing coverage in Cost Explorer to ensure optimal utilization. \
-Recommend checking if additional Savings Plans could cover remaining On-Demand usage.
-   - If Reserved Instances are NOT detected and EC2/RDS usage is significant: \
-Explain that Reserved Instances offer up to 72% savings for steady-state workloads. \
-Standard RIs are locked to instance family+region but offer deeper discounts. \
-Convertible RIs (up to 66% off) allow changing instance family/OS/tenancy. \
-Three payment options: All Upfront (biggest discount), Partial Upfront, No Upfront. \
-Purchase via EC2 Console > Reserved Instances > Purchase. \
-Note: AWS now recommends Savings Plans over RIs for most use cases due to greater flexibility.
-   - If Reserved Instances ARE detected: Acknowledge usage and suggest reviewing utilization in Cost Explorer.
+3. SAVINGS_PLAN_ANALYSIS: Based on Commitment Discount Status, recommend Savings Plans and/or Reserved Instances as appropriate.
 
-Respond in this exact JSON format:
+Respond in this exact JSON:
 {{
   "summary": "...",
   "service_analysis": [
@@ -90,17 +61,15 @@ Respond in this exact JSON format:
       "cost": "...",
       "explanation": "...",
       "billing_details": "...",
-      "recommendations": [
-        {{"title": "...", "description": "...", "estimated_savings": "..."}}
-      ]
+      "recommendations": [{{"title": "...", "description": "...", "estimated_savings": "..."}}]
     }}
   ],
   "savings_plan_analysis": {{
     "has_savings_plans": true/false,
     "has_reserved_instances": true/false,
-    "recommendation": "Detailed recommendation text about Savings Plans and/or Reserved Instances...",
-    "potential_savings_percent": "estimated overall savings percentage if commitment pricing is adopted",
-    "how_to_purchase": "Step-by-step instructions for purchasing the recommended commitment type"
+    "recommendation": "...",
+    "potential_savings_percent": "...",
+    "how_to_purchase": "..."
   }}
 }}"""
 
@@ -324,22 +293,27 @@ def _build_prompt(parsed_bill: Dict[str, Any], tips: List[Dict[str, Any]]) -> st
         bill_lines.append(f"  - {service}: {cost}")
 
     # Include line items grouped by service for calculation details
+    # Only include if line items have different descriptions than service names
+    # (billing console format just repeats service names — skip those)
     line_items = parsed_bill.get("line_items", [])
     if line_items:
-        bill_lines.append("")
-        bill_lines.append("Line Item Details (from the bill):")
         items_by_svc: Dict[str, List[str]] = {}
         for item in line_items:
             svc = item.get("service", "Unknown")
             desc = item.get("description", "")
             cost = item.get("cost", 0)
-            if svc not in items_by_svc:
-                items_by_svc[svc] = []
-            items_by_svc[svc].append(f"{desc}: {cost}")
-        for svc, details in items_by_svc.items():
-            bill_lines.append(f"  {svc}:")
-            for d in details[:10]:  # cap at 10 line items per service for detailed explanations
-                bill_lines.append(f"    - {d}")
+            # Skip if description is just the service name (no extra detail)
+            if desc and desc != svc:
+                if svc not in items_by_svc:
+                    items_by_svc[svc] = []
+                items_by_svc[svc].append(f"{desc}: {cost}")
+        if items_by_svc:
+            bill_lines.append("")
+            bill_lines.append("Line Item Details (from the bill):")
+            for svc, details in items_by_svc.items():
+                bill_lines.append(f"  {svc}:")
+                for d in details[:8]:  # cap per service
+                    bill_lines.append(f"    - {d}")
 
     # Include commitment discount detection results
     discounts = parsed_bill.get("commitment_discounts", {})
@@ -366,7 +340,7 @@ def _build_prompt(parsed_bill: Dict[str, Any], tips: List[Dict[str, Any]]) -> st
     # Format tips as readable text (limit to 3 per service to keep prompt compact)
     if tips:
         tip_lines = []
-        for tip in tips[:15]:  # cap total tips to avoid bloating prompt
+        for tip in tips[:10]:  # cap total tips to keep prompt compact
             tip_lines.append(
                 f"- [{tip.get('service', 'General')}] {tip.get('title', '')}: "
                 f"{tip.get('description', '')} "
