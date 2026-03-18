@@ -30,6 +30,30 @@ Parameters:
 Resources:
 
   # ============================================================
+  # DynamoDB Table - Leads (Contact Information)
+  # ============================================================
+  LeadsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: ViewMyBill-Leads
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: email
+          AttributeType: S
+        - AttributeName: timestamp
+          AttributeType: S
+      KeySchema:
+        - AttributeName: email
+          KeyType: HASH
+        - AttributeName: timestamp
+          KeyType: RANGE
+      SSESpecification:
+        SSEEnabled: true
+      Tags:
+        - Key: Project
+          Value: ViewMyBill
+
+  # ============================================================
   # DynamoDB Table - Cost Optimization Tips (RAG Knowledge Base)
   # ============================================================
   CostOptimizationTipsTable:
@@ -133,6 +157,15 @@ Resources:
                   - s3:PutObjectTagging
                 Resource:
                   - !Sub 'arn:aws:s3:::${BillStorageBucket}/bills/*'
+        - PolicyName: DynamoDBLeadsWriteAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                Resource:
+                  - !GetAtt LeadsTable.Arn
       Tags:
         - Key: Project
           Value: ViewMyBill
@@ -181,6 +214,7 @@ Resources:
       Environment:
         Variables:
           BILL_STORAGE_BUCKET: !Ref BillStorageBucket
+          LEADS_TABLE_NAME: !Ref LeadsTable
       Tags:
         - Key: Project
           Value: ViewMyBill
@@ -321,3 +355,11 @@ Outputs:
   ApiId:
     Description: API Gateway ID
     Value: !Ref ViewMyBillApi
+
+  LeadsTableName:
+    Description: DynamoDB table name for leads
+    Value: !Ref LeadsTable
+
+  LeadsTableArn:
+    Description: DynamoDB Leads table ARN
+    Value: !GetAtt LeadsTable.Arn

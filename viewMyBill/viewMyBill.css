@@ -50,6 +50,20 @@
     box-shadow: 0 8px 24px rgba(0, 102, 255, 0.1);
 }
 
+/* Contact Fields Grid */
+.vmb-contact-fields {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin-bottom: 8px;
+}
+
+@media (max-width: 768px) {
+    .vmb-contact-fields {
+        grid-template-columns: 1fr;
+    }
+}
+
 /* File Picker */
 .vmb-file-picker {
     position: relative;

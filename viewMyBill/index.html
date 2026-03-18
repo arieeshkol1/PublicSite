@@ -58,20 +58,70 @@
     <section class="vmb-form-section">
         <div class="container">
             <form id="vmb-form" class="vmb-form" novalidate>
-                <div class="form-group">
-                    <label for="vmb-email">
-                        <i class="fas fa-envelope"></i> Email Address
-                    </label>
-                    <input
-                        type="email"
-                        id="vmb-email"
-                        name="email"
-                        required
-                        placeholder="your.email@example.com"
-                        autocomplete="email"
-                        aria-describedby="vmb-email-error"
-                    >
-                    <span id="vmb-email-error" class="vmb-field-error" role="alert" aria-live="polite"></span>
+                <div class="vmb-contact-fields">
+                    <div class="form-group">
+                        <label for="vmb-name">
+                            <i class="fas fa-user"></i> Full Name
+                        </label>
+                        <input
+                            type="text"
+                            id="vmb-name"
+                            name="name"
+                            required
+                            placeholder="John Doe"
+                            autocomplete="name"
+                            aria-describedby="vmb-name-error"
+                        >
+                        <span id="vmb-name-error" class="vmb-field-error" role="alert" aria-live="polite"></span>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="vmb-company">
+                            <i class="fas fa-building"></i> Company Name
+                        </label>
+                        <input
+                            type="text"
+                            id="vmb-company"
+                            name="company"
+                            required
+                            placeholder="Acme Inc."
+                            autocomplete="organization"
+                            aria-describedby="vmb-company-error"
+                        >
+                        <span id="vmb-company-error" class="vmb-field-error" role="alert" aria-live="polite"></span>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="vmb-email">
+                            <i class="fas fa-envelope"></i> Email Address
+                        </label>
+                        <input
+                            type="email"
+                            id="vmb-email"
+                            name="email"
+                            required
+                            placeholder="your.email@example.com"
+                            autocomplete="email"
+                            aria-describedby="vmb-email-error"
+                        >
+                        <span id="vmb-email-error" class="vmb-field-error" role="alert" aria-live="polite"></span>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="vmb-phone">
+                            <i class="fas fa-phone"></i> Phone Number
+                        </label>
+                        <input
+                            type="tel"
+                            id="vmb-phone"
+                            name="phone"
+                            required
+                            placeholder="+1 (555) 123-4567"
+                            autocomplete="tel"
+                            aria-describedby="vmb-phone-error"
+                        >
+                        <span id="vmb-phone-error" class="vmb-field-error" role="alert" aria-live="polite"></span>
+                    </div>
                 </div>
 
                 <div class="form-group">
