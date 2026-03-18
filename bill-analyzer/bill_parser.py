@@ -558,7 +558,33 @@ def _parse_line_items_from_text(text: str) -> List[Dict[str, Any]]:
         - "Amazon EC2  $45.23"
         - "AWS Lambda    $1.50"
         - "Amazon Simple Storage Service  $12.34"
+
+    Stops before "Linked Account" sections to avoid double-counting services
+    that appear in both the main Detail and Linked Account Detail sections.
     """
+    # Truncate text before linked account sections to avoid double-counting
+    truncated = text
+    for marker in [
+        "Linked Account Allocation",
+        "Summary for Linked Account",
+        "Detail for Linked Account",
+        "Activity By Account",
+    ]:
+        idx = truncated.find(marker)
+        if idx > 0:
+            truncated = truncated[:idx]
+
+    # Summary lines that should not be treated as services
+    summary_lines = {
+        "aws service charges",
+        "net charges",
+        "charges",
+        "total",
+        "vat",
+        "tax",
+        "invoice summary",
+    }
+
     items: List[Dict[str, Any]] = []
     # Pattern: service name followed by a cost
     line_pattern = re.compile(
@@ -567,16 +593,20 @@ def _parse_line_items_from_text(text: str) -> List[Dict[str, Any]]:
         re.MULTILINE | re.IGNORECASE,
     )
 
-    for match in line_pattern.finditer(text):
+    for match in line_pattern.finditer(truncated):
         service_name = match.group(1).strip()
         cost_str = match.group(2).replace(",", "")
+        cleaned = _clean_service_name(service_name)
+        # Skip summary/aggregate lines
+        if cleaned.lower() in summary_lines:
+            continue
         try:
             cost_val = Decimal(cost_str)
             if cost_val > Decimal("0"):
                 items.append({
-                    "service": _clean_service_name(service_name),
+                    "service": cleaned,
                     "cost": cost_val,
-                    "description": _clean_service_name(service_name),
+                    "description": cleaned,
                 })
         except InvalidOperation:
             continue
@@ -587,21 +617,25 @@ def _parse_line_items_from_text(text: str) -> List[Dict[str, Any]]:
             r"^(.{3,}?)\s+\$\s*([\d,]+\.\d{2})\s*$",
             re.MULTILINE,
         )
-        for match in fallback_pattern.finditer(text):
+        for match in fallback_pattern.finditer(truncated):
             service_name = match.group(1).strip()
             cost_str = match.group(2).replace(",", "")
+            cleaned = _clean_service_name(service_name)
+            if cleaned.lower() in summary_lines:
+                continue
             try:
                 cost_val = Decimal(cost_str)
                 if cost_val > Decimal("0"):
                     items.append({
-                        "service": _clean_service_name(service_name),
+                        "service": cleaned,
                         "cost": cost_val,
-                        "description": _clean_service_name(service_name),
+                        "description": cleaned,
                     })
             except InvalidOperation:
                 continue
 
     return items
+
 
 
 def _extract_metadata(text: str) -> Dict[str, str]:

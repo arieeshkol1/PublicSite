@@ -110,10 +110,10 @@ class TestParseAnalysisResponse:
         with pytest.raises(ValueError, match="explanations"):
             _parse_analysis_response(bad)
 
-    def test_missing_recommendations_raises_value_error(self):
-        bad = json.dumps({"summary": "ok", "explanations": []})
-        with pytest.raises(ValueError, match="recommendations"):
-            _parse_analysis_response(bad)
+    def test_missing_recommendations_defaults_to_empty(self):
+        data = json.dumps({"summary": "ok", "explanations": []})
+        result = _parse_analysis_response(data)
+        assert result["recommendations"] == []
 
     def test_explanation_missing_field_raises_value_error(self):
         bad = json.dumps({
@@ -124,14 +124,14 @@ class TestParseAnalysisResponse:
         with pytest.raises(ValueError, match="explanation"):
             _parse_analysis_response(bad)
 
-    def test_recommendation_missing_field_raises_value_error(self):
-        bad = json.dumps({
+    def test_recommendation_missing_estimated_savings_still_parses(self):
+        data = json.dumps({
             "summary": "ok",
             "explanations": [],
-            "recommendations": [{"title": "Save", "description": "Do stuff"}],  # missing estimated_savings
+            "recommendations": [{"title": "Save", "description": "Do stuff"}],
         })
-        with pytest.raises(ValueError, match="estimated_savings"):
-            _parse_analysis_response(bad)
+        result = _parse_analysis_response(data)
+        assert len(result["recommendations"]) == 1
 
     def test_non_dict_json_raises_value_error(self):
         with pytest.raises(ValueError, match="not a JSON object"):

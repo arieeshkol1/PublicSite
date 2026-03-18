@@ -49,6 +49,34 @@ def _sample_parsed_bill() -> dict:
 def _sample_ai_analysis() -> dict:
     return {
         "summary": "Your total bill is $57.73. EC2 is the top spender.",
+        "service_analysis": [
+            {
+                "service": "Amazon EC2",
+                "cost": "$45.23",
+                "explanation": "Compute instances running in us-east-1.",
+                "billing_details": "720 hours of t3.medium at $0.0416/hr",
+                "recommendations": [
+                    {
+                        "title": "Use Reserved Instances",
+                        "description": "Switch to reserved instances for steady-state workloads.",
+                        "estimated_savings": "20-40%",
+                    },
+                ],
+            },
+            {
+                "service": "Amazon S3",
+                "cost": "$12.50",
+                "explanation": "Object storage for your files.",
+                "billing_details": "500 GB stored at $0.023/GB",
+                "recommendations": [
+                    {
+                        "title": "Enable S3 Intelligent Tiering",
+                        "description": "Automatically move objects to cheaper storage tiers.",
+                        "estimated_savings": "10-20%",
+                    },
+                ],
+            },
+        ],
         "explanations": [
             {"service": "Amazon EC2", "cost": "$45.23", "explanation": "Compute instances running in us-east-1."},
             {"service": "Amazon S3", "cost": "$12.50", "explanation": "Object storage for your files."},
@@ -58,13 +86,11 @@ def _sample_ai_analysis() -> dict:
                 "title": "Use Reserved Instances",
                 "description": "Switch to reserved instances for steady-state workloads.",
                 "estimated_savings": "20-40%",
-                "difficulty": "medium",
             },
             {
                 "title": "Enable S3 Intelligent Tiering",
                 "description": "Automatically move objects to cheaper storage tiers.",
                 "estimated_savings": "10-20%",
-                "difficulty": "easy",
             },
         ],
     }
