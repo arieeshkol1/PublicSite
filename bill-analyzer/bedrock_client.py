@@ -10,6 +10,7 @@ import json
 import logging
 import os
 import re
+import time
 from typing import Any, Dict, List
 
 import boto3
@@ -22,6 +23,11 @@ logger = logging.getLogger(__name__)
 TIPS_TABLE_NAME = os.environ.get('TIPS_TABLE_NAME', 'ViewMyBill-CostOptimizationTips')
 BEDROCK_MODEL_ID = os.environ.get('BEDROCK_MODEL_ID', 'amazon.nova-lite-v1:0')
 MAX_TOKENS = int(os.environ.get('MAX_TOKENS', '4000'))
+
+# Chunking and retry configuration
+MAX_SERVICES_PER_BATCH = int(os.environ.get('MAX_SERVICES_PER_BATCH', '5'))
+MAX_RETRIES = int(os.environ.get('MAX_RETRIES', '2'))
+RETRY_BASE_DELAY = 1  # seconds (keep short — API Gateway has 29s hard limit)
 
 # Type alias for the AI analysis response structure
 AIAnalysis = Dict[str, Any]
@@ -72,45 +78,145 @@ def analyze_bill(parsed_bill: Dict[str, Any]) -> AIAnalysis:
     """
     Run the full AI analysis pipeline on a parsed bill.
 
-    Steps:
-        1. Query DynamoDB for optimization tips matching detected services.
-        2. Construct the analysis prompt with bill data and retrieved tips.
-        3. Invoke Bedrock Nova Lite model.
-        4. Parse and return the structured AIAnalysis response.
+    For bills with many services, splits into batches of MAX_SERVICES_PER_BATCH
+    services each, calls Bedrock per batch, and merges results. This avoids
+    hitting Nova Lite's context/token limits on large bills.
 
     Args:
         parsed_bill: ParsedBill dict from bill_parser.parse_bill().
 
     Returns:
-        AIAnalysis dict with the following structure:
-            {
-                "summary": str,
-                "explanations": [{"service": str, "cost": str, "explanation": str}],
-                "recommendations": [
-                    {"title": str, "description": str,
-                     "estimated_savings": str, "difficulty": str}
-                ]
-            }
+        AIAnalysis dict with summary, service_analysis, explanations, recommendations.
 
     Raises:
         RuntimeError: If Bedrock is throttled (429) or unavailable (503).
         ValueError: If the Bedrock response cannot be parsed as valid JSON.
     """
-    # 1. Extract service names from the parsed bill
-    services = list(parsed_bill.get("service_totals", {}).keys())
-    logger.info("Detected services: %s", services)
+    service_totals = parsed_bill.get("service_totals", {})
+    services = list(service_totals.keys())
+    logger.info("Detected %d services: %s", len(services), services)
 
-    # 2. Query DynamoDB for optimization tips
+    # Query DynamoDB for optimization tips (once, for all services)
     tips = _get_optimization_tips(services)
 
-    # 3. Build the analysis prompt
-    prompt = _build_prompt(parsed_bill, tips)
+    # If small enough, do a single call (original behavior)
+    if len(services) <= MAX_SERVICES_PER_BATCH:
+        prompt = _build_prompt(parsed_bill, tips)
+        raw_response = _invoke_bedrock_with_retry(prompt)
+        return _parse_analysis_response(raw_response)
 
-    # 4. Invoke Bedrock
-    raw_response = _invoke_bedrock(prompt)
+    # --- Chunked analysis for large bills ---
+    logger.info(
+        "Bill has %d services, splitting into batches of %d",
+        len(services), MAX_SERVICES_PER_BATCH,
+    )
+    batches = _split_services_into_batches(services, MAX_SERVICES_PER_BATCH)
+    all_service_analyses: List[Dict[str, Any]] = []
+    batch_summaries: List[str] = []
 
-    # 5. Parse and return structured response
-    return _parse_analysis_response(raw_response)
+    for i, batch_services in enumerate(batches):
+        logger.info("Processing batch %d/%d: %s", i + 1, len(batches), batch_services)
+        batch_bill = _create_batch_bill(parsed_bill, batch_services)
+        batch_tips = [t for t in tips if t.get("service") in batch_services or t.get("service") == "General"]
+        prompt = _build_prompt(batch_bill, batch_tips)
+        raw_response = _invoke_bedrock_with_retry(prompt)
+        batch_result = _parse_analysis_response(raw_response)
+
+        all_service_analyses.extend(batch_result.get("service_analysis", []))
+        batch_summaries.append(batch_result.get("summary", ""))
+
+    # Merge all batch results into a single response
+    return _merge_batch_results(parsed_bill, all_service_analyses, batch_summaries)
+
+def _split_services_into_batches(services: List[str], batch_size: int) -> List[List[str]]:
+    """Split a list of services into batches of the given size."""
+    return [services[i:i + batch_size] for i in range(0, len(services), batch_size)]
+
+
+def _create_batch_bill(parsed_bill: Dict[str, Any], batch_services: List[str]) -> Dict[str, Any]:
+    """Create a subset of the parsed bill containing only the given services."""
+    batch_totals = {
+        svc: cost for svc, cost in parsed_bill.get("service_totals", {}).items()
+        if svc in batch_services
+    }
+    batch_line_items = [
+        item for item in parsed_bill.get("line_items", [])
+        if item.get("service") in batch_services
+    ]
+    return {
+        **parsed_bill,
+        "service_totals": batch_totals,
+        "line_items": batch_line_items,
+    }
+
+
+def _merge_batch_results(
+    parsed_bill: Dict[str, Any],
+    all_service_analyses: List[Dict[str, Any]],
+    batch_summaries: List[str],
+) -> AIAnalysis:
+    """Merge results from multiple batch calls into a single AIAnalysis."""
+    total_cost = parsed_bill.get("total_cost", 0)
+    currency = parsed_bill.get("currency", "USD")
+    num_services = len(parsed_bill.get("service_totals", {}))
+
+    # Build a combined summary
+    top_services = sorted(
+        all_service_analyses, key=lambda x: _extract_cost_value(x.get("cost", "0")), reverse=True
+    )[:3]
+    top_names = ", ".join(s.get("service", "Unknown") for s in top_services)
+    summary = (
+        f"Your total AWS bill is {currency} {total_cost} across {num_services} services. "
+        f"Top spenders: {top_names}."
+    )
+
+    # Build legacy fields for backward compatibility
+    explanations = [
+        {"service": s.get("service", ""), "cost": s.get("cost", ""), "explanation": s.get("explanation", "")}
+        for s in all_service_analyses
+    ]
+    all_recs = []
+    for s in all_service_analyses:
+        all_recs.extend(s.get("recommendations", []))
+
+    return {
+        "summary": summary,
+        "service_analysis": all_service_analyses,
+        "explanations": explanations,
+        "recommendations": all_recs,
+    }
+
+
+def _extract_cost_value(cost_str: str) -> float:
+    """Extract numeric cost from a string like '$45.23'."""
+    cleaned = str(cost_str).replace("$", "").replace(",", "").strip()
+    try:
+        return float(cleaned)
+    except ValueError:
+        return 0.0
+
+
+def _invoke_bedrock_with_retry(prompt: str) -> str:
+    """Invoke Bedrock with exponential backoff retry on transient errors."""
+    last_error = None
+    for attempt in range(MAX_RETRIES):
+        try:
+            return _invoke_bedrock(prompt)
+        except RuntimeError as e:
+            last_error = e
+            error_msg = str(e)
+            if "Service is busy" in error_msg or "temporarily unavailable" in error_msg:
+                delay = RETRY_BASE_DELAY * (2 ** attempt)
+                logger.warning(
+                    "Bedrock transient error (attempt %d/%d), retrying in %ds: %s",
+                    attempt + 1, MAX_RETRIES, delay, error_msg,
+                )
+                time.sleep(delay)
+            else:
+                raise
+    # All retries exhausted
+    raise last_error  # type: ignore[misc]
+
 
 
 

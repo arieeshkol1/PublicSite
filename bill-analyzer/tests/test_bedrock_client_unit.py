@@ -10,7 +10,12 @@ from bedrock_client import (
     _get_optimization_tips,
     _build_prompt,
     _invoke_bedrock,
+    _invoke_bedrock_with_retry,
     _parse_analysis_response,
+    _split_services_into_batches,
+    _create_batch_bill,
+    _merge_batch_results,
+    _extract_cost_value,
 )
 
 
@@ -318,7 +323,7 @@ class TestGetOptimizationTips:
 class TestAnalyzeBill:
     """Test the full pipeline with mocked AWS services."""
 
-    @patch("bedrock_client._invoke_bedrock")
+    @patch("bedrock_client._invoke_bedrock_with_retry")
     @patch("bedrock_client._get_optimization_tips")
     def test_full_pipeline(self, mock_tips, mock_bedrock):
         mock_tips.return_value = SAMPLE_TIPS
@@ -332,7 +337,7 @@ class TestAnalyzeBill:
         mock_tips.assert_called_once_with(["Amazon EC2", "Amazon S3"])
         mock_bedrock.assert_called_once()
 
-    @patch("bedrock_client._invoke_bedrock")
+    @patch("bedrock_client._invoke_bedrock_with_retry")
     @patch("bedrock_client._get_optimization_tips")
     def test_empty_service_totals(self, mock_tips, mock_bedrock):
         mock_tips.return_value = []
@@ -343,3 +348,164 @@ class TestAnalyzeBill:
 
         assert "summary" in result
         mock_tips.assert_called_once_with([])
+
+    @patch("bedrock_client.MAX_SERVICES_PER_BATCH", 2)
+    @patch("bedrock_client._invoke_bedrock_with_retry")
+    @patch("bedrock_client._get_optimization_tips")
+    def test_chunked_analysis_for_many_services(self, mock_tips, mock_bedrock):
+        """Bills with more services than MAX_SERVICES_PER_BATCH get chunked."""
+        mock_tips.return_value = []
+
+        # Build a bill with 4 services (batch size = 2 → 2 batches)
+        big_bill = {
+            **SAMPLE_PARSED_BILL,
+            "service_totals": {
+                "Amazon EC2": Decimal("80.00"),
+                "Amazon S3": Decimal("43.45"),
+                "Amazon RDS": Decimal("30.00"),
+                "AWS Lambda": Decimal("10.00"),
+            },
+            "line_items": [
+                {"service": "Amazon EC2", "cost": Decimal("80.00"), "description": "Compute"},
+                {"service": "Amazon S3", "cost": Decimal("43.45"), "description": "Storage"},
+                {"service": "Amazon RDS", "cost": Decimal("30.00"), "description": "Database"},
+                {"service": "AWS Lambda", "cost": Decimal("10.00"), "description": "Functions"},
+            ],
+        }
+
+        # Each batch call returns a valid response for its services
+        batch1_json = json.dumps({
+            "summary": "Batch 1 summary",
+            "service_analysis": [
+                {"service": "Amazon EC2", "cost": "$80.00", "explanation": "Compute.", "billing_details": "", "recommendations": []},
+                {"service": "Amazon S3", "cost": "$43.45", "explanation": "Storage.", "billing_details": "", "recommendations": []},
+            ],
+        })
+        batch2_json = json.dumps({
+            "summary": "Batch 2 summary",
+            "service_analysis": [
+                {"service": "Amazon RDS", "cost": "$30.00", "explanation": "Database.", "billing_details": "", "recommendations": []},
+                {"service": "AWS Lambda", "cost": "$10.00", "explanation": "Functions.", "billing_details": "", "recommendations": []},
+            ],
+        })
+        mock_bedrock.side_effect = [batch1_json, batch2_json]
+
+        result = analyze_bill(big_bill)
+
+        assert mock_bedrock.call_count == 2
+        assert len(result["service_analysis"]) == 4
+        assert "4 services" in result["summary"]
+
+
+# ---------------------------------------------------------------------------
+# _split_services_into_batches tests
+# ---------------------------------------------------------------------------
+
+class TestSplitServicesIntoBatches:
+    def test_exact_batch_size(self):
+        result = _split_services_into_batches(["A", "B", "C", "D"], 2)
+        assert result == [["A", "B"], ["C", "D"]]
+
+    def test_remainder_batch(self):
+        result = _split_services_into_batches(["A", "B", "C"], 2)
+        assert result == [["A", "B"], ["C"]]
+
+    def test_single_batch(self):
+        result = _split_services_into_batches(["A", "B"], 5)
+        assert result == [["A", "B"]]
+
+    def test_empty_list(self):
+        result = _split_services_into_batches([], 5)
+        assert result == []
+
+
+# ---------------------------------------------------------------------------
+# _create_batch_bill tests
+# ---------------------------------------------------------------------------
+
+class TestCreateBatchBill:
+    def test_filters_services(self):
+        result = _create_batch_bill(SAMPLE_PARSED_BILL, ["Amazon EC2"])
+        assert "Amazon EC2" in result["service_totals"]
+        assert "Amazon S3" not in result["service_totals"]
+        assert len(result["line_items"]) == 1
+        assert result["line_items"][0]["service"] == "Amazon EC2"
+
+    def test_preserves_metadata(self):
+        result = _create_batch_bill(SAMPLE_PARSED_BILL, ["Amazon EC2"])
+        assert result["invoice_number"] == "EUINIL26-139120"
+        assert result["total_cost"] == Decimal("123.45")
+
+
+# ---------------------------------------------------------------------------
+# _extract_cost_value tests
+# ---------------------------------------------------------------------------
+
+class TestExtractCostValue:
+    def test_dollar_amount(self):
+        assert _extract_cost_value("$45.23") == 45.23
+
+    def test_with_commas(self):
+        assert _extract_cost_value("$1,234.56") == 1234.56
+
+    def test_plain_number(self):
+        assert _extract_cost_value("99.99") == 99.99
+
+    def test_invalid_returns_zero(self):
+        assert _extract_cost_value("N/A") == 0.0
+
+
+# ---------------------------------------------------------------------------
+# _invoke_bedrock_with_retry tests
+# ---------------------------------------------------------------------------
+
+class TestInvokeBedrockWithRetry:
+    @patch("bedrock_client._invoke_bedrock")
+    def test_success_on_first_try(self, mock_invoke):
+        mock_invoke.return_value = "response"
+        result = _invoke_bedrock_with_retry("prompt")
+        assert result == "response"
+        assert mock_invoke.call_count == 1
+
+    @patch("bedrock_client.time.sleep")
+    @patch("bedrock_client._invoke_bedrock")
+    def test_retries_on_transient_error(self, mock_invoke, mock_sleep):
+        mock_invoke.side_effect = [
+            RuntimeError("AI service temporarily unavailable"),
+            "response",
+        ]
+        result = _invoke_bedrock_with_retry("prompt")
+        assert result == "response"
+        assert mock_invoke.call_count == 2
+        mock_sleep.assert_called_once()
+
+    @patch("bedrock_client.time.sleep")
+    @patch("bedrock_client._invoke_bedrock")
+    def test_raises_after_all_retries_exhausted(self, mock_invoke, mock_sleep):
+        mock_invoke.side_effect = RuntimeError("AI service temporarily unavailable")
+        with pytest.raises(RuntimeError, match="temporarily unavailable"):
+            _invoke_bedrock_with_retry("prompt")
+
+    @patch("bedrock_client._invoke_bedrock")
+    def test_non_transient_error_not_retried(self, mock_invoke):
+        mock_invoke.side_effect = RuntimeError("Some other error")
+        with pytest.raises(RuntimeError, match="Some other error"):
+            _invoke_bedrock_with_retry("prompt")
+        assert mock_invoke.call_count == 1
+
+
+# ---------------------------------------------------------------------------
+# _merge_batch_results tests
+# ---------------------------------------------------------------------------
+
+class TestMergeBatchResults:
+    def test_merges_service_analyses(self):
+        analyses = [
+            {"service": "EC2", "cost": "$80", "explanation": "Compute", "recommendations": [{"title": "Save"}]},
+            {"service": "S3", "cost": "$40", "explanation": "Storage", "recommendations": []},
+        ]
+        result = _merge_batch_results(SAMPLE_PARSED_BILL, analyses, ["Summary 1"])
+        assert len(result["service_analysis"]) == 2
+        assert len(result["explanations"]) == 2
+        assert len(result["recommendations"]) == 1
+        assert "123.45" in result["summary"]
