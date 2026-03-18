@@ -1,4 +1,4 @@
-/* ViewMyBill - Client-side logic for AWS bill analysis */
+/* Slash My Bill - Client-side logic for AWS bill analysis */
 
 const API_GATEWAY_URL = 'https://l2fd4h481h.execute-api.us-east-1.amazonaws.com';
 

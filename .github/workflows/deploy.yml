@@ -55,6 +55,7 @@ jobs:
           echo "Packaging Bill Analyzer Lambda..."
           pip install -r bill-analyzer/requirements.txt -t .build-bill-analyzer/ --quiet
           cp bill-analyzer/*.py .build-bill-analyzer/
+          cp bill-analyzer/eshkolaiLogo.png .build-bill-analyzer/
           cd .build-bill-analyzer && zip -r ../bill-analyzer-lambda.zip . -q
           cd ..
           aws s3 cp bill-analyzer-lambda.zip s3://${{ env.STORAGE_BUCKET }}/lambda-packages/bill-analyzer.zip

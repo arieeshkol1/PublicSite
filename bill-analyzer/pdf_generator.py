@@ -7,6 +7,7 @@ invoice as an appendix.
 """
 
 import io
+import os
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any, Dict, List
@@ -38,6 +39,9 @@ TEXT_COLOR = colors.HexColor("#333333")
 WHITE = colors.white
 ACCENT_ORANGE = colors.HexColor("#FF6B35")
 
+# Logo image path (bundled with Lambda package)
+_LOGO_PATH = os.path.join(os.path.dirname(__file__), "eshkolaiLogo.png")
+
 
 def _format_cost(value: Any) -> str:
     """Format a cost value as a string with 2 decimal places."""
@@ -52,22 +56,41 @@ def _page_header_footer(canvas_obj, doc):
     canvas_obj.saveState()
     width, height = letter
 
-    # --- Header bar ---
+    # --- Header bar (white background) ---
     bar_height = 28
-    canvas_obj.setFillColor(DARK_BG)
+    canvas_obj.setFillColor(WHITE)
     canvas_obj.rect(0, height - bar_height, width, bar_height, fill=1, stroke=0)
     # Accent line under header
     canvas_obj.setStrokeColor(PRIMARY_BLUE)
     canvas_obj.setLineWidth(2)
     canvas_obj.line(0, height - bar_height, width, height - bar_height)
-    # Logo text
-    canvas_obj.setFillColor(WHITE)
-    canvas_obj.setFont("Helvetica-Bold", 10)
-    canvas_obj.drawString(doc.leftMargin, height - 19, "eshkolai.com")
+    # Logo image (same height as the old text, ~18px high)
+    logo_h = 20
+    logo_w = logo_h * 3.5  # approximate aspect ratio
+    if os.path.exists(_LOGO_PATH):
+        try:
+            canvas_obj.drawImage(
+                _LOGO_PATH,
+                doc.leftMargin,
+                height - bar_height + (bar_height - logo_h) / 2,
+                width=logo_w,
+                height=logo_h,
+                preserveAspectRatio=True,
+                mask="auto",
+            )
+        except Exception:
+            # Fallback to text if image fails
+            canvas_obj.setFillColor(DARK_BG)
+            canvas_obj.setFont("Helvetica-Bold", 10)
+            canvas_obj.drawString(doc.leftMargin, height - 19, "eshkolai.com")
+    else:
+        canvas_obj.setFillColor(DARK_BG)
+        canvas_obj.setFont("Helvetica-Bold", 10)
+        canvas_obj.drawString(doc.leftMargin, height - 19, "eshkolai.com")
     # Right side text
     canvas_obj.setFont("Helvetica", 8)
-    canvas_obj.setFillColor(colors.HexColor("#AABBDD"))
-    canvas_obj.drawRightString(width - doc.rightMargin, height - 19, "Bill Analysis Report")
+    canvas_obj.setFillColor(colors.HexColor("#666666"))
+    canvas_obj.drawRightString(width - doc.rightMargin, height - 19, "Slash My Bill Report")
 
     # --- Footer bar ---
     footer_y = 30
@@ -286,41 +309,35 @@ def _build_header(
     """Build the title banner with branding and billing period summary."""
     elements: List[Any] = []
 
-    # Title banner - white background with blue text
-    title_data = [[Paragraph("Bill Analysis Report", ParagraphStyle(
+    # Title + date combined in one table, blue line at the bottom
+    title_para = Paragraph("Slash My Bill Report", ParagraphStyle(
         "BannerTitle",
         fontName="Helvetica-Bold",
         fontSize=22,
         textColor=DARK_BLUE,
         alignment=1,
         spaceAfter=0,
-    ))]]
-    title_table = Table(title_data, colWidths=[7 * inch])
-    title_table.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, -1), WHITE),
-        ("TOPPADDING", (0, 0), (-1, -1), 14),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
-        ("LEFTPADDING", (0, 0), (-1, -1), 12),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 12),
-        ("LINEBELOW", (0, 0), (-1, -1), 3, PRIMARY_BLUE),
-    ]))
-    elements.append(title_table)
-
-    # Date line - separate row below the title
-    date_data = [[Paragraph(f"Generated: {timestamp}", ParagraphStyle(
+    ))
+    date_para = Paragraph(f"Generated: {timestamp}", ParagraphStyle(
         "BannerDate",
         fontName="Helvetica",
         fontSize=9,
         textColor=colors.HexColor("#666666"),
         alignment=1,
-    ))]]
-    date_table = Table(date_data, colWidths=[7 * inch])
-    date_table.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, -1), LIGHT_BG),
-        ("TOPPADDING", (0, 0), (-1, -1), 4),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+    ))
+    header_data = [[title_para], [date_para]]
+    header_table = Table(header_data, colWidths=[7 * inch])
+    header_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), WHITE),
+        ("TOPPADDING", (0, 0), (0, 0), 14),
+        ("BOTTOMPADDING", (0, 0), (0, 0), 2),
+        ("TOPPADDING", (0, 1), (0, 1), 2),
+        ("BOTTOMPADDING", (0, 1), (0, 1), 12),
+        ("LEFTPADDING", (0, 0), (-1, -1), 12),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 12),
+        ("LINEBELOW", (0, 1), (-1, 1), 3, PRIMARY_BLUE),
     ]))
-    elements.append(date_table)
+    elements.append(header_table)
     elements.append(Spacer(1, 14))
 
     # Billing period info row

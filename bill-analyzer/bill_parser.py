@@ -285,12 +285,15 @@ def _parse_billing_console(text: str, tables: List[List[List[str]]]) -> ParsedBi
             "Please ensure this is a valid AWS bill."
         )
 
+    # Enrich line items with detailed pricing sub-items for Bedrock
+    detail_items = _extract_billing_console_details(text, line_items)
+
     total_cost = sum(item["cost"] for item in line_items)
     service_totals = _aggregate_service_totals(line_items)
     commitment_discounts = _detect_commitment_discounts(text)
 
     return {
-        "line_items": line_items,
+        "line_items": line_items + detail_items,
         "total_cost": total_cost,
         "currency": metadata.get("currency", "USD"),
         "period_start": metadata.get("period_start", "N/A"),
@@ -486,6 +489,92 @@ def _extract_billing_console_services(text: str) -> List[Dict[str, Any]]:
         })
 
     return items
+
+
+def _extract_billing_console_details(
+    text: str, line_items: List[Dict[str, Any]]
+) -> List[Dict[str, Any]]:
+    """
+    Extract detailed pricing sub-line-items from a billing console PDF.
+
+    Parses lines like:
+        $0.097 per db.t3.medium Single-AZ instance hour ... 672 Hrs USD 65.18
+
+    Matches each detail to its parent service and returns human-readable
+    descriptions that Bedrock can use to explain charges.
+
+    Args:
+        text: Full extracted text from the PDF.
+        line_items: Top-level service line items (used to identify parent services).
+
+    Returns:
+        List of detail dicts: {"service": parent, "cost": Decimal, "description": str}
+    """
+    details: List[Dict[str, Any]] = []
+
+    # Find the "Charges by service" section
+    charges_match = re.search(r"Charges by service\b", text)
+    if not charges_match:
+        return details
+
+    charges_text = text[charges_match.end():]
+
+    # Cut off at known boundaries
+    for boundary in ["Charges by account", "Invoices\n", "Tax Invoices"]:
+        idx = charges_text.find(boundary)
+        if idx > 0:
+            charges_text = charges_text[:idx]
+
+    # Build set of known service names for matching
+    service_names = [item["service"] for item in line_items]
+
+    # Pattern: $rate per <description> <quantity> <unit> USD <amount>
+    detail_pattern = re.compile(
+        r"\$([\d,.]+)\s+per\s+(.+?)\s+([\d,.]+)\s+(Hrs?|GB|Requests?|Count|Queries|Keys?|Secrets?|Hrs:HrsUsage)\s+USD\s+([\d,.]+)",
+        re.IGNORECASE,
+    )
+
+    # Track current service context by scanning lines
+    current_service = ""
+    for line in charges_text.split("\n"):
+        stripped = line.strip()
+        if not stripped:
+            continue
+
+        # Check if this line is a service header (matches a known service)
+        for svc in service_names:
+            if stripped.startswith(svc) or svc in stripped:
+                current_service = svc
+                break
+
+        # Try to match detail pricing lines
+        for match in detail_pattern.finditer(stripped):
+            rate = match.group(1).replace(",", "")
+            desc_text = match.group(2).strip()
+            quantity = match.group(3).replace(",", "")
+            unit = match.group(4)
+            amount = match.group(5).replace(",", "")
+
+            try:
+                cost_val = Decimal(amount)
+            except InvalidOperation:
+                continue
+
+            if cost_val <= Decimal("0"):
+                continue
+
+            # Build human-readable description
+            human_desc = f"{quantity} {unit} at ${rate}/{unit.rstrip('s')} = ${amount} ({desc_text})"
+
+            parent = current_service if current_service else "Unknown"
+
+            details.append({
+                "service": parent,
+                "cost": cost_val,
+                "description": human_desc,
+            })
+
+    return details
 
 
 def _extract_text_and_tables(pdf_bytes: bytes, text_only: bool = False) -> Dict[str, Any]:
