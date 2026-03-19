@@ -32,6 +32,48 @@ RETRY_BASE_DELAY = 1  # seconds (keep short — API Gateway has 29s hard limit)
 # Type alias for the AI analysis response structure
 AIAnalysis = Dict[str, Any]
 
+# Map bill parser service names → DynamoDB tip service names
+# The bill parser extracts full AWS names (e.g. "Amazon EC2"),
+# but DynamoDB tips use short names (e.g. "EC2").
+SERVICE_NAME_TO_TIP_KEY: Dict[str, str] = {
+    "Amazon Elastic Compute Cloud": "EC2",
+    "Amazon EC2": "EC2",
+    "Amazon Simple Storage Service": "S3",
+    "Amazon S3": "S3",
+    "Amazon Relational Database Service": "RDS",
+    "Amazon RDS": "RDS",
+    "AWS Lambda": "Lambda",
+    "Amazon CloudFront": "CloudFront",
+    "Amazon Virtual Private Cloud": "NAT Gateway",
+    "Amazon VPC": "NAT Gateway",
+    "Elastic Block Store": "EBS",
+    "Amazon EBS": "EBS",
+    "Amazon Elastic Block Store": "EBS",
+    "Data Transfer": "Data Transfer",
+    "AWS Data Transfer": "Data Transfer",
+    "Amazon Route 53": "Route 53",
+    "Amazon DynamoDB": "DynamoDB",
+    "Amazon ElastiCache": "ElastiCache",
+    "Amazon OpenSearch Service": "OpenSearch",
+    "Amazon Redshift": "Redshift",
+    "Amazon CloudWatch": "CloudWatch",
+    "AWS Key Management Service": "KMS",
+    "Amazon KMS": "KMS",
+    "AWS Config": "Config",
+    "Amazon Simple Notification Service": "SNS",
+    "Amazon SNS": "SNS",
+    "Amazon Simple Queue Service": "SQS",
+    "Amazon SQS": "SQS",
+    "Amazon API Gateway": "API Gateway",
+    "AWS WAF": "WAF",
+    "Amazon Elastic Container Service": "ECS",
+    "Amazon ECS": "ECS",
+    "Amazon Elastic Container Registry": "ECR",
+    "Amazon ECR": "ECR",
+    "AWS Secrets Manager": "Secrets Manager",
+    "AWS Cloud Map": "Cloud Map",
+}
+
 # Analysis prompt template
 ANALYSIS_PROMPT = """You are an AWS billing expert. Analyze this AWS bill and provide insights.
 
@@ -134,7 +176,7 @@ def analyze_bill(parsed_bill: Dict[str, Any]) -> AIAnalysis:
     for i, batch_services in enumerate(batches):
         logger.info("Processing batch %d/%d: %s", i + 1, len(batches), batch_services)
         batch_bill = _create_batch_bill(parsed_bill, batch_services)
-        batch_tips = [t for t in tips if t.get("service") in batch_services or t.get("service") == "General"]
+        batch_tips = [t for t in tips if t.get("service") in {SERVICE_NAME_TO_TIP_KEY.get(s, s) for s in batch_services} or t.get("service") == "General"]
         prompt = _build_prompt(batch_bill, batch_tips)
         raw_response = _invoke_bedrock_with_retry(prompt)
         batch_result = _parse_analysis_response(raw_response)
@@ -261,7 +303,11 @@ def _get_optimization_tips(services: List[str]) -> List[Dict[str, Any]]:
     tips: List[Dict[str, Any]] = []
 
     # Build unique set of services to query, always including "General"
-    services_to_query = set(services)
+    # Map full bill names to short DynamoDB tip keys
+    services_to_query = set()
+    for svc in services:
+        tip_key = SERVICE_NAME_TO_TIP_KEY.get(svc, svc)
+        services_to_query.add(tip_key)
     services_to_query.add("General")
 
     logger.info("Querying DynamoDB for tips for services: %s", services_to_query)

@@ -308,7 +308,7 @@
       "service": "General",
       "category": "commitment",
       "title": "Database Savings Plans",
-      "description": "Commit to a consistent $/hr spend on database services for 1 or 3 years. Covers Aurora, RDS, DynamoDB, ElastiCache, DocumentDB, Neptune, Keyspaces, Timestream, DMS, and OpenSearch. Applies across instance families, sizes, regions, and engines.",
+      "description": "Commit to a consistent $/hr spend on database services for 1 or 3 years. Covers Aurora, RDS, DynamoDB, ElastiCache, DocumentDB, Neptune, Keyspaces, Timestream, and DMS. Applies across instance families, sizes, regions, and engines.",
       "estimatedSavings": "up to 35%",
       "difficulty": "medium"
     },
