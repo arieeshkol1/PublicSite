@@ -87,10 +87,14 @@ def _page_header_footer(canvas_obj, doc):
         canvas_obj.setFillColor(DARK_BG)
         canvas_obj.setFont("Helvetica-Bold", 10)
         canvas_obj.drawString(doc.leftMargin, height - 19, "eshkolai.com")
-    # Right side text
+    # Right side text — report name + generated timestamp
     canvas_obj.setFont("Helvetica", 8)
     canvas_obj.setFillColor(colors.HexColor("#666666"))
-    canvas_obj.drawRightString(width - doc.rightMargin, height - 19, "Slash My Bill Report")
+    canvas_obj.drawRightString(width - doc.rightMargin, height - 14, "Slash My Bill Report")
+    # Generated timestamp on second line
+    if hasattr(doc, '_report_timestamp') and doc._report_timestamp:
+        canvas_obj.setFont("Helvetica", 7)
+        canvas_obj.drawRightString(width - doc.rightMargin, height - 23, f"Generated: {doc._report_timestamp}")
 
     # --- Footer bar ---
     footer_y = 30
@@ -280,6 +284,8 @@ def _generate_analysis_pages(
         leftMargin=0.75 * inch,
         rightMargin=0.75 * inch,
     )
+    # Attach timestamp so _page_header_footer can display it
+    doc._report_timestamp = timestamp
 
     elements: List[Any] = []
 
@@ -318,24 +324,15 @@ def _build_header(
         alignment=1,
         spaceAfter=0,
     ))
-    date_para = Paragraph(f"Generated: {timestamp}", ParagraphStyle(
-        "BannerDate",
-        fontName="Helvetica",
-        fontSize=9,
-        textColor=colors.HexColor("#666666"),
-        alignment=1,
-    ))
-    header_data = [[title_para], [date_para]]
+    header_data = [[title_para]]
     header_table = Table(header_data, colWidths=[7 * inch])
     header_table.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, -1), WHITE),
         ("TOPPADDING", (0, 0), (0, 0), 14),
-        ("BOTTOMPADDING", (0, 0), (0, 0), 2),
-        ("TOPPADDING", (0, 1), (0, 1), 2),
-        ("BOTTOMPADDING", (0, 1), (0, 1), 12),
+        ("BOTTOMPADDING", (0, 0), (0, 0), 12),
         ("LEFTPADDING", (0, 0), (-1, -1), 12),
         ("RIGHTPADDING", (0, 0), (-1, -1), 12),
-        ("LINEBELOW", (0, 1), (-1, 1), 3, PRIMARY_BLUE),
+        ("LINEBELOW", (0, 0), (-1, 0), 3, PRIMARY_BLUE),
     ]))
     elements.append(header_table)
     elements.append(Spacer(1, 14))
