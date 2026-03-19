@@ -41,6 +41,18 @@ ANALYSIS_PROMPT = """You are an AWS billing expert. Analyze this AWS bill and pr
 ## Cost Optimization Tips:
 {retrieved_tips}
 
+## CRITICAL RULES — Savings Plans & Reserved Instances eligibility:
+Only recommend Savings Plans or Reserved Instances for services that actually support them.
+
+Compute Savings Plans (up to 66% off) apply ONLY to: Amazon EC2, AWS Lambda, AWS Fargate.
+EC2 Instance Savings Plans (up to 72% off) apply ONLY to: Amazon EC2.
+Database Savings Plans (up to 35% off) apply ONLY to: Amazon RDS, Amazon Aurora, Amazon DynamoDB, Amazon ElastiCache, Amazon DocumentDB, Amazon Neptune, Amazon Keyspaces, Amazon Timestream, AWS DMS.
+Reserved Instances apply ONLY to: Amazon EC2, Amazon RDS, Amazon Redshift, Amazon ElastiCache, Amazon OpenSearch, Amazon DynamoDB, AWS Elemental MediaLive, Amazon MemoryDB.
+
+DO NOT recommend Savings Plans or Reserved Instances for: VPC, Route 53, CloudWatch, S3, KMS, Secrets Manager, Config, Cloud Map, Data Transfer, ECR, ECS (unless Fargate), SNS, SQS, API Gateway, Lambda (RI not available — use Compute SP only), or any other service not listed above.
+CloudFront Security Savings Bundle (up to 30% off): Available for Amazon CloudFront. Commit to a monthly spend for 1 year. Also includes free AWS WAF usage up to 10% of the committed amount. Recommend this instead of generic Savings Plans for CloudFront and WAF.
+For ineligible services, recommend right-sizing, usage optimization, or architectural changes instead.
+
 Provide analysis in this JSON format:
 
 1. SUMMARY: 2-3 sentences about total cost and top spenders.
@@ -48,9 +60,9 @@ Provide analysis in this JSON format:
 2. SERVICE_ANALYSIS: For each service:
    - explanation: Use actual line item data if available (cite quantities, rates, amounts). If line items show "NatGateway-Hours: 672", write "You ran a NAT Gateway for 672 hours at $0.045/hr = $30.24". If no line items, briefly describe the pricing model. Do NOT start with "This represents" or "Charges for".
    - billing_details: One-line formula with actual quantities if available (e.g., "672 hrs x $0.045/hr = $30.24"). Use generic units only if no line items exist.
-   - recommendations: 1-2 cost-saving tips with estimated savings %.
+   - recommendations: 1-2 cost-saving tips with estimated savings %. Only suggest Savings Plans or Reserved Instances if the service is eligible per the rules above.
 
-3. SAVINGS_PLAN_ANALYSIS: Based on Commitment Discount Status, recommend Savings Plans and/or Reserved Instances as appropriate.
+3. SAVINGS_PLAN_ANALYSIS: Based on Commitment Discount Status, recommend Savings Plans and/or Reserved Instances. Only mention services that are eligible per the rules above.
 
 Respond in this exact JSON:
 {{
