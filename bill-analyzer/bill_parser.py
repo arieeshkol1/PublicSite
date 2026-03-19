@@ -123,6 +123,19 @@ def parse_bill(pdf_bytes: bytes) -> ParsedBill:
             "Please upload a valid AWS invoice PDF."
         )
 
+    # Strip previously-generated analysis report pages from the text
+    # (in case user re-uploads an analyzed PDF that has report + original appended)
+    for report_marker in ["Slash My Bill Report", "Bill Analysis Report"]:
+        idx = text.find(report_marker)
+        if idx >= 0 and idx < 200:
+            # Find where the original invoice starts
+            for invoice_marker in ["Invoice Number", "Tax Invoice", "Charges by service",
+                                   "AWS bill summary", "billing period"]:
+                inv_idx = text.find(invoice_marker)
+                if inv_idx > idx:
+                    text = text[inv_idx:]
+                    break
+
     # Detect format: billing console export vs traditional invoice
     if _is_billing_console_format(text):
         # Billing console format only needs text, no tables
@@ -162,10 +175,8 @@ def _detect_commitment_discounts(text: str) -> Dict[str, Any]:
     """
     Detect whether Savings Plans or Reserved Instances are used in the bill.
 
-    Scans the full bill text for indicators such as:
-        - "Savings Plans" section or line items
-        - "Reserved" pricing mentions
-        - Savings/discount amounts
+    Only matches actual billing indicators (charges, fees, applied discounts),
+    NOT recommendation text like "Implement Savings Plans" or "consider Reserved Instances".
 
     Returns:
         Dict with:
@@ -183,27 +194,51 @@ def _detect_commitment_discounts(text: str) -> Dict[str, Any]:
         "savings_amount": None,
     }
 
+    # Strip any analysis report pages from the text to avoid false positives
+    # from our own recommendations text
+    clean_text = text
+    for marker in ["Slash My Bill Report", "Bill Analysis Report"]:
+        idx = clean_text.find(marker)
+        if idx >= 0 and idx < 200:
+            # Find where the original invoice starts
+            invoice_start = clean_text.find("Invoice Number")
+            if invoice_start < 0:
+                invoice_start = clean_text.find("Tax Invoice")
+            if invoice_start < 0:
+                invoice_start = clean_text.find("Charges by service")
+            if invoice_start > idx:
+                clean_text = clean_text[invoice_start:]
+
     # --- Savings Plans detection ---
+    # Only match actual billing line items, NOT recommendation text
     sp_indicators = [
-        re.compile(r"Savings\s+Plans?\b", re.IGNORECASE),
-        re.compile(r"SavingsPlan", re.IGNORECASE),
-        re.compile(r"Compute\s+Savings\s+Plan", re.IGNORECASE),
-        re.compile(r"EC2\s+Instance\s+Savings\s+Plan", re.IGNORECASE),
-        re.compile(r"Database\s+Savings\s+Plan", re.IGNORECASE),
-        re.compile(r"SageMaker\s+Savings\s+Plan", re.IGNORECASE),
+        re.compile(r"Savings\s+Plans?\s+for\s+compute", re.IGNORECASE),
+        re.compile(r"Savings\s+Plans?\s+negation", re.IGNORECASE),
+        re.compile(r"SavingsPlan\s+(?:Covered|Negation|Recurring)", re.IGNORECASE),
+        re.compile(r"Savings\s+Plans?\s+\$[\d,]+\.\d{2}", re.IGNORECASE),
+        re.compile(r"Compute\s+Savings\s+Plan\s+\$", re.IGNORECASE),
     ]
+    # Negative patterns — skip if context contains recommendation language
+    skip_phrases = [
+        "implement", "consider", "commit to", "how to", "save up to",
+        "recommend", "purchase", "get started", "potential savings",
+        "savings plans: not detected", "savings plans: active",
+    ]
+
     sp_details = []
     for pattern in sp_indicators:
-        for match in pattern.finditer(text):
-            # Grab surrounding context (up to 120 chars after match)
+        for match in pattern.finditer(clean_text):
             start = match.start()
-            end = min(match.end() + 120, len(text))
-            context = text[start:end].replace("\n", " ").strip()
+            end = min(match.end() + 120, len(clean_text))
+            context = clean_text[start:end].replace("\n", " ").strip()
+            # Skip if context looks like recommendation text
+            context_lower = context.lower()
+            if any(phrase in context_lower for phrase in skip_phrases):
+                continue
             sp_details.append(context)
 
     if sp_details:
         result["has_savings_plans"] = True
-        # Deduplicate similar entries
         seen = set()
         unique = []
         for d in sp_details:
@@ -214,18 +249,23 @@ def _detect_commitment_discounts(text: str) -> Dict[str, Any]:
         result["savings_plan_details"] = unique[:10]
 
     # --- Reserved Instances detection ---
+    # Only match actual billing indicators
     ri_indicators = [
-        re.compile(r"Reserved\s+Instance", re.IGNORECASE),
-        re.compile(r"\bRI\s+(?:fee|charge|discount|coverage)", re.IGNORECASE),
-        re.compile(r"Reserved\s+(?:capacity|pricing)", re.IGNORECASE),
-        re.compile(r"Reservation\s+(?:applied|discount)", re.IGNORECASE),
+        re.compile(r"Reserved\s+Instance\s+(?:fee|charge|applied)", re.IGNORECASE),
+        re.compile(r"\bRI\s+(?:fee|charge|discount|applied)", re.IGNORECASE),
+        re.compile(r"Reserved\s+(?:capacity|pricing)\s+\$", re.IGNORECASE),
+        re.compile(r"Reservation\s+applied", re.IGNORECASE),
+        re.compile(r"Reserved\s+Instance.*USD\s+[\d,]+\.\d{2}", re.IGNORECASE),
     ]
     ri_details = []
     for pattern in ri_indicators:
-        for match in pattern.finditer(text):
+        for match in pattern.finditer(clean_text):
             start = match.start()
-            end = min(match.end() + 120, len(text))
-            context = text[start:end].replace("\n", " ").strip()
+            end = min(match.end() + 120, len(clean_text))
+            context = clean_text[start:end].replace("\n", " ").strip()
+            context_lower = context.lower()
+            if any(phrase in context_lower for phrase in skip_phrases):
+                continue
             ri_details.append(context)
 
     if ri_details:
@@ -240,12 +280,11 @@ def _detect_commitment_discounts(text: str) -> Dict[str, Any]:
         result["reserved_instance_details"] = unique[:10]
 
     # --- Savings amount detection ---
-    # Look for "Savings (XX.XX)" or "Total savings: XX.XX"
     savings_pattern = re.compile(
         r"(?:Savings|Total\s+savings|You\s+saved)[:\s]*\$?\s*([\d,]+\.\d{2})",
         re.IGNORECASE,
     )
-    savings_match = savings_pattern.search(text)
+    savings_match = savings_pattern.search(clean_text)
     if savings_match:
         try:
             result["savings_amount"] = Decimal(savings_match.group(1).replace(",", ""))
@@ -640,6 +679,8 @@ def _parse_line_items(
 
     Tries table-based extraction first (more reliable for structured invoices),
     then falls back to text-based regex extraction.
+    Deduplicates results to prevent double-counting from repeated sections
+    (e.g., when a previously-generated report is appended to the original invoice).
 
     Args:
         text: Full extracted text from the PDF.
@@ -651,7 +692,19 @@ def _parse_line_items(
     items = _parse_line_items_from_tables(tables)
     if not items:
         items = _parse_line_items_from_text(text)
-    return items
+
+    # Deduplicate: same service + same cost = keep only first occurrence.
+    # This prevents double-counting when a re-uploaded analyzed PDF contains
+    # both the report pages and the original invoice with identical line items.
+    seen_pairs: set = set()
+    deduped: List[Dict[str, Any]] = []
+    for item in items:
+        key = (item["service"], str(item["cost"]))
+        if key not in seen_pairs:
+            seen_pairs.add(key)
+            deduped.append(item)
+
+    return deduped
 
 
 def _parse_line_items_from_tables(
@@ -692,15 +745,22 @@ def _parse_line_items_from_tables(
                 service_name = (row[service_col] or "").strip()
 
                 if cost_val is not None and service_name:
+                    cleaned_svc = _clean_service_name(service_name)
+                    # Skip summary/aggregate lines
+                    if cleaned_svc.lower() in (
+                        "aws service charges", "total", "net charges",
+                        "charges", "vat", "tax", "total amount",
+                    ) or cleaned_svc.lower().startswith("total"):
+                        continue
                     # Build description from other columns
                     desc_parts = []
                     for i, cell in enumerate(row):
                         if i not in (cost_col, service_col) and cell and cell.strip():
                             desc_parts.append(cell.strip())
-                    description = " - ".join(desc_parts) if desc_parts else service_name
+                    description = " - ".join(desc_parts) if desc_parts else cleaned_svc
 
                     items.append({
-                        "service": _clean_service_name(service_name),
+                        "service": cleaned_svc,
                         "cost": cost_val,
                         "description": _clean_service_name(description),
                     })
@@ -738,10 +798,18 @@ def _scan_table_rows_for_costs(
                     break
 
             if service_name:
+                cleaned = _clean_service_name(service_name)
+                # Skip summary/aggregate lines
+                if cleaned.lower() in (
+                    "aws service charges", "total", "net charges",
+                    "charges", "vat", "tax", "total amount",
+                    "total vat", "total charges",
+                ) or cleaned.lower().startswith("total"):
+                    continue
                 items.append({
-                    "service": _clean_service_name(service_name),
+                    "service": cleaned,
                     "cost": cost_val,
-                    "description": _clean_service_name(service_name),
+                    "description": cleaned,
                 })
     return items
 
@@ -771,6 +839,24 @@ def _parse_line_items_from_text(text: str) -> List[Dict[str, Any]]:
         if idx > 0:
             truncated = truncated[:idx]
 
+    # Also strip any previously-generated analysis report pages
+    # (in case user re-uploads an analyzed PDF)
+    for report_marker in [
+        "Slash My Bill Report",
+        "Bill Analysis Report",
+        "Service Analysis\n",
+        "Generated by eshkolai.com",
+    ]:
+        idx = truncated.find(report_marker)
+        if idx >= 0 and idx < 200:
+            # Report text at the start — find where the original invoice begins
+            # Look for the actual invoice content after the report pages
+            invoice_start = truncated.find("Invoice Number")
+            if invoice_start < 0:
+                invoice_start = truncated.find("Tax Invoice")
+            if invoice_start > idx:
+                truncated = truncated[invoice_start:]
+
     # Summary lines that should not be treated as services
     summary_lines = {
         "aws service charges",
@@ -780,6 +866,9 @@ def _parse_line_items_from_text(text: str) -> List[Dict[str, Any]]:
         "vat",
         "tax",
         "invoice summary",
+        "total amount",
+        "total vat",
+        "total charges",
     }
 
     items: List[Dict[str, Any]] = []
@@ -797,6 +886,9 @@ def _parse_line_items_from_text(text: str) -> List[Dict[str, Any]]:
         # Skip summary/aggregate lines
         if cleaned.lower() in summary_lines:
             continue
+        # Skip lines that are just "Total" with a qualifier
+        if cleaned.lower().startswith("total"):
+            continue
         try:
             cost_val = Decimal(cost_str)
             if cost_val > Decimal("0"):
@@ -807,6 +899,17 @@ def _parse_line_items_from_text(text: str) -> List[Dict[str, Any]]:
                 })
         except InvalidOperation:
             continue
+
+    # Deduplicate: if the same service appears multiple times with the same cost,
+    # keep only the first occurrence (prevents double-counting from repeated sections)
+    seen_pairs: set = set()
+    deduped: List[Dict[str, Any]] = []
+    for item in items:
+        key = (item["service"], str(item["cost"]))
+        if key not in seen_pairs:
+            seen_pairs.add(key)
+            deduped.append(item)
+    items = deduped
 
     # Fallback: look for any line with a dollar amount preceded by text
     if not items:
