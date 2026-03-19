@@ -51,7 +51,11 @@ Reserved Instances apply ONLY to: Amazon EC2, Amazon RDS, Amazon Redshift, Amazo
 
 DO NOT recommend Savings Plans or Reserved Instances for: VPC, Route 53, CloudWatch, S3, KMS, Secrets Manager, Config, Cloud Map, Data Transfer, ECR, ECS (unless Fargate), SNS, SQS, API Gateway, Lambda (RI not available — use Compute SP only), or any other service not listed above.
 CloudFront Security Savings Bundle (up to 30% off): Available for Amazon CloudFront. Commit to a monthly spend for 1 year. Also includes free AWS WAF usage up to 10% of the committed amount. Recommend this instead of generic Savings Plans for CloudFront and WAF.
-For ineligible services, recommend right-sizing, usage optimization, or architectural changes instead.
+
+## Rightsizing eligibility:
+Services that support rightsizing (can change instance type/size/class): Amazon EC2 (instance type/size), Amazon RDS (instance class), Amazon ElastiCache (node type), Amazon OpenSearch (instance type), Amazon Redshift (node type), Amazon ECS/Fargate (task CPU/memory).
+Services that do NOT support rightsizing: Route 53, CloudWatch, S3, KMS, Secrets Manager, AWS Config, Cloud Map, Data Transfer, ECR, SNS, SQS, WAF, CloudFront, API Gateway, VPC (NAT Gateway has fixed per-hour pricing).
+For non-rightsizable services, recommend usage optimization instead: reduce unnecessary requests, clean up unused resources, consolidate, or use more efficient pricing tiers.
 
 Provide analysis in this JSON format:
 
