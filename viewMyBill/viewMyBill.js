@@ -93,19 +93,28 @@ document.addEventListener('DOMContentLoaded', () => {
   function showResults(summary, url, originalFilename) {
     hideSection(loadingSection); hideSection(errorSection); hideSection(form.closest('.vmb-form-section'));
     summaryText.textContent = summary;
-    downloadLink.href = url;
-    // Build download filename: originalname_analyzed_YYYYMMDD_HHMMSS.pdf
+    // Build download filename: SlashedReport_YYYYMMDD_CompanyName.pdf
     const now = new Date();
-    const ts = now.getFullYear().toString()
+    const dateStr = now.getFullYear().toString()
       + String(now.getMonth() + 1).padStart(2, '0')
-      + String(now.getDate()).padStart(2, '0')
-      + '_' + String(now.getHours()).padStart(2, '0')
-      + String(now.getMinutes()).padStart(2, '0')
-      + String(now.getSeconds()).padStart(2, '0');
-    let baseName = originalFilename || 'report';
-    if (baseName.toLowerCase().endsWith('.pdf')) baseName = baseName.slice(0, -4);
-    downloadLink.download = `${baseName}_analyzed_${ts}.pdf`;
-    showSection(resultsSection);
+      + String(now.getDate()).padStart(2, '0');
+    const accountName = (companyInput.value.trim() || 'Report').replace(/[^a-zA-Z0-9_-]/g, '_');
+    const downloadFilename = `SlashedReport_${dateStr}_${accountName}.pdf`;
+    // Force download (not open) by fetching as blob
+    fetch(url)
+      .then(r => r.blob())
+      .then(blob => {
+        const blobUrl = URL.createObjectURL(blob);
+        downloadLink.href = blobUrl;
+        downloadLink.download = downloadFilename;
+        showSection(resultsSection);
+      })
+      .catch(() => {
+        // Fallback: use direct URL
+        downloadLink.href = url;
+        downloadLink.download = downloadFilename;
+        showSection(resultsSection);
+      });
   }
   function showError(message) { hideSection(loadingSection); hideSection(resultsSection); hideSection(form.closest('.vmb-form-section')); errorMessage.textContent = message; showSection(errorSection); }
   function resetToForm() { hideSection(errorSection); hideSection(resultsSection); hideSection(loadingSection); showSection(form.closest('.vmb-form-section')); submitBtn.disabled = false; updateSubmitState(); }

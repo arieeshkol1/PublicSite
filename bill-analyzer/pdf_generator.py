@@ -26,6 +26,9 @@ from reportlab.platypus import (
     PageBreak,
 )
 from reportlab.pdfgen import canvas
+from reportlab.graphics.shapes import Drawing, String
+from reportlab.graphics.charts.piecharts import Pie
+from reportlab.graphics import renderPDF
 
 # eshkolai.com theme colors (matching website CSS variables)
 PRIMARY_BLUE = colors.HexColor("#0066FF")
@@ -57,15 +60,15 @@ def _page_header_footer(canvas_obj, doc):
     width, height = letter
 
     # --- Header bar (white background) ---
-    bar_height = 28
+    bar_height = 48
     canvas_obj.setFillColor(WHITE)
     canvas_obj.rect(0, height - bar_height, width, bar_height, fill=1, stroke=0)
     # Accent line under header
     canvas_obj.setStrokeColor(PRIMARY_BLUE)
     canvas_obj.setLineWidth(2)
     canvas_obj.line(0, height - bar_height, width, height - bar_height)
-    # Logo image (same height as the old text, ~18px high)
-    logo_h = 20
+    # Logo image (2x size for better visibility)
+    logo_h = 40
     logo_w = logo_h * 3.5  # approximate aspect ratio
     if os.path.exists(_LOGO_PATH):
         try:
@@ -87,14 +90,14 @@ def _page_header_footer(canvas_obj, doc):
         canvas_obj.setFillColor(DARK_BG)
         canvas_obj.setFont("Helvetica-Bold", 10)
         canvas_obj.drawString(doc.leftMargin, height - 19, "eshkolai.com")
-    # Right side text — report name + generated timestamp
+    # Right side text — report name + generated timestamp (shifted up)
     canvas_obj.setFont("Helvetica", 8)
     canvas_obj.setFillColor(colors.HexColor("#666666"))
-    canvas_obj.drawRightString(width - doc.rightMargin, height - 14, "Slash My Bill Report")
+    canvas_obj.drawRightString(width - doc.rightMargin, height - 20, "Slash My Bill Report")
     # Generated timestamp on second line
     if hasattr(doc, '_report_timestamp') and doc._report_timestamp:
         canvas_obj.setFont("Helvetica", 7)
-        canvas_obj.drawRightString(width - doc.rightMargin, height - 23, f"Generated: {doc._report_timestamp}")
+        canvas_obj.drawRightString(width - doc.rightMargin, height - 32, f"Generated: {doc._report_timestamp}")
 
     # --- Footer bar ---
     footer_y = 30
@@ -279,7 +282,7 @@ def _generate_analysis_pages(
     doc = SimpleDocTemplate(
         buf,
         pagesize=letter,
-        topMargin=0.75 * inch,  # room for header bar
+        topMargin=1.0 * inch,  # room for taller header bar
         bottomMargin=0.75 * inch,  # room for footer
         leftMargin=0.75 * inch,
         rightMargin=0.75 * inch,
@@ -332,7 +335,6 @@ def _build_header(
         ("BOTTOMPADDING", (0, 0), (0, 0), 12),
         ("LEFTPADDING", (0, 0), (-1, -1), 12),
         ("RIGHTPADDING", (0, 0), (-1, -1), 12),
-        ("LINEBELOW", (0, 0), (-1, 0), 3, PRIMARY_BLUE),
     ]))
     elements.append(header_table)
     elements.append(Spacer(1, 14))
@@ -436,6 +438,113 @@ def _build_summary_section(
     else:
         elements.append(Paragraph("No service breakdown available.", styles["body"]))
 
+    elements.append(Spacer(1, 12))
+
+    # Pie chart of service consumption
+    elements.extend(_build_service_pie_chart(parsed_bill, styles))
+
+    return elements
+
+
+def _build_service_pie_chart(
+    parsed_bill: Dict[str, Any],
+    styles: Dict[str, ParagraphStyle],
+) -> List[Any]:
+    """Build a pie chart showing service consumption percentages."""
+    elements: List[Any] = []
+    service_totals = parsed_bill.get("service_totals", {})
+    if not service_totals:
+        return elements
+
+    total = sum(float(v) for v in service_totals.values())
+    if total <= 0:
+        return elements
+
+    # Build slices: services >= 1% shown individually, rest grouped as "Other"
+    slices = []
+    other_total = 0.0
+    for svc, cost in sorted(service_totals.items(), key=lambda x: float(x[1]), reverse=True):
+        pct = float(cost) / total * 100
+        if pct >= 1.0:
+            slices.append((svc, float(cost), pct))
+        else:
+            other_total += float(cost)
+
+    if other_total > 0:
+        other_pct = other_total / total * 100
+        slices.append(("Other", other_total, other_pct))
+
+    if not slices:
+        return elements
+
+    # Color palette for pie slices
+    pie_colors = [
+        colors.HexColor("#0066FF"),  # primary blue
+        colors.HexColor("#00D4FF"),  # secondary blue
+        colors.HexColor("#FF6B35"),  # accent orange
+        colors.HexColor("#067D62"),  # green
+        colors.HexColor("#8B5CF6"),  # purple
+        colors.HexColor("#EC4899"),  # pink
+        colors.HexColor("#F59E0B"),  # amber
+        colors.HexColor("#10B981"),  # emerald
+        colors.HexColor("#6366F1"),  # indigo
+        colors.HexColor("#EF4444"),  # red
+        colors.HexColor("#14B8A6"),  # teal
+        colors.HexColor("#A855F7"),  # violet
+        colors.HexColor("#F97316"),  # orange
+        colors.HexColor("#3B82F6"),  # blue
+        colors.HexColor("#84CC16"),  # lime
+        colors.HexColor("#E11D48"),  # rose
+        colors.HexColor("#0EA5E9"),  # sky
+        colors.HexColor("#D946EF"),  # fuchsia
+        colors.HexColor("#78716C"),  # stone (for "Other")
+    ]
+
+    # Create the drawing
+    chart_width = 500
+    chart_height = 220
+    d = Drawing(chart_width, chart_height)
+
+    pie = Pie()
+    pie.x = 30
+    pie.y = 20
+    pie.width = 180
+    pie.height = 180
+    pie.data = [s[2] for s in slices]
+    pie.labels = None  # We'll draw a legend instead
+
+    for i in range(len(slices)):
+        color_idx = i % len(pie_colors)
+        pie.slices[i].fillColor = pie_colors[color_idx]
+        pie.slices[i].strokeColor = colors.white
+        pie.slices[i].strokeWidth = 1.5
+
+    d.add(pie)
+
+    # Legend on the right side
+    legend_x = 240
+    legend_y = chart_height - 20
+    line_height = 14
+    max_legend_items = min(len(slices), 15)
+
+    for i in range(max_legend_items):
+        svc_name, _, pct = slices[i]
+        color_idx = i % len(pie_colors)
+        y_pos = legend_y - (i * line_height)
+
+        # Color swatch
+        from reportlab.graphics.shapes import Rect
+        swatch = Rect(legend_x, y_pos - 3, 10, 10, fillColor=pie_colors[color_idx], strokeColor=None)
+        d.add(swatch)
+
+        # Label
+        label_text = f"{svc_name} ({pct:.1f}%)"
+        if len(label_text) > 40:
+            label_text = label_text[:37] + "..."
+        label = String(legend_x + 14, y_pos - 1, label_text, fontSize=8, fontName="Helvetica")
+        d.add(label)
+
+    elements.append(d)
     elements.append(Spacer(1, 12))
     return elements
 
