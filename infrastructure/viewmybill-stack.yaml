@@ -282,8 +282,9 @@ Resources:
               - Effect: Allow
                 Action:
                   - ses:SendEmail
+                  - ses:SendRawEmail
                 Resource:
-                  - !Sub 'arn:aws:ses:${AWS::Region}:${AWS::AccountId}:identity/eshkolai.com'
+                  - !Sub 'arn:aws:ses:${AWS::Region}:${AWS::AccountId}:identity/*'
       Tags:
         - Key: Project
           Value: ViewMyBill
