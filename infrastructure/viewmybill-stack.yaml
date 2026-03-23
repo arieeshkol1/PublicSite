@@ -27,6 +27,11 @@ Parameters:
     Default: 'lambda-packages/upload-handler.zip'
     Description: S3 key for Upload Handler Lambda deployment package
 
+  OTPHandlerCodeKey:
+    Type: String
+    Default: 'lambda-packages/otp-handler.zip'
+    Description: S3 key for OTP Handler Lambda deployment package
+
 Resources:
 
   # ============================================================
@@ -220,6 +225,103 @@ Resources:
           Value: ViewMyBill
 
   # ============================================================
+  # DynamoDB Table - OTP Codes
+  # ============================================================
+  OTPTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: ViewMyBill-OTP
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: email
+          AttributeType: S
+      KeySchema:
+        - AttributeName: email
+          KeyType: HASH
+      SSESpecification:
+        SSEEnabled: true
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+      Tags:
+        - Key: Project
+          Value: ViewMyBill
+
+  # ============================================================
+  # IAM Role - OTP Handler Lambda
+  # ============================================================
+  OTPHandlerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: aws-bill-analyzer-otp-handler-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: DynamoDBOTPAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:DeleteItem
+                Resource:
+                  - !GetAtt OTPTable.Arn
+        - PolicyName: SESSendEmail
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ses:SendEmail
+                Resource:
+                  - !Sub 'arn:aws:ses:${AWS::Region}:${AWS::AccountId}:identity/eshkolai.com'
+      Tags:
+        - Key: Project
+          Value: ViewMyBill
+
+  # ============================================================
+  # Lambda Function - OTP Handler
+  # ============================================================
+  OTPHandlerFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: aws-bill-analyzer-otp-handler
+      Runtime: python3.12
+      Handler: lambda_function.lambda_handler
+      MemorySize: 128
+      Timeout: 30
+      Role: !GetAtt OTPHandlerRole.Arn
+      Code:
+        S3Bucket: !Ref LambdaCodeBucket
+        S3Key: !Ref OTPHandlerCodeKey
+      Environment:
+        Variables:
+          OTP_TABLE_NAME: !Ref OTPTable
+          SES_SENDER_EMAIL: 'noreply@eshkolai.com'
+      Tags:
+        - Key: Project
+          Value: ViewMyBill
+
+  # ============================================================
+  # SES Email Identity - eshkolai.com domain
+  # ============================================================
+  SESEmailIdentity:
+    Type: AWS::SES::EmailIdentity
+    Properties:
+      EmailIdentity: eshkolai.com
+      DkimSigningAttributes:
+        NextSigningKeyLength: RSA_2048_BIT
+
+  # ============================================================
   # API Gateway - HTTP API
   # ============================================================
   ViewMyBillApi:
@@ -291,6 +393,31 @@ Resources:
       Target: !Sub 'integrations/${AnalyzeIntegration}'
 
   # ============================================================
+  # API Gateway - OTP Integration and Routes
+  # ============================================================
+  OTPIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !GetAtt OTPHandlerFunction.Arn
+      PayloadFormatVersion: '2.0'
+
+  SendOTPRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'POST /send-otp'
+      Target: !Sub 'integrations/${OTPIntegration}'
+
+  VerifyOTPRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'POST /verify-otp'
+      Target: !Sub 'integrations/${OTPIntegration}'
+
+  # ============================================================
   # Lambda Permissions - Allow API Gateway to invoke Lambdas
   # ============================================================
   UploadHandlerInvokePermission:
@@ -305,6 +432,14 @@ Resources:
     Type: AWS::Lambda::Permission
     Properties:
       FunctionName: !Ref BillAnalyzerFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ViewMyBillApi}/*'
+
+  OTPHandlerInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref OTPHandlerFunction
       Action: lambda:InvokeFunction
       Principal: apigateway.amazonaws.com
       SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ViewMyBillApi}/*'
@@ -363,3 +498,15 @@ Outputs:
   LeadsTableArn:
     Description: DynamoDB Leads table ARN
     Value: !GetAtt LeadsTable.Arn
+
+  OTPTableName:
+    Description: DynamoDB OTP table name
+    Value: !Ref OTPTable
+
+  OTPTableArn:
+    Description: DynamoDB OTP table ARN
+    Value: !GetAtt OTPTable.Arn
+
+  OTPHandlerFunctionArn:
+    Description: OTP Handler Lambda function ARN
+    Value: !GetAtt OTPHandlerFunction.Arn

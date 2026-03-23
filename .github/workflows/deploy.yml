@@ -17,6 +17,7 @@ on:
       - 'infrastructure/viewmybill-stack.yaml'
       - 'bill-analyzer/**'
       - 'upload-handler/**'
+      - 'otp-handler/**'
       - 'knowledge-base/**'
   workflow_dispatch:
 
@@ -71,6 +72,16 @@ jobs:
           aws s3 cp upload-handler-lambda.zip s3://${{ env.STORAGE_BUCKET }}/lambda-packages/upload-handler.zip
           echo "✓ Upload Handler packaged"
 
+      - name: Package OTP Handler Lambda
+        run: |
+          echo "Packaging OTP Handler Lambda..."
+          mkdir -p .build-otp-handler
+          cp otp-handler/lambda_function.py .build-otp-handler/
+          cd .build-otp-handler && zip -r ../otp-handler-lambda.zip . -q
+          cd ..
+          aws s3 cp otp-handler-lambda.zip s3://${{ env.STORAGE_BUCKET }}/lambda-packages/otp-handler.zip
+          echo "✓ OTP Handler packaged"
+
       - name: Deploy ViewMyBill CloudFormation stack
         run: |
           echo "Deploying ViewMyBill infrastructure..."
@@ -92,6 +103,10 @@ jobs:
             --function-name aws-bill-analyzer-upload-handler \
             --s3-bucket ${{ env.STORAGE_BUCKET }} \
             --s3-key lambda-packages/upload-handler.zip > /dev/null
+          aws lambda update-function-code \
+            --function-name aws-bill-analyzer-otp-handler \
+            --s3-bucket ${{ env.STORAGE_BUCKET }} \
+            --s3-key lambda-packages/otp-handler.zip > /dev/null
           echo "✓ Lambda functions updated"
 
       - name: Seed DynamoDB knowledge base
