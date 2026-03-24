@@ -1,5 +1,7 @@
 /* Admin Panel Styles — eshkolai.com theme */
 
+[hidden] { display: none !important; }
+
 :root {
     --primary: #0066ff;
     --primary-dark: #0052cc;
