@@ -128,9 +128,11 @@ def parse_bill(pdf_bytes: bytes) -> ParsedBill:
     for report_marker in ["Slash My Bill Report", "Bill Analysis Report"]:
         idx = text.find(report_marker)
         if idx >= 0 and idx < 200:
-            # Find where the original invoice starts
-            for invoice_marker in ["Invoice Number", "Tax Invoice", "Charges by service",
-                                   "AWS bill summary", "billing period"]:
+            # Find where the original invoice starts — try markers in priority order
+            # "Billing period" is the first line of billing console exports
+            for invoice_marker in ["Billing period", "billing period",
+                                   "Invoice Number", "Charges by service",
+                                   "AWS bill summary"]:
                 inv_idx = text.find(invoice_marker)
                 if inv_idx > idx:
                     text = text[inv_idx:]
@@ -491,6 +493,11 @@ def _extract_billing_console_services(text: str) -> List[Dict[str, Any]]:
         "Amazon Elastic Container Service ",
         "Elastic Load Balancing -",
         "AWS Glue ",
+        "Amazon ElastiCache ",
+        "Amazon DynamoDB ",
+        "Amazon Simple Notification Service ",
+        "AWS Cloud Map ",
+        "AWS Config ",
     )
 
     seen_services: Dict[str, bool] = {}

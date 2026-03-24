@@ -433,20 +433,6 @@ def _build_prompt(parsed_bill: Dict[str, Any], tips: List[Dict[str, Any]]) -> st
                 for detail in region_entry.get("details", [])[:4]:  # cap details per region
                     bill_lines.append(f"      > {detail.get('description', '')}")
 
-    # Include region breakdown per service (if available)
-    region_breakdown = parsed_bill.get("region_breakdown", {})
-    if region_breakdown:
-        bill_lines.append("")
-        bill_lines.append("Region Breakdown by Service:")
-        for svc, regions in region_breakdown.items():
-            bill_lines.append(f"  {svc}:")
-            for region_entry in regions[:6]:  # cap regions per service
-                rname = region_entry.get("region", "Unknown")
-                rcost = region_entry.get("cost", 0)
-                bill_lines.append(f"    - {rname}: {rcost}")
-                for detail in region_entry.get("details", [])[:4]:  # cap details per region
-                    bill_lines.append(f"      > {detail.get('description', '')}")
-
     bill_data = "\n".join(bill_lines)
 
     # Format tips as readable text (limit to 3 per service to keep prompt compact)
