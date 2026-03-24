@@ -103,9 +103,9 @@ jobs:
             --capabilities CAPABILITY_NAMED_IAM \
             --no-fail-on-empty-changeset \
             --parameter-overrides \
-              AdminUsername="${{ secrets.ADMIN_USERNAME }}" \
-              AdminPasswordHash="${{ secrets.ADMIN_PASSWORD_HASH }}" \
-              JWTSecret="${{ secrets.JWT_SECRET }}" \
+              AdminUsername='${{ secrets.ADMIN_USERNAME }}' \
+              AdminPasswordHash='${{ secrets.ADMIN_PASSWORD_HASH }}' \
+              JWTSecret='${{ secrets.JWT_SECRET }}' \
             --tags Project=ViewMyBill
           echo "✓ Infrastructure deployed"
 
