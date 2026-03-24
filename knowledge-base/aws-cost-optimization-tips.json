@@ -1,9 +1,11 @@
 {
   "version": "1.0",
-  "lastUpdated": "2026-03-16",
+  "lastUpdated": "2026-03-25",
   "sources": [
     "https://aws.amazon.com/getting-started/cost-optimization-essentials/",
-    "https://awsforengineers.com/blog/10-aws-cost-optimization-strategies-2024/"
+    "https://awsforengineers.com/blog/10-aws-cost-optimization-strategies-2024/",
+    "https://cheesecakelabs.com/blog/aws-finops-best-practices/",
+    "https://www.flexera.com/blog/finops/aws-cost-optimization-8-tools-and-tips-to-reduce-your-cloud-costs/"
   ],
   "tips": [
     {
@@ -374,6 +376,141 @@
       "description": "Review VPC for idle NAT Gateways, unused Elastic IPs, and empty subnets. NAT Gateways cost $0.045/hr ($32/month) even with zero traffic. Delete idle resources and consider downsizing by consolidating traffic through fewer NAT Gateways.",
       "estimatedSavings": "$32/month per idle NAT Gateway",
       "difficulty": "easy"
+    },
+    {
+      "id": "ec2-007",
+      "service": "EC2",
+      "category": "region",
+      "title": "Choose cost-effective AWS regions",
+      "description": "AWS pricing varies by region. Compare on-demand pricing across regions using the AWS Pricing Calculator. Consider moving non-latency-sensitive workloads to cheaper regions while respecting data sovereignty requirements.",
+      "estimatedSavings": "5-20%",
+      "difficulty": "easy"
+    },
+    {
+      "id": "ec2-008",
+      "service": "EC2",
+      "category": "auto-scaling",
+      "title": "Optimize Auto Scaling policies for cost",
+      "description": "Fine-tune ASG scaling policies to avoid over-provisioning. Scale up less aggressively and scale down to the minimum needed. Use predictive scaling for workloads with known patterns and target tracking policies for dynamic loads.",
+      "estimatedSavings": "15-40%",
+      "difficulty": "medium"
+    },
+    {
+      "id": "ec2-009",
+      "service": "EC2",
+      "category": "pricing-model",
+      "title": "Use mixed instance fleets with Spot",
+      "description": "Configure ASGs with mixed instance policies combining On-Demand and Spot instances. Diversify across multiple instance types and AZs to reduce interruption risk while maximizing Spot savings.",
+      "estimatedSavings": "50-80%",
+      "difficulty": "hard"
+    },
+    {
+      "id": "ebs-004",
+      "service": "EBS",
+      "category": "cleanup",
+      "title": "Delete unattached EBS volumes",
+      "description": "EBS volumes persist after EC2 termination and continue incurring costs. Find volumes with status 'available' using CloudWatch or Trusted Advisor. Enable 'Delete on Termination' for new instances to prevent orphaned volumes.",
+      "estimatedSavings": "100% per orphaned volume",
+      "difficulty": "easy"
+    },
+    {
+      "id": "ebs-005",
+      "service": "EBS",
+      "category": "snapshots",
+      "title": "Manage EBS snapshot lifecycle automatically",
+      "description": "Use Amazon Data Lifecycle Manager to automate snapshot creation and deletion. Set retention policies to avoid accumulating old snapshots. Delete the initial full snapshot when no longer needed as it consumes the most storage.",
+      "estimatedSavings": "20-50% on snapshot costs",
+      "difficulty": "easy"
+    },
+    {
+      "id": "s3-005",
+      "service": "S3",
+      "category": "analytics",
+      "title": "Use S3 Storage Lens and Analytics",
+      "description": "Enable S3 Storage Lens for organization-wide visibility into storage usage and activity trends. Use S3 Analytics to identify objects that can be moved to Infrequent Access or Glacier tiers based on actual access patterns.",
+      "estimatedSavings": "20-50%",
+      "difficulty": "easy"
+    },
+    {
+      "id": "general-011",
+      "service": "General",
+      "category": "tagging",
+      "title": "Automate resource tagging",
+      "description": "Embed tags in CloudFormation/Terraform templates. Use AWS Organizations tag policies to enforce tagging rules. Set up Lambda functions to auto-tag resources at launch. Consistent tagging enables accurate cost allocation and orphan detection.",
+      "estimatedSavings": "varies",
+      "difficulty": "medium"
+    },
+    {
+      "id": "general-012",
+      "service": "General",
+      "category": "anomaly",
+      "title": "Use AWS Cost Optimization Hub",
+      "description": "Cost Optimization Hub consolidates and prioritizes cost optimization recommendations across all accounts and regions in your AWS Organization. It surfaces rightsizing, idle resource, and commitment recommendations in one place.",
+      "estimatedSavings": "varies",
+      "difficulty": "easy"
+    },
+    {
+      "id": "general-013",
+      "service": "General",
+      "category": "chargeback",
+      "title": "Implement chargeback with billing groups",
+      "description": "Use AWS Enterprise Billing Console to allocate costs to departments or business units. Create billing groups with customized pricing plans and CUR reports per group to drive accountability and identify optimization opportunities per team.",
+      "estimatedSavings": "varies",
+      "difficulty": "medium"
+    },
+    {
+      "id": "general-014",
+      "service": "General",
+      "category": "commitment",
+      "title": "Sell unused Reserved Instances on RI Marketplace",
+      "description": "If you have Standard RIs you no longer need, list them on the AWS RI Marketplace to recoup costs. For future purchases, consider Convertible RIs if workloads may change, or Standard RIs if you want the resale option.",
+      "estimatedSavings": "recover unused commitment costs",
+      "difficulty": "medium"
+    },
+    {
+      "id": "elb-003",
+      "service": "ELB",
+      "category": "optimization",
+      "title": "Use CloudFront to reduce load balancer data transfer",
+      "description": "Place CloudFront in front of your ALB to cache responses and reduce data transfer through the load balancer. CloudFront data transfer is cheaper than direct ALB egress and reduces origin load.",
+      "estimatedSavings": "20-40% on data transfer",
+      "difficulty": "medium"
+    },
+    {
+      "id": "elasticache-001",
+      "service": "ElastiCache",
+      "category": "right-sizing",
+      "title": "Right-size ElastiCache nodes",
+      "description": "Monitor memory utilization, CPU, and network metrics. Downsize over-provisioned cache nodes. Consider using ElastiCache Serverless for variable workloads to pay only for data stored and compute used.",
+      "estimatedSavings": "20-50%",
+      "difficulty": "medium"
+    },
+    {
+      "id": "elasticache-002",
+      "service": "ElastiCache",
+      "category": "pricing-model",
+      "title": "Use Reserved Nodes for ElastiCache",
+      "description": "For steady-state caching workloads, purchase ElastiCache Reserved Nodes for 1 or 3 years. Covered by Database Savings Plans as well.",
+      "estimatedSavings": "30-55%",
+      "difficulty": "medium"
+    },
+    {
+      "id": "dynamodb-001",
+      "service": "DynamoDB",
+      "category": "capacity",
+      "title": "Switch to On-Demand capacity for variable workloads",
+      "description": "If your DynamoDB tables have unpredictable traffic, use On-Demand capacity mode to avoid paying for provisioned capacity you don't use. For steady workloads, provisioned mode with auto-scaling is cheaper.",
+      "estimatedSavings": "varies",
+      "difficulty": "easy"
+    },
+    {
+      "id": "dynamodb-002",
+      "service": "DynamoDB",
+      "category": "pricing-model",
+      "title": "Use DynamoDB Reserved Capacity",
+      "description": "For predictable DynamoDB workloads, purchase reserved capacity for 1 or 3 years. Also covered by Database Savings Plans for more flexibility across database services.",
+      "estimatedSavings": "up to 53%",
+      "difficulty": "medium"
     }
   ]
 }
