@@ -329,6 +329,51 @@
       "description": "Like Standard RIs but allow changing instance family, OS, and tenancy during the term. Lower discount than Standard RIs but more flexibility. Cannot be sold on RI Marketplace. Good for workloads that may evolve but will remain on EC2.",
       "estimatedSavings": "up to 66%",
       "difficulty": "medium"
+    },
+    {
+      "id": "elb-001",
+      "service": "ELB",
+      "category": "cleanup",
+      "title": "Remove idle load balancers",
+      "description": "Check if your load balancer is idle (fewer than 100 requests/day over 7 days). Each idle ELB costs ~$200/year. Delete unused load balancers or those with no registered/healthy backend instances.",
+      "estimatedSavings": "up to 100% per idle ELB",
+      "difficulty": "easy"
+    },
+    {
+      "id": "elb-002",
+      "service": "ELB",
+      "category": "optimization",
+      "title": "Right-size load balancer type",
+      "description": "Evaluate whether you need an Application Load Balancer (ALB), Network Load Balancer (NLB), or Gateway Load Balancer. NLB is cheaper for simple TCP/UDP traffic. Remove unused listeners and target groups.",
+      "estimatedSavings": "10-30%",
+      "difficulty": "medium"
+    },
+    {
+      "id": "kms-001",
+      "service": "KMS",
+      "category": "cleanup",
+      "title": "Audit and remove unused KMS keys",
+      "description": "Each customer-managed KMS key costs $1/month regardless of usage. Audit keys that have not been used for encryption/decryption in the past 90 days. Disable unused keys and schedule them for deletion. Use AWS-managed keys where possible (free).",
+      "estimatedSavings": "$1/month per unused key",
+      "difficulty": "easy"
+    },
+    {
+      "id": "kms-002",
+      "service": "KMS",
+      "category": "optimization",
+      "title": "Reduce KMS API request costs",
+      "description": "KMS charges $0.03 per 10,000 API requests. Use data key caching to reduce the number of GenerateDataKey calls. Consider using envelope encryption to minimize direct KMS API calls.",
+      "estimatedSavings": "10-50% on API costs",
+      "difficulty": "medium"
+    },
+    {
+      "id": "vpc-001",
+      "service": "NAT Gateway",
+      "category": "cleanup",
+      "title": "Check for idle VPC resources",
+      "description": "Review VPC for idle NAT Gateways, unused Elastic IPs, and empty subnets. NAT Gateways cost $0.045/hr ($32/month) even with zero traffic. Delete idle resources and consider downsizing by consolidating traffic through fewer NAT Gateways.",
+      "estimatedSavings": "$32/month per idle NAT Gateway",
+      "difficulty": "easy"
     }
   ]
 }

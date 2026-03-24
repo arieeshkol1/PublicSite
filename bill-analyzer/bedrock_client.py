@@ -72,6 +72,8 @@ SERVICE_NAME_TO_TIP_KEY: Dict[str, str] = {
     "Amazon ECR": "ECR",
     "AWS Secrets Manager": "Secrets Manager",
     "AWS Cloud Map": "Cloud Map",
+    "Elastic Load Balancing": "ELB",
+    "Amazon Elastic Load Balancing": "ELB",
 }
 
 # Analysis prompt template
@@ -88,16 +90,29 @@ Only recommend Savings Plans or Reserved Instances for services that actually su
 
 Compute Savings Plans (up to 66% off) apply ONLY to: Amazon EC2, AWS Lambda, AWS Fargate.
 EC2 Instance Savings Plans (up to 72% off) apply ONLY to: Amazon EC2.
-Database Savings Plans (up to 35% off) apply ONLY to: Amazon RDS, Amazon Aurora, Amazon DynamoDB, Amazon ElastiCache, Amazon DocumentDB, Amazon Neptune, Amazon Keyspaces, Amazon Timestream, AWS DMS.
+Database Savings Plans (up to 35% off) apply ONLY to: Amazon RDS, Amazon Aurora, Amazon DynamoDB, Amazon ElastiCache, Amazon DocumentDB, Amazon Neptune, Amazon Keyspaces, Amazon Timestream, AWS DMS. Note: Only Gen7+ instance families (r7g, m7i, etc.) are eligible; older families (r5, m5, t3) require Reserved Instances instead.
 Reserved Instances apply ONLY to: Amazon EC2, Amazon RDS, Amazon Redshift, Amazon ElastiCache, Amazon OpenSearch, Amazon DynamoDB, AWS Elemental MediaLive, Amazon MemoryDB.
+EC2 Reserved Instance Marketplace: Customers can buy discounted "second-hand" RIs from other AWS customers at reduced prices. Since Jan 2024, marketplace-purchased RIs cannot be resold. Standard RIs only (not Convertible).
 
-DO NOT recommend Savings Plans or Reserved Instances for: VPC, Route 53, CloudWatch, S3, KMS, Secrets Manager, Config, Cloud Map, Data Transfer, ECR, ECS (unless Fargate), SNS, SQS, API Gateway, Lambda (RI not available — use Compute SP only), or any other service not listed above.
+DO NOT recommend Savings Plans or Reserved Instances for: VPC, Route 53, CloudWatch, S3, KMS, Secrets Manager, Config, Cloud Map, Data Transfer, ECR, ECS (unless Fargate), SNS, SQS, API Gateway, Lambda (RI not available — use Compute SP only), Elastic Load Balancing, or any other service not listed above.
 CloudFront Security Savings Bundle (up to 30% off): Available for Amazon CloudFront. Commit to a monthly spend for 1 year. Also includes free AWS WAF usage up to 10% of the committed amount. Recommend this instead of generic Savings Plans for CloudFront and WAF.
+
+## EC2 cost optimization tiers (recommend in this order):
+1. Savings Plans / Reserved Instances (for steady-state workloads)
+2. EC2 Reserved Instance Marketplace (buy discounted second-hand RIs)
+3. Spot Instances (up to 90% off for fault-tolerant/stateless workloads: batch jobs, CI/CD, containers, HPC, dev/test — NOT for stateful production databases or single-instance apps)
+4. Serverless migration: Consider AWS Lambda (for event-driven) or AWS Fargate (for containerized workloads) to eliminate idle compute costs entirely
 
 ## Rightsizing eligibility:
 Services that support rightsizing (can change instance type/size/class): Amazon EC2 (instance type/size), Amazon RDS (instance class), Amazon ElastiCache (node type), Amazon OpenSearch (instance type), Amazon Redshift (node type), Amazon ECS/Fargate (task CPU/memory).
 Services that do NOT support rightsizing: Route 53, CloudWatch, S3, KMS, Secrets Manager, AWS Config, Cloud Map, Data Transfer, ECR, SNS, SQS, WAF, CloudFront, API Gateway, VPC (NAT Gateway has fixed per-hour pricing).
 For non-rightsizable services, recommend usage optimization instead: reduce unnecessary requests, clean up unused resources, consolidate, or use more efficient pricing tiers.
+
+## Service-specific rules (NEVER leave recommendations empty for these):
+Elastic Load Balancing: ALWAYS recommend checking if the load balancer is idle (fewer than 100 requests/day for 7 days = idle). Each idle ELB costs ~$200/year. Check for unused/unregistered backend instances.
+VPC / NAT Gateway: ALWAYS recommend checking if VPC resources are idle or oversized. Check for unused NAT Gateways, consider VPC endpoints to reduce NAT Gateway data processing costs, evaluate if downsizing is possible.
+AWS KMS: ALWAYS recommend auditing for unused KMS keys. Each key costs $1/month regardless of usage. Disable or schedule deletion of keys no longer in use.
+Amazon S3: ALWAYS recommend reviewing retention policies, lifecycle rules, and delete policies. Check for incomplete multipart uploads, old object versions, and objects that can be moved to cheaper storage classes or deleted.
 
 Provide analysis in this JSON format:
 

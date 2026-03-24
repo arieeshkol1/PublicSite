@@ -158,7 +158,10 @@ def parse_bill(pdf_bytes: bytes) -> ParsedBill:
     service_totals = _aggregate_service_totals(line_items)
     commitment_discounts = _detect_commitment_discounts(text)
 
-    return {
+    # Extract tax amount
+    tax_amount = _extract_tax_amount(text)
+
+    result = {
         "line_items": line_items,
         "total_cost": total_cost,
         "currency": metadata.get("currency", "USD"),
@@ -169,6 +172,10 @@ def parse_bill(pdf_bytes: bytes) -> ParsedBill:
         "service_totals": service_totals,
         "commitment_discounts": commitment_discounts,
     }
+    if tax_amount and tax_amount > Decimal("0"):
+        result["tax_amount"] = tax_amount
+        result["total_with_tax"] = total_cost + tax_amount
+    return result
 
 
 def _detect_commitment_discounts(text: str) -> Dict[str, Any]:
@@ -331,7 +338,10 @@ def _parse_billing_console(text: str, tables: List[List[List[str]]]) -> ParsedBi
     service_totals = _aggregate_service_totals(line_items)
     commitment_discounts = _detect_commitment_discounts(text)
 
-    return {
+    # Extract tax amount from "Taxes by service" or "Total tax" lines
+    tax_amount = _extract_tax_amount(text)
+
+    result = {
         "line_items": line_items + detail_items,
         "total_cost": total_cost,
         "currency": metadata.get("currency", "USD"),
@@ -342,6 +352,10 @@ def _parse_billing_console(text: str, tables: List[List[List[str]]]) -> ParsedBi
         "service_totals": service_totals,
         "commitment_discounts": commitment_discounts,
     }
+    if tax_amount and tax_amount > Decimal("0"):
+        result["tax_amount"] = tax_amount
+        result["total_with_tax"] = total_cost + tax_amount
+    return result
 
 
 def _extract_billing_console_metadata(text: str) -> Dict[str, str]:
@@ -1117,6 +1131,51 @@ def _extract_dates_from_text(text: str) -> List[str]:
             dates.append(f"{year}-{month}-{day}")
 
     return dates
+
+
+def _extract_tax_amount(text: str) -> Decimal | None:
+    """
+    Extract total tax/VAT amount from the bill text.
+
+    Looks for patterns like:
+        "Total tax USD 132.81"
+        "VAT 17% USD 132.81"
+        "Tax USD 132.81"
+    """
+    # Try "Total tax USD amount" pattern (billing console format)
+    tax_match = re.search(
+        r"Total\s+tax\s+(?:USD\s+)?([\d,]+\.\d{2})",
+        text, re.IGNORECASE,
+    )
+    if tax_match:
+        try:
+            return Decimal(tax_match.group(1).replace(",", ""))
+        except Exception:
+            pass
+
+    # Try "VAT nn% USD amount" pattern (EMEA invoice format)
+    vat_match = re.search(
+        r"VAT\s+\d+%?\s+(?:USD\s+)?([\d,]+\.\d{2})",
+        text, re.IGNORECASE,
+    )
+    if vat_match:
+        try:
+            return Decimal(vat_match.group(1).replace(",", ""))
+        except Exception:
+            pass
+
+    # Try "Total VAT USD amount"
+    total_vat_match = re.search(
+        r"Total\s+VAT\s+(?:USD\s+)?([\d,]+\.\d{2})",
+        text, re.IGNORECASE,
+    )
+    if total_vat_match:
+        try:
+            return Decimal(total_vat_match.group(1).replace(",", ""))
+        except Exception:
+            pass
+
+    return None
 
 
 def _aggregate_service_totals(

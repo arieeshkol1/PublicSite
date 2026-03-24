@@ -376,10 +376,23 @@ def _build_summary_section(
 
     total_cost = _format_cost(parsed_bill.get("total_cost", 0))
     currency = parsed_bill.get("currency", "USD")
+    tax_amount = parsed_bill.get("tax_amount")
+    total_with_tax = parsed_bill.get("total_with_tax")
 
-    # Total cost highlight box
+    # Total cost highlight box — include tax if present
+    if tax_amount and total_with_tax:
+        tax_str = _format_cost(tax_amount)
+        total_with_tax_str = _format_cost(total_with_tax)
+        total_text = (
+            f"<b>Charges:</b> {currency} {total_cost} &nbsp;&nbsp;|&nbsp;&nbsp; "
+            f"<b>Tax:</b> {currency} {tax_str} &nbsp;&nbsp;|&nbsp;&nbsp; "
+            f"<b>Total (incl. tax):</b> {currency} {total_with_tax_str}"
+        )
+    else:
+        total_text = f"<b>Total Cost:</b> {currency} {total_cost}"
+
     total_data = [[
-        Paragraph(f"<b>Total Cost:</b> {currency} {total_cost}", styles["body_bold"]),
+        Paragraph(total_text, styles["body_bold"]),
     ]]
     total_table = Table(total_data, colWidths=[7 * inch])
     total_table.setStyle(TableStyle([
@@ -413,11 +426,25 @@ def _build_summary_section(
                 Paragraph(_format_cost(cost), styles["body"]),
             ])
 
-        # Totals row
-        svc_rows.append([
-            Paragraph("<b>Total</b>", styles["body_bold"]),
-            Paragraph(f"<b>{total_cost}</b>", styles["body_bold"]),
-        ])
+        # Totals row(s) — include tax if present
+        if tax_amount and total_with_tax:
+            svc_rows.append([
+                Paragraph("<b>Subtotal</b>", styles["body_bold"]),
+                Paragraph(f"<b>{total_cost}</b>", styles["body_bold"]),
+            ])
+            svc_rows.append([
+                Paragraph("<b>Tax</b>", styles["body_bold"]),
+                Paragraph(f"<b>{_format_cost(tax_amount)}</b>", styles["body_bold"]),
+            ])
+            svc_rows.append([
+                Paragraph("<b>Total (incl. tax)</b>", styles["body_bold"]),
+                Paragraph(f"<b>{_format_cost(total_with_tax)}</b>", styles["body_bold"]),
+            ])
+        else:
+            svc_rows.append([
+                Paragraph("<b>Total</b>", styles["body_bold"]),
+                Paragraph(f"<b>{total_cost}</b>", styles["body_bold"]),
+            ])
 
         svc_table = Table(svc_rows, colWidths=[5 * inch, 2 * inch])
         svc_table.setStyle(TableStyle([
@@ -518,17 +545,27 @@ def _build_service_pie_chart(
         pie.slices[i].fillColor = pie_colors[color_idx]
         pie.slices[i].strokeColor = colors.white
         pie.slices[i].strokeWidth = 1.5
+        # Show percentage inside each slice
+        pie.slices[i].label_visible = 1
+        pie.slices[i].fontName = "Helvetica-Bold"
+        pie.slices[i].fontSize = 7
+        pie.slices[i].fontColor = colors.white
+        pie.slices[i].labelRadius = 0.65
+
+    # Set labels to show % inside slices (only for slices >= 3% to avoid clutter)
+    pie.labels = [f"{s[2]:.0f}%" if s[2] >= 3.0 else "" for s in slices]
 
     d.add(pie)
 
-    # Legend on the right side
+    # Legend on the right side — show service name + amount
     legend_x = 240
     legend_y = chart_height - 20
     line_height = 14
     max_legend_items = min(len(slices), 15)
+    currency = parsed_bill.get("currency", "USD")
 
     for i in range(max_legend_items):
-        svc_name, _, pct = slices[i]
+        svc_name, cost_val, pct = slices[i]
         color_idx = i % len(pie_colors)
         y_pos = legend_y - (i * line_height)
 
@@ -537,10 +574,10 @@ def _build_service_pie_chart(
         swatch = Rect(legend_x, y_pos - 3, 10, 10, fillColor=pie_colors[color_idx], strokeColor=None)
         d.add(swatch)
 
-        # Label
-        label_text = f"{svc_name} ({pct:.1f}%)"
-        if len(label_text) > 40:
-            label_text = label_text[:37] + "..."
+        # Label: service name + cost amount
+        label_text = f"{svc_name} ({currency} {cost_val:,.2f})"
+        if len(label_text) > 45:
+            label_text = label_text[:42] + "..."
         label = String(legend_x + 14, y_pos - 1, label_text, fontSize=8, fontName="Helvetica")
         d.add(label)
 
