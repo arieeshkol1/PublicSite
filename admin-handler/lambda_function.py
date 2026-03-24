@@ -131,10 +131,6 @@ def validate_token(event):
 
 def handle_get_leads(event):
     """Return all leads from the Leads table, sorted by timestamp descending."""
-    auth_result = validate_token(event)
-    if isinstance(auth_result, dict) and 'statusCode' in auth_result:
-        return auth_result
-
     try:
         table = dynamodb.Table(LEADS_TABLE_NAME)
         response = table.scan()
@@ -148,10 +144,6 @@ def handle_get_leads(event):
 
 def handle_get_tips(event):
     """Return all tips from the Tips table, sorted by service then tipId."""
-    auth_result = validate_token(event)
-    if isinstance(auth_result, dict) and 'statusCode' in auth_result:
-        return auth_result
-
     try:
         table = dynamodb.Table(TIPS_TABLE_NAME)
         response = table.scan()
@@ -165,10 +157,6 @@ def handle_get_tips(event):
 
 def handle_create_tip(event):
     """Create a new tip in the Tips table."""
-    auth_result = validate_token(event)
-    if isinstance(auth_result, dict) and 'statusCode' in auth_result:
-        return auth_result
-
     try:
         body = json.loads(event.get('body', '{}'))
     except (json.JSONDecodeError, TypeError):
@@ -197,10 +185,6 @@ def handle_create_tip(event):
 
 def handle_update_tip(event):
     """Update an existing tip in the Tips table."""
-    auth_result = validate_token(event)
-    if isinstance(auth_result, dict) and 'statusCode' in auth_result:
-        return auth_result
-
     try:
         body = json.loads(event.get('body', '{}'))
     except (json.JSONDecodeError, TypeError):
@@ -224,10 +208,6 @@ def handle_update_tip(event):
 
 def handle_delete_tip(event):
     """Delete a tip from the Tips table."""
-    auth_result = validate_token(event)
-    if isinstance(auth_result, dict) and 'statusCode' in auth_result:
-        return auth_result
-
     try:
         body = json.loads(event.get('body', '{}'))
     except (json.JSONDecodeError, TypeError):

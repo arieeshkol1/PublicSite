@@ -9,31 +9,8 @@
 </head>
 <body>
 
-    <!-- Login View -->
-    <div id="login-view" class="login-view">
-        <div class="login-card">
-            <div class="login-logo">
-                <img src="../eshkolai.png" alt="Eshkol Logo">
-                <h1>Admin Panel</h1>
-                <p>Sign in to manage Slash My Bill</p>
-            </div>
-            <form id="login-form" novalidate>
-                <div class="form-group">
-                    <label for="login-username">Username</label>
-                    <input type="text" id="login-username" placeholder="Enter username" autocomplete="username" required>
-                </div>
-                <div class="form-group">
-                    <label for="login-password">Password</label>
-                    <input type="password" id="login-password" placeholder="Enter password" autocomplete="current-password" required>
-                </div>
-                <div id="login-error" class="login-error" role="alert" aria-live="polite"></div>
-                <button type="submit" id="login-submit" class="btn btn-primary btn-full">Sign In</button>
-            </form>
-        </div>
-    </div>
-
     <!-- Dashboard View -->
-    <div id="dashboard-view" class="dashboard-view" hidden>
+    <div id="dashboard-view" class="dashboard-view">
         <!-- Header -->
         <header class="dashboard-header">
             <div class="header-content">
@@ -42,8 +19,7 @@
                     <h1>Admin Panel</h1>
                 </div>
                 <div class="header-right">
-                    <span id="header-username" class="header-username"></span>
-                    <button id="logout-btn" class="btn btn-outline btn-sm">Logout</button>
+                    <span class="header-username">Admin</span>
                 </div>
             </div>
         </header>
