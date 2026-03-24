@@ -311,12 +311,12 @@ document.addEventListener('DOMContentLoaded', () => {
       .then(blob => {
         const blobUrl = URL.createObjectURL(blob);
         downloadLink.href = blobUrl;
-        downloadLink.download = downloadFilename;
+        downloadLink.removeAttribute('download');
         showSection(resultsSection);
       })
       .catch(() => {
         downloadLink.href = url;
-        downloadLink.download = downloadFilename;
+        downloadLink.removeAttribute('download');
         showSection(resultsSection);
       });
   }
