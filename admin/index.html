@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Panel - Cloud and AI</title>
+    <link rel="icon" type="image/png" href="../eshkolai.png">
+    <link rel="stylesheet" href="admin.css">
+</head>
+<body>
+
+    <!-- Login View -->
+    <div id="login-view" class="login-view">
+        <div class="login-card">
+            <div class="login-logo">
+                <img src="../eshkolai.png" alt="Eshkol Logo">
+                <h1>Admin Panel</h1>
+                <p>Sign in to manage Slash My Bill</p>
+            </div>
+            <form id="login-form" novalidate>
+                <div class="form-group">
+                    <label for="login-username">Username</label>
+                    <input type="text" id="login-username" placeholder="Enter username" autocomplete="username" required>
+                </div>
+                <div class="form-group">
+                    <label for="login-password">Password</label>
+                    <input type="password" id="login-password" placeholder="Enter password" autocomplete="current-password" required>
+                </div>
+                <div id="login-error" class="login-error" role="alert" aria-live="polite"></div>
+                <button type="submit" id="login-submit" class="btn btn-primary btn-full">Sign In</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Dashboard View -->
+    <div id="dashboard-view" class="dashboard-view" hidden>
+        <!-- Header -->
+        <header class="dashboard-header">
+            <div class="header-content">
+                <div class="header-left">
+                    <img src="../eshkolai.png" alt="Eshkol Logo" class="header-logo">
+                    <h1>Admin Panel</h1>
+                </div>
+                <div class="header-right">
+                    <span id="header-username" class="header-username"></span>
+                    <button id="logout-btn" class="btn btn-outline btn-sm">Logout</button>
+                </div>
+            </div>
+        </header>
+
+        <!-- Tab Navigation -->
+        <nav class="tab-nav">
+            <button class="tab-btn active" data-tab="leads">Leads</button>
+            <button class="tab-btn" data-tab="tips">Tips</button>
+        </nav>
+
+        <!-- Leads Tab -->
+        <div id="leads-tab" class="tab-content">
+            <div class="tab-toolbar">
+                <input type="text" id="leads-search" class="search-input" placeholder="Search by email, name, or company...">
+            </div>
+            <div class="table-wrapper">
+                <table id="leads-table" class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Email</th>
+                            <th>Name</th>
+                            <th>Company</th>
+                            <th>Phone</th>
+                            <th>File</th>
+                            <th>Date</th>
+                        </tr>
+                    </thead>
+                    <tbody id="leads-tbody"></tbody>
+                </table>
+                <div id="leads-empty" class="empty-state" hidden>
+                    <p>No leads have been recorded yet.</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tips Tab -->
+        <div id="tips-tab" class="tab-content" hidden>
+            <div class="tab-toolbar">
+                <input type="text" id="tips-search" class="search-input" placeholder="Search by service, title, or category...">
+                <button id="add-tip-btn" class="btn btn-primary btn-sm">+ Add Tip</button>
+            </div>
+            <div class="table-wrapper">
+                <table id="tips-table" class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Service</th>
+                            <th>Tip ID</th>
+                            <th>Category</th>
+                            <th>Title</th>
+                            <th>Description</th>
+                            <th>Est. Savings</th>
+                            <th>Difficulty</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tips-tbody"></tbody>
+                </table>
+                <div id="tips-empty" class="empty-state" hidden>
+                    <p>No tips exist yet. Click "Add Tip" to create one.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Tip Modal -->
+    <div id="tip-modal" class="modal-overlay" hidden>
+        <div class="modal-card">
+            <div class="modal-header">
+                <h2 id="tip-modal-title">Add Tip</h2>
+                <button id="tip-modal-close" class="modal-close">&times;</button>
+            </div>
+            <form id="tip-form" novalidate>
+                <div class="modal-body">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="tip-service">Service</label>
+                            <input type="text" id="tip-service" placeholder="e.g. Amazon EC2" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="tip-tipId">Tip ID</label>
+                            <input type="text" id="tip-tipId" placeholder="e.g. ec2-rightsizing" required>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="tip-category">Category</label>
+                            <input type="text" id="tip-category" placeholder="e.g. Cost Optimization" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="tip-difficulty">Difficulty</label>
+                            <select id="tip-difficulty" required>
+                                <option value="">Select difficulty</option>
+                                <option value="easy">Easy</option>
+                                <option value="medium">Medium</option>
+                                <option value="hard">Hard</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="tip-title">Title</label>
+                        <input type="text" id="tip-title" placeholder="Short descriptive title" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="tip-description">Description</label>
+                        <textarea id="tip-description" rows="3" placeholder="Detailed description of the tip" required></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label for="tip-estimatedSavings">Estimated Savings</label>
+                        <input type="text" id="tip-estimatedSavings" placeholder="e.g. 10-30%" required>
+                    </div>
+                    <div id="tip-form-error" class="form-error" role="alert" aria-live="polite"></div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" id="tip-cancel-btn" class="btn btn-outline">Cancel</button>
+                    <button type="submit" id="tip-submit-btn" class="btn btn-primary">Save Tip</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Delete Confirmation Dialog -->
+    <div id="delete-dialog" class="modal-overlay" hidden>
+        <div class="modal-card modal-card-sm">
+            <div class="modal-header">
+                <h2>Confirm Delete</h2>
+            </div>
+            <div class="modal-body">
+                <p>Are you sure you want to delete this tip? This action cannot be undone.</p>
+            </div>
+            <div class="modal-footer">
+                <button id="delete-cancel-btn" class="btn btn-outline">Cancel</button>
+                <button id="delete-confirm-btn" class="btn btn-danger">Delete</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Loading Overlay -->
+    <div id="loading-overlay" class="loading-overlay" hidden>
+        <div class="loading-spinner"></div>
+    </div>
+
+    <!-- Notification Banner -->
+    <div id="notification" class="notification" hidden>
+        <span id="notification-message"></span>
+    </div>
+
+    <script src="admin.js"></script>
+</body>
+</html>

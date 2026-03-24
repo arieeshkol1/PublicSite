@@ -32,6 +32,26 @@ Parameters:
     Default: 'lambda-packages/otp-handler.zip'
     Description: S3 key for OTP Handler Lambda deployment package
 
+  AdminHandlerCodeKey:
+    Type: String
+    Default: 'lambda-packages/admin-handler.zip'
+    Description: S3 key for Admin Handler Lambda deployment package
+
+  AdminUsername:
+    Type: String
+    NoEcho: true
+    Description: Admin panel username
+
+  AdminPasswordHash:
+    Type: String
+    NoEcho: true
+    Description: Bcrypt hash of admin password
+
+  JWTSecret:
+    Type: String
+    NoEcho: true
+    Description: Secret key for JWT signing
+
 Resources:
 
   # ============================================================
@@ -336,11 +356,15 @@ Resources:
           - 'https://eshkolai.com'
           - 'https://www.eshkolai.com'
         AllowMethods:
+          - GET
           - POST
+          - PUT
+          - DELETE
           - OPTIONS
         AllowHeaders:
           - Content-Type
           - X-Filename
+          - Authorization
         MaxAge: 86400
       Tags:
         Project: ViewMyBill
@@ -446,6 +470,135 @@ Resources:
       SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ViewMyBillApi}/*'
 
   # ============================================================
+  # IAM Role - Admin Handler Lambda
+  # ============================================================
+  AdminHandlerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: aws-bill-analyzer-admin-handler-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: DynamoDBLeadsReadAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:Scan
+                Resource:
+                  - !GetAtt LeadsTable.Arn
+        - PolicyName: DynamoDBTipsCRUDAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:Scan
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                Resource:
+                  - !GetAtt CostOptimizationTipsTable.Arn
+      Tags:
+        - Key: Project
+          Value: ViewMyBill
+
+  # ============================================================
+  # Lambda Function - Admin Handler
+  # ============================================================
+  AdminHandlerFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: aws-bill-analyzer-admin-api
+      Runtime: python3.12
+      Handler: lambda_function.lambda_handler
+      MemorySize: 128
+      Timeout: 30
+      Role: !GetAtt AdminHandlerRole.Arn
+      Code:
+        S3Bucket: !Ref LambdaCodeBucket
+        S3Key: !Ref AdminHandlerCodeKey
+      Environment:
+        Variables:
+          ADMIN_USERNAME: !Ref AdminUsername
+          ADMIN_PASSWORD_HASH: !Ref AdminPasswordHash
+          JWT_SECRET: !Ref JWTSecret
+          LEADS_TABLE_NAME: !Ref LeadsTable
+          TIPS_TABLE_NAME: !Ref CostOptimizationTipsTable
+      Tags:
+        - Key: Project
+          Value: ViewMyBill
+
+  # ============================================================
+  # API Gateway - Admin Integration and Routes
+  # ============================================================
+  AdminIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !GetAtt AdminHandlerFunction.Arn
+      PayloadFormatVersion: '2.0'
+
+  AdminLoginRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'POST /admin/login'
+      Target: !Sub 'integrations/${AdminIntegration}'
+
+  AdminGetLeadsRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'GET /admin/leads'
+      Target: !Sub 'integrations/${AdminIntegration}'
+
+  AdminGetTipsRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'GET /admin/tips'
+      Target: !Sub 'integrations/${AdminIntegration}'
+
+  AdminCreateTipRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'POST /admin/tips'
+      Target: !Sub 'integrations/${AdminIntegration}'
+
+  AdminUpdateTipRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'PUT /admin/tips'
+      Target: !Sub 'integrations/${AdminIntegration}'
+
+  AdminDeleteTipRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'DELETE /admin/tips'
+      Target: !Sub 'integrations/${AdminIntegration}'
+
+  AdminHandlerInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref AdminHandlerFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ViewMyBillApi}/*'
+
+  # ============================================================
   # S3 Lifecycle Rule for reports/ prefix
   # NOTE: The bucket aws-bill-analyzer-storage-991105135552 already exists
   # and is NOT managed by this stack. Apply this lifecycle rule manually:
@@ -511,3 +664,7 @@ Outputs:
   OTPHandlerFunctionArn:
     Description: OTP Handler Lambda function ARN
     Value: !GetAtt OTPHandlerFunction.Arn
+
+  AdminHandlerFunctionArn:
+    Description: Admin Handler Lambda function ARN
+    Value: !GetAtt AdminHandlerFunction.Arn

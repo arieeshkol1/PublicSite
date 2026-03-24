@@ -18,6 +18,8 @@ on:
       - 'bill-analyzer/**'
       - 'upload-handler/**'
       - 'otp-handler/**'
+      - 'admin-handler/**'
+      - 'admin/**'
       - 'knowledge-base/**'
   workflow_dispatch:
 
@@ -82,6 +84,16 @@ jobs:
           aws s3 cp otp-handler-lambda.zip s3://${{ env.STORAGE_BUCKET }}/lambda-packages/otp-handler.zip
           echo "✓ OTP Handler packaged"
 
+      - name: Package Admin Handler Lambda
+        run: |
+          echo "Packaging Admin Handler Lambda..."
+          pip install PyJWT bcrypt -t .build-admin-handler/ --quiet
+          cp admin-handler/lambda_function.py .build-admin-handler/
+          cd .build-admin-handler && zip -r ../admin-handler-lambda.zip . -q
+          cd ..
+          aws s3 cp admin-handler-lambda.zip s3://${{ env.STORAGE_BUCKET }}/lambda-packages/admin-handler.zip
+          echo "✓ Admin Handler packaged"
+
       - name: Deploy ViewMyBill CloudFormation stack
         run: |
           echo "Deploying ViewMyBill infrastructure..."
@@ -90,6 +102,10 @@ jobs:
             --stack-name ${{ env.STACK_NAME }} \
             --capabilities CAPABILITY_NAMED_IAM \
             --no-fail-on-empty-changeset \
+            --parameter-overrides \
+              AdminUsername="${{ secrets.ADMIN_USERNAME }}" \
+              AdminPasswordHash="${{ secrets.ADMIN_PASSWORD_HASH }}" \
+              JWTSecret="${{ secrets.JWT_SECRET }}" \
             --tags Project=ViewMyBill
           echo "✓ Infrastructure deployed"
 
@@ -107,6 +123,10 @@ jobs:
             --function-name aws-bill-analyzer-otp-handler \
             --s3-bucket ${{ env.STORAGE_BUCKET }} \
             --s3-key lambda-packages/otp-handler.zip > /dev/null
+          aws lambda update-function-code \
+            --function-name aws-bill-analyzer-admin-api \
+            --s3-bucket ${{ env.STORAGE_BUCKET }} \
+            --s3-key lambda-packages/admin-handler.zip > /dev/null
           echo "✓ Lambda functions updated"
 
       - name: Seed DynamoDB knowledge base
@@ -168,6 +188,16 @@ jobs:
             --cache-control "max-age=300" --content-type "application/javascript"
           echo "✓ ViewMyBill frontend deployed"
 
+      - name: Deploy Admin frontend
+        run: |
+          aws s3 cp admin/index.html s3://${{ env.S3_BUCKET }}/admin/index.html \
+            --cache-control "max-age=300" --content-type "text/html"
+          aws s3 cp admin/admin.css s3://${{ env.S3_BUCKET }}/admin/admin.css \
+            --cache-control "max-age=300" --content-type "text/css"
+          aws s3 cp admin/admin.js s3://${{ env.S3_BUCKET }}/admin/admin.js \
+            --cache-control "max-age=300" --content-type "application/javascript"
+          echo "✓ Admin frontend deployed"
+
       - name: Invalidate CloudFront cache
         run: |
           aws cloudfront create-invalidation \
@@ -180,4 +210,5 @@ jobs:
           echo "=== Deploy Complete ==="
           echo "Website: https://www.eshkolai.com"
           echo "ViewMyBill: https://www.eshkolai.com/viewMyBill/"
+          echo "Admin: https://www.eshkolai.com/admin/"
           echo "API: ${{ steps.api-url.outputs.api_endpoint }}"

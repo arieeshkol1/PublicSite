@@ -1,0 +1,289 @@
+"""
+Admin Handler Lambda - Authentication and admin API for the Slash My Bill tool.
+Routes: POST /admin/login, GET /admin/leads, GET /admin/tips,
+        POST /admin/tips, PUT /admin/tips, DELETE /admin/tips
+"""
+
+import json
+import os
+import time
+import logging
+from decimal import Decimal
+
+import boto3
+from botocore.exceptions import ClientError
+import jwt
+import bcrypt
+
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
+
+ADMIN_USERNAME = os.environ.get('ADMIN_USERNAME', '')
+ADMIN_PASSWORD_HASH = os.environ.get('ADMIN_PASSWORD_HASH', '')
+JWT_SECRET = os.environ.get('JWT_SECRET', '')
+LEADS_TABLE_NAME = os.environ.get('LEADS_TABLE_NAME', 'ViewMyBill-Leads')
+TIPS_TABLE_NAME = os.environ.get('TIPS_TABLE_NAME', 'ViewMyBill-CostOptimizationTips')
+
+dynamodb = boto3.resource('dynamodb')
+
+
+def _decimal_to_native(obj):
+    """Recursively convert Decimal values to int/float for JSON serialization."""
+    if isinstance(obj, list):
+        return [_decimal_to_native(item) for item in obj]
+    if isinstance(obj, dict):
+        return {k: _decimal_to_native(v) for k, v in obj.items()}
+    if isinstance(obj, Decimal):
+        if obj % 1 == 0:
+            return int(obj)
+        return float(obj)
+    return obj
+
+
+def lambda_handler(event, context):
+    """Main entry point — dispatches to handler based on routeKey."""
+    route_key = event.get('routeKey', '')
+    logger.info(f"Admin API request: {route_key}")
+
+    if route_key == 'OPTIONS /admin/login' or route_key.startswith('OPTIONS '):
+        return create_response(200, {'message': 'OK'})
+
+    routes = {
+        'POST /admin/login': handle_login,
+        'GET /admin/leads': handle_get_leads,
+        'GET /admin/tips': handle_get_tips,
+        'POST /admin/tips': handle_create_tip,
+        'PUT /admin/tips': handle_update_tip,
+        'DELETE /admin/tips': handle_delete_tip,
+    }
+
+    handler = routes.get(route_key)
+    if handler is None:
+        return create_error_response(404, 'NotFound', 'Route not found')
+
+    return handler(event)
+
+
+def handle_login(event):
+    """Authenticate admin user and return JWT token."""
+    try:
+        body = json.loads(event.get('body', '{}'))
+    except (json.JSONDecodeError, TypeError):
+        return create_error_response(400, 'InvalidRequest', 'Invalid request body')
+
+    username = body.get('username', '')
+    password = body.get('password', '')
+
+    if not username or not password:
+        return create_error_response(400, 'InvalidRequest', 'Username and password are required')
+
+    # Verify credentials
+    if username != ADMIN_USERNAME:
+        return create_error_response(401, 'AuthError', 'Invalid credentials')
+
+    try:
+        password_valid = bcrypt.checkpw(
+            password.encode('utf-8'),
+            ADMIN_PASSWORD_HASH.encode('utf-8')
+        )
+    except Exception as e:
+        logger.error(f"Password verification error: {e}")
+        return create_error_response(401, 'AuthError', 'Invalid credentials')
+
+    if not password_valid:
+        return create_error_response(401, 'AuthError', 'Invalid credentials')
+
+    # Generate JWT
+    now = int(time.time())
+    payload = {
+        'sub': username,
+        'iat': now,
+        'exp': now + 86400,
+    }
+    token = jwt.encode(payload, JWT_SECRET, algorithm='HS256')
+
+    logger.info(f"Admin login successful for user: {username}")
+    return create_response(200, {'token': token, 'username': username})
+
+
+def validate_token(event):
+    """Extract and validate JWT from Authorization header.
+
+    Returns decoded payload on success.
+    Returns an error response dict on failure.
+    """
+    headers = event.get('headers', {}) or {}
+    auth_header = headers.get('authorization') or headers.get('Authorization') or ''
+
+    if not auth_header.startswith('Bearer '):
+        return create_error_response(401, 'AuthError', 'Authentication required')
+
+    token = auth_header[7:]
+
+    try:
+        decoded = jwt.decode(token, JWT_SECRET, algorithms=['HS256'])
+        return decoded
+    except jwt.ExpiredSignatureError:
+        return create_error_response(401, 'AuthError', 'Invalid or expired token')
+    except jwt.InvalidTokenError:
+        return create_error_response(401, 'AuthError', 'Invalid or expired token')
+
+
+def handle_get_leads(event):
+    """Return all leads from the Leads table, sorted by timestamp descending."""
+    auth_result = validate_token(event)
+    if isinstance(auth_result, dict) and 'statusCode' in auth_result:
+        return auth_result
+
+    try:
+        table = dynamodb.Table(LEADS_TABLE_NAME)
+        response = table.scan()
+        leads = _decimal_to_native(response.get('Items', []))
+        leads.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
+        return create_response(200, {'leads': leads})
+    except ClientError as e:
+        logger.error(f"DynamoDB error scanning leads: {e}")
+        return create_error_response(500, 'ServerError', 'Failed to retrieve leads')
+
+
+def handle_get_tips(event):
+    """Return all tips from the Tips table, sorted by service then tipId."""
+    auth_result = validate_token(event)
+    if isinstance(auth_result, dict) and 'statusCode' in auth_result:
+        return auth_result
+
+    try:
+        table = dynamodb.Table(TIPS_TABLE_NAME)
+        response = table.scan()
+        tips = _decimal_to_native(response.get('Items', []))
+        tips.sort(key=lambda x: (x.get('service', ''), x.get('tipId', '')))
+        return create_response(200, {'tips': tips})
+    except ClientError as e:
+        logger.error(f"DynamoDB error scanning tips: {e}")
+        return create_error_response(500, 'ServerError', 'Failed to retrieve tips')
+
+
+def handle_create_tip(event):
+    """Create a new tip in the Tips table."""
+    auth_result = validate_token(event)
+    if isinstance(auth_result, dict) and 'statusCode' in auth_result:
+        return auth_result
+
+    try:
+        body = json.loads(event.get('body', '{}'))
+    except (json.JSONDecodeError, TypeError):
+        return create_error_response(400, 'InvalidRequest', 'Invalid request body')
+
+    required_fields = ['service', 'tipId', 'category', 'title', 'description', 'estimatedSavings', 'difficulty']
+    for field in required_fields:
+        if not body.get(field, '').strip():
+            return create_error_response(400, 'InvalidRequest', f'Field "{field}" is required and cannot be empty')
+
+    tip = {field: body[field].strip() for field in required_fields}
+
+    try:
+        table = dynamodb.Table(TIPS_TABLE_NAME)
+        table.put_item(
+            Item=tip,
+            ConditionExpression='attribute_not_exists(service) AND attribute_not_exists(tipId)'
+        )
+        return create_response(201, {'tip': tip, 'message': 'Tip created successfully'})
+    except ClientError as e:
+        if e.response['Error']['Code'] == 'ConditionalCheckFailedException':
+            return create_error_response(409, 'ConflictError', 'A tip with this service and tipId already exists')
+        logger.error(f"DynamoDB error creating tip: {e}")
+        return create_error_response(500, 'ServerError', 'Failed to create tip')
+
+
+def handle_update_tip(event):
+    """Update an existing tip in the Tips table."""
+    auth_result = validate_token(event)
+    if isinstance(auth_result, dict) and 'statusCode' in auth_result:
+        return auth_result
+
+    try:
+        body = json.loads(event.get('body', '{}'))
+    except (json.JSONDecodeError, TypeError):
+        return create_error_response(400, 'InvalidRequest', 'Invalid request body')
+
+    required_fields = ['service', 'tipId', 'category', 'title', 'description', 'estimatedSavings', 'difficulty']
+    for field in required_fields:
+        if not body.get(field, '').strip():
+            return create_error_response(400, 'InvalidRequest', f'Field "{field}" is required and cannot be empty')
+
+    tip = {field: body[field].strip() for field in required_fields}
+
+    try:
+        table = dynamodb.Table(TIPS_TABLE_NAME)
+        table.put_item(Item=tip)
+        return create_response(200, {'tip': tip, 'message': 'Tip updated successfully'})
+    except ClientError as e:
+        logger.error(f"DynamoDB error updating tip: {e}")
+        return create_error_response(500, 'ServerError', 'Failed to update tip')
+
+
+def handle_delete_tip(event):
+    """Delete a tip from the Tips table."""
+    auth_result = validate_token(event)
+    if isinstance(auth_result, dict) and 'statusCode' in auth_result:
+        return auth_result
+
+    try:
+        body = json.loads(event.get('body', '{}'))
+    except (json.JSONDecodeError, TypeError):
+        return create_error_response(400, 'InvalidRequest', 'Invalid request body')
+
+    service = body.get('service', '').strip()
+    tip_id = body.get('tipId', '').strip()
+
+    if not service or not tip_id:
+        return create_error_response(400, 'InvalidRequest', 'Fields "service" and "tipId" are required')
+
+    try:
+        table = dynamodb.Table(TIPS_TABLE_NAME)
+        table.delete_item(
+            Key={'service': service, 'tipId': tip_id},
+            ConditionExpression='attribute_exists(service)'
+        )
+        return create_response(200, {'message': 'Tip deleted successfully'})
+    except ClientError as e:
+        if e.response['Error']['Code'] == 'ConditionalCheckFailedException':
+            return create_error_response(404, 'NotFound', 'Tip not found')
+        logger.error(f"DynamoDB error deleting tip: {e}")
+        return create_error_response(500, 'ServerError', 'Failed to delete tip')
+
+
+# ============================================================
+# Helper functions
+# ============================================================
+
+def cors_headers():
+    """Return CORS headers for admin API responses."""
+    return {
+        'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': 'https://www.eshkolai.com',
+        'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Filename',
+        'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+    }
+
+
+def create_response(status_code, body):
+    """Return an API Gateway v2 response dict with CORS headers."""
+    return {
+        'statusCode': status_code,
+        'headers': cors_headers(),
+        'body': json.dumps(body),
+    }
+
+
+def create_error_response(status_code, error_type, message):
+    """Return an error response following the existing Lambda pattern."""
+    return {
+        'statusCode': status_code,
+        'headers': cors_headers(),
+        'body': json.dumps({
+            'error': error_type,
+            'message': message,
+            'code': status_code,
+        }),
+    }
