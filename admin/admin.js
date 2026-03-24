@@ -1,4 +1,4 @@
-﻿/* Admin Panel - Slash My Bill admin dashboard */
+/* Admin Panel - Slash My Bill admin dashboard */
 var API_BASE_URL = 'https://l2fd4h481h.execute-api.us-east-1.amazonaws.com';
 var allLeads = [], allTips = [], editingTip = null, deletingTip = null, debounceTimer = null;
 var loginView = document.getElementById('login-view');
