@@ -1,333 +1,95 @@
-/* Admin Panel — Client-side logic for Slash My Bill admin dashboard */
+﻿/* Admin Panel - Slash My Bill admin dashboard */
+var API_BASE_URL = 'https://l2fd4h481h.execute-api.us-east-1.amazonaws.com';
+var allLeads = [], allTips = [], editingTip = null, deletingTip = null, debounceTimer = null;
+var loginView = document.getElementById('login-view');
+var dashboardView = document.getElementById('dashboard-view');
+var loginForm = document.getElementById('login-form');
+var loginUsername = document.getElementById('login-username');
+var loginPassword = document.getElementById('login-password');
+var loginError = document.getElementById('login-error');
+var headerUsername = document.getElementById('header-username');
+var logoutBtn = document.getElementById('logout-btn');
+var leadsPanel = document.getElementById('leads-tab');
+var tipsPanel = document.getElementById('tips-tab');
+var leadsSearch = document.getElementById('leads-search');
+var tipsSearch = document.getElementById('tips-search');
+var leadsTbody = document.getElementById('leads-tbody');
+var tipsTbody = document.getElementById('tips-tbody');
+var leadsEmpty = document.getElementById('leads-empty');
+var tipsEmpty = document.getElementById('tips-empty');
+var addTipBtn = document.getElementById('add-tip-btn');
+var tipModal = document.getElementById('tip-modal');
+var tipModalTitle = document.getElementById('tip-modal-title');
+var tipForm = document.getElementById('tip-form');
+var tipFormError = document.getElementById('tip-form-error');
+var tipCancelBtn = document.getElementById('tip-cancel-btn');
+var tipModalClose = document.getElementById('tip-modal-close');
+var tipSubmitBtn = document.getElementById('tip-submit-btn');
+var deleteDialog = document.getElementById('delete-dialog');
+var deleteCancelBtn = document.getElementById('delete-cancel-btn');
+var deleteConfirmBtn = document.getElementById('delete-confirm-btn');
+var loadingOverlay = document.getElementById('loading-overlay');
+var notification = document.getElementById('notification');
+var notificationMessage = document.getElementById('notification-message');
+var TIP_FIELDS = ['service','tipId','category','title','description','estimatedSavings','difficulty'];
 
-const API_BASE_URL = 'https://l2fd4h481h.execute-api.us-east-1.amazonaws.com';
+function showNotification(msg,type){notificationMessage.textContent=msg;notification.className='notification notification-'+type;notification.hidden=false;setTimeout(function(){notification.hidden=true;},4000);}
+function showLoading(){loadingOverlay.hidden=false;}
+function hideLoading(){loadingOverlay.hidden=true;}
+function showLogin(){loginView.hidden=false;dashboardView.hidden=true;loginPassword.value='';loginError.textContent='';}
+function showDashboard(){loginView.hidden=true;dashboardView.hidden=false;headerUsername.textContent=sessionStorage.getItem('admin_username')||'';}
+function switchTab(name){document.querySelectorAll('.tab-btn').forEach(function(b){b.classList.toggle('active',b.dataset.tab===name);});leadsPanel.hidden=(name!=='leads');tipsPanel.hidden=(name!=='tips');}
+function formatDate(ts){if(!ts)return '';try{var d=new Date(ts);return isNaN(d.getTime())?ts:d.toLocaleString('en-US',{year:'numeric',month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});}catch(e){return ts;}}
+function escapeHtml(s){var d=document.createElement('div');d.textContent=s;return d.innerHTML;}
+function escapeAttr(s){return String(s||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/'/g,'&#39;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+function debounce(fn,ms){return function(){var a=arguments,t=this;clearTimeout(debounceTimer);debounceTimer=setTimeout(function(){fn.apply(t,a);},ms);};}
 
-// ============================================================
-// State
-// ============================================================
-let allLeads = [];
-let allTips = [];
-let editingTip = null; // null = create mode, object = edit mode
-let deletingTip = null; // { service, tipId } for pending delete
-let debounceTimer = null;
+async function login(username,password){
+showLoading();loginError.textContent='';
+try{var res=await fetch(API_BASE_URL+'/admin/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:username,password:password})});
+var data=await res.json();if(!res.ok){loginError.textContent=data.message||'Invalid username or password';return;}
+sessionStorage.setItem('admin_token',data.token);sessionStorage.setItem('admin_username',data.username);showDashboard();loadLeads();loadTips();
+}catch(e){loginError.textContent='Unable to connect. Please check your connection.';}finally{hideLoading();}}
 
-// ============================================================
-// DOM References
-// ============================================================
-const loginView = document.getElementById('login-view');
-const dashboardView = document.getElementById('dashboard-view');
-const loginForm = document.getElementById('login-form');
-const loginUsername = document.getElementById('login-username');
-const loginPassword = document.getElementById('login-password');
-const loginError = document.getElementById('login-error');
-const loginSubmit = document.getElementById('login-submit');
+function logout(){sessionStorage.removeItem('admin_token');sessionStorage.removeItem('admin_username');allLeads=[];allTips=[];leadsTbody.innerHTML='';tipsTbody.innerHTML='';leadsSearch.value='';tipsSearch.value='';showLogin();}
 
-const headerUsername = document.getElementById('header-username');
-const logoutBtn = document.getElementById('logout-btn');
+async function apiRequest(method,path,body){
+var token=sessionStorage.getItem('admin_token');var opts={method:method,headers:{'Content-Type':'application/json','Authorization':'Bearer '+token}};
+if(body)opts.body=JSON.stringify(body);var res=await fetch(API_BASE_URL+path,opts);
+if(res.status===401){showNotification('Session expired. Please log in again.','error');logout();throw new Error('Unauthorized');}
+var data=await res.json();if(!res.ok)throw{status:res.status,message:data.message||'Something went wrong'};return data;}
 
-const leadsTab = document.getElementById('leads-tab');
-const tipsTab = document.getElementById('tips-tab');
-const leadsSearch = document.getElementById('leads-search');
-const tipsSearch = document.getElementById('tips-search');
-const leadsTbody = document.getElementById('leads-tbody');
-const tipsTbody = document.getElementById('tips-tbody');
-const leadsEmpty = document.getElementById('leads-empty');
-const tipsEmpty = document.getElementById('tips-empty');
-const addTipBtn = document.getElementById('add-tip-btn');
+async function loadLeads(){try{showLoading();var data=await apiRequest('GET','/admin/leads');allLeads=data.leads||[];renderLeads(allLeads);}catch(e){if(e.message!=='Unauthorized')showNotification('Failed to load leads.','error');}finally{hideLoading();}}
+function renderLeads(leads){leadsTbody.innerHTML='';if(!leads.length){leadsEmpty.hidden=false;return;}leadsEmpty.hidden=true;leads.forEach(function(l){var tr=document.createElement('tr');tr.innerHTML='<td>'+escapeHtml(l.email||'')+'</td><td>'+escapeHtml(l.name||'')+'</td><td>'+escapeHtml(l.company||'')+'</td><td>'+escapeHtml(l.phone||'')+'</td><td>'+escapeHtml(l.fileName||'')+'</td><td>'+formatDate(l.timestamp)+'</td>';leadsTbody.appendChild(tr);});}
+function filterLeads(q){q=(q||'').toLowerCase().trim();if(!q){renderLeads(allLeads);return;}renderLeads(allLeads.filter(function(l){return(l.email||'').toLowerCase().indexOf(q)>=0||(l.name||'').toLowerCase().indexOf(q)>=0||(l.company||'').toLowerCase().indexOf(q)>=0;}));}
 
-const tipModal = document.getElementById('tip-modal');
-const tipModalTitle = document.getElementById('tip-modal-title');
-const tipForm = document.getElementById('tip-form');
-const tipFormError = document.getElementById('tip-form-error');
-const tipCancelBtn = document.getElementById('tip-cancel-btn');
-const tipModalClose = document.getElementById('tip-modal-close');
-const tipSubmitBtn = document.getElementById('tip-submit-btn');
+async function loadTips(){try{showLoading();var data=await apiRequest('GET','/admin/tips');allTips=data.tips||[];renderTips(allTips);}catch(e){if(e.message!=='Unauthorized')showNotification('Failed to load tips.','error');}finally{hideLoading();}}
+function renderTips(tips){tipsTbody.innerHTML='';if(!tips.length){tipsEmpty.hidden=false;return;}tipsEmpty.hidden=true;tips.forEach(function(t){var tr=document.createElement('tr');tr.innerHTML='<td>'+escapeHtml(t.service||'')+'</td><td>'+escapeHtml(t.tipId||'')+'</td><td>'+escapeHtml(t.category||'')+'</td><td>'+escapeHtml(t.title||'')+'</td><td title="'+escapeAttr(t.description)+'">'+escapeHtml(t.description||'')+'</td><td>'+escapeHtml(t.estimatedSavings||'')+'</td><td><span class="badge badge-'+(t.difficulty||'').toLowerCase()+'">'+escapeHtml(t.difficulty||'')+'</span></td><td class="actions-cell"><button class="btn-icon btn-icon-edit" data-action="edit" data-service="'+escapeAttr(t.service)+'" data-tipid="'+escapeAttr(t.tipId)+'" title="Edit">&#9998;</button><button class="btn-icon btn-icon-delete" data-action="delete" data-service="'+escapeAttr(t.service)+'" data-tipid="'+escapeAttr(t.tipId)+'" title="Delete">&#128465;</button></td>';tipsTbody.appendChild(tr);});}
+function filterTips(q){q=(q||'').toLowerCase().trim();if(!q){renderTips(allTips);return;}renderTips(allTips.filter(function(t){return(t.service||'').toLowerCase().indexOf(q)>=0||(t.title||'').toLowerCase().indexOf(q)>=0||(t.category||'').toLowerCase().indexOf(q)>=0;}));}
 
-const deleteDialog = document.getElementById('delete-dialog');
-const deleteCancelBtn = document.getElementById('delete-cancel-btn');
-const deleteConfirmBtn = document.getElementById('delete-confirm-btn');
+function showTipForm(tip){tipFormError.textContent='';if(tip){editingTip=tip;tipModalTitle.textContent='Edit Tip';tipSubmitBtn.textContent='Update Tip';TIP_FIELDS.forEach(function(f){document.getElementById('tip-'+f).value=tip[f]||'';});document.getElementById('tip-service').disabled=true;document.getElementById('tip-tipId').disabled=true;}else{editingTip=null;tipModalTitle.textContent='Add Tip';tipSubmitBtn.textContent='Save Tip';TIP_FIELDS.forEach(function(f){document.getElementById('tip-'+f).value='';});document.getElementById('tip-service').disabled=false;document.getElementById('tip-tipId').disabled=false;}tipModal.hidden=false;}
+function hideTipForm(){tipModal.hidden=true;editingTip=null;}
 
-const loadingOverlay = document.getElementById('loading-overlay');
-const notification = document.getElementById('notification');
-const notificationMessage = document.getElementById('notification-message');
+async function saveTip(){tipFormError.textContent='';var tipData={};for(var i=0;i<TIP_FIELDS.length;i++){var f=TIP_FIELDS[i],val=document.getElementById('tip-'+f).value.trim();if(!val){tipFormError.textContent='All fields are required.';return;}tipData[f]=val;}
+try{showLoading();if(editingTip){await apiRequest('PUT','/admin/tips',tipData);showNotification('Tip updated.','success');}else{await apiRequest('POST','/admin/tips',tipData);showNotification('Tip created.','success');}hideTipForm();await loadTips();}catch(e){if(e.status===409)tipFormError.textContent='A tip with this service and ID already exists.';else if(e.message!=='Unauthorized')tipFormError.textContent=e.message||'Failed to save tip.';}finally{hideLoading();}}
 
-// Tip form field IDs
-const TIP_FIELDS = ['service', 'tipId', 'category', 'title', 'description', 'estimatedSavings', 'difficulty'];
+function showDeleteDialog(svc,tid){deletingTip={service:svc,tipId:tid};deleteDialog.hidden=false;}
+function hideDeleteDialog(){deleteDialog.hidden=true;deletingTip=null;}
+async function deleteTip(){if(!deletingTip)return;var svc=deletingTip.service,tid=deletingTip.tipId;hideDeleteDialog();try{showLoading();await apiRequest('DELETE','/admin/tips',{service:svc,tipId:tid});showNotification('Tip deleted.','success');await loadTips();}catch(e){if(e.status===404){showNotification('Tip not found.','error');await loadTips();}else if(e.message!=='Unauthorized')showNotification(e.message||'Failed to delete tip.','error');}finally{hideLoading();}}
 
-// ============================================================
-// Auth
-// ============================================================
-async function login(username, password) {
-    showLoading();
-    loginError.textContent = '';
-    try {
-        const res = await fetch(`${API_BASE_URL}/admin/login`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ username, password })
-        });
-        const data = await res.json();
-        if (!res.ok) {
-            loginError.textContent = data.message || 'Invalid username or password';
-            return;
-        }
-        sessionStorage.setItem('admin_token', data.token);
-        sessionStorage.setItem('admin_username', data.username);
-        showDashboard();
-        loadLeads();
-        loadTips();
-    } catch (err) {
-        loginError.textContent = 'Unable to connect. Please check your connection.';
-    } finally {
-        hideLoading();
-    }
-}
+loginForm.addEventListener('submit',function(e){e.preventDefault();var u=loginUsername.value.trim(),p=loginPassword.value;if(!u||!p){loginError.textContent='Please enter username and password.';return;}login(u,p);});
+logoutBtn.addEventListener('click',logout);
+document.querySelectorAll('.tab-btn').forEach(function(btn){btn.addEventListener('click',function(){switchTab(btn.dataset.tab);});});
+leadsSearch.addEventListener('input',debounce(function(){filterLeads(leadsSearch.value);},200));
+tipsSearch.addEventListener('input',debounce(function(){filterTips(tipsSearch.value);},200));
+addTipBtn.addEventListener('click',function(){showTipForm(null);});
+tipForm.addEventListener('submit',function(e){e.preventDefault();saveTip();});
+tipCancelBtn.addEventListener('click',hideTipForm);
+tipModalClose.addEventListener('click',hideTipForm);
+deleteCancelBtn.addEventListener('click',hideDeleteDialog);
+deleteConfirmBtn.addEventListener('click',deleteTip);
+tipsTbody.addEventListener('click',function(e){var btn=e.target.closest('[data-action]');if(!btn)return;var action=btn.dataset.action,svc=btn.dataset.service,tid=btn.dataset.tipid;if(action==='edit'){var tip=allTips.find(function(t){return t.service===svc&&t.tipId===tid;});if(tip)showTipForm(tip);}else if(action==='delete')showDeleteDialog(svc,tid);});
+tipModal.addEventListener('click',function(e){if(e.target===tipModal)hideTipForm();});
+deleteDialog.addEventListener('click',function(e){if(e.target===deleteDialog)hideDeleteDialog();});
 
-function logout() {
-    sessionStorage.removeItem('admin_token');
-    sessionStorage.removeItem('admin_username');
-    allLeads = [];
-    allTips = [];
-    leadsTbody.innerHTML = '';
-    tipsTbody.innerHTML = '';
-    leadsSearch.value = '';
-    tipsSearch.value = '';
-    showLogin();
-}
-
-// ============================================================
-// API Helper
-// ============================================================
-async function apiRequest(method, path, body) {
-    const token = sessionStorage.getItem('admin_token');
-    const options = {
-        method,
-        headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`
-        }
-    };
-    if (body) options.body = JSON.stringify(body);
-
-    const res = await fetch(`${API_BASE_URL}${path}`, options);
-
-    if (res.status === 401) {
-        showNotification('Session expired. Please log in again.', 'error');
-        logout();
-        throw new Error('Unauthorized');
-    }
-
-    const data = await res.json();
-    if (!res.ok) {
-        throw { status: res.status, message: data.message || 'Something went wrong' };
-    }
-    return data;
-}
-
-// ============================================================
-// Leads
-// ============================================================
-async function loadLeads() {
-    try {
-        showLoading();
-        const data = await apiRequest('GET', '/admin/leads');
-        allLeads = data.leads || [];
-        renderLeads(allLeads);
-    } catch (err) {
-        if (err.message !== 'Unauthorized') {
-            showNotification('Failed to load leads.', 'error');
-        }
-    } finally {
-        hideLoading();
-    }
-}
-
-function renderLeads(leads) {
-    leadsTbody.innerHTML = '';
-    if (leads.length === 0) {
-        leadsEmpty.hidden = false;
-        return;
-    }
-    leadsEmpty.hidden = true;
-    leads.forEach(lead => {
-        const tr = document.createElement('tr');
-        tr.innerHTML = `
-            <td>${escapeHtml(lead.email || '')}</td>
-            <td>${escapeHtml(lead.name || '')}</td>
-            <td>${escapeHtml(lead.company || '')}</td>
-            <td>${escapeHtml(lead.phone || '')}</td>
-            <td>${escapeHtml(lead.fileName || '')}</td>
-            <td>${formatDate(lead.timestamp)}</td>
-        `;
-        leadsTbody.appendChild(tr);
-    });
-}
-
-function filterLeads(query) {
-    const q = query.toLowerCase().trim();
-    if (!q) { renderLeads(allLeads); return; }
-    const filtered = allLeads.filter(l =>
-        (l.email || '').toLowerCase().includes(q) ||
-        (l.name || '').toLowerCase().includes(q) ||
-        (l.company || '').toLowerCase().includes(q)
-    );
-    renderLeads(filtered);
-}
-
-// ============================================================
-// Tips
-// ============================================================
-async function loadTips() {
-    try {
-        showLoading();
-        const data = await apiRequest('GET', '/admin/tips');
-        allTips = data.tips || [];
-        renderTips(allTips);
-    } catch (err) {
-        if (err.message !== 'Unauthorized') {
-            showNotification('Failed to load tips.', 'error');
-        }
-    } finally {
-        hideLoading();
-    }
-}
-
-function renderTips(tips) {
-    tipsTbody.innerHTML = '';
-    if (tips.length === 0) {
-        tipsEmpty.hidden = false;
-        return;
-    }
-    tipsEmpty.hidden = true;
-    tips.forEach(tip => {
-        const tr = document.createElement('tr');
-        tr.innerHTML = `
-            <td>${escapeHtml(tip.service || '')}</td>
-            <td>${escapeHtml(tip.tipId || '')}</td>
-            <td>${escapeHtml(tip.category || '')}</td>
-            <td>${escapeHtml(tip.title || '')}</td>
-            <td title="${escapeHtml(tip.description || '')}">${escapeHtml(tip.description || '')}</td>
-            <td>${escapeHtml(tip.estimatedSavings || '')}</td>
-            <td><span class="badge badge-${(tip.difficulty || '').toLowerCase()}">${escapeHtml(tip.difficulty || '')}</span></td>
-            <td class="actions-cell">
-                <button class="btn-icon btn-icon-edit" data-action="edit" data-service="${escapeAttr(tip.service)}" data-tipid="${escapeAttr(tip.tipId)}" title="Edit">&#9998;</button>
-                <button class="btn-icon btn-icon-delete" data-action="delete" data-service="${escapeAttr(tip.service)}" data-tipid="${escapeAttr(tip.tipId)}" title="Delete">&#128465;</button>
-            </td>
-        `;
-        tipsTbody.appendChild(tr);
-    });
-}
-
-function filterTips(query) {
-    const q = query.toLowerCase().trim();
-    if (!q) { renderTips(allTips); return; }
-    const filtered = allTips.filter(t =>
-        (t.service || '').toLowerCase().includes(q) ||
-        (t.title || '').toLowerCase().includes(q) ||
-        (t.category || '').toLowerCase().includes(q)
-    );
-    renderTips(filtered);
-}
-
-// ============================================================
-// Tip Form (Create / Edit)
-// ============================================================
-function showTipForm(tip) {
-    tipFormError.textContent = '';
-    if (tip) {
-        // Edit mode
-        editingTip = tip;
-        tipModalTitle.textContent = 'Edit Tip';
-        tipSubmitBtn.textContent = 'Update Tip';
-        TIP_FIELDS.forEach(f => {
-            const el = document.getElementById('tip-' + f);
-            el.value = tip[f] || '';
-        });
-        document.getElementById('tip-service').disabled = true;
-        document.getElementById('tip-tipId').disabled = true;
-    } else {
-        // Create mode
-        editingTip = null;
-        tipModalTitle.textContent = 'Add Tip';
-        tipSubmitBtn.textContent = 'Save Tip';
-        TIP_FIELDS.forEach(f => {
-            document.getElementById('tip-' + f).value = '';
-        });
-        document.getElementById('tip-service').disabled = false;
-        document.getElementById('tip-tipId').disabled = false;
-    }
-    tipModal.hidden = false;
-}
-
-function hideTipForm() {
-    tipModal.hidden = true;
-    editingTip = null;
-}
-
-async function saveTip() {
-    tipFormError.textContent = '';
-    const tipData = {};
-    for (const f of TIP_FIELDS) {
-        const val = document.getElementById('tip-' + f).value.trim();
-        if (!val) {
-            tipFormError.textContent = 'All fields are required.';
-            return;
-        }
-        tipData[f] = val;
-    }
-
-    try {
-        showLoading();
-        if (editingTip) {
-            await apiRequest('PUT', '/admin/tips', tipData);
-            showNotification('Tip updated successfully.', 'success');
-        } else {
-            await apiRequest('POST', '/admin/tips', tipData);
-            showNotification('Tip created successfully.', 'success');
-        }
-        hideTipForm();
-        await loadTips();
-    } catch (err) {
-        if (err.status === 409) {
-            tipFormError.textContent = 'A tip with this service and ID already exists.';
-        } else if (err.message !== 'Unauthorized') {
-            tipFormError.textContent = err.message || 'Failed to save tip.';
-        }
-    } finally {
-        hideLoading();
-    }
-}
-
-// ============================================================
-// Delete Tip
-// ============================================================
-function showDeleteDialog(service, tipId) {
-    deletingTip = { service, tipId };
-    deleteDialog.hidden = false;
-}
-
-function hideDeleteDialog() {
-    deleteDialog.hidden = true;
-    deletingTip = null;
-}
-
-async function deleteTip() {
-    if (!deletingTip) return;
-    const { service, tipId } = deletingTip;
-    hideDeleteDialog();
-    try {
-        showLoading();
-        await apiRequest('DELETE', '/admin/tips', { service, tipId });
-        showNotification('Tip deleted successfully.', 'success');
-        await loadTips();
-    } catch (err) {
-        if (err.status === 404) {
-            showNotification('Tip not found. It may have been already deleted.', 'error');
-            await loadTips();
-        } else if (err.message !== 'Unauthorized') {
-            showNotification(err.message || 'Failed to delete tip.', 'error');
-        }
-    } finally {
-        hideLoading();
-    }
-}
+(function(){if(sessionStorage.getItem('admin_token')){showDashboard();loadLeads();loadTips();}else showLogin();})();
