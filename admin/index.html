@@ -9,8 +9,27 @@
 </head>
 <body>
 
+    <!-- Login Gate -->
+    <div id="login-gate" class="login-view">
+        <div class="login-card">
+            <div class="login-logo">
+                <img src="../eshkolai.png" alt="Eshkol Logo">
+                <h1>Admin Panel</h1>
+                <p>Enter password to continue</p>
+            </div>
+            <form id="gate-form" novalidate>
+                <div class="form-group">
+                    <label for="gate-password">Password</label>
+                    <input type="password" id="gate-password" placeholder="Enter password" autocomplete="current-password" required>
+                </div>
+                <div id="gate-error" class="login-error" role="alert"></div>
+                <button type="submit" class="btn btn-primary btn-full">Sign In</button>
+            </form>
+        </div>
+    </div>
+
     <!-- Dashboard View -->
-    <div id="dashboard-view" class="dashboard-view">
+    <div id="dashboard-view" class="dashboard-view" hidden>
         <!-- Header -->
         <header class="dashboard-header">
             <div class="header-content">

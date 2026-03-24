@@ -1,6 +1,42 @@
-/* Admin Panel - Slash My Bill admin dashboard (no auth) */
+/* Admin Panel - Slash My Bill admin dashboard */
 var API_BASE_URL = 'https://l2fd4h481h.execute-api.us-east-1.amazonaws.com';
+var PASS_HASH = '36522ce904b9ea9bf439a6267171508ddcf95ff522a4188ecb2c5d07b8e5ab29';
 var allLeads = [], allTips = [], editingTip = null, deletingTip = null, debounceTimer = null;
+
+/* Password gate */
+var loginGate = document.getElementById('login-gate');
+var gateForm = document.getElementById('gate-form');
+var gatePassword = document.getElementById('gate-password');
+var gateError = document.getElementById('gate-error');
+var dashboardView = document.getElementById('dashboard-view');
+
+async function sha256(str) {
+  var buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
+  return Array.from(new Uint8Array(buf)).map(function(b){return b.toString(16).padStart(2,'0');}).join('');
+}
+
+gateForm.addEventListener('submit', async function(e) {
+  e.preventDefault();
+  var pw = gatePassword.value;
+  if (!pw) { gateError.textContent = 'Please enter password.'; return; }
+  var hash = await sha256(pw);
+  if (hash === PASS_HASH) {
+    sessionStorage.setItem('admin_ok', '1');
+    loginGate.hidden = true;
+    dashboardView.hidden = false;
+    loadLeads(); loadTips();
+  } else {
+    gateError.textContent = 'Wrong password.';
+    gatePassword.value = '';
+  }
+});
+
+if (sessionStorage.getItem('admin_ok') === '1') {
+  loginGate.hidden = true;
+  dashboardView.hidden = false;
+}
+
+/* DOM refs */
 var leadsPanel = document.getElementById('leads-tab');
 var tipsPanel = document.getElementById('tips-tab');
 var leadsSearch = document.getElementById('leads-search');
@@ -71,4 +107,5 @@ tipsTbody.addEventListener('click',function(e){var btn=e.target.closest('[data-a
 tipModal.addEventListener('click',function(e){if(e.target===tipModal)hideTipForm();});
 deleteDialog.addEventListener('click',function(e){if(e.target===deleteDialog)hideDeleteDialog();});
 
-loadLeads();loadTips();
+/* Auto-load if already authenticated */
+if(sessionStorage.getItem('admin_ok')==='1'){loadLeads();loadTips();}
