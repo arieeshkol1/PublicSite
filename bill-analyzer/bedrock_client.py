@@ -97,6 +97,13 @@ EC2 Reserved Instance Marketplace: Customers can buy discounted "second-hand" RI
 DO NOT recommend Savings Plans or Reserved Instances for: VPC, Route 53, CloudWatch, S3, KMS, Secrets Manager, Config, Cloud Map, Data Transfer, ECR, ECS (unless Fargate), SNS, SQS, API Gateway, Lambda (RI not available — use Compute SP only), Elastic Load Balancing, or any other service not listed above.
 CloudFront Security Savings Bundle (up to 30% off): Available for Amazon CloudFront. Commit to a monthly spend for 1 year. Also includes free AWS WAF usage up to 10% of the committed amount. Recommend this instead of generic Savings Plans for CloudFront and WAF.
 
+## Savings Plans & Reserved Instances overlap rules:
+SP and RI CAN coexist on the same account. AWS applies discounts in this order:
+1. Reserved Instances are applied FIRST to matching usage (exact instance type/region match).
+2. Savings Plans are applied SECOND to remaining eligible usage not already covered by RIs.
+3. Any leftover usage is billed at On-Demand rates.
+This means RI + SP never double-discount the same hour of usage. Best practice: use RIs for steady-state predictable workloads (specific instance type/region), then layer Compute Savings Plans on top to cover variable/flexible usage across instance families and regions.
+
 ## EC2 cost optimization tiers (recommend in this order):
 1. Savings Plans / Reserved Instances (for steady-state workloads)
 2. EC2 Reserved Instance Marketplace (buy discounted second-hand RIs)
@@ -119,9 +126,9 @@ Provide analysis in this JSON format:
 1. SUMMARY: 2-3 sentences about total cost and top spenders.
 
 2. SERVICE_ANALYSIS: For each service:
-   - explanation: Use actual line item data if available (cite quantities, rates, amounts). If line items show "NatGateway-Hours: 672", write "You ran a NAT Gateway for 672 hours at $0.045/hr = $30.24". If no line items, briefly describe the pricing model. Do NOT start with "This represents" or "Charges for".
+   - explanation: Use actual line item data if available (cite quantities, rates, amounts). If region breakdown data is provided, mention the top regions and instance types. If line items show "NatGateway-Hours: 672", write "You ran a NAT Gateway for 672 hours at $0.045/hr = $30.24". If no line items, briefly describe the pricing model. Do NOT start with "This represents" or "Charges for".
    - billing_details: One-line formula with actual quantities if available (e.g., "672 hrs x $0.045/hr = $30.24"). Use generic units only if no line items exist.
-   - recommendations: 1-2 cost-saving tips with estimated savings %. Only suggest Savings Plans or Reserved Instances if the service is eligible per the rules above.
+   - recommendations: 1-2 cost-saving tips with estimated savings %. Only suggest Savings Plans or Reserved Instances if the service is eligible per the rules above. If region data shows usage spread across multiple regions, recommend consolidating to fewer regions where possible.
 
 3. SAVINGS_PLAN_ANALYSIS: Based on Commitment Discount Status, recommend Savings Plans and/or Reserved Instances. Only mention services that are eligible per the rules above.
 
@@ -411,6 +418,34 @@ def _build_prompt(parsed_bill: Dict[str, Any], tips: List[Dict[str, Any]]) -> st
             bill_lines.append("  - Reserved Instances: NOT DETECTED")
         if discounts.get("savings_amount"):
             bill_lines.append(f"  - Total savings shown in bill: {discounts['savings_amount']}")
+
+    # Include region breakdown per service (if available)
+    region_breakdown = parsed_bill.get("region_breakdown", {})
+    if region_breakdown:
+        bill_lines.append("")
+        bill_lines.append("Region Breakdown by Service:")
+        for svc, regions in region_breakdown.items():
+            bill_lines.append(f"  {svc}:")
+            for region_entry in regions[:6]:  # cap regions per service
+                rname = region_entry.get("region", "Unknown")
+                rcost = region_entry.get("cost", 0)
+                bill_lines.append(f"    - {rname}: {rcost}")
+                for detail in region_entry.get("details", [])[:4]:  # cap details per region
+                    bill_lines.append(f"      > {detail.get('description', '')}")
+
+    # Include region breakdown per service (if available)
+    region_breakdown = parsed_bill.get("region_breakdown", {})
+    if region_breakdown:
+        bill_lines.append("")
+        bill_lines.append("Region Breakdown by Service:")
+        for svc, regions in region_breakdown.items():
+            bill_lines.append(f"  {svc}:")
+            for region_entry in regions[:6]:  # cap regions per service
+                rname = region_entry.get("region", "Unknown")
+                rcost = region_entry.get("cost", 0)
+                bill_lines.append(f"    - {rname}: {rcost}")
+                for detail in region_entry.get("details", [])[:4]:  # cap details per region
+                    bill_lines.append(f"      > {detail.get('description', '')}")
 
     bill_data = "\n".join(bill_lines)
 

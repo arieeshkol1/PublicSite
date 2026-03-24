@@ -681,6 +681,44 @@ def _build_explanations_section(
             ("BOX", (0, 0), (-1, -1), 0.5, MEDIUM_GRAY),
         ]))
         elements.append(body_table)
+
+        # --- Region breakdown sub-table (if available) ---
+        region_breakdown = parsed_bill.get("region_breakdown", {})
+        regions = region_breakdown.get(service, [])
+        if regions:
+            region_rows = [[
+                Paragraph("<b>Region</b>", styles["small"]),
+                Paragraph("<b>Cost</b>", styles["small"]),
+                Paragraph("<b>Details</b>", styles["small"]),
+            ]]
+            currency = parsed_bill.get("currency", "USD")
+            for region_entry in regions:
+                rname = region_entry.get("region", "Unknown")
+                rcost = _format_cost(region_entry.get("cost", 0))
+                details = region_entry.get("details", [])
+                detail_text = "; ".join(
+                    d.get("description", "")[:60] for d in details[:3]
+                )
+                if len(details) > 3:
+                    detail_text += f"; +{len(details) - 3} more"
+                region_rows.append([
+                    Paragraph(rname, styles["small"]),
+                    Paragraph(f"{currency} {rcost}", styles["small"]),
+                    Paragraph(detail_text if detail_text else "-", styles["small"]),
+                ])
+            region_table = Table(region_rows, colWidths=[2.0 * inch, 1.0 * inch, 4.0 * inch])
+            region_table.setStyle(TableStyle([
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#E8EEF8")),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [WHITE, LIGHT_BG]),
+                ("GRID", (0, 0), (-1, -1), 0.3, MEDIUM_GRAY),
+                ("TOPPADDING", (0, 0), (-1, -1), 3),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+                ("LEFTPADDING", (0, 0), (-1, -1), 6),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+            ]))
+            elements.append(region_table)
+
         elements.append(Spacer(1, 10))
 
     return elements

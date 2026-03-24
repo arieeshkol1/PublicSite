@@ -334,6 +334,9 @@ def _parse_billing_console(text: str, tables: List[List[List[str]]]) -> ParsedBi
     # Enrich line items with detailed pricing sub-items for Bedrock
     detail_items = _extract_billing_console_details(text, line_items)
 
+    # Extract region-level breakdown per service
+    region_breakdown = _extract_region_breakdown(text, line_items)
+
     total_cost = sum(item["cost"] for item in line_items)
     service_totals = _aggregate_service_totals(line_items)
     commitment_discounts = _detect_commitment_discounts(text)
@@ -351,6 +354,7 @@ def _parse_billing_console(text: str, tables: List[List[List[str]]]) -> ParsedBi
         "account_id": metadata.get("account_id", "N/A"),
         "service_totals": service_totals,
         "commitment_discounts": commitment_discounts,
+        "region_breakdown": region_breakdown,
     }
     if tax_amount and tax_amount > Decimal("0"):
         result["tax_amount"] = tax_amount
@@ -542,6 +546,155 @@ def _extract_billing_console_services(text: str) -> List[Dict[str, Any]]:
         })
 
     return items
+
+
+def _extract_region_breakdown(
+    text: str, line_items: List[Dict[str, Any]]
+) -> Dict[str, List[Dict[str, Any]]]:
+    """
+    Extract region-level cost breakdown and instance/resource details per service.
+
+    Parses the billing console text to find region lines like:
+        "US East (N. Virginia) USD 250.00"
+        "EU (Ireland) USD 50.00"
+    and detail lines like:
+        "$0.097 per db.t3.medium Single-AZ instance hour ... 672 Hrs USD 65.18"
+
+    Groups them under their parent service.
+
+    Returns:
+        Dict mapping service name -> list of region/detail dicts:
+        {
+            "Elastic Compute Cloud": [
+                {"region": "US East (N. Virginia)", "cost": Decimal("250.00"), "details": [
+                    {"description": "2x t3.xlarge running Linux, 672 Hrs at $0.1664/Hr", "cost": Decimal("223.66")}
+                ]}
+            ]
+        }
+    """
+    breakdown: Dict[str, List[Dict[str, Any]]] = {}
+
+    charges_match = re.search(r"Charges by service\b", text)
+    if not charges_match:
+        return breakdown
+
+    charges_text = text[charges_match.end():]
+
+    # Cut off at known boundaries
+    for boundary in ["Charges by account", "Invoices\n", "Tax Invoices"]:
+        idx = charges_text.find(boundary)
+        if idx > 0:
+            charges_text = charges_text[:idx]
+
+    service_names = [item["service"] for item in line_items]
+
+    # Region name patterns
+    region_prefixes = (
+        "US East", "US West", "EU (", "Europe (", "Asia Pacific",
+        "Canada", "South America", "Middle East", "Africa",
+        "Israel", "Global", "Any",
+    )
+
+    # USD amount pattern at end of line
+    usd_pattern = re.compile(r"^(.+?)\s+USD\s+([\d,]+\.\d{2})\s*$", re.MULTILINE)
+
+    # Detail pricing pattern: $rate per <description> <qty> <unit> USD <amount>
+    detail_pattern = re.compile(
+        r"\$([\d,.]+)\s+per\s+(.+?)\s+([\d,.]+)\s+(Hrs?|GB|Requests?|Count|Queries|Keys?|Secrets?|Hrs:HrsUsage)\s+USD\s+([\d,.]+)",
+        re.IGNORECASE,
+    )
+
+    current_service = ""
+    current_region_name = ""
+    current_region_entry: Dict[str, Any] | None = None
+
+    for line in charges_text.split("\n"):
+        stripped = line.strip()
+        if not stripped:
+            continue
+
+        # Check if this line is a top-level service header
+        is_service_header = False
+        for svc in service_names:
+            if stripped.startswith(svc) and "USD" in stripped:
+                current_service = svc
+                is_service_header = True
+                if current_service not in breakdown:
+                    breakdown[current_service] = []
+                current_region_name = ""
+                current_region_entry = None
+                break
+
+        if is_service_header:
+            continue
+
+        if not current_service:
+            continue
+
+        # Check if this is a region line (e.g., "US East (N. Virginia) USD 132.05")
+        is_region = False
+        for prefix in region_prefixes:
+            if stripped.startswith(prefix):
+                is_region = True
+                break
+
+        if is_region:
+            region_match = usd_pattern.match(stripped)
+            if region_match:
+                region_name = region_match.group(1).strip()
+                region_cost_str = region_match.group(2).replace(",", "")
+                try:
+                    region_cost = Decimal(region_cost_str)
+                except InvalidOperation:
+                    continue
+                current_region_name = region_name
+                current_region_entry = {
+                    "region": region_name,
+                    "cost": region_cost,
+                    "details": [],
+                }
+                breakdown[current_service].append(current_region_entry)
+            continue
+
+        # Check if this is a detail pricing line
+        for match in detail_pattern.finditer(stripped):
+            rate = match.group(1).replace(",", "")
+            desc_text = match.group(2).strip()
+            quantity = match.group(3).replace(",", "")
+            unit = match.group(4)
+            amount = match.group(5).replace(",", "")
+
+            try:
+                cost_val = Decimal(amount)
+            except InvalidOperation:
+                continue
+
+            if cost_val <= Decimal("0"):
+                continue
+
+            detail_desc = f"{desc_text}: {quantity} {unit} at ${rate}/{unit.rstrip('s')} = ${amount}"
+
+            if current_region_entry is not None:
+                current_region_entry["details"].append({
+                    "description": detail_desc,
+                    "cost": cost_val,
+                })
+            elif current_service in breakdown:
+                # Detail without a region header — add to a "General" region
+                general_entry = None
+                for entry in breakdown[current_service]:
+                    if entry["region"] == "General":
+                        general_entry = entry
+                        break
+                if general_entry is None:
+                    general_entry = {"region": "General", "cost": Decimal("0"), "details": []}
+                    breakdown[current_service].append(general_entry)
+                general_entry["details"].append({
+                    "description": detail_desc,
+                    "cost": cost_val,
+                })
+
+    return breakdown
 
 
 def _extract_billing_console_details(
