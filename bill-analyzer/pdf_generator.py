@@ -43,7 +43,7 @@ WHITE = colors.white
 ACCENT_ORANGE = colors.HexColor("#FF6B35")
 
 # Logo image path (bundled with Lambda package)
-_LOGO_PATH = os.path.join(os.path.dirname(__file__), "eshkolaiLogo.png")
+_LOGO_PATH = os.path.join(os.path.dirname(__file__), "SlashMyBill.png")
 
 
 def _format_cost(value: Any) -> str:
