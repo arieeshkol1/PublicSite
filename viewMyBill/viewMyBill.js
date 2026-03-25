@@ -350,19 +350,47 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   async function analyzeFile(sessionId, email) {
-    // Start analysis (returns 202 processing or 200 complete)
-    var response = await fetch(API_GATEWAY_URL + '/analyze', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionId: sessionId, email: email }) });
-    if (!response.ok && response.status !== 202) { var msg = await parseErrorResponse(response); throw Object.assign(new Error(msg), { status: response.status, userMessage: msg }); }
-    var data = await response.json();
-    if (data.status === 'complete') return data;
+    // Start analysis — may return 200 (complete), 202 (processing), or 503 (API Gateway timeout but Lambda still running)
+    var response;
+    try {
+      response = await fetch(API_GATEWAY_URL + '/analyze', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionId: sessionId, email: email }) });
+    } catch (e) {
+      // Network error — start polling anyway in case Lambda is running
+      response = null;
+    }
 
-    // Poll for result every 4 seconds, up to 90 attempts (6 minutes)
-    for (var i = 0; i < 90; i++) {
-      await new Promise(function(r) { setTimeout(r, 4000); });
-      var pollRes = await fetch(API_GATEWAY_URL + '/analyze', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionId: sessionId, email: email }) });
-      if (!pollRes.ok && pollRes.status !== 202) { var errMsg = await parseErrorResponse(pollRes); throw Object.assign(new Error(errMsg), { status: pollRes.status, userMessage: errMsg }); }
-      var pollData = await pollRes.json();
-      if (pollData.status === 'complete') return pollData;
+    if (response && response.ok) {
+      try {
+        var data = await response.json();
+        if (data.status === 'complete') return data;
+      } catch (e) { /* ignore parse error, start polling */ }
+    }
+
+    // If we got 400/404, that's a real error — don't poll
+    if (response && response.status >= 400 && response.status < 500) {
+      var msg = await parseErrorResponse(response);
+      throw Object.assign(new Error(msg), { status: response.status, userMessage: msg });
+    }
+
+    // For 5xx (API Gateway timeout) or 202 — start polling
+    // Lambda is still running in the background, result will appear in S3
+    for (var i = 0; i < 120; i++) {
+      await new Promise(function(r) { setTimeout(r, 5000); });
+      try {
+        var pollRes = await fetch(API_GATEWAY_URL + '/analyze', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionId: sessionId, email: email }) });
+        if (pollRes.ok) {
+          var pollData = await pollRes.json();
+          if (pollData.status === 'complete') return pollData;
+        }
+        // 202 = still processing, 5xx = Lambda still running, keep polling
+        if (pollRes.status >= 400 && pollRes.status < 500) {
+          var errMsg = await parseErrorResponse(pollRes);
+          throw Object.assign(new Error(errMsg), { status: pollRes.status, userMessage: errMsg });
+        }
+      } catch (e) {
+        if (e.userMessage) throw e; // re-throw 4xx errors
+        // Network errors — keep polling
+      }
     }
     throw Object.assign(new Error('Analysis timed out'), { userMessage: 'Analysis is taking too long. Please try again with a smaller bill.' });
   }
