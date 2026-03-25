@@ -332,6 +332,7 @@ document.addEventListener('DOMContentLoaded', () => {
   async function parseErrorResponse(response) {
     try { const data = await response.json(); if (data && data.message) return data.message; } catch (_) {}
     if (response.status === 429) return 'Service is busy. Please wait a moment and try again';
+    if (response.status === 503) return 'Analysis is taking longer than expected. Please try again — smaller bills process faster';
     if (response.status >= 500) return 'Something went wrong. Please try again';
     return 'Something went wrong. Please try again';
   }
