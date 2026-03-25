@@ -1,16 +1,12 @@
 """
 AWS Bill Analyzer - Lambda Handler
 
-Orchestrates the bill analysis pipeline:
-    1. Retrieve bill PDF from S3 using sessionId
-    2. Parse bill (pdfplumber)
-    3. RAG lookup (DynamoDB tips)
-    4. AI analysis (Bedrock Nova Lite)
-    5. Generate merged PDF report (ReportLab + PyPDF2)
-    6. Upload report to S3
-    7. Return pre-signed download URL
+Orchestrates the bill analysis pipeline with async polling:
+    Phase 1 (sync, <2s): Receive request, invoke self async, return "processing"
+    Phase 2 (async, up to 300s): Parse bill, AI analysis, generate PDF, upload to S3
+    Poll: Frontend polls /analyze, Lambda checks S3 for result
 
-Runtime: Python 3.12 | Memory: 512 MB | Timeout: 120s
+Runtime: Python 3.12 | Memory: 512 MB | Timeout: 300s
 """
 
 import json
@@ -25,20 +21,18 @@ from bill_parser import parse_bill
 from bedrock_client import analyze_bill
 from pdf_generator import generate_report
 
-# Configure logging
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-# Initialize AWS clients
 s3_client = boto3.client('s3')
+lambda_client = boto3.client('lambda')
 
-# Environment variables
 BILL_STORAGE_BUCKET = os.environ.get(
     'BILL_STORAGE_BUCKET', 'aws-bill-analyzer-storage-991105135552'
 )
 PRESIGNED_URL_EXPIRY = int(os.environ.get('PRESIGNED_URL_EXPIRY', '86400'))
+FUNCTION_NAME = os.environ.get('AWS_LAMBDA_FUNCTION_NAME', 'aws-bill-analyzer-viewmybill')
 
-# CORS headers
 CORS_HEADERS = {
     'Content-Type': 'application/json',
     'Access-Control-Allow-Origin': '*',
@@ -47,22 +41,15 @@ CORS_HEADERS = {
 }
 
 
-
 def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
-    """
-    Handle bill analysis requests from API Gateway.
-
-    Expects a JSON body with:
-        - sessionId (str): Session identifier from the upload step.
-        - email (str): User's email address.
-
-    Returns:
-        API Gateway proxy response with downloadUrl and summary on success,
-        or an error response with appropriate HTTP status code.
-    """
+    """Handle bill analysis requests — supports async processing with polling."""
     logger.info("Received analysis request")
 
-    # 1. Parse and validate request
+    # Check if this is an async background invocation
+    if event.get('_async_process'):
+        return _process_bill(event)
+
+    # Parse request
     try:
         request_data = _parse_request(event)
     except ValueError as e:
@@ -71,77 +58,151 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
 
     session_id = request_data['sessionId']
     email = request_data['email']
-    logger.info("Processing session %s", session_id)
 
-    # 2. Retrieve bill PDF from S3
+    # Check if result already exists (polling)
+    result = _check_result(session_id)
+    if result:
+        return result
+
+    # Check if already processing
+    if _is_processing(session_id):
+        return _create_response(202, {'status': 'processing', 'sessionId': session_id})
+
+    # Mark as processing
+    _set_processing(session_id)
+
+    # Invoke self asynchronously for the heavy work
     try:
+        lambda_client.invoke(
+            FunctionName=FUNCTION_NAME,
+            InvocationType='Event',
+            Payload=json.dumps({
+                '_async_process': True,
+                'sessionId': session_id,
+                'email': email,
+            }),
+        )
+        logger.info("Async invocation started for session %s", session_id)
+    except Exception:
+        logger.error("Failed to invoke async for session %s", session_id, exc_info=True)
+        _clear_processing(session_id)
+        return _create_error_response(500, "Failed to start analysis. Please try again.", retryable=True)
+
+    return _create_response(202, {'status': 'processing', 'sessionId': session_id})
+
+
+def _process_bill(event: Dict[str, Any]) -> Dict[str, Any]:
+    """Background async processing — parse, analyze, generate PDF, upload."""
+    session_id = event['sessionId']
+    email = event['email']
+    logger.info("Async processing session %s", session_id)
+
+    try:
+        # Retrieve bill
         pdf_bytes, filename = _retrieve_bill_from_s3(session_id)
-    except FileNotFoundError:
-        logger.warning("Session not found: %s", session_id)
-        return _create_error_response(404, "Session not found or expired")
-    except RuntimeError:
-        logger.error("Failed to retrieve bill for session %s", session_id)
-        return _create_error_response(500, "Failed to retrieve bill. Please try again.", retryable=True)
 
-    # 3. Parse bill
-    try:
+        # Parse bill
         parsed_bill = parse_bill(pdf_bytes)
-    except ValueError as e:
-        logger.warning("Bill parsing failed for session %s: %s", session_id, str(e))
-        return _create_error_response(
-            400,
-            "Unable to parse the uploaded bill. Please ensure it is a valid AWS invoice PDF."
-        )
-    except Exception:
-        logger.error("Unexpected bill parsing error for session %s", session_id, exc_info=True)
-        return _create_error_response(
-            400,
-            "Unable to parse the uploaded bill. Please ensure it is a valid AWS invoice PDF."
-        )
 
-    # 4. AI analysis via Bedrock
-    try:
+        # AI analysis
         analysis = analyze_bill(parsed_bill)
-    except RuntimeError as e:
-        error_msg = str(e)
-        if "Service is busy" in error_msg:
-            logger.warning("Bedrock throttled for session %s", session_id)
-            return _create_error_response(429, "Service is busy. Please wait a moment and try again.", retryable=True)
-        if "AI service temporarily unavailable" in error_msg:
-            logger.error("Bedrock unavailable for session %s", session_id)
-            return _create_error_response(503, "AI service temporarily unavailable. Please try again later.", retryable=True)
-        logger.error("Bedrock error for session %s: %s", session_id, error_msg)
-        return _create_error_response(504, "Analysis request timed out. Please try again.", retryable=True)
-    except Exception:
-        logger.error("Unexpected analysis error for session %s", session_id, exc_info=True)
-        return _create_error_response(504, "Analysis request timed out. Please try again.", retryable=True)
 
-    # 5. Generate PDF report
-    try:
+        # Generate PDF
         report_bytes = generate_report(pdf_bytes, parsed_bill, analysis, session_id, email)
-    except Exception:
-        logger.error("PDF generation failed for session %s", session_id, exc_info=True)
-        return _create_error_response(500, "Failed to generate report. Please try again.", retryable=True)
 
-    # 6. Upload report to S3 and get pre-signed URL
-    try:
+        # Upload report
         download_url = _upload_report_to_s3(session_id, report_bytes)
-    except RuntimeError as e:
-        error_msg = str(e)
-        if "pre-signed" in error_msg.lower() or "presigned" in error_msg.lower():
-            logger.error("Pre-signed URL generation failed for session %s", session_id)
-            return _create_error_response(
-                500,
-                "Report was generated but download link creation failed. Please try again.",
-                retryable=True,
-            )
-        logger.error("Report upload failed for session %s", session_id)
-        return _create_error_response(500, "Failed to store report. Please try again.", retryable=True)
 
-    # 7. Return success
-    summary = analysis.get('summary', '')
-    logger.info("Analysis complete for session %s", session_id)
-    return _create_success_response(download_url, summary, session_id, filename)
+        # Save result metadata
+        summary = analysis.get('summary', '')
+        _save_result(session_id, download_url, summary, filename)
+        _clear_processing(session_id)
+
+        logger.info("Async processing complete for session %s", session_id)
+        return {'status': 'complete'}
+
+    except Exception as e:
+        logger.error("Async processing failed for session %s: %s", session_id, str(e), exc_info=True)
+        _save_error(session_id, str(e))
+        _clear_processing(session_id)
+        return {'status': 'error'}
+
+
+def _check_result(session_id: str):
+    """Check if analysis result exists in S3. Returns response or None."""
+    result_key = f"reports/{session_id}/result.json"
+    try:
+        obj = s3_client.get_object(Bucket=BILL_STORAGE_BUCKET, Key=result_key)
+        data = json.loads(obj['Body'].read().decode('utf-8'))
+        if data.get('error'):
+            _cleanup_status(session_id)
+            return _create_error_response(503, "Analysis failed. Please try again.", retryable=True)
+        return _create_response(200, {
+            'status': 'complete',
+            'downloadUrl': data['downloadUrl'],
+            'summary': data['summary'],
+            'sessionId': session_id,
+            'originalFilename': data.get('originalFilename', ''),
+        })
+    except ClientError as e:
+        if e.response['Error']['Code'] == 'NoSuchKey':
+            return None
+        return None
+
+
+def _is_processing(session_id: str) -> bool:
+    """Check if a processing marker exists."""
+    try:
+        s3_client.head_object(Bucket=BILL_STORAGE_BUCKET, Key=f"reports/{session_id}/processing")
+        return True
+    except ClientError:
+        return False
+
+
+def _set_processing(session_id: str):
+    """Create a processing marker in S3."""
+    try:
+        s3_client.put_object(Bucket=BILL_STORAGE_BUCKET, Key=f"reports/{session_id}/processing", Body=b'1')
+    except ClientError:
+        pass
+
+
+def _clear_processing(session_id: str):
+    """Remove the processing marker."""
+    try:
+        s3_client.delete_object(Bucket=BILL_STORAGE_BUCKET, Key=f"reports/{session_id}/processing")
+    except ClientError:
+        pass
+
+
+def _save_result(session_id: str, download_url: str, summary: str, filename: str):
+    """Save analysis result metadata to S3."""
+    result_key = f"reports/{session_id}/result.json"
+    s3_client.put_object(
+        Bucket=BILL_STORAGE_BUCKET,
+        Key=result_key,
+        Body=json.dumps({'downloadUrl': download_url, 'summary': summary, 'originalFilename': filename}),
+        ContentType='application/json',
+    )
+
+
+def _save_error(session_id: str, error_msg: str):
+    """Save error result to S3."""
+    result_key = f"reports/{session_id}/result.json"
+    s3_client.put_object(
+        Bucket=BILL_STORAGE_BUCKET,
+        Key=result_key,
+        Body=json.dumps({'error': True, 'message': error_msg}),
+        ContentType='application/json',
+    )
+
+
+def _cleanup_status(session_id: str):
+    """Remove result.json so user can retry."""
+    try:
+        s3_client.delete_object(Bucket=BILL_STORAGE_BUCKET, Key=f"reports/{session_id}/result.json")
+    except ClientError:
+        pass
 
 
 
@@ -274,18 +335,6 @@ def _upload_report_to_s3(session_id: str, report_bytes: bytes) -> str:
 def _create_success_response(
     download_url: str, summary: str, session_id: str, original_filename: str = ""
 ) -> Dict[str, Any]:
-    """
-    Create a success response with download URL and summary.
-
-    Args:
-        download_url: Pre-signed S3 URL for the report.
-        summary: Brief AI-generated bill summary.
-        session_id: Session identifier.
-        original_filename: Original uploaded filename.
-
-    Returns:
-        API Gateway proxy response dict.
-    """
     return {
         'statusCode': 200,
         'headers': CORS_HEADERS,
@@ -295,6 +344,14 @@ def _create_success_response(
             'sessionId': session_id,
             'originalFilename': original_filename,
         }),
+    }
+
+
+def _create_response(status_code: int, body: dict) -> Dict[str, Any]:
+    return {
+        'statusCode': status_code,
+        'headers': CORS_HEADERS,
+        'body': json.dumps(body),
     }
 
 

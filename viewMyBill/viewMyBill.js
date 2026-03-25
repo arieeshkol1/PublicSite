@@ -350,9 +350,21 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   async function analyzeFile(sessionId, email) {
-    const response = await fetch(`${API_GATEWAY_URL}/analyze`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionId, email }) });
-    if (!response.ok) { const msg = await parseErrorResponse(response); throw Object.assign(new Error(msg), { status: response.status, userMessage: msg }); }
-    return response.json();
+    // Start analysis (returns 202 processing or 200 complete)
+    var response = await fetch(API_GATEWAY_URL + '/analyze', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionId: sessionId, email: email }) });
+    if (!response.ok && response.status !== 202) { var msg = await parseErrorResponse(response); throw Object.assign(new Error(msg), { status: response.status, userMessage: msg }); }
+    var data = await response.json();
+    if (data.status === 'complete') return data;
+
+    // Poll for result every 4 seconds, up to 90 attempts (6 minutes)
+    for (var i = 0; i < 90; i++) {
+      await new Promise(function(r) { setTimeout(r, 4000); });
+      var pollRes = await fetch(API_GATEWAY_URL + '/analyze', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionId: sessionId, email: email }) });
+      if (!pollRes.ok && pollRes.status !== 202) { var errMsg = await parseErrorResponse(pollRes); throw Object.assign(new Error(errMsg), { status: pollRes.status, userMessage: errMsg }); }
+      var pollData = await pollRes.json();
+      if (pollData.status === 'complete') return pollData;
+    }
+    throw Object.assign(new Error('Analysis timed out'), { userMessage: 'Analysis is taking too long. Please try again with a smaller bill.' });
   }
 
   async function handleSubmit(e) {
