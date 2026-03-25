@@ -151,6 +151,15 @@ Resources:
                   - dynamodb:BatchGetItem
                 Resource:
                   - !GetAtt CostOptimizationTipsTable.Arn
+        - PolicyName: LambdaSelfInvoke
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource:
+                  - !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:aws-bill-analyzer-viewmybill'
       Tags:
         - Key: Project
           Value: ViewMyBill

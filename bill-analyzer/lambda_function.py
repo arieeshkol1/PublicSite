@@ -1,10 +1,10 @@
 """
 AWS Bill Analyzer - Lambda Handler
 
-Orchestrates the bill analysis pipeline with async polling:
-    First call: Starts processing synchronously. API Gateway may timeout at 29s,
-                but Lambda continues running for up to 900s. Result saved to S3.
-    Poll calls: Frontend polls /analyze every 4s, Lambda checks S3 for result.
+Orchestrates the bill analysis pipeline with async self-invoke:
+    1. First /analyze call: Sets processing marker, invokes self async, returns 202
+    2. Async invocation: Processes bill (parse/Bedrock/PDF), saves result to S3
+    3. Poll /analyze calls: Check S3 for result.json, return 202 or 200
 
 Runtime: Python 3.12 | Memory: 512 MB | Timeout: 900s
 """
@@ -25,11 +25,13 @@ logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
 s3_client = boto3.client('s3')
+lambda_client = boto3.client('lambda')
 
 BILL_STORAGE_BUCKET = os.environ.get(
     'BILL_STORAGE_BUCKET', 'aws-bill-analyzer-storage-991105135552'
 )
 PRESIGNED_URL_EXPIRY = int(os.environ.get('PRESIGNED_URL_EXPIRY', '86400'))
+FUNCTION_NAME = os.environ.get('AWS_LAMBDA_FUNCTION_NAME', 'aws-bill-analyzer-viewmybill')
 
 CORS_HEADERS = {
     'Content-Type': 'application/json',
@@ -40,7 +42,11 @@ CORS_HEADERS = {
 
 
 def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
-    """Handle bill analysis requests with polling support."""
+    """Handle bill analysis requests with async self-invoke and polling."""
+    # Async background invocation — do the actual work
+    if event.get('_async'):
+        return _process_bill(event['sessionId'], event['email'])
+
     logger.info("Received analysis request")
 
     # Parse request
@@ -58,55 +64,56 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     if result:
         return result
 
-    # Check if already processing (another invocation is working on it)
+    # Check if already processing
     if _is_processing(session_id):
         return _create_response(202, {'status': 'processing', 'sessionId': session_id})
 
-    # Mark as processing and do the work
-    # If API Gateway times out at 29s, Lambda keeps running.
-    # Frontend polls and picks up result from S3 when done.
+    # Start async processing: set marker, invoke self, return 202
     _set_processing(session_id)
-    logger.info("Starting processing for session %s", session_id)
+
+    try:
+        lambda_client.invoke(
+            FunctionName=FUNCTION_NAME,
+            InvocationType='Event',
+            Payload=json.dumps({'_async': True, 'sessionId': session_id, 'email': email}),
+        )
+        logger.info("Async invoke started for session %s", session_id)
+    except Exception:
+        logger.error("Failed to invoke async for session %s", session_id, exc_info=True)
+        _clear_processing(session_id)
+        return _create_error_response(500, "Failed to start analysis. Please try again.", retryable=True)
+
+    return _create_response(202, {'status': 'processing', 'sessionId': session_id})
+
+
+def _process_bill(session_id: str, email: str) -> Dict[str, Any]:
+    """Async background processing — runs in a separate Lambda invocation."""
+    logger.info("ASYNC START session %s", session_id)
 
     try:
         pdf_bytes, filename = _retrieve_bill_from_s3(session_id)
-        logger.info("Retrieved bill for session %s (%d bytes)", session_id, len(pdf_bytes))
+        logger.info("ASYNC retrieved bill %d bytes", len(pdf_bytes))
 
         parsed_bill = parse_bill(pdf_bytes)
-        num_services = len(parsed_bill.get('service_totals', {}))
-        logger.info("Parsed bill: %d services for session %s", num_services, session_id)
+        logger.info("ASYNC parsed %d services", len(parsed_bill.get('service_totals', {})))
 
         analysis = analyze_bill(parsed_bill)
-        logger.info("Bedrock analysis complete for session %s", session_id)
+        logger.info("ASYNC Bedrock done")
 
         report_bytes = generate_report(pdf_bytes, parsed_bill, analysis, session_id, email)
-        logger.info("PDF generated for session %s (%d bytes)", session_id, len(report_bytes))
+        logger.info("ASYNC PDF generated %d bytes", len(report_bytes))
 
         download_url = _upload_report_to_s3(session_id, report_bytes)
-        summary = analysis.get('summary', '')
-        _save_result(session_id, download_url, summary, filename)
+        _save_result(session_id, download_url, analysis.get('summary', ''), filename)
         _clear_processing(session_id)
+        logger.info("ASYNC COMPLETE session %s", session_id)
+        return {'status': 'complete'}
 
-        logger.info("Processing complete for session %s", session_id)
-        return _create_response(200, {
-            'status': 'complete',
-            'downloadUrl': download_url,
-            'summary': summary,
-            'sessionId': session_id,
-            'originalFilename': filename,
-        })
-
-    except FileNotFoundError:
-        _clear_processing(session_id)
-        return _create_error_response(404, "Session not found or expired")
-    except ValueError as e:
-        _clear_processing(session_id)
-        return _create_error_response(400, "Unable to parse the uploaded bill. Please ensure it is a valid AWS invoice PDF.")
     except Exception as e:
-        logger.error("Processing failed for session %s: %s", session_id, str(e), exc_info=True)
+        logger.error("ASYNC FAILED session %s: %s", session_id, str(e), exc_info=True)
         _save_error(session_id, str(e))
         _clear_processing(session_id)
-        return _create_error_response(503, "Analysis failed. Please try again.", retryable=True)
+        return {'status': 'error'}
 
 
 def _check_result(session_id: str):
