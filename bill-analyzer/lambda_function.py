@@ -100,15 +100,20 @@ def _process_bill(event: Dict[str, Any]) -> Dict[str, Any]:
     try:
         # Retrieve bill
         pdf_bytes, filename = _retrieve_bill_from_s3(session_id)
+        logger.info("Retrieved bill for session %s (%d bytes)", session_id, len(pdf_bytes))
 
         # Parse bill
         parsed_bill = parse_bill(pdf_bytes)
+        num_services = len(parsed_bill.get('service_totals', {}))
+        logger.info("Parsed bill: %d services", num_services)
 
         # AI analysis
         analysis = analyze_bill(parsed_bill)
+        logger.info("Bedrock analysis complete for session %s", session_id)
 
         # Generate PDF
         report_bytes = generate_report(pdf_bytes, parsed_bill, analysis, session_id, email)
+        logger.info("PDF generated for session %s (%d bytes)", session_id, len(report_bytes))
 
         # Upload report
         download_url = _upload_report_to_s3(session_id, report_bytes)
