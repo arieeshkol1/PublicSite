@@ -184,9 +184,6 @@ class TestLambdaHandler:
     def _make_event(self, session_id="sess-1", email="user@example.com"):
         return {"body": json.dumps({"sessionId": session_id, "email": email})}
 
-    def _make_async_event(self, session_id="sess-1", email="user@example.com"):
-        return {"_async_process": True, "sessionId": session_id, "email": email}
-
     def test_missing_body_returns_400(self):
         resp = lambda_handler({}, None)
         assert resp["statusCode"] == 400
@@ -197,18 +194,6 @@ class TestLambdaHandler:
         assert resp["statusCode"] == 400
         body = json.loads(resp["body"])
         assert body["error"] == "BadRequest"
-
-    @patch("lambda_function._check_result", return_value=None)
-    @patch("lambda_function._is_processing", return_value=False)
-    @patch("lambda_function._set_processing")
-    @patch("lambda_function._clear_processing")
-    @patch("lambda_function.lambda_client")
-    def test_first_call_returns_202_processing(self, mock_lc, mock_clear, mock_set, mock_is_proc, mock_check):
-        mock_lc.invoke.return_value = {}
-        resp = lambda_handler(self._make_event(), None)
-        assert resp["statusCode"] == 202
-        body = json.loads(resp["body"])
-        assert body["status"] == "processing"
 
     @patch("lambda_function._check_result")
     def test_poll_returns_complete_when_result_exists(self, mock_check):
@@ -221,7 +206,6 @@ class TestLambdaHandler:
         assert resp["statusCode"] == 200
         body = json.loads(resp["body"])
         assert body["status"] == "complete"
-        assert body["downloadUrl"] == "https://s3.example.com/report.pdf"
 
     @patch("lambda_function._check_result", return_value=None)
     @patch("lambda_function._is_processing", return_value=True)
@@ -231,43 +215,49 @@ class TestLambdaHandler:
         body = json.loads(resp["body"])
         assert body["status"] == "processing"
 
-    # --- Async processing path tests ---
+    @patch("lambda_function._check_result", return_value=None)
+    @patch("lambda_function._is_processing", return_value=False)
+    @patch("lambda_function._set_processing")
     @patch("lambda_function._retrieve_bill_from_s3")
-    @patch("lambda_function._save_error")
-    @patch("lambda_function._clear_processing")
-    def test_async_session_not_found(self, mock_clear, mock_save_err, mock_retrieve):
+    def test_session_not_found_returns_404(self, mock_retrieve, mock_set, mock_is_proc, mock_check):
         mock_retrieve.side_effect = FileNotFoundError("not found")
-        resp = lambda_handler(self._make_async_event(), None)
-        assert resp["status"] == "error"
-        mock_save_err.assert_called_once()
+        resp = lambda_handler(self._make_event(), None)
+        assert resp["statusCode"] == 404
 
+    @patch("lambda_function._check_result", return_value=None)
+    @patch("lambda_function._is_processing", return_value=False)
+    @patch("lambda_function._set_processing")
     @patch("lambda_function._save_result")
+    @patch("lambda_function._clear_processing")
     @patch("lambda_function._upload_report_to_s3")
     @patch("lambda_function.generate_report")
     @patch("lambda_function.analyze_bill")
     @patch("lambda_function.parse_bill")
     @patch("lambda_function._retrieve_bill_from_s3")
-    @patch("lambda_function._clear_processing")
-    def test_async_success_flow(self, mock_clear, mock_retrieve, mock_parse, mock_analyze, mock_gen, mock_upload, mock_save):
+    def test_success_flow(self, mock_retrieve, mock_parse, mock_analyze, mock_gen, mock_upload, mock_clear, mock_save, mock_set, mock_is_proc, mock_check):
         mock_retrieve.return_value = (b"%PDF-data", "invoice.pdf")
         mock_parse.return_value = {"summary": "test"}
         mock_analyze.return_value = {"summary": "Your bill totals $150."}
         mock_gen.return_value = b"%PDF-report"
         mock_upload.return_value = "https://s3.example.com/report.pdf"
+        resp = lambda_handler(self._make_event(), None)
+        assert resp["statusCode"] == 200
+        body = json.loads(resp["body"])
+        assert body["downloadUrl"] == "https://s3.example.com/report.pdf"
+        assert body["summary"] == "Your bill totals $150."
 
-        resp = lambda_handler(self._make_async_event(), None)
-        assert resp["status"] == "complete"
-        mock_save.assert_called_once()
-
+    @patch("lambda_function._check_result", return_value=None)
+    @patch("lambda_function._is_processing", return_value=False)
+    @patch("lambda_function._set_processing")
+    @patch("lambda_function._save_error")
+    @patch("lambda_function._clear_processing")
     @patch("lambda_function.analyze_bill")
     @patch("lambda_function.parse_bill")
     @patch("lambda_function._retrieve_bill_from_s3")
-    @patch("lambda_function._save_error")
-    @patch("lambda_function._clear_processing")
-    def test_async_bedrock_error_saves_error(self, mock_clear, mock_save_err, mock_retrieve, mock_parse, mock_analyze):
+    def test_bedrock_error_saves_error(self, mock_retrieve, mock_parse, mock_analyze, mock_clear, mock_save_err, mock_set, mock_is_proc, mock_check):
         mock_retrieve.return_value = (b"%PDF-data", "invoice.pdf")
         mock_parse.return_value = {"summary": "test"}
         mock_analyze.side_effect = RuntimeError("Service is busy")
-        resp = lambda_handler(self._make_async_event(), None)
-        assert resp["status"] == "error"
+        resp = lambda_handler(self._make_event(), None)
+        assert resp["statusCode"] == 503
         mock_save_err.assert_called_once()
