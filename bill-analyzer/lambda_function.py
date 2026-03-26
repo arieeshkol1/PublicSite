@@ -284,9 +284,18 @@ def _retrieve_bill_from_s3(session_id: str) -> tuple[bytes, str]:
     if not contents:
         raise FileNotFoundError(f"No bill found for session {session_id}")
 
-    # Pick the first (and typically only) object under the session prefix
-    bill_key = contents[0]['Key']
+    # Skip 0-byte folder markers — pick the first real file
+    bill_key = None
+    for obj in contents:
+        if obj.get('Size', 0) > 0 and not obj['Key'].endswith('/'):
+            bill_key = obj['Key']
+            break
+
+    if not bill_key:
+        raise FileNotFoundError(f"No bill found for session {session_id}")
+
     filename = bill_key.split('/')[-1] if '/' in bill_key else bill_key
+    logger.info("STEP 4.2.1: Downloading S3 key=%s size=%d", bill_key, next((o['Size'] for o in contents if o['Key'] == bill_key), 0))
 
     try:
         obj = s3_client.get_object(Bucket=BILL_STORAGE_BUCKET, Key=bill_key)
