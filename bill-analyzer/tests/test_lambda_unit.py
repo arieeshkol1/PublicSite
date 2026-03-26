@@ -70,7 +70,7 @@ class TestRetrieveBillFromS3:
     @patch("lambda_function.s3_client")
     def test_success(self, mock_s3):
         mock_s3.list_objects_v2.return_value = {
-            "Contents": [{"Key": "bills/sess-1/invoice.pdf"}]
+            "Contents": [{"Key": "bills/sess-1/invoice.pdf", "Size": 1024}]
         }
         body_mock = MagicMock()
         body_mock.read.return_value = b"%PDF-fake"
@@ -107,7 +107,7 @@ class TestRetrieveBillFromS3:
         from botocore.exceptions import ClientError
 
         mock_s3.list_objects_v2.return_value = {
-            "Contents": [{"Key": "bills/sess-1/invoice.pdf"}]
+            "Contents": [{"Key": "bills/sess-1/invoice.pdf", "Size": 1024}]
         }
         mock_s3.get_object.side_effect = ClientError(
             {"Error": {"Code": "NoSuchKey", "Message": "not found"}}, "GetObject"
