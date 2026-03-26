@@ -79,7 +79,7 @@ def handle_send_otp(event):
     # Send email via SES
     try:
         ses_client.send_email(
-            Source=SES_SENDER_EMAIL,
+            Source=f'SlashMyBill <{SES_SENDER_EMAIL}>',
             Destination={'ToAddresses': [email]},
             Message={
                 'Subject': {'Data': 'Your Slash My Bill verification code', 'Charset': 'UTF-8'},
@@ -143,10 +143,11 @@ def handle_verify_otp(event):
 def build_email_body(otp_code):
     return f"""<!DOCTYPE html>
 <html><head><meta charset="UTF-8"></head>
-<body style="font-family:Arial,sans-serif;max-width:480px;margin:0 auto;padding:20px;">
+<body style="font-family:Arial,sans-serif;max-width:480px;margin:0 auto;padding:20px;background:#ffffff;">
   <div style="text-align:center;padding:20px 0;border-bottom:2px solid #0066ff;">
-    <h2 style="color:#0a0e27;margin:0;">Eshkol AI</h2>
-    <p style="color:#666;margin:4px 0 0;">Cloud and AI Services</p>
+    <img src="https://www.eshkolai.com/SlashMyBill.png" alt="SlashMyBill" style="height:48px;margin-bottom:8px;" />
+    <h2 style="color:#0a0e27;margin:0;">SlashMyBill</h2>
+    <p style="color:#666;margin:4px 0 0;">AI-Powered AWS Bill Analysis</p>
   </div>
   <div style="padding:30px 0;text-align:center;">
     <p style="color:#333;font-size:16px;">Your verification code is:</p>
@@ -158,6 +159,9 @@ def build_email_body(otp_code):
     <p style="color:#999;font-size:12px;margin-top:24px;">
       If you did not request this code, please ignore this email.
     </p>
+  </div>
+  <div style="text-align:center;padding-top:16px;border-top:1px solid #eee;">
+    <p style="color:#999;font-size:11px;">eshkolai.com &bull; Cloud and AI Services</p>
   </div>
 </body></html>"""
 

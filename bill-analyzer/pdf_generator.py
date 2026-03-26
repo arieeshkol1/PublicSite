@@ -496,10 +496,13 @@ def _build_summary_section(
 
     if savings_totals:
         s_min, s_max, s_avg = savings_totals
+        y_min, y_max, y_avg = s_min * 12, s_max * 12, s_avg * 12
         savings_line = (
-            f" Based on our analysis, estimated potential savings range from "
-            f"<b>{currency} {s_min:,.2f}</b> (min) to <b>{currency} {s_max:,.2f}</b> (max), "
-            f"with an average of <b>{currency} {s_avg:,.2f}</b> per billing period."
+            f" Based on our analysis, estimated potential monthly savings range from "
+            f"<b>{currency} {s_min:,.2f}</b> to <b>{currency} {s_max:,.2f}</b> "
+            f"(avg <b>{currency} {s_avg:,.2f}</b>), "
+            f"or <b>{currency} {y_min:,.2f}</b> to <b>{currency} {y_max:,.2f}</b> "
+            f"(avg <b>{currency} {y_avg:,.2f}</b>) annually."
         )
         summary_text = summary_text.rstrip(".") + "." + savings_line
 
@@ -509,19 +512,29 @@ def _build_summary_section(
     # Savings highlight box (if we have numbers)
     if savings_totals:
         s_min, s_max, s_avg = savings_totals
-        savings_box_text = (
-            f'<b>Estimated Savings:</b> &nbsp; '
+        y_min, y_max, y_avg = s_min * 12, s_max * 12, s_avg * 12
+        monthly_text = (
+            f'<b>Monthly Savings:</b> &nbsp; '
             f'Min: <font color="#067D62"><b>{currency} {s_min:,.2f}</b></font> &nbsp;&nbsp;|&nbsp;&nbsp; '
             f'Max: <font color="#067D62"><b>{currency} {s_max:,.2f}</b></font> &nbsp;&nbsp;|&nbsp;&nbsp; '
             f'Avg: <font color="#067D62"><b>{currency} {s_avg:,.2f}</b></font>'
         )
-        savings_data = [[Paragraph(savings_box_text, styles["body_bold"])]]
+        yearly_text = (
+            f'<b>Yearly Savings:</b> &nbsp;&nbsp;&nbsp; '
+            f'Min: <font color="#067D62"><b>{currency} {y_min:,.2f}</b></font> &nbsp;&nbsp;|&nbsp;&nbsp; '
+            f'Max: <font color="#067D62"><b>{currency} {y_max:,.2f}</b></font> &nbsp;&nbsp;|&nbsp;&nbsp; '
+            f'Avg: <font color="#067D62"><b>{currency} {y_avg:,.2f}</b></font>'
+        )
+        savings_data = [
+            [Paragraph(monthly_text, styles["body_bold"])],
+            [Paragraph(yearly_text, styles["body_bold"])],
+        ]
         savings_table = Table(savings_data, colWidths=[7 * inch])
         savings_table.setStyle(TableStyle([
             ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#E8F5E9")),
             ("BOX", (0, 0), (-1, -1), 1, colors.HexColor("#067D62")),
-            ("TOPPADDING", (0, 0), (-1, -1), 8),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+            ("TOPPADDING", (0, 0), (-1, -1), 6),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
             ("LEFTPADDING", (0, 0), (-1, -1), 10),
         ]))
         elements.append(savings_table)
@@ -736,7 +749,13 @@ def _build_explanations_section(
 
     for item in sorted_items:
         service = str(item.get("service", "Unknown"))
-        cost = str(item.get("cost", "N/A"))
+        raw_cost = str(item.get("cost", "N/A"))
+        # Format cost with comma separators
+        cost_cleaned = raw_cost.replace("$", "").replace(",", "").strip()
+        try:
+            cost = f"${float(cost_cleaned):,.2f}"
+        except ValueError:
+            cost = raw_cost
         explanation = str(item.get("explanation", ""))
         billing_details = str(item.get("billing_details", ""))
         recommendations = item.get("recommendations", [])
@@ -807,13 +826,20 @@ def _build_explanations_section(
             svc_savings = _compute_service_savings(_extract_cost(item), recommendations)
             if svc_savings:
                 s_min, s_max, s_avg = svc_savings
+                y_min, y_max, y_avg = s_min * 12, s_max * 12, s_avg * 12
                 currency = parsed_bill.get("currency", "USD")
-                savings_line = (
-                    f'<font color="#067D62"><b>Potential savings: '
+                monthly_line = (
+                    f'<font color="#067D62"><b>Monthly: '
                     f'{currency} {s_min:,.2f} – {currency} {s_max:,.2f} '
                     f'(avg {currency} {s_avg:,.2f})</b></font>'
                 )
-                right_parts.append(Paragraph(savings_line, styles["rec_savings"]))
+                yearly_line = (
+                    f'<font color="#067D62"><b>Yearly: '
+                    f'{currency} {y_min:,.2f} – {currency} {y_max:,.2f} '
+                    f'(avg {currency} {y_avg:,.2f})</b></font>'
+                )
+                right_parts.append(Paragraph(monthly_line, styles["rec_savings"]))
+                right_parts.append(Paragraph(yearly_line, styles["rec_savings"]))
                 right_parts.append(Spacer(1, 4))
 
             for rec in recommendations:
