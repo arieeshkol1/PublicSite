@@ -569,3 +569,81 @@ body {
     .data-table thead th { padding: 10px 10px; font-size: 11px; }
     .data-table tbody td { padding: 8px 10px; }
 }
+
+/* ============================================================
+   Sortable Headers
+   ============================================================ */
+.sortable {
+    cursor: pointer;
+    user-select: none;
+    position: relative;
+}
+.sortable:hover {
+    background: rgba(255,255,255,0.1);
+}
+.sort-icon {
+    font-size: 10px;
+    opacity: 0.5;
+    margin-left: 4px;
+}
+.sortable.sort-asc .sort-icon::after { content: ' ▲'; }
+.sortable.sort-desc .sort-icon::after { content: ' ▼'; }
+.sortable.sort-asc .sort-icon,
+.sortable.sort-desc .sort-icon { opacity: 1; }
+
+/* ============================================================
+   Script Block
+   ============================================================ */
+.script-block {
+    background: #1e1e1e;
+    color: #d4d4d4;
+    padding: 16px;
+    border-radius: 8px;
+    font-family: Consolas, 'Courier New', monospace;
+    font-size: 13px;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    max-height: 400px;
+    overflow-y: auto;
+}
+
+.script-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 500;
+    background: #e0e7ff;
+    color: #3730a3;
+    cursor: pointer;
+    max-width: 120px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.script-badge:hover { background: #c7d2fe; }
+
+/* ============================================================
+   Larger Modal
+   ============================================================ */
+.modal-card-lg { max-width: 680px; }
+
+/* ============================================================
+   Optional Label + Field Hint
+   ============================================================ */
+.label-optional {
+    font-weight: 400;
+    font-size: 11px;
+    color: var(--gray);
+}
+.field-hint {
+    font-size: 12px;
+    color: var(--gray);
+    margin-top: 4px;
+}
+
+/* ============================================================
+   Notification fix
+   ============================================================ */
+.notification-success { background: var(--success); }
+.notification-error { background: var(--danger); }

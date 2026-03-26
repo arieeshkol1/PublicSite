@@ -51,6 +51,8 @@ def lambda_handler(event, context):
     routes = {
         'POST /admin/login': handle_login,
         'GET /admin/leads': handle_get_leads,
+        'PUT /admin/leads': handle_update_lead,
+        'DELETE /admin/leads': handle_delete_lead,
         'GET /admin/tips': handle_get_tips,
         'POST /admin/tips': handle_create_tip,
         'PUT /admin/tips': handle_update_tip,
@@ -155,6 +157,71 @@ def handle_get_tips(event):
         return create_error_response(500, 'ServerError', 'Failed to retrieve tips')
 
 
+def handle_update_lead(event):
+    """Update an existing lead's editable fields."""
+    try:
+        body = json.loads(event.get('body', '{}'))
+    except (json.JSONDecodeError, TypeError):
+        return create_error_response(400, 'InvalidRequest', 'Invalid request body')
+
+    email = body.get('email', '').strip()
+    timestamp = body.get('timestamp', '').strip()
+    if not email or not timestamp:
+        return create_error_response(400, 'InvalidRequest', 'Fields "email" and "timestamp" are required')
+
+    # Only allow updating non-key, non-system fields
+    editable = ['name', 'company', 'phone', 'notes']
+    updates = {f: body[f].strip() for f in editable if f in body}
+    if not updates:
+        return create_error_response(400, 'InvalidRequest', 'No editable fields provided')
+
+    expr = 'SET ' + ', '.join(f'#{k} = :{k}' for k in updates)
+    names = {f'#{k}': k for k in updates}
+    values = {f':{k}': v for k, v in updates.items()}
+
+    try:
+        table = dynamodb.Table(LEADS_TABLE_NAME)
+        table.update_item(
+            Key={'email': email, 'timestamp': timestamp},
+            UpdateExpression=expr,
+            ExpressionAttributeNames=names,
+            ExpressionAttributeValues=values,
+            ConditionExpression='attribute_exists(email)',
+        )
+        return create_response(200, {'message': 'Lead updated successfully'})
+    except ClientError as e:
+        if e.response['Error']['Code'] == 'ConditionalCheckFailedException':
+            return create_error_response(404, 'NotFound', 'Lead not found')
+        logger.error(f"DynamoDB error updating lead: {e}")
+        return create_error_response(500, 'ServerError', 'Failed to update lead')
+
+
+def handle_delete_lead(event):
+    """Delete a lead from the Leads table."""
+    try:
+        body = json.loads(event.get('body', '{}'))
+    except (json.JSONDecodeError, TypeError):
+        return create_error_response(400, 'InvalidRequest', 'Invalid request body')
+
+    email = body.get('email', '').strip()
+    timestamp = body.get('timestamp', '').strip()
+    if not email or not timestamp:
+        return create_error_response(400, 'InvalidRequest', 'Fields "email" and "timestamp" are required')
+
+    try:
+        table = dynamodb.Table(LEADS_TABLE_NAME)
+        table.delete_item(
+            Key={'email': email, 'timestamp': timestamp},
+            ConditionExpression='attribute_exists(email)',
+        )
+        return create_response(200, {'message': 'Lead deleted successfully'})
+    except ClientError as e:
+        if e.response['Error']['Code'] == 'ConditionalCheckFailedException':
+            return create_error_response(404, 'NotFound', 'Lead not found')
+        logger.error(f"DynamoDB error deleting lead: {e}")
+        return create_error_response(500, 'ServerError', 'Failed to delete lead')
+
+
 def handle_create_tip(event):
     """Create a new tip in the Tips table."""
     try:
@@ -168,6 +235,10 @@ def handle_create_tip(event):
             return create_error_response(400, 'InvalidRequest', f'Field "{field}" is required and cannot be empty')
 
     tip = {field: body[field].strip() for field in required_fields}
+
+    # Optional field: automatedCheck (script/command)
+    if body.get('automatedCheck', '').strip():
+        tip['automatedCheck'] = body['automatedCheck'].strip()
 
     try:
         table = dynamodb.Table(TIPS_TABLE_NAME)
@@ -196,6 +267,10 @@ def handle_update_tip(event):
             return create_error_response(400, 'InvalidRequest', f'Field "{field}" is required and cannot be empty')
 
     tip = {field: body[field].strip() for field in required_fields}
+
+    # Optional field: automatedCheck (script/command)
+    if body.get('automatedCheck', '').strip():
+        tip['automatedCheck'] = body['automatedCheck'].strip()
 
     try:
         table = dynamodb.Table(TIPS_TABLE_NAME)
