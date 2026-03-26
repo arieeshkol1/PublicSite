@@ -355,7 +355,8 @@ def _parse_savings_pct(s: str):
         return float(m.group(1)), float(m.group(2))
     m = re.search(r'(?:up\s+to|~)\s*(\d+(?:\.\d+)?)\s*%', s)
     if m:
-        return 0.0, float(m.group(1))
+        val = float(m.group(1))
+        return val * 0.3, val
     m = re.search(r'(\d+(?:\.\d+)?)\s*%', s)
     if m:
         v = float(m.group(1))
@@ -429,24 +430,6 @@ def _update_lead_with_savings(email: str, session_id: str, parsed_bill: Dict[str
                      email, monthly_min, monthly_max, monthly_min * 12, monthly_max * 12)
     except Exception as e:
         logger.warning("Failed to update lead with savings (non-fatal): %s", str(e))
-
-
-def _parse_savings_pct(s: str):
-    """Parse savings string like '20-40%' or 'up to 30%' into (min%, max%)."""
-    import re
-    s = s.strip().lower().replace(',', '')
-    m = re.search(r'(\d+(?:\.\d+)?)\s*[%]?\s*[-\u2013to]+\s*(\d+(?:\.\d+)?)\s*%', s)
-    if m:
-        return float(m.group(1)), float(m.group(2))
-    m = re.search(r'(?:up\s+to|~)\s*(\d+(?:\.\d+)?)\s*%', s)
-    if m:
-        return 0.0, float(m.group(1))
-    m = re.search(r'(\d+(?:\.\d+)?)\s*%', s)
-    if m:
-        v = float(m.group(1))
-        return v, v
-    return None
-
 
 
 def _save_error(session_id: str, error_msg: str):

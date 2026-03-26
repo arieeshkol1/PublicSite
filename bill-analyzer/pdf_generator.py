@@ -69,7 +69,7 @@ def _parse_savings_percent(savings_str: str):
     m = re.search(r'(?:up\s+to|~)\s*(\d+(?:\.\d+)?)\s*%', s)
     if m:
         val = float(m.group(1))
-        return 0.0, val
+        return val * 0.3, val  # conservative min: 30% of the max
     # Pattern: plain "30%"
     m = re.search(r'(\d+(?:\.\d+)?)\s*%', s)
     if m:
@@ -388,10 +388,6 @@ def _generate_analysis_pages(
     # --- Region Pie Chart ---
     elements.extend(_build_region_pie_chart(parsed_bill, styles))
 
-    # --- Footer on page 1 ---
-    elements.append(Spacer(1, 12))
-    elements.extend(_build_footer(timestamp, styles))
-
     # ============================================================
     # PAGE BREAK → Detailed Analysis
     # ============================================================
@@ -485,20 +481,22 @@ def _build_executive_summary(
         cost_label = f"{currency} {display_total}"
 
     big_cost = Paragraph(cost_label, ParagraphStyle(
-        "BigCost", fontName="Helvetica-Bold", fontSize=28, textColor=DARK_BLUE, alignment=1, spaceAfter=4,
+        "BigCost", fontName="Helvetica-Bold", fontSize=18, textColor=DARK_BLUE, alignment=1, spaceAfter=2,
     ))
     cost_caption = Paragraph("Total Bill Amount", ParagraphStyle(
-        "CostCaption", fontName="Helvetica", fontSize=11, textColor=colors.HexColor("#666666"), alignment=1, spaceAfter=0,
+        "CostCaption", fontName="Helvetica", fontSize=9, textColor=colors.HexColor("#666666"), alignment=1, spaceAfter=0,
     ))
     cost_data = [[cost_caption], [big_cost]]
-    cost_box = Table(cost_data, colWidths=[7 * inch])
+    cost_box = Table(cost_data, colWidths=[4 * inch])
     cost_box.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, -1), LIGHT_BG),
-        ("LINEBELOW", (0, -1), (-1, -1), 3, PRIMARY_BLUE),
-        ("TOPPADDING", (0, 0), (-1, -1), 8),
-        ("BOTTOMPADDING", (0, -1), (-1, -1), 10),
+        ("BOX", (0, 0), (-1, -1), 1, MEDIUM_GRAY),
+        ("TOPPADDING", (0, 0), (-1, -1), 6),
+        ("BOTTOMPADDING", (0, -1), (-1, -1), 8),
         ("LEFTPADDING", (0, 0), (-1, -1), 10),
+        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
     ]))
+    cost_box.hAlign = 'CENTER'
     elements.append(cost_box)
     elements.append(Spacer(1, 10))
 
@@ -518,23 +516,12 @@ def _build_executive_summary(
 
     if savings_totals:
         s_min, s_max, s_avg = savings_totals
-        y_min, y_max, y_avg = s_min * 12, s_max * 12, s_avg * 12
-        monthly_text = (
-            f'<b>Monthly Savings:</b> &nbsp; '
-            f'Min: <font color="#067D62"><b>{currency} {s_min:,.2f}</b></font> &nbsp;&nbsp;|&nbsp;&nbsp; '
-            f'Max: <font color="#067D62"><b>{currency} {s_max:,.2f}</b></font> &nbsp;&nbsp;|&nbsp;&nbsp; '
-            f'Avg: <font color="#067D62"><b>{currency} {s_avg:,.2f}</b></font>'
+        y_max = s_max * 12
+        savings_text = (
+            f'<font color="#067D62"><b>Saving up to {currency} {s_max:,.2f}/month '
+            f'({currency} {y_max:,.2f}/year)</b></font>'
         )
-        yearly_text = (
-            f'<b>Yearly Savings:</b> &nbsp;&nbsp;&nbsp; '
-            f'Min: <font color="#067D62"><b>{currency} {y_min:,.2f}</b></font> &nbsp;&nbsp;|&nbsp;&nbsp; '
-            f'Max: <font color="#067D62"><b>{currency} {y_max:,.2f}</b></font> &nbsp;&nbsp;|&nbsp;&nbsp; '
-            f'Avg: <font color="#067D62"><b>{currency} {y_avg:,.2f}</b></font>'
-        )
-        savings_data = [
-            [Paragraph(monthly_text, styles["body_bold"])],
-            [Paragraph(yearly_text, styles["body_bold"])],
-        ]
+        savings_data = [[Paragraph(savings_text, styles["body_bold"])]]
         savings_table = Table(savings_data, colWidths=[7 * inch])
         savings_table.setStyle(TableStyle([
             ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#E8F5E9")),
@@ -677,14 +664,14 @@ def _build_service_pie_chart(
 
     # Create the drawing
     chart_width = 500
-    chart_height = 220
+    chart_height = 150
     d = Drawing(chart_width, chart_height)
 
     pie = Pie()
-    pie.x = 30
-    pie.y = 20
-    pie.width = 180
-    pie.height = 180
+    pie.x = 20
+    pie.y = 10
+    pie.width = 120
+    pie.height = 120
     pie.data = [s[2] for s in slices]
     pie.labels = None  # We'll draw a legend instead
 
@@ -706,10 +693,10 @@ def _build_service_pie_chart(
     d.add(pie)
 
     # Legend on the right side — show service name + amount
-    legend_x = 240
-    legend_y = chart_height - 20
-    line_height = 14
-    max_legend_items = min(len(slices), 15)
+    legend_x = 170
+    legend_y = chart_height - 10
+    line_height = 11
+    max_legend_items = min(len(slices), 12)
     currency = parsed_bill.get("currency", "USD")
 
     for i in range(max_legend_items):
@@ -719,14 +706,14 @@ def _build_service_pie_chart(
 
         # Color swatch
         from reportlab.graphics.shapes import Rect
-        swatch = Rect(legend_x, y_pos - 3, 10, 10, fillColor=pie_colors[color_idx], strokeColor=None)
+        swatch = Rect(legend_x, y_pos - 3, 8, 8, fillColor=pie_colors[color_idx], strokeColor=None)
         d.add(swatch)
 
         # Label: service name + cost amount
         label_text = f"{svc_name} ({currency} {cost_val:,.2f})"
         if len(label_text) > 45:
             label_text = label_text[:42] + "..."
-        label = String(legend_x + 14, y_pos - 1, label_text, fontSize=8, fontName="Helvetica")
+        label = String(legend_x + 12, y_pos - 1, label_text, fontSize=7, fontName="Helvetica")
         d.add(label)
 
     elements.append(d)
@@ -785,14 +772,14 @@ def _build_region_pie_chart(
     ]
 
     chart_width = 500
-    chart_height = 200
+    chart_height = 140
     d = Drawing(chart_width, chart_height)
 
     pie = Pie()
-    pie.x = 30
+    pie.x = 20
     pie.y = 10
-    pie.width = 160
-    pie.height = 160
+    pie.width = 110
+    pie.height = 110
     pie.data = [s[2] for s in slices]
     pie.labels = [f"{s[2]:.0f}%" if s[2] >= 3.0 else "" for s in slices]
 
@@ -809,19 +796,19 @@ def _build_region_pie_chart(
     d.add(pie)
 
     currency = parsed_bill.get("currency", "USD")
-    legend_x = 220
-    legend_y = chart_height - 16
-    line_height = 14
+    legend_x = 160
+    legend_y = chart_height - 10
+    line_height = 11
     from reportlab.graphics.shapes import Rect
 
     for i, (rname, rcost, pct) in enumerate(slices[:12]):
         y_pos = legend_y - (i * line_height)
-        swatch = Rect(legend_x, y_pos - 3, 10, 10, fillColor=pie_colors[i % len(pie_colors)], strokeColor=None)
+        swatch = Rect(legend_x, y_pos - 3, 8, 8, fillColor=pie_colors[i % len(pie_colors)], strokeColor=None)
         d.add(swatch)
         label_text = f"{rname} ({currency} {rcost:,.2f})"
         if len(label_text) > 48:
             label_text = label_text[:45] + "..."
-        label = String(legend_x + 14, y_pos - 1, label_text, fontSize=8, fontName="Helvetica")
+        label = String(legend_x + 12, y_pos - 1, label_text, fontSize=7, fontName="Helvetica")
         d.add(label)
 
     elements.append(d)
@@ -939,20 +926,14 @@ def _build_explanations_section(
             svc_savings = _compute_service_savings(_extract_cost(item), recommendations)
             if svc_savings:
                 s_min, s_max, s_avg = svc_savings
-                y_min, y_max, y_avg = s_min * 12, s_max * 12, s_avg * 12
+                y_max = s_max * 12
                 currency = parsed_bill.get("currency", "USD")
-                monthly_line = (
-                    f'<font color="#067D62"><b>Monthly: '
-                    f'{currency} {s_min:,.2f} – {currency} {s_max:,.2f} '
-                    f'(avg {currency} {s_avg:,.2f})</b></font>'
+                savings_line = (
+                    f'<font color="#067D62"><b>Saving up to '
+                    f'{currency} {s_max:,.2f}/month '
+                    f'({currency} {y_max:,.2f}/year)</b></font>'
                 )
-                yearly_line = (
-                    f'<font color="#067D62"><b>Yearly: '
-                    f'{currency} {y_min:,.2f} – {currency} {y_max:,.2f} '
-                    f'(avg {currency} {y_avg:,.2f})</b></font>'
-                )
-                right_parts.append(Paragraph(monthly_line, styles["rec_savings"]))
-                right_parts.append(Paragraph(yearly_line, styles["rec_savings"]))
+                right_parts.append(Paragraph(savings_line, styles["rec_savings"]))
                 right_parts.append(Spacer(1, 4))
 
             for rec in recommendations:
