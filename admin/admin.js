@@ -132,9 +132,18 @@ function renderLeadsPage(){
 }
 function showLeadForm(lead){
   leadFormError.textContent='';editingLead=lead;
+  document.getElementById('lead-email').value=lead.email||'';
+  document.getElementById('lead-timestamp').value=formatDate(lead.timestamp)||'';
   document.getElementById('lead-name').value=lead.name||'';
   document.getElementById('lead-company').value=lead.company||'';
   document.getElementById('lead-phone').value=lead.phone||'';
+  document.getElementById('lead-fileName').value=lead.fileName||'';
+  document.getElementById('lead-billTotalCost').value=lead.billTotalCost!=null?fmtMoney(lead.billTotalCost):'-';
+  document.getElementById('lead-billCurrency').value=lead.billCurrency||'';
+  document.getElementById('lead-monthlySavingsMin').value=lead.monthlySavingsMin!=null?fmtMoney(lead.monthlySavingsMin):'-';
+  document.getElementById('lead-monthlySavingsMax').value=lead.monthlySavingsMax!=null?fmtMoney(lead.monthlySavingsMax):'-';
+  document.getElementById('lead-yearlySavingsMin').value=lead.yearlySavingsMin!=null?fmtMoney(lead.yearlySavingsMin):'-';
+  document.getElementById('lead-yearlySavingsMax').value=lead.yearlySavingsMax!=null?fmtMoney(lead.yearlySavingsMax):'-';
   document.getElementById('lead-notes').value=lead.notes||'';
   leadModal.hidden=false;
 }

@@ -171,13 +171,23 @@
 
     <!-- Lead Edit Modal -->
     <div id="lead-modal" class="modal-overlay" hidden>
-        <div class="modal-card">
+        <div class="modal-card modal-card-lg">
             <div class="modal-header">
                 <h2>Edit Lead</h2>
                 <button id="lead-modal-close" class="modal-close">&times;</button>
             </div>
             <form id="lead-form" novalidate>
                 <div class="modal-body">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="lead-email">Email</label>
+                            <input type="text" id="lead-email" disabled>
+                        </div>
+                        <div class="form-group">
+                            <label for="lead-timestamp">Date</label>
+                            <input type="text" id="lead-timestamp" disabled>
+                        </div>
+                    </div>
                     <div class="form-row">
                         <div class="form-group">
                             <label for="lead-name">Name</label>
@@ -188,9 +198,45 @@
                             <input type="text" id="lead-company" placeholder="Company name">
                         </div>
                     </div>
-                    <div class="form-group">
-                        <label for="lead-phone">Phone</label>
-                        <input type="text" id="lead-phone" placeholder="Phone number">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="lead-phone">Phone</label>
+                            <input type="text" id="lead-phone" placeholder="Phone number">
+                        </div>
+                        <div class="form-group">
+                            <label for="lead-fileName">File Name</label>
+                            <input type="text" id="lead-fileName" disabled>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="lead-billTotalCost">Bill Total Cost</label>
+                            <input type="text" id="lead-billTotalCost" disabled>
+                        </div>
+                        <div class="form-group">
+                            <label for="lead-billCurrency">Currency</label>
+                            <input type="text" id="lead-billCurrency" disabled>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="lead-monthlySavingsMin">Monthly Savings Min</label>
+                            <input type="text" id="lead-monthlySavingsMin" disabled>
+                        </div>
+                        <div class="form-group">
+                            <label for="lead-monthlySavingsMax">Monthly Savings Max</label>
+                            <input type="text" id="lead-monthlySavingsMax" disabled>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="lead-yearlySavingsMin">Yearly Savings Min</label>
+                            <input type="text" id="lead-yearlySavingsMin" disabled>
+                        </div>
+                        <div class="form-group">
+                            <label for="lead-yearlySavingsMax">Yearly Savings Max</label>
+                            <input type="text" id="lead-yearlySavingsMax" disabled>
+                        </div>
                     </div>
                     <div class="form-group">
                         <label for="lead-notes">Notes</label>
@@ -200,7 +246,7 @@
                 </div>
                 <div class="modal-footer">
                     <button type="button" id="lead-cancel-btn" class="btn btn-outline">Cancel</button>
-                    <button type="submit" id="lead-submit-btn" class="btn btn-primary">Save Changes</button>
+                    <button type="submit" id="lead-submit-btn" class="btn btn-primary">Update</button>
                 </div>
             </form>
         </div>
