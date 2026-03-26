@@ -372,11 +372,33 @@ def _generate_analysis_pages(
 
     elements: List[Any] = []
 
+    # ============================================================
+    # PAGE 1: Executive Summary
+    # ============================================================
+
     # --- Title Banner ---
     elements.extend(_build_header(parsed_bill, timestamp, styles))
 
-    # --- Bill Summary ---
-    elements.extend(_build_summary_section(parsed_bill, ai_analysis, styles))
+    # --- Executive Summary (big text + savings box) ---
+    elements.extend(_build_executive_summary(parsed_bill, ai_analysis, styles))
+
+    # --- Service Pie Chart ---
+    elements.extend(_build_service_pie_chart(parsed_bill, styles))
+
+    # --- Region Pie Chart ---
+    elements.extend(_build_region_pie_chart(parsed_bill, styles))
+
+    # --- Footer on page 1 ---
+    elements.append(Spacer(1, 12))
+    elements.extend(_build_footer(timestamp, styles))
+
+    # ============================================================
+    # PAGE BREAK → Detailed Analysis
+    # ============================================================
+    elements.append(PageBreak())
+
+    # --- Service Breakdown Table ---
+    elements.extend(_build_service_table(parsed_bill, ai_analysis, styles))
 
     # --- Service Analysis (explanations + recommendations) ---
     elements.extend(_build_explanations_section(parsed_bill, ai_analysis, styles))
@@ -444,72 +466,59 @@ def _build_header(
     return elements
 
 
-def _build_summary_section(
+def _build_executive_summary(
     parsed_bill: Dict[str, Any],
     ai_analysis: Dict[str, Any],
     styles: Dict[str, ParagraphStyle],
 ) -> List[Any]:
-    """Build the bill summary section with total cost and service breakdown table."""
+    """Build the executive summary for page 1 — big text, total cost, savings box."""
     elements: List[Any] = []
-
-    elements.append(_section_heading("Bill Summary", styles))
 
     total_cost = _format_cost(parsed_bill.get("total_cost", 0))
     currency = parsed_bill.get("currency", "USD")
     tax_amount = parsed_bill.get("tax_amount")
     total_with_tax = parsed_bill.get("total_with_tax")
 
-    # Total cost highlight box — include tax if present
-    if tax_amount and total_with_tax:
-        tax_str = _format_cost(tax_amount)
-        total_with_tax_str = _format_cost(total_with_tax)
-        total_text = (
-            f"<b>Charges:</b> {currency} {total_cost} &nbsp;&nbsp;|&nbsp;&nbsp; "
-            f"<b>Tax:</b> {currency} {tax_str} &nbsp;&nbsp;|&nbsp;&nbsp; "
-            f"<b>Total (incl. tax):</b> {currency} {total_with_tax_str}"
-        )
+    # Big total cost display
+    if total_with_tax and tax_amount:
+        display_total = _format_cost(total_with_tax)
+        cost_label = f"{currency} {display_total} (incl. tax)"
     else:
-        total_text = f"<b>Total Cost:</b> {currency} {total_cost}"
+        display_total = total_cost
+        cost_label = f"{currency} {display_total}"
 
-    total_data = [[
-        Paragraph(total_text, styles["body_bold"]),
-    ]]
-    total_table = Table(total_data, colWidths=[7 * inch])
-    total_table.setStyle(TableStyle([
+    big_cost = Paragraph(cost_label, ParagraphStyle(
+        "BigCost", fontName="Helvetica-Bold", fontSize=28, textColor=DARK_BLUE, alignment=1, spaceAfter=4,
+    ))
+    cost_caption = Paragraph("Total Bill Amount", ParagraphStyle(
+        "CostCaption", fontName="Helvetica", fontSize=11, textColor=colors.HexColor("#666666"), alignment=1, spaceAfter=0,
+    ))
+    cost_data = [[cost_caption], [big_cost]]
+    cost_box = Table(cost_data, colWidths=[7 * inch])
+    cost_box.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, -1), LIGHT_BG),
-        ("LINEBELOW", (0, 0), (-1, -1), 2, PRIMARY_BLUE),
+        ("LINEBELOW", (0, -1), (-1, -1), 3, PRIMARY_BLUE),
         ("TOPPADDING", (0, 0), (-1, -1), 8),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+        ("BOTTOMPADDING", (0, -1), (-1, -1), 10),
         ("LEFTPADDING", (0, 0), (-1, -1), 10),
     ]))
-    elements.append(total_table)
-    elements.append(Spacer(1, 8))
+    elements.append(cost_box)
+    elements.append(Spacer(1, 10))
 
-    # AI summary text + savings findings
+    # AI summary text (bigger font for page 1)
     summary_text = ai_analysis.get("summary", "No summary available.")
+    summary_style = ParagraphStyle(
+        "SummaryBig", fontName="Helvetica", fontSize=12, textColor=TEXT_COLOR, leading=17, spaceAfter=6,
+    )
+    elements.append(Paragraph(summary_text, summary_style))
+    elements.append(Spacer(1, 6))
 
-    # Compute total savings range from all service recommendations
+    # Savings highlight box
     service_items = ai_analysis.get("service_analysis", [])
     if not service_items:
         service_items = ai_analysis.get("explanations", [])
     savings_totals = _compute_total_savings(service_items) if service_items else None
 
-    if savings_totals:
-        s_min, s_max, s_avg = savings_totals
-        y_min, y_max, y_avg = s_min * 12, s_max * 12, s_avg * 12
-        savings_line = (
-            f" Based on our analysis, estimated potential monthly savings range from "
-            f"<b>{currency} {s_min:,.2f}</b> to <b>{currency} {s_max:,.2f}</b> "
-            f"(avg <b>{currency} {s_avg:,.2f}</b>), "
-            f"or <b>{currency} {y_min:,.2f}</b> to <b>{currency} {y_max:,.2f}</b> "
-            f"(avg <b>{currency} {y_avg:,.2f}</b>) annually."
-        )
-        summary_text = summary_text.rstrip(".") + "." + savings_line
-
-    elements.append(Paragraph(summary_text, styles["body"]))
-    elements.append(Spacer(1, 8))
-
-    # Savings highlight box (if we have numbers)
     if savings_totals:
         s_min, s_max, s_avg = savings_totals
         y_min, y_max, y_avg = s_min * 12, s_max * 12, s_avg * 12
@@ -540,7 +549,24 @@ def _build_summary_section(
         elements.append(savings_table)
         elements.append(Spacer(1, 8))
 
-    # Service totals table
+    return elements
+
+
+def _build_service_table(
+    parsed_bill: Dict[str, Any],
+    ai_analysis: Dict[str, Any],
+    styles: Dict[str, ParagraphStyle],
+) -> List[Any]:
+    """Build the service breakdown table for page 2."""
+    elements: List[Any] = []
+
+    total_cost = _format_cost(parsed_bill.get("total_cost", 0))
+    currency = parsed_bill.get("currency", "USD")
+    tax_amount = parsed_bill.get("tax_amount")
+    total_with_tax = parsed_bill.get("total_with_tax")
+
+    elements.append(_section_heading("Service Breakdown", styles))
+
     service_totals = parsed_bill.get("service_totals", {})
     if service_totals:
         svc_header = [
@@ -556,7 +582,6 @@ def _build_summary_section(
                 Paragraph(_format_cost(cost), styles["body"]),
             ])
 
-        # Totals row(s) — include tax if present
         if tax_amount and total_with_tax:
             svc_rows.append([
                 Paragraph("<b>Subtotal</b>", styles["body_bold"]),
@@ -596,10 +621,6 @@ def _build_summary_section(
         elements.append(Paragraph("No service breakdown available.", styles["body"]))
 
     elements.append(Spacer(1, 12))
-
-    # Pie chart of service consumption
-    elements.extend(_build_service_pie_chart(parsed_bill, styles))
-
     return elements
 
 
@@ -713,6 +734,101 @@ def _build_service_pie_chart(
 
     elements.append(d)
     elements.append(Spacer(1, 12))
+    return elements
+
+
+def _build_region_pie_chart(
+    parsed_bill: Dict[str, Any],
+    styles: Dict[str, ParagraphStyle],
+) -> List[Any]:
+    """Build a pie chart showing cost distribution by AWS region across all services."""
+    elements: List[Any] = []
+    region_breakdown = parsed_bill.get("region_breakdown", {})
+    if not region_breakdown:
+        return elements
+
+    # Aggregate costs per region across all services
+    region_totals: Dict[str, float] = {}
+    for svc_regions in region_breakdown.values():
+        for entry in svc_regions:
+            rname = entry.get("region", "Unknown")
+            rcost = float(entry.get("cost", 0))
+            region_totals[rname] = region_totals.get(rname, 0.0) + rcost
+
+    if not region_totals:
+        return elements
+
+    total = sum(region_totals.values())
+    if total <= 0:
+        return elements
+
+    # Build slices: regions >= 1% shown individually, rest grouped as "Other"
+    slices = []
+    other_total = 0.0
+    for rname, rcost in sorted(region_totals.items(), key=lambda x: x[1], reverse=True):
+        pct = rcost / total * 100
+        if pct >= 1.0:
+            slices.append((rname, rcost, pct))
+        else:
+            other_total += rcost
+
+    if other_total > 0:
+        slices.append(("Other", other_total, other_total / total * 100))
+
+    if not slices:
+        return elements
+
+    elements.append(_section_heading("Cost Distribution by Region", styles))
+
+    pie_colors = [
+        colors.HexColor("#0066FF"), colors.HexColor("#FF6B35"), colors.HexColor("#00D4FF"),
+        colors.HexColor("#067D62"), colors.HexColor("#8B5CF6"), colors.HexColor("#EC4899"),
+        colors.HexColor("#F59E0B"), colors.HexColor("#10B981"), colors.HexColor("#6366F1"),
+        colors.HexColor("#EF4444"), colors.HexColor("#14B8A6"), colors.HexColor("#78716C"),
+    ]
+
+    chart_width = 500
+    chart_height = 200
+    d = Drawing(chart_width, chart_height)
+
+    pie = Pie()
+    pie.x = 30
+    pie.y = 10
+    pie.width = 160
+    pie.height = 160
+    pie.data = [s[2] for s in slices]
+    pie.labels = [f"{s[2]:.0f}%" if s[2] >= 3.0 else "" for s in slices]
+
+    for i in range(len(slices)):
+        pie.slices[i].fillColor = pie_colors[i % len(pie_colors)]
+        pie.slices[i].strokeColor = colors.white
+        pie.slices[i].strokeWidth = 1.5
+        pie.slices[i].label_visible = 1
+        pie.slices[i].fontName = "Helvetica-Bold"
+        pie.slices[i].fontSize = 7
+        pie.slices[i].fontColor = colors.white
+        pie.slices[i].labelRadius = 0.65
+
+    d.add(pie)
+
+    currency = parsed_bill.get("currency", "USD")
+    legend_x = 220
+    legend_y = chart_height - 16
+    line_height = 14
+    from reportlab.graphics.shapes import Rect
+
+    for i, (rname, rcost, pct) in enumerate(slices[:12]):
+        y_pos = legend_y - (i * line_height)
+        swatch = Rect(legend_x, y_pos - 3, 10, 10, fillColor=pie_colors[i % len(pie_colors)], strokeColor=None)
+        d.add(swatch)
+        label_text = f"{rname} ({currency} {rcost:,.2f})"
+        if len(label_text) > 48:
+            label_text = label_text[:45] + "..."
+        label = String(legend_x + 14, y_pos - 1, label_text, fontSize=8, fontName="Helvetica")
+        d.add(label)
+
+    elements.append(d)
+    elements.append(Spacer(1, 8))
     return elements
 
 
