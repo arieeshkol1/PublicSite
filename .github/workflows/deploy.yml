@@ -13,7 +13,7 @@ on:
       - '*.gif'
       - '*.svg'
       - '*.ico'
-      - 'viewMyBill/**'
+      - 'slashMyBill/**'
       - 'infrastructure/viewmybill-stack.yaml'
       - 'bill-analyzer/**'
       - 'upload-handler/**'
@@ -52,7 +52,7 @@ jobs:
         with:
           python-version: '3.12'
 
-      # ---- ViewMyBill Infrastructure ----
+      # ---- SlashMyBill Infrastructure ----
       - name: Package Bill Analyzer Lambda
         run: |
           echo "Packaging Bill Analyzer Lambda..."
@@ -94,9 +94,9 @@ jobs:
           aws s3 cp admin-handler-lambda.zip s3://${{ env.STORAGE_BUCKET }}/lambda-packages/admin-handler.zip
           echo "✓ Admin Handler packaged"
 
-      - name: Deploy ViewMyBill CloudFormation stack
+      - name: Deploy SlashMyBill CloudFormation stack
         run: |
-          echo "Deploying ViewMyBill infrastructure..."
+          echo "Deploying SlashMyBill infrastructure..."
           aws cloudformation deploy \
             --template-file infrastructure/viewmybill-stack.yaml \
             --stack-name ${{ env.STACK_NAME }} \
@@ -175,18 +175,23 @@ jobs:
           done
           echo "✓ Website deployed"
 
-      - name: Deploy ViewMyBill frontend
+      - name: Deploy SlashMyBill frontend
         run: |
           API_URL="${{ steps.api-url.outputs.api_endpoint }}"
           echo "Injecting API URL: $API_URL"
-          sed -i "s|https://YOUR_API_GATEWAY_URL|${API_URL}|g" viewMyBill/viewMyBill.js
-          aws s3 cp viewMyBill/index.html s3://${{ env.S3_BUCKET }}/viewMyBill/index.html \
+          sed -i "s|https://YOUR_API_GATEWAY_URL|${API_URL}|g" slashMyBill/slashMyBill.js
+          aws s3 cp slashMyBill/index.html s3://${{ env.S3_BUCKET }}/slashMyBill/index.html \
             --cache-control "max-age=300" --content-type "text/html"
-          aws s3 cp viewMyBill/viewMyBill.css s3://${{ env.S3_BUCKET }}/viewMyBill/viewMyBill.css \
+          aws s3 cp slashMyBill/slashMyBill.css s3://${{ env.S3_BUCKET }}/slashMyBill/slashMyBill.css \
             --cache-control "max-age=300" --content-type "text/css"
-          aws s3 cp viewMyBill/viewMyBill.js s3://${{ env.S3_BUCKET }}/viewMyBill/viewMyBill.js \
+          aws s3 cp slashMyBill/slashMyBill.js s3://${{ env.S3_BUCKET }}/slashMyBill/slashMyBill.js \
             --cache-control "max-age=300" --content-type "application/javascript"
-          echo "✓ ViewMyBill frontend deployed"
+          echo "✓ SlashMyBill frontend deployed"
+
+      - name: Remove old viewMyBill files from S3
+        run: |
+          aws s3 rm s3://${{ env.S3_BUCKET }}/viewMyBill/ --recursive
+          echo "✓ Old viewMyBill/ files removed"
 
       - name: Deploy Admin frontend
         run: |
@@ -209,6 +214,6 @@ jobs:
         run: |
           echo "=== Deploy Complete ==="
           echo "Website: https://www.eshkolai.com"
-          echo "ViewMyBill: https://www.eshkolai.com/viewMyBill/"
+          echo "SlashMyBill: https://www.eshkolai.com/slashMyBill/"
           echo "Admin: https://www.eshkolai.com/admin/"
           echo "API: ${{ steps.api-url.outputs.api_endpoint }}"
