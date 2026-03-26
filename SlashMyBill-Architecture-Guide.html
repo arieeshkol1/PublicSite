@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Slash My Bill - Architecture and Process Guide</title>
+<style>
+body { font-family: Calibri, Arial, sans-serif; max-width: 850px; margin: 40px auto; padding: 20px; line-height: 1.6; color: #333; }
+h1 { color: #0066ff; border-bottom: 3px solid #0066ff; padding-bottom: 10px; }
+h2 { color: #0052cc; margin-top: 30px; border-bottom: 1px solid #ddd; padding-bottom: 5px; }
+h3 { color: #0a0e27; }
+h4 { color: #444; margin-top: 15px; }
+table { border-collapse: collapse; width: 100%; margin: 15px 0; }
+th, td { border: 1px solid #ccc; padding: 8px 12px; text-align: left; }
+th { background: #0066ff; color: white; }
+tr:nth-child(even) { background: #f5f7fa; }
+code { background: #f0f0f0; padding: 2px 6px; border-radius: 3px; font-family: Consolas, monospace; }
+.step { background: #f5f7fa; border-left: 4px solid #0066ff; padding: 15px; margin: 15px 0; }
+.substep { background: #fff; border-left: 4px solid #00d4ff; padding: 10px 15px; margin: 10px 0 10px 20px; }
+.note { background: #fff3cd; border-left: 4px solid #ff6b35; padding: 15px; margin: 15px 0; }
+.log { background: #1e1e1e; color: #d4d4d4; padding: 12px; border-radius: 6px; font-family: Consolas, monospace; font-size: 13px; margin: 10px 0; white-space: pre-wrap; }
+.log .ok { color: #4ec9b0; }
+.log .fail { color: #f44747; }
+</style>
+</head>
+<body>
+
+<h1>Slash My Bill - Architecture &amp; Process Guide</h1>
+<p><strong>Version:</strong> 2.1 &nbsp;|&nbsp; <strong>Date:</strong> March 2026 &nbsp;|&nbsp; <strong>Platform:</strong> AWS &nbsp;|&nbsp; <strong>Region:</strong> us-east-1</p>
+<p><strong>Account:</strong> 991105135552 &nbsp;|&nbsp; <strong>Domain:</strong> eshkolai.com &nbsp;|&nbsp; <strong>Repo:</strong> arieeshkol1/PublicSite</p>
+
+<h2>1. System Overview</h2>
+<table>
+<tr><th>Component</th><th>Technology</th><th>Purpose</th></tr>
+<tr><td>Website</td><td>S3 + CloudFront</td><td>Static HTML/CSS/JS frontend</td></tr>
+<tr><td>API Gateway</td><td>HTTP API v2</td><td>Routes requests to Lambda (29s hard timeout)</td></tr>
+<tr><td>Upload Handler</td><td>Lambda Python 3.12</td><td>Receives bill PDF, stores in S3, saves lead</td></tr>
+<tr><td>Bill Analyzer</td><td>Lambda Python 3.12</td><td>Parses PDF, calls Bedrock AI, generates report</td></tr>
+<tr><td>OTP Handler</td><td>Lambda Python 3.12</td><td>Email verification via SES</td></tr>
+<tr><td>Admin Handler</td><td>Lambda Python 3.12</td><td>Admin panel API (leads + tips CRUD)</td></tr>
+<tr><td>AI Engine</td><td>Bedrock Nova Lite</td><td>Analyzes bill, generates recommendations</td></tr>
+<tr><td>Storage</td><td>S3</td><td>Bills + reports (auto-deleted after 24h)</td></tr>
+<tr><td>Database</td><td>DynamoDB</td><td>Leads, tips, OTP codes</td></tr>
+<tr><td>Email</td><td>Amazon SES</td><td>OTP verification emails</td></tr>
+</table>
+
+<h2>2. Complete User Flow — Step by Step</h2>
+
+<h3>Step 1: User Visits Page</h3>
+<div class="step">
+<p><strong>URL:</strong> <code>https://www.eshkolai.com/slashMyBill/</code></p>
+<p>CloudFront serves static files from S3 bucket <code>www.eshkolai.com</code>.</p>
+</div>
+
+<h3>Step 2: Email Verification (OTP)</h3>
+<div class="step">
+<div class="substep"><strong>Step 2.1:</strong> User enters email, clicks "Send Code"</div>
+<div class="substep"><strong>Step 2.2:</strong> Frontend calls <code>POST /send-otp</code></div>
+<div class="substep"><strong>Step 2.3:</strong> OTP Lambda generates 6-digit code, stores in DynamoDB (TTL: 10 min)</div>
+<div class="substep"><strong>Step 2.4:</strong> OTP Lambda sends code via SES from <code>SlashMyBill &lt;noreply@eshkolai.com&gt;</code> with SlashMyBill logo in email</div>
+<div class="substep"><strong>Step 2.5:</strong> User enters code, clicks "Verify"</div>
+<div class="substep"><strong>Step 2.6:</strong> Frontend calls <code>POST /verify-otp</code>, Lambda checks DynamoDB</div>
+<div class="substep"><strong>Step 2.7:</strong> On success, file upload area becomes enabled</div>
+</div>
+
+<h3>Step 3: Bill Upload</h3>
+<div class="step">
+<div class="substep"><strong>Step 3.1:</strong> User selects PDF file (max 10MB), clicks "Slash My Bill"</div>
+<div class="substep"><strong>Step 3.2:</strong> Frontend sends file as base64 to <code>POST /upload</code></div>
+<div class="substep"><strong>Step 3.3:</strong> Upload Lambda validates file (PDF only, max 10MB, not empty)</div>
+<div class="substep"><strong>Step 3.4:</strong> Generates unique session ID (UUID)</div>
+<div class="substep"><strong>Step 3.5:</strong> Stores PDF in S3 at <code>bills/{sessionId}/{filename}</code></div>
+<div class="substep"><strong>Step 3.6:</strong> Saves lead to DynamoDB: email, name, company, phone, fileName, timestamp</div>
+<div class="substep"><strong>Step 3.7:</strong> Returns <code>{sessionId}</code> to frontend</div>
+</div>
+
+<h3>Step 4: Bill Analysis (Async with Polling)</h3>
+<div class="step">
+<p>Frontend calls <code>POST /analyze</code> with <code>{sessionId, email}</code></p>
+
+<h4>Step 4.1: Trigger Async Processing (Sync Lambda, &lt;1 second)</h4>
+<div class="substep"><strong>Step 4.1.1:</strong> Lambda checks S3 for <code>reports/{sessionId}/result.json</code> — if exists, return result immediately</div>
+<div class="substep"><strong>Step 4.1.2:</strong> Lambda checks S3 for <code>reports/{sessionId}/processing</code> marker — if exists, return <code>202 {status: "processing"}</code></div>
+<div class="substep"><strong>Step 4.1.3:</strong> Creates "processing" marker in S3: <code>reports/{sessionId}/processing</code></div>
+<div class="substep"><strong>Step 4.1.4:</strong> Invokes itself asynchronously: <code>lambda_client.invoke(InvocationType='Event')</code></div>
+<div class="substep"><strong>Step 4.1.5:</strong> Returns <code>202 {status: "processing", sessionId}</code> to API Gateway → frontend</div>
+
+<p><strong>CloudWatch log trace:</strong></p>
+<div class="log">STEP 4.1: Processing marker set, invoking self async for session {id}
+STEP 4.1 DONE: Self-invoke returned StatusCode=202 for session {id}</div>
+
+<h4>Step 4.2: Background Processing (Async Lambda, up to 15 minutes)</h4>
+<p>This runs in a <strong>separate Lambda invocation</strong> triggered by the self-invoke. It has its own CloudWatch log stream.</p>
+
+<div class="substep"><strong>Step 4.2.1: Retrieve PDF from S3</strong><br>
+Calls <code>s3.list_objects_v2</code> + <code>s3.get_object</code> for <code>bills/{sessionId}/</code><br>
+<em>File:</em> <code>lambda_function.py → _retrieve_bill_from_s3()</code></div>
+
+<div class="substep"><strong>Step 4.2.2: Parse bill with pdfplumber</strong><br>
+Opens PDF, extracts text/tables, parses line items, aggregates service totals, extracts metadata (invoice#, account, period, currency), extracts region/instance details<br>
+<em>File:</em> <code>bill_parser.py → parse_bill()</code></div>
+
+<div class="substep"><strong>Step 4.2.3: Query DynamoDB for cost optimization tips</strong><br>
+Maps bill service names to DynamoDB keys, queries tips for each service + "General", caps at 10 tips<br>
+<em>File:</em> <code>bedrock_client.py → _get_optimization_tips()</code></div>
+
+<div class="substep"><strong>Step 4.2.4: Call Amazon Bedrock (Nova Lite) for AI analysis</strong><br>
+Builds prompt with bill data + tips + eligibility rules. For &gt;20 services, splits into batches. Each batch = 1 Bedrock call. Retries 2x on throttling/503.<br>
+<em>File:</em> <code>bedrock_client.py → analyze_bill() → _invoke_bedrock_with_retry()</code></div>
+
+<div class="substep"><strong>Step 4.2.5: Generate PDF report</strong><br>
+Creates analysis pages with ReportLab (logo, summary, pie chart, per-service sections, recommendations). Merges with original invoice via PyPDF2.<br>
+<em>File:</em> <code>pdf_generator.py → generate_report()</code></div>
+
+<div class="substep"><strong>Step 4.2.6: Upload report to S3</strong><br>
+Uploads PDF to <code>reports/{sessionId}/report.pdf</code>, generates pre-signed URL (24h expiry)<br>
+<em>File:</em> <code>lambda_function.py → _upload_report_to_s3()</code></div>
+
+<div class="substep"><strong>Step 4.2.7: Save result metadata to S3</strong><br>
+Saves <code>reports/{sessionId}/result.json</code> with <code>{downloadUrl, summary, originalFilename}</code><br>
+<em>File:</em> <code>lambda_function.py → _save_result()</code></div>
+
+<div class="substep"><strong>Step 4.2.8: Clear processing marker</strong><br>
+Deletes <code>reports/{sessionId}/processing</code> from S3<br>
+<em>File:</em> <code>lambda_function.py → _clear_processing()</code></div>
+
+<p><strong>CloudWatch log trace (success):</strong></p>
+<div class="log"><span class="ok">===== STEP 4.2 ASYNC START ===== session={id}</span>
+<span class="ok">STEP 4.2.1: Retrieving PDF from S3...</span>
+<span class="ok">STEP 4.2.1 DONE: Retrieved 3323272 bytes, filename=invoice.pdf</span>
+<span class="ok">STEP 4.2.2: Parsing bill with pdfplumber</span>
+<span class="ok">STEP 4.2.2 DONE: Parsed 15 services, 42 line items</span>
+<span class="ok">STEP 4.2.3-4: Calling analyze_bill (DynamoDB tips + Bedrock AI)</span>
+<span class="ok">STEP 4.2.3-4 DONE: Bedrock returned summary length=180</span>
+<span class="ok">STEP 4.2.5: Generating PDF report</span>
+<span class="ok">STEP 4.2.5 DONE: PDF generated, 335461 bytes</span>
+<span class="ok">STEP 4.2.6: Uploading report to S3</span>
+<span class="ok">STEP 4.2.6 DONE: Report uploaded, URL generated</span>
+<span class="ok">STEP 4.2.7: Saving result.json to S3</span>
+<span class="ok">STEP 4.2.7 DONE: result.json saved</span>
+<span class="ok">STEP 4.2.8: Clearing processing marker</span>
+<span class="ok">===== STEP 4.2 ASYNC COMPLETE =====</span></div>
+
+<p><strong>CloudWatch log trace (failure example):</strong></p>
+<div class="log"><span class="ok">===== STEP 4.2 ASYNC START ===== session={id}</span>
+<span class="ok">STEP 4.2.1: Retrieving PDF from S3...</span>
+<span class="ok">STEP 4.2.1 DONE: Retrieved 3323272 bytes</span>
+<span class="ok">STEP 4.2.2: Parsing bill with pdfplumber</span>
+<span class="ok">STEP 4.2.2 DONE: Parsed 15 services</span>
+<span class="ok">STEP 4.2.3-4: Calling analyze_bill (DynamoDB tips + Bedrock AI)</span>
+<span class="fail">===== STEP 4.2 ASYNC FAILED ===== error=Service is busy, please retry</span>
+<em style="color:#888;">↑ Last successful step was 4.2.2, failure is in 4.2.3-4 (Bedrock)</em></div>
+
+<h4>Step 4.3: Frontend Polling</h4>
+<div class="substep"><strong>Step 4.3.1:</strong> Frontend polls <code>POST /analyze</code> every 5 seconds with same sessionId</div>
+<div class="substep"><strong>Step 4.3.2:</strong> Lambda checks for <code>result.json</code> → not found → checks <code>processing</code> marker → found → returns <code>202</code></div>
+<div class="substep"><strong>Step 4.3.3:</strong> When <code>result.json</code> appears → returns <code>200 {status: "complete", downloadUrl, summary}</code></div>
+<div class="substep"><strong>Step 4.3.4:</strong> Frontend shows summary text and "Download Report" button</div>
+<div class="substep"><strong>Step 4.3.5:</strong> If polling exceeds 10 minutes → frontend shows timeout error</div>
+</div>
+
+<div class="note">
+<strong>Why async?</strong> API Gateway HTTP API has a hard 29-second timeout and <strong>kills the Lambda</strong> when it times out. The self-invoke pattern (<code>InvocationType='Event'</code>) creates a completely separate Lambda execution that runs independently for up to 15 minutes.
+</div>
+
+<h3>Step 5: Report Download</h3>
+<div class="step">
+<div class="substep"><strong>Step 5.1:</strong> User clicks "Download Report" button</div>
+<div class="substep"><strong>Step 5.2:</strong> Opens pre-signed S3 URL in a new browser tab</div>
+<div class="substep"><strong>Step 5.3:</strong> PDF contains: executive summary with savings estimates (monthly/yearly), pie chart, per-service analysis with savings breakdown, recommendations, Savings Plans analysis, original invoice pages</div>
+<div class="substep"><strong>Step 5.4:</strong> Pre-signed URL expires after 24 hours</div>
+<div class="substep"><strong>Step 5.5:</strong> S3 lifecycle rule deletes bill and report files after 24 hours</div>
+</div>
+
+<h2>3. AI Analysis Pipeline Detail</h2>
+
+<h3>3.1 Bill Parsing (Step 4.2.2)</h3>
+<div class="step">
+<p><strong>File:</strong> <code>bill_parser.py</code></p>
+<div class="substep"><strong>3.1.1:</strong> Open PDF with pdfplumber</div>
+<div class="substep"><strong>3.1.2:</strong> Detect and skip report pages (re-uploaded analyzed bills)</div>
+<div class="substep"><strong>3.1.3:</strong> Extract text and tables from each page</div>
+<div class="substep"><strong>3.1.4:</strong> Parse line items: service, description, quantity, rate, amount</div>
+<div class="substep"><strong>3.1.5:</strong> Deduplicate line items</div>
+<div class="substep"><strong>3.1.6:</strong> Aggregate service totals</div>
+<div class="substep"><strong>3.1.7:</strong> Extract metadata: invoice#, account ID, billing period, currency</div>
+<div class="substep"><strong>3.1.8:</strong> Extract region and instance type details per service</div>
+</div>
+
+<h3>3.2 Bedrock AI Analysis (Steps 4.2.3-4)</h3>
+<div class="step">
+<p><strong>File:</strong> <code>bedrock_client.py</code></p>
+<div class="substep"><strong>3.2.1:</strong> Map bill service names to DynamoDB keys (e.g., "Amazon Elastic Compute Cloud" → "EC2")</div>
+<div class="substep"><strong>3.2.2:</strong> Query DynamoDB for tips per service + "General" (cap: 10 tips)</div>
+<div class="substep"><strong>3.2.3:</strong> Build prompt with: bill data, tips, SP/RI eligibility rules, rightsizing rules</div>
+<div class="substep"><strong>3.2.4:</strong> If ≤20 services → single Bedrock call. If &gt;20 → split into batches</div>
+<div class="substep"><strong>3.2.5:</strong> Call Bedrock Nova Lite (<code>amazon.nova-lite-v1:0</code>), MAX_TOKENS=4000</div>
+<div class="substep"><strong>3.2.6:</strong> Retry logic: 2 retries, exponential backoff (1s, 2s) on 429/503</div>
+<div class="substep"><strong>3.2.7:</strong> Parse JSON response: summary, service_analysis[], savings_plan_analysis</div>
+<div class="substep"><strong>3.2.8:</strong> If batched → merge results from all batches</div>
+</div>
+
+<h3>3.3 PDF Report Generation (Step 4.2.5)</h3>
+<div class="step">
+<p><strong>File:</strong> <code>pdf_generator.py</code></p>
+<div class="substep"><strong>3.3.1:</strong> Load SlashMyBill.png logo</div>
+<div class="substep"><strong>3.3.2:</strong> Create title page with logo, date, account info</div>
+<div class="substep"><strong>3.3.3:</strong> Render bill summary section with total cost</div>
+<div class="substep"><strong>3.3.4:</strong> Compute and render savings estimates (monthly and yearly min/max/avg) from AI recommendations</div>
+<div class="substep"><strong>3.3.5:</strong> Render pie chart of service costs</div>
+<div class="substep"><strong>3.3.6:</strong> Render per-service analysis sections (explanation, billing details, recommendations, per-service monthly/yearly savings)</div>
+<div class="substep"><strong>3.3.7:</strong> Render Savings Plans analysis section</div>
+<div class="substep"><strong>3.3.8:</strong> Merge analysis pages with original invoice pages (PyPDF2)</div>
+<p><strong>Note:</strong> All cost values are formatted with comma separators for thousands (e.g., $1,234.56).</p>
+</div>
+
+<h2>4. Infrastructure</h2>
+
+<h3>AWS Resources</h3>
+<table>
+<tr><th>Resource</th><th>Name</th><th>Config</th></tr>
+<tr><td>S3 (website)</td><td>www.eshkolai.com</td><td>Static hosting</td></tr>
+<tr><td>S3 (storage)</td><td>aws-bill-analyzer-storage-991105135552</td><td>Bills, reports, Lambda zips</td></tr>
+<tr><td>CloudFront</td><td>E12JIHGHK40OLE</td><td>HTTPS CDN</td></tr>
+<tr><td>API Gateway</td><td>ViewMyBill-API</td><td>HTTP API, 29s timeout</td></tr>
+<tr><td>Lambda: Analyzer</td><td>aws-bill-analyzer-viewmybill</td><td>1024MB, 900s timeout</td></tr>
+<tr><td>Lambda: Upload</td><td>aws-bill-analyzer-upload-handler</td><td>256MB, 30s timeout</td></tr>
+<tr><td>Lambda: OTP</td><td>aws-bill-analyzer-otp-handler</td><td>128MB, 30s timeout</td></tr>
+<tr><td>Lambda: Admin</td><td>aws-bill-analyzer-admin-api</td><td>128MB, 30s timeout</td></tr>
+<tr><td>DynamoDB: Leads</td><td>ViewMyBill-Leads</td><td>email (HASH) + timestamp (RANGE)</td></tr>
+<tr><td>DynamoDB: Tips</td><td>ViewMyBill-CostOptimizationTips</td><td>service (HASH) + tipId (RANGE)</td></tr>
+<tr><td>DynamoDB: OTP</td><td>ViewMyBill-OTP</td><td>email (HASH), TTL enabled</td></tr>
+<tr><td>SES</td><td>eshkolai.com</td><td>DKIM verified</td></tr>
+</table>
+
+<h3>API Routes</h3>
+<table>
+<tr><th>Method</th><th>Path</th><th>Lambda</th></tr>
+<tr><td>POST</td><td>/upload</td><td>Upload Handler</td></tr>
+<tr><td>POST</td><td>/analyze</td><td>Bill Analyzer</td></tr>
+<tr><td>POST</td><td>/send-otp</td><td>OTP Handler</td></tr>
+<tr><td>POST</td><td>/verify-otp</td><td>OTP Handler</td></tr>
+<tr><td>POST</td><td>/admin/login</td><td>Admin Handler</td></tr>
+<tr><td>GET</td><td>/admin/leads</td><td>Admin Handler</td></tr>
+<tr><td>GET/POST/PUT/DELETE</td><td>/admin/tips</td><td>Admin Handler</td></tr>
+</table>
+
+<h3>S3 Lifecycle</h3>
+<table>
+<tr><th>Prefix</th><th>Action</th><th>After</th></tr>
+<tr><td>bills/</td><td>Delete</td><td>24 hours</td></tr>
+<tr><td>reports/</td><td>Delete</td><td>24 hours</td></tr>
+</table>
+
+<h2>5. Admin Panel</h2>
+<div class="step">
+<p><strong>URL:</strong> <code>https://www.eshkolai.com/admin/</code> (password protected)</p>
+<div class="substep"><strong>Leads Tab:</strong> Read-only view of all users who submitted bills. Search by email/name/company.</div>
+<div class="substep"><strong>Tips Tab:</strong> Full CRUD for cost optimization tips. Add, edit, delete tips stored in DynamoDB.</div>
+</div>
+
+<h2>6. CI/CD Pipeline</h2>
+<div class="step">
+<p><strong>Trigger:</strong> Push to <code>main</code> on GitHub → <code>.github/workflows/deploy.yml</code></p>
+<div class="substep"><strong>6.1:</strong> Package 4 Lambda functions (install deps, zip, upload to S3)</div>
+<div class="substep"><strong>6.2:</strong> Deploy CloudFormation stack</div>
+<div class="substep"><strong>6.3:</strong> Update Lambda function code from S3</div>
+<div class="substep"><strong>6.4:</strong> Seed DynamoDB knowledge base</div>
+<div class="substep"><strong>6.5:</strong> Deploy website + slashMyBill + admin frontend to S3 (removes old viewMyBill/ files)</div>
+<div class="substep"><strong>6.6:</strong> Invalidate CloudFront cache</div>
+</div>
+
+<h2>7. Troubleshooting Guide</h2>
+<table>
+<tr><th>Symptom</th><th>Likely Step</th><th>Check</th></tr>
+<tr><td>Upload fails</td><td>Step 3</td><td>File size &gt;10MB? Not PDF? Upload Lambda logs</td></tr>
+<tr><td>Spinner forever, no error</td><td>Step 4.1.4</td><td>Self-invoke failed? Check for "STEP 4.1" in logs</td></tr>
+<tr><td>Processing marker stuck</td><td>Step 4.2.x</td><td>Async Lambda crashed. Find "STEP 4.2 ASYNC START" log stream</td></tr>
+<tr><td>503 Service Unavailable</td><td>Step 4.2.4</td><td>Bedrock throttled or unavailable. Check retry logs</td></tr>
+<tr><td>Report generated but no download</td><td>Step 4.2.6-7</td><td>S3 upload or result.json save failed</td></tr>
+<tr><td>Admin panel blank</td><td>Admin</td><td>CloudFront cache. Hard refresh or incognito</td></tr>
+</table>
+
+</body>
+</html>
