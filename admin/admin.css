@@ -334,8 +334,8 @@ body {
 }
 
 .data-table thead th {
-    background: var(--dark);
-    color: var(--white);
+    background: #d0e4ff;
+    color: #000000;
     font-weight: 600;
     font-size: 12px;
     text-transform: uppercase;
@@ -647,3 +647,34 @@ body {
    ============================================================ */
 .notification-success { background: var(--success); }
 .notification-error { background: var(--danger); }
+
+/* ============================================================
+   Pagination
+   ============================================================ */
+.pagination {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    padding: 16px 0;
+}
+.page-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 34px;
+    height: 34px;
+    padding: 0 10px;
+    border: 1px solid var(--gray-light);
+    border-radius: 6px;
+    background: var(--white);
+    color: #374151;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+.page-btn:hover { background: #e0e7ff; border-color: var(--primary); color: var(--primary); }
+.page-btn.active { background: var(--primary); color: var(--white); border-color: var(--primary); }
+.page-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.page-info { font-size: 12px; color: var(--gray); margin: 0 8px; }
