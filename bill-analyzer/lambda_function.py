@@ -70,14 +70,15 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
 
     # Start async processing: set marker, invoke self, return 202
     _set_processing(session_id)
+    logger.info("STEP 4.1: Processing marker set, invoking self async for session %s", session_id)
 
     try:
-        lambda_client.invoke(
+        invoke_response = lambda_client.invoke(
             FunctionName=FUNCTION_NAME,
             InvocationType='Event',
             Payload=json.dumps({'_async': True, 'sessionId': session_id, 'email': email}),
         )
-        logger.info("Async invoke started for session %s", session_id)
+        logger.info("STEP 4.1 DONE: Self-invoke returned StatusCode=%s for session %s", invoke_response.get('StatusCode'), session_id)
     except Exception:
         logger.error("Failed to invoke async for session %s", session_id, exc_info=True)
         _clear_processing(session_id)
@@ -88,31 +89,56 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
 
 def _process_bill(session_id: str, email: str) -> Dict[str, Any]:
     """Async background processing — runs in a separate Lambda invocation."""
-    logger.info("ASYNC START session %s", session_id)
+    logger.info("===== STEP 4.2 ASYNC START ===== session=%s email=%s", session_id, email)
 
     try:
+        # STEP 4.2.1: Retrieve PDF from S3
+        logger.info("STEP 4.2.1: Retrieving PDF from S3 for session %s", session_id)
         pdf_bytes, filename = _retrieve_bill_from_s3(session_id)
-        logger.info("ASYNC retrieved bill %d bytes", len(pdf_bytes))
+        logger.info("STEP 4.2.1 DONE: Retrieved %d bytes, filename=%s", len(pdf_bytes), filename)
 
+        # STEP 4.2.2: Parse bill with pdfplumber
+        logger.info("STEP 4.2.2: Parsing bill with pdfplumber")
         parsed_bill = parse_bill(pdf_bytes)
-        logger.info("ASYNC parsed %d services", len(parsed_bill.get('service_totals', {})))
+        num_services = len(parsed_bill.get('service_totals', {}))
+        num_items = len(parsed_bill.get('line_items', []))
+        logger.info("STEP 4.2.2 DONE: Parsed %d services, %d line items", num_services, num_items)
 
+        # STEP 4.2.3: Query DynamoDB for tips (inside analyze_bill)
+        # STEP 4.2.4: Call Bedrock AI
+        logger.info("STEP 4.2.3-4: Calling analyze_bill (DynamoDB tips + Bedrock AI)")
         analysis = analyze_bill(parsed_bill)
-        logger.info("ASYNC Bedrock done")
+        logger.info("STEP 4.2.3-4 DONE: Bedrock returned summary length=%d", len(analysis.get('summary', '')))
 
+        # STEP 4.2.5: Generate PDF report
+        logger.info("STEP 4.2.5: Generating PDF report")
         report_bytes = generate_report(pdf_bytes, parsed_bill, analysis, session_id, email)
-        logger.info("ASYNC PDF generated %d bytes", len(report_bytes))
+        logger.info("STEP 4.2.5 DONE: PDF generated, %d bytes", len(report_bytes))
 
+        # STEP 4.2.6: Upload report to S3
+        logger.info("STEP 4.2.6: Uploading report to S3")
         download_url = _upload_report_to_s3(session_id, report_bytes)
+        logger.info("STEP 4.2.6 DONE: Report uploaded, URL generated")
+
+        # STEP 4.2.7: Save result metadata
+        logger.info("STEP 4.2.7: Saving result.json to S3")
         _save_result(session_id, download_url, analysis.get('summary', ''), filename)
+        logger.info("STEP 4.2.7 DONE: result.json saved")
+
+        # STEP 4.2.8: Clear processing marker
+        logger.info("STEP 4.2.8: Clearing processing marker")
         _clear_processing(session_id)
-        logger.info("ASYNC COMPLETE session %s", session_id)
+        logger.info("===== STEP 4.2 ASYNC COMPLETE ===== session=%s", session_id)
         return {'status': 'complete'}
 
     except Exception as e:
-        logger.error("ASYNC FAILED session %s: %s", session_id, str(e), exc_info=True)
-        _save_error(session_id, str(e))
-        _clear_processing(session_id)
+        logger.error("===== STEP 4.2 ASYNC FAILED ===== session=%s error=%s", session_id, str(e), exc_info=True)
+        try:
+            _save_error(session_id, str(e))
+            _clear_processing(session_id)
+            logger.info("Error saved to result.json and processing marker cleared")
+        except Exception as cleanup_err:
+            logger.error("Failed to save error state: %s", str(cleanup_err))
         return {'status': 'error'}
 
 
