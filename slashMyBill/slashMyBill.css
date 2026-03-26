@@ -544,7 +544,9 @@
 }
 
 .vmb-verify-status.vmb-status-success {
-    color: #10b981;
+    color: #000000;
+    font-weight: 700;
+    font-size: 15px;
 }
 
 .vmb-verify-status.vmb-status-error {
