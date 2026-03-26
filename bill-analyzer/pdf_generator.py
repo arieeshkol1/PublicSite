@@ -403,9 +403,6 @@ def _generate_analysis_pages(
     # --- Service Analysis (explanations + recommendations) ---
     elements.extend(_build_explanations_section(parsed_bill, ai_analysis, styles))
 
-    # --- Savings Plans & Reserved Instances Analysis ---
-    elements.extend(_build_savings_plan_section(ai_analysis, parsed_bill, styles))
-
     # --- Footer disclaimer ---
     elements.append(Spacer(1, 20))
     elements.extend(_build_footer(timestamp, styles))
