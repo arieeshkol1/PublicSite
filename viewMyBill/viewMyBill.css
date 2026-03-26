@@ -125,6 +125,17 @@
     display: none;
 }
 
+.vmb-file-requirements {
+    margin-top: 8px;
+    color: #888;
+    font-size: 0.82em;
+    line-height: 1.4;
+}
+.vmb-file-requirements i {
+    color: var(--secondary, #00d4ff);
+    margin-right: 4px;
+}
+
 /* Field Errors */
 .vmb-field-error {
     display: block;

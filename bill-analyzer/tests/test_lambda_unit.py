@@ -213,7 +213,16 @@ class TestLambdaHandler:
     @patch("lambda_function._is_processing", return_value=False)
     @patch("lambda_function._set_processing")
     @patch("lambda_function.lambda_client")
-    def test_first_call_invokes_async_returns_202(self, mock_lc, mock_set, mock_is_proc, mock_check):
+    @patch("lambda_function._retrieve_bill_from_s3")
+    def test_first_call_invokes_async_returns_202(self, mock_retrieve, mock_lc, mock_set, mock_is_proc, mock_check):
+        # Create a minimal valid PDF for validation
+        from reportlab.lib.pagesizes import letter
+        from reportlab.pdfgen import canvas
+        buf = __import__('io').BytesIO()
+        c = canvas.Canvas(buf, pagesize=letter)
+        c.drawString(100, 700, "AWS Invoice Total $100.00 Amazon Web Services billing statement")
+        c.save()
+        mock_retrieve.return_value = (buf.getvalue(), "invoice.pdf")
         mock_lc.invoke.return_value = {}
         resp = lambda_handler(self._make_event(), None)
         assert resp["statusCode"] == 202

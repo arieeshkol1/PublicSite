@@ -68,6 +68,76 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     if _is_processing(session_id):
         return _create_response(202, {'status': 'processing', 'sessionId': session_id})
 
+    # Quick validation: check size, format, text extractability, and AWS bill content
+    logger.info("STEP 4.0: Validating PDF for session %s", session_id)
+    try:
+        pdf_bytes, filename = _retrieve_bill_from_s3(session_id)
+        file_size_mb = len(pdf_bytes) / (1024 * 1024)
+        logger.info("STEP 4.0: Retrieved %.1f MB, filename=%s", file_size_mb, filename)
+
+        # 4.0.1: Size check
+        if len(pdf_bytes) == 0:
+            return _create_error_response(400, "The uploaded file is empty. Please upload a valid AWS invoice PDF.")
+        if len(pdf_bytes) > 10 * 1024 * 1024:
+            return _create_error_response(400, f"File size ({file_size_mb:.1f} MB) exceeds the 10 MB limit.")
+
+        # 4.0.2: Format check — verify it's a real PDF
+        if not pdf_bytes[:5] == b'%PDF-':
+            return _create_error_response(400, "The uploaded file is not a valid PDF. Please upload a PDF file.")
+
+        # 4.0.3: Text extractability check with PyPDF2
+        import io
+        from PyPDF2 import PdfReader
+        try:
+            reader = PdfReader(io.BytesIO(pdf_bytes))
+        except Exception:
+            return _create_error_response(400, "The PDF file is corrupted or password-protected. Please upload a valid, unprotected AWS invoice PDF.")
+
+        num_pages = len(reader.pages)
+        if num_pages == 0:
+            return _create_error_response(400, "The PDF file has no pages. Please upload a valid AWS invoice PDF.")
+        logger.info("STEP 4.0: PDF has %d pages", num_pages)
+
+        # Extract text from first page (fast with PyPDF2)
+        first_page_text = (reader.pages[0].extract_text() or "").strip()
+        logger.info("STEP 4.0: PyPDF2 first page: %d chars", len(first_page_text))
+
+        # If PyPDF2 got nothing, try pdfplumber on first page only
+        if len(first_page_text) < 50:
+            import pdfplumber
+            with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf_check:
+                first_page_text = (pdf_check.pages[0].extract_text() or "").strip()
+                logger.info("STEP 4.0: pdfplumber fallback first page: %d chars", len(first_page_text))
+
+        if len(first_page_text) < 50:
+            return _create_error_response(400,
+                "This PDF appears to be a scanned image and cannot be processed. "
+                "Please download your AWS bill directly from the AWS Billing Console "
+                "(Billing → Bills → Download CSV or PDF) as a native digital PDF."
+            )
+
+        # 4.0.4: Content check — verify it looks like an AWS bill
+        text_lower = first_page_text.lower()
+        aws_keywords = ['amazon web services', 'aws', 'invoice', 'billing', 'total', 'account']
+        matches = sum(1 for kw in aws_keywords if kw in text_lower)
+        logger.info("STEP 4.0: AWS keyword matches: %d/6 (%s)", matches, [kw for kw in aws_keywords if kw in text_lower])
+
+        if matches < 2:
+            return _create_error_response(400,
+                "This PDF does not appear to be an AWS invoice. "
+                "Please upload an AWS billing PDF downloaded from the AWS Billing Console."
+            )
+
+        logger.info("STEP 4.0: Validation PASSED — %d pages, %.1f MB, %d AWS keywords", num_pages, file_size_mb, matches)
+
+    except FileNotFoundError:
+        return _create_error_response(404, "Session not found or expired")
+    except Exception as e:
+        if hasattr(e, 'statusCode'):
+            raise  # Re-raise our own error responses
+        logger.error("STEP 4.0: Validation error: %s", str(e))
+        return _create_error_response(400, "Unable to read the PDF. Please ensure it is a valid AWS invoice PDF.")
+
     # Start async processing: set marker, invoke self, return 202
     _set_processing(session_id)
     logger.info("STEP 4.1: Processing marker set, invoking self async for session %s", session_id)
