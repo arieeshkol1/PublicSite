@@ -813,7 +813,7 @@ def _extract_text_and_tables(pdf_bytes: bytes, text_only: bool = False) -> Dict[
     MAX_PAGES = 20  # Safety limit — process first 20 pages max
 
     try:
-        # PHASE 1: Fast text extraction with PyPDF2 (< 1 second for 12 pages)
+        # PHASE 1: Fast text extraction with PyPDF2 (< 1 second for most PDFs)
         logger.info("STEP 4.2.2a: Opening PDF (%d bytes) with PyPDF2 for text extraction", len(pdf_bytes))
         _phase1_start = _time.time()
 
@@ -828,14 +828,33 @@ def _extract_text_and_tables(pdf_bytes: bytes, text_only: bool = False) -> Dict[
         pages_to_process = min(total_pages, MAX_PAGES)
         logger.info("STEP 4.2.2a: PDF has %d pages, processing %d", total_pages, pages_to_process)
 
-        all_text_parts: List[str] = []
-        for i in range(pages_to_process):
-            _page_start = _time.time()
-            page_text = reader.pages[i].extract_text() or ""
-            all_text_parts.append(page_text)
-            logger.info("STEP 4.2.2a: Page %d/%d text extracted (%.2fs)", i + 1, pages_to_process, _time.time() - _page_start)
+        # Try PyPDF2 first (fast) — only extract first page to test
+        _test_text = (reader.pages[0].extract_text() or "").strip()
+        _pypdf2_works = len(_test_text) > 50  # If first page has meaningful text, use PyPDF2
+        logger.info("STEP 4.2.2a: PyPDF2 test page: %d chars, using %s", len(_test_text), "PyPDF2" if _pypdf2_works else "pdfplumber fallback")
 
-        logger.info("STEP 4.2.2a: PyPDF2 text extraction done in %.1fs", _time.time() - _phase1_start)
+        all_text_parts: List[str] = []
+
+        if _pypdf2_works:
+            # PyPDF2 works — extract all pages fast
+            all_text_parts.append(_test_text)
+            for i in range(1, pages_to_process):
+                _page_start = _time.time()
+                page_text = reader.pages[i].extract_text() or ""
+                all_text_parts.append(page_text)
+                logger.info("STEP 4.2.2a: Page %d/%d text (PyPDF2, %.2fs)", i + 1, pages_to_process, _time.time() - _page_start)
+        else:
+            # PyPDF2 can't read this PDF — fall back to pdfplumber for text
+            logger.info("STEP 4.2.2a: Falling back to pdfplumber for text extraction")
+            pdf_stream_fb = io.BytesIO(pdf_bytes)
+            with pdfplumber.open(pdf_stream_fb) as pdf_fb:
+                for i, page in enumerate(pdf_fb.pages[:pages_to_process]):
+                    _page_start = _time.time()
+                    page_text = page.extract_text() or ""
+                    all_text_parts.append(page_text)
+                    logger.info("STEP 4.2.2a: Page %d/%d text (pdfplumber, %.1fs)", i + 1, pages_to_process, _time.time() - _page_start)
+
+        logger.info("STEP 4.2.2a: Text extraction done in %.1fs (%d chars total)", _time.time() - _phase1_start, sum(len(t) for t in all_text_parts))
 
         # PHASE 2: Table extraction with pdfplumber (only for non-report pages, only if needed)
         all_tables: List[List[List[str]]] = []
