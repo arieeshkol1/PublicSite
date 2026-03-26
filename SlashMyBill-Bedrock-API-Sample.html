@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>SlashMyBill - Sample Bedrock API Call</title>
+<style>
+body { font-family: Calibri, Arial, sans-serif; max-width: 900px; margin: 40px auto; padding: 20px; line-height: 1.6; color: #333; }
+h1 { color: #0066ff; border-bottom: 3px solid #0066ff; padding-bottom: 10px; }
+h2 { color: #0052cc; margin-top: 30px; border-bottom: 1px solid #ddd; padding-bottom: 5px; }
+h3 { color: #0a0e27; }
+.info { background: #f0f7ff; border-left: 4px solid #0066ff; padding: 15px; margin: 15px 0; }
+.note { background: #fff3cd; border-left: 4px solid #ff6b35; padding: 15px; margin: 15px 0; }
+table { border-collapse: collapse; width: 100%; margin: 15px 0; }
+th, td { border: 1px solid #ccc; padding: 8px 12px; text-align: left; }
+th { background: #0066ff; color: white; }
+tr:nth-child(even) { background: #f5f7fa; }
+pre { background: #1e1e1e; color: #d4d4d4; padding: 16px; border-radius: 8px; font-family: Consolas, 'Courier New', monospace; font-size: 13px; overflow-x: auto; white-space: pre-wrap; word-wrap: break-word; }
+.key { color: #9cdcfe; }
+.str { color: #ce9178; }
+.num { color: #b5cea8; }
+.bool { color: #569cd6; }
+.comment { color: #6a9955; font-style: italic; }
+code { background: #f0f0f0; padding: 2px 6px; border-radius: 3px; font-family: Consolas, monospace; }
+.arrow { color: #0066ff; font-size: 24px; text-align: center; margin: 10px 0; }
+</style>
+</head>
+<body>
+
+<h1>SlashMyBill — Sample Bedrock API Call</h1>
+<p><strong>Model:</strong> Amazon Nova Lite (<code>amazon.nova-lite-v1:0</code>) &nbsp;|&nbsp; <strong>Region:</strong> us-east-1 &nbsp;|&nbsp; <strong>API:</strong> Bedrock Runtime <code>invoke_model</code></p>
+
+<h2>1. Configuration</h2>
+<table>
+<tr><th>Parameter</th><th>Value</th><th>Notes</th></tr>
+<tr><td>Model ID</td><td><code>amazon.nova-lite-v1:0</code></td><td>Amazon Nova Lite — fast, cost-effective</td></tr>
+<tr><td>Max Tokens</td><td>5,000</td><td>Enough for detailed multi-service analysis</td></tr>
+<tr><td>Temperature</td><td>0.3</td><td>Low for consistent, factual output</td></tr>
+<tr><td>Top P</td><td>0.9</td><td>Nucleus sampling</td></tr>
+<tr><td>Retries</td><td>2</td><td>Exponential backoff (1s, 2s) on 429/503</td></tr>
+</table>
+
+<h2>2. Python SDK Call</h2>
+<pre>
+<span class="comment"># boto3 Bedrock Runtime invoke_model call</span>
+<span class="key">import</span> boto3, json
+
+bedrock = boto3.client(<span class="str">'bedrock-runtime'</span>, region_name=<span class="str">'us-east-1'</span>)
+
+request_body = {
+    <span class="str">"messages"</span>: [
+        {
+            <span class="str">"role"</span>: <span class="str">"user"</span>,
+            <span class="str">"content"</span>: [{<span class="str">"text"</span>: prompt}]
+        }
+    ],
+    <span class="str">"inferenceConfig"</span>: {
+        <span class="str">"max_new_tokens"</span>: <span class="num">5000</span>,
+        <span class="str">"temperature"</span>: <span class="num">0.3</span>,
+        <span class="str">"top_p"</span>: <span class="num">0.9</span>
+    }
+}
+
+response = bedrock.invoke_model(
+    modelId=<span class="str">'amazon.nova-lite-v1:0'</span>,
+    contentType=<span class="str">'application/json'</span>,
+    accept=<span class="str">'application/json'</span>,
+    body=json.dumps(request_body)
+)
+
+result = json.loads(response[<span class="str">'body'</span>].read())
+text = result[<span class="str">'output'</span>][<span class="str">'message'</span>][<span class="str">'content'</span>][<span class="num">0</span>][<span class="str">'text'</span>]
+</pre>
+
+<h2>3. Sample Request Body (JSON)</h2>
+<div class="info">
+<p>This is the exact JSON sent to <code>bedrock-runtime:invoke_model</code>. The prompt is truncated for readability — the real prompt includes the full bill data, optimization tips from DynamoDB, and detailed eligibility rules.</p>
+</div>
+<pre>
+{
+  <span class="str">"messages"</span>: [
+    {
+      <span class="str">"role"</span>: <span class="str">"user"</span>,
+      <span class="str">"content"</span>: [
+        {
+          <span class="str">"text"</span>: <span class="str">"You are an AWS billing expert. Analyze this AWS bill and provide insights.\n\n## Bill Data:\nInvoice Number: 1234567890\nAccount ID: 991105135552\nBilling Period: 2026-02-01 to 2026-02-28\nCurrency: USD\nTotal Cost: 2847.53\n\nService Breakdown:\n  - Amazon Elastic Compute Cloud: 1245.67\n  - Amazon Simple Storage Service: 312.45\n  - Amazon Relational Database Service: 567.89\n  - AWS Lambda: 45.23\n  - Amazon CloudFront: 89.12\n  - Amazon DynamoDB: 34.56\n  - Amazon Route 53: 12.50\n  - AWS Key Management Service: 8.00\n  - Amazon Simple Notification Service: 2.11\n  - AmazonCloudWatch: 530.00\n\nLine Item Details (from the bill):\n  Amazon Elastic Compute Cloud:\n    - USE1-BoxUsage:m5.xlarge: 672 Hrs x $0.192/hr = $129.02\n    - USE1-BoxUsage:r5.2xlarge: 744 Hrs x $0.504/hr = $374.98\n    - EBS:VolumeUsage.gp2: 2000 GB-Mo x $0.10/GB = $200.00\n  Amazon Relational Database Service:\n    - USE1-InstanceUsage:db.r5.large: 744 Hrs x $0.25/hr = $186.00\n\nCommitment Discount Status:\n  - Savings Plans: NOT DETECTED (customer is likely paying On-Demand rates)\n  - Reserved Instances: NOT DETECTED\n\n## Cost Optimization Tips:\n- [EC2] Right-size EC2 instances: Use AWS Compute Optimizer... (Estimated savings: 20-40%, Difficulty: easy)\n- [EC2] Use Reserved Instances or Savings Plans: For steady-state workloads... (Estimated savings: 30-72%, Difficulty: medium)\n- [S3] Use S3 Intelligent-Tiering: Enable for data with unknown access patterns... (Estimated savings: 40-70%, Difficulty: easy)\n- [RDS] Right-size RDS instances: Monitor CPU, memory, I/O... (Estimated savings: 20-50%, Difficulty: medium)\n- [General] Compute Savings Plans: Commit to $/hr for 1-3 years... (Estimated savings: up to 66%, Difficulty: medium)\n\n## CRITICAL RULES — Savings Plans &amp; Reserved Instances eligibility:\n[...full eligibility rules...]\n\nProvide analysis in this JSON format:\n[...format specification...]\n\nRespond in this exact JSON:\n{\n  \"summary\": \"...\",\n  \"service_analysis\": [...],\n  \"savings_plan_analysis\": {...}\n}"</span>
+        }
+      ]
+    }
+  ],
+  <span class="str">"inferenceConfig"</span>: {
+    <span class="str">"max_new_tokens"</span>: <span class="num">5000</span>,
+    <span class="str">"temperature"</span>: <span class="num">0.3</span>,
+    <span class="str">"top_p"</span>: <span class="num">0.9</span>
+  }
+}
+</pre>
+
+<h2>4. Sample Response from Bedrock</h2>
+<div class="arrow">⬇</div>
+<pre>
+{
+  <span class="str">"output"</span>: {
+    <span class="str">"message"</span>: {
+      <span class="str">"role"</span>: <span class="str">"assistant"</span>,
+      <span class="str">"content"</span>: [
+        {
+          <span class="str">"text"</span>: <span class="str">"{\n  \"summary\": \"Your February 2026 AWS bill totals $2,847.53 across 10 services. Amazon EC2 is the largest cost driver at $1,245.67 (43.7%), followed by Amazon CloudWatch at $530.00 (18.6%) and Amazon RDS at $567.89 (19.9%). No Savings Plans or Reserved Instances were detected — you are paying full On-Demand rates.\",\n  \"service_analysis\": [\n    {\n      \"service\": \"Amazon Elastic Compute Cloud\",\n      \"cost\": \"$1,245.67\",\n      \"explanation\": \"You ran m5.xlarge instances for 672 hours at $0.192/hr ($129.02) and r5.2xlarge instances for 744 hours at $0.504/hr ($374.98). EBS gp2 storage consumed 2,000 GB-Mo at $0.10/GB ($200.00). All usage is On-Demand with no commitment discounts applied.\",\n      \"billing_details\": \"672 hrs x $0.192 + 744 hrs x $0.504 + 2,000 GB x $0.10 = $1,245.67\",\n      \"recommendations\": [\n        {\n          \"title\": \"Purchase Compute Savings Plans\",\n          \"description\": \"Commit to a $/hr spend for 1 or 3 years to cover EC2 usage. All Upfront 3-year offers the deepest discount.\",\n          \"estimated_savings\": \"30-66%\"\n        },\n        {\n          \"title\": \"Migrate EBS from gp2 to gp3\",\n          \"description\": \"gp3 volumes are 20% cheaper than gp2 and offer configurable IOPS/throughput.\",\n          \"estimated_savings\": \"20%\"\n        }\n      ]\n    },\n    {\n      \"service\": \"Amazon CloudWatch\",\n      \"cost\": \"$530.00\",\n      \"explanation\": \"CloudWatch charges include custom metrics, dashboards, log ingestion, and alarms. At $530/month this suggests high-volume log ingestion or many custom metrics.\",\n      \"billing_details\": \"Metrics + Logs + Dashboards + Alarms = $530.00\",\n      \"recommendations\": [\n        {\n          \"title\": \"Review log retention and ingestion volume\",\n          \"description\": \"Reduce log retention periods, filter unnecessary logs at source, and use CloudWatch Logs Insights instead of exporting to S3.\",\n          \"estimated_savings\": \"20-50%\"\n        }\n      ]\n    },\n    {\n      \"service\": \"Amazon Relational Database Service\",\n      \"cost\": \"$567.89\",\n      \"explanation\": \"You ran a db.r5.large instance for 744 hours at $0.25/hr ($186.00). Additional charges include storage, I/O, and backup.\",\n      \"billing_details\": \"744 hrs x $0.25/hr + storage + I/O = $567.89\",\n      \"recommendations\": [\n        {\n          \"title\": \"Purchase RDS Reserved Instance\",\n          \"description\": \"For a steady-state database, a 1-year All Upfront RI for db.r5.large saves significantly.\",\n          \"estimated_savings\": \"30-60%\"\n        },\n        {\n          \"title\": \"Consider Aurora Serverless v2\",\n          \"description\": \"If workload is variable, Aurora Serverless scales to zero and charges only for capacity used.\",\n          \"estimated_savings\": \"30-70%\"\n        }\n      ]\n    },\n    {\n      \"service\": \"Amazon Simple Storage Service\",\n      \"cost\": \"$312.45\",\n      \"explanation\": \"S3 charges include storage, requests, and data transfer. Review storage class distribution and lifecycle policies.\",\n      \"billing_details\": \"Storage + Requests + Transfer = $312.45\",\n      \"recommendations\": [\n        {\n          \"title\": \"Enable S3 Intelligent-Tiering\",\n          \"description\": \"Automatically moves objects between access tiers based on usage patterns.\",\n          \"estimated_savings\": \"40-70%\"\n        }\n      ]\n    },\n    {\n      \"service\": \"Amazon CloudFront\",\n      \"cost\": \"$89.12\",\n      \"explanation\": \"CloudFront charges for data transfer out and HTTP/HTTPS requests.\",\n      \"billing_details\": \"Data transfer + requests = $89.12\",\n      \"recommendations\": [\n        {\n          \"title\": \"CloudFront Security Savings Bundle\",\n          \"description\": \"Commit to monthly spend for 1 year for up to 30% savings. Includes free WAF usage.\",\n          \"estimated_savings\": \"up to 30%\"\n        }\n      ]\n    },\n    {\n      \"service\": \"AWS Lambda\",\n      \"cost\": \"$45.23\",\n      \"explanation\": \"Lambda charges based on number of requests and GB-seconds of compute time.\",\n      \"billing_details\": \"Requests + Duration (GB-s) = $45.23\",\n      \"recommendations\": [\n        {\n          \"title\": \"Right-size Lambda memory\",\n          \"description\": \"Use AWS Lambda Power Tuning to find optimal memory. More memory = more CPU = faster execution = potentially lower cost.\",\n          \"estimated_savings\": \"10-50%\"\n        }\n      ]\n    },\n    {\n      \"service\": \"Amazon DynamoDB\",\n      \"cost\": \"$34.56\",\n      \"explanation\": \"DynamoDB charges for read/write capacity units and storage.\",\n      \"billing_details\": \"RCU + WCU + Storage = $34.56\",\n      \"recommendations\": [\n        {\n          \"title\": \"Switch to On-Demand capacity\",\n          \"description\": \"If traffic is unpredictable, On-Demand avoids paying for unused provisioned capacity.\",\n          \"estimated_savings\": \"varies\"\n        }\n      ]\n    },\n    {\n      \"service\": \"Amazon Route 53\",\n      \"cost\": \"$12.50\",\n      \"explanation\": \"Route 53 charges $0.50/hosted zone/month plus per-query fees.\",\n      \"billing_details\": \"Hosted zones + queries = $12.50\",\n      \"recommendations\": [\n        {\n          \"title\": \"Consolidate hosted zones\",\n          \"description\": \"Remove unused hosted zones. Each zone costs $0.50/month.\",\n          \"estimated_savings\": \"varies\"\n        }\n      ]\n    },\n    {\n      \"service\": \"AWS Key Management Service\",\n      \"cost\": \"$8.00\",\n      \"explanation\": \"Each customer-managed KMS key costs $1/month. You have 8 keys.\",\n      \"billing_details\": \"8 keys x $1/month = $8.00\",\n      \"recommendations\": [\n        {\n          \"title\": \"Audit unused KMS keys\",\n          \"description\": \"Disable or delete keys not used for encryption/decryption in the past 90 days. Use AWS-managed keys where possible (free).\",\n          \"estimated_savings\": \"$1/month per unused key\"\n        }\n      ]\n    },\n    {\n      \"service\": \"Amazon Simple Notification Service\",\n      \"cost\": \"$2.11\",\n      \"explanation\": \"SNS charges for published messages and deliveries.\",\n      \"billing_details\": \"Publishes + Deliveries = $2.11\",\n      \"recommendations\": []\n    }\n  ],\n  \"savings_plan_analysis\": {\n    \"has_savings_plans\": false,\n    \"has_reserved_instances\": false,\n    \"recommendation\": \"No Savings Plans or Reserved Instances were detected. You are paying On-Demand rates for all services. For your EC2 workloads, a Compute Savings Plan (1-year, All Upfront) could save up to 66%. For RDS, consider a Database Savings Plan or Reserved Instance for up to 60% savings.\",\n    \"potential_savings_percent\": \"30-66% on committed usage\",\n    \"how_to_purchase\": \"Go to AWS Cost Explorer > Savings Plans > Purchase Savings Plans. Choose hourly commitment, term (1 or 3 years), and payment option. For RIs: EC2 Console > Reserved Instances > Purchase.\"\n  }\n}"</span>
+        }
+      ]
+    }
+  },
+  <span class="str">"stopReason"</span>: <span class="str">"end_turn"</span>,
+  <span class="str">"usage"</span>: {
+    <span class="str">"inputTokens"</span>: <span class="num">3842</span>,
+    <span class="str">"outputTokens"</span>: <span class="num">2156</span>
+  }
+}
+</pre>
+
+<h2>5. Data Flow Summary</h2>
+<div class="info">
+<pre style="background:transparent;color:#333;font-size:14px;">
+Bill PDF → pdfplumber → Parsed Bill Data
+                              ↓
+DynamoDB Tips ──────→ Build Prompt (bill + tips + rules)
+                              ↓
+                    Bedrock invoke_model
+                    (Nova Lite, 5000 tokens)
+                              ↓
+                    JSON Response (summary,
+                    service_analysis[], savings_plan_analysis)
+                              ↓
+                    PDF Generator (ReportLab + PyPDF2)
+                    → Monthly/Yearly Min/Max/Avg savings
+                    → Per-service savings breakdown
+                    → Comma-formatted costs ($1,234.56)
+                              ↓
+                    Merged PDF Report → S3 → Pre-signed URL
+</pre>
+</div>
+
+<h2>6. Error Handling</h2>
+<table>
+<tr><th>Error</th><th>Code</th><th>Action</th></tr>
+<tr><td>ThrottlingException</td><td>429</td><td>Retry with exponential backoff (1s, 2s)</td></tr>
+<tr><td>ServiceUnavailableException</td><td>503</td><td>Retry with exponential backoff (1s, 2s)</td></tr>
+<tr><td>Invalid JSON response</td><td>—</td><td>Raise ValueError, fail the analysis</td></tr>
+<tr><td>Missing required fields</td><td>—</td><td>Raise ValueError with field name</td></tr>
+<tr><td>All retries exhausted</td><td>—</td><td>Raise RuntimeError, return error to user</td></tr>
+</table>
+
+</body>
+</html>

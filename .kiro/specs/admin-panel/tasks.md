@@ -146,7 +146,7 @@ Build a login-protected admin dashboard for the "Slash My Bill" tool. The implem
     - Add "Deploy Admin frontend" step: inject API_URL into admin.js, sync `admin/` directory to `s3://www.eshkolai.com/admin/`
     - _Requirements: 7.5, 7.6_
 
-- [-] 8. Final checkpoint - Ensure all tests pass
+- [x] 8. Final checkpoint - Ensure all tests pass
   - Ensure all tests pass, ask the user if questions arise.
 
 ## Notes

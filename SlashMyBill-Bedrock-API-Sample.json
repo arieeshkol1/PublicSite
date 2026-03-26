@@ -1,0 +1,192 @@
+{
+  "_description": "SlashMyBill — Sample Bedrock API Call (Request + Response)",
+  "_model": "amazon.nova-lite-v1:0",
+  "_region": "us-east-1",
+  "_api": "bedrock-runtime:invoke_model",
+
+  "request": {
+    "modelId": "amazon.nova-lite-v1:0",
+    "contentType": "application/json",
+    "accept": "application/json",
+    "body": {
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "text": "You are an AWS billing expert. Analyze this AWS bill and provide insights.\n\n## Bill Data:\nInvoice Number: 1234567890\nAccount ID: 991105135552\nBilling Period: 2026-02-01 to 2026-02-28\nCurrency: USD\nTotal Cost: 2847.53\n\nService Breakdown:\n  - Amazon Elastic Compute Cloud: 1245.67\n  - Amazon Simple Storage Service: 312.45\n  - Amazon Relational Database Service: 567.89\n  - AWS Lambda: 45.23\n  - Amazon CloudFront: 89.12\n  - Amazon DynamoDB: 34.56\n  - Amazon Route 53: 12.50\n  - AWS Key Management Service: 8.00\n  - Amazon Simple Notification Service: 2.11\n  - AmazonCloudWatch: 530.00\n\nLine Item Details (from the bill):\n  Amazon Elastic Compute Cloud:\n    - USE1-BoxUsage:m5.xlarge: 672 Hrs x $0.192/hr = $129.02\n    - USE1-BoxUsage:r5.2xlarge: 744 Hrs x $0.504/hr = $374.98\n    - EBS:VolumeUsage.gp2: 2000 GB-Mo x $0.10/GB = $200.00\n  Amazon Relational Database Service:\n    - USE1-InstanceUsage:db.r5.large: 744 Hrs x $0.25/hr = $186.00\n\nCommitment Discount Status:\n  - Savings Plans: NOT DETECTED (customer is likely paying On-Demand rates)\n  - Reserved Instances: NOT DETECTED\n\n## Cost Optimization Tips:\n- [EC2] Right-size EC2 instances: Use AWS Compute Optimizer to analyze historical utilization and identify underutilized instances. (Estimated savings: 20-40%, Difficulty: easy)\n- [EC2] Use Reserved Instances or Savings Plans: For steady-state workloads, commit to 1-year or 3-year Reserved Instances or Savings Plans. (Estimated savings: 30-72%, Difficulty: medium)\n- [S3] Use S3 Intelligent-Tiering: Enable for data with unknown or changing access patterns. (Estimated savings: 40-70%, Difficulty: easy)\n- [RDS] Right-size RDS instances: Monitor CPU, memory, and I/O utilization. (Estimated savings: 20-50%, Difficulty: medium)\n- [General] Compute Savings Plans: Commit to a consistent $/hr spend for 1 or 3 years. (Estimated savings: up to 66%, Difficulty: medium)\n\n## CRITICAL RULES — Savings Plans & Reserved Instances eligibility:\nCompute Savings Plans (up to 66% off) apply ONLY to: Amazon EC2, AWS Lambda, AWS Fargate.\nEC2 Instance Savings Plans (up to 72% off) apply ONLY to: Amazon EC2.\nDatabase Savings Plans (up to 35% off) apply ONLY to: Amazon RDS, Amazon Aurora, Amazon DynamoDB, Amazon ElastiCache.\nReserved Instances apply ONLY to: Amazon EC2, Amazon RDS, Amazon Redshift, Amazon ElastiCache, Amazon OpenSearch.\nDO NOT recommend Savings Plans or Reserved Instances for: VPC, Route 53, CloudWatch, S3, KMS, SNS, SQS, API Gateway, ELB.\nCloudFront Security Savings Bundle (up to 30% off): Available for Amazon CloudFront only.\n\nProvide analysis in this JSON format:\n\n1. SUMMARY: 2-3 sentences about total cost and top spenders.\n2. SERVICE_ANALYSIS: For each service: explanation, billing_details, recommendations with estimated_savings %.\n3. SAVINGS_PLAN_ANALYSIS: Based on Commitment Discount Status.\n\nRespond in this exact JSON:\n{\n  \"summary\": \"...\",\n  \"service_analysis\": [\n    {\n      \"service\": \"...\",\n      \"cost\": \"...\",\n      \"explanation\": \"...\",\n      \"billing_details\": \"...\",\n      \"recommendations\": [{\"title\": \"...\", \"description\": \"...\", \"estimated_savings\": \"...\"}]\n    }\n  ],\n  \"savings_plan_analysis\": {\n    \"has_savings_plans\": true/false,\n    \"has_reserved_instances\": true/false,\n    \"recommendation\": \"...\",\n    \"potential_savings_percent\": \"...\",\n    \"how_to_purchase\": \"...\"\n  }\n}"
+            }
+          ]
+        }
+      ],
+      "inferenceConfig": {
+        "max_new_tokens": 5000,
+        "temperature": 0.3,
+        "top_p": 0.9
+      }
+    }
+  },
+
+  "response": {
+    "output": {
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "text_parsed": {
+              "summary": "Your February 2026 AWS bill totals $2,847.53 across 10 services. Amazon EC2 is the largest cost driver at $1,245.67 (43.7%), followed by Amazon CloudWatch at $530.00 (18.6%) and Amazon RDS at $567.89 (19.9%). No Savings Plans or Reserved Instances were detected — you are paying full On-Demand rates.",
+              "service_analysis": [
+                {
+                  "service": "Amazon Elastic Compute Cloud",
+                  "cost": "$1,245.67",
+                  "explanation": "You ran m5.xlarge instances for 672 hours at $0.192/hr ($129.02) and r5.2xlarge instances for 744 hours at $0.504/hr ($374.98). EBS gp2 storage consumed 2,000 GB-Mo at $0.10/GB ($200.00). All usage is On-Demand with no commitment discounts applied.",
+                  "billing_details": "672 hrs x $0.192 + 744 hrs x $0.504 + 2,000 GB x $0.10 = $1,245.67",
+                  "recommendations": [
+                    {
+                      "title": "Purchase Compute Savings Plans",
+                      "description": "Commit to a $/hr spend for 1 or 3 years to cover EC2 usage. All Upfront 3-year offers the deepest discount.",
+                      "estimated_savings": "30-66%"
+                    },
+                    {
+                      "title": "Migrate EBS from gp2 to gp3",
+                      "description": "gp3 volumes are 20% cheaper than gp2 and offer configurable IOPS/throughput.",
+                      "estimated_savings": "20%"
+                    }
+                  ]
+                },
+                {
+                  "service": "AmazonCloudWatch",
+                  "cost": "$530.00",
+                  "explanation": "CloudWatch charges include custom metrics, dashboards, log ingestion, and alarms. At $530/month this suggests high-volume log ingestion or many custom metrics.",
+                  "billing_details": "Metrics + Logs + Dashboards + Alarms = $530.00",
+                  "recommendations": [
+                    {
+                      "title": "Review log retention and ingestion volume",
+                      "description": "Reduce log retention periods, filter unnecessary logs at source, and use CloudWatch Logs Insights instead of exporting to S3.",
+                      "estimated_savings": "20-50%"
+                    }
+                  ]
+                },
+                {
+                  "service": "Amazon Relational Database Service",
+                  "cost": "$567.89",
+                  "explanation": "You ran a db.r5.large instance for 744 hours at $0.25/hr ($186.00). Additional charges include storage, I/O, and backup.",
+                  "billing_details": "744 hrs x $0.25/hr + storage + I/O = $567.89",
+                  "recommendations": [
+                    {
+                      "title": "Purchase RDS Reserved Instance",
+                      "description": "For a steady-state database, a 1-year All Upfront RI for db.r5.large saves significantly.",
+                      "estimated_savings": "30-60%"
+                    },
+                    {
+                      "title": "Consider Aurora Serverless v2",
+                      "description": "If workload is variable, Aurora Serverless scales to zero and charges only for capacity used.",
+                      "estimated_savings": "30-70%"
+                    }
+                  ]
+                },
+                {
+                  "service": "Amazon Simple Storage Service",
+                  "cost": "$312.45",
+                  "explanation": "S3 charges include storage, requests, and data transfer. Review storage class distribution and lifecycle policies.",
+                  "billing_details": "Storage + Requests + Transfer = $312.45",
+                  "recommendations": [
+                    {
+                      "title": "Enable S3 Intelligent-Tiering",
+                      "description": "Automatically moves objects between access tiers based on usage patterns.",
+                      "estimated_savings": "40-70%"
+                    }
+                  ]
+                },
+                {
+                  "service": "Amazon CloudFront",
+                  "cost": "$89.12",
+                  "explanation": "CloudFront charges for data transfer out and HTTP/HTTPS requests.",
+                  "billing_details": "Data transfer + requests = $89.12",
+                  "recommendations": [
+                    {
+                      "title": "CloudFront Security Savings Bundle",
+                      "description": "Commit to monthly spend for 1 year for up to 30% savings. Includes free WAF usage.",
+                      "estimated_savings": "up to 30%"
+                    }
+                  ]
+                },
+                {
+                  "service": "AWS Lambda",
+                  "cost": "$45.23",
+                  "explanation": "Lambda charges based on number of requests and GB-seconds of compute time.",
+                  "billing_details": "Requests + Duration (GB-s) = $45.23",
+                  "recommendations": [
+                    {
+                      "title": "Right-size Lambda memory",
+                      "description": "Use AWS Lambda Power Tuning to find optimal memory. More memory = more CPU = faster execution = potentially lower cost.",
+                      "estimated_savings": "10-50%"
+                    }
+                  ]
+                },
+                {
+                  "service": "Amazon DynamoDB",
+                  "cost": "$34.56",
+                  "explanation": "DynamoDB charges for read/write capacity units and storage.",
+                  "billing_details": "RCU + WCU + Storage = $34.56",
+                  "recommendations": [
+                    {
+                      "title": "Switch to On-Demand capacity",
+                      "description": "If traffic is unpredictable, On-Demand avoids paying for unused provisioned capacity.",
+                      "estimated_savings": "varies"
+                    }
+                  ]
+                },
+                {
+                  "service": "Amazon Route 53",
+                  "cost": "$12.50",
+                  "explanation": "Route 53 charges $0.50/hosted zone/month plus per-query fees.",
+                  "billing_details": "Hosted zones + queries = $12.50",
+                  "recommendations": [
+                    {
+                      "title": "Consolidate hosted zones",
+                      "description": "Remove unused hosted zones. Each zone costs $0.50/month.",
+                      "estimated_savings": "varies"
+                    }
+                  ]
+                },
+                {
+                  "service": "AWS Key Management Service",
+                  "cost": "$8.00",
+                  "explanation": "Each customer-managed KMS key costs $1/month. You have 8 keys.",
+                  "billing_details": "8 keys x $1/month = $8.00",
+                  "recommendations": [
+                    {
+                      "title": "Audit unused KMS keys",
+                      "description": "Disable or delete keys not used for encryption/decryption in the past 90 days. Use AWS-managed keys where possible (free).",
+                      "estimated_savings": "$1/month per unused key"
+                    }
+                  ]
+                },
+                {
+                  "service": "Amazon Simple Notification Service",
+                  "cost": "$2.11",
+                  "explanation": "SNS charges for published messages and deliveries.",
+                  "billing_details": "Publishes + Deliveries = $2.11",
+                  "recommendations": []
+                }
+              ],
+              "savings_plan_analysis": {
+                "has_savings_plans": false,
+                "has_reserved_instances": false,
+                "recommendation": "No Savings Plans or Reserved Instances were detected. You are paying On-Demand rates for all services. For your EC2 workloads, a Compute Savings Plan (1-year, All Upfront) could save up to 66%. For RDS, consider a Database Savings Plan or Reserved Instance for up to 60% savings.",
+                "potential_savings_percent": "30-66% on committed usage",
+                "how_to_purchase": "Go to AWS Cost Explorer > Savings Plans > Purchase Savings Plans. Choose hourly commitment, term (1 or 3 years), and payment option. For RIs: EC2 Console > Reserved Instances > Purchase."
+              }
+            }
+          }
+        ]
+      }
+    },
+    "stopReason": "end_turn",
+    "usage": {
+      "inputTokens": 3842,
+      "outputTokens": 2156
+    }
+  }
+}
