@@ -47,11 +47,91 @@ _LOGO_PATH = os.path.join(os.path.dirname(__file__), "SlashMyBill.png")
 
 
 def _format_cost(value: Any) -> str:
-    """Format a cost value as a string with 2 decimal places."""
+    """Format a cost value as a string with 2 decimal places and comma separators."""
     try:
-        return f"{Decimal(str(value)):.2f}"
+        return f"{Decimal(str(value)):,.2f}"
     except Exception:
         return str(value)
+
+
+def _parse_savings_percent(savings_str: str):
+    """Parse an estimated_savings string like '20-40%' or 'up to 30%' into (min%, max%) floats.
+
+    Returns None if unparseable.
+    """
+    import re
+    s = str(savings_str).strip().lower().replace(",", "")
+    # Pattern: "20-40%" or "20% - 40%"
+    m = re.search(r'(\d+(?:\.\d+)?)\s*[%]?\s*[-–to]+\s*(\d+(?:\.\d+)?)\s*%', s)
+    if m:
+        return float(m.group(1)), float(m.group(2))
+    # Pattern: "up to 30%" or "~30%"
+    m = re.search(r'(?:up\s+to|~)\s*(\d+(?:\.\d+)?)\s*%', s)
+    if m:
+        val = float(m.group(1))
+        return 0.0, val
+    # Pattern: plain "30%"
+    m = re.search(r'(\d+(?:\.\d+)?)\s*%', s)
+    if m:
+        val = float(m.group(1))
+        return val, val
+    return None
+
+
+def _compute_service_savings(service_cost: float, recommendations: list):
+    """Compute min/max/avg dollar savings for a service from its recommendations.
+
+    Returns (min_dollars, max_dollars, avg_dollars) or None if no parseable savings.
+    """
+    if service_cost <= 0 or not recommendations:
+        return None
+    total_min_pct = 0.0
+    total_max_pct = 0.0
+    count = 0
+    for rec in recommendations:
+        parsed = _parse_savings_percent(str(rec.get("estimated_savings", "")))
+        if parsed:
+            total_min_pct += parsed[0]
+            total_max_pct += parsed[1]
+            count += 1
+    if count == 0:
+        return None
+    # Use the highest recommendation range (not sum — recommendations overlap)
+    best_min = 0.0
+    best_max = 0.0
+    for rec in recommendations:
+        parsed = _parse_savings_percent(str(rec.get("estimated_savings", "")))
+        if parsed:
+            if parsed[1] > best_max:
+                best_min, best_max = parsed
+    min_dollars = service_cost * best_min / 100.0
+    max_dollars = service_cost * best_max / 100.0
+    avg_dollars = (min_dollars + max_dollars) / 2.0
+    return min_dollars, max_dollars, avg_dollars
+
+
+def _compute_total_savings(service_items: list):
+    """Compute aggregate min/max/avg dollar savings across all services.
+
+    Returns (total_min, total_max, total_avg) or None.
+    """
+    total_min = 0.0
+    total_max = 0.0
+    has_any = False
+    for item in service_items:
+        cost_str = str(item.get("cost", "0")).replace("$", "").replace(",", "").strip()
+        try:
+            cost_val = float(cost_str)
+        except ValueError:
+            continue
+        result = _compute_service_savings(cost_val, item.get("recommendations", []))
+        if result:
+            total_min += result[0]
+            total_max += result[1]
+            has_any = True
+    if not has_any:
+        return None
+    return total_min, total_max, (total_min + total_max) / 2.0
 
 
 def _page_header_footer(canvas_obj, doc):
@@ -405,10 +485,47 @@ def _build_summary_section(
     elements.append(total_table)
     elements.append(Spacer(1, 8))
 
-    # AI summary text
+    # AI summary text + savings findings
     summary_text = ai_analysis.get("summary", "No summary available.")
+
+    # Compute total savings range from all service recommendations
+    service_items = ai_analysis.get("service_analysis", [])
+    if not service_items:
+        service_items = ai_analysis.get("explanations", [])
+    savings_totals = _compute_total_savings(service_items) if service_items else None
+
+    if savings_totals:
+        s_min, s_max, s_avg = savings_totals
+        savings_line = (
+            f" Based on our analysis, estimated potential savings range from "
+            f"<b>{currency} {s_min:,.2f}</b> (min) to <b>{currency} {s_max:,.2f}</b> (max), "
+            f"with an average of <b>{currency} {s_avg:,.2f}</b> per billing period."
+        )
+        summary_text = summary_text.rstrip(".") + "." + savings_line
+
     elements.append(Paragraph(summary_text, styles["body"]))
     elements.append(Spacer(1, 8))
+
+    # Savings highlight box (if we have numbers)
+    if savings_totals:
+        s_min, s_max, s_avg = savings_totals
+        savings_box_text = (
+            f'<b>Estimated Savings:</b> &nbsp; '
+            f'Min: <font color="#067D62"><b>{currency} {s_min:,.2f}</b></font> &nbsp;&nbsp;|&nbsp;&nbsp; '
+            f'Max: <font color="#067D62"><b>{currency} {s_max:,.2f}</b></font> &nbsp;&nbsp;|&nbsp;&nbsp; '
+            f'Avg: <font color="#067D62"><b>{currency} {s_avg:,.2f}</b></font>'
+        )
+        savings_data = [[Paragraph(savings_box_text, styles["body_bold"])]]
+        savings_table = Table(savings_data, colWidths=[7 * inch])
+        savings_table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#E8F5E9")),
+            ("BOX", (0, 0), (-1, -1), 1, colors.HexColor("#067D62")),
+            ("TOPPADDING", (0, 0), (-1, -1), 8),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+            ("LEFTPADDING", (0, 0), (-1, -1), 10),
+        ]))
+        elements.append(savings_table)
+        elements.append(Spacer(1, 8))
 
     # Service totals table
     service_totals = parsed_bill.get("service_totals", {})
@@ -685,6 +802,20 @@ def _build_explanations_section(
         if recommendations:
             right_parts.append(Paragraph("<b>How to save:</b>", styles["body_bold"]))
             right_parts.append(Spacer(1, 2))
+
+            # Compute per-service savings range
+            svc_savings = _compute_service_savings(_extract_cost(item), recommendations)
+            if svc_savings:
+                s_min, s_max, s_avg = svc_savings
+                currency = parsed_bill.get("currency", "USD")
+                savings_line = (
+                    f'<font color="#067D62"><b>Potential savings: '
+                    f'{currency} {s_min:,.2f} – {currency} {s_max:,.2f} '
+                    f'(avg {currency} {s_avg:,.2f})</b></font>'
+                )
+                right_parts.append(Paragraph(savings_line, styles["rec_savings"]))
+                right_parts.append(Spacer(1, 4))
+
             for rec in recommendations:
                 title = str(rec.get("title", ""))
                 desc = str(rec.get("description", ""))
