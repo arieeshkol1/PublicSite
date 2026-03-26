@@ -26,12 +26,14 @@ logger.setLevel(logging.INFO)
 
 s3_client = boto3.client('s3')
 lambda_client = boto3.client('lambda')
+dynamodb = boto3.resource('dynamodb')
 
 BILL_STORAGE_BUCKET = os.environ.get(
     'BILL_STORAGE_BUCKET', 'aws-bill-analyzer-storage-991105135552'
 )
 PRESIGNED_URL_EXPIRY = int(os.environ.get('PRESIGNED_URL_EXPIRY', '86400'))
 FUNCTION_NAME = os.environ.get('AWS_LAMBDA_FUNCTION_NAME', 'aws-bill-analyzer-viewmybill')
+LEADS_TABLE_NAME = os.environ.get('LEADS_TABLE_NAME', 'ViewMyBill-Leads')
 
 CORS_HEADERS = {
     'Content-Type': 'application/json',
@@ -195,8 +197,13 @@ def _process_bill(session_id: str, email: str) -> Dict[str, Any]:
         _save_result(session_id, download_url, analysis.get('summary', ''), filename)
         logger.info("STEP 4.2.7 DONE: result.json saved")
 
-        # STEP 4.2.8: Clear processing marker
-        logger.info("STEP 4.2.8: Clearing processing marker")
+        # STEP 4.2.8: Update lead with savings data
+        logger.info("STEP 4.2.8: Updating lead with bill optimization numbers")
+        _update_lead_with_savings(email, session_id, parsed_bill, analysis)
+        logger.info("STEP 4.2.8 DONE: Lead updated")
+
+        # STEP 4.2.9: Clear processing marker
+        logger.info("STEP 4.2.9: Clearing processing marker")
         _clear_processing(session_id)
         logger.info("===== STEP 4.2 ASYNC COMPLETE ===== session=%s", session_id)
         return {'status': 'complete'}
@@ -268,6 +275,178 @@ def _save_result(session_id: str, download_url: str, summary: str, filename: str
         Body=json.dumps({'downloadUrl': download_url, 'summary': summary, 'originalFilename': filename}),
         ContentType='application/json',
     )
+
+
+def _update_lead_with_savings(email: str, session_id: str, parsed_bill: Dict[str, Any], ai_analysis: Dict[str, Any]):
+    """Update the lead record in DynamoDB with bill optimization summary numbers."""
+    try:
+        table = dynamodb.Table(LEADS_TABLE_NAME)
+
+        # Find the lead by email + sessionId
+        response = table.query(
+            KeyConditionExpression='email = :e',
+            FilterExpression='sessionId = :s',
+            ExpressionAttributeValues={':e': email, ':s': session_id},
+            Limit=1,
+        )
+        items = response.get('Items', [])
+        if not items:
+            logger.warning("Lead not found for email=%s sessionId=%s, skipping savings update", email, session_id)
+            return
+
+        lead = items[0]
+        timestamp = lead['timestamp']
+
+        # Compute savings from AI analysis
+        total_cost = float(parsed_bill.get('total_cost', 0))
+        currency = parsed_bill.get('currency', 'USD')
+        service_items = ai_analysis.get('service_analysis', []) or ai_analysis.get('explanations', [])
+
+        monthly_min = 0.0
+        monthly_max = 0.0
+        for item in service_items:
+            cost_str = str(item.get('cost', '0')).replace('$', '').replace(',', '').strip()
+            try:
+                svc_cost = float(cost_str)
+            except ValueError:
+                continue
+            best_min, best_max = 0.0, 0.0
+            for rec in item.get('recommendations', []):
+                savings_str = str(rec.get('estimated_savings', ''))
+                parsed = _parse_savings_pct(savings_str)
+                if parsed and parsed[1] > best_max:
+                    best_min, best_max = parsed
+            monthly_min += svc_cost * best_min / 100.0
+            monthly_max += svc_cost * best_max / 100.0
+
+        monthly_avg = (monthly_min + monthly_max) / 2.0
+
+        from decimal import Decimal
+        table.update_item(
+            Key={'email': email, 'timestamp': timestamp},
+            UpdateExpression='SET billTotalCost = :tc, billCurrency = :cur, '
+                           'monthlySavingsMin = :smin, monthlySavingsMax = :smax, monthlySavingsAvg = :savg, '
+                           'yearlySavingsMin = :ymin, yearlySavingsMax = :ymax, yearlySavingsAvg = :yavg, '
+                           'numServices = :ns',
+            ExpressionAttributeValues={
+                ':tc': Decimal(str(round(total_cost, 2))),
+                ':cur': currency,
+                ':smin': Decimal(str(round(monthly_min, 2))),
+                ':smax': Decimal(str(round(monthly_max, 2))),
+                ':savg': Decimal(str(round(monthly_avg, 2))),
+                ':ymin': Decimal(str(round(monthly_min * 12, 2))),
+                ':ymax': Decimal(str(round(monthly_max * 12, 2))),
+                ':yavg': Decimal(str(round(monthly_avg * 12, 2))),
+                ':ns': len(service_items),
+            },
+        )
+        logger.info("Lead updated with savings: email=%s monthly=%.2f-%.2f yearly=%.2f-%.2f",
+                     email, monthly_min, monthly_max, monthly_min * 12, monthly_max * 12)
+    except Exception as e:
+        logger.warning("Failed to update lead with savings (non-fatal): %s", str(e))
+
+
+def _parse_savings_pct(s: str):
+    """Parse savings string like '20-40%' or 'up to 30%' into (min%, max%)."""
+    import re
+    s = s.strip().lower().replace(',', '')
+    m = re.search(r'(\d+(?:\.\d+)?)\s*[%]?\s*[-\u2013to]+\s*(\d+(?:\.\d+)?)\s*%', s)
+    if m:
+        return float(m.group(1)), float(m.group(2))
+    m = re.search(r'(?:up\s+to|~)\s*(\d+(?:\.\d+)?)\s*%', s)
+    if m:
+        return 0.0, float(m.group(1))
+    m = re.search(r'(\d+(?:\.\d+)?)\s*%', s)
+    if m:
+        v = float(m.group(1))
+        return v, v
+    return None
+
+def _update_lead_with_savings(email: str, session_id: str, parsed_bill: Dict[str, Any], ai_analysis: Dict[str, Any]):
+    """Update the lead record in DynamoDB with bill optimization summary numbers."""
+    try:
+        table = dynamodb.Table(LEADS_TABLE_NAME)
+
+        # Find the lead by email + sessionId
+        response = table.query(
+            KeyConditionExpression='email = :e',
+            FilterExpression='sessionId = :s',
+            ExpressionAttributeValues={':e': email, ':s': session_id},
+            Limit=1,
+        )
+        items = response.get('Items', [])
+        if not items:
+            logger.warning("Lead not found for email=%s sessionId=%s, skipping savings update", email, session_id)
+            return
+
+        lead = items[0]
+        timestamp = lead['timestamp']
+
+        # Compute savings from AI analysis
+        total_cost = float(parsed_bill.get('total_cost', 0))
+        currency = parsed_bill.get('currency', 'USD')
+        service_items = ai_analysis.get('service_analysis', []) or ai_analysis.get('explanations', [])
+
+        monthly_min = 0.0
+        monthly_max = 0.0
+        for item in service_items:
+            cost_str = str(item.get('cost', '0')).replace('$', '').replace(',', '').strip()
+            try:
+                svc_cost = float(cost_str)
+            except ValueError:
+                continue
+            best_min, best_max = 0.0, 0.0
+            for rec in item.get('recommendations', []):
+                savings_str = str(rec.get('estimated_savings', ''))
+                parsed = _parse_savings_pct(savings_str)
+                if parsed and parsed[1] > best_max:
+                    best_min, best_max = parsed
+            monthly_min += svc_cost * best_min / 100.0
+            monthly_max += svc_cost * best_max / 100.0
+
+        monthly_avg = (monthly_min + monthly_max) / 2.0
+
+        from decimal import Decimal
+        table.update_item(
+            Key={'email': email, 'timestamp': timestamp},
+            UpdateExpression='SET billTotalCost = :tc, billCurrency = :cur, '
+                           'monthlySavingsMin = :smin, monthlySavingsMax = :smax, monthlySavingsAvg = :savg, '
+                           'yearlySavingsMin = :ymin, yearlySavingsMax = :ymax, yearlySavingsAvg = :yavg, '
+                           'numServices = :ns',
+            ExpressionAttributeValues={
+                ':tc': Decimal(str(round(total_cost, 2))),
+                ':cur': currency,
+                ':smin': Decimal(str(round(monthly_min, 2))),
+                ':smax': Decimal(str(round(monthly_max, 2))),
+                ':savg': Decimal(str(round(monthly_avg, 2))),
+                ':ymin': Decimal(str(round(monthly_min * 12, 2))),
+                ':ymax': Decimal(str(round(monthly_max * 12, 2))),
+                ':yavg': Decimal(str(round(monthly_avg * 12, 2))),
+                ':ns': len(service_items),
+            },
+        )
+        logger.info("Lead updated with savings: email=%s monthly=%.2f-%.2f yearly=%.2f-%.2f",
+                     email, monthly_min, monthly_max, monthly_min * 12, monthly_max * 12)
+    except Exception as e:
+        logger.warning("Failed to update lead with savings (non-fatal): %s", str(e))
+
+
+def _parse_savings_pct(s: str):
+    """Parse savings string like '20-40%' or 'up to 30%' into (min%, max%)."""
+    import re
+    s = s.strip().lower().replace(',', '')
+    m = re.search(r'(\d+(?:\.\d+)?)\s*[%]?\s*[-\u2013to]+\s*(\d+(?:\.\d+)?)\s*%', s)
+    if m:
+        return float(m.group(1)), float(m.group(2))
+    m = re.search(r'(?:up\s+to|~)\s*(\d+(?:\.\d+)?)\s*%', s)
+    if m:
+        return 0.0, float(m.group(1))
+    m = re.search(r'(\d+(?:\.\d+)?)\s*%', s)
+    if m:
+        v = float(m.group(1))
+        return v, v
+    return None
+
 
 
 def _save_error(session_id: str, error_msg: str):

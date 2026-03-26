@@ -127,26 +127,26 @@
 
 .vmb-file-requirements {
     margin-top: 8px;
-    color: #888;
+    color: #666;
     font-size: 0.82em;
     line-height: 1.4;
 }
 .vmb-file-requirements i {
-    color: var(--secondary, #00d4ff);
+    color: #0052cc;
     margin-right: 4px;
 }
 
 .vmb-bill-instructions {
     margin-top: 16px;
-    background: rgba(0, 212, 255, 0.05);
-    border: 1px solid rgba(0, 212, 255, 0.15);
+    background: #f0f7ff;
+    border: 1px solid #cce0ff;
     border-radius: 10px;
     padding: 16px 20px;
 }
 .vmb-instructions-title {
     font-size: 1.05em;
     font-weight: 600;
-    color: var(--secondary, #00d4ff);
+    color: #0052cc;
     margin-bottom: 10px;
 }
 .vmb-instructions-title i {
@@ -157,16 +157,16 @@
     padding-left: 22px;
     font-size: 0.92em;
     line-height: 1.8;
-    color: #ccc;
+    color: #555;
 }
 .vmb-instructions-steps li {
     margin-bottom: 2px;
 }
 .vmb-instructions-steps strong {
-    color: #fff;
+    color: #0a0e27;
 }
 .vmb-instructions-steps a {
-    color: var(--secondary, #00d4ff);
+    color: var(--primary, #0066ff);
     text-decoration: none;
 }
 .vmb-instructions-steps a:hover {
