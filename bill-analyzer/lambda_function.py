@@ -284,8 +284,9 @@ def _update_lead_with_savings(email: str, session_id: str, parsed_bill: Dict[str
 
         # Find the lead by email + sessionId
         response = table.query(
-            KeyConditionExpression='email = :e',
+            KeyConditionExpression='#em = :e',
             FilterExpression='sessionId = :s',
+            ExpressionAttributeNames={'#em': 'email'},
             ExpressionAttributeValues={':e': email, ':s': session_id},
             Limit=1,
         )
@@ -343,7 +344,7 @@ def _update_lead_with_savings(email: str, session_id: str, parsed_bill: Dict[str
         logger.info("Lead updated with savings: email=%s monthly=%.2f-%.2f yearly=%.2f-%.2f",
                      email, monthly_min, monthly_max, monthly_min * 12, monthly_max * 12)
     except Exception as e:
-        logger.warning("Failed to update lead with savings (non-fatal): %s", str(e))
+        logger.error("Failed to update lead with savings: %s", str(e), exc_info=True)
 
 
 def _parse_savings_pct(s: str):
