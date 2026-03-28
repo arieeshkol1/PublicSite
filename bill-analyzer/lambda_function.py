@@ -281,6 +281,7 @@ def _update_lead_with_savings(email: str, session_id: str, parsed_bill: Dict[str
     """Update the lead record in DynamoDB with bill optimization summary numbers."""
     try:
         table = dynamodb.Table(LEADS_TABLE_NAME)
+        logger.info("STEP 4.2.8 DEBUG: Looking up lead email=%s sessionId=%s table=%s", email, session_id, LEADS_TABLE_NAME)
 
         # Find the lead by email + sessionId
         response = table.query(
@@ -291,17 +292,20 @@ def _update_lead_with_savings(email: str, session_id: str, parsed_bill: Dict[str
             Limit=1,
         )
         items = response.get('Items', [])
+        logger.info("STEP 4.2.8 DEBUG: Query returned %d items", len(items))
         if not items:
             logger.warning("Lead not found for email=%s sessionId=%s, skipping savings update", email, session_id)
             return
 
         lead = items[0]
         timestamp = lead['timestamp']
+        logger.info("STEP 4.2.8 DEBUG: Found lead timestamp=%s", timestamp)
 
         # Compute savings from AI analysis
         total_cost = float(parsed_bill.get('total_cost', 0))
         currency = parsed_bill.get('currency', 'USD')
         service_items = ai_analysis.get('service_analysis', []) or ai_analysis.get('explanations', [])
+        logger.info("STEP 4.2.8 DEBUG: total_cost=%s currency=%s services=%d", total_cost, currency, len(service_items))
 
         monthly_min = 0.0
         monthly_max = 0.0
@@ -321,6 +325,7 @@ def _update_lead_with_savings(email: str, session_id: str, parsed_bill: Dict[str
             monthly_max += svc_cost * best_max / 100.0
 
         monthly_avg = (monthly_min + monthly_max) / 2.0
+        logger.info("STEP 4.2.8 DEBUG: monthly_min=%s monthly_max=%s", monthly_min, monthly_max)
 
         from decimal import Decimal
         table.update_item(
@@ -341,10 +346,10 @@ def _update_lead_with_savings(email: str, session_id: str, parsed_bill: Dict[str
                 ':ns': len(service_items),
             },
         )
-        logger.info("Lead updated with savings: email=%s monthly=%.2f-%.2f yearly=%.2f-%.2f",
-                     email, monthly_min, monthly_max, monthly_min * 12, monthly_max * 12)
+        logger.info("STEP 4.2.8 SUCCESS: Lead updated with savings email=%s monthly=%.2f-%.2f",
+                     email, monthly_min, monthly_max)
     except Exception as e:
-        logger.error("Failed to update lead with savings: %s", str(e), exc_info=True)
+        logger.error("STEP 4.2.8 FAILED: %s", str(e), exc_info=True)
 
 
 def _parse_savings_pct(s: str):
