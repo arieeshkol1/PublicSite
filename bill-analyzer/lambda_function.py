@@ -198,18 +198,21 @@ def _process_bill(session_id: str, email: str) -> Dict[str, Any]:
         _save_result(session_id, download_url, analysis.get('summary', ''), filename)
         logger.info("STEP 4.2.7 DONE: result.json saved")
 
-        # STEP 4.2.8: Update lead with savings data
-        logger.info("STEP 4.2.8: Updating lead with bill optimization numbers")
+        # STEP 4.2.8: Update lead with savings data (non-fatal)
         try:
+            logger.info("STEP 4.2.8: Updating lead with bill optimization numbers")
             _update_lead_with_savings(email, session_id, parsed_bill, analysis)
             logger.info("STEP 4.2.8 DONE: Lead updated")
-        except Exception as e:
+        except BaseException as e:
             logger.error("STEP 4.2.8 FAILED (non-fatal): %s", str(e), exc_info=True)
-
-        # STEP 4.2.9: Clear processing marker
-        logger.info("STEP 4.2.9: Clearing processing marker")
-        _clear_processing(session_id)
-        logger.info("===== STEP 4.2 ASYNC COMPLETE ===== session=%s", session_id)
+        finally:
+            # STEP 4.2.9: Clear processing marker (ALWAYS runs)
+            try:
+                logger.info("STEP 4.2.9: Clearing processing marker")
+                _clear_processing(session_id)
+                logger.info("===== STEP 4.2 ASYNC COMPLETE ===== session=%s", session_id)
+            except BaseException as e2:
+                logger.error("STEP 4.2.9 FAILED: %s", str(e2))
         return {'status': 'complete'}
 
     except Exception as e:
