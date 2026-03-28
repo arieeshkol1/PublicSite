@@ -58,20 +58,30 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             print(f"S3 upload error: {e.response['Error']['Code']} - {e.response['Error']['Message']}")
             return create_error_response(500, "Failed to store file. Please try again.")
 
-        # Save lead to DynamoDB
+        # Save lead to DynamoDB with auto-increment leadId
         try:
             table = dynamodb.Table(LEADS_TABLE_NAME)
+            # Get max leadId
+            scan_resp = table.scan(ProjectionExpression='leadId')
+            max_id = 0
+            for item in scan_resp.get('Items', []):
+                lid = item.get('leadId', 0)
+                if isinstance(lid, (int, float)) and lid > max_id:
+                    max_id = int(lid)
+            next_id = max_id + 1
+
             table.put_item(Item={
                 'email': contact.get('email', ''),
                 'timestamp': upload_timestamp,
                 'sessionId': session_id,
+                'leadId': next_id,
                 'name': contact.get('name', ''),
                 'company': contact.get('company', ''),
                 'phone': contact.get('phone', ''),
                 'fileName': filename,
                 'fileSize': len(file_content)
             })
-            print(f"Lead saved for {contact.get('email', '')}")
+            print(f"Lead saved for {contact.get('email', '')} with leadId={next_id}")
         except ClientError as e:
             # Log but don't fail the upload if lead save fails
             print(f"DynamoDB lead save error: {e.response['Error']['Code']} - {e.response['Error']['Message']}")
