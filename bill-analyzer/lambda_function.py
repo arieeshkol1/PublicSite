@@ -283,76 +283,59 @@ def _save_result(session_id: str, download_url: str, summary: str, filename: str
 
 def _update_lead_with_savings(email: str, session_id: str, parsed_bill: Dict[str, Any], ai_analysis: Dict[str, Any]):
     """Update the lead record in DynamoDB with bill optimization summary numbers."""
-    try:
-        table = dynamodb.Table(LEADS_TABLE_NAME)
-        logger.info("STEP 4.2.8 DEBUG: Looking up lead email=%s sessionId=%s table=%s", email, session_id, LEADS_TABLE_NAME)
+    table = dynamodb.Table(LEADS_TABLE_NAME)
+    logger.info("STEP 4.2.8 DEBUG: email=%s sessionId=%s table=%s", email, session_id, LEADS_TABLE_NAME)
 
-        # Find the lead by email + sessionId
-        response = table.query(
-            KeyConditionExpression='#em = :e',
-            FilterExpression='sessionId = :s',
-            ExpressionAttributeNames={'#em': 'email'},
-            ExpressionAttributeValues={':e': email, ':s': session_id},
-            Limit=1,
-        )
-        items = response.get('Items', [])
-        logger.info("STEP 4.2.8 DEBUG: Query returned %d items", len(items))
-        if not items:
-            logger.warning("Lead not found for email=%s sessionId=%s, skipping savings update", email, session_id)
-            return
+    # Find the lead by email + sessionId
+    response = table.query(
+        KeyConditionExpression='#em = :e',
+        FilterExpression='sessionId = :s',
+        ExpressionAttributeNames={'#em': 'email'},
+        ExpressionAttributeValues={':e': email, ':s': session_id},
+        Limit=1,
+    )
+    items = response.get('Items', [])
+    logger.info("STEP 4.2.8 DEBUG: found %d items", len(items))
+    if not items:
+        logger.warning("STEP 4.2.8: Lead not found, skipping")
+        return
 
-        lead = items[0]
-        timestamp = lead['timestamp']
-        logger.info("STEP 4.2.8 DEBUG: Found lead timestamp=%s", timestamp)
+    lead = items[0]
 
-        # Compute savings from AI analysis
-        total_cost = float(parsed_bill.get('total_cost', 0))
-        currency = parsed_bill.get('currency', 'USD')
-        service_items = ai_analysis.get('service_analysis', []) or ai_analysis.get('explanations', [])
-        logger.info("STEP 4.2.8 DEBUG: total_cost=%s currency=%s services=%d", total_cost, currency, len(service_items))
+    # Compute savings
+    total_cost = float(parsed_bill.get('total_cost', 0))
+    currency = parsed_bill.get('currency', 'USD')
+    service_items = ai_analysis.get('service_analysis', []) or ai_analysis.get('explanations', [])
 
-        monthly_min = 0.0
-        monthly_max = 0.0
-        for item in service_items:
-            cost_str = str(item.get('cost', '0')).replace('$', '').replace(',', '').strip()
-            try:
-                svc_cost = float(cost_str)
-            except ValueError:
-                continue
-            best_min, best_max = 0.0, 0.0
-            for rec in item.get('recommendations', []):
-                savings_str = str(rec.get('estimated_savings', ''))
-                parsed = _parse_savings_pct(savings_str)
-                if parsed and parsed[1] > best_max:
-                    best_min, best_max = parsed
-            monthly_min += svc_cost * best_min / 100.0
-            monthly_max += svc_cost * best_max / 100.0
+    monthly_min = 0.0
+    monthly_max = 0.0
+    for item in service_items:
+        cost_str = str(item.get('cost', '0')).replace('$', '').replace(',', '').strip()
+        try:
+            svc_cost = float(cost_str)
+        except ValueError:
+            continue
+        best_min, best_max = 0.0, 0.0
+        for rec in item.get('recommendations', []):
+            parsed = _parse_savings_pct(str(rec.get('estimated_savings', '')))
+            if parsed and parsed[1] > best_max:
+                best_min, best_max = parsed
+        monthly_min += svc_cost * best_min / 100.0
+        monthly_max += svc_cost * best_max / 100.0
 
-        monthly_avg = (monthly_min + monthly_max) / 2.0
-        logger.info("STEP 4.2.8 DEBUG: monthly_min=%s monthly_max=%s", monthly_min, monthly_max)
+    # Merge new fields into existing lead and put_item (overwrite)
+    lead['billTotalCost'] = Decimal(str(round(total_cost, 2)))
+    lead['billCurrency'] = currency
+    lead['monthlySavingsMin'] = Decimal(str(round(monthly_min, 2)))
+    lead['monthlySavingsMax'] = Decimal(str(round(monthly_max, 2)))
+    lead['monthlySavingsAvg'] = Decimal(str(round((monthly_min + monthly_max) / 2.0, 2)))
+    lead['yearlySavingsMin'] = Decimal(str(round(monthly_min * 12, 2)))
+    lead['yearlySavingsMax'] = Decimal(str(round(monthly_max * 12, 2)))
+    lead['yearlySavingsAvg'] = Decimal(str(round((monthly_min + monthly_max) / 2.0 * 12, 2)))
+    lead['numServices'] = len(service_items)
 
-        table.update_item(
-            Key={'email': email, 'timestamp': timestamp},
-            UpdateExpression='SET billTotalCost = :tc, billCurrency = :cur, '
-                           'monthlySavingsMin = :smin, monthlySavingsMax = :smax, monthlySavingsAvg = :savg, '
-                           'yearlySavingsMin = :ymin, yearlySavingsMax = :ymax, yearlySavingsAvg = :yavg, '
-                           'numServices = :ns',
-            ExpressionAttributeValues={
-                ':tc': Decimal(str(round(total_cost, 2))),
-                ':cur': currency,
-                ':smin': Decimal(str(round(monthly_min, 2))),
-                ':smax': Decimal(str(round(monthly_max, 2))),
-                ':savg': Decimal(str(round(monthly_avg, 2))),
-                ':ymin': Decimal(str(round(monthly_min * 12, 2))),
-                ':ymax': Decimal(str(round(monthly_max * 12, 2))),
-                ':yavg': Decimal(str(round(monthly_avg * 12, 2))),
-                ':ns': len(service_items),
-            },
-        )
-        logger.info("STEP 4.2.8 SUCCESS: Lead updated with savings email=%s monthly=%.2f-%.2f",
-                     email, monthly_min, monthly_max)
-    except Exception as e:
-        logger.error("STEP 4.2.8 FAILED: %s", str(e), exc_info=True)
+    table.put_item(Item=lead)
+    logger.info("STEP 4.2.8 SUCCESS: billTotal=%s monthlySavingsMax=%s", total_cost, monthly_max)
 
 
 def _parse_savings_pct(s: str):
