@@ -159,6 +159,7 @@ Resources:
                 Action:
                   - dynamodb:Query
                   - dynamodb:UpdateItem
+                  - dynamodb:PutItem
                 Resource:
                   - !GetAtt LeadsTable.Arn
         - PolicyName: LambdaSelfInvoke
