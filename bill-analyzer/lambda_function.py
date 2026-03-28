@@ -63,7 +63,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     email = request_data['email']
 
     # Check if result already exists (polling)
-    result = _check_result(session_id)
+    result = _check_result(session_id, email)
     if result:
         return result
 
@@ -255,7 +255,7 @@ def _process_bill(session_id: str, email: str) -> Dict[str, Any]:
         return {'status': 'error'}
 
 
-def _check_result(session_id: str):
+def _check_result(session_id: str, email: str = ''):
     """Check if analysis result exists in S3. Returns response or None."""
     result_key = f"reports/{session_id}/result.json"
     try:
@@ -264,6 +264,32 @@ def _check_result(session_id: str):
         if data.get('error'):
             _cleanup_status(session_id)
             return _create_error_response(503, "Analysis failed. Please try again.", retryable=True)
+
+        # If result has billing data and we have email, update the lead
+        if data.get('billTotalCost') and email:
+            try:
+                table = dynamodb.Table(LEADS_TABLE_NAME)
+                resp = table.query(
+                    KeyConditionExpression='#em = :e',
+                    FilterExpression='sessionId = :s',
+                    ExpressionAttributeNames={'#em': 'email'},
+                    ExpressionAttributeValues={':e': email, ':s': session_id},
+                    Limit=1,
+                )
+                items = resp.get('Items', [])
+                if items and not items[0].get('billTotalCost'):
+                    lead = items[0]
+                    lead['billTotalCost'] = Decimal(str(data['billTotalCost']))
+                    lead['billCurrency'] = data.get('billCurrency', 'USD')
+                    lead['monthlySavingsMin'] = Decimal(str(data.get('monthlySavingsMin', 0)))
+                    lead['monthlySavingsMax'] = Decimal(str(data.get('monthlySavingsMax', 0)))
+                    lead['monthlySavingsAvg'] = Decimal(str(round((data.get('monthlySavingsMin', 0) + data.get('monthlySavingsMax', 0)) / 2, 2)))
+                    lead['numServices'] = data.get('numServices', 0)
+                    table.put_item(Item=lead)
+                    logger.info("Lead billing synced from result.json: total=%s", data['billTotalCost'])
+            except Exception as sync_err:
+                logger.warning("Failed to sync lead billing: %s", str(sync_err))
+
         return _create_response(200, {
             'status': 'complete',
             'downloadUrl': data['downloadUrl'],
