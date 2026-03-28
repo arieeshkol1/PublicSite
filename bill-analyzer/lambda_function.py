@@ -195,24 +195,53 @@ def _process_bill(session_id: str, email: str) -> Dict[str, Any]:
 
         # STEP 4.2.7: Save result metadata
         logger.info("STEP 4.2.7: Saving result.json to S3")
-        _save_result(session_id, download_url, analysis.get('summary', ''), filename)
-        logger.info("STEP 4.2.7 DONE: result.json saved")
+        # Include billing data in result.json
+        total_cost = float(parsed_bill.get('total_cost', 0))
+        currency = parsed_bill.get('currency', 'USD')
+        service_items = analysis.get('service_analysis', []) or analysis.get('explanations', [])
+        monthly_min = 0.0
+        monthly_max = 0.0
+        for svc_item in service_items:
+            cs = str(svc_item.get('cost', '0')).replace('$', '').replace(',', '').strip()
+            try:
+                sc = float(cs)
+            except ValueError:
+                continue
+            bmin, bmax = 0.0, 0.0
+            for rec in svc_item.get('recommendations', []):
+                p = _parse_savings_pct(str(rec.get('estimated_savings', '')))
+                if p and p[1] > bmax:
+                    bmin, bmax = p
+            monthly_min += sc * bmin / 100.0
+            monthly_max += sc * bmax / 100.0
 
-        # STEP 4.2.8: Update lead with savings data (non-fatal)
+        result_data = {
+            'downloadUrl': download_url,
+            'summary': analysis.get('summary', ''),
+            'originalFilename': filename,
+            'billTotalCost': round(total_cost, 2),
+            'billCurrency': currency,
+            'monthlySavingsMin': round(monthly_min, 2),
+            'monthlySavingsMax': round(monthly_max, 2),
+            'numServices': len(service_items),
+        }
+        _save_result_data(session_id, result_data)
+        logger.info("STEP 4.2.7 DONE: result.json saved with billing data")
+
+        # STEP 4.2.8: Update lead in DynamoDB with billing data
         try:
-            logger.info("STEP 4.2.8: Updating lead with bill optimization numbers")
-            _update_lead_with_savings(email, session_id, parsed_bill, analysis)
-            logger.info("STEP 4.2.8 DONE: Lead updated")
+            logger.info("STEP 4.2.8: Updating lead in DynamoDB")
+            _update_lead_billing(email, session_id, result_data)
+            logger.info("STEP 4.2.8 DONE")
         except BaseException as e:
-            logger.error("STEP 4.2.8 FAILED (non-fatal): %s", str(e), exc_info=True)
+            logger.error("STEP 4.2.8 FAILED: %s", str(e), exc_info=True)
         finally:
             # STEP 4.2.9: Clear processing marker (ALWAYS runs)
             try:
-                logger.info("STEP 4.2.9: Clearing processing marker")
                 _clear_processing(session_id)
-                logger.info("===== STEP 4.2 ASYNC COMPLETE ===== session=%s", session_id)
-            except BaseException as e2:
-                logger.error("STEP 4.2.9 FAILED: %s", str(e2))
+                logger.info("===== STEP 4.2 ASYNC COMPLETE =====")
+            except BaseException:
+                pass
         return {'status': 'complete'}
 
     except Exception as e:
@@ -273,72 +302,44 @@ def _clear_processing(session_id: str):
         pass
 
 
-def _save_result(session_id: str, download_url: str, summary: str, filename: str):
+def _save_result_data(session_id: str, result_data: dict):
     """Save analysis result metadata to S3."""
     result_key = f"reports/{session_id}/result.json"
     s3_client.put_object(
         Bucket=BILL_STORAGE_BUCKET,
         Key=result_key,
-        Body=json.dumps({'downloadUrl': download_url, 'summary': summary, 'originalFilename': filename}),
+        Body=json.dumps(result_data),
         ContentType='application/json',
     )
 
 
-def _update_lead_with_savings(email: str, session_id: str, parsed_bill: Dict[str, Any], ai_analysis: Dict[str, Any]):
-    """Update the lead record in DynamoDB with bill optimization summary numbers."""
+def _update_lead_billing(email: str, session_id: str, result_data: dict):
+    """Update the lead record in DynamoDB with billing data using simple put_item."""
     table = dynamodb.Table(LEADS_TABLE_NAME)
-    logger.info("STEP 4.2.8 DEBUG: email=%s sessionId=%s table=%s", email, session_id, LEADS_TABLE_NAME)
 
-    # Find the lead by email + sessionId
-    response = table.query(
+    # Query lead by email + sessionId
+    resp = table.query(
         KeyConditionExpression='#em = :e',
         FilterExpression='sessionId = :s',
         ExpressionAttributeNames={'#em': 'email'},
         ExpressionAttributeValues={':e': email, ':s': session_id},
         Limit=1,
     )
-    items = response.get('Items', [])
-    logger.info("STEP 4.2.8 DEBUG: found %d items", len(items))
+    items = resp.get('Items', [])
     if not items:
-        logger.warning("STEP 4.2.8: Lead not found, skipping")
+        logger.warning("Lead not found for email=%s sessionId=%s", email, session_id)
         return
 
     lead = items[0]
-
-    # Compute savings
-    total_cost = float(parsed_bill.get('total_cost', 0))
-    currency = parsed_bill.get('currency', 'USD')
-    service_items = ai_analysis.get('service_analysis', []) or ai_analysis.get('explanations', [])
-
-    monthly_min = 0.0
-    monthly_max = 0.0
-    for item in service_items:
-        cost_str = str(item.get('cost', '0')).replace('$', '').replace(',', '').strip()
-        try:
-            svc_cost = float(cost_str)
-        except ValueError:
-            continue
-        best_min, best_max = 0.0, 0.0
-        for rec in item.get('recommendations', []):
-            parsed = _parse_savings_pct(str(rec.get('estimated_savings', '')))
-            if parsed and parsed[1] > best_max:
-                best_min, best_max = parsed
-        monthly_min += svc_cost * best_min / 100.0
-        monthly_max += svc_cost * best_max / 100.0
-
-    # Merge new fields into existing lead and put_item (overwrite)
-    lead['billTotalCost'] = Decimal(str(round(total_cost, 2)))
-    lead['billCurrency'] = currency
-    lead['monthlySavingsMin'] = Decimal(str(round(monthly_min, 2)))
-    lead['monthlySavingsMax'] = Decimal(str(round(monthly_max, 2)))
-    lead['monthlySavingsAvg'] = Decimal(str(round((monthly_min + monthly_max) / 2.0, 2)))
-    lead['yearlySavingsMin'] = Decimal(str(round(monthly_min * 12, 2)))
-    lead['yearlySavingsMax'] = Decimal(str(round(monthly_max * 12, 2)))
-    lead['yearlySavingsAvg'] = Decimal(str(round((monthly_min + monthly_max) / 2.0 * 12, 2)))
-    lead['numServices'] = len(service_items)
-
+    # Add billing fields
+    lead['billTotalCost'] = Decimal(str(result_data.get('billTotalCost', 0)))
+    lead['billCurrency'] = result_data.get('billCurrency', 'USD')
+    lead['monthlySavingsMin'] = Decimal(str(result_data.get('monthlySavingsMin', 0)))
+    lead['monthlySavingsMax'] = Decimal(str(result_data.get('monthlySavingsMax', 0)))
+    lead['monthlySavingsAvg'] = Decimal(str(round((result_data.get('monthlySavingsMin', 0) + result_data.get('monthlySavingsMax', 0)) / 2, 2)))
+    lead['numServices'] = result_data.get('numServices', 0)
     table.put_item(Item=lead)
-    logger.info("STEP 4.2.8 SUCCESS: billTotal=%s monthlySavingsMax=%s", total_cost, monthly_max)
+    logger.info("Lead billing updated: total=%s savingsMax=%s", lead['billTotalCost'], lead['monthlySavingsMax'])
 
 
 def _parse_savings_pct(s: str):
