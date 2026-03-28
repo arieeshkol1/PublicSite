@@ -56,17 +56,23 @@ async function saveTip(){tipFormError.textContent='';var d={};for(var i=0;i<TR.l
 
 /* DELETE */
 function showDel(type,item){deleteType=type;deletingItem=item;delMsg.textContent='Delete this '+type+'? This cannot be undone.';delDialog.hidden=false;}
-function hideDel(){delDialog.hidden=true;deletingItem=null;deleteType=null;}
+function hideDel(){delDialog.hidden=true;deletingItem=null;deleteType=null;delConfirm.hidden=false;delCancel.textContent='Cancel';delConfirm.textContent='Delete';}
 async function doDel(){
   if(!deletingItem)return;
-  hideDel();
+  delConfirm.disabled=true;delConfirm.textContent='Deleting...';
   try{
-    showL();
-    if(deleteType==='tip'){await api('DELETE','/admin/tips',{service:deletingItem.service,tipId:deletingItem.tipId});notify('Tip deleted.','success');await loadTips();}
-    else if(deleteType==='lead'){await api('DELETE','/admin/leads',{email:deletingItem.email,timestamp:deletingItem.timestamp});notify('Lead deleted.','success');await loadLeads();}
-    else if(deleteType==='bulk'){await api('POST','/admin/leads/bulk-delete',{items:deletingItem});notify(deletingItem.length+' leads deleted.','success');selAll.checked=false;await loadLeads();}
-  }catch(e){notify(e.message||'Delete failed.','error');}
-  finally{hideL();}
+    var result;
+    if(deleteType==='tip'){result=await api('DELETE','/admin/tips',{service:deletingItem.service,tipId:deletingItem.tipId});}
+    else if(deleteType==='lead'){result=await api('DELETE','/admin/leads',{email:deletingItem.email,timestamp:deletingItem.timestamp});}
+    else if(deleteType==='bulk'){result=await api('POST','/admin/leads/bulk-delete',{items:deletingItem});}
+    delMsg.innerHTML='<span style="color:#10b981;font-weight:700;">&#10003; '+(result.message||'Deleted successfully')+'</span>';
+    delConfirm.hidden=true;delCancel.textContent='Close';
+    if(deleteType==='tip')await loadTips();
+    else{if(selAll)selAll.checked=false;await loadLeads();}
+  }catch(e){
+    delMsg.innerHTML='<span style="color:#ef4444;font-weight:700;">&#10007; Error: '+(e.message||'Delete failed')+'</span>';
+    delConfirm.hidden=true;delCancel.textContent='Close';
+  }finally{delConfirm.disabled=false;delConfirm.textContent='Delete';}
 }
 
 /* BULK */
