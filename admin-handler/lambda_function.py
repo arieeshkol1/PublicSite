@@ -53,6 +53,7 @@ def lambda_handler(event, context):
         'GET /admin/leads': handle_get_leads,
         'PUT /admin/leads': handle_update_lead,
         'DELETE /admin/leads': handle_delete_lead,
+        'POST /admin/leads/bulk-delete': handle_bulk_delete_leads,
         'GET /admin/tips': handle_get_tips,
         'POST /admin/tips': handle_create_tip,
         'PUT /admin/tips': handle_update_tip,
@@ -220,6 +221,35 @@ def handle_delete_lead(event):
             return create_error_response(404, 'NotFound', 'Lead not found')
         logger.error(f"DynamoDB error deleting lead: {e}")
         return create_error_response(500, 'ServerError', 'Failed to delete lead')
+
+
+def handle_bulk_delete_leads(event):
+    """Delete multiple leads from the Leads table."""
+    try:
+        body = json.loads(event.get('body', '{}'))
+    except (json.JSONDecodeError, TypeError):
+        return create_error_response(400, 'InvalidRequest', 'Invalid request body')
+
+    items = body.get('items', [])
+    if not items or not isinstance(items, list):
+        return create_error_response(400, 'InvalidRequest', 'Field "items" must be a non-empty array')
+
+    table = dynamodb.Table(LEADS_TABLE_NAME)
+    deleted = 0
+    failed = 0
+    for item in items:
+        email = (item.get('email') or '').strip()
+        timestamp = (item.get('timestamp') or '').strip()
+        if not email or not timestamp:
+            failed += 1
+            continue
+        try:
+            table.delete_item(Key={'email': email, 'timestamp': timestamp})
+            deleted += 1
+        except ClientError:
+            failed += 1
+
+    return create_response(200, {'message': f'{deleted} leads deleted, {failed} failed', 'deleted': deleted, 'failed': failed})
 
 
 def handle_create_tip(event):

@@ -51,11 +51,13 @@
         <div id="leads-tab" class="tab-content">
             <div class="tab-toolbar">
                 <input type="text" id="leads-search" class="search-input" placeholder="Search by email, name, or company...">
+                <button id="bulk-delete-leads-btn" class="btn btn-danger btn-sm" hidden>Delete Selected</button>
             </div>
             <div class="table-wrapper">
                 <table id="leads-table" class="data-table">
                     <thead>
                         <tr>
+                            <th><input type="checkbox" id="leads-select-all" title="Select all"></th>
                             <th class="sortable" data-col="email">Email <span class="sort-icon">⇅</span></th>
                             <th class="sortable" data-col="name">Name <span class="sort-icon">⇅</span></th>
                             <th class="sortable" data-col="company">Company <span class="sort-icon">⇅</span></th>
@@ -63,7 +65,6 @@
                             <th>File</th>
                             <th class="sortable" data-col="billTotalCost">Bill Total <span class="sort-icon">⇅</span></th>
                             <th class="sortable" data-col="monthlySavingsMax">Monthly Savings <span class="sort-icon">⇅</span></th>
-                            <th class="sortable" data-col="yearlySavingsMax">Yearly Savings <span class="sort-icon">⇅</span></th>
                             <th class="sortable" data-col="timestamp">Date <span class="sort-icon">⇅</span></th>
                             <th>Actions</th>
                         </tr>
@@ -226,16 +227,6 @@
                         <div class="form-group">
                             <label for="lead-monthlySavingsMax">Monthly Savings Max</label>
                             <input type="text" id="lead-monthlySavingsMax" disabled>
-                        </div>
-                    </div>
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label for="lead-yearlySavingsMin">Yearly Savings Min</label>
-                            <input type="text" id="lead-yearlySavingsMin" disabled>
-                        </div>
-                        <div class="form-group">
-                            <label for="lead-yearlySavingsMax">Yearly Savings Max</label>
-                            <input type="text" id="lead-yearlySavingsMax" disabled>
                         </div>
                     </div>
                     <div class="form-group">

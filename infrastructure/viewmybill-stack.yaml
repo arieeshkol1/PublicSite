@@ -590,6 +590,13 @@ Resources:
       RouteKey: 'DELETE /admin/leads'
       Target: !Sub 'integrations/${AdminIntegration}'
 
+  AdminBulkDeleteLeadsRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'POST /admin/leads/bulk-delete'
+      Target: !Sub 'integrations/${AdminIntegration}'
+
   AdminGetTipsRoute:
     Type: AWS::ApiGatewayV2::Route
     Properties:

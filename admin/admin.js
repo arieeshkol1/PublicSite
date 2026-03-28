@@ -125,10 +125,11 @@ function renderLeadsPage(){
   leadsEmpty.hidden=true;
   page.forEach(function(l){
     var tr=document.createElement('tr');
-    tr.innerHTML='<td>'+escapeHtml(l.email||'')+'</td><td>'+escapeHtml(l.name||'')+'</td><td>'+escapeHtml(l.company||'')+'</td><td>'+escapeHtml(l.phone||'')+'</td><td>'+escapeHtml(l.fileName||'')+'</td><td>'+fmtMoney(l.billTotalCost)+'</td><td>'+fmtMoney(l.monthlySavingsMin)+' - '+fmtMoney(l.monthlySavingsMax)+'</td><td>'+fmtMoney(l.yearlySavingsMin)+' - '+fmtMoney(l.yearlySavingsMax)+'</td><td>'+formatDate(l.timestamp)+'</td><td class="actions-cell"><button class="btn-icon btn-icon-edit" data-action="edit-lead" data-email="'+escapeAttr(l.email)+'" data-ts="'+escapeAttr(l.timestamp)+'" title="Edit">&#9998;</button><button class="btn-icon btn-icon-delete" data-action="delete-lead" data-email="'+escapeAttr(l.email)+'" data-ts="'+escapeAttr(l.timestamp)+'" title="Delete">&#128465;</button></td>';
+    tr.innerHTML='<td><input type="checkbox" class="lead-check" data-email="'+escapeAttr(l.email)+'" data-ts="'+escapeAttr(l.timestamp)+'"></td><td>'+escapeHtml(l.email||'')+'</td><td>'+escapeHtml(l.name||'')+'</td><td>'+escapeHtml(l.company||'')+'</td><td>'+escapeHtml(l.phone||'')+'</td><td>'+escapeHtml(l.fileName||'')+'</td><td>'+fmtMoney(l.billTotalCost)+'</td><td>'+fmtMoney(l.monthlySavingsMin)+' - '+fmtMoney(l.monthlySavingsMax)+'</td><td>'+formatDate(l.timestamp)+'</td><td class="actions-cell"><button class="btn-icon btn-icon-edit" data-action="edit-lead" data-email="'+escapeAttr(l.email)+'" data-ts="'+escapeAttr(l.timestamp)+'" title="Edit">&#9998;</button><button class="btn-icon btn-icon-delete" data-action="delete-lead" data-email="'+escapeAttr(l.email)+'" data-ts="'+escapeAttr(l.timestamp)+'" title="Delete">&#128465;</button></td>';
     leadsTbody.appendChild(tr);
   });
   renderPagination('leads-pagination',filteredLeads.length,leadsPage,function(p){leadsPage=p;renderLeadsPage();});
+  updateBulkDeleteBtn();
 }
 function showLeadForm(lead){
   leadFormError.textContent='';editingLead=lead;
@@ -142,8 +143,6 @@ function showLeadForm(lead){
   document.getElementById('lead-billCurrency').value=lead.billCurrency||'';
   document.getElementById('lead-monthlySavingsMin').value=lead.monthlySavingsMin!=null?fmtMoney(lead.monthlySavingsMin):'-';
   document.getElementById('lead-monthlySavingsMax').value=lead.monthlySavingsMax!=null?fmtMoney(lead.monthlySavingsMax):'-';
-  document.getElementById('lead-yearlySavingsMin').value=lead.yearlySavingsMin!=null?fmtMoney(lead.yearlySavingsMin):'-';
-  document.getElementById('lead-yearlySavingsMax').value=lead.yearlySavingsMax!=null?fmtMoney(lead.yearlySavingsMax):'-';
   document.getElementById('lead-notes').value=lead.notes||'';
   leadModal.hidden=false;
 }
@@ -201,6 +200,7 @@ async function confirmDelete(){
   try{showLoading();
     if(deleteType==='tip'){await apiRequest('DELETE','/admin/tips',{service:deletingItem.service,tipId:deletingItem.tipId});showNotification('Tip deleted.','success');await loadTips();}
     else if(deleteType==='lead'){await apiRequest('DELETE','/admin/leads',{email:deletingItem.email,timestamp:deletingItem.timestamp});showNotification('Lead deleted.','success');await loadLeads();}
+    else if(deleteType==='bulk'){await apiRequest('POST','/admin/leads/bulk-delete',{items:deletingItem});showNotification(deletingItem.length+' leads deleted.','success');selectAllCheckbox.checked=false;await loadLeads();}
   }catch(e){showNotification(e.message||'Failed to delete.','error');}finally{hideLoading();}
 }
 
@@ -256,4 +256,30 @@ document.getElementById('script-modal-close').addEventListener('click',function(
 document.getElementById('script-close-btn').addEventListener('click',function(){document.getElementById('script-modal').hidden=true;});
 document.getElementById('script-copy-btn').addEventListener('click',function(){navigator.clipboard.writeText(document.getElementById('script-modal-content').textContent);showNotification('Copied to clipboard.','success');});
 
+/* Bulk delete */
+var bulkDeleteBtn=document.getElementById('bulk-delete-leads-btn');
+var selectAllCheckbox=document.getElementById('leads-select-all');
+function getSelectedLeads(){
+  var checks=document.querySelectorAll('.lead-check:checked');
+  var items=[];checks.forEach(function(c){items.push({email:c.dataset.email,timestamp:c.dataset.ts});});
+  return items;
+}
+function updateBulkDeleteBtn(){
+  var sel=getSelectedLeads();
+  bulkDeleteBtn.hidden=sel.length===0;
+  if(sel.length>0)bulkDeleteBtn.textContent='Delete Selected ('+sel.length+')';
+}
+leadsTbody.addEventListener('change',function(e){if(e.target.classList.contains('lead-check'))updateBulkDeleteBtn();});
+selectAllCheckbox.addEventListener('change',function(){
+  var checks=document.querySelectorAll('.lead-check');
+  checks.forEach(function(c){c.checked=selectAllCheckbox.checked;});
+  updateBulkDeleteBtn();
+});
+bulkDeleteBtn.addEventListener('click',function(){
+  var items=getSelectedLeads();
+  if(!items.length)return;
+  deleteType='bulk';deletingItem=items;
+  deleteDialogMsg.textContent='Are you sure you want to delete '+items.length+' lead(s)? This cannot be undone.';
+  deleteDialog.hidden=false;
+});
 if(sessionStorage.getItem('admin_ok')==='1'){loadLeads();loadTips();}
