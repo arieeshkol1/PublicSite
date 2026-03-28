@@ -25,6 +25,8 @@ LEADS_TABLE_NAME = os.environ.get('LEADS_TABLE_NAME', 'ViewMyBill-Leads')
 TIPS_TABLE_NAME = os.environ.get('TIPS_TABLE_NAME', 'ViewMyBill-CostOptimizationTips')
 
 dynamodb = boto3.resource('dynamodb')
+s3_client = boto3.client('s3')
+STORAGE_BUCKET = os.environ.get('STORAGE_BUCKET', 'aws-bill-analyzer-storage-991105135552')
 
 
 def _decimal_to_native(obj):
@@ -54,6 +56,7 @@ def lambda_handler(event, context):
         'PUT /admin/leads': handle_update_lead,
         'DELETE /admin/leads': handle_delete_lead,
         'POST /admin/leads/bulk-delete': handle_bulk_delete_leads,
+        'POST /admin/leads/sync-billing': handle_sync_billing,
         'GET /admin/tips': handle_get_tips,
         'POST /admin/tips': handle_create_tip,
         'PUT /admin/tips': handle_update_tip,
@@ -250,6 +253,51 @@ def handle_bulk_delete_leads(event):
             failed += 1
 
     return create_response(200, {'message': f'{deleted} leads deleted, {failed} failed', 'deleted': deleted, 'failed': failed})
+
+
+def handle_sync_billing(event):
+    """Sync billing data from S3 result.json to the lead record in DynamoDB."""
+    try:
+        body = json.loads(event.get('body', '{}'))
+    except (json.JSONDecodeError, TypeError):
+        return create_error_response(400, 'InvalidRequest', 'Invalid request body')
+
+    email = body.get('email', '').strip()
+    session_id = body.get('sessionId', '').strip()
+    timestamp = body.get('timestamp', '').strip()
+    if not email or not session_id or not timestamp:
+        return create_error_response(400, 'InvalidRequest', 'email, sessionId, and timestamp are required')
+
+    # Read result.json from S3
+    try:
+        result_key = f'reports/{session_id}/result.json'
+        obj = s3_client.get_object(Bucket=STORAGE_BUCKET, Key=result_key)
+        data = json.loads(obj['Body'].read().decode('utf-8'))
+    except Exception as e:
+        return create_error_response(404, 'NotFound', f'Result not found for session {session_id}')
+
+    bill_total = data.get('billTotalCost')
+    if not bill_total:
+        return create_error_response(404, 'NotFound', 'No billing data in result')
+
+    # Update the lead
+    try:
+        table = dynamodb.Table(LEADS_TABLE_NAME)
+        table.update_item(
+            Key={'email': email, 'timestamp': timestamp},
+            UpdateExpression='SET billTotalCost = :bt, billCurrency = :bc, monthlySavingsMin = :smin, monthlySavingsMax = :smax, numServices = :ns',
+            ExpressionAttributeValues={
+                ':bt': Decimal(str(bill_total)),
+                ':bc': data.get('billCurrency', 'USD'),
+                ':smin': Decimal(str(data.get('monthlySavingsMin', 0))),
+                ':smax': Decimal(str(data.get('monthlySavingsMax', 0))),
+                ':ns': data.get('numServices', 0),
+            },
+        )
+        return create_response(200, {'message': 'Billing data synced', 'billTotalCost': bill_total, 'monthlySavingsMax': data.get('monthlySavingsMax', 0)})
+    except ClientError as e:
+        logger.error(f"DynamoDB error syncing billing: {e}")
+        return create_error_response(500, 'ServerError', f'Failed to sync: {str(e)}')
 
 
 def handle_create_tip(event):

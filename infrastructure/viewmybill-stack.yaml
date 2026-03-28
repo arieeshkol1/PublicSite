@@ -534,6 +534,15 @@ Resources:
                   - dynamodb:DeleteItem
                 Resource:
                   - !GetAtt CostOptimizationTipsTable.Arn
+        - PolicyName: S3ResultsReadAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                Resource:
+                  - !Sub 'arn:aws:s3:::${BillStorageBucket}/reports/*'
       Tags:
         - Key: Project
           Value: ViewMyBill
@@ -560,6 +569,7 @@ Resources:
           JWT_SECRET: !Ref JWTSecret
           LEADS_TABLE_NAME: !Ref LeadsTable
           TIPS_TABLE_NAME: !Ref CostOptimizationTipsTable
+          STORAGE_BUCKET: !Ref BillStorageBucket
       Tags:
         - Key: Project
           Value: ViewMyBill
@@ -608,6 +618,13 @@ Resources:
     Properties:
       ApiId: !Ref ViewMyBillApi
       RouteKey: 'POST /admin/leads/bulk-delete'
+      Target: !Sub 'integrations/${AdminIntegration}'
+
+  AdminSyncBillingRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'POST /admin/leads/sync-billing'
       Target: !Sub 'integrations/${AdminIntegration}'
 
   AdminGetTipsRoute:

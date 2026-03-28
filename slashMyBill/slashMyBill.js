@@ -411,6 +411,14 @@ document.addEventListener('DOMContentLoaded', () => {
       const uploadResult = await uploadFile(contactInfo, file);
       const analyzeResult = await analyzeFile(uploadResult.sessionId, contactInfo.email);
       showResults(analyzeResult.summary, analyzeResult.downloadUrl, analyzeResult.originalFilename);
+      // Sync billing data to lead record
+      try {
+        fetch(`${API_GATEWAY_URL}/admin/leads/sync-billing`, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({email: contactInfo.email, sessionId: uploadResult.sessionId, timestamp: uploadResult.timestamp || ''})
+        });
+      } catch(e) { /* non-critical */ }
     } catch (error) {
       const msg = error.userMessage || getErrorMessage(error, 'upload');
       showError(msg);
