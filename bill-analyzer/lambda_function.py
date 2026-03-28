@@ -279,14 +279,18 @@ def _check_result(session_id: str, email: str = ''):
                 items = resp.get('Items', [])
                 if items and not items[0].get('billTotalCost'):
                     lead = items[0]
-                    lead['billTotalCost'] = Decimal(str(data['billTotalCost']))
-                    lead['billCurrency'] = data.get('billCurrency', 'USD')
-                    lead['monthlySavingsMin'] = Decimal(str(data.get('monthlySavingsMin', 0)))
-                    lead['monthlySavingsMax'] = Decimal(str(data.get('monthlySavingsMax', 0)))
-                    lead['monthlySavingsAvg'] = Decimal(str(round((data.get('monthlySavingsMin', 0) + data.get('monthlySavingsMax', 0)) / 2, 2)))
-                    lead['numServices'] = data.get('numServices', 0)
-                    table.put_item(Item=lead)
-                    logger.info("Lead billing synced from result.json: total=%s", data['billTotalCost'])
+                    table.update_item(
+                        Key={'email': lead['email'], 'timestamp': lead['timestamp']},
+                        UpdateExpression='SET billTotalCost = :bt, billCurrency = :bc, monthlySavingsMin = :smin, monthlySavingsMax = :smax, numServices = :ns',
+                        ExpressionAttributeValues={
+                            ':bt': Decimal(str(data['billTotalCost'])),
+                            ':bc': data.get('billCurrency', 'USD'),
+                            ':smin': Decimal(str(data.get('monthlySavingsMin', 0))),
+                            ':smax': Decimal(str(data.get('monthlySavingsMax', 0))),
+                            ':ns': data.get('numServices', 0),
+                        },
+                    )
+                    logger.info("Lead billing synced: total=%s", data['billTotalCost'])
             except Exception as sync_err:
                 logger.warning("Failed to sync lead billing: %s", str(sync_err))
 
@@ -340,10 +344,8 @@ def _save_result_data(session_id: str, result_data: dict):
 
 
 def _update_lead_billing(email: str, session_id: str, result_data: dict):
-    """Update the lead record in DynamoDB with billing data using simple put_item."""
+    """Update the lead record in DynamoDB with billing data using update_item."""
     table = dynamodb.Table(LEADS_TABLE_NAME)
-
-    # Query lead by email + sessionId
     resp = table.query(
         KeyConditionExpression='#em = :e',
         FilterExpression='sessionId = :s',
@@ -355,17 +357,19 @@ def _update_lead_billing(email: str, session_id: str, result_data: dict):
     if not items:
         logger.warning("Lead not found for email=%s sessionId=%s", email, session_id)
         return
-
     lead = items[0]
-    # Add billing fields
-    lead['billTotalCost'] = Decimal(str(result_data.get('billTotalCost', 0)))
-    lead['billCurrency'] = result_data.get('billCurrency', 'USD')
-    lead['monthlySavingsMin'] = Decimal(str(result_data.get('monthlySavingsMin', 0)))
-    lead['monthlySavingsMax'] = Decimal(str(result_data.get('monthlySavingsMax', 0)))
-    lead['monthlySavingsAvg'] = Decimal(str(round((result_data.get('monthlySavingsMin', 0) + result_data.get('monthlySavingsMax', 0)) / 2, 2)))
-    lead['numServices'] = result_data.get('numServices', 0)
-    table.put_item(Item=lead)
-    logger.info("Lead billing updated: total=%s savingsMax=%s", lead['billTotalCost'], lead['monthlySavingsMax'])
+    table.update_item(
+        Key={'email': lead['email'], 'timestamp': lead['timestamp']},
+        UpdateExpression='SET billTotalCost = :bt, billCurrency = :bc, monthlySavingsMin = :smin, monthlySavingsMax = :smax, numServices = :ns',
+        ExpressionAttributeValues={
+            ':bt': Decimal(str(result_data.get('billTotalCost', 0))),
+            ':bc': result_data.get('billCurrency', 'USD'),
+            ':smin': Decimal(str(result_data.get('monthlySavingsMin', 0))),
+            ':smax': Decimal(str(result_data.get('monthlySavingsMax', 0))),
+            ':ns': result_data.get('numServices', 0),
+        },
+    )
+    logger.info("Lead billing updated: total=%s savingsMax=%s", result_data.get('billTotalCost'), result_data.get('monthlySavingsMax'))
 
 
 def _parse_savings_pct(s: str):
