@@ -58,16 +58,17 @@ async function saveTip(){tipFormError.textContent='';var d={};for(var i=0;i<TR.l
 function showDel(type,item){deleteType=type;deletingItem=item;delMsg.textContent='Delete this '+type+'? This cannot be undone.';delDialog.hidden=false;}
 function hideDel(){delDialog.hidden=true;deletingItem=null;deleteType=null;delConfirm.hidden=false;delCancel.textContent='Cancel';delConfirm.textContent='Delete';}
 async function doDel(){
-  if(!deletingItem)return;
+  var item=deletingItem,dtype=deleteType;
+  if(!item)return;
   delConfirm.disabled=true;delConfirm.textContent='Deleting...';
   try{
     var result;
-    if(deleteType==='tip'){result=await api('DELETE','/admin/tips',{service:deletingItem.service,tipId:deletingItem.tipId});}
-    else if(deleteType==='lead'){result=await api('DELETE','/admin/leads',{email:deletingItem.email,timestamp:deletingItem.timestamp});}
-    else if(deleteType==='bulk'){result=await api('POST','/admin/leads/bulk-delete',{items:deletingItem});}
+    if(dtype==='tip'){result=await api('DELETE','/admin/tips',{service:item.service,tipId:item.tipId});}
+    else if(dtype==='lead'){result=await api('DELETE','/admin/leads',{email:item.email,timestamp:item.timestamp});}
+    else if(dtype==='bulk'){result=await api('POST','/admin/leads/bulk-delete',{items:item});}
     delMsg.innerHTML='<span style="color:#10b981;font-weight:700;">&#10003; '+(result.message||'Deleted successfully')+'</span>';
     delConfirm.hidden=true;delCancel.textContent='Close';
-    if(deleteType==='tip')await loadTips();
+    if(dtype==='tip')await loadTips();
     else{if(selAll)selAll.checked=false;await loadLeads();}
   }catch(e){
     delMsg.innerHTML='<span style="color:#ef4444;font-weight:700;">&#10007; Error: '+(e.message||'Delete failed')+'</span>';
@@ -99,7 +100,7 @@ leadsTbody.onclick=function(e){var b=e.target.closest('[data-a]');if(!b)return;v
 
 tipModal.onclick=function(e){if(e.target===tipModal)hideTipForm();};
 leadModal.onclick=function(e){if(e.target===leadModal)hideLeadForm();};
-delDialog.onclick=function(e){if(e.target===delDialog)hideDel();};
+delDialog.addEventListener('click',function(e){if(e.target===delDialog)hideDel();},false);
 $('script-modal').onclick=function(e){if(e.target===$('script-modal'))$('script-modal').hidden=true;};
 $('script-modal-close').onclick=function(){$('script-modal').hidden=true;};
 $('script-close-btn').onclick=function(){$('script-modal').hidden=true;};
