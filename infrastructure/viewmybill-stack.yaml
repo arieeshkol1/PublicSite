@@ -151,6 +151,16 @@ Resources:
                   - dynamodb:BatchGetItem
                 Resource:
                   - !GetAtt CostOptimizationTipsTable.Arn
+        - PolicyName: DynamoDBLeadsAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:Query
+                  - dynamodb:UpdateItem
+                Resource:
+                  - !GetAtt LeadsTable.Arn
         - PolicyName: LambdaSelfInvoke
           PolicyDocument:
             Version: '2012-10-17'
@@ -224,6 +234,7 @@ Resources:
       Environment:
         Variables:
           BILL_STORAGE_BUCKET: !Ref BillStorageBucket
+          LEADS_TABLE_NAME: !Ref LeadsTable
           TIPS_TABLE_NAME: !Ref CostOptimizationTipsTable
           BEDROCK_MODEL_ID: !Ref BedrockModelId
           MAX_TOKENS: '4000'
