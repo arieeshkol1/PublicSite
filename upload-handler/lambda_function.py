@@ -65,9 +65,14 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             scan_resp = table.scan(ProjectionExpression='leadId')
             max_id = 0
             for item in scan_resp.get('Items', []):
-                lid = item.get('leadId', 0)
-                if isinstance(lid, (int, float)) and lid > max_id:
-                    max_id = int(lid)
+                lid = item.get('leadId')
+                if lid is not None:
+                    try:
+                        lid_int = int(lid)
+                        if lid_int > max_id:
+                            max_id = lid_int
+                    except (ValueError, TypeError):
+                        pass
             next_id = max_id + 1
 
             table.put_item(Item={

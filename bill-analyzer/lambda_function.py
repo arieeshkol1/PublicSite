@@ -12,6 +12,7 @@ Runtime: Python 3.12 | Memory: 512 MB | Timeout: 900s
 import json
 import logging
 import os
+from decimal import Decimal
 from typing import Any, Dict
 
 import boto3
@@ -199,8 +200,11 @@ def _process_bill(session_id: str, email: str) -> Dict[str, Any]:
 
         # STEP 4.2.8: Update lead with savings data
         logger.info("STEP 4.2.8: Updating lead with bill optimization numbers")
-        _update_lead_with_savings(email, session_id, parsed_bill, analysis)
-        logger.info("STEP 4.2.8 DONE: Lead updated")
+        try:
+            _update_lead_with_savings(email, session_id, parsed_bill, analysis)
+            logger.info("STEP 4.2.8 DONE: Lead updated")
+        except Exception as e:
+            logger.error("STEP 4.2.8 FAILED (non-fatal): %s", str(e), exc_info=True)
 
         # STEP 4.2.9: Clear processing marker
         logger.info("STEP 4.2.9: Clearing processing marker")
@@ -327,7 +331,6 @@ def _update_lead_with_savings(email: str, session_id: str, parsed_bill: Dict[str
         monthly_avg = (monthly_min + monthly_max) / 2.0
         logger.info("STEP 4.2.8 DEBUG: monthly_min=%s monthly_max=%s", monthly_min, monthly_max)
 
-        from decimal import Decimal
         table.update_item(
             Key={'email': email, 'timestamp': timestamp},
             UpdateExpression='SET billTotalCost = :tc, billCurrency = :cur, '
