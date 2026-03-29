@@ -663,8 +663,43 @@ def handle_generate_template(event):
 
     template_yaml = yaml.dump(template, default_flow_style=False, sort_keys=False)
     filename = f'SlashMyBill-{account_id}.yaml'
+    stack_name = f'SlashMyBill-Access-{account_id}'
+    role_name = f'SlashMyBill-{account_id}'
 
-    return create_response(200, {'template': template_yaml, 'filename': filename})
+    # Upload template to S3 for CloudFormation quick-create link
+    s3_key = f'cf-templates/{member_email}/{filename}'
+    try:
+        s3_client = boto3.client('s3')
+        bucket = os.environ.get('STORAGE_BUCKET', 'aws-bill-analyzer-storage-991105135552')
+        s3_client.put_object(
+            Bucket=bucket,
+            Key=s3_key,
+            Body=template_yaml,
+            ContentType='application/x-yaml',
+        )
+        template_url = f'https://{bucket}.s3.amazonaws.com/{s3_key}'
+    except Exception as e:
+        logger.warning(f"Failed to upload CF template to S3: {e}")
+        template_url = None
+
+    # Build CloudFormation quick-create URL
+    cf_console_url = None
+    if template_url:
+        import urllib.parse
+        params = urllib.parse.urlencode({
+            'templateURL': template_url,
+            'stackName': stack_name,
+        })
+        cf_console_url = f'https://console.aws.amazon.com/cloudformation/home#/stacks/create/review?{params}'
+
+    return create_response(200, {
+        'template': template_yaml,
+        'filename': filename,
+        'templateUrl': template_url,
+        'cfConsoleUrl': cf_console_url,
+        'stackName': stack_name,
+        'roleName': role_name,
+    })
 
 
 def handle_test_connection(event):

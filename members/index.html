@@ -174,40 +174,38 @@
                     <div class="wizard-step-indicator" id="wiz-ind-3"><span>3</span> Test Connection</div>
                 </div>
 
-                <!-- Step 1: Download CloudFormation Template -->
+                <!-- Step 1: Download & Launch CloudFormation -->
                 <div id="wiz-step-1" class="wizard-step-content">
                     <div class="wizard-icon">&#9997;</div>
-                    <h3>Step 1: Download the CloudFormation Template</h3>
-                    <p>We've generated a CloudFormation template that creates a read-only IAM role in your AWS account. This role allows SlashMyBill to access your Cost Explorer and Billing data securely.</p>
+                    <h3>Step 1: Launch CloudFormation Template</h3>
+                    <p>We've generated a CloudFormation template that creates a read-only IAM role in your AWS account. Click the button below to open it directly in the AWS CloudFormation console with all settings pre-filled.</p>
                     <div class="wizard-info-box">
+                        <p><strong>Stack name:</strong> <code id="wiz-stack-name">SlashMyBill-Access-123456789012</code></p>
                         <p><strong>Role name:</strong> <code id="wiz-role-name">SlashMyBill-123456789012</code></p>
                         <p><strong>Permissions:</strong> Read-only access to Cost Explorer &amp; Billing APIs</p>
                         <p><strong>Security:</strong> Uses ExternalId for additional protection</p>
                     </div>
-                    <button id="wiz-download-btn" class="btn btn-primary btn-full">
-                        &#8681; Download CloudFormation Template
-                    </button>
-                    <div class="wizard-note">Save this file — you'll need it in the next step.</div>
+                    <a id="wiz-launch-cf-btn" href="#" target="_blank" rel="noopener" class="btn btn-primary btn-full">
+                        &#9729; Launch in AWS CloudFormation Console
+                    </a>
+                    <div style="text-align:center;margin-top:12px;">
+                        <button id="wiz-download-btn" class="btn btn-outline btn-sm">&#8681; Or download template file</button>
+                    </div>
+                    <div class="wizard-note">The CloudFormation console will open with the template and stack name pre-filled. Just review and click "Submit".</div>
                 </div>
 
-                <!-- Step 2: Deploy in AWS Console -->
+                <!-- Step 2: Confirm Deployment -->
                 <div id="wiz-step-2" class="wizard-step-content" hidden>
                     <div class="wizard-icon">&#9729;</div>
-                    <h3>Step 2: Deploy the Template in AWS</h3>
-                    <p>Open the AWS CloudFormation console and create a new stack using the template you just downloaded.</p>
-                    <ol class="wizard-instructions">
-                        <li>Sign in to the <a href="https://console.aws.amazon.com/cloudformation" target="_blank" rel="noopener">AWS CloudFormation Console</a> with the account <strong id="wiz-account-display">123456789012</strong></li>
-                        <li>Click <strong>"Create stack"</strong> → <strong>"With new resources (standard)"</strong></li>
-                        <li>Select <strong>"Upload a template file"</strong> and choose the file you downloaded</li>
-                        <li>Click <strong>"Next"</strong>, enter a stack name (e.g., <code>SlashMyBill-Access</code>)</li>
-                        <li>Click <strong>"Next"</strong> through the options page</li>
-                        <li>On the review page, check <strong>"I acknowledge that AWS CloudFormation might create IAM resources with custom names"</strong></li>
-                        <li>Click <strong>"Submit"</strong> and wait for the stack to show <strong>CREATE_COMPLETE</strong></li>
-                    </ol>
-                    <a href="https://console.aws.amazon.com/cloudformation/home#/stacks/create" target="_blank" rel="noopener" class="btn btn-primary btn-full">
-                        Open AWS CloudFormation Console &#8599;
-                    </a>
-                    <div class="wizard-note">Once the stack is created, come back here and click "Next".</div>
+                    <h3>Step 2: Confirm the Stack is Deployed</h3>
+                    <p>If you used the "Launch in CloudFormation" button, the stack should be creating now. Wait for it to show <strong>CREATE_COMPLETE</strong> in the AWS console.</p>
+                    <div class="wizard-info-box">
+                        <p><strong>Stack name:</strong> <code id="wiz-stack-name-2">SlashMyBill-Access-123456789012</code></p>
+                        <p><strong>Role being created:</strong> <code id="wiz-role-name-2">SlashMyBill-123456789012</code></p>
+                        <p><strong>Account:</strong> <code id="wiz-account-display">123456789012</code></p>
+                    </div>
+                    <p style="font-size:13px;color:#555;">If you haven't deployed yet, go back to Step 1 and click "Launch in AWS CloudFormation Console". The template and all parameters are pre-filled — just check the IAM acknowledgment box and click "Submit".</p>
+                    <div class="wizard-note">Once the stack shows CREATE_COMPLETE, click "Next" to test the connection.</div>
                 </div>
 
                 <!-- Step 3: Test Connection -->

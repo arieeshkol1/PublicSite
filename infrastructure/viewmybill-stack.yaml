@@ -786,6 +786,15 @@ Resources:
                 Action:
                   - sts:AssumeRole
                 Resource: '*'
+        - PolicyName: S3TemplateUpload
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                Resource:
+                  - !Sub 'arn:aws:s3:::${BillStorageBucket}/cf-templates/*'
       Tags:
         - Key: Project
           Value: ViewMyBill
@@ -813,6 +822,7 @@ Resources:
           OTP_TABLE_NAME: !Ref OTPTable
           SES_SENDER_EMAIL: 'noreply@eshkolai.com'
           PLATFORM_ACCOUNT_ID: '991105135552'
+          STORAGE_BUCKET: !Ref BillStorageBucket
       Tags:
         - Key: Project
           Value: ViewMyBill

@@ -506,21 +506,56 @@ var wizDownloadBtn = $('wiz-download-btn');
 var wizTestBtn = $('wiz-test-btn');
 var wizTestResult = $('wiz-test-result');
 var wizRoleName = $('wiz-role-name');
+var wizStackName = $('wiz-stack-name');
+var wizLaunchCfBtn = $('wiz-launch-cf-btn');
 var wizAccountDisplay = $('wiz-account-display');
+var wizStackName2 = $('wiz-stack-name-2');
+var wizRoleName2 = $('wiz-role-name-2');
 var wizardAccountId = null;
 var wizardStep = 1;
 var wizardTemplateDownloaded = false;
+var wizardCfConsoleUrl = null;
+var wizardTemplateYaml = null;
+var wizardFilename = null;
 
 function showWizard(accountId) {
     wizardAccountId = accountId;
     wizardStep = 1;
     wizardTemplateDownloaded = false;
-    wizRoleName.textContent = 'SlashMyBill-' + accountId;
+    wizardCfConsoleUrl = null;
+    var roleName = 'SlashMyBill-' + accountId;
+    var stackName = 'SlashMyBill-Access-' + accountId;
+    wizRoleName.textContent = roleName;
+    wizStackName.textContent = stackName;
+    wizStackName2.textContent = stackName;
+    wizRoleName2.textContent = roleName;
     wizAccountDisplay.textContent = accountId;
     wizTestResult.hidden = true;
     wizTestResult.className = 'wizard-test-result';
+    wizLaunchCfBtn.href = '#';
+    wizLaunchCfBtn.style.opacity = '0.5';
+    wizLaunchCfBtn.style.pointerEvents = 'none';
+    // Pre-fetch the template to get the CF console URL
+    _fetchTemplate(accountId);
     updateWizardStep();
     wizardModal.hidden = false;
+}
+
+async function _fetchTemplate(accountId) {
+    try {
+        var data = await api('POST', '/members/accounts/template', { accountId: accountId });
+        wizardTemplateYaml = data.template;
+        wizardFilename = data.filename;
+        wizardCfConsoleUrl = data.cfConsoleUrl;
+        if (wizardCfConsoleUrl) {
+            wizLaunchCfBtn.href = wizardCfConsoleUrl;
+            wizLaunchCfBtn.style.opacity = '1';
+            wizLaunchCfBtn.style.pointerEvents = 'auto';
+            wizardTemplateDownloaded = true;
+        }
+    } catch (err) {
+        notify(err.message || 'Failed to generate template.', 'error');
+    }
 }
 
 function hideWizard() {
@@ -565,27 +600,28 @@ wizFinishBtn.onclick = function() { hideWizard(); };
 wizardClose.onclick = function() { hideWizard(); };
 wizardModal.onclick = function(e) { if (e.target === wizardModal) hideWizard(); };
 
-wizDownloadBtn.onclick = async function() {
-    if (!wizardAccountId) return;
-    try {
-        showLoading();
-        var data = await api('POST', '/members/accounts/template', { accountId: wizardAccountId });
-        var blob = new Blob([data.template], { type: 'application/x-yaml' });
-        var url = URL.createObjectURL(blob);
-        var a = document.createElement('a');
-        a.href = url;
-        a.download = data.filename || ('SlashMyBill-' + wizardAccountId + '.yaml');
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
+wizLaunchCfBtn.onclick = function() {
+    if (wizardCfConsoleUrl) {
         wizardTemplateDownloaded = true;
-        notify('Template downloaded!', 'success');
-    } catch (err) {
-        notify(err.message || 'Failed to download template.', 'error');
-    } finally {
-        hideLoading();
     }
+};
+
+wizDownloadBtn.onclick = function() {
+    if (!wizardTemplateYaml) {
+        notify('Template not ready yet, please wait...', 'error');
+        return;
+    }
+    var blob = new Blob([wizardTemplateYaml], { type: 'application/x-yaml' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = wizardFilename || ('SlashMyBill-' + wizardAccountId + '.yaml');
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    wizardTemplateDownloaded = true;
+    notify('Template downloaded!', 'success');
 };
 
 wizTestBtn.onclick = async function() {
