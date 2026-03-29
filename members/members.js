@@ -154,7 +154,7 @@ async function api(method, path, body) {
 function showView(name) {
     loginView.hidden = name !== 'login';
     registerView.hidden = name !== 'register';
-    resetView.hidden = name !== 'reset';
+    if (resetView) resetView.hidden = name !== 'reset';
     dashboardView.hidden = name !== 'dashboard';
 
     if (name === 'register') {
@@ -176,7 +176,7 @@ function showView(name) {
         loginEmail.value = '';
         loginPassword.value = '';
     }
-    if (name === 'reset') {
+    if (name === 'reset' && $('reset-step-1')) {
         $('reset-step-1').hidden = false;
         $('reset-step-2').hidden = true;
         $('reset-step-3').hidden = true;
@@ -200,10 +200,11 @@ function showView(name) {
 // Navigation
 // ============================================================
 
-$('show-register').onclick = function(e) { e.preventDefault(); showView('register'); };
-$('show-login').onclick = function(e) { e.preventDefault(); showView('login'); };
-$('show-forgot').onclick = function(e) { e.preventDefault(); showView('reset'); };
-$('show-login-from-reset').onclick = function(e) { e.preventDefault(); showView('login'); };
+var _el;
+_el = $('show-register'); if (_el) _el.onclick = function(e) { e.preventDefault(); showView('register'); };
+_el = $('show-login'); if (_el) _el.onclick = function(e) { e.preventDefault(); showView('login'); };
+_el = $('show-forgot'); if (_el) _el.onclick = function(e) { e.preventDefault(); showView('reset'); };
+_el = $('show-login-from-reset'); if (_el) _el.onclick = function(e) { e.preventDefault(); showView('login'); };
 logoutBtn.onclick = function() {
     sessionStorage.removeItem('memberToken');
     sessionStorage.removeItem('memberEmail');
@@ -306,7 +307,7 @@ regPasswordForm.onsubmit = async function(e) {
 // Password Reset
 // ============================================================
 
-$('reset-email-form').onsubmit = async function(e) {
+if ($('reset-email-form')) $('reset-email-form').onsubmit = async function(e) {
     e.preventDefault();
     $('reset-email-error').textContent = '';
     resetEmailValue = $('reset-email').value.trim().toLowerCase();
@@ -325,7 +326,7 @@ $('reset-email-form').onsubmit = async function(e) {
     }
 };
 
-$('reset-otp-form').onsubmit = async function(e) {
+if ($('reset-otp-form')) $('reset-otp-form').onsubmit = async function(e) {
     e.preventDefault();
     $('reset-otp-error').textContent = '';
     var code = $('reset-otp').value.trim();
@@ -346,7 +347,7 @@ $('reset-otp-form').onsubmit = async function(e) {
     }
 };
 
-$('reset-password-form').onsubmit = async function(e) {
+if ($('reset-password-form')) $('reset-password-form').onsubmit = async function(e) {
     e.preventDefault();
     $('reset-password-error').textContent = '';
     var pw = $('reset-new-password').value;
@@ -840,6 +841,7 @@ var labRunBtn = $('lab-run-btn');
 var labAccountSelect = $('lab-account-select');
 
 function populateLabAccounts() {
+    if (!labAccountSelect) return;
     var current = labAccountSelect.value;
     labAccountSelect.innerHTML = '<option value="">Select an account...</option>';
     allAccounts.forEach(function(a) {
@@ -854,6 +856,7 @@ function populateLabAccounts() {
 }
 
 function addLabMessage(type, content) {
+    if (!labChat) return;
     // Remove welcome message if present
     var welcome = labChat.querySelector('.lab-welcome');
     if (welcome) welcome.remove();
@@ -907,13 +910,13 @@ async function runLabCommand() {
     }
 }
 
-labRunBtn.onclick = runLabCommand;
-labCommandInput.onkeydown = function(e) {
+if (labRunBtn) labRunBtn.onclick = runLabCommand;
+if (labCommandInput) labCommandInput.onkeydown = function(e) {
     if (e.key === 'Enter') { e.preventDefault(); runLabCommand(); }
 };
 
 // Click example commands to populate input
-labChat.onclick = function(e) {
+if (labChat) labChat.onclick = function(e) {
     if (e.target.tagName === 'CODE' && e.target.closest('.lab-examples')) {
         labCommandInput.value = e.target.textContent;
         labCommandInput.focus();
