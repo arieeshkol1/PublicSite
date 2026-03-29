@@ -1,5 +1,5 @@
 /* Member Portal v1 - SlashMyBill */
-var API = 'https://YOUR_API_GATEWAY_URL';
+var API = 'https://l2fd4h481h.execute-api.us-east-1.amazonaws.com';
 
 var $ = function(id) { return document.getElementById(id); };
 

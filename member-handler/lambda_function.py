@@ -1016,6 +1016,15 @@ def handle_execute_command(event):
     # e.g., "describe-instances" -> "describe_instances"
     method_name = action_name.replace('-', '_')
 
+    # Map common CLI shorthand commands to boto3 method names
+    cli_to_boto3_actions = {
+        's3': {'ls': 'list_buckets'},
+        'lambda': {'ls': 'list_functions'},
+        'iam': {'ls': 'list_roles'},
+    }
+    if service_name in cli_to_boto3_actions and action_name in cli_to_boto3_actions[service_name]:
+        method_name = cli_to_boto3_actions[service_name][action_name]
+
     # Map CLI service names to boto3 service names
     service_map = {
         'costexplorer': 'ce', 'cost-explorer': 'ce',
@@ -1126,7 +1135,7 @@ def cors_headers():
     """Return CORS headers for member API responses."""
     return {
         'Content-Type': 'application/json',
-        'Access-Control-Allow-Origin': 'https://www.eshkolai.com',
+        'Access-Control-Allow-Origin': '*',
         'Access-Control-Allow-Headers': 'Content-Type, Authorization',
         'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
     }
