@@ -8,7 +8,7 @@
           <mxGeometry height="40" width="700" x="400" y="20" as="geometry" />
         </mxCell>
         <mxCell id="aws-cloud" parent="1" style="points=[[0,0],[0.25,0],[0.5,0],[0.75,0],[1,0],[1,0.25],[1,0.5],[1,0.75],[1,1],[0.75,1],[0.5,1],[0.25,1],[0,1],[0,0.75],[0,0.5],[0,0.25]];outlineConnect=0;gradientColor=none;html=1;whiteSpace=wrap;fontSize=12;fontStyle=0;container=0;pointerEvents=0;collapsible=0;recursiveResize=0;shape=mxgraph.aws4.group;grIcon=mxgraph.aws4.group_aws_cloud_alt;strokeColor=#232F3E;fillColor=none;verticalAlign=top;align=left;spacingLeft=30;fontColor=#232F3E;dashed=0;" value="" vertex="1">
-          <mxGeometry height="1200" width="1200" x="300" y="70" as="geometry" />
+          <mxGeometry height="1250" width="1200" x="300" y="70" as="geometry" />
         </mxCell>
         <mxCell id="aws-label" parent="1" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=top;whiteSpace=wrap;fontSize=13;fontStyle=1;fontColor=#232F3E;" value="AWS Cloud — Account 991105135552 (us-east-1)" vertex="1">
           <mxGeometry height="25" width="400" x="340" y="75" as="geometry" />
@@ -63,13 +63,13 @@
         <mxCell id="bill-section" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;opacity=15;" value="" vertex="1">
           <mxGeometry height="620" width="1160" x="320" y="370" as="geometry" />
         </mxCell>
-        <mxCell id="bill-label" parent="1" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=top;whiteSpace=wrap;fontSize=13;fontStyle=1;fontColor=#006600;" value="Slash My Bill (eshkolai.com/viewMyBill/)" vertex="1">
+        <mxCell id="bill-label" parent="1" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=top;whiteSpace=wrap;fontSize=13;fontStyle=1;fontColor=#006600;" value="SlashMyBill (eshkolai.com/slashMyBill/)" vertex="1">
           <mxGeometry height="25" width="300" x="340" y="375" as="geometry" />
         </mxCell>
         <mxCell id="bill-user" parent="1" style="sketch=0;points=[[0,0,0],[0.25,0,0],[0.5,0,0],[0.75,0,0],[1,0,0],[0,1,0],[0.25,1,0],[0.5,1,0],[0.75,1,0],[1,1,0]];outlineConnect=0;fontColor=#232F3E;fillColor=#232F3E;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=12;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.users;" value="Bill User" vertex="1">
           <mxGeometry height="60" width="60" x="100" y="560" as="geometry" />
         </mxCell>
-        <mxCell id="apigw" parent="1" style="sketch=0;points=[[0,0,0],[0.25,0,0],[0.5,0,0],[0.75,0,0],[1,0,0],[0,1,0],[0.25,1,0],[0.5,1,0],[0.75,1,0],[1,1,0]];outlineConnect=0;fontColor=#232F3E;fillColor=#E7157B;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=11;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.api_gateway;" value="API Gateway HTTP v2&#xa;4 Routes" vertex="1">
+        <mxCell id="apigw" parent="1" style="sketch=0;points=[[0,0,0],[0.25,0,0],[0.5,0,0],[0.75,0,0],[1,0,0],[0,1,0],[0.25,1,0],[0.5,1,0],[0.75,1,0],[1,1,0]];outlineConnect=0;fontColor=#232F3E;fillColor=#E7157B;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=11;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.api_gateway;" value="API Gateway HTTP v2&#xa;ViewMyBill-API&#xa;(15+ Routes)" vertex="1">
           <mxGeometry height="60" width="60" x="370" y="560" as="geometry" />
         </mxCell>
         <!-- Three Lambda Functions -->
@@ -267,9 +267,9 @@
         <!-- Member Portal Section -->
         <!-- ============================================================ -->
         <mxCell id="member-section" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;opacity=15;" value="" vertex="1">
-          <mxGeometry height="200" width="560" x="320" y="1030" as="geometry" />
+          <mxGeometry height="250" width="1160" x="320" y="1030" as="geometry" />
         </mxCell>
-        <mxCell id="member-label" parent="1" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=top;whiteSpace=wrap;fontSize=13;fontStyle=1;fontColor=#660066;" value="Member Portal (eshkolai.com/members/)" vertex="1">
+        <mxCell id="member-label" parent="1" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=top;whiteSpace=wrap;fontSize=13;fontStyle=1;fontColor=#660066;" value="Member Portal — Accounts | Console | AI Agent (eshkolai.com/members/)" vertex="1">
           <mxGeometry height="25" width="350" x="340" y="1035" as="geometry" />
         </mxCell>
         <mxCell id="member-lambda" parent="1" style="sketch=0;points=[[0,0,0],[0.25,0,0],[0.5,0,0],[0.75,0,0],[1,0,0],[0,1,0],[0.25,1,0],[0.5,1,0],[0.75,1,0],[1,1,0]];outlineConnect=0;fontColor=#232F3E;fillColor=#ED7100;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=11;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.lambda_function;" value="Member Handler&#xa;Lambda" vertex="1">
@@ -308,6 +308,61 @@
         </mxCell>
         <mxCell id="f-member-ses" edge="1" parent="1" source="member-lambda" style="endArrow=classic;html=1;rounded=0;strokeWidth=2;strokeColor=#DD344C;dashed=1;" target="ses" value="OTP Email">
           <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+      
+        <!-- Admin Panel Section -->
+        <mxCell id="admin-lambda" parent="1" style="sketch=0;points=[[0,0,0],[0.25,0,0],[0.5,0,0],[0.75,0,0],[1,0,0],[0,1,0],[0.25,1,0],[0.5,1,0],[0.75,1,0],[1,1,0]];outlineConnect=0;fontColor=#232F3E;fillColor=#ED7100;strokeColor=#ffffff;dashed=0;verticalLabelPosition=bottom;verticalAlign=top;align=center;html=1;fontSize=11;fontStyle=0;aspect=fixed;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.lambda_function;" value="Admin Handler&#xa;Lambda" vertex="1">
+          <mxGeometry height="60" width="60" x="570" y="530" as="geometry" />
+        </mxCell>
+        <mxCell id="f-apigw-admin" edge="1" parent="1" source="apigw" style="endArrow=classic;html=1;rounded=0;strokeWidth=3;strokeColor=#ED7100;flowAnimation=1;" target="admin-lambda" value="Admin API&#xa;(CRUD Leads/Tips)">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="f-admin-leads" edge="1" parent="1" source="admin-lambda" style="endArrow=classic;html=1;rounded=0;strokeWidth=2;strokeColor=#C925D1;" target="leads-ddb" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="f-admin-tips" edge="1" parent="1" source="admin-lambda" style="endArrow=classic;html=1;rounded=0;strokeWidth=2;strokeColor=#C925D1;" target="tips-ddb" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="f-member-bedrock" edge="1" parent="1" source="member-lambda" style="endArrow=classic;html=1;rounded=0;strokeWidth=3;strokeColor=#01A88D;flowAnimation=1;" target="bedrock" value="AI Agent&#xa;(Bedrock)">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="400" y="960" />
+              <mxPoint x="840" y="960" />
+              <mxPoint x="840" y="680" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="f-member-tips" edge="1" parent="1" source="member-lambda" style="endArrow=classic;html=1;rounded=0;strokeWidth=2;strokeColor=#C925D1;dashed=1;" target="tips-ddb" value="Query/Save Tips">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="400" y="940" />
+              <mxPoint x="1040" y="940" />
+              <mxPoint x="1040" y="680" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="f-member-ses" edge="1" parent="1" source="member-lambda" style="endArrow=classic;html=1;rounded=0;strokeWidth=2;strokeColor=#DD344C;dashed=1;" target="ses" value="OTP Email">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="400" y="1200" />
+              <mxPoint x="1040" y="1200" />
+              <mxPoint x="1040" y="870" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="f-member-otp" edge="1" parent="1" source="member-lambda" style="endArrow=classic;html=1;rounded=0;strokeWidth=2;strokeColor=#C925D1;dashed=1;" target="otp-ddb" value="">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="350" y="1200" />
+              <mxPoint x="350" y="840" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="member-features" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;verticalAlign=top;fontSize=11;fontStyle=1;dashed=1;dashPattern=8 8;" value="Member Portal Features" vertex="1">
+          <mxGeometry height="50" width="700" x="370" y="1230" as="geometry" />
+        </mxCell>
+        <mxCell id="member-features-text" parent="1" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;fontSize=10;fontColor=#333333;" value="Registration (OTP) → Login (JWT) → Password Reset → AWS Account CRUD → CloudFormation Wizard → Console (CLI) → AI Agent (Bedrock FinOps)" vertex="1">
+          <mxGeometry height="30" width="680" x="380" y="1248" as="geometry" />
         </mxCell>
       </root>
     </mxGraphModel>
