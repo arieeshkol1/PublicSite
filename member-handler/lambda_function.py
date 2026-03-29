@@ -788,6 +788,63 @@ def handle_generate_template(event):
                                             'ce:GetSavingsPlansUtilization',
                                             'budgets:ViewBudget',
                                             'cur:DescribeReportDefinitions',
+                                            'cur:GetClassicReport',
+                                            'cur:GetUsageReport',
+                                        ],
+                                        'Resource': '*'
+                                    },
+                                    {
+                                        'Effect': 'Allow',
+                                        'Action': [
+                                            'athena:GetDataCatalog',
+                                            'athena:GetDatabase',
+                                            'athena:GetTableMetadata',
+                                            'athena:ListDatabases',
+                                            'athena:ListTableMetadata',
+                                            'athena:ListWorkGroups',
+                                            'athena:StartQueryExecution',
+                                            'athena:GetQueryExecution',
+                                            'athena:GetQueryResults',
+                                            'athena:StopQueryExecution',
+                                            'glue:GetDatabase',
+                                            'glue:GetDatabases',
+                                            'glue:GetTable',
+                                            'glue:GetTables',
+                                            'glue:GetPartition',
+                                            'glue:GetPartitions',
+                                        ],
+                                        'Resource': '*'
+                                    },
+                                    {
+                                        'Effect': 'Allow',
+                                        'Action': [
+                                            's3:ListAllMyBuckets',
+                                            's3:ListBucket',
+                                            's3:GetBucketLocation',
+                                            's3:GetObject',
+                                        ],
+                                        'Resource': '*'
+                                    },
+                                    {
+                                        'Effect': 'Allow',
+                                        'Action': [
+                                            'cloudwatch:GetMetricData',
+                                            'cloudwatch:GetMetricStatistics',
+                                            'cloudwatch:ListMetrics',
+                                            'ec2:DescribeInstances',
+                                            'ec2:DescribeInstanceTypes',
+                                            'ec2:DescribeVolumes',
+                                            'ec2:DescribeTags',
+                                            'ec2:DescribeRegions',
+                                            'rds:DescribeDBInstances',
+                                            'rds:DescribeDBClusters',
+                                            'rds:DescribeDBLogFiles',
+                                            'ecs:ListClusters',
+                                            'ecs:DescribeClusters',
+                                            'ecs:ListServices',
+                                            'ecs:DescribeServices',
+                                            'ecs:ListTasks',
+                                            'ecs:DescribeTasks',
                                         ],
                                         'Resource': '*'
                                     }
