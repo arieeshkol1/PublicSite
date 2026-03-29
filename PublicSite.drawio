@@ -341,7 +341,7 @@
             </Array>
           </mxGeometry>
         </mxCell>
-        <mxCell id="f-member-ses" edge="1" parent="1" source="member-lambda" style="endArrow=classic;html=1;rounded=0;strokeWidth=2;strokeColor=#DD344C;dashed=1;" target="ses" value="OTP Email">
+        <mxCell id="f-member-ses2" edge="1" parent="1" source="member-lambda" style="endArrow=classic;html=1;rounded=0;strokeWidth=2;strokeColor=#DD344C;dashed=1;" target="ses" value="OTP Email">
           <mxGeometry relative="1" as="geometry">
             <Array as="points">
               <mxPoint x="400" y="1200" />
