@@ -754,6 +754,8 @@ def handle_generate_template(event):
         'Resources': {
             'SlashMyBillRole': {
                 'Type': 'AWS::IAM::Role',
+                'DeletionPolicy': 'Retain',
+                'UpdateReplacePolicy': 'Retain',
                 'Properties': {
                     'RoleName': f'SlashMyBill-{account_id}',
                     'AssumeRolePolicyDocument': {
@@ -788,6 +790,63 @@ def handle_generate_template(event):
                                             'ce:GetSavingsPlansUtilization',
                                             'budgets:ViewBudget',
                                             'cur:DescribeReportDefinitions',
+                                            'cur:GetClassicReport',
+                                            'cur:GetUsageReport',
+                                        ],
+                                        'Resource': '*'
+                                    },
+                                    {
+                                        'Effect': 'Allow',
+                                        'Action': [
+                                            'athena:GetDataCatalog',
+                                            'athena:GetDatabase',
+                                            'athena:GetTableMetadata',
+                                            'athena:ListDatabases',
+                                            'athena:ListTableMetadata',
+                                            'athena:ListWorkGroups',
+                                            'athena:StartQueryExecution',
+                                            'athena:GetQueryExecution',
+                                            'athena:GetQueryResults',
+                                            'athena:StopQueryExecution',
+                                            'glue:GetDatabase',
+                                            'glue:GetDatabases',
+                                            'glue:GetTable',
+                                            'glue:GetTables',
+                                            'glue:GetPartition',
+                                            'glue:GetPartitions',
+                                        ],
+                                        'Resource': '*'
+                                    },
+                                    {
+                                        'Effect': 'Allow',
+                                        'Action': [
+                                            's3:ListAllMyBuckets',
+                                            's3:ListBucket',
+                                            's3:GetBucketLocation',
+                                            's3:GetObject',
+                                        ],
+                                        'Resource': '*'
+                                    },
+                                    {
+                                        'Effect': 'Allow',
+                                        'Action': [
+                                            'cloudwatch:GetMetricData',
+                                            'cloudwatch:GetMetricStatistics',
+                                            'cloudwatch:ListMetrics',
+                                            'ec2:DescribeInstances',
+                                            'ec2:DescribeInstanceTypes',
+                                            'ec2:DescribeVolumes',
+                                            'ec2:DescribeTags',
+                                            'ec2:DescribeRegions',
+                                            'rds:DescribeDBInstances',
+                                            'rds:DescribeDBClusters',
+                                            'rds:DescribeDBLogFiles',
+                                            'ecs:ListClusters',
+                                            'ecs:DescribeClusters',
+                                            'ecs:ListServices',
+                                            'ecs:DescribeServices',
+                                            'ecs:ListTasks',
+                                            'ecs:DescribeTasks',
                                         ],
                                         'Resource': '*'
                                     }
@@ -822,7 +881,13 @@ def handle_generate_template(event):
             Body=template_yaml,
             ContentType='application/x-yaml',
         )
-        template_url = f'https://{bucket}.s3.amazonaws.com/{s3_key}'
+        # Use a pre-signed URL so CloudFormation in the member account can fetch
+        # the template even when the platform bucket is private.
+        template_url = s3_client.generate_presigned_url(
+            'get_object',
+            Params={'Bucket': bucket, 'Key': s3_key},
+            ExpiresIn=86400,  # 24 hours
+        )
     except Exception as e:
         logger.warning(f"Failed to upload CF template to S3: {e}")
         template_url = None
