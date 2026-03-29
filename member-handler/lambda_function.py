@@ -83,6 +83,9 @@ def lambda_handler(event, context):
         'POST /members/accounts/test': handle_test_connection,
         'POST /members/accounts/execute': handle_execute_command,
         'POST /members/accounts/ai-query': handle_ai_query,
+        'GET /members/dashboard': handle_get_dashboard,
+        'POST /members/dashboard': handle_add_dashboard_item,
+        'DELETE /members/dashboard': handle_delete_dashboard_item,
     }
 
     handler = routes.get(route_key)
@@ -321,6 +324,7 @@ def _register_create_account(body):
             'displayName': display_name,
             'createdAt': now_iso,
             'lastLoginAt': None,
+            'favoriteQueries': [],
         })
     except ClientError as e:
         logger.error(f"DynamoDB write error: {e}")
@@ -754,6 +758,8 @@ def handle_generate_template(event):
         'Resources': {
             'SlashMyBillRole': {
                 'Type': 'AWS::IAM::Role',
+                'DeletionPolicy': 'Retain',
+                'UpdateReplacePolicy': 'Retain',
                 'Properties': {
                     'RoleName': f'SlashMyBill-{account_id}',
                     'AssumeRolePolicyDocument': {
@@ -787,7 +793,67 @@ def handle_generate_template(event):
                                             'ce:GetReservationUtilization',
                                             'ce:GetSavingsPlansUtilization',
                                             'budgets:ViewBudget',
+                                            'billingconductor:GetBillingData',
+                                            'billingconductor:GetBillingGroupCostReport',
+                                            'billingconductor:GetCustomLineItemVersions',
                                             'cur:DescribeReportDefinitions',
+                                            'cur:GetClassicReport',
+                                            'cur:GetUsageReport',
+                                        ],
+                                        'Resource': '*'
+                                    },
+                                    {
+                                        'Effect': 'Allow',
+                                        'Action': [
+                                            'athena:GetDataCatalog',
+                                            'athena:GetDatabase',
+                                            'athena:GetTableMetadata',
+                                            'athena:ListDatabases',
+                                            'athena:ListTableMetadata',
+                                            'athena:ListWorkGroups',
+                                            'athena:StartQueryExecution',
+                                            'athena:GetQueryExecution',
+                                            'athena:GetQueryResults',
+                                            'athena:StopQueryExecution',
+                                            'glue:GetDatabase',
+                                            'glue:GetDatabases',
+                                            'glue:GetTable',
+                                            'glue:GetTables',
+                                            'glue:GetPartition',
+                                            'glue:GetPartitions',
+                                        ],
+                                        'Resource': '*'
+                                    },
+                                    {
+                                        'Effect': 'Allow',
+                                        'Action': [
+                                            's3:ListAllMyBuckets',
+                                            's3:ListBucket',
+                                            's3:GetBucketLocation',
+                                            's3:GetObject',
+                                        ],
+                                        'Resource': '*'
+                                    },
+                                    {
+                                        'Effect': 'Allow',
+                                        'Action': [
+                                            'cloudwatch:GetMetricData',
+                                            'cloudwatch:GetMetricStatistics',
+                                            'cloudwatch:ListMetrics',
+                                            'ec2:DescribeInstances',
+                                            'ec2:DescribeInstanceTypes',
+                                            'ec2:DescribeVolumes',
+                                            'ec2:DescribeTags',
+                                            'ec2:DescribeRegions',
+                                            'rds:DescribeDBInstances',
+                                            'rds:DescribeDBClusters',
+                                            'rds:DescribeDBLogFiles',
+                                            'ecs:ListClusters',
+                                            'ecs:DescribeClusters',
+                                            'ecs:ListServices',
+                                            'ecs:DescribeServices',
+                                            'ecs:ListTasks',
+                                            'ecs:DescribeTasks',
                                         ],
                                         'Resource': '*'
                                     }
@@ -822,7 +888,13 @@ def handle_generate_template(event):
             Body=template_yaml,
             ContentType='application/x-yaml',
         )
-        template_url = f'https://{bucket}.s3.amazonaws.com/{s3_key}'
+        # Use a pre-signed URL so CloudFormation in the member account can fetch
+        # the template even when the platform bucket is private.
+        template_url = s3_client.generate_presigned_url(
+            'get_object',
+            Params={'Bucket': bucket, 'Key': s3_key},
+            ExpiresIn=86400,  # 24 hours
+        )
     except Exception as e:
         logger.warning(f"Failed to upload CF template to S3: {e}")
         template_url = None
@@ -920,6 +992,114 @@ def handle_test_connection(event):
     _update_connection_status(accounts_table, member_email, account_id, 'connected', now_iso)
     logger.info(f"Connection test successful for account {account_id}, member {member_email}")
     return create_response(200, {'status': 'connected', 'message': 'Connection verified. Cost data is accessible.'})
+
+
+def handle_get_dashboard(event):
+    """Return saved dashboard/favorite query items for the authenticated member."""
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+
+    member_email = auth['sub']
+    members_table = dynamodb.Table(MEMBERS_TABLE_NAME)
+
+    try:
+        item = members_table.get_item(Key={'email': member_email}).get('Item') or {}
+    except ClientError as e:
+        logger.error(f"DynamoDB read error (dashboard): {e}")
+        return create_error_response(500, 'ServerError', 'Failed to load dashboard items')
+
+    favorites = item.get('favoriteQueries') or []
+    if not isinstance(favorites, list):
+        favorites = []
+    return create_response(200, {'items': _decimal_to_native(favorites)})
+
+
+def handle_add_dashboard_item(event):
+    """Add a new dashboard item (table/graph) to the member profile."""
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+
+    member_email = auth['sub']
+    members_table = dynamodb.Table(MEMBERS_TABLE_NAME)
+
+    try:
+        body = json.loads(event.get('body', '{}'))
+    except (json.JSONDecodeError, TypeError):
+        return create_error_response(400, 'InvalidRequest', 'Invalid request body')
+
+    view_type = (body.get('viewType') or '').strip().lower()
+    prompt = (body.get('prompt') or '').strip()
+    title = (body.get('title') or '').strip()
+    answer = (body.get('answer') or '').strip()
+    account_id = (body.get('accountId') or '').strip()
+
+    if view_type not in ('graph', 'table'):
+        return create_error_response(400, 'InvalidRequest', "viewType must be 'graph' or 'table'")
+    if not prompt:
+        return create_error_response(400, 'InvalidRequest', 'Prompt is required')
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    item_id = hashlib.sha256(f'{member_email}|{prompt}|{now_iso}'.encode('utf-8')).hexdigest()[:16]
+    item = {
+        'id': item_id,
+        'title': title or prompt[:80],
+        'prompt': prompt,
+        'answer': answer,
+        'viewType': view_type,
+        'accountId': account_id,
+        'createdAt': now_iso,
+    }
+
+    try:
+        members_table.update_item(
+            Key={'email': member_email},
+            UpdateExpression='SET favoriteQueries = list_append(if_not_exists(favoriteQueries, :empty), :item)',
+            ExpressionAttributeValues={
+                ':empty': [],
+                ':item': [item],
+            },
+        )
+    except ClientError as e:
+        logger.error(f"DynamoDB update error (dashboard add): {e}")
+        return create_error_response(500, 'ServerError', 'Failed to save dashboard item')
+
+    return create_response(201, {'message': 'Dashboard item saved', 'item': item})
+
+
+def handle_delete_dashboard_item(event):
+    """Delete a dashboard item from the member profile by item id."""
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+
+    member_email = auth['sub']
+    members_table = dynamodb.Table(MEMBERS_TABLE_NAME)
+
+    try:
+        body = json.loads(event.get('body', '{}'))
+    except (json.JSONDecodeError, TypeError):
+        return create_error_response(400, 'InvalidRequest', 'Invalid request body')
+
+    item_id = (body.get('id') or '').strip()
+    if not item_id:
+        return create_error_response(400, 'InvalidRequest', 'Item id is required')
+
+    try:
+        member = members_table.get_item(Key={'email': member_email}).get('Item') or {}
+        current = member.get('favoriteQueries') or []
+        filtered = [it for it in current if str(it.get('id', '')) != item_id]
+        members_table.update_item(
+            Key={'email': member_email},
+            UpdateExpression='SET favoriteQueries = :items',
+            ExpressionAttributeValues={':items': filtered},
+        )
+    except ClientError as e:
+        logger.error(f"DynamoDB update error (dashboard delete): {e}")
+        return create_error_response(500, 'ServerError', 'Failed to delete dashboard item')
+
+    return create_response(200, {'message': 'Dashboard item deleted', 'id': item_id})
 
 
 def handle_execute_command(event):

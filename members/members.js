@@ -37,6 +37,13 @@ var logoutBtn = $('logout-btn');
 var addAccountBtn = $('add-account-btn');
 var accountsTbody = $('accounts-tbody');
 var accountsEmpty = $('accounts-empty');
+var dashboardViewType = $('dashboard-view-type');
+var dashboardTitleInput = $('dashboard-title');
+var dashboardPromptInput = $('dashboard-prompt');
+var dashboardAnswerInput = $('dashboard-answer');
+var dashboardAddBtn = $('dashboard-add-btn');
+var dashboardGrid = $('dashboard-grid');
+var dashboardEmpty = $('dashboard-empty');
 
 // Account modal
 var accountModal = $('account-modal');
@@ -66,6 +73,7 @@ var editingAccountId = null;
 var deletingAccountId = null;
 var resetEmailValue = '';
 var resetToken = null;
+var dashboardItems = [];
 
 // ============================================================
 // Helpers
@@ -193,6 +201,7 @@ function showView(name) {
     if (name === 'dashboard') {
         headerEmail.textContent = getMemberEmail() || '';
         loadAccounts();
+        loadDashboard();
     }
 }
 
@@ -827,10 +836,112 @@ document.querySelectorAll('.member-tab').forEach(function(tab) {
         tab.classList.add('active');
         var target = $(tab.dataset.tab);
         if (target) target.hidden = false;
+        if (tab.dataset.tab === 'dashboard-tab') loadDashboard();
         if (tab.dataset.tab === 'lab-tab') populateLabAccounts();
         if (tab.dataset.tab === 'ai-tab') populateAIAccounts();
     };
 });
+
+// ============================================================
+// Dashboard (Saved Queries + Visuals)
+// ============================================================
+
+function extractValues(text) {
+    var matches = String(text || '').match(/-?\\d+(?:\\.\\d+)?/g) || [];
+    return matches.slice(0, 8).map(function(v, idx) {
+        return { label: 'V' + (idx + 1), value: Number(v) };
+    }).filter(function(x) { return !isNaN(x.value); });
+}
+
+function renderMiniGraph(values) {
+    if (!values.length) return '<p>Provide numeric values in the answer to render a graph.</p>';
+    var max = Math.max.apply(null, values.map(function(v) { return Math.abs(v.value); })) || 1;
+    var rows = values.map(function(v) {
+        var pct = Math.max(4, Math.round(Math.abs(v.value) / max * 100));
+        return '<div class=\"mini-bar-row\"><span>' + esc(v.label) + '</span><div class=\"mini-bar\" style=\"width:' + pct + '%\"></div><strong>' + esc(String(v.value)) + '</strong></div>';
+    }).join('');
+    return '<div class=\"mini-bars\">' + rows + '</div>';
+}
+
+function renderMiniTable(values) {
+    if (!values.length) return '<p>Provide numeric values in the answer to render a table.</p>';
+    var rows = values.map(function(v) {
+        return '<tr><td>' + esc(v.label) + '</td><td>' + esc(String(v.value)) + '</td></tr>';
+    }).join('');
+    return '<table class=\"mini-table\"><thead><tr><th>Metric</th><th>Value</th></tr></thead><tbody>' + rows + '</tbody></table>';
+}
+
+function renderDashboard() {
+    if (!dashboardGrid || !dashboardEmpty) return;
+    dashboardGrid.innerHTML = '';
+    dashboardEmpty.hidden = dashboardItems.length > 0;
+    if (!dashboardItems.length) return;
+
+    dashboardItems.forEach(function(item) {
+        var card = document.createElement('div');
+        card.className = 'dashboard-card';
+        var values = extractValues(item.answer || '');
+        var visual = item.viewType === 'table' ? renderMiniTable(values) : renderMiniGraph(values);
+        card.innerHTML =
+            '<h3>' + esc(item.title || 'Saved Query') + '</h3>' +
+            '<div class=\"dashboard-card-meta\">' + esc((item.viewType || 'graph').toUpperCase()) + ' • ' + esc(fmtDate(item.createdAt)) + '</div>' +
+            '<p><strong>Request:</strong> ' + esc(item.prompt || '') + '</p>' +
+            '<p><strong>Response:</strong> ' + esc(item.answer || '-') + '</p>' +
+            visual +
+            '<div class=\"dashboard-actions\"><button class=\"btn btn-outline btn-sm\" data-dashboard-del=\"' + ea(item.id || '') + '\">Delete</button></div>';
+        dashboardGrid.appendChild(card);
+    });
+}
+
+async function loadDashboard() {
+    try {
+        var data = await api('GET', '/members/dashboard');
+        dashboardItems = Array.isArray(data.items) ? data.items : [];
+        renderDashboard();
+    } catch (err) {
+        notify(err.message || 'Failed to load dashboard', 'error');
+    }
+}
+
+async function addDashboardItem() {
+    if (!dashboardViewType || !dashboardPromptInput) return;
+    var payload = {
+        viewType: dashboardViewType.value || 'graph',
+        title: (dashboardTitleInput && dashboardTitleInput.value || '').trim(),
+        prompt: dashboardPromptInput.value.trim(),
+        answer: (dashboardAnswerInput && dashboardAnswerInput.value || '').trim(),
+        accountId: (aiAccountSelect && aiAccountSelect.value) || '',
+    };
+    if (!payload.prompt) {
+        notify('Please describe what you want to visualize.', 'error');
+        return;
+    }
+    try {
+        await api('POST', '/members/dashboard', payload);
+        if (dashboardPromptInput) dashboardPromptInput.value = '';
+        if (dashboardTitleInput) dashboardTitleInput.value = '';
+        if (dashboardAnswerInput) dashboardAnswerInput.value = '';
+        notify('Saved to dashboard.', 'success');
+        loadDashboard();
+    } catch (err) {
+        notify(err.message || 'Failed to save dashboard item', 'error');
+    }
+}
+
+if (dashboardAddBtn) dashboardAddBtn.onclick = addDashboardItem;
+if (dashboardGrid) dashboardGrid.onclick = async function(e) {
+    var btn = e.target.closest('[data-dashboard-del]');
+    if (!btn) return;
+    var id = btn.getAttribute('data-dashboard-del');
+    if (!id) return;
+    try {
+        await api('DELETE', '/members/dashboard', { id: id });
+        notify('Dashboard item removed.', 'success');
+        loadDashboard();
+    } catch (err) {
+        notify(err.message || 'Failed to delete dashboard item', 'error');
+    }
+};
 
 // ============================================================
 // Lab Area
