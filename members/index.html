@@ -6,7 +6,7 @@
     <title>Member Portal - SlashMyBill</title>
     <link rel="icon" type="image/png" href="../SlashMyBill.png">
     <link rel="stylesheet" href="../styles.css">
-    <link rel="stylesheet" href="members.css?v=3">
+    <link rel="stylesheet" href="members.css?v=4">
 </head>
 <body>
 
@@ -224,6 +224,41 @@
         </div>
     </div>
 
+
+            <div id="ai-tab" class="member-tab-content" hidden>
+                <div class="lab-container">
+                    <div class="lab-header">
+                        <h2>AI Agent</h2>
+                        <div class="lab-account-selector">
+                            <label for="ai-account-select">Account:</label>
+                            <select id="ai-account-select"><option value="">Select an account...</option></select>
+                        </div>
+                    </div>
+                    <div id="ai-chat" class="lab-chat">
+                        <div class="lab-welcome">
+                            <div class="lab-welcome-icon">&#129302;</div>
+                            <h3>AWS FinOps AI Agent</h3>
+                            <p>Ask questions about your AWS account in natural language.</p>
+                            <div class="lab-examples">
+                                <p>Try asking:</p>
+                                <code>What are my top costs this month?</code>
+                                <code>Do I have any unused EC2 instances?</code>
+                                <code>How can I reduce my S3 costs?</code>
+                                <code>Show me my cost breakdown by service</code>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="lab-input-area">
+                        <div class="lab-input-row">
+                            <span class="lab-prompt" style="color:#a78bfa;">&#129302;</span>
+                            <input type="text" id="ai-question-input" class="lab-command-input" placeholder="Ask about your AWS account..." autocomplete="off">
+                            <button id="ai-ask-btn" class="btn btn-primary btn-sm">Ask</button>
+                        </div>
+                        <div class="lab-hint">AI analyzes your account using read-only access and provides FinOps insights.</div>
+                    </div>
+                </div>
+            </div>
+
     <!-- Add/Edit Account Modal -->
     <div id="account-modal" class="modal-overlay" hidden>
         <div class="modal-card">
@@ -343,6 +378,6 @@
         <span id="notification-message"></span>
     </div>
 
-    <script src="members.js?v=3"></script>
+    <script src="members.js?v=4"></script>
 </body>
 </html>

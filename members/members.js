@@ -828,6 +828,7 @@ document.querySelectorAll('.member-tab').forEach(function(tab) {
         var target = $(tab.dataset.tab);
         if (target) target.hidden = false;
         if (tab.dataset.tab === 'lab-tab') populateLabAccounts();
+        if (tab.dataset.tab === 'ai-tab') populateAIAccounts();
     };
 });
 
@@ -920,5 +921,118 @@ if (labChat) labChat.onclick = function(e) {
     if (e.target.tagName === 'CODE' && e.target.closest('.lab-examples')) {
         labCommandInput.value = e.target.textContent;
         labCommandInput.focus();
+    }
+};
+
+// ============================================================
+// AI Agent
+// ============================================================
+
+var aiChat = $('ai-chat');
+var aiQuestionInput = $('ai-question-input');
+var aiAskBtn = $('ai-ask-btn');
+var aiAccountSelect = $('ai-account-select');
+
+function populateAIAccounts() {
+    if (!aiAccountSelect) return;
+    var current = aiAccountSelect.value;
+    aiAccountSelect.innerHTML = '<option value="">Select an account...</option>';
+    allAccounts.forEach(function(a) {
+        if (a.connectionStatus === 'connected') {
+            var opt = document.createElement('option');
+            opt.value = a.accountId;
+            opt.textContent = a.accountId + ' (' + a.roleName + ')';
+            aiAccountSelect.appendChild(opt);
+        }
+    });
+    if (current) aiAccountSelect.value = current;
+}
+
+function addAIMessage(type, content) {
+    if (!aiChat) return;
+    var welcome = aiChat.querySelector('.lab-welcome');
+    if (welcome) welcome.remove();
+
+    var div = document.createElement('div');
+    div.className = 'lab-message';
+
+    if (type === 'question') {
+        div.innerHTML = '<div class="lab-msg-command" style="color:#a78bfa;">' + esc(content) + '</div>';
+    } else if (type === 'answer') {
+        // Render markdown-like formatting
+        var formatted = content
+            .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+            .replace(/\n- /g, '\n• ')
+            .replace(/\n/g, '<br>');
+        div.innerHTML = '<div class="lab-msg-output" style="color:#e2e8f0;border-color:#4c1d95;">' + formatted + '</div>';
+    } else if (type === 'commands') {
+        var cmdsHtml = '<div class="lab-msg-info" style="color:#7ee787;">Commands executed:</div>';
+        content.forEach(function(c) {
+            cmdsHtml += '<div class="lab-msg-command" style="font-size:11px;color:#58a6ff;">$ ' + esc(c) + '</div>';
+        });
+        div.innerHTML = cmdsHtml;
+    } else if (type === 'thinking') {
+        div.innerHTML = '<div class="lab-msg-info" style="color:#a78bfa;">&#129302; ' + esc(content) + '</div>';
+        div.id = 'ai-thinking';
+    } else if (type === 'error') {
+        div.innerHTML = '<div class="lab-msg-output lab-msg-error">' + esc(content) + '</div>';
+    }
+
+    aiChat.appendChild(div);
+    aiChat.scrollTop = aiChat.scrollHeight;
+}
+
+async function askAI() {
+    if (!aiAccountSelect || !aiQuestionInput) return;
+    var accountId = aiAccountSelect.value;
+    var question = aiQuestionInput.value.trim();
+
+    if (!accountId) { notify('Please select an account first.', 'error'); return; }
+    if (!question) return;
+
+    addAIMessage('question', question);
+    aiQuestionInput.value = '';
+    addAIMessage('thinking', 'Analyzing your question...');
+
+    try {
+        var data = await api('POST', '/members/accounts/ai-query', {
+            accountId: accountId,
+            question: question,
+        });
+
+        // Remove thinking message
+        var thinking = $('ai-thinking');
+        if (thinking) thinking.remove();
+
+        // Show commands that were executed
+        if (data.commands && data.commands.length > 0) {
+            addAIMessage('commands', data.commands);
+        }
+
+        // Show the AI answer
+        addAIMessage('answer', data.answer || 'No answer available.');
+
+        if (data.tipFound) {
+            addAIMessage('thinking', 'Tip found in knowledge base ✓');
+            var tipNote = $('ai-thinking');
+            if (tipNote) tipNote.id = '';
+        }
+    } catch (err) {
+        var thinking2 = $('ai-thinking');
+        if (thinking2) thinking2.remove();
+        addAIMessage('error', err.message || 'AI query failed. Please try again.');
+    }
+}
+
+if (aiAskBtn) aiAskBtn.onclick = askAI;
+if (aiQuestionInput) aiQuestionInput.onkeydown = function(e) {
+    if (e.key === 'Enter') { e.preventDefault(); askAI(); }
+};
+
+// Click example questions to populate input
+if (aiChat) aiChat.onclick = function(e) {
+    if (e.target.tagName === 'CODE' && e.target.closest('.lab-examples')) {
+        aiQuestionInput.value = e.target.textContent;
+        aiQuestionInput.focus();
     }
 };

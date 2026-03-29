@@ -795,6 +795,27 @@ Resources:
                   - s3:PutObject
                 Resource:
                   - !Sub 'arn:aws:s3:::${BillStorageBucket}/cf-templates/*'
+        - PolicyName: BedrockInvokeAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                Resource:
+                  - !Sub 'arn:aws:bedrock:us-east-1::foundation-model/${BedrockModelId}'
+        - PolicyName: DynamoDBTipsAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                Resource:
+                  - !GetAtt CostOptimizationTipsTable.Arn
       Tags:
         - Key: Project
           Value: ViewMyBill
@@ -809,7 +830,7 @@ Resources:
       Runtime: python3.12
       Handler: lambda_function.lambda_handler
       MemorySize: 256
-      Timeout: 60
+      Timeout: 120
       Role: !GetAtt MemberHandlerRole.Arn
       Code:
         S3Bucket: !Ref LambdaCodeBucket
@@ -823,6 +844,8 @@ Resources:
           SES_SENDER_EMAIL: 'noreply@eshkolai.com'
           PLATFORM_ACCOUNT_ID: '991105135552'
           STORAGE_BUCKET: !Ref BillStorageBucket
+          TIPS_TABLE_NAME: !Ref CostOptimizationTipsTable
+          BEDROCK_MODEL_ID: !Ref BedrockModelId
       Tags:
         - Key: Project
           Value: ViewMyBill
@@ -906,6 +929,13 @@ Resources:
     Properties:
       ApiId: !Ref ViewMyBillApi
       RouteKey: 'POST /members/accounts/execute'
+      Target: !Sub 'integrations/${MemberIntegration}'
+
+  MemberAIQueryRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'POST /members/accounts/ai-query'
       Target: !Sub 'integrations/${MemberIntegration}'
 
   MemberHandlerInvokePermission:

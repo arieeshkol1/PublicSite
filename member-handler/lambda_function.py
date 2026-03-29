@@ -31,6 +31,8 @@ ACCOUNTS_TABLE_NAME = os.environ.get('ACCOUNTS_TABLE_NAME', 'MemberPortal-Accoun
 OTP_TABLE_NAME = os.environ.get('OTP_TABLE_NAME', 'ViewMyBill-OTP')
 SES_SENDER_EMAIL = os.environ.get('SES_SENDER_EMAIL', 'noreply@eshkolai.com')
 PLATFORM_ACCOUNT_ID = os.environ.get('PLATFORM_ACCOUNT_ID', '991105135552')
+TIPS_TABLE_NAME = os.environ.get('TIPS_TABLE_NAME', 'ViewMyBill-CostOptimizationTips')
+BEDROCK_MODEL_ID = os.environ.get('BEDROCK_MODEL_ID', 'amazon.nova-lite-v1:0')
 
 # AWS clients
 dynamodb = boto3.resource('dynamodb')
@@ -78,6 +80,7 @@ def lambda_handler(event, context):
         'POST /members/accounts/template': handle_generate_template,
         'POST /members/accounts/test': handle_test_connection,
         'POST /members/accounts/execute': handle_execute_command,
+        'POST /members/accounts/ai-query': handle_ai_query,
     }
 
     handler = routes.get(route_key)
@@ -1078,6 +1081,299 @@ def handle_execute_command(event):
             'action': action_name,
             'accountId': account_id,
         })
+
+
+# ============================================================
+# AI Agent Query Handler
+# ============================================================
+
+def handle_ai_query(event):
+    """Handle natural language questions — uses tips DB + Bedrock + cross-account execution."""
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+
+    member_email = auth['sub']
+
+    try:
+        body = json.loads(event.get('body', '{}'))
+    except (json.JSONDecodeError, TypeError):
+        return create_error_response(400, 'InvalidRequest', 'Invalid request body')
+
+    question = (body.get('question') or '').strip()
+    account_id = (body.get('accountId') or '').strip()
+
+    if not question:
+        return create_error_response(400, 'InvalidRequest', 'Question is required')
+    if not re.fullmatch(r'\d{12}', account_id):
+        return create_error_response(400, 'InvalidAccountId', 'Account ID must be exactly 12 digits')
+
+    # Step 1: Search tips table for relevant knowledge
+    tips_context = _search_tips(question)
+
+    # Step 2: Ask Bedrock to interpret the question and generate CLI commands
+    bedrock_response = _ask_bedrock(question, tips_context, account_id)
+
+    # Step 3: If Bedrock suggested CLI commands, execute them on the account
+    cli_results = []
+    if bedrock_response.get('commands'):
+        cli_results = _execute_ai_commands(
+            bedrock_response['commands'], account_id, member_email
+        )
+
+    # Step 4: Ask Bedrock to summarize the results in natural language
+    final_answer = _summarize_results(question, bedrock_response, cli_results)
+
+    # Step 5: Save new tip if Bedrock generated useful knowledge
+    if bedrock_response.get('newTip'):
+        _save_tip(bedrock_response['newTip'])
+
+    return create_response(200, {
+        'answer': final_answer,
+        'commands': bedrock_response.get('commands', []),
+        'results': cli_results,
+        'tipFound': bool(tips_context),
+    })
+
+
+def _search_tips(question):
+    """Search ViewMyBill-CostOptimizationTips for relevant tips matching the question."""
+    tips_table = dynamodb.Table(TIPS_TABLE_NAME)
+    question_lower = question.lower()
+
+    # Extract service keywords from the question
+    service_keywords = [
+        'ec2', 's3', 'rds', 'lambda', 'cloudfront', 'dynamodb', 'ebs',
+        'elb', 'ecs', 'eks', 'redshift', 'elasticache', 'route53',
+        'cloudwatch', 'iam', 'vpc', 'nat', 'general', 'cost', 'billing',
+    ]
+    matched_services = [s for s in service_keywords if s in question_lower]
+
+    tips = []
+    try:
+        if matched_services:
+            for svc in matched_services[:3]:  # Limit to 3 services
+                result = tips_table.query(
+                    KeyConditionExpression=boto3.dynamodb.conditions.Key('service').eq(svc.upper())
+                )
+                tips.extend(result.get('Items', []))
+        else:
+            # Scan for general tips if no service matched
+            result = tips_table.scan(Limit=20)
+            tips = result.get('Items', [])
+    except ClientError as e:
+        logger.warning(f"Tips table query error: {e}")
+
+    # Convert Decimal values
+    tips = _decimal_to_native(tips)
+    return tips[:10]  # Return top 10 relevant tips
+
+
+def _ask_bedrock(question, tips_context, account_id):
+    """Call Bedrock to interpret the question and generate CLI commands."""
+    bedrock_client = boto3.client('bedrock-runtime', region_name='us-east-1')
+
+    tips_text = ""
+    if tips_context:
+        tips_text = "Relevant knowledge from our tips database:\n"
+        for tip in tips_context:
+            tips_text += f"- {tip.get('title', '')}: {tip.get('description', '')} (Service: {tip.get('service', '')}, Savings: {tip.get('estimatedSavings', 'N/A')})\n"
+
+    prompt = f"""You are an AWS FinOps AI assistant for SlashMyBill. A member is asking about their AWS account {account_id}.
+
+{tips_text}
+
+User question: {question}
+
+Respond with a JSON object containing:
+1. "answer": A brief natural language explanation of what you'll check
+2. "commands": An array of AWS CLI commands (read-only) to run on the account to answer the question. Use only describe/list/get operations. Each command should be a string like "aws ec2 describe-instances --region us-east-1". Maximum 3 commands.
+3. "newTip": If this question reveals a useful optimization tip not in the existing tips, provide an object with "service" (uppercase), "tipId" (like "ec2-auto-001"), "title", "description", "category", "estimatedSavings", "difficulty" (easy/medium/hard), and "automatedCheck" (the CLI command to verify). Set to null if no new tip.
+
+IMPORTANT: Only suggest read-only commands (describe, list, get). Never suggest create, delete, modify, update, put, terminate, stop, start commands.
+Respond ONLY with valid JSON, no markdown formatting."""
+
+    try:
+        response = bedrock_client.invoke_model(
+            modelId=BEDROCK_MODEL_ID,
+            contentType='application/json',
+            accept='application/json',
+            body=json.dumps({
+                'messages': [{'role': 'user', 'content': [{'text': prompt}]}],
+                'inferenceConfig': {'maxTokens': 2000, 'temperature': 0.3},
+            }),
+        )
+        response_body = json.loads(response['body'].read())
+        ai_text = response_body.get('output', {}).get('message', {}).get('content', [{}])[0].get('text', '{}')
+
+        # Parse JSON from the response
+        # Strip markdown code fences if present
+        ai_text = ai_text.strip()
+        if ai_text.startswith('```'):
+            ai_text = ai_text.split('\n', 1)[1] if '\n' in ai_text else ai_text[3:]
+            if ai_text.endswith('```'):
+                ai_text = ai_text[:-3]
+            ai_text = ai_text.strip()
+
+        parsed = json.loads(ai_text)
+        return parsed
+    except Exception as e:
+        logger.error(f"Bedrock call failed: {e}")
+        return {'answer': 'I encountered an error processing your question. Please try again.', 'commands': [], 'newTip': None}
+
+
+def _execute_ai_commands(commands, account_id, member_email):
+    """Execute AI-suggested CLI commands on the member's account."""
+    role_arn = f'arn:aws:iam::{account_id}:role/SlashMyBill-{account_id}'
+    external_id = hashlib.sha256(member_email.encode('utf-8')).hexdigest()
+
+    # Assume role
+    sts_client = boto3.client('sts')
+    try:
+        assume_response = sts_client.assume_role(
+            RoleArn=role_arn,
+            RoleSessionName='SlashMyBillAI',
+            ExternalId=external_id,
+        )
+        credentials = assume_response['Credentials']
+    except ClientError as e:
+        return [{'command': cmd, 'output': f'ERROR: Cannot assume role - {str(e)}'} for cmd in commands]
+
+    results = []
+    for cmd in commands[:3]:  # Max 3 commands
+        result = _run_single_command(cmd, credentials)
+        results.append(result)
+
+    return results
+
+
+def _run_single_command(command, credentials):
+    """Parse and execute a single AWS CLI command using boto3."""
+    parts = command.split()
+    if len(parts) < 3 or parts[0] != 'aws':
+        return {'command': command, 'output': 'ERROR: Invalid command format'}
+
+    service_name = parts[1]
+    action_name = parts[2]
+
+    # Block write operations
+    action_lower = action_name.lower().replace('-', '')
+    blocked = ['create', 'delete', 'put', 'update', 'modify', 'terminate', 'stop', 'start',
+               'reboot', 'run', 'invoke', 'send', 'publish', 'remove', 'attach', 'detach']
+    for b in blocked:
+        if action_lower.startswith(b):
+            return {'command': command, 'output': f'ERROR: Write operation "{action_name}" blocked'}
+
+    # Parse CLI params
+    cli_params = {}
+    region = 'us-east-1'
+    i = 3
+    while i < len(parts):
+        if parts[i] == '--region' and i + 1 < len(parts):
+            region = parts[i + 1]
+            i += 2
+        elif parts[i].startswith('--'):
+            param_name = parts[i][2:]
+            pascal = ''.join(w.capitalize() for w in param_name.split('-'))
+            if i + 1 < len(parts) and not parts[i + 1].startswith('--'):
+                cli_params[pascal] = parts[i + 1]
+                i += 2
+            else:
+                cli_params[pascal] = True
+                i += 1
+        else:
+            i += 1
+
+    method_name = action_name.replace('-', '_')
+
+    # CLI shorthand mappings
+    cli_to_boto3 = {'s3': {'ls': 'list_buckets'}, 'lambda': {'ls': 'list_functions'}}
+    if service_name in cli_to_boto3 and action_name in cli_to_boto3[service_name]:
+        method_name = cli_to_boto3[service_name][action_name]
+
+    service_map = {'costexplorer': 'ce', 'cost-explorer': 'ce', 's3api': 's3', 'logs': 'logs'}
+    boto3_service = service_map.get(service_name, service_name)
+
+    try:
+        client = boto3.client(
+            boto3_service,
+            aws_access_key_id=credentials['AccessKeyId'],
+            aws_secret_access_key=credentials['SecretAccessKey'],
+            aws_session_token=credentials['SessionToken'],
+            region_name=region,
+        )
+        if not hasattr(client, method_name):
+            return {'command': command, 'output': f'ERROR: Unknown action "{action_name}"'}
+
+        result = getattr(client, method_name)(**cli_params)
+        if isinstance(result, dict):
+            result.pop('ResponseMetadata', None)
+        output = json.dumps(result, indent=2, default=str)
+        # Truncate very long outputs
+        if len(output) > 5000:
+            output = output[:5000] + '\n... (truncated)'
+        return {'command': command, 'output': output}
+    except Exception as e:
+        return {'command': command, 'output': f'ERROR: {str(e)}'}
+
+
+def _summarize_results(question, bedrock_response, cli_results):
+    """Ask Bedrock to summarize the CLI results into a natural language answer."""
+    if not cli_results:
+        return bedrock_response.get('answer', 'I could not find relevant information.')
+
+    bedrock_client = boto3.client('bedrock-runtime', region_name='us-east-1')
+
+    results_text = ""
+    for r in cli_results:
+        results_text += f"Command: {r['command']}\nOutput: {r['output']}\n\n"
+
+    prompt = f"""You are an AWS FinOps assistant. The user asked: "{question}"
+
+We ran these commands and got these results:
+{results_text}
+
+Please provide a clear, concise natural language summary of the findings. Include specific numbers, costs, and actionable recommendations. Format with bullet points where helpful. Keep it under 500 words."""
+
+    try:
+        response = bedrock_client.invoke_model(
+            modelId=BEDROCK_MODEL_ID,
+            contentType='application/json',
+            accept='application/json',
+            body=json.dumps({
+                'messages': [{'role': 'user', 'content': [{'text': prompt}]}],
+                'inferenceConfig': {'maxTokens': 1500, 'temperature': 0.3},
+            }),
+        )
+        response_body = json.loads(response['body'].read())
+        return response_body.get('output', {}).get('message', {}).get('content', [{}])[0].get('text', bedrock_response.get('answer', ''))
+    except Exception as e:
+        logger.error(f"Bedrock summarize failed: {e}")
+        return bedrock_response.get('answer', 'Analysis complete. See command results below.')
+
+
+def _save_tip(tip):
+    """Save a new tip to the CostOptimizationTips table."""
+    if not tip or not tip.get('service') or not tip.get('tipId'):
+        return
+    tips_table = dynamodb.Table(TIPS_TABLE_NAME)
+    try:
+        item = {
+            'service': tip['service'].upper(),
+            'tipId': tip['tipId'],
+            'title': tip.get('title', ''),
+            'description': tip.get('description', ''),
+            'category': tip.get('category', 'ai-generated'),
+            'estimatedSavings': tip.get('estimatedSavings', 'varies'),
+            'difficulty': tip.get('difficulty', 'medium'),
+            'automatedCheck': tip.get('automatedCheck', ''),
+            'source': 'ai-agent',
+            'createdAt': datetime.now(timezone.utc).isoformat(),
+        }
+        tips_table.put_item(Item=item)
+        logger.info(f"Saved new AI-generated tip: {tip['tipId']}")
+    except ClientError as e:
+        logger.warning(f"Failed to save tip: {e}")
 
 
 # ============================================================
