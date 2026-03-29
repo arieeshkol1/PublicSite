@@ -5,7 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Member Portal - SlashMyBill</title>
     <link rel="icon" type="image/png" href="../SlashMyBill.png">
-    <link rel="stylesheet" href="members.css?v=1">
+    <link rel="stylesheet" href="../styles.css">
+    <link rel="stylesheet" href="members.css?v=3">
 </head>
 <body>
 
@@ -31,6 +32,57 @@
             </form>
             <div class="login-link">
                 Don't have an account? <a href="#" id="show-register">Register here</a>
+            </div>
+        </div>
+    </div>
+
+
+    <!-- Password Reset View -->
+    <div id="reset-view" class="login-view" hidden>
+        <div class="login-card">
+            <div class="login-logo">
+                <img src="../SlashMyBill.png" alt="SlashMyBill Logo">
+                <h1>Reset Password</h1>
+                <p>We'll send you a verification code</p>
+            </div>
+            <div id="reset-step-1">
+                <form id="reset-email-form" novalidate>
+                    <div class="form-group">
+                        <label for="reset-email">Email</label>
+                        <input type="email" id="reset-email" placeholder="you@example.com" autocomplete="email" required>
+                    </div>
+                    <div id="reset-email-error" class="login-error" role="alert"></div>
+                    <button type="submit" class="btn btn-primary btn-full">Send Reset Code</button>
+                </form>
+            </div>
+            <div id="reset-step-2" hidden>
+                <form id="reset-otp-form" novalidate>
+                    <p class="reg-step-info">We sent a 6-digit code to <strong id="reset-email-display"></strong></p>
+                    <div class="form-group">
+                        <label for="reset-otp">Verification Code</label>
+                        <input type="text" id="reset-otp" maxlength="6" inputmode="numeric" pattern="[0-9]{6}" placeholder="Enter 6-digit code" autocomplete="one-time-code" required>
+                    </div>
+                    <div id="reset-otp-error" class="login-error" role="alert"></div>
+                    <button type="submit" class="btn btn-primary btn-full">Verify Code</button>
+                </form>
+            </div>
+            <div id="reset-step-3" hidden>
+                <form id="reset-password-form" novalidate>
+                    <p class="reg-step-info">Set your new password</p>
+                    <div class="form-group">
+                        <label for="reset-new-password">New Password</label>
+                        <input type="password" id="reset-new-password" placeholder="At least 8 characters" autocomplete="new-password" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="reset-confirm-password">Confirm Password</label>
+                        <input type="password" id="reset-confirm-password" placeholder="Confirm password" autocomplete="new-password" required>
+                    </div>
+                    <div id="reset-password-error" class="login-error" role="alert"></div>
+                    <button type="submit" class="btn btn-primary btn-full">Reset Password</button>
+                </form>
+            </div>
+            <div class="login-link">
+                <a href="#" id="show-login-from-reset">Back to login</a>
             </div>
         </div>
     </div>
@@ -109,6 +161,11 @@
         </header>
 
         <div class="dashboard-content">
+            <div class="member-tabs">
+                <button class="member-tab active" data-tab="accounts-tab">Accounts</button>
+                <button class="member-tab" data-tab="lab-tab">Lab</button>
+            </div>
+            <div id="accounts-tab" class="member-tab-content">
             <div class="tab-toolbar">
                 <h2>AWS Accounts</h2>
                 <button id="add-account-btn" class="btn btn-primary btn-sm">+ Add Account</button>
@@ -130,6 +187,38 @@
                 </table>
                 <div id="accounts-empty" class="empty-state" hidden>
                     <p>No AWS accounts connected yet. Click "Add Account" to get started.</p>
+                </div>
+            </div>
+            </div>
+            <div id="lab-tab" class="member-tab-content" hidden>
+                <div class="lab-container">
+                    <div class="lab-header">
+                        <h2>Lab Console</h2>
+                        <div class="lab-account-selector">
+                            <label for="lab-account-select">Account:</label>
+                            <select id="lab-account-select"><option value="">Select an account...</option></select>
+                        </div>
+                    </div>
+                    <div id="lab-chat" class="lab-chat">
+                        <div class="lab-welcome">
+                            <div class="lab-welcome-icon">&#128187;</div>
+                            <h3>AWS CLI Console</h3>
+                            <p>Run read-only AWS CLI commands on your connected accounts.</p>
+                            <div class="lab-examples">
+                                <p>Try these examples:</p>
+                                <code>aws s3 ls</code>
+                                <code>aws ec2 describe-instances --region us-east-1</code>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="lab-input-area">
+                        <div class="lab-input-row">
+                            <span class="lab-prompt">$</span>
+                            <input type="text" id="lab-command-input" class="lab-command-input" placeholder="Type an AWS CLI command..." autocomplete="off">
+                            <button id="lab-run-btn" class="btn btn-primary btn-sm">Run</button>
+                        </div>
+                        <div class="lab-hint">Read-only commands only. Write/delete operations are blocked.</div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -254,6 +343,6 @@
         <span id="notification-message"></span>
     </div>
 
-    <script src="members.js?v=1"></script>
+    <script src="members.js?v=3"></script>
 </body>
 </html>
