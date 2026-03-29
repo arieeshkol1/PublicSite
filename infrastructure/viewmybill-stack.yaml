@@ -9,7 +9,7 @@ Parameters:
 
   BedrockModelId:
     Type: String
-    Default: 'amazon.nova-lite-v1:0'
+    Default: 'amazon.nova-2-lite-v1:0'
     Description: Bedrock model ID for bill analysis
 
   LambdaCodeBucket:
@@ -802,8 +802,13 @@ Resources:
               - Effect: Allow
                 Action:
                   - bedrock:InvokeModel
+                  - bedrock:InvokeAgent
                 Resource:
                   - !Sub 'arn:aws:bedrock:us-east-1::foundation-model/${BedrockModelId}'
+                  - 'arn:aws:bedrock:us-east-1::foundation-model/amazon.nova-lite-v1:0'
+                  - 'arn:aws:bedrock:us-east-1::foundation-model/amazon.nova-2-lite-v1:0'
+                  - !Sub 'arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:agent/*'
+                  - !Sub 'arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:agent-alias/*'
         - PolicyName: DynamoDBTipsAccess
           PolicyDocument:
             Version: '2012-10-17'
@@ -846,9 +851,82 @@ Resources:
           STORAGE_BUCKET: !Ref BillStorageBucket
           TIPS_TABLE_NAME: !Ref CostOptimizationTipsTable
           BEDROCK_MODEL_ID: !Ref BedrockModelId
+          BEDROCK_AGENT_ID: ''
+          BEDROCK_AGENT_ALIAS_ID: ''
       Tags:
         - Key: Project
           Value: ViewMyBill
+
+  # ============================================================
+  # IAM Role - Agent Action Lambda
+  # ============================================================
+  AgentActionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: SlashMyBill-AgentAction-Role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: STSAssumeRole
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sts:AssumeRole
+                Resource: '*'
+        - PolicyName: DynamoDBTipsRead
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                Resource:
+                  - !GetAtt CostOptimizationTipsTable.Arn
+      Tags:
+        - Key: Project
+          Value: ViewMyBill
+
+  # ============================================================
+  # Lambda Function - Agent Action Group
+  # ============================================================
+  AgentActionFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: SlashMyBill-AgentAction
+      Runtime: python3.12
+      Handler: lambda_function.lambda_handler
+      MemorySize: 256
+      Timeout: 120
+      Role: !GetAtt AgentActionRole.Arn
+      Code:
+        S3Bucket: !Ref LambdaCodeBucket
+        S3Key: 'lambda-packages/agent-action.zip'
+      Environment:
+        Variables:
+          PLATFORM_ACCOUNT_ID: '991105135552'
+          TIPS_TABLE_NAME: !Ref CostOptimizationTipsTable
+      Tags:
+        - Key: Project
+          Value: ViewMyBill
+
+  AgentActionBedrockPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref AgentActionFunction
+      Action: lambda:InvokeFunction
+      Principal: bedrock.amazonaws.com
+      SourceAccount: !Ref AWS::AccountId
 
   # ============================================================
   # API Gateway - Member Integration and Routes

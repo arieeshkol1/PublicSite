@@ -22,6 +22,7 @@ on:
       - 'admin/**'
       - 'member-handler/**'
       - 'members/**'
+      - 'agent-action/**'
       - 'knowledge-base/**'
   workflow_dispatch:
 
@@ -106,6 +107,16 @@ jobs:
           aws s3 cp member-handler-lambda.zip s3://${{ env.STORAGE_BUCKET }}/lambda-packages/member-handler.zip
           echo "✓ Member Handler packaged"
 
+      - name: Package Agent Action Lambda
+        run: |
+          echo "Packaging Agent Action Lambda..."
+          mkdir -p .build-agent-action
+          cp agent-action/lambda_function.py .build-agent-action/
+          cd .build-agent-action && zip -r ../agent-action-lambda.zip . -q
+          cd ..
+          aws s3 cp agent-action-lambda.zip s3://${{ env.STORAGE_BUCKET }}/lambda-packages/agent-action.zip
+          echo "✓ Agent Action packaged"
+
       - name: Deploy SlashMyBill CloudFormation stack
         run: |
           echo "Deploying SlashMyBill infrastructure..."
@@ -143,6 +154,10 @@ jobs:
             --function-name aws-bill-analyzer-member-api \
             --s3-bucket ${{ env.STORAGE_BUCKET }} \
             --s3-key lambda-packages/member-handler.zip > /dev/null
+          aws lambda update-function-code \
+            --function-name SlashMyBill-AgentAction \
+            --s3-bucket ${{ env.STORAGE_BUCKET }} \
+            --s3-key lambda-packages/agent-action.zip > /dev/null || true
           echo "✓ Lambda functions updated"
 
       - name: Seed DynamoDB knowledge base

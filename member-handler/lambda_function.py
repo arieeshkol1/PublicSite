@@ -32,7 +32,9 @@ OTP_TABLE_NAME = os.environ.get('OTP_TABLE_NAME', 'ViewMyBill-OTP')
 SES_SENDER_EMAIL = os.environ.get('SES_SENDER_EMAIL', 'noreply@eshkolai.com')
 PLATFORM_ACCOUNT_ID = os.environ.get('PLATFORM_ACCOUNT_ID', '991105135552')
 TIPS_TABLE_NAME = os.environ.get('TIPS_TABLE_NAME', 'ViewMyBill-CostOptimizationTips')
-BEDROCK_MODEL_ID = os.environ.get('BEDROCK_MODEL_ID', 'amazon.nova-lite-v1:0')
+BEDROCK_MODEL_ID = os.environ.get('BEDROCK_MODEL_ID', 'amazon.nova-2-lite-v1:0')
+BEDROCK_AGENT_ID = os.environ.get('BEDROCK_AGENT_ID', '')
+BEDROCK_AGENT_ALIAS_ID = os.environ.get('BEDROCK_AGENT_ALIAS_ID', '')
 
 # AWS clients
 dynamodb = boto3.resource('dynamodb')
@@ -1088,7 +1090,7 @@ def handle_execute_command(event):
 # ============================================================
 
 def handle_ai_query(event):
-    """Handle natural language questions — uses tips DB + Bedrock + cross-account execution."""
+    """Handle natural language questions — uses Bedrock Agent or falls back to direct model API."""
     auth = validate_token(event)
     if isinstance(auth, dict) and 'statusCode' in auth:
         return auth
@@ -1108,31 +1110,88 @@ def handle_ai_query(event):
     if not re.fullmatch(r'\d{12}', account_id):
         return create_error_response(400, 'InvalidAccountId', 'Account ID must be exactly 12 digits')
 
-    # Step 1: Search tips table for relevant knowledge
-    tips_context = _search_tips(question)
+    # Use Bedrock Agent if configured, otherwise fall back to direct API
+    if BEDROCK_AGENT_ID and BEDROCK_AGENT_ALIAS_ID:
+        return _invoke_bedrock_agent(question, account_id, member_email)
+    else:
+        return _invoke_direct_model(question, account_id, member_email)
 
-    # Step 2: Ask Bedrock to interpret the question and generate CLI commands
-    bedrock_response = _ask_bedrock(question, tips_context, account_id)
 
-    # Step 3: If Bedrock suggested CLI commands, execute them on the account
-    cli_results = []
-    if bedrock_response.get('commands'):
-        cli_results = _execute_ai_commands(
-            bedrock_response['commands'], account_id, member_email
+def _invoke_bedrock_agent(question, account_id, member_email):
+    """Invoke the Bedrock Agent for a conversational FinOps query."""
+    agent_runtime = boto3.client('bedrock-agent-runtime', region_name='us-east-1')
+
+    # Include account context in the prompt
+    enriched_prompt = f"[Account: {account_id}, Member: {member_email}] {question}"
+
+    try:
+        response = agent_runtime.invoke_agent(
+            agentId=BEDROCK_AGENT_ID,
+            agentAliasId=BEDROCK_AGENT_ALIAS_ID,
+            sessionId=f'{member_email}-{account_id}'[:100],
+            inputText=enriched_prompt,
         )
 
-    # Step 4: Ask Bedrock to summarize the results in natural language
-    final_answer = _summarize_results(question, bedrock_response, cli_results)
+        # Stream the response
+        answer_parts = []
+        for event_stream in response.get('completion', []):
+            if 'chunk' in event_stream:
+                chunk = event_stream['chunk']
+                if 'bytes' in chunk:
+                    answer_parts.append(chunk['bytes'].decode('utf-8'))
 
-    # Step 5: Save new tip if Bedrock generated useful knowledge
-    if bedrock_response.get('newTip'):
-        _save_tip(bedrock_response['newTip'])
+        answer = ''.join(answer_parts)
+        if not answer:
+            answer = 'The agent did not return a response. Please try rephrasing your question.'
+
+        return create_response(200, {
+            'answer': answer,
+            'commands': ['Bedrock Agent orchestrated the analysis'],
+            'results': [],
+            'tipFound': False,
+            'agentUsed': True,
+        })
+    except Exception as e:
+        logger.error(f"Bedrock Agent invocation failed: {e}")
+        # Fall back to direct model
+        return _invoke_direct_model(question, account_id, member_email)
+
+
+def _invoke_direct_model(question, account_id, member_email):
+    """Fallback: use direct Bedrock model API with boto3 data gathering."""
+    # Step 1: Search tips
+    tips_context = _search_tips(question)
+
+    # Step 2: Assume role and gather data
+    role_arn = f'arn:aws:iam::{account_id}:role/SlashMyBill-{account_id}'
+    external_id = hashlib.sha256(member_email.encode('utf-8')).hexdigest()
+    credentials = None
+    try:
+        sts_client = boto3.client('sts')
+        assume_response = sts_client.assume_role(
+            RoleArn=role_arn, RoleSessionName='SlashMyBillAI', ExternalId=external_id,
+        )
+        credentials = assume_response['Credentials']
+    except ClientError as e:
+        logger.error(f"STS AssumeRole failed: {e}")
+
+    account_data = {}
+    executed_actions = []
+    if credentials:
+        account_data, executed_actions = _gather_account_data(question, credentials)
+
+    # Step 3: Ask Bedrock to analyze
+    answer = _ask_bedrock_analyze(question, tips_context, account_data, account_id)
+
+    # Step 4: Save tip
+    _maybe_save_tip(question, answer, tips_context)
 
     return create_response(200, {
-        'answer': final_answer,
-        'commands': bedrock_response.get('commands', []),
-        'results': cli_results,
+        'answer': answer,
+        'commands': executed_actions,
+        'results': [],
         'tipFound': bool(tips_context),
+        'agentUsed': False,
     })
 
 
@@ -1141,7 +1200,6 @@ def _search_tips(question):
     tips_table = dynamodb.Table(TIPS_TABLE_NAME)
     question_lower = question.lower()
 
-    # Extract service keywords from the question
     service_keywords = [
         'ec2', 's3', 'rds', 'lambda', 'cloudfront', 'dynamodb', 'ebs',
         'elb', 'ecs', 'eks', 'redshift', 'elasticache', 'route53',
@@ -1152,46 +1210,150 @@ def _search_tips(question):
     tips = []
     try:
         if matched_services:
-            for svc in matched_services[:3]:  # Limit to 3 services
+            for svc in matched_services[:3]:
                 result = tips_table.query(
                     KeyConditionExpression=boto3.dynamodb.conditions.Key('service').eq(svc.upper())
                 )
                 tips.extend(result.get('Items', []))
         else:
-            # Scan for general tips if no service matched
             result = tips_table.scan(Limit=20)
             tips = result.get('Items', [])
     except ClientError as e:
         logger.warning(f"Tips table query error: {e}")
 
-    # Convert Decimal values
-    tips = _decimal_to_native(tips)
-    return tips[:10]  # Return top 10 relevant tips
+    return _decimal_to_native(tips[:10])
 
 
-def _ask_bedrock(question, tips_context, account_id):
-    """Call Bedrock to interpret the question and generate CLI commands."""
+def _gather_account_data(question, credentials):
+    """Gather relevant AWS account data based on the question using direct boto3 calls."""
+    question_lower = question.lower()
+    data = {}
+    actions = []
+
+    def _make_client(service, region='us-east-1'):
+        return boto3.client(
+            service,
+            aws_access_key_id=credentials['AccessKeyId'],
+            aws_secret_access_key=credentials['SecretAccessKey'],
+            aws_session_token=credentials['SessionToken'],
+            region_name=region,
+        )
+
+    # Always get cost data — it's the most common question
+    try:
+        ce = _make_client('ce')
+        end_date = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+        start_30d = (datetime.now(timezone.utc) - timedelta(days=30)).strftime('%Y-%m-%d')
+
+        # Monthly cost by service
+        cost_by_service = ce.get_cost_and_usage(
+            TimePeriod={'Start': start_30d, 'End': end_date},
+            Granularity='MONTHLY',
+            Metrics=['UnblendedCost', 'UsageQuantity'],
+            GroupBy=[{'Type': 'DIMENSION', 'Key': 'SERVICE'}],
+        )
+        data['cost_by_service'] = cost_by_service.get('ResultsByTime', [])
+        actions.append('ce:GetCostAndUsage (by service, last 30 days)')
+
+        # Daily cost trend
+        start_7d = (datetime.now(timezone.utc) - timedelta(days=7)).strftime('%Y-%m-%d')
+        daily_cost = ce.get_cost_and_usage(
+            TimePeriod={'Start': start_7d, 'End': end_date},
+            Granularity='DAILY',
+            Metrics=['UnblendedCost'],
+        )
+        data['daily_cost'] = daily_cost.get('ResultsByTime', [])
+        actions.append('ce:GetCostAndUsage (daily, last 7 days)')
+    except Exception as e:
+        data['cost_error'] = str(e)
+        logger.warning(f"Cost Explorer error: {e}")
+
+    # EC2 instances if question mentions EC2, instances, servers
+    if any(kw in question_lower for kw in ['ec2', 'instance', 'server', 'compute', 'running']):
+        try:
+            ec2 = _make_client('ec2')
+            instances = ec2.describe_instances()
+            instance_list = []
+            for res in instances.get('Reservations', []):
+                for inst in res.get('Instances', []):
+                    name_tag = ''
+                    for tag in inst.get('Tags', []):
+                        if tag['Key'] == 'Name':
+                            name_tag = tag['Value']
+                    instance_list.append({
+                        'id': inst['InstanceId'],
+                        'type': inst['InstanceType'],
+                        'state': inst['State']['Name'],
+                        'name': name_tag,
+                        'az': inst.get('Placement', {}).get('AvailabilityZone', ''),
+                    })
+            data['ec2_instances'] = instance_list
+            actions.append('ec2:DescribeInstances')
+        except Exception as e:
+            data['ec2_error'] = str(e)
+
+    # S3 if question mentions S3, storage, buckets
+    if any(kw in question_lower for kw in ['s3', 'storage', 'bucket']):
+        try:
+            s3 = _make_client('s3')
+            buckets = s3.list_buckets()
+            data['s3_buckets'] = [{'name': b['Name'], 'created': str(b['CreationDate'])} for b in buckets.get('Buckets', [])]
+            actions.append('s3:ListBuckets')
+        except Exception as e:
+            data['s3_error'] = str(e)
+
+    # RDS if question mentions RDS, database
+    if any(kw in question_lower for kw in ['rds', 'database', 'db']):
+        try:
+            rds = _make_client('rds')
+            dbs = rds.describe_db_instances()
+            data['rds_instances'] = [{'id': d['DBInstanceIdentifier'], 'class': d['DBInstanceClass'], 'engine': d['Engine'], 'status': d['DBInstanceStatus']} for d in dbs.get('DBInstances', [])]
+            actions.append('rds:DescribeDBInstances')
+        except Exception as e:
+            data['rds_error'] = str(e)
+
+    # Lambda if question mentions Lambda, functions
+    if any(kw in question_lower for kw in ['lambda', 'function', 'serverless']):
+        try:
+            lam = _make_client('lambda')
+            funcs = lam.list_functions()
+            data['lambda_functions'] = [{'name': f['FunctionName'], 'runtime': f.get('Runtime', ''), 'memory': f.get('MemorySize', 0), 'timeout': f.get('Timeout', 0)} for f in funcs.get('Functions', [])]
+            actions.append('lambda:ListFunctions')
+        except Exception as e:
+            data['lambda_error'] = str(e)
+
+    return data, actions
+
+
+def _ask_bedrock_analyze(question, tips_context, account_data, account_id):
+    """Call Bedrock to analyze gathered data and answer the question."""
     bedrock_client = boto3.client('bedrock-runtime', region_name='us-east-1')
 
     tips_text = ""
     if tips_context:
-        tips_text = "Relevant knowledge from our tips database:\n"
-        for tip in tips_context:
-            tips_text += f"- {tip.get('title', '')}: {tip.get('description', '')} (Service: {tip.get('service', '')}, Savings: {tip.get('estimatedSavings', 'N/A')})\n"
+        tips_text = "\n\nRelevant optimization tips from our knowledge base:\n"
+        for tip in tips_context[:5]:
+            tips_text += f"- {tip.get('title', '')}: {tip.get('description', '')} (Savings: {tip.get('estimatedSavings', 'N/A')})\n"
 
-    prompt = f"""You are an AWS FinOps AI assistant for SlashMyBill. A member is asking about their AWS account {account_id}.
+    data_text = json.dumps(account_data, indent=2, default=str)
+    if len(data_text) > 8000:
+        data_text = data_text[:8000] + '\n... (truncated)'
 
-{tips_text}
+    prompt = f"""You are SlashMyBill AI, an AWS FinOps assistant. Analyze the following real data from AWS account {account_id} and answer the user's question.
 
 User question: {question}
+{tips_text}
 
-Respond with a JSON object containing:
-1. "answer": A brief natural language explanation of what you'll check
-2. "commands": An array of AWS CLI commands (read-only) to run on the account to answer the question. Use only describe/list/get operations. Each command should be a string like "aws ec2 describe-instances --region us-east-1". Maximum 3 commands.
-3. "newTip": If this question reveals a useful optimization tip not in the existing tips, provide an object with "service" (uppercase), "tipId" (like "ec2-auto-001"), "title", "description", "category", "estimatedSavings", "difficulty" (easy/medium/hard), and "automatedCheck" (the CLI command to verify). Set to null if no new tip.
+Real account data gathered via AWS APIs:
+{data_text}
 
-IMPORTANT: Only suggest read-only commands (describe, list, get). Never suggest create, delete, modify, update, put, terminate, stop, start commands.
-Respond ONLY with valid JSON, no markdown formatting."""
+Provide a clear, actionable answer with:
+- Specific numbers and costs from the data
+- Bullet points for key findings
+- Concrete recommendations to reduce costs
+- If data shows errors, explain what permissions might be needed
+
+Keep the response concise and practical. Use dollar amounts with commas for thousands."""
 
     try:
         response = bedrock_client.invoke_model(
@@ -1204,176 +1366,40 @@ Respond ONLY with valid JSON, no markdown formatting."""
             }),
         )
         response_body = json.loads(response['body'].read())
-        ai_text = response_body.get('output', {}).get('message', {}).get('content', [{}])[0].get('text', '{}')
-
-        # Parse JSON from the response
-        # Strip markdown code fences if present
-        ai_text = ai_text.strip()
-        if ai_text.startswith('```'):
-            ai_text = ai_text.split('\n', 1)[1] if '\n' in ai_text else ai_text[3:]
-            if ai_text.endswith('```'):
-                ai_text = ai_text[:-3]
-            ai_text = ai_text.strip()
-
-        parsed = json.loads(ai_text)
-        return parsed
+        return response_body.get('output', {}).get('message', {}).get('content', [{}])[0].get('text', 'No response from AI.')
     except Exception as e:
         logger.error(f"Bedrock call failed: {e}")
-        return {'answer': 'I encountered an error processing your question. Please try again.', 'commands': [], 'newTip': None}
+        return f'AI analysis error: {str(e)}. The account data was gathered successfully — please try again.'
 
 
-def _execute_ai_commands(commands, account_id, member_email):
-    """Execute AI-suggested CLI commands on the member's account."""
-    role_arn = f'arn:aws:iam::{account_id}:role/SlashMyBill-{account_id}'
-    external_id = hashlib.sha256(member_email.encode('utf-8')).hexdigest()
-
-    # Assume role
-    sts_client = boto3.client('sts')
-    try:
-        assume_response = sts_client.assume_role(
-            RoleArn=role_arn,
-            RoleSessionName='SlashMyBillAI',
-            ExternalId=external_id,
-        )
-        credentials = assume_response['Credentials']
-    except ClientError as e:
-        return [{'command': cmd, 'output': f'ERROR: Cannot assume role - {str(e)}'} for cmd in commands]
-
-    results = []
-    for cmd in commands[:3]:  # Max 3 commands
-        result = _run_single_command(cmd, credentials)
-        results.append(result)
-
-    return results
-
-
-def _run_single_command(command, credentials):
-    """Parse and execute a single AWS CLI command using boto3."""
-    parts = command.split()
-    if len(parts) < 3 or parts[0] != 'aws':
-        return {'command': command, 'output': 'ERROR: Invalid command format'}
-
-    service_name = parts[1]
-    action_name = parts[2]
-
-    # Block write operations
-    action_lower = action_name.lower().replace('-', '')
-    blocked = ['create', 'delete', 'put', 'update', 'modify', 'terminate', 'stop', 'start',
-               'reboot', 'run', 'invoke', 'send', 'publish', 'remove', 'attach', 'detach']
-    for b in blocked:
-        if action_lower.startswith(b):
-            return {'command': command, 'output': f'ERROR: Write operation "{action_name}" blocked'}
-
-    # Parse CLI params
-    cli_params = {}
-    region = 'us-east-1'
-    i = 3
-    while i < len(parts):
-        if parts[i] == '--region' and i + 1 < len(parts):
-            region = parts[i + 1]
-            i += 2
-        elif parts[i].startswith('--'):
-            param_name = parts[i][2:]
-            pascal = ''.join(w.capitalize() for w in param_name.split('-'))
-            if i + 1 < len(parts) and not parts[i + 1].startswith('--'):
-                cli_params[pascal] = parts[i + 1]
-                i += 2
-            else:
-                cli_params[pascal] = True
-                i += 1
-        else:
-            i += 1
-
-    method_name = action_name.replace('-', '_')
-
-    # CLI shorthand mappings
-    cli_to_boto3 = {'s3': {'ls': 'list_buckets'}, 'lambda': {'ls': 'list_functions'}}
-    if service_name in cli_to_boto3 and action_name in cli_to_boto3[service_name]:
-        method_name = cli_to_boto3[service_name][action_name]
-
-    service_map = {'costexplorer': 'ce', 'cost-explorer': 'ce', 's3api': 's3', 'logs': 'logs'}
-    boto3_service = service_map.get(service_name, service_name)
-
-    try:
-        client = boto3.client(
-            boto3_service,
-            aws_access_key_id=credentials['AccessKeyId'],
-            aws_secret_access_key=credentials['SecretAccessKey'],
-            aws_session_token=credentials['SessionToken'],
-            region_name=region,
-        )
-        if not hasattr(client, method_name):
-            return {'command': command, 'output': f'ERROR: Unknown action "{action_name}"'}
-
-        result = getattr(client, method_name)(**cli_params)
-        if isinstance(result, dict):
-            result.pop('ResponseMetadata', None)
-        output = json.dumps(result, indent=2, default=str)
-        # Truncate very long outputs
-        if len(output) > 5000:
-            output = output[:5000] + '\n... (truncated)'
-        return {'command': command, 'output': output}
-    except Exception as e:
-        return {'command': command, 'output': f'ERROR: {str(e)}'}
-
-
-def _summarize_results(question, bedrock_response, cli_results):
-    """Ask Bedrock to summarize the CLI results into a natural language answer."""
-    if not cli_results:
-        return bedrock_response.get('answer', 'I could not find relevant information.')
-
-    bedrock_client = boto3.client('bedrock-runtime', region_name='us-east-1')
-
-    results_text = ""
-    for r in cli_results:
-        results_text += f"Command: {r['command']}\nOutput: {r['output']}\n\n"
-
-    prompt = f"""You are an AWS FinOps assistant. The user asked: "{question}"
-
-We ran these commands and got these results:
-{results_text}
-
-Please provide a clear, concise natural language summary of the findings. Include specific numbers, costs, and actionable recommendations. Format with bullet points where helpful. Keep it under 500 words."""
-
-    try:
-        response = bedrock_client.invoke_model(
-            modelId=BEDROCK_MODEL_ID,
-            contentType='application/json',
-            accept='application/json',
-            body=json.dumps({
-                'messages': [{'role': 'user', 'content': [{'text': prompt}]}],
-                'inferenceConfig': {'maxTokens': 1500, 'temperature': 0.3},
-            }),
-        )
-        response_body = json.loads(response['body'].read())
-        return response_body.get('output', {}).get('message', {}).get('content', [{}])[0].get('text', bedrock_response.get('answer', ''))
-    except Exception as e:
-        logger.error(f"Bedrock summarize failed: {e}")
-        return bedrock_response.get('answer', 'Analysis complete. See command results below.')
-
-
-def _save_tip(tip):
-    """Save a new tip to the CostOptimizationTips table."""
-    if not tip or not tip.get('service') or not tip.get('tipId'):
+def _maybe_save_tip(question, answer, existing_tips):
+    """Save a new tip to the knowledge base if the answer contains useful optimization advice."""
+    # Only save if we don't already have many tips for this topic
+    if len(existing_tips) >= 5:
         return
+    # Simple heuristic: if the answer mentions savings, save it
+    if 'sav' not in answer.lower() and 'reduc' not in answer.lower() and 'optim' not in answer.lower():
+        return
+
     tips_table = dynamodb.Table(TIPS_TABLE_NAME)
+    tip_id = f'ai-{hashlib.md5(question.encode()).hexdigest()[:8]}'
     try:
-        item = {
-            'service': tip['service'].upper(),
-            'tipId': tip['tipId'],
-            'title': tip.get('title', ''),
-            'description': tip.get('description', ''),
-            'category': tip.get('category', 'ai-generated'),
-            'estimatedSavings': tip.get('estimatedSavings', 'varies'),
-            'difficulty': tip.get('difficulty', 'medium'),
-            'automatedCheck': tip.get('automatedCheck', ''),
-            'source': 'ai-agent',
-            'createdAt': datetime.now(timezone.utc).isoformat(),
-        }
-        tips_table.put_item(Item=item)
-        logger.info(f"Saved new AI-generated tip: {tip['tipId']}")
-    except ClientError as e:
-        logger.warning(f"Failed to save tip: {e}")
+        tips_table.put_item(
+            Item={
+                'service': 'AI-GENERATED',
+                'tipId': tip_id,
+                'title': question[:100],
+                'description': answer[:500],
+                'category': 'ai-generated',
+                'estimatedSavings': 'varies',
+                'difficulty': 'medium',
+                'source': 'ai-agent',
+                'createdAt': datetime.now(timezone.utc).isoformat(),
+            },
+            ConditionExpression='attribute_not_exists(tipId)',
+        )
+    except ClientError:
+        pass  # Already exists or error — non-critical
 
 
 # ============================================================

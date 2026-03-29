@@ -302,7 +302,7 @@
 
 .lab-chat {
     flex: 1; overflow-y: auto; padding: 20px; background: #0d1117;
-    font-family: 'Consolas', 'Courier New', monospace; font-size: 13px;
+    font-family: 'Consolas', 'Courier New', monospace; font-size: 15px;
 }
 .lab-welcome { text-align: center; padding: 40px 20px; color: #8b949e; }
 .lab-welcome-icon { font-size: 48px; margin-bottom: 12px; }
@@ -325,7 +325,7 @@
 .lab-msg-output {
     background: #161b22; border: 1px solid #30363d; border-radius: 6px;
     padding: 12px; color: #c9d1d9; white-space: pre-wrap; word-wrap: break-word;
-    max-height: 400px; overflow-y: auto; font-size: 12px; line-height: 1.5;
+    max-height: 400px; overflow-y: auto; font-size: 14px; line-height: 1.6;
 }
 .lab-msg-error { color: #f85149; }
 .lab-msg-info { color: #8b949e; font-style: italic; padding: 4px 0; }
