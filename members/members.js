@@ -6,6 +6,7 @@ var $ = function(id) { return document.getElementById(id); };
 // Views
 var loginView = $('login-view');
 var registerView = $('register-view');
+var resetView = $('reset-view');
 var dashboardView = $('dashboard-view');
 
 // Login elements
@@ -63,6 +64,8 @@ var otpToken = null;
 var regEmailValue = '';
 var editingAccountId = null;
 var deletingAccountId = null;
+var resetEmailValue = '';
+var resetToken = null;
 
 // ============================================================
 // Helpers
@@ -151,6 +154,7 @@ async function api(method, path, body) {
 function showView(name) {
     loginView.hidden = name !== 'login';
     registerView.hidden = name !== 'register';
+    resetView.hidden = name !== 'reset';
     dashboardView.hidden = name !== 'dashboard';
 
     if (name === 'register') {
@@ -172,6 +176,20 @@ function showView(name) {
         loginEmail.value = '';
         loginPassword.value = '';
     }
+    if (name === 'reset') {
+        $('reset-step-1').hidden = false;
+        $('reset-step-2').hidden = true;
+        $('reset-step-3').hidden = true;
+        $('reset-email-error').textContent = '';
+        $('reset-otp-error').textContent = '';
+        $('reset-password-error').textContent = '';
+        $('reset-email').value = '';
+        $('reset-otp').value = '';
+        $('reset-new-password').value = '';
+        $('reset-confirm-password').value = '';
+        resetEmailValue = '';
+        resetToken = null;
+    }
     if (name === 'dashboard') {
         headerEmail.textContent = getMemberEmail() || '';
         loadAccounts();
@@ -184,6 +202,8 @@ function showView(name) {
 
 $('show-register').onclick = function(e) { e.preventDefault(); showView('register'); };
 $('show-login').onclick = function(e) { e.preventDefault(); showView('login'); };
+$('show-forgot').onclick = function(e) { e.preventDefault(); showView('reset'); };
+$('show-login-from-reset').onclick = function(e) { e.preventDefault(); showView('login'); };
 logoutBtn.onclick = function() {
     sessionStorage.removeItem('memberToken');
     sessionStorage.removeItem('memberEmail');
@@ -277,6 +297,72 @@ regPasswordForm.onsubmit = async function(e) {
         showView('login');
     } catch (err) {
         regPasswordError.textContent = err.message || 'Registration failed.';
+    } finally {
+        hideLoading();
+    }
+};
+
+// ============================================================
+// Password Reset
+// ============================================================
+
+$('reset-email-form').onsubmit = async function(e) {
+    e.preventDefault();
+    $('reset-email-error').textContent = '';
+    resetEmailValue = $('reset-email').value.trim().toLowerCase();
+    if (!resetEmailValue) { $('reset-email-error').textContent = 'Enter your email.'; return; }
+
+    try {
+        showLoading();
+        await api('POST', '/members/reset-password', { action: 'send-otp', email: resetEmailValue });
+        $('reset-email-display').textContent = resetEmailValue;
+        $('reset-step-1').hidden = true;
+        $('reset-step-2').hidden = false;
+    } catch (err) {
+        $('reset-email-error').textContent = err.message || 'Failed to send reset code.';
+    } finally {
+        hideLoading();
+    }
+};
+
+$('reset-otp-form').onsubmit = async function(e) {
+    e.preventDefault();
+    $('reset-otp-error').textContent = '';
+    var code = $('reset-otp').value.trim();
+    if (!code || code.length !== 6) { $('reset-otp-error').textContent = 'Enter the 6-digit code.'; return; }
+
+    try {
+        showLoading();
+        var data = await api('POST', '/members/reset-password', {
+            action: 'verify-otp', email: resetEmailValue, otp: code
+        });
+        resetToken = data.resetToken;
+        $('reset-step-2').hidden = true;
+        $('reset-step-3').hidden = false;
+    } catch (err) {
+        $('reset-otp-error').textContent = err.message || 'Invalid code.';
+    } finally {
+        hideLoading();
+    }
+};
+
+$('reset-password-form').onsubmit = async function(e) {
+    e.preventDefault();
+    $('reset-password-error').textContent = '';
+    var pw = $('reset-new-password').value;
+    var cpw = $('reset-confirm-password').value;
+    if (pw.length < 8) { $('reset-password-error').textContent = 'Password must be at least 8 characters.'; return; }
+    if (pw !== cpw) { $('reset-password-error').textContent = 'Passwords do not match.'; return; }
+
+    try {
+        showLoading();
+        await api('POST', '/members/reset-password', {
+            action: 'set-password', resetToken: resetToken, password: pw, confirmPassword: cpw
+        });
+        notify('Password reset successful! Please log in.', 'success');
+        showView('login');
+    } catch (err) {
+        $('reset-password-error').textContent = err.message || 'Reset failed.';
     } finally {
         hideLoading();
     }
@@ -752,23 +838,6 @@ var labChat = $('lab-chat');
 var labCommandInput = $('lab-command-input');
 var labRunBtn = $('lab-run-btn');
 var labAccountSelect = $('lab-account-select');
-
-function populateLabAccounts() {
-    var current = labAccountSelect.value;
-    labAccountSelect.innerHTML = '<option value="">Select an account...</option>';
-    // Use the already-loaded accounts from the dashboard
-    if (typeof allAccounts !== 'undefined' && allAccounts) {
-        allAccounts.forEach(function(a) {
-            if (a.connectionStatus === 'connected') {
-                var opt = document.createElement('option');
-                opt.value = a.accountId;
-                opt.textContent = a.accountId + ' (' + a.roleName + ')';
-                labAccountSelect.appendChild(opt);
-            }
-        });
-    }
-    if (current) labAccountSelect.value = current;
-}
 
 function populateLabAccounts() {
     var current = labAccountSelect.value;
