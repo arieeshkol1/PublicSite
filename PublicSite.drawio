@@ -323,23 +323,11 @@
         <mxCell id="f-admin-tips" edge="1" parent="1" source="admin-lambda" style="endArrow=classic;html=1;rounded=0;strokeWidth=2;strokeColor=#C925D1;" target="tips-ddb" value="">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="f-member-bedrock" edge="1" parent="1" source="member-lambda" style="endArrow=classic;html=1;rounded=0;strokeWidth=3;strokeColor=#01A88D;flowAnimation=1;" target="bedrock" value="AI Agent&#xa;(Bedrock)">
-          <mxGeometry relative="1" as="geometry">
-            <Array as="points">
-              <mxPoint x="400" y="960" />
-              <mxPoint x="840" y="960" />
-              <mxPoint x="840" y="680" />
-            </Array>
-          </mxGeometry>
+        <mxCell id="f-member-bedrock" edge="1" parent="1" source="member-lambda" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=3;strokeColor=#01A88D;flowAnimation=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;" target="bedrock" value="AI Agent&#xa;(Bedrock Nova Lite)">
+          <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="f-member-tips" edge="1" parent="1" source="member-lambda" style="endArrow=classic;html=1;rounded=0;strokeWidth=2;strokeColor=#C925D1;dashed=1;" target="tips-ddb" value="Query/Save Tips">
-          <mxGeometry relative="1" as="geometry">
-            <Array as="points">
-              <mxPoint x="400" y="940" />
-              <mxPoint x="1040" y="940" />
-              <mxPoint x="1040" y="680" />
-            </Array>
-          </mxGeometry>
+        <mxCell id="f-member-tips" edge="1" parent="1" source="member-lambda" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=2;strokeColor=#C925D1;dashed=1;exitX=1;exitY=0.25;exitDx=0;exitDy=0;" target="tips-ddb" value="Query/Save Tips">
+          <mxGeometry relative="1" as="geometry" />
         </mxCell>
         <mxCell id="f-member-ses2" edge="1" parent="1" source="member-lambda" style="endArrow=classic;html=1;rounded=0;strokeWidth=2;strokeColor=#DD344C;dashed=1;" target="ses" value="OTP Email">
           <mxGeometry relative="1" as="geometry">
