@@ -754,6 +754,8 @@ def handle_generate_template(event):
         'Resources': {
             'SlashMyBillRole': {
                 'Type': 'AWS::IAM::Role',
+                'DeletionPolicy': 'Retain',
+                'UpdateReplacePolicy': 'Retain',
                 'Properties': {
                     'RoleName': f'SlashMyBill-{account_id}',
                     'AssumeRolePolicyDocument': {
@@ -879,7 +881,13 @@ def handle_generate_template(event):
             Body=template_yaml,
             ContentType='application/x-yaml',
         )
-        template_url = f'https://{bucket}.s3.amazonaws.com/{s3_key}'
+        # Use a pre-signed URL so CloudFormation in the member account can fetch
+        # the template even when the platform bucket is private.
+        template_url = s3_client.generate_presigned_url(
+            'get_object',
+            Params={'Bucket': bucket, 'Key': s3_key},
+            ExpiresIn=86400,  # 24 hours
+        )
     except Exception as e:
         logger.warning(f"Failed to upload CF template to S3: {e}")
         template_url = None
