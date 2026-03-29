@@ -286,11 +286,13 @@ regPasswordForm.onsubmit = async function(e) {
 // Dashboard - Accounts
 // ============================================================
 
+var allAccounts = [];
 async function loadAccounts() {
     try {
         showLoading();
         var data = await api('GET', '/members/accounts');
-        renderAccounts(data.accounts || []);
+        allAccounts = data.accounts || [];
+        renderAccounts(allAccounts);
     } catch (err) {
         notify('Failed to load accounts.', 'error');
     } finally {
@@ -768,21 +770,19 @@ function populateLabAccounts() {
     if (current) labAccountSelect.value = current;
 }
 
-// Store accounts globally for lab
-var allAccounts = [];
-var _origLoadAccounts = loadAccounts;
-loadAccounts = async function() {
-    try {
-        showLoading();
-        var data = await api('GET', '/members/accounts');
-        allAccounts = data.accounts || [];
-        renderAccounts(allAccounts);
-    } catch (err) {
-        notify('Failed to load accounts.', 'error');
-    } finally {
-        hideLoading();
-    }
-};
+function populateLabAccounts() {
+    var current = labAccountSelect.value;
+    labAccountSelect.innerHTML = '<option value="">Select an account...</option>';
+    allAccounts.forEach(function(a) {
+        if (a.connectionStatus === 'connected') {
+            var opt = document.createElement('option');
+            opt.value = a.accountId;
+            opt.textContent = a.accountId + ' (' + a.roleName + ')';
+            labAccountSelect.appendChild(opt);
+        }
+    });
+    if (current) labAccountSelect.value = current;
+}
 
 function addLabMessage(type, content) {
     // Remove welcome message if present
