@@ -37,6 +37,11 @@ Parameters:
     Default: 'lambda-packages/admin-handler.zip'
     Description: S3 key for Admin Handler Lambda deployment package
 
+  MemberHandlerCodeKey:
+    Type: String
+    Default: 'lambda-packages/member-handler.zip'
+    Description: S3 key for Member Handler Lambda deployment package
+
   AdminUsername:
     Type: String
     NoEcho: true
@@ -357,6 +362,50 @@ Resources:
           Value: ViewMyBill
 
   # ============================================================
+  # DynamoDB Table - Member Portal Members
+  # ============================================================
+  MembersTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: MemberPortal-Members
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: email
+          AttributeType: S
+      KeySchema:
+        - AttributeName: email
+          KeyType: HASH
+      SSESpecification:
+        SSEEnabled: true
+      Tags:
+        - Key: Project
+          Value: ViewMyBill
+
+  # ============================================================
+  # DynamoDB Table - Member Portal Accounts
+  # ============================================================
+  AccountsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: MemberPortal-Accounts
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: memberEmail
+          AttributeType: S
+        - AttributeName: accountId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: memberEmail
+          KeyType: HASH
+        - AttributeName: accountId
+          KeyType: RANGE
+      SSESpecification:
+        SSEEnabled: true
+      Tags:
+        - Key: Project
+          Value: ViewMyBill
+
+  # ============================================================
   # SES Email Identity - eshkolai.com domain
   # ============================================================
   SESEmailIdentity:
@@ -664,6 +713,186 @@ Resources:
       SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ViewMyBillApi}/*'
 
   # ============================================================
+  # IAM Role - Member Handler Lambda
+  # ============================================================
+  MemberHandlerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: aws-bill-analyzer-member-handler-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: DynamoDBMembersCRUDAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                Resource:
+                  - !GetAtt MembersTable.Arn
+        - PolicyName: DynamoDBAccountsCRUDAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                Resource:
+                  - !GetAtt AccountsTable.Arn
+        - PolicyName: DynamoDBOTPAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:DeleteItem
+                Resource:
+                  - !GetAtt OTPTable.Arn
+        - PolicyName: SESSendEmail
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ses:SendEmail
+                  - ses:SendRawEmail
+                Resource:
+                  - !Sub 'arn:aws:ses:${AWS::Region}:${AWS::AccountId}:identity/*'
+        - PolicyName: STSAssumeRole
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sts:AssumeRole
+                Resource: '*'
+      Tags:
+        - Key: Project
+          Value: ViewMyBill
+
+  # ============================================================
+  # Lambda Function - Member Handler
+  # ============================================================
+  MemberHandlerFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: aws-bill-analyzer-member-api
+      Runtime: python3.12
+      Handler: lambda_function.lambda_handler
+      MemorySize: 256
+      Timeout: 30
+      Role: !GetAtt MemberHandlerRole.Arn
+      Code:
+        S3Bucket: !Ref LambdaCodeBucket
+        S3Key: !Ref MemberHandlerCodeKey
+      Environment:
+        Variables:
+          JWT_SECRET: !Ref JWTSecret
+          MEMBERS_TABLE_NAME: !Ref MembersTable
+          ACCOUNTS_TABLE_NAME: !Ref AccountsTable
+          OTP_TABLE_NAME: !Ref OTPTable
+          SES_SENDER_EMAIL: 'noreply@eshkolai.com'
+          PLATFORM_ACCOUNT_ID: '991105135552'
+      Tags:
+        - Key: Project
+          Value: ViewMyBill
+
+  # ============================================================
+  # API Gateway - Member Integration and Routes
+  # ============================================================
+  MemberIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !GetAtt MemberHandlerFunction.Arn
+      PayloadFormatVersion: '2.0'
+
+  MemberRegisterRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'POST /members/register'
+      Target: !Sub 'integrations/${MemberIntegration}'
+
+  MemberLoginRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'POST /members/login'
+      Target: !Sub 'integrations/${MemberIntegration}'
+
+  MemberGetAccountsRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'GET /members/accounts'
+      Target: !Sub 'integrations/${MemberIntegration}'
+
+  MemberAddAccountRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'POST /members/accounts'
+      Target: !Sub 'integrations/${MemberIntegration}'
+
+  MemberEditAccountRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'PUT /members/accounts'
+      Target: !Sub 'integrations/${MemberIntegration}'
+
+  MemberDeleteAccountRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'DELETE /members/accounts'
+      Target: !Sub 'integrations/${MemberIntegration}'
+
+  MemberTemplateRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'POST /members/accounts/template'
+      Target: !Sub 'integrations/${MemberIntegration}'
+
+  MemberTestRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'POST /members/accounts/test'
+      Target: !Sub 'integrations/${MemberIntegration}'
+
+  MemberHandlerInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref MemberHandlerFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ViewMyBillApi}/*'
+
+  # ============================================================
   # S3 Lifecycle Rule for reports/ prefix
   # NOTE: The bucket aws-bill-analyzer-storage-991105135552 already exists
   # and is NOT managed by this stack. Apply this lifecycle rule manually:
@@ -733,3 +962,23 @@ Outputs:
   AdminHandlerFunctionArn:
     Description: Admin Handler Lambda function ARN
     Value: !GetAtt AdminHandlerFunction.Arn
+
+  MembersTableName:
+    Description: DynamoDB table name for member portal members
+    Value: !Ref MembersTable
+
+  MembersTableArn:
+    Description: DynamoDB Members table ARN
+    Value: !GetAtt MembersTable.Arn
+
+  AccountsTableName:
+    Description: DynamoDB table name for member portal accounts
+    Value: !Ref AccountsTable
+
+  AccountsTableArn:
+    Description: DynamoDB Accounts table ARN
+    Value: !GetAtt AccountsTable.Arn
+
+  MemberHandlerFunctionArn:
+    Description: Member Handler Lambda function ARN
+    Value: !GetAtt MemberHandlerFunction.Arn

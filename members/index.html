@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Member Portal - SlashMyBill</title>
+    <link rel="icon" type="image/png" href="../SlashMyBill.png">
+    <link rel="stylesheet" href="members.css?v=1">
+</head>
+<body>
+
+    <!-- Login View -->
+    <div id="login-view" class="login-view">
+        <div class="login-card">
+            <div class="login-logo">
+                <img src="../SlashMyBill.png" alt="SlashMyBill Logo">
+                <h1>Member Portal</h1>
+                <p>Sign in to manage your AWS accounts</p>
+            </div>
+            <form id="login-form" novalidate>
+                <div class="form-group">
+                    <label for="login-email">Email</label>
+                    <input type="email" id="login-email" placeholder="you@example.com" autocomplete="email" required>
+                </div>
+                <div class="form-group">
+                    <label for="login-password">Password</label>
+                    <input type="password" id="login-password" placeholder="Enter password" autocomplete="current-password" required>
+                </div>
+                <div id="login-error" class="login-error" role="alert"></div>
+                <button type="submit" class="btn btn-primary btn-full">Login</button>
+            </form>
+            <div class="login-link">
+                Don't have an account? <a href="#" id="show-register">Register here</a>
+            </div>
+        </div>
+    </div>
+
+    <!-- Registration View -->
+    <div id="register-view" class="login-view" hidden>
+        <div class="login-card">
+            <div class="login-logo">
+                <img src="../SlashMyBill.png" alt="SlashMyBill Logo">
+                <h1>Create Account</h1>
+                <p>Register for the Member Portal</p>
+            </div>
+
+            <!-- Step 1: Email + Get OTP -->
+            <div id="reg-step-1">
+                <form id="reg-email-form" novalidate>
+                    <div class="form-group">
+                        <label for="reg-email">Email</label>
+                        <input type="email" id="reg-email" placeholder="you@example.com" autocomplete="email" required>
+                    </div>
+                    <div id="reg-email-error" class="login-error" role="alert"></div>
+                    <button type="submit" class="btn btn-primary btn-full">Get OTP</button>
+                </form>
+            </div>
+
+            <!-- Step 2: OTP Verification -->
+            <div id="reg-step-2" hidden>
+                <form id="reg-otp-form" novalidate>
+                    <p class="reg-step-info">We sent a 6-digit code to <strong id="reg-email-display"></strong></p>
+                    <div class="form-group">
+                        <label for="reg-otp">Verification Code</label>
+                        <input type="text" id="reg-otp" maxlength="6" inputmode="numeric" pattern="[0-9]{6}" placeholder="Enter 6-digit code" autocomplete="one-time-code" required>
+                    </div>
+                    <div id="reg-otp-error" class="login-error" role="alert"></div>
+                    <button type="submit" class="btn btn-primary btn-full">Verify Code</button>
+                </form>
+            </div>
+
+            <!-- Step 3: Password -->
+            <div id="reg-step-3" hidden>
+                <form id="reg-password-form" novalidate>
+                    <p class="reg-step-info">Set your password</p>
+                    <div class="form-group">
+                        <label for="reg-password">Password</label>
+                        <input type="password" id="reg-password" placeholder="At least 8 characters" autocomplete="new-password" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="reg-confirm">Confirm Password</label>
+                        <input type="password" id="reg-confirm" placeholder="Confirm password" autocomplete="new-password" required>
+                    </div>
+                    <div id="reg-password-error" class="login-error" role="alert"></div>
+                    <button type="submit" class="btn btn-primary btn-full">Create Account</button>
+                </form>
+            </div>
+
+            <div class="login-link">
+                Already have an account? <a href="#" id="show-login">Sign in</a>
+            </div>
+        </div>
+    </div>
+
+    <!-- Dashboard View -->
+    <div id="dashboard-view" class="dashboard-view" hidden>
+        <header class="dashboard-header">
+            <div class="header-content">
+                <div class="header-left">
+                    <img src="../SlashMyBill.png" alt="SlashMyBill Logo" class="header-logo">
+                    <h1>Member Portal</h1>
+                </div>
+                <div class="header-right">
+                    <a href="../slashMyBill/" class="btn btn-outline btn-sm">SlashMyBill</a>
+                    <span id="header-email" class="header-username"></span>
+                    <button id="logout-btn" class="btn btn-outline btn-sm">Logout</button>
+                </div>
+            </div>
+        </header>
+
+        <div class="dashboard-content">
+            <div class="tab-toolbar">
+                <h2>AWS Accounts</h2>
+                <button id="add-account-btn" class="btn btn-primary btn-sm">+ Add Account</button>
+            </div>
+            <div class="table-wrapper">
+                <table id="accounts-table" class="data-table">
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>Account ID</th>
+                            <th>Role Name</th>
+                            <th>Status</th>
+                            <th>Added</th>
+                            <th>Last Tested</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="accounts-tbody"></tbody>
+                </table>
+                <div id="accounts-empty" class="empty-state" hidden>
+                    <p>No AWS accounts connected yet. Click "Add Account" to get started.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add/Edit Account Modal -->
+    <div id="account-modal" class="modal-overlay" hidden>
+        <div class="modal-card">
+            <div class="modal-header">
+                <h2 id="account-modal-title">Add Account</h2>
+                <button id="account-modal-close" class="modal-close">&times;</button>
+            </div>
+            <form id="account-form" novalidate>
+                <div class="modal-body">
+                    <div class="form-group">
+                        <label for="account-id-input">AWS Account ID</label>
+                        <input type="text" id="account-id-input" maxlength="12" inputmode="numeric" pattern="[0-9]{12}" placeholder="123456789012" required>
+                        <div class="field-hint">Enter the 12-digit AWS Account ID</div>
+                    </div>
+                    <div id="account-form-error" class="form-error" role="alert" aria-live="polite"></div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" id="account-cancel-btn" class="btn btn-outline">Cancel</button>
+                    <button type="submit" id="account-submit-btn" class="btn btn-primary">Add Account</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Delete Confirmation Dialog -->
+    <div id="delete-dialog" class="modal-overlay" hidden>
+        <div class="modal-card modal-card-sm">
+            <div class="modal-header">
+                <h2>Confirm Delete</h2>
+            </div>
+            <div class="modal-body">
+                <p id="delete-dialog-msg">Are you sure you want to delete this account? This action cannot be undone.</p>
+            </div>
+            <div class="modal-footer">
+                <button id="delete-cancel-btn" class="btn btn-outline">Cancel</button>
+                <button id="delete-confirm-btn" class="btn btn-danger">Delete</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Loading Overlay -->
+    <div id="loading-overlay" class="loading-overlay" hidden>
+        <div class="loading-spinner"></div>
+    </div>
+
+    <!-- Notification Banner -->
+    <div id="notification" class="notification" hidden>
+        <span id="notification-message"></span>
+    </div>
+
+    <script src="members.js?v=1"></script>
+</body>
+</html>

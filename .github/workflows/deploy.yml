@@ -20,6 +20,8 @@ on:
       - 'otp-handler/**'
       - 'admin-handler/**'
       - 'admin/**'
+      - 'member-handler/**'
+      - 'members/**'
       - 'knowledge-base/**'
   workflow_dispatch:
 
@@ -94,6 +96,16 @@ jobs:
           aws s3 cp admin-handler-lambda.zip s3://${{ env.STORAGE_BUCKET }}/lambda-packages/admin-handler.zip
           echo "✓ Admin Handler packaged"
 
+      - name: Package Member Handler Lambda
+        run: |
+          echo "Packaging Member Handler Lambda..."
+          pip install PyJWT bcrypt pyyaml -t .build-member-handler/ --quiet
+          cp member-handler/lambda_function.py .build-member-handler/
+          cd .build-member-handler && zip -r ../member-handler-lambda.zip . -q
+          cd ..
+          aws s3 cp member-handler-lambda.zip s3://${{ env.STORAGE_BUCKET }}/lambda-packages/member-handler.zip
+          echo "✓ Member Handler packaged"
+
       - name: Deploy SlashMyBill CloudFormation stack
         run: |
           echo "Deploying SlashMyBill infrastructure..."
@@ -127,6 +139,10 @@ jobs:
             --function-name aws-bill-analyzer-admin-api \
             --s3-bucket ${{ env.STORAGE_BUCKET }} \
             --s3-key lambda-packages/admin-handler.zip > /dev/null
+          aws lambda update-function-code \
+            --function-name aws-bill-analyzer-member-api \
+            --s3-bucket ${{ env.STORAGE_BUCKET }} \
+            --s3-key lambda-packages/member-handler.zip > /dev/null
           echo "✓ Lambda functions updated"
 
       - name: Seed DynamoDB knowledge base
@@ -203,6 +219,19 @@ jobs:
             --cache-control "max-age=300" --content-type "application/javascript"
           echo "✓ Admin frontend deployed"
 
+      - name: Deploy Member Portal frontend
+        run: |
+          API_URL="${{ steps.api-url.outputs.api_endpoint }}"
+          echo "Injecting API URL: $API_URL"
+          sed -i "s|https://YOUR_API_GATEWAY_URL|${API_URL}|g" members/members.js
+          aws s3 cp members/index.html s3://${{ env.S3_BUCKET }}/members/index.html \
+            --cache-control "max-age=300" --content-type "text/html"
+          aws s3 cp members/members.css s3://${{ env.S3_BUCKET }}/members/members.css \
+            --cache-control "max-age=300" --content-type "text/css"
+          aws s3 cp members/members.js s3://${{ env.S3_BUCKET }}/members/members.js \
+            --cache-control "max-age=300" --content-type "application/javascript"
+          echo "✓ Member Portal frontend deployed"
+
       - name: Invalidate CloudFront cache
         run: |
           aws cloudfront create-invalidation \
@@ -216,4 +245,5 @@ jobs:
           echo "Website: https://www.eshkolai.com"
           echo "SlashMyBill: https://www.eshkolai.com/slashMyBill/"
           echo "Admin: https://www.eshkolai.com/admin/"
+          echo "Member Portal: https://www.eshkolai.com/members/"
           echo "API: ${{ steps.api-url.outputs.api_endpoint }}"

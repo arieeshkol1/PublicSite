@@ -1,0 +1,488 @@
+/* Member Portal v1 - SlashMyBill */
+var API = 'https://YOUR_API_GATEWAY_URL';
+
+var $ = function(id) { return document.getElementById(id); };
+
+// Views
+var loginView = $('login-view');
+var registerView = $('register-view');
+var dashboardView = $('dashboard-view');
+
+// Login elements
+var loginForm = $('login-form');
+var loginEmail = $('login-email');
+var loginPassword = $('login-password');
+var loginError = $('login-error');
+
+// Registration elements
+var regEmailForm = $('reg-email-form');
+var regOtpForm = $('reg-otp-form');
+var regPasswordForm = $('reg-password-form');
+var regStep1 = $('reg-step-1');
+var regStep2 = $('reg-step-2');
+var regStep3 = $('reg-step-3');
+var regEmail = $('reg-email');
+var regEmailDisplay = $('reg-email-display');
+var regOtp = $('reg-otp');
+var regPassword = $('reg-password');
+var regConfirm = $('reg-confirm');
+var regEmailError = $('reg-email-error');
+var regOtpError = $('reg-otp-error');
+var regPasswordError = $('reg-password-error');
+
+// Dashboard elements
+var headerEmail = $('header-email');
+var logoutBtn = $('logout-btn');
+var addAccountBtn = $('add-account-btn');
+var accountsTbody = $('accounts-tbody');
+var accountsEmpty = $('accounts-empty');
+
+// Account modal
+var accountModal = $('account-modal');
+var accountModalTitle = $('account-modal-title');
+var accountForm = $('account-form');
+var accountIdInput = $('account-id-input');
+var accountFormError = $('account-form-error');
+var accountCancelBtn = $('account-cancel-btn');
+var accountModalClose = $('account-modal-close');
+var accountSubmitBtn = $('account-submit-btn');
+
+// Delete dialog
+var deleteDialog = $('delete-dialog');
+var deleteMsg = $('delete-dialog-msg');
+var deleteCancelBtn = $('delete-cancel-btn');
+var deleteConfirmBtn = $('delete-confirm-btn');
+
+// Loading & notification
+var loading = $('loading-overlay');
+var notif = $('notification');
+var notifMsg = $('notification-message');
+
+// State
+var otpToken = null;
+var regEmailValue = '';
+var editingAccountId = null;
+var deletingAccountId = null;
+
+// ============================================================
+// Helpers
+// ============================================================
+
+function notify(msg, type) {
+    notifMsg.textContent = msg;
+    notif.className = 'notification notification-' + type;
+    notif.hidden = false;
+    setTimeout(function() { notif.hidden = true; }, 4000);
+}
+
+function showLoading() { loading.hidden = false; }
+function hideLoading() { loading.hidden = true; }
+
+function esc(s) {
+    var d = document.createElement('div');
+    d.textContent = s;
+    return d.innerHTML;
+}
+
+function ea(s) {
+    return String(s || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function fmtDate(ts) {
+    if (!ts) return '-';
+    try {
+        var d = new Date(ts);
+        return isNaN(d) ? ts : d.toLocaleString('en-US', {
+            year: 'numeric', month: 'short', day: 'numeric',
+            hour: '2-digit', minute: '2-digit'
+        });
+    } catch (e) { return ts; }
+}
+
+function getToken() { return sessionStorage.getItem('memberToken'); }
+function getMemberEmail() { return sessionStorage.getItem('memberEmail'); }
+
+// ============================================================
+// API wrapper
+// ============================================================
+
+async function api(method, path, body) {
+    var opts = {
+        method: method,
+        headers: { 'Content-Type': 'application/json' }
+    };
+    var token = getToken();
+    if (token) {
+        opts.headers['Authorization'] = 'Bearer ' + token;
+    }
+    if (body) opts.body = JSON.stringify(body);
+
+    var resp;
+    try {
+        resp = await fetch(API + path, opts);
+    } catch (e) {
+        throw { status: 0, message: 'Connection error, please try again' };
+    }
+
+    var data;
+    try {
+        data = await resp.json();
+    } catch (e) {
+        data = {};
+    }
+
+    if (!resp.ok) {
+        if (resp.status === 401) {
+            sessionStorage.removeItem('memberToken');
+            sessionStorage.removeItem('memberEmail');
+            sessionStorage.removeItem('memberDisplayName');
+            showView('login');
+        }
+        throw { status: resp.status, message: data.message || 'Error' };
+    }
+    return data;
+}
+
+// ============================================================
+// View management
+// ============================================================
+
+function showView(name) {
+    loginView.hidden = name !== 'login';
+    registerView.hidden = name !== 'register';
+    dashboardView.hidden = name !== 'dashboard';
+
+    if (name === 'register') {
+        regStep1.hidden = false;
+        regStep2.hidden = true;
+        regStep3.hidden = true;
+        regEmailError.textContent = '';
+        regOtpError.textContent = '';
+        regPasswordError.textContent = '';
+        regEmail.value = '';
+        regOtp.value = '';
+        regPassword.value = '';
+        regConfirm.value = '';
+        otpToken = null;
+        regEmailValue = '';
+    }
+    if (name === 'login') {
+        loginError.textContent = '';
+        loginEmail.value = '';
+        loginPassword.value = '';
+    }
+    if (name === 'dashboard') {
+        headerEmail.textContent = getMemberEmail() || '';
+        loadAccounts();
+    }
+}
+
+// ============================================================
+// Navigation
+// ============================================================
+
+$('show-register').onclick = function(e) { e.preventDefault(); showView('register'); };
+$('show-login').onclick = function(e) { e.preventDefault(); showView('login'); };
+logoutBtn.onclick = function() {
+    sessionStorage.removeItem('memberToken');
+    sessionStorage.removeItem('memberEmail');
+    sessionStorage.removeItem('memberDisplayName');
+    showView('login');
+};
+
+// ============================================================
+// Login
+// ============================================================
+
+loginForm.onsubmit = async function(e) {
+    e.preventDefault();
+    loginError.textContent = '';
+    var email = loginEmail.value.trim();
+    var password = loginPassword.value;
+    if (!email || !password) { loginError.textContent = 'Enter email and password.'; return; }
+
+    try {
+        showLoading();
+        var data = await api('POST', '/members/login', { email: email, password: password });
+        sessionStorage.setItem('memberToken', data.token);
+        sessionStorage.setItem('memberEmail', data.email);
+        sessionStorage.setItem('memberDisplayName', data.displayName);
+        showView('dashboard');
+    } catch (err) {
+        loginError.textContent = err.message || 'Login failed.';
+    } finally {
+        hideLoading();
+    }
+};
+
+// ============================================================
+// Registration
+// ============================================================
+
+regEmailForm.onsubmit = async function(e) {
+    e.preventDefault();
+    regEmailError.textContent = '';
+    regEmailValue = regEmail.value.trim().toLowerCase();
+    if (!regEmailValue) { regEmailError.textContent = 'Enter your email.'; return; }
+
+    try {
+        showLoading();
+        await api('POST', '/members/register', { action: 'send-otp', email: regEmailValue });
+        regEmailDisplay.textContent = regEmailValue;
+        regStep1.hidden = true;
+        regStep2.hidden = false;
+    } catch (err) {
+        regEmailError.textContent = err.message || 'Failed to send OTP.';
+    } finally {
+        hideLoading();
+    }
+};
+
+regOtpForm.onsubmit = async function(e) {
+    e.preventDefault();
+    regOtpError.textContent = '';
+    var code = regOtp.value.trim();
+    if (!code || code.length !== 6) { regOtpError.textContent = 'Enter the 6-digit code.'; return; }
+
+    try {
+        showLoading();
+        var data = await api('POST', '/members/register', {
+            action: 'verify-otp', email: regEmailValue, otp: code
+        });
+        otpToken = data.otpToken;
+        regStep2.hidden = true;
+        regStep3.hidden = false;
+    } catch (err) {
+        regOtpError.textContent = err.message || 'Invalid code.';
+    } finally {
+        hideLoading();
+    }
+};
+
+regPasswordForm.onsubmit = async function(e) {
+    e.preventDefault();
+    regPasswordError.textContent = '';
+    var pw = regPassword.value;
+    var cpw = regConfirm.value;
+    if (pw.length < 8) { regPasswordError.textContent = 'Password must be at least 8 characters.'; return; }
+    if (pw !== cpw) { regPasswordError.textContent = 'Passwords do not match.'; return; }
+
+    try {
+        showLoading();
+        await api('POST', '/members/register', {
+            action: 'create-account', otpToken: otpToken, password: pw, confirmPassword: cpw
+        });
+        notify('Registration successful! Please log in.', 'success');
+        showView('login');
+    } catch (err) {
+        regPasswordError.textContent = err.message || 'Registration failed.';
+    } finally {
+        hideLoading();
+    }
+};
+
+// ============================================================
+// Dashboard - Accounts
+// ============================================================
+
+async function loadAccounts() {
+    try {
+        showLoading();
+        var data = await api('GET', '/members/accounts');
+        renderAccounts(data.accounts || []);
+    } catch (err) {
+        notify('Failed to load accounts.', 'error');
+    } finally {
+        hideLoading();
+    }
+}
+
+function renderAccounts(accounts) {
+    accountsTbody.innerHTML = '';
+    if (!accounts.length) {
+        accountsEmpty.hidden = false;
+        return;
+    }
+    accountsEmpty.hidden = true;
+    accounts.forEach(function(a, idx) {
+        var statusClass = 'status-' + (a.connectionStatus || 'pending');
+        var tr = document.createElement('tr');
+        tr.innerHTML =
+            '<td style="color:#999;font-size:12px">' + (idx + 1) + '</td>' +
+            '<td>' + esc(a.accountId || '') + '</td>' +
+            '<td>' + esc(a.roleName || '') + '</td>' +
+            '<td><span class="status-badge ' + statusClass + '">' + esc(a.connectionStatus || 'pending') + '</span></td>' +
+            '<td>' + fmtDate(a.addedAt) + '</td>' +
+            '<td>' + fmtDate(a.lastTestedAt) + '</td>' +
+            '<td class="actions-cell">' +
+                '<button class="btn-icon btn-icon-download" data-a="dl" data-id="' + ea(a.accountId) + '" title="Download CF Template">&#8681;</button> ' +
+                '<button class="btn-icon btn-icon-test" data-a="test" data-id="' + ea(a.accountId) + '" title="Test Connection">&#9889;</button> ' +
+                '<button class="btn-icon btn-icon-edit" data-a="edit" data-id="' + ea(a.accountId) + '" title="Edit">&#9998;</button> ' +
+                '<button class="btn-icon btn-icon-delete" data-a="del" data-id="' + ea(a.accountId) + '" title="Delete">&#128465;</button>' +
+            '</td>';
+        accountsTbody.appendChild(tr);
+    });
+}
+
+// ============================================================
+// Account table actions
+// ============================================================
+
+accountsTbody.onclick = function(e) {
+    var btn = e.target.closest('[data-a]');
+    if (!btn) return;
+    var action = btn.dataset.a;
+    var accountId = btn.dataset.id;
+
+    if (action === 'edit') showAccountModal(accountId);
+    else if (action === 'del') showDeleteDialog(accountId);
+    else if (action === 'dl') downloadTemplate(accountId);
+    else if (action === 'test') testConnection(accountId, btn);
+};
+
+// ============================================================
+// Add / Edit Account Modal
+// ============================================================
+
+addAccountBtn.onclick = function() { showAccountModal(null); };
+
+function showAccountModal(existingId) {
+    accountFormError.textContent = '';
+    editingAccountId = existingId;
+    if (existingId) {
+        accountModalTitle.textContent = 'Edit Account';
+        accountSubmitBtn.textContent = 'Update Account';
+        accountIdInput.value = '';
+        accountIdInput.placeholder = 'New 12-digit Account ID';
+    } else {
+        accountModalTitle.textContent = 'Add Account';
+        accountSubmitBtn.textContent = 'Add Account';
+        accountIdInput.value = '';
+        accountIdInput.placeholder = '123456789012';
+    }
+    accountModal.hidden = false;
+    accountIdInput.focus();
+}
+
+function hideAccountModal() { accountModal.hidden = true; editingAccountId = null; }
+
+accountCancelBtn.onclick = hideAccountModal;
+accountModalClose.onclick = hideAccountModal;
+accountModal.onclick = function(e) { if (e.target === accountModal) hideAccountModal(); };
+
+accountForm.onsubmit = async function(e) {
+    e.preventDefault();
+    accountFormError.textContent = '';
+    var val = accountIdInput.value.trim();
+    if (!/^\d{12}$/.test(val)) {
+        accountFormError.textContent = 'Account ID must be exactly 12 digits.';
+        return;
+    }
+
+    try {
+        showLoading();
+        if (editingAccountId) {
+            await api('PUT', '/members/accounts', { oldAccountId: editingAccountId, newAccountId: val });
+            notify('Account updated.', 'success');
+        } else {
+            await api('POST', '/members/accounts', { accountId: val });
+            notify('Account added.', 'success');
+        }
+        hideAccountModal();
+        await loadAccounts();
+    } catch (err) {
+        accountFormError.textContent = err.message || 'Failed.';
+    } finally {
+        hideLoading();
+    }
+};
+
+// ============================================================
+// Delete Account
+// ============================================================
+
+function showDeleteDialog(accountId) {
+    deletingAccountId = accountId;
+    deleteMsg.textContent = 'Delete account ' + accountId + '? This cannot be undone.';
+    deleteConfirmBtn.hidden = false;
+    deleteCancelBtn.textContent = 'Cancel';
+    deleteDialog.hidden = false;
+}
+
+function hideDeleteDialog() { deleteDialog.hidden = true; deletingAccountId = null; }
+
+deleteCancelBtn.onclick = hideDeleteDialog;
+deleteDialog.onclick = function(e) { if (e.target === deleteDialog) hideDeleteDialog(); };
+
+deleteConfirmBtn.onclick = async function() {
+    if (!deletingAccountId) return;
+    deleteConfirmBtn.disabled = true;
+    deleteConfirmBtn.textContent = 'Deleting...';
+    try {
+        await api('DELETE', '/members/accounts', { accountId: deletingAccountId });
+        notify('Account deleted.', 'success');
+        hideDeleteDialog();
+        await loadAccounts();
+    } catch (err) {
+        deleteMsg.textContent = 'Error: ' + (err.message || 'Delete failed.');
+        deleteConfirmBtn.hidden = true;
+        deleteCancelBtn.textContent = 'Close';
+    } finally {
+        deleteConfirmBtn.disabled = false;
+        deleteConfirmBtn.textContent = 'Delete';
+    }
+};
+
+// ============================================================
+// Download CloudFormation Template
+// ============================================================
+
+async function downloadTemplate(accountId) {
+    try {
+        showLoading();
+        var data = await api('POST', '/members/accounts/template', { accountId: accountId });
+        var blob = new Blob([data.template], { type: 'application/x-yaml' });
+        var url = URL.createObjectURL(blob);
+        var a = document.createElement('a');
+        a.href = url;
+        a.download = data.filename || ('SlashMyBill-' + accountId + '.yaml');
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        notify('Template downloaded.', 'success');
+    } catch (err) {
+        notify(err.message || 'Failed to download template.', 'error');
+    } finally {
+        hideLoading();
+    }
+}
+
+// ============================================================
+// Test Connection
+// ============================================================
+
+async function testConnection(accountId, btn) {
+    try {
+        showLoading();
+        var data = await api('POST', '/members/accounts/test', { accountId: accountId });
+        notify(data.message || 'Connection test complete.', 'success');
+        await loadAccounts();
+    } catch (err) {
+        notify(err.message || 'Connection test failed.', 'error');
+        await loadAccounts();
+    } finally {
+        hideLoading();
+    }
+}
+
+// ============================================================
+// Init
+// ============================================================
+
+if (getToken()) {
+    showView('dashboard');
+} else {
+    showView('login');
+}

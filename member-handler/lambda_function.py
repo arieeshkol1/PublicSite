@@ -1,0 +1,825 @@
+"""
+Member Handler Lambda - Registration, login, and account management for the Member Portal.
+Routes: POST /members/register, POST /members/login, GET /members/accounts,
+        POST /members/accounts, PUT /members/accounts, DELETE /members/accounts,
+        POST /members/accounts/template, POST /members/accounts/test
+"""
+
+import json
+import os
+import re
+import time
+import secrets
+import hashlib
+import logging
+from datetime import datetime, timedelta, timezone
+from decimal import Decimal
+
+import boto3
+from botocore.exceptions import ClientError
+import jwt
+import bcrypt
+import yaml
+
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
+
+# Environment variables
+JWT_SECRET = os.environ.get('JWT_SECRET', '')
+MEMBERS_TABLE_NAME = os.environ.get('MEMBERS_TABLE_NAME', 'MemberPortal-Members')
+ACCOUNTS_TABLE_NAME = os.environ.get('ACCOUNTS_TABLE_NAME', 'MemberPortal-Accounts')
+OTP_TABLE_NAME = os.environ.get('OTP_TABLE_NAME', 'ViewMyBill-OTP')
+SES_SENDER_EMAIL = os.environ.get('SES_SENDER_EMAIL', 'noreply@eshkolai.com')
+PLATFORM_ACCOUNT_ID = os.environ.get('PLATFORM_ACCOUNT_ID', '991105135552')
+
+# AWS clients
+dynamodb = boto3.resource('dynamodb')
+ses_client = boto3.client('ses')
+
+# Constants
+OTP_TTL_SECONDS = 300  # 5 minutes
+RATE_LIMIT_SECONDS = 60
+EMAIL_REGEX = re.compile(r'^[^\s@]+@[^\s@]+\.[^\s@]+$')
+
+
+def _decimal_to_native(obj):
+    """Recursively convert Decimal values to int/float for JSON serialization."""
+    if isinstance(obj, list):
+        return [_decimal_to_native(item) for item in obj]
+    if isinstance(obj, dict):
+        return {k: _decimal_to_native(v) for k, v in obj.items()}
+    if isinstance(obj, Decimal):
+        if obj % 1 == 0:
+            return int(obj)
+        return float(obj)
+    return obj
+
+
+# ============================================================
+# Main entry point and route dispatch
+# ============================================================
+
+def lambda_handler(event, context):
+    """Main entry point — dispatches to handler based on routeKey."""
+    route_key = event.get('routeKey', '')
+    logger.info(f"Member API request: {route_key}")
+
+    if route_key.startswith('OPTIONS '):
+        return create_response(200, {'message': 'OK'})
+
+    routes = {
+        'POST /members/register': handle_register,
+        'POST /members/login': handle_login,
+        'GET /members/accounts': handle_get_accounts,
+        'POST /members/accounts': handle_add_account,
+        'PUT /members/accounts': handle_edit_account,
+        'DELETE /members/accounts': handle_delete_account,
+        'POST /members/accounts/template': handle_generate_template,
+        'POST /members/accounts/test': handle_test_connection,
+    }
+
+    handler = routes.get(route_key)
+    if handler is None:
+        return create_error_response(404, 'NotFound', 'Route not found')
+
+    return handler(event)
+
+
+# ============================================================
+# Token validation
+# ============================================================
+
+def validate_token(event):
+    """Extract and validate JWT from Authorization header.
+
+    Returns decoded payload on success (with role == 'member').
+    Returns an error response dict on failure.
+    """
+    headers = event.get('headers', {}) or {}
+    auth_header = headers.get('authorization') or headers.get('Authorization') or ''
+
+    if not auth_header.startswith('Bearer '):
+        return create_error_response(401, 'AuthError', 'Authentication required')
+
+    token = auth_header[7:]
+
+    try:
+        decoded = jwt.decode(token, JWT_SECRET, algorithms=['HS256'])
+    except jwt.ExpiredSignatureError:
+        return create_error_response(401, 'AuthError', 'Session expired, please log in again')
+    except jwt.InvalidTokenError:
+        return create_error_response(401, 'AuthError', 'Authentication required')
+
+    if decoded.get('role') != 'member':
+        return create_error_response(401, 'AuthError', 'Authentication required')
+
+    return decoded
+
+
+# ============================================================
+# Registration handler (3-step OTP flow)
+# ============================================================
+
+def handle_register(event):
+    """Handle member registration with 3-step OTP flow."""
+    try:
+        body = json.loads(event.get('body', '{}'))
+    except (json.JSONDecodeError, TypeError):
+        return create_error_response(400, 'InvalidRequest', 'Invalid request body')
+
+    action = body.get('action', '')
+
+    if action == 'send-otp':
+        return _register_send_otp(body)
+    elif action == 'verify-otp':
+        return _register_verify_otp(body)
+    elif action == 'create-account':
+        return _register_create_account(body)
+    else:
+        return create_error_response(400, 'InvalidRequest', "Field 'action' is required")
+
+
+def _register_send_otp(body):
+    """Step 1: Validate email, check for existing member, send OTP."""
+    email = (body.get('email') or '').strip().lower()
+    if not email or not EMAIL_REGEX.match(email):
+        return create_error_response(400, 'InvalidEmail', 'Please provide a valid email address')
+
+    members_table = dynamodb.Table(MEMBERS_TABLE_NAME)
+    otp_table = dynamodb.Table(OTP_TABLE_NAME)
+    now = datetime.now(timezone.utc)
+    now_iso = now.isoformat()
+    now_epoch = int(now.timestamp())
+
+    # Check if member already exists
+    try:
+        existing_member = members_table.get_item(Key={'email': email}).get('Item')
+        if existing_member:
+            return create_error_response(409, 'ConflictError', 'An account with this email already exists')
+    except ClientError as e:
+        logger.error(f"DynamoDB read error: {e}")
+        return create_error_response(500, 'ServerError', 'An unexpected error occurred. Please try again.')
+
+    # Rate limiting: check if OTP was sent within last 60 seconds
+    try:
+        existing_otp = otp_table.get_item(Key={'email': email}).get('Item')
+        if existing_otp and existing_otp.get('createdAt'):
+            created = datetime.fromisoformat(existing_otp['createdAt'])
+            elapsed = (now - created).total_seconds()
+            if elapsed < RATE_LIMIT_SECONDS:
+                retry_after = int(RATE_LIMIT_SECONDS - elapsed)
+                return create_error_response(429, 'RateLimited', 'Please wait before requesting a new code')
+    except ClientError as e:
+        logger.error(f"DynamoDB read error: {e}")
+        return create_error_response(500, 'ServerError', 'An unexpected error occurred. Please try again.')
+
+    # Generate 6-digit OTP
+    otp_code = str(secrets.randbelow(900000) + 100000)
+
+    # Store in OTP table
+    try:
+        otp_table.put_item(Item={
+            'email': email,
+            'otp': otp_code,
+            'createdAt': now_iso,
+            'ttl': now_epoch + OTP_TTL_SECONDS,
+        })
+    except ClientError as e:
+        logger.error(f"DynamoDB write error: {e}")
+        return create_error_response(500, 'ServerError', 'An unexpected error occurred. Please try again.')
+
+    # Send email via SES
+    try:
+        ses_client.send_email(
+            Source=f'SlashMyBill <{SES_SENDER_EMAIL}>',
+            Destination={'ToAddresses': [email]},
+            Message={
+                'Subject': {'Data': 'Your SlashMyBill verification code', 'Charset': 'UTF-8'},
+                'Body': {
+                    'Html': {
+                        'Data': _build_otp_email(otp_code),
+                        'Charset': 'UTF-8',
+                    }
+                },
+            },
+        )
+    except ClientError as e:
+        logger.error(f"SES send error: {e}")
+        return create_error_response(500, 'SendFailed', 'Failed to send verification email')
+
+    return create_response(200, {'message': 'OTP sent successfully', 'email': email})
+
+
+def _register_verify_otp(body):
+    """Step 2: Verify OTP code, return short-lived otpToken."""
+    email = (body.get('email') or '').strip().lower()
+    otp_code = (body.get('otp') or '').strip()
+
+    if not email or not otp_code:
+        return create_error_response(400, 'InvalidOTP', 'Invalid or expired OTP code')
+
+    otp_table = dynamodb.Table(OTP_TABLE_NAME)
+
+    try:
+        result = otp_table.get_item(Key={'email': email})
+        item = result.get('Item')
+    except ClientError as e:
+        logger.error(f"DynamoDB read error: {e}")
+        return create_error_response(500, 'ServerError', 'An unexpected error occurred. Please try again.')
+
+    if not item:
+        return create_error_response(400, 'InvalidOTP', 'Invalid or expired OTP code')
+
+    # Check expiry
+    now_epoch = int(time.time())
+    if item.get('ttl') and int(item['ttl']) < now_epoch:
+        return create_error_response(400, 'InvalidOTP', 'Invalid or expired OTP code')
+
+    # Compare codes
+    if item.get('otp') != otp_code:
+        return create_error_response(400, 'InvalidOTP', 'Invalid or expired OTP code')
+
+    # Delete OTP record on success
+    try:
+        otp_table.delete_item(Key={'email': email})
+    except ClientError:
+        pass  # Non-critical
+
+    # Generate short-lived otpToken (10-min expiry)
+    now = int(time.time())
+    otp_token_payload = {
+        'sub': email,
+        'purpose': 'registration',
+        'iat': now,
+        'exp': now + 600,  # 10 minutes
+    }
+    otp_token = jwt.encode(otp_token_payload, JWT_SECRET, algorithm='HS256')
+
+    return create_response(200, {'verified': True, 'otpToken': otp_token})
+
+
+def _register_create_account(body):
+    """Step 3: Validate otpToken, create member record with hashed password."""
+    otp_token = (body.get('otpToken') or '').strip()
+    password = body.get('password', '')
+    confirm_password = body.get('confirmPassword', '')
+
+    if not otp_token:
+        return create_error_response(400, 'InvalidToken', 'Email verification token is invalid or expired')
+
+    # Validate otpToken
+    try:
+        decoded = jwt.decode(otp_token, JWT_SECRET, algorithms=['HS256'])
+    except jwt.ExpiredSignatureError:
+        return create_error_response(400, 'InvalidToken', 'Email verification token is invalid or expired')
+    except jwt.InvalidTokenError:
+        return create_error_response(400, 'InvalidToken', 'Email verification token is invalid or expired')
+
+    if decoded.get('purpose') != 'registration':
+        return create_error_response(400, 'InvalidToken', 'Email verification token is invalid or expired')
+
+    email = decoded.get('sub', '').lower()
+
+    # Validate password
+    if len(password) < 8:
+        return create_error_response(400, 'InvalidPassword', 'Password must be at least 8 characters')
+
+    if password != confirm_password:
+        return create_error_response(400, 'InvalidPassword', 'Passwords do not match')
+
+    members_table = dynamodb.Table(MEMBERS_TABLE_NAME)
+
+    # Check if member already exists (race condition guard)
+    try:
+        existing = members_table.get_item(Key={'email': email}).get('Item')
+        if existing:
+            return create_error_response(409, 'ConflictError', 'An account with this email already exists')
+    except ClientError as e:
+        logger.error(f"DynamoDB read error: {e}")
+        return create_error_response(500, 'ServerError', 'An unexpected error occurred. Please try again.')
+
+    # Hash password with bcrypt
+    password_hash = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+
+    # Derive displayName from email
+    display_name = email.split('@')[0]
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    # Store member record
+    try:
+        members_table.put_item(Item={
+            'email': email,
+            'passwordHash': password_hash,
+            'displayName': display_name,
+            'createdAt': now_iso,
+            'lastLoginAt': None,
+        })
+    except ClientError as e:
+        logger.error(f"DynamoDB write error: {e}")
+        return create_error_response(500, 'ServerError', 'An unexpected error occurred. Please try again.')
+
+    return create_response(201, {'message': 'Registration successful', 'email': email})
+
+
+# ============================================================
+# Login handler
+# ============================================================
+
+def handle_login(event):
+    """Authenticate member and return JWT token."""
+    try:
+        body = json.loads(event.get('body', '{}'))
+    except (json.JSONDecodeError, TypeError):
+        return create_error_response(400, 'InvalidRequest', 'Invalid request body')
+
+    email = (body.get('email') or '').strip().lower()
+    password = body.get('password', '')
+
+    if not email or not password:
+        return create_error_response(400, 'InvalidRequest', "Field 'email' is required")
+
+    members_table = dynamodb.Table(MEMBERS_TABLE_NAME)
+
+    # Look up member
+    try:
+        result = members_table.get_item(Key={'email': email})
+        member = result.get('Item')
+    except ClientError as e:
+        logger.error(f"DynamoDB read error: {e}")
+        return create_error_response(500, 'ServerError', 'An unexpected error occurred. Please try again.')
+
+    if not member:
+        return create_error_response(401, 'AuthError', 'Invalid email or password')
+
+    # Verify password with bcrypt
+    try:
+        password_valid = bcrypt.checkpw(
+            password.encode('utf-8'),
+            member['passwordHash'].encode('utf-8'),
+        )
+    except Exception as e:
+        logger.error(f"Password verification error: {e}")
+        return create_error_response(401, 'AuthError', 'Invalid email or password')
+
+    if not password_valid:
+        return create_error_response(401, 'AuthError', 'Invalid email or password')
+
+    # Generate JWT with 24h expiry
+    now = int(time.time())
+    payload = {
+        'sub': email,
+        'role': 'member',
+        'iat': now,
+        'exp': now + 86400,  # 24 hours
+    }
+    token = jwt.encode(payload, JWT_SECRET, algorithm='HS256')
+
+    # Update lastLoginAt
+    now_iso = datetime.now(timezone.utc).isoformat()
+    try:
+        members_table.update_item(
+            Key={'email': email},
+            UpdateExpression='SET lastLoginAt = :ts',
+            ExpressionAttributeValues={':ts': now_iso},
+        )
+    except ClientError as e:
+        logger.warning(f"Failed to update lastLoginAt: {e}")
+        # Non-critical — don't fail the login
+
+    display_name = member.get('displayName', email.split('@')[0])
+
+    logger.info(f"Member login successful for: {email}")
+    return create_response(200, {'token': token, 'email': email, 'displayName': display_name})
+
+
+# ============================================================
+# Account CRUD handlers
+# ============================================================
+
+def handle_get_accounts(event):
+    """List member's accounts."""
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+
+    member_email = auth['sub']
+    accounts_table = dynamodb.Table(ACCOUNTS_TABLE_NAME)
+
+    try:
+        result = accounts_table.query(
+            KeyConditionExpression=boto3.dynamodb.conditions.Key('memberEmail').eq(member_email)
+        )
+        accounts = result.get('Items', [])
+    except ClientError as e:
+        logger.error(f"DynamoDB query error: {e}")
+        return create_error_response(500, 'ServerError', 'An unexpected error occurred. Please try again.')
+
+    # Sort by addedAt
+    accounts.sort(key=lambda a: a.get('addedAt', ''))
+
+    # Convert Decimal values for JSON serialization
+    accounts = _decimal_to_native(accounts)
+
+    return create_response(200, {'accounts': accounts})
+
+
+def handle_add_account(event):
+    """Add a new AWS account."""
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+
+    member_email = auth['sub']
+
+    try:
+        body = json.loads(event.get('body', '{}'))
+    except (json.JSONDecodeError, TypeError):
+        return create_error_response(400, 'InvalidRequest', 'Invalid request body')
+
+    account_id = (body.get('accountId') or '').strip()
+
+    # Validate 12-digit Account ID
+    if not re.fullmatch(r'\d{12}', account_id):
+        return create_error_response(400, 'InvalidAccountId', 'Account ID must be exactly 12 digits')
+
+    accounts_table = dynamodb.Table(ACCOUNTS_TABLE_NAME)
+
+    # Check for duplicate
+    try:
+        existing = accounts_table.get_item(Key={'memberEmail': member_email, 'accountId': account_id}).get('Item')
+        if existing:
+            return create_error_response(409, 'ConflictError', 'This AWS account is already connected')
+    except ClientError as e:
+        logger.error(f"DynamoDB read error: {e}")
+        return create_error_response(500, 'ServerError', 'An unexpected error occurred. Please try again.')
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    role_name = f'SlashMyBill-{account_id}'
+
+    account_record = {
+        'memberEmail': member_email,
+        'accountId': account_id,
+        'roleName': role_name,
+        'connectionStatus': 'pending',
+        'addedAt': now_iso,
+        'lastTestedAt': None,
+    }
+
+    try:
+        accounts_table.put_item(Item=account_record)
+    except ClientError as e:
+        logger.error(f"DynamoDB write error: {e}")
+        return create_error_response(500, 'ServerError', 'An unexpected error occurred. Please try again.')
+
+    logger.info(f"Account {account_id} added for member {member_email}")
+    return create_response(201, {'message': 'Account added', 'account': account_record})
+
+
+def handle_edit_account(event):
+    """Edit an existing AWS account (change Account ID)."""
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+
+    member_email = auth['sub']
+
+    try:
+        body = json.loads(event.get('body', '{}'))
+    except (json.JSONDecodeError, TypeError):
+        return create_error_response(400, 'InvalidRequest', 'Invalid request body')
+
+    old_account_id = (body.get('oldAccountId') or '').strip()
+    new_account_id = (body.get('newAccountId') or '').strip()
+
+    if not old_account_id or not new_account_id:
+        return create_error_response(400, 'InvalidRequest', "Fields 'oldAccountId' and 'newAccountId' are required")
+
+    # Validate new Account ID is 12 digits
+    if not re.fullmatch(r'\d{12}', new_account_id):
+        return create_error_response(400, 'InvalidAccountId', 'Account ID must be exactly 12 digits')
+
+    accounts_table = dynamodb.Table(ACCOUNTS_TABLE_NAME)
+
+    # Fetch old record
+    try:
+        old_result = accounts_table.get_item(Key={'memberEmail': member_email, 'accountId': old_account_id})
+        old_record = old_result.get('Item')
+    except ClientError as e:
+        logger.error(f"DynamoDB read error: {e}")
+        return create_error_response(500, 'ServerError', 'An unexpected error occurred. Please try again.')
+
+    if not old_record:
+        return create_error_response(404, 'NotFound', 'Account not found')
+
+    # If same ID, nothing to change
+    if old_account_id == new_account_id:
+        return create_response(200, {'message': 'Account updated', 'account': _decimal_to_native(old_record)})
+
+    # Check for duplicate with new ID
+    try:
+        dup = accounts_table.get_item(Key={'memberEmail': member_email, 'accountId': new_account_id}).get('Item')
+        if dup:
+            return create_error_response(409, 'ConflictError', 'This AWS account is already connected')
+    except ClientError as e:
+        logger.error(f"DynamoDB read error: {e}")
+        return create_error_response(500, 'ServerError', 'An unexpected error occurred. Please try again.')
+
+    # Preserve original addedAt
+    original_added_at = old_record.get('addedAt', datetime.now(timezone.utc).isoformat())
+
+    new_record = {
+        'memberEmail': member_email,
+        'accountId': new_account_id,
+        'roleName': f'SlashMyBill-{new_account_id}',
+        'connectionStatus': 'pending',
+        'addedAt': original_added_at,
+        'lastTestedAt': None,
+    }
+
+    # Delete old, create new
+    try:
+        accounts_table.delete_item(Key={'memberEmail': member_email, 'accountId': old_account_id})
+        accounts_table.put_item(Item=new_record)
+    except ClientError as e:
+        logger.error(f"DynamoDB write error: {e}")
+        return create_error_response(500, 'ServerError', 'An unexpected error occurred. Please try again.')
+
+    logger.info(f"Account edited for {member_email}: {old_account_id} -> {new_account_id}")
+    return create_response(200, {'message': 'Account updated', 'account': new_record})
+
+
+def handle_delete_account(event):
+    """Delete an AWS account."""
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+
+    member_email = auth['sub']
+
+    try:
+        body = json.loads(event.get('body', '{}'))
+    except (json.JSONDecodeError, TypeError):
+        return create_error_response(400, 'InvalidRequest', 'Invalid request body')
+
+    account_id = (body.get('accountId') or '').strip()
+    if not account_id:
+        return create_error_response(400, 'InvalidRequest', "Field 'accountId' is required")
+
+    accounts_table = dynamodb.Table(ACCOUNTS_TABLE_NAME)
+
+    try:
+        accounts_table.delete_item(
+            Key={'memberEmail': member_email, 'accountId': account_id},
+            ConditionExpression='attribute_exists(memberEmail)',
+        )
+    except ClientError as e:
+        if e.response['Error']['Code'] == 'ConditionalCheckFailedException':
+            return create_error_response(404, 'NotFound', 'Account not found')
+        logger.error(f"DynamoDB delete error: {e}")
+        return create_error_response(500, 'ServerError', 'An unexpected error occurred. Please try again.')
+
+    logger.info(f"Account {account_id} deleted for member {member_email}")
+    return create_response(200, {'message': 'Account deleted'})
+
+
+def handle_generate_template(event):
+    """Generate CloudFormation template for an account."""
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+
+    member_email = auth['sub']
+
+    try:
+        body = json.loads(event.get('body', '{}'))
+    except (json.JSONDecodeError, TypeError):
+        return create_error_response(400, 'InvalidRequest', 'Invalid request body')
+
+    account_id = (body.get('accountId') or '').strip()
+    if not re.fullmatch(r'\d{12}', account_id):
+        return create_error_response(400, 'InvalidAccountId', 'Account ID must be exactly 12 digits')
+
+    # Compute ExternalId as SHA-256 hash of member email
+    external_id = hashlib.sha256(member_email.encode('utf-8')).hexdigest()
+
+    template = {
+        'AWSTemplateFormatVersion': '2010-09-09',
+        'Description': f'SlashMyBill cross-account access role for {account_id}',
+        'Resources': {
+            'SlashMyBillRole': {
+                'Type': 'AWS::IAM::Role',
+                'Properties': {
+                    'RoleName': f'SlashMyBill-{account_id}',
+                    'AssumeRolePolicyDocument': {
+                        'Version': '2012-10-17',
+                        'Statement': [
+                            {
+                                'Effect': 'Allow',
+                                'Principal': {
+                                    'AWS': f'arn:aws:iam::{PLATFORM_ACCOUNT_ID}:root'
+                                },
+                                'Action': 'sts:AssumeRole',
+                                'Condition': {
+                                    'StringEquals': {
+                                        'sts:ExternalId': external_id
+                                    }
+                                }
+                            }
+                        ]
+                    },
+                    'Policies': [
+                        {
+                            'PolicyName': 'SlashMyBillReadOnly',
+                            'PolicyDocument': {
+                                'Version': '2012-10-17',
+                                'Statement': [
+                                    {
+                                        'Effect': 'Allow',
+                                        'Action': [
+                                            'ce:GetCostAndUsage',
+                                            'ce:GetCostForecast',
+                                            'ce:GetReservationUtilization',
+                                            'ce:GetSavingsPlansUtilization',
+                                            'budgets:ViewBudget',
+                                            'cur:DescribeReportDefinitions',
+                                        ],
+                                        'Resource': '*'
+                                    }
+                                ]
+                            }
+                        }
+                    ]
+                }
+            }
+        },
+        'Outputs': {
+            'RoleArn': {
+                'Description': 'ARN of the SlashMyBill cross-account role',
+                'Value': {'Fn::GetAtt': ['SlashMyBillRole', 'Arn']}
+            }
+        }
+    }
+
+    template_yaml = yaml.dump(template, default_flow_style=False, sort_keys=False)
+    filename = f'SlashMyBill-{account_id}.yaml'
+
+    return create_response(200, {'template': template_yaml, 'filename': filename})
+
+
+def handle_test_connection(event):
+    """Test cross-account connection via STS AssumeRole + Cost Explorer."""
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+
+    member_email = auth['sub']
+
+    try:
+        body = json.loads(event.get('body', '{}'))
+    except (json.JSONDecodeError, TypeError):
+        return create_error_response(400, 'InvalidRequest', 'Invalid request body')
+
+    account_id = (body.get('accountId') or '').strip()
+    if not re.fullmatch(r'\d{12}', account_id):
+        return create_error_response(400, 'InvalidAccountId', 'Account ID must be exactly 12 digits')
+
+    role_arn = f'arn:aws:iam::{account_id}:role/SlashMyBill-{account_id}'
+    external_id = hashlib.sha256(member_email.encode('utf-8')).hexdigest()
+
+    accounts_table = dynamodb.Table(ACCOUNTS_TABLE_NAME)
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    # Step 1: STS AssumeRole
+    sts_client = boto3.client('sts')
+    try:
+        assume_response = sts_client.assume_role(
+            RoleArn=role_arn,
+            RoleSessionName='SlashMyBillConnectionTest',
+            ExternalId=external_id,
+        )
+        credentials = assume_response['Credentials']
+    except ClientError as e:
+        logger.error(f"STS AssumeRole failed for {role_arn}: {e}")
+        # Update status to failed
+        _update_connection_status(accounts_table, member_email, account_id, 'failed', now_iso)
+        return create_error_response(
+            400, 'ConnectionFailed',
+            f'The IAM role SlashMyBill-{account_id} was not found in account {account_id}. '
+            'Please deploy the CloudFormation template first.'
+        )
+
+    # Step 2: Test Cost Explorer call with assumed credentials
+    try:
+        ce_client = boto3.client(
+            'ce',
+            aws_access_key_id=credentials['AccessKeyId'],
+            aws_secret_access_key=credentials['SecretAccessKey'],
+            aws_session_token=credentials['SessionToken'],
+        )
+
+        # Query last 7 days
+        end_date = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+        start_str = (datetime.now(timezone.utc) - timedelta(days=7)).strftime('%Y-%m-%d')
+
+        ce_client.get_cost_and_usage(
+            TimePeriod={'Start': start_str, 'End': end_date},
+            Granularity='DAILY',
+            Metrics=['UnblendedCost'],
+        )
+    except ClientError as e:
+        logger.error(f"Cost Explorer call failed for {account_id}: {e}")
+        _update_connection_status(accounts_table, member_email, account_id, 'partial', now_iso)
+        return create_error_response(
+            400, 'PartialConnection',
+            'The role was assumed successfully, but Cost Explorer access was denied. '
+            'Please verify the role policy includes ce:GetCostAndUsage permission.'
+        )
+
+    # Full success
+    _update_connection_status(accounts_table, member_email, account_id, 'connected', now_iso)
+    logger.info(f"Connection test successful for account {account_id}, member {member_email}")
+    return create_response(200, {'status': 'connected', 'message': 'Connection verified. Cost data is accessible.'})
+
+
+# ============================================================
+# Connection status helper
+# ============================================================
+
+def _update_connection_status(accounts_table, member_email, account_id, status, last_tested_at):
+    """Update connectionStatus and lastTestedAt for an account record."""
+    try:
+        accounts_table.update_item(
+            Key={'memberEmail': member_email, 'accountId': account_id},
+            UpdateExpression='SET connectionStatus = :s, lastTestedAt = :t',
+            ExpressionAttributeValues={':s': status, ':t': last_tested_at},
+        )
+    except ClientError as e:
+        logger.error(f"Failed to update connection status for {account_id}: {e}")
+
+
+# ============================================================
+# OTP email template
+# ============================================================
+
+def _build_otp_email(otp_code):
+    """Build HTML email body for OTP verification with SlashMyBill branding."""
+    return f"""<!DOCTYPE html>
+<html><head><meta charset="UTF-8"></head>
+<body style="font-family:Arial,sans-serif;max-width:480px;margin:0 auto;padding:20px;background:#ffffff;">
+  <div style="text-align:center;padding:20px 0;border-bottom:2px solid #0066ff;">
+    <img src="https://www.eshkolai.com/SlashMyBill.png" alt="SlashMyBill" style="height:48px;margin-bottom:8px;" />
+    <h2 style="color:#0a0e27;margin:0;">SlashMyBill</h2>
+    <p style="color:#666;margin:4px 0 0;">AI-Powered AWS Bill Analysis</p>
+  </div>
+  <div style="padding:30px 0;text-align:center;">
+    <p style="color:#333;font-size:16px;">Your verification code is:</p>
+    <div style="font-size:36px;font-weight:bold;letter-spacing:8px;color:#0066ff;
+                padding:20px;background:#f0f7ff;border-radius:8px;margin:16px 0;">
+      {otp_code}
+    </div>
+    <p style="color:#666;font-size:14px;">This code is valid for 5 minutes.</p>
+    <p style="color:#999;font-size:12px;margin-top:24px;">
+      If you did not request this code, please ignore this email.
+    </p>
+  </div>
+  <div style="text-align:center;padding-top:16px;border-top:1px solid #eee;">
+    <p style="color:#999;font-size:11px;">eshkolai.com &bull; Cloud and AI Services</p>
+  </div>
+</body></html>"""
+
+
+# ============================================================
+# Helper functions
+# ============================================================
+
+def cors_headers():
+    """Return CORS headers for member API responses."""
+    return {
+        'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': 'https://www.eshkolai.com',
+        'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+        'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+    }
+
+
+def create_response(status_code, body):
+    """Return an API Gateway v2 response dict with CORS headers."""
+    return {
+        'statusCode': status_code,
+        'headers': cors_headers(),
+        'body': json.dumps(body),
+    }
+
+
+def create_error_response(status_code, error_type, message):
+    """Return an error response following the existing Lambda pattern."""
+    return {
+        'statusCode': status_code,
+        'headers': cors_headers(),
+        'body': json.dumps({
+            'error': error_type,
+            'message': message,
+            'code': status_code,
+        }),
+    }
