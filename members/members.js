@@ -44,6 +44,12 @@ var dashboardAnswerInput = $('dashboard-answer');
 var dashboardAddBtn = $('dashboard-add-btn');
 var dashboardGrid = $('dashboard-grid');
 var dashboardEmpty = $('dashboard-empty');
+var visualizeModal = $('visualize-modal');
+var visualizeTypeSelect = $('visualize-type-select');
+var visualizeTitleInput = $('visualize-title-input');
+var visualizeCloseBtn = $('visualize-close-btn');
+var visualizeCancelBtn = $('visualize-cancel-btn');
+var visualizeSaveBtn = $('visualize-save-btn');
 
 // Account modal
 var accountModal = $('account-modal');
@@ -74,6 +80,7 @@ var deletingAccountId = null;
 var resetEmailValue = '';
 var resetToken = null;
 var dashboardItems = [];
+var pendingVisualize = null;
 
 // ============================================================
 // Helpers
@@ -831,16 +838,122 @@ accountsTbody.onclick = function(e) {
 
 document.querySelectorAll('.member-tab').forEach(function(tab) {
     tab.onclick = function() {
-        document.querySelectorAll('.member-tab').forEach(function(t) { t.classList.remove('active'); });
-        document.querySelectorAll('.member-tab-content').forEach(function(c) { c.hidden = true; });
-        tab.classList.add('active');
-        var target = $(tab.dataset.tab);
-        if (target) target.hidden = false;
-        if (tab.dataset.tab === 'dashboard-tab') loadDashboard();
-        if (tab.dataset.tab === 'lab-tab') populateLabAccounts();
-        if (tab.dataset.tab === 'ai-tab') populateAIAccounts();
+        activateMemberTab(tab.dataset.tab);
     };
 });
+
+function activateMemberTab(tabId) {
+    document.querySelectorAll('.member-tab').forEach(function(t) {
+        t.classList.toggle('active', t.dataset.tab === tabId);
+    });
+    document.querySelectorAll('.member-tab-content').forEach(function(c) {
+        c.hidden = c.id !== tabId;
+    });
+    if (tabId === 'dashboard-tab') loadDashboard();
+    if (tabId === 'lab-tab') populateLabAccounts();
+    if (tabId === 'ai-tab') populateAIAccounts();
+}
+
+// ============================================================
+// Dashboard (Saved Queries + Visuals)
+// ============================================================
+
+function extractValues(text) {
+    var matches = String(text || '').match(/-?\\d+(?:\\.\\d+)?/g) || [];
+    return matches.slice(0, 8).map(function(v, idx) {
+        return { label: 'V' + (idx + 1), value: Number(v) };
+    }).filter(function(x) { return !isNaN(x.value); });
+}
+
+function renderMiniGraph(values) {
+    if (!values.length) return '<p>Provide numeric values in the answer to render a graph.</p>';
+    var max = Math.max.apply(null, values.map(function(v) { return Math.abs(v.value); })) || 1;
+    var rows = values.map(function(v) {
+        var pct = Math.max(4, Math.round(Math.abs(v.value) / max * 100));
+        return '<div class=\"mini-bar-row\"><span>' + esc(v.label) + '</span><div class=\"mini-bar\" style=\"width:' + pct + '%\"></div><strong>' + esc(String(v.value)) + '</strong></div>';
+    }).join('');
+    return '<div class=\"mini-bars\">' + rows + '</div>';
+}
+
+function renderMiniTable(values) {
+    if (!values.length) return '<p>Provide numeric values in the answer to render a table.</p>';
+    var rows = values.map(function(v) {
+        return '<tr><td>' + esc(v.label) + '</td><td>' + esc(String(v.value)) + '</td></tr>';
+    }).join('');
+    return '<table class=\"mini-table\"><thead><tr><th>Metric</th><th>Value</th></tr></thead><tbody>' + rows + '</tbody></table>';
+}
+
+function renderDashboard() {
+    if (!dashboardGrid || !dashboardEmpty) return;
+    dashboardGrid.innerHTML = '';
+    dashboardEmpty.hidden = dashboardItems.length > 0;
+    if (!dashboardItems.length) return;
+
+    dashboardItems.forEach(function(item) {
+        var card = document.createElement('div');
+        card.className = 'dashboard-card';
+        var values = extractValues(item.answer || '');
+        var visual = item.viewType === 'table' ? renderMiniTable(values) : renderMiniGraph(values);
+        card.innerHTML =
+            '<h3>' + esc(item.title || 'Saved Query') + '</h3>' +
+            '<div class=\"dashboard-card-meta\">' + esc((item.viewType || 'graph').toUpperCase()) + ' • ' + esc(fmtDate(item.createdAt)) + '</div>' +
+            '<p><strong>Request:</strong> ' + esc(item.prompt || '') + '</p>' +
+            '<p><strong>Response:</strong> ' + esc(item.answer || '-') + '</p>' +
+            visual +
+            '<div class=\"dashboard-actions\"><button class=\"btn btn-outline btn-sm\" data-dashboard-del=\"' + ea(item.id || '') + '\">Delete</button></div>';
+        dashboardGrid.appendChild(card);
+    });
+}
+
+async function loadDashboard() {
+    try {
+        var data = await api('GET', '/members/dashboard');
+        dashboardItems = Array.isArray(data.items) ? data.items : [];
+        renderDashboard();
+    } catch (err) {
+        notify(err.message || 'Failed to load dashboard', 'error');
+    }
+}
+
+async function addDashboardItem() {
+    if (!dashboardViewType || !dashboardPromptInput) return;
+    var payload = {
+        viewType: dashboardViewType.value || 'graph',
+        title: (dashboardTitleInput && dashboardTitleInput.value || '').trim(),
+        prompt: dashboardPromptInput.value.trim(),
+        answer: (dashboardAnswerInput && dashboardAnswerInput.value || '').trim(),
+        accountId: (aiAccountSelect && aiAccountSelect.value) || '',
+    };
+    if (!payload.prompt) {
+        notify('Please describe what you want to visualize.', 'error');
+        return;
+    }
+    try {
+        await api('POST', '/members/dashboard', payload);
+        if (dashboardPromptInput) dashboardPromptInput.value = '';
+        if (dashboardTitleInput) dashboardTitleInput.value = '';
+        if (dashboardAnswerInput) dashboardAnswerInput.value = '';
+        notify('Saved to dashboard.', 'success');
+        loadDashboard();
+    } catch (err) {
+        notify(err.message || 'Failed to save dashboard item', 'error');
+    }
+}
+
+if (dashboardAddBtn) dashboardAddBtn.onclick = addDashboardItem;
+if (dashboardGrid) dashboardGrid.onclick = async function(e) {
+    var btn = e.target.closest('[data-dashboard-del]');
+    if (!btn) return;
+    var id = btn.getAttribute('data-dashboard-del');
+    if (!id) return;
+    try {
+        await api('DELETE', '/members/dashboard', { id: id });
+        notify('Dashboard item removed.', 'success');
+        loadDashboard();
+    } catch (err) {
+        notify(err.message || 'Failed to delete dashboard item', 'error');
+    }
+};
 
 // ============================================================
 // Dashboard (Saved Queries + Visuals)
@@ -1075,7 +1188,12 @@ function addAIMessage(type, content) {
             .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
             .replace(/\n- /g, '\n• ')
             .replace(/\n/g, '<br>');
-        div.innerHTML = '<div class="lab-msg-output" style="color:#e2e8f0;border-color:#4c1d95;">' + formatted + '</div>';
+        var questionText = aiQuestionInput && aiQuestionInput.dataset.lastQuestion ? aiQuestionInput.dataset.lastQuestion : '';
+        div.innerHTML =
+            '<div class="lab-msg-output" style="color:#e2e8f0;border-color:#4c1d95;">' + formatted + '</div>' +
+            '<div style="margin-top:10px;text-align:right;">' +
+            '<button class="btn btn-outline btn-sm ai-visualize-btn" data-question="' + ea(questionText) + '" data-answer="' + ea(content) + '">Visualize</button>' +
+            '</div>';
     } else if (type === 'commands') {
         var cmdsHtml = '<div class="lab-msg-info" style="color:#7ee787;">Commands executed:</div>';
         content.forEach(function(c) {
@@ -1102,6 +1220,7 @@ async function askAI() {
     if (!question) return;
 
     addAIMessage('question', question);
+    aiQuestionInput.dataset.lastQuestion = question;
     aiQuestionInput.value = '';
     addAIMessage('thinking', 'Analyzing your question...');
 
@@ -1142,8 +1261,48 @@ if (aiQuestionInput) aiQuestionInput.onkeydown = function(e) {
 
 // Click example questions to populate input
 if (aiChat) aiChat.onclick = function(e) {
+    var visualizeBtn = e.target.closest('.ai-visualize-btn');
+    if (visualizeBtn) {
+        pendingVisualize = {
+            prompt: visualizeBtn.getAttribute('data-question') || '',
+            answer: visualizeBtn.getAttribute('data-answer') || '',
+            accountId: (aiAccountSelect && aiAccountSelect.value) || '',
+        };
+        if (visualizeTitleInput) visualizeTitleInput.value = '';
+        if (visualizeTypeSelect) visualizeTypeSelect.value = 'graph';
+        if (visualizeModal) visualizeModal.hidden = false;
+        return;
+    }
     if (e.target.tagName === 'CODE' && e.target.closest('.lab-examples')) {
         aiQuestionInput.value = e.target.textContent;
         aiQuestionInput.focus();
     }
 };
+
+function closeVisualizeModal() {
+    if (visualizeModal) visualizeModal.hidden = true;
+    pendingVisualize = null;
+}
+
+async function saveVisualizedAnswer() {
+    if (!pendingVisualize) return;
+    var payload = {
+        viewType: (visualizeTypeSelect && visualizeTypeSelect.value) || 'graph',
+        title: (visualizeTitleInput && visualizeTitleInput.value || '').trim(),
+        prompt: pendingVisualize.prompt || 'AI Query',
+        answer: pendingVisualize.answer || '',
+        accountId: pendingVisualize.accountId || '',
+    };
+    try {
+        await api('POST', '/members/dashboard', payload);
+        closeVisualizeModal();
+        notify('Visualization added to Dashboard.', 'success');
+        activateMemberTab('dashboard-tab');
+    } catch (err) {
+        notify(err.message || 'Failed to add visualization', 'error');
+    }
+}
+
+if (visualizeCloseBtn) visualizeCloseBtn.onclick = closeVisualizeModal;
+if (visualizeCancelBtn) visualizeCancelBtn.onclick = closeVisualizeModal;
+if (visualizeSaveBtn) visualizeSaveBtn.onclick = saveVisualizedAnswer;

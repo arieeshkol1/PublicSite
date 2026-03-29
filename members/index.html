@@ -403,6 +403,34 @@
         </div>
     </div>
 
+    <!-- Visualize Answer Modal -->
+    <div id="visualize-modal" class="modal-overlay" hidden>
+        <div class="modal-card modal-card-sm">
+            <div class="modal-header">
+                <h2>Visualize Answer</h2>
+                <button id="visualize-close-btn" class="modal-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label for="visualize-type-select">Visual Type</label>
+                    <select id="visualize-type-select">
+                        <option value="graph">Graph</option>
+                        <option value="table">Table</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="visualize-title-input">Title (optional)</label>
+                    <input type="text" id="visualize-title-input" placeholder="EC2 3-Month Utilization">
+                </div>
+                <p class="field-hint">This answer will be added to your Dashboard tab.</p>
+            </div>
+            <div class="modal-footer">
+                <button id="visualize-cancel-btn" class="btn btn-outline">Cancel</button>
+                <button id="visualize-save-btn" class="btn btn-primary">Add to Dashboard</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Loading Overlay -->
     <div id="loading-overlay" class="loading-overlay" hidden>
         <div class="loading-spinner"></div>
@@ -413,6 +441,6 @@
         <span id="notification-message"></span>
     </div>
 
-    <script src="members.js?v=6"></script>
+    <script src="members.js?v=7"></script>
 </body>
 </html>
