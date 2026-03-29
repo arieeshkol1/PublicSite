@@ -185,6 +185,7 @@
     .dashboard-header { padding: 0 16px; }
     .dashboard-content { padding: 16px 16px 32px; }
     .tab-toolbar { flex-wrap: wrap; gap: 12px; }
+    .dashboard-builder-row { grid-template-columns: 1fr; }
     .member-tab { padding: 10px 16px; font-size: 18px; }
     .modal-card { margin: 12px; }
     .data-table { font-size: 16px; }
@@ -293,6 +294,48 @@
 }
 .member-tab:hover { color: var(--primary); }
 .member-tab.active { color: var(--primary); border-bottom-color: var(--primary); }
+
+/* ============================================================
+   Dashboard Tab (Saved Queries)
+   ============================================================ */
+.dashboard-builder {
+    background: var(--white);
+    border: 1px solid var(--gray-light);
+    border-radius: 12px;
+    padding: 20px;
+    margin-bottom: 18px;
+}
+.dashboard-builder-row {
+    display: grid;
+    grid-template-columns: 1fr 2fr;
+    gap: 12px;
+}
+.dashboard-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    gap: 14px;
+}
+.dashboard-card {
+    background: var(--white);
+    border: 1px solid var(--gray-light);
+    border-radius: 12px;
+    padding: 16px;
+}
+.dashboard-card h3 { margin: 0 0 8px; font-size: 18px; color: var(--dark); }
+.dashboard-card-meta { color: var(--gray); font-size: 13px; margin-bottom: 10px; }
+.dashboard-card p { margin: 0 0 10px; font-size: 14px; color: #334155; white-space: pre-wrap; }
+.dashboard-actions { display: flex; justify-content: flex-end; margin-top: 8px; }
+
+.mini-bars { display: grid; gap: 8px; margin: 8px 0 4px; }
+.mini-bar-row { display: grid; grid-template-columns: 60px 1fr 48px; gap: 8px; align-items: center; font-size: 12px; }
+.mini-bar {
+    height: 12px;
+    background: linear-gradient(90deg, #2563eb, #60a5fa);
+    border-radius: 999px;
+}
+.mini-table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 8px; }
+.mini-table th, .mini-table td { border: 1px solid #e5e7eb; padding: 6px 8px; text-align: left; }
+.mini-table th { background: #eff6ff; }
 
 /* ============================================================
    Lab Area
