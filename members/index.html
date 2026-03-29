@@ -159,6 +159,77 @@
         </div>
     </div>
 
+    <!-- Setup Wizard Modal -->
+    <div id="wizard-modal" class="modal-overlay" hidden>
+        <div class="modal-card modal-card-wizard">
+            <div class="modal-header">
+                <h2>Connect AWS Account</h2>
+                <button id="wizard-close" class="modal-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <!-- Wizard Progress -->
+                <div class="wizard-progress">
+                    <div class="wizard-step-indicator active" id="wiz-ind-1"><span>1</span> Download Template</div>
+                    <div class="wizard-step-indicator" id="wiz-ind-2"><span>2</span> Deploy in AWS</div>
+                    <div class="wizard-step-indicator" id="wiz-ind-3"><span>3</span> Test Connection</div>
+                </div>
+
+                <!-- Step 1: Download CloudFormation Template -->
+                <div id="wiz-step-1" class="wizard-step-content">
+                    <div class="wizard-icon">&#9997;</div>
+                    <h3>Step 1: Download the CloudFormation Template</h3>
+                    <p>We've generated a CloudFormation template that creates a read-only IAM role in your AWS account. This role allows SlashMyBill to access your Cost Explorer and Billing data securely.</p>
+                    <div class="wizard-info-box">
+                        <p><strong>Role name:</strong> <code id="wiz-role-name">SlashMyBill-123456789012</code></p>
+                        <p><strong>Permissions:</strong> Read-only access to Cost Explorer &amp; Billing APIs</p>
+                        <p><strong>Security:</strong> Uses ExternalId for additional protection</p>
+                    </div>
+                    <button id="wiz-download-btn" class="btn btn-primary btn-full">
+                        &#8681; Download CloudFormation Template
+                    </button>
+                    <div class="wizard-note">Save this file — you'll need it in the next step.</div>
+                </div>
+
+                <!-- Step 2: Deploy in AWS Console -->
+                <div id="wiz-step-2" class="wizard-step-content" hidden>
+                    <div class="wizard-icon">&#9729;</div>
+                    <h3>Step 2: Deploy the Template in AWS</h3>
+                    <p>Open the AWS CloudFormation console and create a new stack using the template you just downloaded.</p>
+                    <ol class="wizard-instructions">
+                        <li>Sign in to the <a href="https://console.aws.amazon.com/cloudformation" target="_blank" rel="noopener">AWS CloudFormation Console</a> with the account <strong id="wiz-account-display">123456789012</strong></li>
+                        <li>Click <strong>"Create stack"</strong> → <strong>"With new resources (standard)"</strong></li>
+                        <li>Select <strong>"Upload a template file"</strong> and choose the file you downloaded</li>
+                        <li>Click <strong>"Next"</strong>, enter a stack name (e.g., <code>SlashMyBill-Access</code>)</li>
+                        <li>Click <strong>"Next"</strong> through the options page</li>
+                        <li>On the review page, check <strong>"I acknowledge that AWS CloudFormation might create IAM resources with custom names"</strong></li>
+                        <li>Click <strong>"Submit"</strong> and wait for the stack to show <strong>CREATE_COMPLETE</strong></li>
+                    </ol>
+                    <a href="https://console.aws.amazon.com/cloudformation/home#/stacks/create" target="_blank" rel="noopener" class="btn btn-primary btn-full">
+                        Open AWS CloudFormation Console &#8599;
+                    </a>
+                    <div class="wizard-note">Once the stack is created, come back here and click "Next".</div>
+                </div>
+
+                <!-- Step 3: Test Connection -->
+                <div id="wiz-step-3" class="wizard-step-content" hidden>
+                    <div class="wizard-icon">&#9889;</div>
+                    <h3>Step 3: Test the Connection</h3>
+                    <p>Let's verify that SlashMyBill can access your AWS account's billing data through the role you just created.</p>
+                    <div id="wiz-test-result" class="wizard-test-result" hidden></div>
+                    <button id="wiz-test-btn" class="btn btn-primary btn-full">
+                        &#9889; Test Connection
+                    </button>
+                    <div class="wizard-note">This will attempt to assume the IAM role and read your Cost Explorer data.</div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button id="wiz-back-btn" class="btn btn-outline" hidden>Back</button>
+                <button id="wiz-next-btn" class="btn btn-primary">Next</button>
+                <button id="wiz-finish-btn" class="btn btn-primary" hidden>Finish</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Delete Confirmation Dialog -->
     <div id="delete-dialog" class="modal-overlay" hidden>
         <div class="modal-card modal-card-sm">

@@ -219,3 +219,61 @@ body {
     .data-table thead th { padding: 10px 10px; font-size: 11px; }
     .data-table tbody td { padding: 8px 10px; }
 }
+
+/* ============================================================
+   Setup Wizard
+   ============================================================ */
+.modal-card-wizard { max-width: 640px; }
+
+.wizard-progress {
+    display: flex; gap: 8px; margin-bottom: 24px;
+    border-bottom: 2px solid var(--gray-light); padding-bottom: 16px;
+}
+.wizard-step-indicator {
+    flex: 1; text-align: center; font-size: 12px; font-weight: 600;
+    color: var(--gray); padding: 8px 4px; border-radius: 8px;
+    transition: all 0.2s;
+}
+.wizard-step-indicator span {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 24px; height: 24px; border-radius: 50%; background: var(--gray-light);
+    color: var(--gray); font-size: 12px; font-weight: 700; margin-right: 6px;
+}
+.wizard-step-indicator.active { color: var(--primary); }
+.wizard-step-indicator.active span { background: var(--primary); color: var(--white); }
+.wizard-step-indicator.done { color: var(--success); }
+.wizard-step-indicator.done span { background: var(--success); color: var(--white); }
+
+.wizard-step-content { animation: fadeIn 0.3s ease-out; }
+@keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+
+.wizard-icon { font-size: 40px; text-align: center; margin-bottom: 12px; }
+.wizard-step-content h3 { font-size: 18px; color: var(--dark); margin-bottom: 12px; text-align: center; }
+.wizard-step-content p { font-size: 14px; color: #555; line-height: 1.6; margin-bottom: 16px; }
+
+.wizard-info-box {
+    background: #f0f7ff; border: 1px solid #cce0ff; border-radius: 10px;
+    padding: 16px; margin-bottom: 16px; font-size: 13px;
+}
+.wizard-info-box p { margin-bottom: 6px; color: #333; }
+.wizard-info-box code { background: #e0e7ff; padding: 2px 6px; border-radius: 4px; font-size: 12px; }
+
+.wizard-instructions {
+    margin: 0 0 16px 0; padding-left: 22px; font-size: 13px; line-height: 1.9; color: #444;
+}
+.wizard-instructions li { margin-bottom: 4px; }
+.wizard-instructions strong { color: #0a0e27; }
+.wizard-instructions a { color: var(--primary); text-decoration: none; }
+.wizard-instructions a:hover { text-decoration: underline; }
+.wizard-instructions code { background: #f0f0f0; padding: 1px 5px; border-radius: 3px; font-size: 12px; }
+
+.wizard-note {
+    text-align: center; font-size: 12px; color: var(--gray); margin-top: 12px; font-style: italic;
+}
+
+.wizard-test-result {
+    padding: 16px; border-radius: 10px; margin-bottom: 16px; font-size: 14px; font-weight: 500;
+}
+.wizard-test-result.test-success { background: #d1fae5; color: #065f46; border: 1px solid #10b981; }
+.wizard-test-result.test-failed { background: #fee2e2; color: #991b1b; border: 1px solid #ef4444; }
+.wizard-test-result.test-partial { background: #ffedd5; color: #9a3412; border: 1px solid #f97316; }

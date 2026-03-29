@@ -486,3 +486,207 @@ if (getToken()) {
 } else {
     showView('login');
 }
+
+// ============================================================
+// Setup Wizard
+// ============================================================
+
+var wizardModal = $('wizard-modal');
+var wizardClose = $('wizard-close');
+var wizStep1 = $('wiz-step-1');
+var wizStep2 = $('wiz-step-2');
+var wizStep3 = $('wiz-step-3');
+var wizInd1 = $('wiz-ind-1');
+var wizInd2 = $('wiz-ind-2');
+var wizInd3 = $('wiz-ind-3');
+var wizBackBtn = $('wiz-back-btn');
+var wizNextBtn = $('wiz-next-btn');
+var wizFinishBtn = $('wiz-finish-btn');
+var wizDownloadBtn = $('wiz-download-btn');
+var wizTestBtn = $('wiz-test-btn');
+var wizTestResult = $('wiz-test-result');
+var wizRoleName = $('wiz-role-name');
+var wizAccountDisplay = $('wiz-account-display');
+var wizardAccountId = null;
+var wizardStep = 1;
+var wizardTemplateDownloaded = false;
+
+function showWizard(accountId) {
+    wizardAccountId = accountId;
+    wizardStep = 1;
+    wizardTemplateDownloaded = false;
+    wizRoleName.textContent = 'SlashMyBill-' + accountId;
+    wizAccountDisplay.textContent = accountId;
+    wizTestResult.hidden = true;
+    wizTestResult.className = 'wizard-test-result';
+    updateWizardStep();
+    wizardModal.hidden = false;
+}
+
+function hideWizard() {
+    wizardModal.hidden = true;
+    wizardAccountId = null;
+    loadAccounts();
+}
+
+function updateWizardStep() {
+    wizStep1.hidden = wizardStep !== 1;
+    wizStep2.hidden = wizardStep !== 2;
+    wizStep3.hidden = wizardStep !== 3;
+
+    wizInd1.className = 'wizard-step-indicator' + (wizardStep === 1 ? ' active' : wizardStep > 1 ? ' done' : '');
+    wizInd2.className = 'wizard-step-indicator' + (wizardStep === 2 ? ' active' : wizardStep > 2 ? ' done' : '');
+    wizInd3.className = 'wizard-step-indicator' + (wizardStep === 3 ? ' active' : '');
+
+    wizBackBtn.hidden = wizardStep <= 1;
+    wizNextBtn.hidden = wizardStep >= 3;
+    wizFinishBtn.hidden = wizardStep < 3;
+}
+
+wizNextBtn.onclick = function() {
+    if (wizardStep === 1 && !wizardTemplateDownloaded) {
+        notify('Please download the template first.', 'error');
+        return;
+    }
+    if (wizardStep < 3) {
+        wizardStep++;
+        updateWizardStep();
+    }
+};
+
+wizBackBtn.onclick = function() {
+    if (wizardStep > 1) {
+        wizardStep--;
+        updateWizardStep();
+    }
+};
+
+wizFinishBtn.onclick = function() { hideWizard(); };
+wizardClose.onclick = function() { hideWizard(); };
+wizardModal.onclick = function(e) { if (e.target === wizardModal) hideWizard(); };
+
+wizDownloadBtn.onclick = async function() {
+    if (!wizardAccountId) return;
+    try {
+        showLoading();
+        var data = await api('POST', '/members/accounts/template', { accountId: wizardAccountId });
+        var blob = new Blob([data.template], { type: 'application/x-yaml' });
+        var url = URL.createObjectURL(blob);
+        var a = document.createElement('a');
+        a.href = url;
+        a.download = data.filename || ('SlashMyBill-' + wizardAccountId + '.yaml');
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        wizardTemplateDownloaded = true;
+        notify('Template downloaded!', 'success');
+    } catch (err) {
+        notify(err.message || 'Failed to download template.', 'error');
+    } finally {
+        hideLoading();
+    }
+};
+
+wizTestBtn.onclick = async function() {
+    if (!wizardAccountId) return;
+    wizTestResult.hidden = true;
+    try {
+        showLoading();
+        var data = await api('POST', '/members/accounts/test', { accountId: wizardAccountId });
+        wizTestResult.hidden = false;
+        wizTestResult.className = 'wizard-test-result test-success';
+        wizTestResult.innerHTML = '<strong>&#10003; Connection Successful!</strong><br>' + (data.message || 'Cost data is accessible.');
+    } catch (err) {
+        wizTestResult.hidden = false;
+        if (err.message && err.message.includes('Cost Explorer')) {
+            wizTestResult.className = 'wizard-test-result test-partial';
+        } else {
+            wizTestResult.className = 'wizard-test-result test-failed';
+        }
+        wizTestResult.innerHTML = '<strong>&#10007; Connection Failed</strong><br>' + (err.message || 'Please check the CloudFormation stack.');
+    } finally {
+        hideLoading();
+        await loadAccounts();
+    }
+};
+
+// Override the add account flow to show wizard after adding
+var _originalAccountFormSubmit = accountForm.onsubmit;
+accountForm.onsubmit = async function(e) {
+    e.preventDefault();
+    accountFormError.textContent = '';
+    var val = accountIdInput.value.trim();
+    if (!/^\d{12}$/.test(val)) {
+        accountFormError.textContent = 'Account ID must be exactly 12 digits.';
+        return;
+    }
+    try {
+        showLoading();
+        if (editingAccountId) {
+            await api('PUT', '/members/accounts', { oldAccountId: editingAccountId, newAccountId: val });
+            notify('Account updated.', 'success');
+            hideAccountModal();
+            await loadAccounts();
+        } else {
+            await api('POST', '/members/accounts', { accountId: val });
+            notify('Account added!', 'success');
+            hideAccountModal();
+            await loadAccounts();
+            // Show the setup wizard for the new account
+            showWizard(val);
+        }
+    } catch (err) {
+        accountFormError.textContent = err.message || 'Failed.';
+    } finally {
+        hideLoading();
+    }
+};
+
+// Also add a "Setup" button to the accounts table for pending accounts
+var _originalRenderAccounts = renderAccounts;
+renderAccounts = function(accounts) {
+    accountsTbody.innerHTML = '';
+    if (!accounts.length) {
+        accountsEmpty.hidden = false;
+        return;
+    }
+    accountsEmpty.hidden = true;
+    accounts.forEach(function(a, idx) {
+        var statusClass = 'status-' + (a.connectionStatus || 'pending');
+        var setupBtn = (a.connectionStatus === 'pending' || a.connectionStatus === 'failed')
+            ? '<button class="btn-icon btn-icon-test" data-a="setup" data-id="' + ea(a.accountId) + '" title="Setup Wizard" style="background:rgba(0,102,255,0.1);color:#0066ff;">&#9881;</button> '
+            : '';
+        var tr = document.createElement('tr');
+        tr.innerHTML =
+            '<td style="color:#999;font-size:12px">' + (idx + 1) + '</td>' +
+            '<td>' + esc(a.accountId || '') + '</td>' +
+            '<td>' + esc(a.roleName || '') + '</td>' +
+            '<td><span class="status-badge ' + statusClass + '">' + esc(a.connectionStatus || 'pending') + '</span></td>' +
+            '<td>' + fmtDate(a.addedAt) + '</td>' +
+            '<td>' + fmtDate(a.lastTestedAt) + '</td>' +
+            '<td class="actions-cell">' +
+                setupBtn +
+                '<button class="btn-icon btn-icon-download" data-a="dl" data-id="' + ea(a.accountId) + '" title="Download CF Template">&#8681;</button> ' +
+                '<button class="btn-icon btn-icon-test" data-a="test" data-id="' + ea(a.accountId) + '" title="Test Connection">&#9889;</button> ' +
+                '<button class="btn-icon btn-icon-edit" data-a="edit" data-id="' + ea(a.accountId) + '" title="Edit">&#9998;</button> ' +
+                '<button class="btn-icon btn-icon-delete" data-a="del" data-id="' + ea(a.accountId) + '" title="Delete">&#128465;</button>' +
+            '</td>';
+        accountsTbody.appendChild(tr);
+    });
+};
+
+// Add setup action to the table click handler
+var _originalTableClick = accountsTbody.onclick;
+accountsTbody.onclick = function(e) {
+    var btn = e.target.closest('[data-a]');
+    if (!btn) return;
+    var action = btn.dataset.a;
+    var accountId = btn.dataset.id;
+
+    if (action === 'setup') showWizard(accountId);
+    else if (action === 'edit') showAccountModal(accountId);
+    else if (action === 'del') showDeleteDialog(accountId);
+    else if (action === 'dl') downloadTemplate(accountId);
+    else if (action === 'test') testConnection(accountId, btn);
+};
