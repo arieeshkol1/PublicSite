@@ -76,6 +76,7 @@ def lambda_handler(event, context):
         'DELETE /members/accounts': handle_delete_account,
         'POST /members/accounts/template': handle_generate_template,
         'POST /members/accounts/test': handle_test_connection,
+        'POST /members/accounts/execute': handle_execute_command,
     }
 
     handler = routes.get(route_key)
@@ -775,6 +776,160 @@ def handle_test_connection(event):
     _update_connection_status(accounts_table, member_email, account_id, 'connected', now_iso)
     logger.info(f"Connection test successful for account {account_id}, member {member_email}")
     return create_response(200, {'status': 'connected', 'message': 'Connection verified. Cost data is accessible.'})
+
+
+def handle_execute_command(event):
+    """Execute an AWS CLI command against a member's connected account via cross-account role."""
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+
+    member_email = auth['sub']
+
+    try:
+        body = json.loads(event.get('body', '{}'))
+    except (json.JSONDecodeError, TypeError):
+        return create_error_response(400, 'InvalidRequest', 'Invalid request body')
+
+    account_id = (body.get('accountId') or '').strip()
+    command = (body.get('command') or '').strip()
+
+    if not re.fullmatch(r'\d{12}', account_id):
+        return create_error_response(400, 'InvalidAccountId', 'Account ID must be exactly 12 digits')
+    if not command:
+        return create_error_response(400, 'InvalidRequest', 'Command is required')
+
+    # Parse the AWS CLI command: "aws <service> <action> [--param value ...]"
+    parts = command.split()
+    if len(parts) < 3 or parts[0] != 'aws':
+        return create_error_response(400, 'InvalidCommand', 'Command must start with "aws <service> <action>"')
+
+    service_name = parts[1]
+    action_name = parts[2]
+
+    # Whitelist of allowed services (read-only operations)
+    allowed_services = {
+        'ce', 'costexplorer', 'cost-explorer',
+        's3', 's3api',
+        'ec2',
+        'rds',
+        'lambda',
+        'iam',
+        'cloudwatch', 'logs',
+        'sts',
+        'dynamodb',
+        'elasticache',
+        'elbv2', 'elb',
+        'route53',
+        'cloudfront',
+        'budgets',
+    }
+
+    # Block write/delete operations
+    blocked_actions = [
+        'create', 'delete', 'put', 'update', 'modify', 'terminate', 'stop', 'start',
+        'reboot', 'run', 'invoke', 'send', 'publish', 'remove', 'attach', 'detach',
+        'enable', 'disable', 'tag', 'untag', 'deregister', 'register',
+    ]
+
+    if service_name not in allowed_services:
+        return create_error_response(400, 'InvalidCommand', f'Service "{service_name}" is not allowed. Allowed: {", ".join(sorted(allowed_services))}')
+
+    action_lower = action_name.lower().replace('-', '')
+    for blocked in blocked_actions:
+        if action_lower.startswith(blocked):
+            return create_error_response(400, 'InvalidCommand', f'Write operation "{action_name}" is not allowed. Only read/describe/list/get operations are permitted.')
+
+    # Assume the cross-account role
+    role_arn = f'arn:aws:iam::{account_id}:role/SlashMyBill-{account_id}'
+    external_id = hashlib.sha256(member_email.encode('utf-8')).hexdigest()
+
+    sts_client = boto3.client('sts')
+    try:
+        assume_response = sts_client.assume_role(
+            RoleArn=role_arn,
+            RoleSessionName='SlashMyBillLab',
+            ExternalId=external_id,
+        )
+        credentials = assume_response['Credentials']
+    except ClientError as e:
+        return create_error_response(400, 'ConnectionFailed',
+            f'Cannot assume role for account {account_id}. Please ensure the CloudFormation stack is deployed.')
+
+    # Parse CLI arguments into boto3 parameters
+    cli_params = {}
+    i = 3
+    while i < len(parts):
+        if parts[i].startswith('--'):
+            param_name = parts[i][2:]
+            # Convert CLI param name to PascalCase for boto3
+            pascal = ''.join(w.capitalize() for w in param_name.split('-'))
+            if i + 1 < len(parts) and not parts[i + 1].startswith('--'):
+                cli_params[pascal] = parts[i + 1]
+                i += 2
+            else:
+                cli_params[pascal] = True
+                i += 1
+        else:
+            i += 1
+
+    # Convert action name from CLI format to boto3 method name
+    # e.g., "describe-instances" -> "describe_instances"
+    method_name = action_name.replace('-', '_')
+
+    # Map CLI service names to boto3 service names
+    service_map = {
+        'costexplorer': 'ce', 'cost-explorer': 'ce',
+        's3api': 's3', 'logs': 'logs',
+        'elbv2': 'elbv2', 'elb': 'elb',
+    }
+    boto3_service = service_map.get(service_name, service_name)
+
+    try:
+        client = boto3.client(
+            boto3_service,
+            aws_access_key_id=credentials['AccessKeyId'],
+            aws_secret_access_key=credentials['SecretAccessKey'],
+            aws_session_token=credentials['SessionToken'],
+            region_name='us-east-1',
+        )
+
+        if not hasattr(client, method_name):
+            return create_error_response(400, 'InvalidCommand',
+                f'Unknown action "{action_name}" for service "{service_name}"')
+
+        method = getattr(client, method_name)
+        result = method(**cli_params)
+
+        # Remove ResponseMetadata for cleaner output
+        if isinstance(result, dict):
+            result.pop('ResponseMetadata', None)
+
+        # Convert to JSON-serializable format
+        output = json.dumps(result, indent=2, default=str)
+
+        return create_response(200, {
+            'output': output,
+            'service': service_name,
+            'action': action_name,
+            'accountId': account_id,
+        })
+
+    except ClientError as e:
+        error_msg = e.response.get('Error', {}).get('Message', str(e))
+        return create_response(200, {
+            'output': f'ERROR: {error_msg}',
+            'service': service_name,
+            'action': action_name,
+            'accountId': account_id,
+        })
+    except Exception as e:
+        return create_response(200, {
+            'output': f'ERROR: {str(e)}',
+            'service': service_name,
+            'action': action_name,
+            'accountId': account_id,
+        })
 
 
 # ============================================================

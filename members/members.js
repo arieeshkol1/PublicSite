@@ -726,3 +726,127 @@ accountsTbody.onclick = function(e) {
     else if (action === 'dl') downloadTemplate(accountId);
     else if (action === 'test') testConnection(accountId, btn);
 };
+
+// ============================================================
+// Member Tabs
+// ============================================================
+
+document.querySelectorAll('.member-tab').forEach(function(tab) {
+    tab.onclick = function() {
+        document.querySelectorAll('.member-tab').forEach(function(t) { t.classList.remove('active'); });
+        document.querySelectorAll('.member-tab-content').forEach(function(c) { c.hidden = true; });
+        tab.classList.add('active');
+        var target = $(tab.dataset.tab);
+        if (target) target.hidden = false;
+        if (tab.dataset.tab === 'lab-tab') populateLabAccounts();
+    };
+});
+
+// ============================================================
+// Lab Area
+// ============================================================
+
+var labChat = $('lab-chat');
+var labCommandInput = $('lab-command-input');
+var labRunBtn = $('lab-run-btn');
+var labAccountSelect = $('lab-account-select');
+
+function populateLabAccounts() {
+    var current = labAccountSelect.value;
+    labAccountSelect.innerHTML = '<option value="">Select an account...</option>';
+    // Use the already-loaded accounts from the dashboard
+    if (typeof allAccounts !== 'undefined' && allAccounts) {
+        allAccounts.forEach(function(a) {
+            if (a.connectionStatus === 'connected') {
+                var opt = document.createElement('option');
+                opt.value = a.accountId;
+                opt.textContent = a.accountId + ' (' + a.roleName + ')';
+                labAccountSelect.appendChild(opt);
+            }
+        });
+    }
+    if (current) labAccountSelect.value = current;
+}
+
+// Store accounts globally for lab
+var allAccounts = [];
+var _origLoadAccounts = loadAccounts;
+loadAccounts = async function() {
+    try {
+        showLoading();
+        var data = await api('GET', '/members/accounts');
+        allAccounts = data.accounts || [];
+        renderAccounts(allAccounts);
+    } catch (err) {
+        notify('Failed to load accounts.', 'error');
+    } finally {
+        hideLoading();
+    }
+};
+
+function addLabMessage(type, content) {
+    // Remove welcome message if present
+    var welcome = labChat.querySelector('.lab-welcome');
+    if (welcome) welcome.remove();
+
+    var div = document.createElement('div');
+    div.className = 'lab-message';
+
+    if (type === 'command') {
+        div.innerHTML = '<div class="lab-msg-command">' + esc(content) + '</div>';
+    } else if (type === 'output') {
+        div.innerHTML = '<div class="lab-msg-output">' + esc(content) + '</div>';
+    } else if (type === 'error') {
+        div.innerHTML = '<div class="lab-msg-output lab-msg-error">' + esc(content) + '</div>';
+    } else if (type === 'info') {
+        div.innerHTML = '<div class="lab-msg-info">' + esc(content) + '</div>';
+    }
+
+    labChat.appendChild(div);
+    labChat.scrollTop = labChat.scrollHeight;
+}
+
+async function runLabCommand() {
+    var accountId = labAccountSelect.value;
+    var command = labCommandInput.value.trim();
+
+    if (!accountId) { notify('Please select an account first.', 'error'); return; }
+    if (!command) return;
+
+    addLabMessage('command', command);
+    labCommandInput.value = '';
+    addLabMessage('info', 'Running on account ' + accountId + '...');
+
+    try {
+        var data = await api('POST', '/members/accounts/execute', {
+            accountId: accountId,
+            command: command,
+        });
+        // Remove the "Running..." message
+        var msgs = labChat.querySelectorAll('.lab-msg-info');
+        if (msgs.length) msgs[msgs.length - 1].parentElement.remove();
+
+        if (data.output && data.output.startsWith('ERROR:')) {
+            addLabMessage('error', data.output);
+        } else {
+            addLabMessage('output', data.output || 'No output');
+        }
+    } catch (err) {
+        var msgs2 = labChat.querySelectorAll('.lab-msg-info');
+        if (msgs2.length) msgs2[msgs2.length - 1].parentElement.remove();
+        addLabMessage('error', err.message || 'Command failed');
+    }
+}
+
+labRunBtn.onclick = runLabCommand;
+labCommandInput.onkeydown = function(e) {
+    if (e.key === 'Enter') { e.preventDefault(); runLabCommand(); }
+};
+
+// Click example commands to populate input
+labChat.onclick = function(e) {
+    if (e.target.tagName === 'CODE' && e.target.closest('.lab-examples')) {
+        labCommandInput.value = e.target.textContent;
+        labCommandInput.focus();
+    }
+};
