@@ -70,6 +70,7 @@ def lambda_handler(event, context):
     routes = {
         'POST /members/register': handle_register,
         'POST /members/login': handle_login,
+        'POST /members/reset-password': handle_reset_password,
         'GET /members/accounts': handle_get_accounts,
         'POST /members/accounts': handle_add_account,
         'PUT /members/accounts': handle_edit_account,
@@ -392,6 +393,144 @@ def handle_login(event):
 
     logger.info(f"Member login successful for: {email}")
     return create_response(200, {'token': token, 'email': email, 'displayName': display_name})
+
+
+def handle_reset_password(event):
+    """Handle password reset with 3-step OTP flow (same pattern as registration)."""
+    try:
+        body = json.loads(event.get('body', '{}'))
+    except (json.JSONDecodeError, TypeError):
+        return create_error_response(400, 'InvalidRequest', 'Invalid request body')
+
+    action = body.get('action', '')
+
+    if action == 'send-otp':
+        return _reset_send_otp(body)
+    elif action == 'verify-otp':
+        return _reset_verify_otp(body)
+    elif action == 'set-password':
+        return _reset_set_password(body)
+    else:
+        return create_error_response(400, 'InvalidRequest', "Field 'action' is required")
+
+
+def _reset_send_otp(body):
+    """Step 1: Validate email exists, send OTP."""
+    email = (body.get('email') or '').strip().lower()
+    if not email or not EMAIL_REGEX.match(email):
+        return create_error_response(400, 'InvalidEmail', 'Please provide a valid email address')
+
+    members_table = dynamodb.Table(MEMBERS_TABLE_NAME)
+    otp_table = dynamodb.Table(OTP_TABLE_NAME)
+    now = datetime.now(timezone.utc)
+    now_iso = now.isoformat()
+    now_epoch = int(now.timestamp())
+
+    # Check if member exists
+    try:
+        existing = members_table.get_item(Key={'email': email}).get('Item')
+        if not existing:
+            return create_error_response(404, 'NotFound', 'No account found with this email')
+    except ClientError:
+        return create_error_response(500, 'ServerError', 'An unexpected error occurred.')
+
+    # Rate limiting
+    try:
+        existing_otp = otp_table.get_item(Key={'email': email}).get('Item')
+        if existing_otp and existing_otp.get('createdAt'):
+            created = datetime.fromisoformat(existing_otp['createdAt'])
+            if (now - created).total_seconds() < RATE_LIMIT_SECONDS:
+                return create_error_response(429, 'RateLimited', 'Please wait before requesting a new code')
+    except ClientError:
+        pass
+
+    otp_code = str(secrets.randbelow(900000) + 100000)
+    try:
+        otp_table.put_item(Item={'email': email, 'otp': otp_code, 'createdAt': now_iso, 'ttl': now_epoch + OTP_TTL_SECONDS})
+    except ClientError:
+        return create_error_response(500, 'ServerError', 'An unexpected error occurred.')
+
+    try:
+        ses_client.send_email(
+            Source=f'SlashMyBill <{SES_SENDER_EMAIL}>',
+            Destination={'ToAddresses': [email]},
+            Message={
+                'Subject': {'Data': 'SlashMyBill Password Reset Code', 'Charset': 'UTF-8'},
+                'Body': {'Html': {'Data': _build_otp_email(otp_code), 'Charset': 'UTF-8'}},
+            },
+        )
+    except ClientError:
+        return create_error_response(500, 'SendFailed', 'Failed to send verification email')
+
+    return create_response(200, {'message': 'Reset code sent', 'email': email})
+
+
+def _reset_verify_otp(body):
+    """Step 2: Verify OTP, return resetToken."""
+    email = (body.get('email') or '').strip().lower()
+    otp_code = (body.get('otp') or '').strip()
+    if not email or not otp_code:
+        return create_error_response(400, 'InvalidOTP', 'Invalid or expired code')
+
+    otp_table = dynamodb.Table(OTP_TABLE_NAME)
+    try:
+        item = otp_table.get_item(Key={'email': email}).get('Item')
+    except ClientError:
+        return create_error_response(500, 'ServerError', 'An unexpected error occurred.')
+
+    if not item:
+        return create_error_response(400, 'InvalidOTP', 'Invalid or expired code')
+    if item.get('ttl') and int(item['ttl']) < int(time.time()):
+        return create_error_response(400, 'InvalidOTP', 'Invalid or expired code')
+    if item.get('otp') != otp_code:
+        return create_error_response(400, 'InvalidOTP', 'Invalid or expired code')
+
+    try:
+        otp_table.delete_item(Key={'email': email})
+    except ClientError:
+        pass
+
+    now = int(time.time())
+    reset_token = jwt.encode({'sub': email, 'purpose': 'reset', 'iat': now, 'exp': now + 600}, JWT_SECRET, algorithm='HS256')
+    return create_response(200, {'verified': True, 'resetToken': reset_token})
+
+
+def _reset_set_password(body):
+    """Step 3: Validate resetToken, set new password."""
+    reset_token = (body.get('resetToken') or '').strip()
+    password = body.get('password', '')
+    confirm_password = body.get('confirmPassword', '')
+
+    if not reset_token:
+        return create_error_response(400, 'InvalidToken', 'Reset token is invalid or expired')
+
+    try:
+        decoded = jwt.decode(reset_token, JWT_SECRET, algorithms=['HS256'])
+    except (jwt.ExpiredSignatureError, jwt.InvalidTokenError):
+        return create_error_response(400, 'InvalidToken', 'Reset token is invalid or expired')
+
+    if decoded.get('purpose') != 'reset':
+        return create_error_response(400, 'InvalidToken', 'Reset token is invalid or expired')
+
+    email = decoded.get('sub', '').lower()
+    if len(password) < 8:
+        return create_error_response(400, 'InvalidPassword', 'Password must be at least 8 characters')
+    if password != confirm_password:
+        return create_error_response(400, 'InvalidPassword', 'Passwords do not match')
+
+    password_hash = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+
+    try:
+        members_table = dynamodb.Table(MEMBERS_TABLE_NAME)
+        members_table.update_item(
+            Key={'email': email},
+            UpdateExpression='SET passwordHash = :ph',
+            ExpressionAttributeValues={':ph': password_hash},
+        )
+    except ClientError:
+        return create_error_response(500, 'ServerError', 'An unexpected error occurred.')
+
+    return create_response(200, {'message': 'Password reset successful. Please log in with your new password.'})
 
 
 # ============================================================
