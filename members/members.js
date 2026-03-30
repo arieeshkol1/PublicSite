@@ -214,6 +214,7 @@ function showView(name) {
     if (name === 'dashboard') {
         headerEmail.textContent = getMemberEmail() || '';
         loadAccounts();
+        loadDashboard();
     }
 }
 
@@ -1151,7 +1152,12 @@ function addAIMessage(type, content) {
             .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
             .replace(/\n- /g, '\n• ')
             .replace(/\n/g, '<br>');
-        div.innerHTML = '<div class="lab-msg-output" style="color:#e2e8f0;border-color:#4c1d95;">' + formatted + '</div>';
+        var questionText = aiQuestionInput && aiQuestionInput.dataset.lastQuestion ? aiQuestionInput.dataset.lastQuestion : '';
+        div.innerHTML =
+            '<div class="lab-msg-output" style="color:#e2e8f0;border-color:#4c1d95;">' + formatted + '</div>' +
+            '<div style="margin-top:10px;text-align:right;">' +
+            '<button class="btn btn-outline btn-sm ai-visualize-btn" data-question="' + ea(questionText) + '" data-answer="' + ea(content) + '">Visualize</button>' +
+            '</div>';
     } else if (type === 'commands') {
         var cmdsHtml = '<div class="lab-msg-info" style="color:#7ee787;">Commands executed:</div>';
         content.forEach(function(c) {
@@ -1219,8 +1225,64 @@ if (aiQuestionInput) aiQuestionInput.onkeydown = function(e) {
 
 // Click example questions to populate input
 if (aiChat) aiChat.onclick = function(e) {
+    var visualizeBtn = e.target.closest('.ai-visualize-btn');
+    if (visualizeBtn) {
+        pendingVisualize = {
+            prompt: visualizeBtn.getAttribute('data-question') || '',
+            answer: visualizeBtn.getAttribute('data-answer') || '',
+            accountId: (aiAccountSelect && aiAccountSelect.value) || '',
+        };
+        if (visualizeTitleInput) visualizeTitleInput.value = '';
+        if (visualizeTypeSelect) visualizeTypeSelect.value = 'graph';
+        if (visualizeChartType) visualizeChartType.value = 'bar';
+        if (visualizeDatasetLabel) visualizeDatasetLabel.value = '';
+        if (visualizeLabelsInput) visualizeLabelsInput.value = '';
+        if (visualizeValuesInput) visualizeValuesInput.value = '';
+        if (visualizeModal) visualizeModal.hidden = false;
+        return;
+    }
     if (e.target.tagName === 'CODE' && e.target.closest('.lab-examples')) {
         aiQuestionInput.value = e.target.textContent;
         aiQuestionInput.focus();
     }
 };
+
+function closeVisualizeModal() {
+    if (visualizeModal) visualizeModal.hidden = true;
+    pendingVisualize = null;
+}
+
+async function saveVisualizedAnswer() {
+    if (!pendingVisualize) return;
+    var payload = {
+        viewType: (visualizeTypeSelect && visualizeTypeSelect.value) || 'graph',
+        title: (visualizeTitleInput && visualizeTitleInput.value || '').trim(),
+        prompt: pendingVisualize.prompt || 'AI Query',
+        answer: pendingVisualize.answer || '',
+        accountId: pendingVisualize.accountId || '',
+    };
+    if (payload.viewType === 'graph') {
+        var labels = parseCsvLabels(visualizeLabelsInput && visualizeLabelsInput.value);
+        var data = parseCsvNumbers(visualizeValuesInput && visualizeValuesInput.value);
+        if (labels.length && data.length && labels.length === data.length) {
+            payload.chartConfig = {
+                type: (visualizeChartType && visualizeChartType.value) || 'bar',
+                labels: labels,
+                data: data,
+                datasetLabel: (visualizeDatasetLabel && visualizeDatasetLabel.value || '').trim() || 'Values'
+            };
+        }
+    }
+    try {
+        await api('POST', '/members/dashboard', payload);
+        closeVisualizeModal();
+        notify('Visualization added to Dashboard.', 'success');
+        activateMemberTab('dashboard-tab');
+    } catch (err) {
+        notify(err.message || 'Failed to add visualization', 'error');
+    }
+}
+
+if (visualizeCloseBtn) visualizeCloseBtn.onclick = closeVisualizeModal;
+if (visualizeCancelBtn) visualizeCancelBtn.onclick = closeVisualizeModal;
+if (visualizeSaveBtn) visualizeSaveBtn.onclick = saveVisualizedAnswer;
