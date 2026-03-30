@@ -163,8 +163,6 @@
         <div class="dashboard-content">
             <div class="member-tabs">
                 <button class="member-tab active" data-tab="accounts-tab">Accounts</button>
-                <button class="member-tab" data-tab="dashboard-tab">Dashboard</button>
-                <button class="member-tab" data-tab="lab-tab">Console</button>
                 <button class="member-tab" data-tab="ai-tab">AI Agent</button>
             </div>
             <div id="accounts-tab" class="member-tab-content">
@@ -192,78 +190,6 @@
                 </div>
             </div>
             </div>
-            <div id="dashboard-tab" class="member-tab-content" hidden>
-                <div class="tab-toolbar">
-                    <h2>Dashboard</h2>
-                </div>
-                <div class="dashboard-builder">
-                    <div class="dashboard-builder-row">
-                        <div class="form-group">
-                            <label for="dashboard-view-type">Visual Type</label>
-                            <select id="dashboard-view-type">
-                                <option value="graph">Graph</option>
-                                <option value="table">Table</option>
-                            </select>
-                        </div>
-                        <div class="form-group">
-                            <label for="dashboard-title">Title (optional)</label>
-                            <input type="text" id="dashboard-title" placeholder="EC2 Utilization Trends">
-                        </div>
-                    </div>
-                    <div class="form-group">
-                        <label for="dashboard-prompt">What would you like to track?</label>
-                        <textarea id="dashboard-prompt" rows="3" placeholder="Example: Show EC2 CPU usage trend for the last 3 months and highlight idle instances."></textarea>
-                    </div>
-                    <div class="form-group">
-                        <label for="dashboard-answer">Answer / Data to visualize (optional)</label>
-                        <textarea id="dashboard-answer" rows="4" placeholder="Paste AI answer or numeric data here (e.g. Jan 42, Feb 55, Mar 38)."></textarea>
-                    </div>
-                    <div class="form-group">
-                        <label for="dashboard-chart-config">Chart Config (optional JSON)</label>
-                        <textarea id="dashboard-chart-config" rows="4" placeholder='{"type":"bar","labels":["Jan","Feb","Mar"],"data":[120,98,87],"datasetLabel":"Top 3 Services"}'></textarea>
-                    </div>
-                    <button id="dashboard-add-btn" class="btn btn-primary">Add to Dashboard</button>
-                </div>
-                <div id="dashboard-empty" class="empty-state" hidden>
-                    <p>No saved queries yet. Add your first graph or table above.</p>
-                </div>
-                <div id="dashboard-grid" class="dashboard-grid"></div>
-            </div>
-            <div id="lab-tab" class="member-tab-content" hidden>
-                <div class="lab-container">
-                    <div class="lab-header">
-                        <h2>Console</h2>
-                        <div class="lab-account-selector">
-                            <label for="lab-account-select">Account:</label>
-                            <select id="lab-account-select"><option value="">Select an account...</option></select>
-                        </div>
-                    </div>
-                    <div id="lab-chat" class="lab-chat">
-                        <div class="lab-welcome">
-                            <div class="lab-welcome-icon">&#128187;</div>
-                            <h3>AWS CLI Console</h3>
-                            <p>Run read-only AWS CLI commands on your connected accounts.</p>
-                            <div class="lab-examples">
-                                <p>Try these examples:</p>
-                                <code>aws s3 ls</code>
-                                <code>aws ec2 describe-instances --region us-east-1</code>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="lab-input-area">
-                        <div class="lab-input-row">
-                            <span class="lab-prompt">$</span>
-                            <input type="text" id="lab-command-input" class="lab-command-input" placeholder="Type an AWS CLI command..." autocomplete="off">
-                            <button id="lab-run-btn" class="btn btn-primary btn-sm">Run</button>
-                        </div>
-                        <div class="lab-hint">Read-only commands only. Write/delete operations are blocked.</div>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-
-
             <div id="ai-tab" class="member-tab-content" hidden>
                 <div class="lab-container">
                     <div class="lab-header">
@@ -297,6 +223,8 @@
                     </div>
                 </div>
             </div>
+        </div>
+    </div>
 
     <!-- Add/Edit Account Modal -->
     <div id="account-modal" class="modal-overlay" hidden>
@@ -467,7 +395,6 @@
         <span id="notification-message"></span>
     </div>
 
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
-    <script src="members.js?v=8"></script>
+    <script src="members.js?v=9"></script>
 </body>
 </html>

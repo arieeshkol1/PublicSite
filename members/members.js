@@ -855,8 +855,6 @@ function activateMemberTab(tabId) {
     document.querySelectorAll('.member-tab-content').forEach(function(c) {
         c.hidden = c.id !== tabId;
     });
-    if (tabId === 'dashboard-tab') loadDashboard();
-    if (tabId === 'lab-tab') populateLabAccounts();
     if (tabId === 'ai-tab') populateAIAccounts();
 }
 
