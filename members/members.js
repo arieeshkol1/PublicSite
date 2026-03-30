@@ -61,6 +61,7 @@ var accountModal = $('account-modal');
 var accountModalTitle = $('account-modal-title');
 var accountForm = $('account-form');
 var accountIdInput = $('account-id-input');
+var accountNameInput = $('account-name-input');
 var accountFormError = $('account-form-error');
 var accountCancelBtn = $('account-cancel-btn');
 var accountModalClose = $('account-modal-close');
@@ -422,6 +423,7 @@ function renderAccounts(accounts) {
         tr.innerHTML =
             '<td style="color:#999;font-size:12px">' + (idx + 1) + '</td>' +
             '<td>' + esc(a.accountId || '') + '</td>' +
+            '<td>' + esc(a.accountName || '-') + '</td>' +
             '<td>' + esc(a.roleName || '') + '</td>' +
             '<td><span class="status-badge ' + statusClass + '">' + esc(a.connectionStatus || 'pending') + '</span></td>' +
             '<td>' + fmtDate(a.addedAt) + '</td>' +
@@ -462,15 +464,18 @@ function showAccountModal(existingId) {
     accountFormError.textContent = '';
     editingAccountId = existingId;
     if (existingId) {
+        var existing = allAccounts.find(function(a) { return a.accountId === existingId; }) || {};
         accountModalTitle.textContent = 'Edit Account';
         accountSubmitBtn.textContent = 'Update Account';
-        accountIdInput.value = '';
+        accountIdInput.value = existingId;
         accountIdInput.placeholder = 'New 12-digit Account ID';
+        if (accountNameInput) accountNameInput.value = existing.accountName || '';
     } else {
         accountModalTitle.textContent = 'Add Account';
         accountSubmitBtn.textContent = 'Add Account';
         accountIdInput.value = '';
         accountIdInput.placeholder = '123456789012';
+        if (accountNameInput) accountNameInput.value = '';
     }
     accountModal.hidden = false;
     accountIdInput.focus();
@@ -486,6 +491,7 @@ accountForm.onsubmit = async function(e) {
     e.preventDefault();
     accountFormError.textContent = '';
     var val = accountIdInput.value.trim();
+    var accountName = accountNameInput ? accountNameInput.value.trim() : '';
     if (!/^\d{12}$/.test(val)) {
         accountFormError.textContent = 'Account ID must be exactly 12 digits.';
         return;
@@ -494,10 +500,10 @@ accountForm.onsubmit = async function(e) {
     try {
         showLoading();
         if (editingAccountId) {
-            await api('PUT', '/members/accounts', { oldAccountId: editingAccountId, newAccountId: val });
+            await api('PUT', '/members/accounts', { oldAccountId: editingAccountId, newAccountId: val, accountName: accountName });
             notify('Account updated.', 'success');
         } else {
-            await api('POST', '/members/accounts', { accountId: val });
+            await api('POST', '/members/accounts', { accountId: val, accountName: accountName });
             notify('Account added.', 'success');
         }
         hideAccountModal();
@@ -764,6 +770,7 @@ accountForm.onsubmit = async function(e) {
     e.preventDefault();
     accountFormError.textContent = '';
     var val = accountIdInput.value.trim();
+    var accountName = accountNameInput ? accountNameInput.value.trim() : '';
     if (!/^\d{12}$/.test(val)) {
         accountFormError.textContent = 'Account ID must be exactly 12 digits.';
         return;
@@ -771,12 +778,12 @@ accountForm.onsubmit = async function(e) {
     try {
         showLoading();
         if (editingAccountId) {
-            await api('PUT', '/members/accounts', { oldAccountId: editingAccountId, newAccountId: val });
+            await api('PUT', '/members/accounts', { oldAccountId: editingAccountId, newAccountId: val, accountName: accountName });
             notify('Account updated.', 'success');
             hideAccountModal();
             await loadAccounts();
         } else {
-            await api('POST', '/members/accounts', { accountId: val });
+            await api('POST', '/members/accounts', { accountId: val, accountName: accountName });
             notify('Account added!', 'success');
             hideAccountModal();
             await loadAccounts();
@@ -808,6 +815,7 @@ renderAccounts = function(accounts) {
         tr.innerHTML =
             '<td style="color:#999;font-size:12px">' + (idx + 1) + '</td>' +
             '<td>' + esc(a.accountId || '') + '</td>' +
+            '<td>' + esc(a.accountName || '-') + '</td>' +
             '<td>' + esc(a.roleName || '') + '</td>' +
             '<td><span class="status-badge ' + statusClass + '">' + esc(a.connectionStatus || 'pending') + '</span></td>' +
             '<td>' + fmtDate(a.addedAt) + '</td>' +
@@ -1120,6 +1128,9 @@ var aiChat = $('ai-chat');
 var aiQuestionInput = $('ai-question-input');
 var aiAskBtn = $('ai-ask-btn');
 var aiAccountSelect = $('ai-account-select');
+var aiFontDecBtn = $('ai-font-dec');
+var aiFontIncBtn = $('ai-font-inc');
+var aiFontSize = 18;
 
 function populateAIAccounts() {
     if (!aiAccountSelect) return;
@@ -1222,6 +1233,20 @@ if (aiAskBtn) aiAskBtn.onclick = askAI;
 if (aiQuestionInput) aiQuestionInput.onkeydown = function(e) {
     if (e.key === 'Enter') { e.preventDefault(); askAI(); }
 };
+
+function applyAIFontSize() {
+    if (aiChat) aiChat.style.fontSize = aiFontSize + 'px';
+    if (aiQuestionInput) aiQuestionInput.style.fontSize = Math.max(14, aiFontSize - 1) + 'px';
+}
+if (aiFontDecBtn) aiFontDecBtn.onclick = function() {
+    aiFontSize = Math.max(14, aiFontSize - 1);
+    applyAIFontSize();
+};
+if (aiFontIncBtn) aiFontIncBtn.onclick = function() {
+    aiFontSize = Math.min(28, aiFontSize + 1);
+    applyAIFontSize();
+};
+applyAIFontSize();
 
 // Click example questions to populate input
 if (aiChat) aiChat.onclick = function(e) {

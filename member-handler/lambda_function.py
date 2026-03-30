@@ -587,6 +587,7 @@ def handle_add_account(event):
         return create_error_response(400, 'InvalidRequest', 'Invalid request body')
 
     account_id = (body.get('accountId') or '').strip()
+    account_name = (body.get('accountName') or '').strip()
 
     # Validate 12-digit Account ID
     if not re.fullmatch(r'\d{12}', account_id):
@@ -609,6 +610,7 @@ def handle_add_account(event):
     account_record = {
         'memberEmail': member_email,
         'accountId': account_id,
+        'accountName': account_name or f'Account {account_id[-4:]}',
         'roleName': role_name,
         'connectionStatus': 'pending',
         'addedAt': now_iso,
@@ -640,6 +642,7 @@ def handle_edit_account(event):
 
     old_account_id = (body.get('oldAccountId') or '').strip()
     new_account_id = (body.get('newAccountId') or '').strip()
+    account_name = (body.get('accountName') or '').strip()
 
     if not old_account_id or not new_account_id:
         return create_error_response(400, 'InvalidRequest', "Fields 'oldAccountId' and 'newAccountId' are required")
@@ -663,6 +666,16 @@ def handle_edit_account(event):
 
     # If same ID, nothing to change
     if old_account_id == new_account_id:
+        try:
+            accounts_table.update_item(
+                Key={'memberEmail': member_email, 'accountId': old_account_id},
+                UpdateExpression='SET accountName = :n',
+                ExpressionAttributeValues={':n': account_name or old_record.get('accountName', f'Account {old_account_id[-4:]}')},
+            )
+            old_record['accountName'] = account_name or old_record.get('accountName', f'Account {old_account_id[-4:]}')
+        except ClientError as e:
+            logger.error(f"DynamoDB update error: {e}")
+            return create_error_response(500, 'ServerError', 'An unexpected error occurred. Please try again.')
         return create_response(200, {'message': 'Account updated', 'account': _decimal_to_native(old_record)})
 
     # Check for duplicate with new ID
@@ -680,6 +693,7 @@ def handle_edit_account(event):
     new_record = {
         'memberEmail': member_email,
         'accountId': new_account_id,
+        'accountName': account_name or old_record.get('accountName', f'Account {new_account_id[-4:]}'),
         'roleName': f'SlashMyBill-{new_account_id}',
         'connectionStatus': 'pending',
         'addedAt': original_added_at,
@@ -717,6 +731,37 @@ def handle_delete_account(event):
 
     accounts_table = dynamodb.Table(ACCOUNTS_TABLE_NAME)
 
+    # Try deleting the member stack in the target AWS account first
+    role_arn = f'arn:aws:iam::{account_id}:role/SlashMyBill-{account_id}'
+    external_id = hashlib.sha256(member_email.encode('utf-8')).hexdigest()
+    stack_name = f'SlashMyBill-Access-{account_id}'
+    stack_delete_requested = False
+    try:
+        sts_client = boto3.client('sts')
+        assume = sts_client.assume_role(
+            RoleArn=role_arn,
+            RoleSessionName='SlashMyBillDeleteStack',
+            ExternalId=external_id,
+        )
+        creds = assume['Credentials']
+        cf = boto3.client(
+            'cloudformation',
+            aws_access_key_id=creds['AccessKeyId'],
+            aws_secret_access_key=creds['SecretAccessKey'],
+            aws_session_token=creds['SessionToken'],
+            region_name='us-east-1',
+        )
+        cf.delete_stack(StackName=stack_name)
+        stack_delete_requested = True
+    except ClientError as e:
+        code = (e.response or {}).get('Error', {}).get('Code', '')
+        msg = (e.response or {}).get('Error', {}).get('Message', '')
+        if code == 'ValidationError' and 'does not exist' in msg:
+            logger.info(f"Stack {stack_name} not found in account {account_id}, continuing with account delete")
+        else:
+            logger.error(f"Failed to delete stack {stack_name} for account {account_id}: {e}")
+            return create_error_response(400, 'StackDeleteFailed', f'Failed to delete stack {stack_name}: {msg or code}')
+
     try:
         accounts_table.delete_item(
             Key={'memberEmail': member_email, 'accountId': account_id},
@@ -729,7 +774,7 @@ def handle_delete_account(event):
         return create_error_response(500, 'ServerError', 'An unexpected error occurred. Please try again.')
 
     logger.info(f"Account {account_id} deleted for member {member_email}")
-    return create_response(200, {'message': 'Account deleted'})
+    return create_response(200, {'message': 'Account deleted', 'stackDeleteRequested': stack_delete_requested, 'stackName': stack_name})
 
 
 def handle_generate_template(event):
@@ -796,6 +841,13 @@ def handle_generate_template(event):
                                             'billingconductor:GetBillingData',
                                             'billingconductor:GetBillingGroupCostReport',
                                             'billingconductor:GetCustomLineItemVersions',
+                                            'cloudformation:DeleteStack',
+                                            'cloudformation:DescribeStacks',
+                                            'cloudformation:DescribeStackResources',
+                                            'iam:GetRole',
+                                            'iam:ListRolePolicies',
+                                            'iam:DeleteRolePolicy',
+                                            'iam:DeleteRole',
                                             'cur:DescribeReportDefinitions',
                                             'cur:GetClassicReport',
                                             'cur:GetUsageReport',

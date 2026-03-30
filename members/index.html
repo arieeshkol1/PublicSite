@@ -176,6 +176,7 @@
                         <tr>
                             <th>#</th>
                             <th>Account ID</th>
+                            <th>Name</th>
                             <th>Role Name</th>
                             <th>Status</th>
                             <th>Added</th>
@@ -219,6 +220,10 @@
                             <input type="text" id="ai-question-input" class="lab-command-input" placeholder="Ask about your AWS account..." autocomplete="off">
                             <button id="ai-ask-btn" class="btn btn-primary btn-sm">Ask</button>
                         </div>
+                        <div class="lab-input-row" style="justify-content:flex-end; margin-top:8px;">
+                            <button id="ai-font-dec" class="btn btn-outline btn-sm" type="button">A-</button>
+                            <button id="ai-font-inc" class="btn btn-outline btn-sm" type="button">A+</button>
+                        </div>
                         <div class="lab-hint">AI analyzes your account using read-only access and provides FinOps insights.</div>
                     </div>
                 </div>
@@ -239,6 +244,10 @@
                         <label for="account-id-input">AWS Account ID</label>
                         <input type="text" id="account-id-input" maxlength="12" inputmode="numeric" pattern="[0-9]{12}" placeholder="123456789012" required>
                         <div class="field-hint">Enter the 12-digit AWS Account ID</div>
+                    </div>
+                    <div class="form-group">
+                        <label for="account-name-input">Account Name</label>
+                        <input type="text" id="account-name-input" maxlength="80" placeholder="Production, Dev, Billing...">
                     </div>
                     <div id="account-form-error" class="form-error" role="alert" aria-live="polite"></div>
                 </div>
