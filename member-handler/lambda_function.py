@@ -1034,6 +1034,7 @@ def handle_add_dashboard_item(event):
     title = (body.get('title') or '').strip()
     answer = (body.get('answer') or '').strip()
     account_id = (body.get('accountId') or '').strip()
+    chart_config = body.get('chartConfig')
 
     if view_type not in ('graph', 'table'):
         return create_error_response(400, 'InvalidRequest', "viewType must be 'graph' or 'table'")
@@ -1049,6 +1050,7 @@ def handle_add_dashboard_item(event):
         'answer': answer,
         'viewType': view_type,
         'accountId': account_id,
+        'chartConfig': chart_config if isinstance(chart_config, dict) else None,
         'createdAt': now_iso,
     }
 

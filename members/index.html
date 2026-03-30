@@ -218,6 +218,10 @@
                         <label for="dashboard-answer">Answer / Data to visualize (optional)</label>
                         <textarea id="dashboard-answer" rows="4" placeholder="Paste AI answer or numeric data here (e.g. Jan 42, Feb 55, Mar 38)."></textarea>
                     </div>
+                    <div class="form-group">
+                        <label for="dashboard-chart-config">Chart Config (optional JSON)</label>
+                        <textarea id="dashboard-chart-config" rows="4" placeholder='{"type":"bar","labels":["Jan","Feb","Mar"],"data":[120,98,87],"datasetLabel":"Top 3 Services"}'></textarea>
+                    </div>
                     <button id="dashboard-add-btn" class="btn btn-primary">Add to Dashboard</button>
                 </div>
                 <div id="dashboard-empty" class="empty-state" hidden>
@@ -422,6 +426,28 @@
                     <label for="visualize-title-input">Title (optional)</label>
                     <input type="text" id="visualize-title-input" placeholder="EC2 3-Month Utilization">
                 </div>
+                <div class="dashboard-builder-row">
+                    <div class="form-group">
+                        <label for="visualize-chart-type">Graph Type</label>
+                        <select id="visualize-chart-type">
+                            <option value="bar">Bar</option>
+                            <option value="line">Line</option>
+                            <option value="pie">Pie</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="visualize-dataset-label">Dataset Label</label>
+                        <input type="text" id="visualize-dataset-label" placeholder="Top 3 Services">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label for="visualize-labels-input">Labels (comma separated, optional)</label>
+                    <input type="text" id="visualize-labels-input" placeholder="Jan, Feb, Mar">
+                </div>
+                <div class="form-group">
+                    <label for="visualize-values-input">Values (comma separated, optional)</label>
+                    <input type="text" id="visualize-values-input" placeholder="120, 98, 87">
+                </div>
                 <p class="field-hint">This answer will be added to your Dashboard tab.</p>
             </div>
             <div class="modal-footer">
@@ -441,6 +467,7 @@
         <span id="notification-message"></span>
     </div>
 
-    <script src="members.js?v=7"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+    <script src="members.js?v=8"></script>
 </body>
 </html>

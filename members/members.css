@@ -325,6 +325,7 @@
 .dashboard-card-meta { color: var(--gray); font-size: 13px; margin-bottom: 10px; }
 .dashboard-card p { margin: 0 0 10px; font-size: 14px; color: #334155; white-space: pre-wrap; }
 .dashboard-actions { display: flex; justify-content: flex-end; margin-top: 8px; }
+.dashboard-card canvas { width: 100% !important; height: 220px !important; margin-top: 8px; }
 
 .mini-bars { display: grid; gap: 8px; margin: 8px 0 4px; }
 .mini-bar-row { display: grid; grid-template-columns: 60px 1fr 48px; gap: 8px; align-items: center; font-size: 12px; }
