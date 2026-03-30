@@ -6,7 +6,7 @@
     <title>Member Portal - SlashMyBill</title>
     <link rel="icon" type="image/png" href="../SlashMyBill.png">
     <link rel="stylesheet" href="../styles.css">
-    <link rel="stylesheet" href="members.css?v=5">
+    <link rel="stylesheet" href="members.css?v=9">
 </head>
 <body>
 
@@ -163,6 +163,7 @@
         <div class="dashboard-content">
             <div class="member-tabs">
                 <button class="member-tab active" data-tab="accounts-tab">Accounts</button>
+                <button class="member-tab" data-tab="dashboard-tab">Dashboard</button>
                 <button class="member-tab" data-tab="lab-tab">Console</button>
                 <button class="member-tab" data-tab="ai-tab">AI Agent</button>
             </div>
@@ -190,6 +191,43 @@
                     <p>No AWS accounts connected yet. Click "Add Account" to get started.</p>
                 </div>
             </div>
+            </div>
+            <div id="dashboard-tab" class="member-tab-content" hidden>
+                <div class="tab-toolbar">
+                    <h2>Dashboard</h2>
+                </div>
+                <div class="dashboard-builder">
+                    <div class="dashboard-builder-row">
+                        <div class="form-group">
+                            <label for="dashboard-view-type">Visual Type</label>
+                            <select id="dashboard-view-type">
+                                <option value="graph">Graph</option>
+                                <option value="table">Table</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="dashboard-title">Title (optional)</label>
+                            <input type="text" id="dashboard-title" placeholder="EC2 Utilization Trends">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="dashboard-prompt">What would you like to track?</label>
+                        <textarea id="dashboard-prompt" rows="3" placeholder="Example: Show EC2 CPU usage trend for the last 3 months and highlight idle instances."></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label for="dashboard-answer">Answer / Data to visualize (optional)</label>
+                        <textarea id="dashboard-answer" rows="4" placeholder="Paste AI answer or numeric data here (e.g. Jan 42, Feb 55, Mar 38)."></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label for="dashboard-chart-config">Chart Config (optional JSON)</label>
+                        <textarea id="dashboard-chart-config" rows="4" placeholder='{"type":"bar","labels":["Jan","Feb","Mar"],"data":[120,98,87],"datasetLabel":"Top 3 Services"}'></textarea>
+                    </div>
+                    <button id="dashboard-add-btn" class="btn btn-primary">Add to Dashboard</button>
+                </div>
+                <div id="dashboard-empty" class="empty-state" hidden>
+                    <p>No saved queries yet. Add your first graph or table above.</p>
+                </div>
+                <div id="dashboard-grid" class="dashboard-grid"></div>
             </div>
             <div id="lab-tab" class="member-tab-content" hidden>
                 <div class="lab-container">
@@ -369,6 +407,56 @@
         </div>
     </div>
 
+    <!-- Visualize Answer Modal -->
+    <div id="visualize-modal" class="modal-overlay" hidden>
+        <div class="modal-card modal-card-sm">
+            <div class="modal-header">
+                <h2>Visualize Answer</h2>
+                <button id="visualize-close-btn" class="modal-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label for="visualize-type-select">Visual Type</label>
+                    <select id="visualize-type-select">
+                        <option value="graph">Graph</option>
+                        <option value="table">Table</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="visualize-title-input">Title (optional)</label>
+                    <input type="text" id="visualize-title-input" placeholder="EC2 3-Month Utilization">
+                </div>
+                <div class="dashboard-builder-row">
+                    <div class="form-group">
+                        <label for="visualize-chart-type">Graph Type</label>
+                        <select id="visualize-chart-type">
+                            <option value="bar">Bar</option>
+                            <option value="line">Line</option>
+                            <option value="pie">Pie</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="visualize-dataset-label">Dataset Label</label>
+                        <input type="text" id="visualize-dataset-label" placeholder="Top 3 Services">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label for="visualize-labels-input">Labels (comma separated, optional)</label>
+                    <input type="text" id="visualize-labels-input" placeholder="Jan, Feb, Mar">
+                </div>
+                <div class="form-group">
+                    <label for="visualize-values-input">Values (comma separated, optional)</label>
+                    <input type="text" id="visualize-values-input" placeholder="120, 98, 87">
+                </div>
+                <p class="field-hint">This answer will be added to your Dashboard tab.</p>
+            </div>
+            <div class="modal-footer">
+                <button id="visualize-cancel-btn" class="btn btn-outline">Cancel</button>
+                <button id="visualize-save-btn" class="btn btn-primary">Add to Dashboard</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Loading Overlay -->
     <div id="loading-overlay" class="loading-overlay" hidden>
         <div class="loading-spinner"></div>
@@ -379,6 +467,7 @@
         <span id="notification-message"></span>
     </div>
 
-    <script src="members.js?v=5"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+    <script src="members.js?v=8"></script>
 </body>
 </html>
