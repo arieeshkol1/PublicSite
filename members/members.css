@@ -32,7 +32,7 @@
 .header-email-display { font-size: 14px; color: var(--gray, #6b7280); }
 
 /* Buttons (supplement main site buttons) */
-.btn-sm { padding: 7px 14px; font-size: 13px; }
+.btn-sm { padding: 10px 16px; font-size: 16px; }
 .btn-full { width: 100%; justify-content: center; }
 .btn-outline { background: transparent; color: var(--gray, #6b7280); border: 1px solid var(--gray-light, #e5e7eb); }
 .btn-outline:hover { background: var(--light, #f9fafb); color: var(--dark, #0a0e27); }
@@ -61,10 +61,10 @@
 
 /* Form Elements */
 .form-group { margin-bottom: 16px; flex: 1; }
-.form-group label { display: block; font-size: 13px; font-weight: 600; color: #374151; margin-bottom: 6px; }
+.form-group label { display: block; font-size: 16px; font-weight: 600; color: #374151; margin-bottom: 8px; }
 .form-group input, .form-group select, .form-group textarea {
     width: 100%; padding: 10px 12px; border: 1.5px solid var(--gray-light);
-    border-radius: 8px; font-size: 14px; outline: none;
+    border-radius: 8px; font-size: 18px; outline: none;
     transition: border-color 0.2s; font-family: inherit; background: var(--white);
 }
 .form-group input:focus, .form-group select:focus, .form-group textarea:focus {
@@ -73,19 +73,19 @@
 .form-group input:disabled { background: #f3f4f6; color: var(--gray); cursor: not-allowed; }
 .form-error { font-size: 13px; color: var(--danger); font-weight: 500; margin-top: 4px; }
 .form-error:empty { display: none; }
-.field-hint { font-size: 12px; color: var(--gray); margin-top: 4px; }
+.field-hint { font-size: 16px; color: var(--gray); margin-top: 6px; }
 
 /* Dashboard Content */
-.dashboard-content { max-width: 1200px; margin: 0 auto; }
+.dashboard-content { max-width: none; margin: 0; padding: 0 24px 32px; font-size: 19px; }
 
 /* Data Table */
 .table-wrapper {
     overflow-x: auto; background: var(--white);
     border-radius: 12px; border: 1px solid var(--gray-light);
 }
-.data-table { width: 100%; min-width: 800px; border-collapse: collapse; font-size: 13px; }
+.data-table { width: 100%; min-width: 800px; border-collapse: collapse; font-size: 17px; }
 .data-table thead th {
-    background: #d0e4ff; color: #000; font-weight: 600; font-size: 12px;
+    background: #d0e4ff; color: #000; font-weight: 700; font-size: 15px;
     text-transform: uppercase; letter-spacing: 0.5px; padding: 12px 14px;
     text-align: left; white-space: nowrap;
 }
@@ -103,8 +103,8 @@
 /* Action Buttons */
 .btn-icon {
     display: inline-flex; align-items: center; justify-content: center;
-    width: 30px; height: 30px; border-radius: 6px; border: none;
-    cursor: pointer; font-size: 13px; transition: background 0.2s;
+    width: 38px; height: 38px; border-radius: 8px; border: none;
+    cursor: pointer; font-size: 20px; transition: background 0.2s;
 }
 .btn-icon-edit { background: rgba(0,102,255,0.1); color: var(--primary); }
 .btn-icon-edit:hover { background: rgba(0,102,255,0.2); }
@@ -118,7 +118,7 @@
 /* Status Badges */
 .status-badge {
     display: inline-block; padding: 3px 10px; border-radius: 12px;
-    font-size: 11px; font-weight: 600; text-transform: capitalize;
+    font-size: 15px; font-weight: 600; text-transform: capitalize;
 }
 .status-connected { background: #d1fae5; color: #065f46; }
 .status-pending { background: #fef3c7; color: #92400e; }
@@ -126,7 +126,7 @@
 .status-partial { background: #ffedd5; color: #9a3412; }
 
 /* Empty State */
-.empty-state { padding: 48px 24px; text-align: center; color: var(--gray); font-size: 14px; }
+.empty-state { padding: 48px 24px; text-align: center; color: var(--gray); font-size: 18px; }
 
 /* Modal */
 .modal-overlay {
@@ -185,9 +185,11 @@
     .dashboard-header { padding: 0 16px; }
     .dashboard-content { padding: 16px 16px 32px; }
     .tab-toolbar { flex-wrap: wrap; gap: 12px; }
+    .dashboard-builder-row { grid-template-columns: 1fr; }
+    .member-tab { padding: 10px 16px; font-size: 18px; }
     .modal-card { margin: 12px; }
-    .data-table { font-size: 12px; }
-    .data-table thead th { padding: 10px 10px; font-size: 11px; }
+    .data-table { font-size: 16px; }
+    .data-table thead th { padding: 10px 10px; font-size: 14px; }
     .data-table tbody td { padding: 8px 10px; }
 }
 
@@ -267,17 +269,74 @@
    Member Tabs
    ============================================================ */
 .member-tabs {
-    display: flex; gap: 4px; margin-bottom: 20px;
-    border-bottom: 2px solid var(--gray-light); padding-bottom: 0;
+    display: flex;
+    justify-content: flex-start;
+    align-items: flex-end;
+    gap: 4px;
+    margin-bottom: 20px;
+    border-bottom: 2px solid var(--gray-light);
+    padding-bottom: 0;
+    width: 100%;
+    text-align: left;
 }
 .member-tab {
-    padding: 10px 24px; font-size: 14px; font-weight: 600;
-    color: var(--gray); background: none; border: none; cursor: pointer;
-    border-bottom: 2px solid transparent; margin-bottom: -2px;
+    padding: 12px 24px;
+    font-size: 20px;
+    font-weight: 600;
+    color: var(--gray);
+    background: none;
+    border: none;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -2px;
     transition: color 0.2s, border-color 0.2s;
+    text-align: left;
 }
 .member-tab:hover { color: var(--primary); }
 .member-tab.active { color: var(--primary); border-bottom-color: var(--primary); }
+
+/* ============================================================
+   Dashboard Tab (Saved Queries)
+   ============================================================ */
+.dashboard-builder {
+    background: var(--white);
+    border: 1px solid var(--gray-light);
+    border-radius: 12px;
+    padding: 20px;
+    margin-bottom: 18px;
+}
+.dashboard-builder-row {
+    display: grid;
+    grid-template-columns: 1fr 2fr;
+    gap: 12px;
+}
+.dashboard-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    gap: 14px;
+}
+.dashboard-card {
+    background: var(--white);
+    border: 1px solid var(--gray-light);
+    border-radius: 12px;
+    padding: 16px;
+}
+.dashboard-card h3 { margin: 0 0 8px; font-size: 18px; color: var(--dark); }
+.dashboard-card-meta { color: var(--gray); font-size: 13px; margin-bottom: 10px; }
+.dashboard-card p { margin: 0 0 10px; font-size: 14px; color: #334155; white-space: pre-wrap; }
+.dashboard-actions { display: flex; justify-content: flex-end; margin-top: 8px; }
+.dashboard-card canvas { width: 100% !important; height: 220px !important; margin-top: 8px; }
+
+.mini-bars { display: grid; gap: 8px; margin: 8px 0 4px; }
+.mini-bar-row { display: grid; grid-template-columns: 60px 1fr 48px; gap: 8px; align-items: center; font-size: 12px; }
+.mini-bar {
+    height: 12px;
+    background: linear-gradient(90deg, #2563eb, #60a5fa);
+    border-radius: 999px;
+}
+.mini-table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 8px; }
+.mini-table th, .mini-table td { border: 1px solid #e5e7eb; padding: 6px 8px; text-align: left; }
+.mini-table th { background: #eff6ff; }
 
 /* ============================================================
    Lab Area
@@ -291,28 +350,28 @@
     display: flex; align-items: center; justify-content: space-between;
     padding: 16px 20px; border-bottom: 1px solid var(--gray-light); background: #f8fafc;
 }
-.lab-header h2 { font-size: 18px; color: var(--dark); margin: 0; }
+.lab-header h2 { font-size: 24px; color: var(--dark); margin: 0; }
 .lab-account-selector { display: flex; align-items: center; gap: 8px; }
-.lab-account-selector label { font-size: 13px; font-weight: 600; color: #374151; }
+.lab-account-selector label { font-size: 17px; font-weight: 600; color: #374151; }
 .lab-account-selector select {
     padding: 6px 12px; border: 1.5px solid var(--gray-light); border-radius: 6px;
-    font-size: 13px; outline: none; min-width: 200px;
+    font-size: 17px; outline: none; min-width: 240px;
 }
 .lab-account-selector select:focus { border-color: var(--primary); }
 
 .lab-chat {
     flex: 1; overflow-y: auto; padding: 20px; background: #0d1117;
-    font-family: 'Consolas', 'Courier New', monospace; font-size: 15px;
+    font-family: 'Consolas', 'Courier New', monospace; font-size: 18px;
 }
 .lab-welcome { text-align: center; padding: 40px 20px; color: #8b949e; }
 .lab-welcome-icon { font-size: 48px; margin-bottom: 12px; }
-.lab-welcome h3 { color: #c9d1d9; font-size: 20px; margin-bottom: 8px; }
-.lab-welcome p { font-size: 14px; line-height: 1.6; max-width: 500px; margin: 0 auto 20px; }
+.lab-welcome h3 { color: #c9d1d9; font-size: 28px; margin-bottom: 10px; }
+.lab-welcome p { font-size: 18px; line-height: 1.6; max-width: 700px; margin: 0 auto 22px; }
 .lab-examples { text-align: left; max-width: 600px; margin: 0 auto; }
 .lab-examples p { margin-bottom: 8px; color: #c9d1d9; }
 .lab-examples code {
     display: block; background: #161b22; border: 1px solid #30363d; border-radius: 6px;
-    padding: 8px 12px; margin-bottom: 6px; font-size: 12px; color: #58a6ff;
+    padding: 12px 14px; margin-bottom: 10px; font-size: 16px; color: #58a6ff;
     cursor: pointer; transition: background 0.2s;
 }
 .lab-examples code:hover { background: #1c2128; }
@@ -325,7 +384,7 @@
 .lab-msg-output {
     background: #161b22; border: 1px solid #30363d; border-radius: 6px;
     padding: 12px; color: #c9d1d9; white-space: pre-wrap; word-wrap: break-word;
-    max-height: 400px; overflow-y: auto; font-size: 14px; line-height: 1.6;
+    max-height: 460px; overflow-y: auto; font-size: 18px; line-height: 1.65;
 }
 .lab-msg-error { color: #f85149; }
 .lab-msg-info { color: #8b949e; font-style: italic; padding: 4px 0; }
@@ -334,12 +393,12 @@
     padding: 12px 20px; border-top: 1px solid #30363d; background: #161b22;
 }
 .lab-input-row { display: flex; align-items: center; gap: 8px; }
-.lab-prompt { color: #7ee787; font-family: 'Consolas', monospace; font-size: 14px; font-weight: 700; }
+.lab-prompt { color: #7ee787; font-family: 'Consolas', monospace; font-size: 18px; font-weight: 700; }
 .lab-command-input {
     flex: 1; background: #0d1117; border: 1px solid #30363d; border-radius: 6px;
-    padding: 10px 12px; color: #c9d1d9; font-family: 'Consolas', monospace; font-size: 13px;
+    padding: 14px 16px; color: #c9d1d9; font-family: 'Consolas', monospace; font-size: 17px;
     outline: none;
 }
 .lab-command-input:focus { border-color: #58a6ff; }
 .lab-command-input::placeholder { color: #484f58; }
-.lab-hint { font-size: 11px; color: #484f58; margin-top: 6px; text-align: center; }
+.lab-hint { font-size: 15px; color: #6b7280; margin-top: 10px; text-align: center; }

@@ -37,12 +37,31 @@ var logoutBtn = $('logout-btn');
 var addAccountBtn = $('add-account-btn');
 var accountsTbody = $('accounts-tbody');
 var accountsEmpty = $('accounts-empty');
+var dashboardViewType = $('dashboard-view-type');
+var dashboardTitleInput = $('dashboard-title');
+var dashboardPromptInput = $('dashboard-prompt');
+var dashboardAnswerInput = $('dashboard-answer');
+var dashboardChartConfigInput = $('dashboard-chart-config');
+var dashboardAddBtn = $('dashboard-add-btn');
+var dashboardGrid = $('dashboard-grid');
+var dashboardEmpty = $('dashboard-empty');
+var visualizeModal = $('visualize-modal');
+var visualizeTypeSelect = $('visualize-type-select');
+var visualizeTitleInput = $('visualize-title-input');
+var visualizeChartType = $('visualize-chart-type');
+var visualizeDatasetLabel = $('visualize-dataset-label');
+var visualizeLabelsInput = $('visualize-labels-input');
+var visualizeValuesInput = $('visualize-values-input');
+var visualizeCloseBtn = $('visualize-close-btn');
+var visualizeCancelBtn = $('visualize-cancel-btn');
+var visualizeSaveBtn = $('visualize-save-btn');
 
 // Account modal
 var accountModal = $('account-modal');
 var accountModalTitle = $('account-modal-title');
 var accountForm = $('account-form');
 var accountIdInput = $('account-id-input');
+var accountNameInput = $('account-name-input');
 var accountFormError = $('account-form-error');
 var accountCancelBtn = $('account-cancel-btn');
 var accountModalClose = $('account-modal-close');
@@ -66,6 +85,9 @@ var editingAccountId = null;
 var deletingAccountId = null;
 var resetEmailValue = '';
 var resetToken = null;
+var dashboardItems = [];
+var pendingVisualize = null;
+var dashboardCharts = [];
 
 // ============================================================
 // Helpers
@@ -400,6 +422,7 @@ function renderAccounts(accounts) {
         tr.innerHTML =
             '<td style="color:#999;font-size:12px">' + (idx + 1) + '</td>' +
             '<td>' + esc(a.accountId || '') + '</td>' +
+            '<td>' + esc(a.accountName || '-') + '</td>' +
             '<td>' + esc(a.roleName || '') + '</td>' +
             '<td><span class="status-badge ' + statusClass + '">' + esc(a.connectionStatus || 'pending') + '</span></td>' +
             '<td>' + fmtDate(a.addedAt) + '</td>' +
@@ -440,15 +463,18 @@ function showAccountModal(existingId) {
     accountFormError.textContent = '';
     editingAccountId = existingId;
     if (existingId) {
+        var existing = allAccounts.find(function(a) { return a.accountId === existingId; }) || {};
         accountModalTitle.textContent = 'Edit Account';
         accountSubmitBtn.textContent = 'Update Account';
-        accountIdInput.value = '';
+        accountIdInput.value = existingId;
         accountIdInput.placeholder = 'New 12-digit Account ID';
+        if (accountNameInput) accountNameInput.value = existing.accountName || '';
     } else {
         accountModalTitle.textContent = 'Add Account';
         accountSubmitBtn.textContent = 'Add Account';
         accountIdInput.value = '';
         accountIdInput.placeholder = '123456789012';
+        if (accountNameInput) accountNameInput.value = '';
     }
     accountModal.hidden = false;
     accountIdInput.focus();
@@ -464,6 +490,7 @@ accountForm.onsubmit = async function(e) {
     e.preventDefault();
     accountFormError.textContent = '';
     var val = accountIdInput.value.trim();
+    var accountName = accountNameInput ? accountNameInput.value.trim() : '';
     if (!/^\d{12}$/.test(val)) {
         accountFormError.textContent = 'Account ID must be exactly 12 digits.';
         return;
@@ -472,10 +499,10 @@ accountForm.onsubmit = async function(e) {
     try {
         showLoading();
         if (editingAccountId) {
-            await api('PUT', '/members/accounts', { oldAccountId: editingAccountId, newAccountId: val });
+            await api('PUT', '/members/accounts', { oldAccountId: editingAccountId, newAccountId: val, accountName: accountName });
             notify('Account updated.', 'success');
         } else {
-            await api('POST', '/members/accounts', { accountId: val });
+            await api('POST', '/members/accounts', { accountId: val, accountName: accountName });
             notify('Account added.', 'success');
         }
         hideAccountModal();
@@ -742,6 +769,7 @@ accountForm.onsubmit = async function(e) {
     e.preventDefault();
     accountFormError.textContent = '';
     var val = accountIdInput.value.trim();
+    var accountName = accountNameInput ? accountNameInput.value.trim() : '';
     if (!/^\d{12}$/.test(val)) {
         accountFormError.textContent = 'Account ID must be exactly 12 digits.';
         return;
@@ -749,12 +777,12 @@ accountForm.onsubmit = async function(e) {
     try {
         showLoading();
         if (editingAccountId) {
-            await api('PUT', '/members/accounts', { oldAccountId: editingAccountId, newAccountId: val });
+            await api('PUT', '/members/accounts', { oldAccountId: editingAccountId, newAccountId: val, accountName: accountName });
             notify('Account updated.', 'success');
             hideAccountModal();
             await loadAccounts();
         } else {
-            await api('POST', '/members/accounts', { accountId: val });
+            await api('POST', '/members/accounts', { accountId: val, accountName: accountName });
             notify('Account added!', 'success');
             hideAccountModal();
             await loadAccounts();
@@ -786,6 +814,7 @@ renderAccounts = function(accounts) {
         tr.innerHTML =
             '<td style="color:#999;font-size:12px">' + (idx + 1) + '</td>' +
             '<td>' + esc(a.accountId || '') + '</td>' +
+            '<td>' + esc(a.accountName || '-') + '</td>' +
             '<td>' + esc(a.roleName || '') + '</td>' +
             '<td><span class="status-badge ' + statusClass + '">' + esc(a.connectionStatus || 'pending') + '</span></td>' +
             '<td>' + fmtDate(a.addedAt) + '</td>' +
@@ -822,15 +851,181 @@ accountsTbody.onclick = function(e) {
 
 document.querySelectorAll('.member-tab').forEach(function(tab) {
     tab.onclick = function() {
-        document.querySelectorAll('.member-tab').forEach(function(t) { t.classList.remove('active'); });
-        document.querySelectorAll('.member-tab-content').forEach(function(c) { c.hidden = true; });
-        tab.classList.add('active');
-        var target = $(tab.dataset.tab);
-        if (target) target.hidden = false;
-        if (tab.dataset.tab === 'lab-tab') populateLabAccounts();
-        if (tab.dataset.tab === 'ai-tab') populateAIAccounts();
+        activateMemberTab(tab.dataset.tab);
     };
 });
+
+function activateMemberTab(tabId) {
+    document.querySelectorAll('.member-tab').forEach(function(t) {
+        t.classList.toggle('active', t.dataset.tab === tabId);
+    });
+    document.querySelectorAll('.member-tab-content').forEach(function(c) {
+        c.hidden = c.id !== tabId;
+    });
+    if (tabId === 'ai-tab') populateAIAccounts();
+}
+
+// ============================================================
+// Dashboard (Saved Queries + Visuals)
+// ============================================================
+
+function extractValues(text) {
+    var matches = String(text || '').match(/-?\\d+(?:\\.\\d+)?/g) || [];
+    return matches.slice(0, 8).map(function(v, idx) {
+        return { label: 'V' + (idx + 1), value: Number(v) };
+    }).filter(function(x) { return !isNaN(x.value); });
+}
+
+function buildChartConfigFromText(text) {
+    var values = extractValues(text);
+    if (!values.length) return null;
+    return {
+        type: 'bar',
+        labels: values.map(function(v) { return v.label; }),
+        data: values.map(function(v) { return v.value; }),
+        datasetLabel: 'Values'
+    };
+}
+
+function parseCsvNumbers(s) {
+    return String(s || '').split(',').map(function(v) { return Number(v.trim()); }).filter(function(v) { return !isNaN(v); });
+}
+
+function parseCsvLabels(s) {
+    return String(s || '').split(',').map(function(v) { return v.trim(); }).filter(Boolean);
+}
+
+function renderMiniGraph(values) {
+    if (!values.length) return '<p>Provide numeric values in the answer to render a graph.</p>';
+    var max = Math.max.apply(null, values.map(function(v) { return Math.abs(v.value); })) || 1;
+    var rows = values.map(function(v) {
+        var pct = Math.max(4, Math.round(Math.abs(v.value) / max * 100));
+        return '<div class=\"mini-bar-row\"><span>' + esc(v.label) + '</span><div class=\"mini-bar\" style=\"width:' + pct + '%\"></div><strong>' + esc(String(v.value)) + '</strong></div>';
+    }).join('');
+    return '<div class=\"mini-bars\">' + rows + '</div>';
+}
+
+function renderMiniTable(values) {
+    if (!values.length) return '<p>Provide numeric values in the answer to render a table.</p>';
+    var rows = values.map(function(v) {
+        return '<tr><td>' + esc(v.label) + '</td><td>' + esc(String(v.value)) + '</td></tr>';
+    }).join('');
+    return '<table class=\"mini-table\"><thead><tr><th>Metric</th><th>Value</th></tr></thead><tbody>' + rows + '</tbody></table>';
+}
+
+function renderDashboard() {
+    if (!dashboardGrid || !dashboardEmpty) return;
+    dashboardCharts.forEach(function(ch) { try { ch.destroy(); } catch (e) {} });
+    dashboardCharts = [];
+    dashboardGrid.innerHTML = '';
+    dashboardEmpty.hidden = dashboardItems.length > 0;
+    if (!dashboardItems.length) return;
+
+    dashboardItems.forEach(function(item) {
+        var card = document.createElement('div');
+        card.className = 'dashboard-card';
+        var values = extractValues(item.answer || '');
+        var chartId = 'dash-chart-' + (item.id || Math.random().toString(36).slice(2));
+        var visual = item.viewType === 'table'
+            ? renderMiniTable(values)
+            : '<canvas id="' + chartId + '" height="180"></canvas>';
+        card.innerHTML =
+            '<h3>' + esc(item.title || 'Saved Query') + '</h3>' +
+            '<div class=\"dashboard-card-meta\">' + esc((item.viewType || 'graph').toUpperCase()) + ' • ' + esc(fmtDate(item.createdAt)) + '</div>' +
+            '<p><strong>Request:</strong> ' + esc(item.prompt || '') + '</p>' +
+            '<p><strong>Response:</strong> ' + esc(item.answer || '-') + '</p>' +
+            visual +
+            '<div class=\"dashboard-actions\"><button class=\"btn btn-outline btn-sm\" data-dashboard-del=\"' + ea(item.id || '') + '\">Delete</button></div>';
+        dashboardGrid.appendChild(card);
+
+        if (item.viewType !== 'table') {
+            var cfg = item.chartConfig && item.chartConfig.labels && item.chartConfig.data
+                ? item.chartConfig
+                : buildChartConfigFromText(item.answer || '');
+            var canvas = $(chartId);
+            if (canvas && cfg && window.Chart) {
+                var chart = new Chart(canvas, {
+                    type: cfg.type || 'bar',
+                    data: {
+                        labels: cfg.labels || [],
+                        datasets: [{
+                            label: cfg.datasetLabel || 'Values',
+                            data: cfg.data || [],
+                            borderWidth: 2,
+                            backgroundColor: ['#3b82f6', '#22c55e', '#f59e0b', '#a855f7', '#ef4444', '#06b6d4'],
+                            borderColor: '#1d4ed8'
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: { legend: { display: true } }
+                    }
+                });
+                dashboardCharts.push(chart);
+            }
+        }
+    });
+}
+
+async function loadDashboard() {
+    try {
+        var data = await api('GET', '/members/dashboard');
+        dashboardItems = Array.isArray(data.items) ? data.items : [];
+        renderDashboard();
+    } catch (err) {
+        notify(err.message || 'Failed to load dashboard', 'error');
+    }
+}
+
+async function addDashboardItem() {
+    if (!dashboardViewType || !dashboardPromptInput) return;
+    var payload = {
+        viewType: dashboardViewType.value || 'graph',
+        title: (dashboardTitleInput && dashboardTitleInput.value || '').trim(),
+        prompt: dashboardPromptInput.value.trim(),
+        answer: (dashboardAnswerInput && dashboardAnswerInput.value || '').trim(),
+        accountId: (aiAccountSelect && aiAccountSelect.value) || '',
+    };
+    if (dashboardChartConfigInput && dashboardChartConfigInput.value.trim()) {
+        try {
+            payload.chartConfig = JSON.parse(dashboardChartConfigInput.value.trim());
+        } catch (e) {
+            notify('Chart Config must be valid JSON.', 'error');
+            return;
+        }
+    }
+    if (!payload.prompt) {
+        notify('Please describe what you want to visualize.', 'error');
+        return;
+    }
+    try {
+        await api('POST', '/members/dashboard', payload);
+        if (dashboardPromptInput) dashboardPromptInput.value = '';
+        if (dashboardTitleInput) dashboardTitleInput.value = '';
+        if (dashboardAnswerInput) dashboardAnswerInput.value = '';
+        if (dashboardChartConfigInput) dashboardChartConfigInput.value = '';
+        notify('Saved to dashboard.', 'success');
+        loadDashboard();
+    } catch (err) {
+        notify(err.message || 'Failed to save dashboard item', 'error');
+    }
+}
+
+if (dashboardAddBtn) dashboardAddBtn.onclick = addDashboardItem;
+if (dashboardGrid) dashboardGrid.onclick = async function(e) {
+    var btn = e.target.closest('[data-dashboard-del]');
+    if (!btn) return;
+    var id = btn.getAttribute('data-dashboard-del');
+    if (!id) return;
+    try {
+        await api('DELETE', '/members/dashboard', { id: id });
+        notify('Dashboard item removed.', 'success');
+        loadDashboard();
+    } catch (err) {
+        notify(err.message || 'Failed to delete dashboard item', 'error');
+    }
+};
 
 // ============================================================
 // Lab Area
@@ -932,6 +1127,9 @@ var aiChat = $('ai-chat');
 var aiQuestionInput = $('ai-question-input');
 var aiAskBtn = $('ai-ask-btn');
 var aiAccountSelect = $('ai-account-select');
+var aiFontDecBtn = $('ai-font-dec');
+var aiFontIncBtn = $('ai-font-inc');
+var aiFontSize = 18;
 
 function populateAIAccounts() {
     if (!aiAccountSelect) return;
@@ -991,6 +1189,7 @@ async function askAI() {
     if (!question) return;
 
     addAIMessage('question', question);
+    aiQuestionInput.dataset.lastQuestion = question;
     aiQuestionInput.value = '';
     addAIMessage('thinking', 'Analyzing your question...');
 
@@ -1028,6 +1227,20 @@ if (aiAskBtn) aiAskBtn.onclick = askAI;
 if (aiQuestionInput) aiQuestionInput.onkeydown = function(e) {
     if (e.key === 'Enter') { e.preventDefault(); askAI(); }
 };
+
+function applyAIFontSize() {
+    if (aiChat) aiChat.style.fontSize = aiFontSize + 'px';
+    if (aiQuestionInput) aiQuestionInput.style.fontSize = Math.max(14, aiFontSize - 1) + 'px';
+}
+if (aiFontDecBtn) aiFontDecBtn.onclick = function() {
+    aiFontSize = Math.max(14, aiFontSize - 1);
+    applyAIFontSize();
+};
+if (aiFontIncBtn) aiFontIncBtn.onclick = function() {
+    aiFontSize = Math.min(28, aiFontSize + 1);
+    applyAIFontSize();
+};
+applyAIFontSize();
 
 // Click example questions to populate input
 if (aiChat) aiChat.onclick = function(e) {
