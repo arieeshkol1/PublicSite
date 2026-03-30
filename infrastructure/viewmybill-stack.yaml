@@ -792,6 +792,7 @@ Resources:
             Statement:
               - Effect: Allow
                 Action:
+                  - s3:GetObject
                   - s3:PutObject
                 Resource:
                   - !Sub 'arn:aws:s3:::${BillStorageBucket}/cf-templates/*'
@@ -1014,6 +1015,27 @@ Resources:
     Properties:
       ApiId: !Ref ViewMyBillApi
       RouteKey: 'POST /members/accounts/ai-query'
+      Target: !Sub 'integrations/${MemberIntegration}'
+
+  MemberDashboardGetRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'GET /members/dashboard'
+      Target: !Sub 'integrations/${MemberIntegration}'
+
+  MemberDashboardAddRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'POST /members/dashboard'
+      Target: !Sub 'integrations/${MemberIntegration}'
+
+  MemberDashboardDeleteRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'DELETE /members/dashboard'
       Target: !Sub 'integrations/${MemberIntegration}'
 
   MemberHandlerInvokePermission:

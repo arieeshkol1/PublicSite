@@ -6,7 +6,7 @@
     <title>Member Portal - SlashMyBill</title>
     <link rel="icon" type="image/png" href="../SlashMyBill.png">
     <link rel="stylesheet" href="../styles.css">
-    <link rel="stylesheet" href="members.css?v=5">
+    <link rel="stylesheet" href="members.css?v=9">
 </head>
 <body>
 
@@ -163,7 +163,6 @@
         <div class="dashboard-content">
             <div class="member-tabs">
                 <button class="member-tab active" data-tab="accounts-tab">Accounts</button>
-                <button class="member-tab" data-tab="lab-tab">Console</button>
                 <button class="member-tab" data-tab="ai-tab">AI Agent</button>
             </div>
             <div id="accounts-tab" class="member-tab-content">
@@ -191,41 +190,6 @@
                 </div>
             </div>
             </div>
-            <div id="lab-tab" class="member-tab-content" hidden>
-                <div class="lab-container">
-                    <div class="lab-header">
-                        <h2>Console</h2>
-                        <div class="lab-account-selector">
-                            <label for="lab-account-select">Account:</label>
-                            <select id="lab-account-select"><option value="">Select an account...</option></select>
-                        </div>
-                    </div>
-                    <div id="lab-chat" class="lab-chat">
-                        <div class="lab-welcome">
-                            <div class="lab-welcome-icon">&#128187;</div>
-                            <h3>AWS CLI Console</h3>
-                            <p>Run read-only AWS CLI commands on your connected accounts.</p>
-                            <div class="lab-examples">
-                                <p>Try these examples:</p>
-                                <code>aws s3 ls</code>
-                                <code>aws ec2 describe-instances --region us-east-1</code>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="lab-input-area">
-                        <div class="lab-input-row">
-                            <span class="lab-prompt">$</span>
-                            <input type="text" id="lab-command-input" class="lab-command-input" placeholder="Type an AWS CLI command..." autocomplete="off">
-                            <button id="lab-run-btn" class="btn btn-primary btn-sm">Run</button>
-                        </div>
-                        <div class="lab-hint">Read-only commands only. Write/delete operations are blocked.</div>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-
-
             <div id="ai-tab" class="member-tab-content" hidden>
                 <div class="lab-container">
                     <div class="lab-header">
@@ -259,6 +223,8 @@
                     </div>
                 </div>
             </div>
+        </div>
+    </div>
 
     <!-- Add/Edit Account Modal -->
     <div id="account-modal" class="modal-overlay" hidden>
@@ -379,6 +345,6 @@
         <span id="notification-message"></span>
     </div>
 
-    <script src="members.js?v=5"></script>
+    <script src="members.js?v=9"></script>
 </body>
 </html>
