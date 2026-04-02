@@ -93,11 +93,11 @@ var dashboardCharts = [];
 // Helpers
 // ============================================================
 
-function notify(msg, type) {
+function notify(msg, type, duration) {
     notifMsg.textContent = msg;
-    notif.className = 'notification notification-' + type;
+    notif.className = 'notification notification-' + (type || 'info');
     notif.hidden = false;
-    setTimeout(function() { notif.hidden = true; }, 4000);
+    setTimeout(function() { notif.hidden = true; }, duration || 4000);
 }
 
 function showLoading() { loading.hidden = false; }
@@ -537,10 +537,15 @@ deleteConfirmBtn.onclick = async function() {
     deleteConfirmBtn.disabled = true;
     deleteConfirmBtn.textContent = 'Deleting...';
     try {
-        await api('DELETE', '/members/accounts', { accountId: deletingAccountId });
-        notify('Account deleted.', 'success');
+        const result = await api('DELETE', '/members/accounts', { accountId: deletingAccountId });
         hideDeleteDialog();
         await loadAccounts();
+        if (result.warning) {
+            // Stack couldn't be auto-deleted (old role template) — show actionable message
+            notify(result.warning, 'warning', 12000);
+        } else {
+            notify('Account disconnected and AWS stack deleted.', 'success');
+        }
     } catch (err) {
         deleteMsg.textContent = 'Error: ' + (err.message || 'Delete failed.');
         deleteConfirmBtn.hidden = true;

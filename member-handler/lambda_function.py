@@ -736,6 +736,7 @@ def handle_delete_account(event):
     external_id = hashlib.sha256(member_email.encode('utf-8')).hexdigest()
     stack_name = f'SlashMyBill-Access-{account_id}'
     stack_delete_requested = False
+    stack_delete_warning = None
     try:
         sts_client = boto3.client('sts')
         assume = sts_client.assume_role(
@@ -758,6 +759,17 @@ def handle_delete_account(event):
         msg = (e.response or {}).get('Error', {}).get('Message', '')
         if code == 'ValidationError' and 'does not exist' in msg:
             logger.info(f"Stack {stack_name} not found in account {account_id}, continuing with account delete")
+        elif 'not authorized' in msg.lower() or code == 'AccessDenied':
+            # Old role template — missing cloudformation:DeleteStack permission.
+            # Don't block the disconnect; warn the user to clean up manually.
+            stack_delete_warning = (
+                f'The connection has been removed from SlashMyBill. '
+                f'However, the IAM role stack "{stack_name}" could not be automatically deleted '
+                f'because the role was deployed with an older template that lacks cloudformation:DeleteStack. '
+                f'To fully clean up, please delete the stack manually in your AWS CloudFormation console, '
+                f'or redeploy the latest template first and then disconnect again.'
+            )
+            logger.warning(f"Stack delete permission denied for {stack_name}: {msg}")
         else:
             logger.error(f"Failed to delete stack {stack_name} for account {account_id}: {e}")
             return create_error_response(400, 'StackDeleteFailed', f'Failed to delete stack {stack_name}: {msg or code}')
@@ -774,7 +786,12 @@ def handle_delete_account(event):
         return create_error_response(500, 'ServerError', 'An unexpected error occurred. Please try again.')
 
     logger.info(f"Account {account_id} deleted for member {member_email}")
-    return create_response(200, {'message': 'Account deleted', 'stackDeleteRequested': stack_delete_requested, 'stackName': stack_name})
+    return create_response(200, {
+        'message': 'Account deleted',
+        'stackDeleteRequested': stack_delete_requested,
+        'stackName': stack_name,
+        'warning': stack_delete_warning,
+    })
 
 
 def handle_generate_template(event):
@@ -869,8 +886,11 @@ def handle_generate_template(event):
                                             'support:DescribeTrustedAdvisorCheckResult',
                                             # Stack self-management (for template update/delete)
                                             'cloudformation:DeleteStack',
+                                            'cloudformation:UpdateStack',
+                                            'cloudformation:CreateStack',
                                             'cloudformation:DescribeStacks',
                                             'cloudformation:DescribeStackResources',
+                                            'cloudformation:GetTemplate',
                                             'iam:GetRole',
                                             'iam:ListRolePolicies',
                                             'iam:DeleteRolePolicy',
