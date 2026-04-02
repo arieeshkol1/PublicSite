@@ -820,8 +820,8 @@ def handle_generate_template(event):
         'Resources': {
             'SlashMyBillRole': {
                 'Type': 'AWS::IAM::Role',
-                'DeletionPolicy': 'Retain',
-                'UpdateReplacePolicy': 'Retain',
+                'DeletionPolicy': 'Delete',
+                'UpdateReplacePolicy': 'Delete',
                 'Properties': {
                     'RoleName': f'SlashMyBill-{account_id}',
                     'AssumeRolePolicyDocument': {
@@ -940,23 +940,40 @@ def handle_generate_template(event):
         logger.warning(f"Failed to upload CF template to S3: {e}")
         template_url = None
 
-    # Build CloudFormation quick-create URL
+    # Build CloudFormation quick-create URL (for new stacks)
+    # and update URL (for existing stacks where role already exists)
     cf_console_url = None
+    cf_update_url = None
     if template_url:
         import urllib.parse
-        params = urllib.parse.urlencode({
+        # Create URL
+        create_params = urllib.parse.urlencode({
             'templateURL': template_url,
             'stackName': stack_name,
         })
-        cf_console_url = f'https://console.aws.amazon.com/cloudformation/home#/stacks/create/review?{params}'
+        cf_console_url = f'https://console.aws.amazon.com/cloudformation/home#/stacks/create/review?{create_params}'
+        # Update URL — used when role already exists (AlreadyExists error)
+        update_params = urllib.parse.urlencode({
+            'templateURL': template_url,
+        })
+        cf_update_url = (
+            f'https://console.aws.amazon.com/cloudformation/home#/stacks/update/template'
+            f'?stackId={urllib.parse.quote(f"arn:aws:cloudformation:us-east-1:{account_id}:stack/{stack_name}/", safe="")}'
+            f'&{update_params}'
+        )
 
     return create_response(200, {
         'template': template_yaml,
         'filename': filename,
         'templateUrl': template_url,
         'cfConsoleUrl': cf_console_url,
+        'cfUpdateUrl': cf_update_url,
         'stackName': stack_name,
         'roleName': role_name,
+        'instructions': (
+            f'If you see "role already exists" when deploying, the stack needs to be UPDATED not created. '
+            f'Go to CloudFormation → Stacks → {stack_name} → Update, and use the template URL above.'
+        ),
     })
 
 

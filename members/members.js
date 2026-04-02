@@ -637,6 +637,7 @@ var wizardAccountId = null;
 var wizardStep = 1;
 var wizardTemplateDownloaded = false;
 var wizardCfConsoleUrl = null;
+var wizardCfUpdateUrl = null;
 var wizardTemplateYaml = null;
 var wizardFilename = null;
 
@@ -645,6 +646,7 @@ function showWizard(accountId) {
     wizardStep = 1;
     wizardTemplateDownloaded = false;
     wizardCfConsoleUrl = null;
+    wizardCfUpdateUrl = null;
     var roleName = 'SlashMyBill-' + accountId;
     var stackName = 'SlashMyBill-Access-' + accountId;
     wizRoleName.textContent = roleName;
@@ -669,11 +671,18 @@ async function _fetchTemplate(accountId) {
         wizardTemplateYaml = data.template;
         wizardFilename = data.filename;
         wizardCfConsoleUrl = data.cfConsoleUrl;
+        wizardCfUpdateUrl = data.cfUpdateUrl;
         if (wizardCfConsoleUrl) {
             wizLaunchCfBtn.href = wizardCfConsoleUrl;
             wizLaunchCfBtn.style.opacity = '1';
             wizLaunchCfBtn.style.pointerEvents = 'auto';
             wizardTemplateDownloaded = true;
+        }
+        // Show update button if update URL is available
+        var updateBtn = document.getElementById('wiz-update-cf-btn');
+        if (updateBtn && wizardCfUpdateUrl) {
+            updateBtn.href = wizardCfUpdateUrl;
+            updateBtn.hidden = false;
         }
     } catch (err) {
         notify(err.message || 'Failed to generate template.', 'error');
