@@ -1479,24 +1479,43 @@ def _gather_account_data(question, credentials):
         end_date = datetime.now(timezone.utc).strftime('%Y-%m-%d')
         start_30d = (datetime.now(timezone.utc) - timedelta(days=30)).strftime('%Y-%m-%d')
 
-        # Monthly cost by service
+        # Monthly cost by service — cost only (no UsageQuantity to avoid unit confusion)
         cost_by_service = ce.get_cost_and_usage(
             TimePeriod={'Start': start_30d, 'End': end_date},
             Granularity='MONTHLY',
-            Metrics=['UnblendedCost', 'UsageQuantity'],
+            Metrics=['UnblendedCost'],
             GroupBy=[{'Type': 'DIMENSION', 'Key': 'SERVICE'}],
         )
-        data['cost_by_service'] = cost_by_service.get('ResultsByTime', [])
-        actions.append('ce:GetCostAndUsage (by service, last 30 days)')
+        # Flatten to a clean list so the AI gets unambiguous numbers
+        service_costs = []
+        for period in cost_by_service.get('ResultsByTime', []):
+            for group in period.get('Groups', []):
+                svc = group['Keys'][0]
+                cost_usd = float(group['Metrics']['UnblendedCost']['Amount'])
+                if cost_usd > 0:
+                    service_costs.append({
+                        'service': svc,
+                        'cost_usd': round(cost_usd, 4),
+                        'period': f"{period['TimePeriod']['Start']} to {period['TimePeriod']['End']}",
+                    })
+        service_costs.sort(key=lambda x: x['cost_usd'], reverse=True)
+        data['cost_by_service'] = service_costs
+        actions.append('ce:GetCostAndUsage (monthly by service, last 30 days)')
 
-        # Daily cost trend
+        # Daily cost trend — cost only
         start_7d = (datetime.now(timezone.utc) - timedelta(days=7)).strftime('%Y-%m-%d')
         daily_cost = ce.get_cost_and_usage(
             TimePeriod={'Start': start_7d, 'End': end_date},
             Granularity='DAILY',
             Metrics=['UnblendedCost'],
         )
-        data['daily_cost'] = daily_cost.get('ResultsByTime', [])
+        daily_costs = []
+        for period in daily_cost.get('ResultsByTime', []):
+            daily_costs.append({
+                'date': period['TimePeriod']['Start'],
+                'cost_usd': round(float(period['Total']['UnblendedCost']['Amount']), 4),
+            })
+        data['daily_cost_trend'] = daily_costs
         actions.append('ce:GetCostAndUsage (daily, last 7 days)')
     except Exception as e:
         data['cost_error'] = str(e)
@@ -1556,7 +1575,131 @@ def _gather_account_data(question, credentials):
         except Exception as e:
             data['lambda_error'] = str(e)
 
+    # Fetch real pricing for top spending services to ground recommendations
+    if data.get('cost_by_service'):
+        pricing_context = _fetch_pricing_context(data['cost_by_service'])
+        if pricing_context:
+            data['pricing_context'] = pricing_context
+            actions.append('pricing:GetProducts (on-demand + RI rates for top services)')
+
     return data, actions
+
+
+def _fetch_pricing_context(service_costs):
+    """
+    For the top spending services that have RI/Savings Plan alternatives,
+    fetch current on-demand and 1-year RI pricing so the AI can quote
+    real savings numbers instead of generic percentages.
+    """
+    # Map CE service names to Pricing API service codes + relevant filters
+    PRICEABLE_SERVICES = {
+        'Amazon Elastic Compute Cloud - Compute': {
+            'serviceCode': 'AmazonEC2',
+            'filters': [
+                {'Type': 'TERM_MATCH', 'Field': 'operatingSystem', 'Value': 'Linux'},
+                {'Type': 'TERM_MATCH', 'Field': 'tenancy', 'Value': 'Shared'},
+                {'Type': 'TERM_MATCH', 'Field': 'capacitystatus', 'Value': 'Used'},
+                {'Type': 'TERM_MATCH', 'Field': 'preInstalledSw', 'Value': 'NA'},
+            ],
+            'label': 'EC2 (Linux, shared tenancy)',
+        },
+        'Amazon Relational Database Service': {
+            'serviceCode': 'AmazonRDS',
+            'filters': [
+                {'Type': 'TERM_MATCH', 'Field': 'databaseEngine', 'Value': 'MySQL'},
+                {'Type': 'TERM_MATCH', 'Field': 'deploymentOption', 'Value': 'Single-AZ'},
+            ],
+            'label': 'RDS (MySQL, Single-AZ)',
+        },
+        'Amazon ElastiCache': {
+            'serviceCode': 'AmazonElastiCache',
+            'filters': [
+                {'Type': 'TERM_MATCH', 'Field': 'cacheEngine', 'Value': 'Redis'},
+            ],
+            'label': 'ElastiCache (Redis)',
+        },
+    }
+
+    pricing_client = boto3.client('pricing', region_name='us-east-1')
+    results = {}
+
+    # Only price the top 3 services by spend that we know how to price
+    top_services = [s['service'] for s in service_costs[:5]]
+
+    for svc_name in top_services:
+        if svc_name not in PRICEABLE_SERVICES:
+            continue
+        cfg = PRICEABLE_SERVICES[svc_name]
+        try:
+            filters = cfg['filters'] + [
+                {'Type': 'TERM_MATCH', 'Field': 'location', 'Value': 'US East (N. Virginia)'},
+            ]
+            response = pricing_client.get_products(
+                ServiceCode=cfg['serviceCode'],
+                Filters=filters,
+                MaxResults=5,
+            )
+
+            on_demand_prices = []
+            ri_1yr_prices = []
+
+            for price_str in response.get('PriceList', []):
+                item = json.loads(price_str)
+                terms = item.get('terms', {})
+                attributes = item.get('product', {}).get('attributes', {})
+                instance_type = attributes.get('instanceType', '')
+
+                # On-demand
+                for _, term in terms.get('OnDemand', {}).items():
+                    for _, dim in term.get('priceDimensions', {}).items():
+                        usd = float(dim.get('pricePerUnit', {}).get('USD', 0))
+                        if usd > 0:
+                            on_demand_prices.append({
+                                'instanceType': instance_type,
+                                'onDemand_per_hr_usd': round(usd, 4),
+                                'onDemand_per_month_usd': round(usd * 730, 2),
+                            })
+
+                # Reserved (1yr, No Upfront)
+                for _, term in terms.get('Reserved', {}).items():
+                    term_attrs = term.get('termAttributes', {})
+                    if (term_attrs.get('LeaseContractLength') == '1yr' and
+                            term_attrs.get('PurchaseOption') == 'No Upfront'):
+                        for _, dim in term.get('priceDimensions', {}).items():
+                            usd = float(dim.get('pricePerUnit', {}).get('USD', 0))
+                            if usd > 0:
+                                ri_1yr_prices.append({
+                                    'instanceType': instance_type,
+                                    'ri_1yr_no_upfront_per_hr_usd': round(usd, 4),
+                                    'ri_1yr_no_upfront_per_month_usd': round(usd * 730, 2),
+                                })
+
+            if on_demand_prices or ri_1yr_prices:
+                # Merge by instance type
+                merged = {}
+                for p in on_demand_prices[:3]:
+                    it = p['instanceType']
+                    merged.setdefault(it, {}).update(p)
+                for p in ri_1yr_prices[:3]:
+                    it = p['instanceType']
+                    merged.setdefault(it, {}).update(p)
+
+                # Calculate savings %
+                for it, p in merged.items():
+                    od = p.get('onDemand_per_month_usd')
+                    ri = p.get('ri_1yr_no_upfront_per_month_usd')
+                    if od and ri and od > 0:
+                        p['ri_savings_pct'] = round((1 - ri / od) * 100, 1)
+
+                results[svc_name] = {
+                    'label': cfg['label'],
+                    'sample_pricing': list(merged.values()),
+                    'note': 'us-east-1 on-demand vs 1yr No Upfront RI. Actual savings depend on instance type and region.',
+                }
+        except Exception as e:
+            logger.warning(f"Pricing fetch failed for {svc_name}: {e}")
+
+    return results if results else None
 
 
 def _ask_bedrock_analyze(question, tips_context, account_data, account_id):
@@ -1575,19 +1718,25 @@ def _ask_bedrock_analyze(question, tips_context, account_data, account_id):
 
     prompt = f"""You are SlashMyBill AI, an AWS FinOps assistant. Analyze the following real data from AWS account {account_id} and answer the user's question.
 
+IMPORTANT RULES:
+- Only reference AWS services and products that actually exist. Do NOT invent product names (e.g. "ECR Lite" does not exist).
+- The cost_by_service data contains ONLY USD cost amounts. Do NOT infer or mention usage quantities or units (GB, hours, requests) unless they are explicitly present in the data.
+- If a service shows $0 cost, it may be within Free Tier or covered by a Savings Plan — do not speculate beyond these known reasons.
+- When pricing_context is present, use the real on-demand vs RI prices to calculate concrete monthly savings amounts. Quote actual dollar figures, not generic percentages.
+- Base all recommendations on real AWS features: Reserved Instances, Savings Plans, S3 Intelligent-Tiering, S3 Glacier, right-sizing, etc.
+
 User question: {question}
 {tips_text}
 
-Real account data gathered via AWS APIs:
+Real account data (costs in USD, gathered via AWS APIs):
 {data_text}
 
 Provide a clear, actionable answer with:
-- Specific numbers and costs from the data
+- Specific dollar amounts from the data (use $ prefix, commas for thousands)
+- Where pricing_context is available: show the on-demand cost, the RI/Savings Plan alternative cost, and the exact monthly saving
 - Bullet points for key findings
-- Concrete recommendations to reduce costs
-- If data shows errors, explain what permissions might be needed
-
-Keep the response concise and practical. Use dollar amounts with commas for thousands."""
+- Concrete, real AWS recommendations to reduce costs
+- If data shows errors, explain what IAM permissions might be needed"""
 
     try:
         response = bedrock_client.invoke_model(
