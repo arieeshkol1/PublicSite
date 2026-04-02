@@ -2043,6 +2043,100 @@ def _gather_account_data(question, credentials):
         except Exception as e:
             data['lambda_error'] = str(e)
 
+    # CloudWatch metrics — fetch when question asks about usage, invocations, utilization, transactions
+    if any(kw in question_lower for kw in ['lambda', 'invocation', 'transaction', 'execution', 'utilization',
+                                            'cpu', 'usage', 'metric', 'cloudwatch', 'how many', 'how much',
+                                            'כמה', 'שימוש']):
+        try:
+            cw = _make_client('cloudwatch')
+            now = datetime.now(timezone.utc)
+            start_30d_dt = now - timedelta(days=30)
+
+            # Lambda invocation metrics per function
+            if data.get('lambda_functions'):
+                lambda_metrics = []
+                for func in data['lambda_functions'][:10]:  # Top 10 functions
+                    try:
+                        inv_resp = cw.get_metric_statistics(
+                            Namespace='AWS/Lambda',
+                            MetricName='Invocations',
+                            Dimensions=[{'Name': 'FunctionName', 'Value': func['name']}],
+                            StartTime=start_30d_dt,
+                            EndTime=now,
+                            Period=2592000,  # 30 days in one datapoint
+                            Statistics=['Sum'],
+                        )
+                        dur_resp = cw.get_metric_statistics(
+                            Namespace='AWS/Lambda',
+                            MetricName='Duration',
+                            Dimensions=[{'Name': 'FunctionName', 'Value': func['name']}],
+                            StartTime=start_30d_dt,
+                            EndTime=now,
+                            Period=2592000,
+                            Statistics=['Average', 'Maximum'],
+                        )
+                        err_resp = cw.get_metric_statistics(
+                            Namespace='AWS/Lambda',
+                            MetricName='Errors',
+                            Dimensions=[{'Name': 'FunctionName', 'Value': func['name']}],
+                            StartTime=start_30d_dt,
+                            EndTime=now,
+                            Period=2592000,
+                            Statistics=['Sum'],
+                        )
+                        invocations = sum(dp['Sum'] for dp in inv_resp.get('Datapoints', []))
+                        avg_duration = next((dp['Average'] for dp in dur_resp.get('Datapoints', [])), 0)
+                        max_duration = next((dp['Maximum'] for dp in dur_resp.get('Datapoints', [])), 0)
+                        errors = sum(dp['Sum'] for dp in err_resp.get('Datapoints', []))
+                        lambda_metrics.append({
+                            'functionName': func['name'],
+                            'invocations_30d': int(invocations),
+                            'avg_duration_ms': round(avg_duration, 1),
+                            'max_duration_ms': round(max_duration, 1),
+                            'errors_30d': int(errors),
+                            'memory_mb': func.get('memory', 0),
+                        })
+                    except Exception:
+                        pass
+                lambda_metrics.sort(key=lambda x: x['invocations_30d'], reverse=True)
+                data['lambda_metrics'] = lambda_metrics
+                actions.append('cloudwatch:GetMetricStatistics (Lambda invocations, duration, errors)')
+
+            # EC2 CPU utilization if instances exist
+            if data.get('ec2_instances'):
+                ec2_metrics = []
+                for inst in data['ec2_instances'][:10]:
+                    if inst.get('state') != 'running':
+                        continue
+                    try:
+                        cpu_resp = cw.get_metric_statistics(
+                            Namespace='AWS/EC2',
+                            MetricName='CPUUtilization',
+                            Dimensions=[{'Name': 'InstanceId', 'Value': inst['id']}],
+                            StartTime=start_30d_dt,
+                            EndTime=now,
+                            Period=2592000,
+                            Statistics=['Average', 'Maximum'],
+                        )
+                        avg_cpu = next((dp['Average'] for dp in cpu_resp.get('Datapoints', [])), 0)
+                        max_cpu = next((dp['Maximum'] for dp in cpu_resp.get('Datapoints', [])), 0)
+                        ec2_metrics.append({
+                            'instanceId': inst['id'],
+                            'type': inst.get('type', ''),
+                            'name': inst.get('name', ''),
+                            'avg_cpu_pct': round(avg_cpu, 1),
+                            'max_cpu_pct': round(max_cpu, 1),
+                            'rightsizing_note': 'Consider downsizing' if avg_cpu < 10 else '',
+                        })
+                    except Exception:
+                        pass
+                if ec2_metrics:
+                    data['ec2_cpu_metrics'] = ec2_metrics
+                    actions.append('cloudwatch:GetMetricStatistics (EC2 CPU utilization)')
+        except Exception as e:
+            data['cloudwatch_error'] = str(e)
+            logger.warning(f"CloudWatch metrics error: {e}")
+
     # Route 53 — fetch when it's a top cost or question mentions DNS/Route53
     top_service_names_r53 = [s['service'] for s in data.get('cost_by_service', [])[:8]]
     if 'Amazon Route 53' in top_service_names_r53 or \
@@ -2227,6 +2321,8 @@ IMPORTANT RULES:
 - For VPC endpoints: interface_monthly_cost_usd is the cost. Recommend reviewing if each endpoint is actively used.
 - For KMS: customer_managed_keys × $1/month = monthly_cost_usd. Flag keys that may be unused.
 - For RDS: show instance class, engine, Multi-AZ status. If Multi-AZ is enabled for dev/test, suggest disabling it.
+- When lambda_metrics is present, use it to show invocation counts, average/max duration, and error counts per function. Identify functions with 0 invocations as candidates for deletion. Identify functions with high avg duration relative to their timeout as optimization candidates.
+- When ec2_cpu_metrics is present, use it to show CPU utilization. Instances with avg CPU < 10% are rightsizing candidates. Quote the actual avg/max CPU percentages.
 - The data already contains the resource details. Do NOT tell the customer to "use CloudWatch" or "check Trusted Advisor" to find resources that are already listed in the data.
 - When usage_breakdown shows charges (e.g. VpcEndpoint-Hours: $11.20) but the resource inventory shows 0 resources (e.g. vpc_endpoints.total: 0), you MUST explain: "These charges are from resources that were active earlier in the billing period but have since been deleted. The charges will stop in the next billing cycle." Do NOT say "no cost savings opportunity" and do NOT suggest reviewing resources that no longer exist.
 - IMPORTANT: Only apply the "deleted mid-month" explanation when the SPECIFIC resource inventory for that service shows 0 AND the usage_breakdown shows charges. Do NOT apply it to services like Amazon Registrar, EC2-Other (EBS), or RDS just because April data is low — that's simply because April just started.
