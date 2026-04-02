@@ -1179,34 +1179,62 @@ function addAIMessage(type, content) {
             .replace(/\n/g, '<br>');
         var questionText = aiQuestionInput && aiQuestionInput.dataset.lastQuestion ? aiQuestionInput.dataset.lastQuestion : '';
 
-        // Generate drill-down follow-up suggestions based on the answer content
+        // Generate drill-down follow-up suggestions based on the QUESTION context, not just answer content
         var followUps = [];
         var answerLower = content.toLowerCase();
-        if (answerLower.indexOf('ebs') !== -1 || answerLower.indexOf('volume') !== -1)
-            followUps.push('List my unattached EBS volumes with sizes');
-        if (answerLower.indexOf('nat gateway') !== -1)
-            followUps.push('Show my NAT Gateways and their VPCs');
-        if (answerLower.indexOf('vpc endpoint') !== -1 || answerLower.indexOf('vpc') !== -1)
-            followUps.push('List all my VPC endpoints with costs');
-        if (answerLower.indexOf('elastic ip') !== -1)
-            followUps.push('Show my unattached Elastic IPs');
-        if (answerLower.indexOf('kms') !== -1 || answerLower.indexOf('key management') !== -1)
-            followUps.push('List my KMS keys and which are unused');
-        if (answerLower.indexOf('rds') !== -1 || answerLower.indexOf('database') !== -1)
-            followUps.push('Show my RDS instances with RI pricing comparison');
-        if (answerLower.indexOf('ec2') !== -1 && answerLower.indexOf('instance') !== -1)
-            followUps.push('List my EC2 instances with rightsizing recommendations');
-        if (answerLower.indexOf('s3') !== -1 || answerLower.indexOf('storage') !== -1)
-            followUps.push('Analyze my S3 buckets for storage class optimization');
-        if (answerLower.indexOf('route 53') !== -1 || answerLower.indexOf('hosted zone') !== -1)
-            followUps.push('List my Route 53 hosted zones with record counts');
-        if (answerLower.indexOf('lambda') !== -1 || answerLower.indexOf('invocation') !== -1 || answerLower.indexOf('function') !== -1) {
-            if (answerLower.indexOf('error') !== -1)
-                followUps.push('Which Lambda functions have errors?');
-            if (answerLower.indexOf('duration') !== -1 || answerLower.indexOf('timeout') !== -1)
-                followUps.push('Which Lambda functions are slow or hitting timeouts?');
-            if (answerLower.indexOf('0 invocation') !== -1 || answerLower.indexOf('deletion') !== -1)
-                followUps.push('List unused Lambda functions I can delete');
+        var questionLower = questionText.toLowerCase();
+
+        // Detect if this was a comparison/trend question
+        var isComparison = questionLower.indexOf('compare') !== -1 || questionLower.indexOf('month') !== -1 ||
+            questionLower.indexOf('trend') !== -1 || questionLower.indexOf('last') !== -1 ||
+            questionLower.indexOf('חודש') !== -1 || questionLower.indexOf('תשווה') !== -1;
+
+        // Detect if this was an efficiency/savings question
+        var isEfficiency = questionLower.indexOf('efficient') !== -1 || questionLower.indexOf('save') !== -1 ||
+            questionLower.indexOf('waste') !== -1 || questionLower.indexOf('don\'t need') !== -1 ||
+            questionLower.indexOf('reduce') !== -1 || questionLower.indexOf('optimize') !== -1;
+
+        if (isComparison) {
+            // Comparison-context drill-downs
+            followUps.push('What caused the biggest cost increase?');
+            followUps.push('Which services are trending up?');
+            followUps.push('How efficient is my account?');
+            followUps.push('Where can I save money?');
+        } else if (isEfficiency) {
+            // Efficiency-context drill-downs
+            if (answerLower.indexOf('ebs') !== -1) followUps.push('List my unattached EBS volumes with sizes');
+            if (answerLower.indexOf('vpc') !== -1) followUps.push('List all my VPC endpoints with costs');
+            if (answerLower.indexOf('kms') !== -1) followUps.push('List my KMS keys and which are unused');
+            if (answerLower.indexOf('lambda') !== -1) followUps.push('List unused Lambda functions I can delete');
+            if (followUps.length < 2) followUps.push('Compare my costs over the last 3 months');
+        } else {
+            // General/specific question drill-downs based on answer content
+            if (answerLower.indexOf('ebs') !== -1 || answerLower.indexOf('volume') !== -1)
+                followUps.push('List my unattached EBS volumes with sizes');
+            if (answerLower.indexOf('nat gateway') !== -1)
+                followUps.push('Show my NAT Gateways and their VPCs');
+            if (answerLower.indexOf('vpc endpoint') !== -1 || answerLower.indexOf('vpc') !== -1)
+                followUps.push('List all my VPC endpoints with costs');
+            if (answerLower.indexOf('elastic ip') !== -1)
+                followUps.push('Show my unattached Elastic IPs');
+            if (answerLower.indexOf('kms') !== -1 || answerLower.indexOf('key management') !== -1)
+                followUps.push('List my KMS keys and which are unused');
+            if (answerLower.indexOf('rds') !== -1 || answerLower.indexOf('database') !== -1)
+                followUps.push('Show my RDS instances with RI pricing comparison');
+            if (answerLower.indexOf('ec2') !== -1 && answerLower.indexOf('instance') !== -1)
+                followUps.push('List my EC2 instances with rightsizing recommendations');
+            if (answerLower.indexOf('s3') !== -1 || answerLower.indexOf('storage') !== -1)
+                followUps.push('Analyze my S3 buckets for storage class optimization');
+            if (answerLower.indexOf('route 53') !== -1 || answerLower.indexOf('hosted zone') !== -1)
+                followUps.push('List my Route 53 hosted zones with record counts');
+            if (answerLower.indexOf('lambda') !== -1 || answerLower.indexOf('invocation') !== -1 || answerLower.indexOf('function') !== -1) {
+                if (answerLower.indexOf('error') !== -1)
+                    followUps.push('Which Lambda functions have errors?');
+                if (answerLower.indexOf('duration') !== -1 || answerLower.indexOf('timeout') !== -1)
+                    followUps.push('Which Lambda functions are slow or hitting timeouts?');
+                if (answerLower.indexOf('0 invocation') !== -1 || answerLower.indexOf('deletion') !== -1)
+                    followUps.push('List unused Lambda functions I can delete');
+            }
         }
 
         // Limit to 4 most relevant follow-ups
@@ -1282,14 +1310,25 @@ async function askAI() {
         if (data.chartData && data.chartData.length > 0) {
             var lastMsg = aiChat.querySelector('.lab-message:last-child');
             if (lastMsg) {
-                lastMsg.dataset.chartData = JSON.stringify(data.chartData);
+                // Reorder charts based on question context
+                var sortedCharts = data.chartData.slice();
+                var qLower = (aiQuestionInput && aiQuestionInput.dataset.lastQuestion || '').toLowerCase();
+                var isCompQ = qLower.indexOf('compare') !== -1 || qLower.indexOf('month') !== -1 ||
+                    qLower.indexOf('trend') !== -1 || qLower.indexOf('last') !== -1;
+                if (isCompQ) {
+                    // Put monthly trend/comparison charts first
+                    sortedCharts.sort(function(a, b) {
+                        var aScore = (a.id || '').indexOf('monthly') !== -1 || (a.id || '').indexOf('comparison') !== -1 ? 0 : 1;
+                        var bScore = (b.id || '').indexOf('monthly') !== -1 || (b.id || '').indexOf('comparison') !== -1 ? 0 : 1;
+                        return aScore - bScore;
+                    });
+                }
+                lastMsg.dataset.chartData = JSON.stringify(sortedCharts);
                 // Add "Show as Table" buttons in the table area
                 var tableArea = lastMsg.querySelector('.ai-table-area');
                 if (tableArea) {
-                    var tableIcons = { 'bar': '📊', 'line': '📈', 'doughnut': '🍩' };
                     var html = '<div style="color:#8b949e;font-size:0.85em;margin-bottom:6px;margin-top:12px;">Show as table:</div>';
-                    data.chartData.forEach(function(cd, idx) {
-                        var icon = tableIcons[cd.type] || '📋';
+                    sortedCharts.forEach(function(cd, idx) {
                         html += '<button class="btn btn-outline btn-sm ai-table-btn" style="margin:3px 4px 3px 0;font-size:0.85em;" data-chart-idx="' + idx + '">'
                             + '📋 ' + esc(cd.title) + '</button>';
                     });
