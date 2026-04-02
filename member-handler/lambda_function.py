@@ -1651,7 +1651,8 @@ def _gather_account_data(question, credentials):
             'jul': 7, 'july': 7, 'aug': 8, 'august': 8, 'sep': 9, 'september': 9,
             'oct': 10, 'october': 10, 'nov': 11, 'november': 11, 'dec': 12, 'december': 12,
         }
-        is_comparison = any(kw in question_lower for kw in ['compare', 'vs', 'versus', 'between', 'difference'])
+        is_comparison = any(kw in question_lower for kw in ['compare', 'vs', 'versus', 'between', 'difference']) or \
+                       any(kw in question for kw in ['השווה', 'תשווה', 'השוואה', 'לעומת'])
         mentioned_months = []
         for name, num in month_names.items():
             if name in question_lower:
@@ -1730,10 +1731,20 @@ def _gather_account_data(question, credentials):
             actions.append(f'ce:GetCostAndUsage ({m1_label} vs {m2_label})')
 
         # Detect relative time comparisons: "last 3 months", "past 6 months", "last quarter"
+        # Also support Hebrew: "3 חודשים", "חודשים אחרונים"
         import re as _re2
         relative_match = _re2.search(r'last\s+(\d+)\s+month', question_lower) or \
-                         _re2.search(r'past\s+(\d+)\s+month', question_lower)
-        if not relative_match and ('last quarter' in question_lower or 'past quarter' in question_lower):
+                         _re2.search(r'past\s+(\d+)\s+month', question_lower) or \
+                         _re2.search(r'(\d+)\s+month', question_lower)
+        # Hebrew: "3 חודשים" or "חודשים"
+        if not relative_match:
+            hebrew_match = _re2.search(r'(\d+)\s*חודש', question)
+            if hebrew_match:
+                relative_match = hebrew_match
+        if not relative_match and ('last quarter' in question_lower or 'past quarter' in question_lower or 'רבעון' in question):
+            class _FakeMatch:
+                def group(self, n): return '3'
+            relative_match = _FakeMatch()
             # Treat "last quarter" as 3 months
             class _FakeMatch:
                 def group(self, n): return '3'
@@ -2218,7 +2229,10 @@ IMPORTANT RULES:
 - For RDS: show instance class, engine, Multi-AZ status. If Multi-AZ is enabled for dev/test, suggest disabling it.
 - The data already contains the resource details. Do NOT tell the customer to "use CloudWatch" or "check Trusted Advisor" to find resources that are already listed in the data.
 - When usage_breakdown shows charges (e.g. VpcEndpoint-Hours: $11.20) but the resource inventory shows 0 resources (e.g. vpc_endpoints.total: 0), you MUST explain: "These charges are from resources that were active earlier in the billing period but have since been deleted. The charges will stop in the next billing cycle." Do NOT say "no cost savings opportunity" and do NOT suggest reviewing resources that no longer exist.
+- IMPORTANT: Only apply the "deleted mid-month" explanation when the SPECIFIC resource inventory for that service shows 0 AND the usage_breakdown shows charges. Do NOT apply it to services like Amazon Registrar, EC2-Other (EBS), or RDS just because April data is low — that's simply because April just started.
 - Tax is NEVER actionable and NEVER minor. Exclude Tax from the ranked analysis entirely — do not list it as a numbered item or in the minor costs section. Only mention it as a footnote if the user specifically asks about tax.
+- ALWAYS rank services strictly by cost_usd descending. A service costing $1.03 MUST appear above a service costing $0.93.
+- Services costing less than $0.50 MUST be in the "Minor costs" bullet list, not individually numbered. Do NOT give them their own numbered section.
 - For general cost analysis: collapse ALL services under $0.50 into a single "Minor costs" bullet list at the end. Do NOT give each one its own numbered section.
 - ALWAYS rank services strictly by cost_usd descending. Never rank a cheaper service above a more expensive one.
 - When month_comparison is present, use ONLY that data for the comparison — do NOT use cost_by_service (which is last 30 days). Show a side-by-side comparison with the difference (+ or -) and percentage change for each service. Highlight services with the biggest absolute dollar change.
