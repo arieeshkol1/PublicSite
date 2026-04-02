@@ -2353,6 +2353,15 @@ IMPORTANT RULES:
 - When monthly_trend is present, use it to show month-over-month costs. Each key in monthly_trend is a YYYY-MM label with a dict of service→cost. Show a table with months as columns and services as rows. Highlight the trend direction. Do NOT fabricate data for months not in the monthly_trend dict.
 - Do NOT use generic percentages. Use real dollar amounts from the data fields.
 - Do NOT list IAM permissions unless a specific fetch failed with an error in the data.
+- When the user asks about "services I don't need", "waste", "unused", or "unnecessary costs", do NOT list every service. ONLY list resources with concrete evidence of being unused or wasteful:
+  * Unattached EBS volumes (unattached_count > 0)
+  * Idle Elastic IPs (elastic_ips.unattached > 0)
+  * Lambda functions with 0 invocations
+  * VPC endpoints/NAT Gateways with charges but 0 current resources (deleted mid-month)
+  * KMS customer-managed keys
+  * Route 53 hosted zones with very few records
+  If no evidence of waste exists for a service, do NOT include it — say "appears actively used."
+- Do NOT repeat "review X usage to ensure it is necessary" for every service. That is generic filler. Only give specific, actionable advice based on the data.
 
 User question: {question}
 {tips_text}
