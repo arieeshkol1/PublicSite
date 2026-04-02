@@ -1215,10 +1215,7 @@ function addAIMessage(type, content) {
 
         div.innerHTML =
             '<div class="lab-msg-output" style="color:#e2e8f0;border-color:#4c1d95;">' + formatted + '</div>' +
-            followUpHtml +
-            '<div style="margin-top:10px;text-align:right;">' +
-            '<button class="btn btn-outline btn-sm ai-visualize-btn" data-question="' + ea(questionText) + '" data-answer="' + ea(content) + '">Visualize</button>' +
-            '</div>';
+            followUpHtml;
     } else if (type === 'commands') {
         var cmdsHtml = '<div class="lab-msg-info" style="color:#7ee787;">Commands executed:</div>';
         content.forEach(function(c) {
