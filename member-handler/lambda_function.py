@@ -1947,7 +1947,9 @@ IMPORTANT RULES:
 - For KMS: customer_managed_keys × $1/month = monthly_cost_usd. Flag keys that may be unused.
 - For RDS: show instance class, engine, Multi-AZ status. If Multi-AZ is enabled for dev/test, suggest disabling it.
 - The data already contains the resource details. Do NOT tell the customer to "use CloudWatch" or "check Trusted Advisor" to find resources that are already listed in the data.
-- For general cost analysis: services costing less than $0.50/month go in "Minor costs" with no recommendations. Services costing $0.50 or more ALWAYS get individual analysis. Amazon Registrar and VPC are NEVER minor regardless of cost.
+- When usage_breakdown shows charges (e.g. VpcEndpoint-Hours: $11.20) but the resource inventory shows 0 resources (e.g. vpc_endpoints.total: 0), explain that the charges are for resources that were active earlier in the billing period but have since been deleted. Do NOT say "no cost savings opportunity" — instead say the charges will stop next month since the resources are already gone.
+- Tax is NEVER actionable. Always list it last or exclude it from the ranked analysis entirely. Do NOT rank Tax above real services.
+- For general cost analysis: collapse ALL services under $0.50 into a single "Minor costs" bullet list at the end. Do NOT give each one its own numbered section.
 - Do NOT use generic percentages. Use real dollar amounts from the data fields.
 - Do NOT list IAM permissions unless a specific fetch failed with an error in the data.
 
