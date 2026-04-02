@@ -1595,6 +1595,18 @@ def _fetch_pricing_context(service_costs):
     PRICEABLE_SERVICES = {
         'Amazon Elastic Compute Cloud - Compute': {
             'serviceCode': 'AmazonEC2',
+            'instance_types': ['t3.medium', 't3.large', 'm5.large', 'm5.xlarge', 'c5.large'],
+            'filters': [
+                {'Type': 'TERM_MATCH', 'Field': 'operatingSystem', 'Value': 'Linux'},
+                {'Type': 'TERM_MATCH', 'Field': 'tenancy', 'Value': 'Shared'},
+                {'Type': 'TERM_MATCH', 'Field': 'capacitystatus', 'Value': 'Used'},
+                {'Type': 'TERM_MATCH', 'Field': 'preInstalledSw', 'Value': 'NA'},
+            ],
+            'label': 'EC2 (Linux, shared tenancy)',
+        },
+        'EC2 - Other': {
+            'serviceCode': 'AmazonEC2',
+            'instance_types': ['t3.medium', 't3.large', 'm5.large', 'm5.xlarge', 'c5.large'],
             'filters': [
                 {'Type': 'TERM_MATCH', 'Field': 'operatingSystem', 'Value': 'Linux'},
                 {'Type': 'TERM_MATCH', 'Field': 'tenancy', 'Value': 'Shared'},
@@ -1605,6 +1617,7 @@ def _fetch_pricing_context(service_costs):
         },
         'Amazon Relational Database Service': {
             'serviceCode': 'AmazonRDS',
+            'instance_types': ['db.t3.medium', 'db.t3.large', 'db.m5.large'],
             'filters': [
                 {'Type': 'TERM_MATCH', 'Field': 'databaseEngine', 'Value': 'MySQL'},
                 {'Type': 'TERM_MATCH', 'Field': 'deploymentOption', 'Value': 'Single-AZ'},
@@ -1613,6 +1626,7 @@ def _fetch_pricing_context(service_costs):
         },
         'Amazon ElastiCache': {
             'serviceCode': 'AmazonElastiCache',
+            'instance_types': ['cache.t3.medium', 'cache.m5.large'],
             'filters': [
                 {'Type': 'TERM_MATCH', 'Field': 'cacheEngine', 'Value': 'Redis'},
             ],
@@ -1630,74 +1644,69 @@ def _fetch_pricing_context(service_costs):
         if svc_name not in PRICEABLE_SERVICES:
             continue
         cfg = PRICEABLE_SERVICES[svc_name]
-        try:
-            filters = cfg['filters'] + [
-                {'Type': 'TERM_MATCH', 'Field': 'location', 'Value': 'US East (N. Virginia)'},
-            ]
-            response = pricing_client.get_products(
-                ServiceCode=cfg['serviceCode'],
-                Filters=filters,
-                MaxResults=5,
-            )
+        
+        # Fetch pricing for common instance types
+        pricing_samples = []
+        for instance_type in cfg['instance_types'][:3]:  # Top 3 common types
+            try:
+                filters = cfg['filters'] + [
+                    {'Type': 'TERM_MATCH', 'Field': 'location', 'Value': 'US East (N. Virginia)'},
+                    {'Type': 'TERM_MATCH', 'Field': 'instanceType', 'Value': instance_type},
+                ]
+                response = pricing_client.get_products(
+                    ServiceCode=cfg['serviceCode'],
+                    Filters=filters,
+                    MaxResults=1,
+                )
 
-            on_demand_prices = []
-            ri_1yr_prices = []
+                for price_str in response.get('PriceList', []):
+                    item = json.loads(price_str)
+                    terms = item.get('terms', {})
+                    
+                    sample = {'instanceType': instance_type}
 
-            for price_str in response.get('PriceList', []):
-                item = json.loads(price_str)
-                terms = item.get('terms', {})
-                attributes = item.get('product', {}).get('attributes', {})
-                instance_type = attributes.get('instanceType', '')
-
-                # On-demand
-                for _, term in terms.get('OnDemand', {}).items():
-                    for _, dim in term.get('priceDimensions', {}).items():
-                        usd = float(dim.get('pricePerUnit', {}).get('USD', 0))
-                        if usd > 0:
-                            on_demand_prices.append({
-                                'instanceType': instance_type,
-                                'onDemand_per_hr_usd': round(usd, 4),
-                                'onDemand_per_month_usd': round(usd * 730, 2),
-                            })
-
-                # Reserved (1yr, No Upfront)
-                for _, term in terms.get('Reserved', {}).items():
-                    term_attrs = term.get('termAttributes', {})
-                    if (term_attrs.get('LeaseContractLength') == '1yr' and
-                            term_attrs.get('PurchaseOption') == 'No Upfront'):
+                    # On-demand
+                    for _, term in terms.get('OnDemand', {}).items():
                         for _, dim in term.get('priceDimensions', {}).items():
                             usd = float(dim.get('pricePerUnit', {}).get('USD', 0))
                             if usd > 0:
-                                ri_1yr_prices.append({
-                                    'instanceType': instance_type,
-                                    'ri_1yr_no_upfront_per_hr_usd': round(usd, 4),
-                                    'ri_1yr_no_upfront_per_month_usd': round(usd * 730, 2),
-                                })
+                                sample['onDemand_per_hr_usd'] = round(usd, 4)
+                                sample['onDemand_per_month_usd'] = round(usd * 730, 2)
+                                break
+                        break
 
-            if on_demand_prices or ri_1yr_prices:
-                # Merge by instance type
-                merged = {}
-                for p in on_demand_prices[:3]:
-                    it = p['instanceType']
-                    merged.setdefault(it, {}).update(p)
-                for p in ri_1yr_prices[:3]:
-                    it = p['instanceType']
-                    merged.setdefault(it, {}).update(p)
+                    # Reserved (1yr, No Upfront)
+                    for _, term in terms.get('Reserved', {}).items():
+                        term_attrs = term.get('termAttributes', {})
+                        if (term_attrs.get('LeaseContractLength') == '1yr' and
+                                term_attrs.get('PurchaseOption') == 'No Upfront'):
+                            for _, dim in term.get('priceDimensions', {}).items():
+                                usd = float(dim.get('pricePerUnit', {}).get('USD', 0))
+                                if usd > 0:
+                                    sample['ri_1yr_no_upfront_per_hr_usd'] = round(usd, 4)
+                                    sample['ri_1yr_no_upfront_per_month_usd'] = round(usd * 730, 2)
+                                    break
+                            break
 
-                # Calculate savings %
-                for it, p in merged.items():
-                    od = p.get('onDemand_per_month_usd')
-                    ri = p.get('ri_1yr_no_upfront_per_month_usd')
+                    # Calculate savings
+                    od = sample.get('onDemand_per_month_usd')
+                    ri = sample.get('ri_1yr_no_upfront_per_month_usd')
                     if od and ri and od > 0:
-                        p['ri_savings_pct'] = round((1 - ri / od) * 100, 1)
+                        sample['monthly_savings_usd'] = round(od - ri, 2)
+                        sample['savings_pct'] = round((1 - ri / od) * 100, 1)
+                    
+                    if 'onDemand_per_month_usd' in sample:
+                        pricing_samples.append(sample)
+                        
+            except Exception as e:
+                logger.warning(f"Pricing fetch failed for {svc_name} {instance_type}: {e}")
 
-                results[svc_name] = {
-                    'label': cfg['label'],
-                    'sample_pricing': list(merged.values()),
-                    'note': 'us-east-1 on-demand vs 1yr No Upfront RI. Actual savings depend on instance type and region.',
-                }
-        except Exception as e:
-            logger.warning(f"Pricing fetch failed for {svc_name}: {e}")
+        if pricing_samples:
+            results[svc_name] = {
+                'label': cfg['label'],
+                'sample_pricing': pricing_samples,
+                'note': 'us-east-1 pricing. 1yr No Upfront RI vs on-demand. Multiply monthly savings by number of instances.',
+            }
 
     return results if results else None
 
@@ -1719,11 +1728,15 @@ def _ask_bedrock_analyze(question, tips_context, account_data, account_id):
     prompt = f"""You are SlashMyBill AI, an AWS FinOps assistant. Analyze the following real data from AWS account {account_id} and answer the user's question.
 
 IMPORTANT RULES:
-- Only reference AWS services and products that actually exist. Do NOT invent product names (e.g. "ECR Lite" does not exist).
-- The cost_by_service data contains ONLY USD cost amounts. Do NOT infer or mention usage quantities or units (GB, hours, requests) unless they are explicitly present in the data.
+- Only reference AWS services and products that actually exist. Do NOT invent product names.
+- The cost_by_service data contains ONLY USD cost amounts. Do NOT infer or mention usage quantities or units (GB, hours, requests) unless explicitly present in the data.
+- "EC2 - Other" in Cost Explorer means NAT Gateway, EBS volumes, data transfer, Elastic IPs, and load balancers — NOT EC2 instances. Explain this clearly and recommend reviewing NAT Gateway and data transfer costs specifically.
+- "Amazon Virtual Private Cloud" costs are NAT Gateway hours/data processing, VPC endpoints, or Elastic IPs — NOT the VPC itself. Identify the likely driver and give specific advice.
 - If a service shows $0 cost, it may be within Free Tier or covered by a Savings Plan — do not speculate beyond these known reasons.
-- When pricing_context is present, use the real on-demand vs RI prices to calculate concrete monthly savings amounts. Quote actual dollar figures, not generic percentages.
-- Base all recommendations on real AWS features: Reserved Instances, Savings Plans, S3 Intelligent-Tiering, S3 Glacier, right-sizing, etc.
+- Do NOT suggest generic IAM permissions lists — only mention permissions if a specific data fetch actually failed with an error in the data.
+- When pricing_context is present, use the real on-demand vs RI prices to calculate concrete monthly savings. Quote actual dollar figures: "m5.large on-demand = $X/month, 1yr RI = $Y/month, saving $Z/month per instance."
+- Do NOT use generic percentages like "save up to 40%" or "save up to 90%" — use the real numbers from pricing_context.
+- Base all recommendations on real AWS features only: Reserved Instances, Savings Plans, S3 Intelligent-Tiering, S3 Glacier, NAT Gateway optimization, right-sizing.
 
 User question: {question}
 {tips_text}
@@ -1733,10 +1746,10 @@ Real account data (costs in USD, gathered via AWS APIs):
 
 Provide a clear, actionable answer with:
 - Specific dollar amounts from the data (use $ prefix, commas for thousands)
-- Where pricing_context is available: show the on-demand cost, the RI/Savings Plan alternative cost, and the exact monthly saving
-- Bullet points for key findings
-- Concrete, real AWS recommendations to reduce costs
-- If data shows errors, explain what IAM permissions might be needed"""
+- For EC2/RDS: use pricing_context to show on-demand vs RI cost and exact monthly saving per instance
+- For "EC2 - Other" and VPC: explain what these line items actually contain and give targeted advice
+- Bullet points for key findings ranked by cost impact
+- Concrete next steps the customer can take today"""
 
     try:
         response = bedrock_client.invoke_model(
