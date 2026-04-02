@@ -1268,8 +1268,16 @@ async function askAI() {
         addAIMessage('answer', data.answer || 'No answer available.');
 
         // Render inline charts if chartData is present
-        if (data.chartData && data.chartData.length > 0 && window.Chart) {
-            renderAICharts(data.chartData);
+        if (data.chartData && data.chartData.length > 0) {
+            if (window.Chart) {
+                renderAICharts(data.chartData);
+            } else {
+                console.warn('Chart.js not loaded, loading dynamically...');
+                var s = document.createElement('script');
+                s.src = 'https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js';
+                s.onload = function() { renderAICharts(data.chartData); };
+                document.head.appendChild(s);
+            }
         }
 
         if (data.tipFound) {
@@ -1321,9 +1329,11 @@ function renderAICharts(chartDataArray) {
         title.textContent = cd.title || 'Chart';
         card.appendChild(title);
 
+        var canvasWrap = document.createElement('div');
+        canvasWrap.style.cssText = 'position:relative;height:' + (cd.type === 'doughnut' ? '200' : '160') + 'px;';
         var canvas = document.createElement('canvas');
-        canvas.height = cd.type === 'doughnut' ? 200 : 160;
-        card.appendChild(canvas);
+        canvasWrap.appendChild(canvas);
+        card.appendChild(canvasWrap);
         container.appendChild(card);
 
         // Build Chart.js config
