@@ -1607,6 +1607,20 @@ def _build_chart_data(account_data):
                 'isCurrency': False,
             })
 
+    # Chart 8: Cost Efficiency Score (gauge-like doughnut) if available
+    efficiency = account_data.get('cost_efficiency')
+    if efficiency:
+        score = efficiency['score']
+        charts.append({
+            'id': 'efficiency-score',
+            'title': f"Cost Efficiency Score: {score}% ({efficiency['rating']})",
+            'type': 'doughnut',
+            'labels': ['Efficient Spend', 'Potential Savings'],
+            'data': [round(score, 1), round(100 - score, 1)],
+            'color': '#10b981',
+            'isCurrency': False,
+        })
+
     return charts if charts else None
 
 
@@ -2176,6 +2190,65 @@ def _gather_account_data(question, credentials):
         except Exception as e:
             data['route53_error'] = str(e)
 
+    # ============================================================
+    # Cost Anomaly Detection — flag daily spikes > 2x the 7-day average
+    # ============================================================
+    daily_trend = data.get('daily_cost_trend', [])
+    if len(daily_trend) >= 3:
+        costs = [d['cost_usd'] for d in daily_trend]
+        avg_cost = sum(costs) / len(costs) if costs else 0
+        anomalies = []
+        for d in daily_trend:
+            if avg_cost > 0 and d['cost_usd'] > avg_cost * 2:
+                anomalies.append({
+                    'date': d['date'],
+                    'cost_usd': d['cost_usd'],
+                    'avg_usd': round(avg_cost, 4),
+                    'spike_pct': round((d['cost_usd'] / avg_cost - 1) * 100, 1),
+                })
+        if anomalies:
+            data['cost_anomalies'] = anomalies
+            data['cost_anomaly_count'] = len(anomalies)
+
+    # ============================================================
+    # Cost Efficiency Score — based on identified savings opportunities
+    # Formula: [1 - (Potential Savings / Total Optimizable Spend)] × 100%
+    # ============================================================
+    total_spend = sum(s['cost_usd'] for s in data.get('cost_by_service', []))
+    potential_savings = 0.0
+
+    # Unattached EBS volumes
+    ebs = data.get('ebs_summary', {})
+    potential_savings += ebs.get('unattached_monthly_cost_usd', 0)
+    potential_savings += ebs.get('gp2_to_gp3_savings_usd', 0)
+
+    # Idle Elastic IPs
+    eips = data.get('elastic_ips', {})
+    potential_savings += eips.get('unattached_monthly_cost_usd', 0)
+
+    # VPC endpoints (if deleted mid-month, charges will stop)
+    vpc_eps = data.get('vpc_endpoints', {})
+    if vpc_eps.get('total', 0) == 0:
+        # Charges from deleted endpoints — will stop next month
+        vpc_breakdown = data.get('amazon_virtual_private_cloud_usage_breakdown', [])
+        for u in vpc_breakdown:
+            if 'VpcEndpoint' in u.get('usage_type', ''):
+                potential_savings += u['cost_usd']
+
+    # KMS customer-managed keys
+    kms = data.get('kms_summary', {})
+    potential_savings += kms.get('monthly_cost_usd', 0)
+
+    if total_spend > 0:
+        efficiency_score = round((1 - (potential_savings / total_spend)) * 100, 1)
+        data['cost_efficiency'] = {
+            'score': efficiency_score,
+            'total_spend_usd': round(total_spend, 2),
+            'potential_savings_usd': round(potential_savings, 2),
+            'savings_pct': round((potential_savings / total_spend) * 100, 1),
+            'rating': 'Excellent' if efficiency_score >= 90 else 'Good' if efficiency_score >= 75 else 'Needs Improvement' if efficiency_score >= 50 else 'Critical',
+        }
+
     # Fetch real pricing for top spending services to ground recommendations
     if data.get('cost_by_service'):
         pricing_context = _fetch_pricing_context(data['cost_by_service'])
@@ -2362,6 +2435,8 @@ IMPORTANT RULES:
   * Route 53 hosted zones with very few records
   If no evidence of waste exists for a service, do NOT include it — say "appears actively used."
 - Do NOT repeat "review X usage to ensure it is necessary" for every service. That is generic filler. Only give specific, actionable advice based on the data.
+- When cost_anomalies is present, highlight the anomalous days with their spike percentage. Explain what might have caused the spike and suggest investigating.
+- When cost_efficiency is present, ALWAYS show the Cost Efficiency Score prominently at the top of general cost analyses. Format: "Cost Efficiency Score: XX% (Rating)". Explain: total spend, potential savings identified, and what drives the savings gap. This is based on the AWS Well-Architected Cost Optimization formula: [1 - (Potential Savings / Total Spend)] × 100%.
 
 User question: {question}
 {tips_text}
