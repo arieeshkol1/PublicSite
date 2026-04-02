@@ -1640,7 +1640,7 @@ def _gather_account_data(question, credentials):
             # Also fetch EBS volumes to explain EC2-Other storage costs
             vols = ec2.describe_volumes()
             vol_summary = {'total_gb': 0, 'gp2_count': 0, 'gp2_gb': 0, 'gp3_count': 0, 'io1_count': 0,
-                           'unattached_count': 0, 'unattached_gb': 0}
+                           'unattached_count': 0, 'unattached_gb': 0, 'unattached_volumes': []}
             for v in vols.get('Volumes', []):
                 size = v.get('Size', 0)
                 vol_summary['total_gb'] += size
@@ -1655,6 +1655,12 @@ def _gather_account_data(question, credentials):
                 if not v.get('Attachments'):
                     vol_summary['unattached_count'] += 1
                     vol_summary['unattached_gb'] += size
+                    vol_summary['unattached_volumes'].append({
+                        'volumeId': v['VolumeId'],
+                        'size_gb': size,
+                        'type': vtype,
+                        'monthly_cost_usd': round(size * 0.10, 2) if vtype in ('gp2', 'gp3') else round(size * 0.125, 2),
+                    })
             # gp2 costs $0.10/GB/month, gp3 costs $0.08/GB/month
             vol_summary['unattached_monthly_cost_usd'] = round(vol_summary['unattached_gb'] * 0.10, 2)
             vol_summary['gp2_to_gp3_savings_usd'] = round(vol_summary['gp2_gb'] * 0.02, 2)  # $0.02/GB saving
@@ -1896,7 +1902,8 @@ IMPORTANT RULES:
 - For VPC endpoints: interface_monthly_cost_usd is the cost. Recommend reviewing if each endpoint is actively used.
 - For KMS: customer_managed_keys × $1/month = monthly_cost_usd. Flag keys that may be unused.
 - For RDS: show instance class, engine, Multi-AZ status. If Multi-AZ is enabled for dev/test, suggest disabling it.
-- Do NOT write analysis for services costing less than $1/month — just list them in a "Minor costs (< $1)" section with no recommendations.
+- Do NOT write analysis for services costing less than $0.50/month — just list them in a "Minor costs" section with no recommendations. Exception: RDS and EC2 Compute always get analysis regardless of cost (they have RI savings potential).
+- When listing recommendations, include specific resource IDs from the data (e.g. volume IDs, endpoint IDs, EIP allocation IDs, NAT Gateway IDs) so the customer knows exactly what to act on.
 - Do NOT use generic percentages. Use real dollar amounts from the data fields.
 - Do NOT list IAM permissions unless a specific fetch failed with an error in the data.
 

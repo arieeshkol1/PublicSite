@@ -1178,8 +1178,44 @@ function addAIMessage(type, content) {
             .replace(/\n- /g, '\n• ')
             .replace(/\n/g, '<br>');
         var questionText = aiQuestionInput && aiQuestionInput.dataset.lastQuestion ? aiQuestionInput.dataset.lastQuestion : '';
+
+        // Generate drill-down follow-up suggestions based on the answer content
+        var followUps = [];
+        var answerLower = content.toLowerCase();
+        if (answerLower.indexOf('ebs') !== -1 || answerLower.indexOf('volume') !== -1)
+            followUps.push('List my unattached EBS volumes with sizes');
+        if (answerLower.indexOf('nat gateway') !== -1)
+            followUps.push('Show my NAT Gateways and their VPCs');
+        if (answerLower.indexOf('vpc endpoint') !== -1 || answerLower.indexOf('vpc') !== -1)
+            followUps.push('List all my VPC endpoints with costs');
+        if (answerLower.indexOf('elastic ip') !== -1)
+            followUps.push('Show my unattached Elastic IPs');
+        if (answerLower.indexOf('kms') !== -1 || answerLower.indexOf('key management') !== -1)
+            followUps.push('List my KMS keys and which are unused');
+        if (answerLower.indexOf('rds') !== -1 || answerLower.indexOf('database') !== -1)
+            followUps.push('Show my RDS instances with RI pricing comparison');
+        if (answerLower.indexOf('ec2') !== -1 && answerLower.indexOf('instance') !== -1)
+            followUps.push('List my EC2 instances with rightsizing recommendations');
+        if (answerLower.indexOf('s3') !== -1 || answerLower.indexOf('storage') !== -1)
+            followUps.push('Analyze my S3 buckets for storage class optimization');
+        if (answerLower.indexOf('route 53') !== -1 || answerLower.indexOf('hosted zone') !== -1)
+            followUps.push('List my Route 53 hosted zones with record counts');
+
+        // Limit to 4 most relevant follow-ups
+        followUps = followUps.slice(0, 4);
+
+        var followUpHtml = '';
+        if (followUps.length > 0) {
+            followUpHtml = '<div class="ai-followups" style="margin-top:12px;"><div style="color:#8b949e;font-size:0.85em;margin-bottom:6px;">Drill down:</div>';
+            followUps.forEach(function(q) {
+                followUpHtml += '<button class="btn btn-outline btn-sm ai-followup-btn" style="margin:3px 4px 3px 0;font-size:0.85em;" data-question="' + ea(q) + '">' + esc(q) + '</button>';
+            });
+            followUpHtml += '</div>';
+        }
+
         div.innerHTML =
             '<div class="lab-msg-output" style="color:#e2e8f0;border-color:#4c1d95;">' + formatted + '</div>' +
+            followUpHtml +
             '<div style="margin-top:10px;text-align:right;">' +
             '<button class="btn btn-outline btn-sm ai-visualize-btn" data-question="' + ea(questionText) + '" data-answer="' + ea(content) + '">Visualize</button>' +
             '</div>';
@@ -1264,6 +1300,16 @@ applyAIFontSize();
 
 // Click example questions to populate input
 if (aiChat) aiChat.onclick = function(e) {
+    // Handle follow-up drill-down buttons
+    var followUpBtn = e.target.closest('.ai-followup-btn');
+    if (followUpBtn) {
+        var followUpQ = followUpBtn.getAttribute('data-question');
+        if (followUpQ && aiQuestionInput) {
+            aiQuestionInput.value = followUpQ;
+            askAI();
+        }
+        return;
+    }
     var visualizeBtn = e.target.closest('.ai-visualize-btn');
     if (visualizeBtn) {
         pendingVisualize = {
