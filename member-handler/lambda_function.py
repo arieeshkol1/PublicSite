@@ -1549,6 +1549,41 @@ def _gather_account_data(question, credentials):
             })
         data['daily_cost_trend'] = daily_costs
         actions.append('ce:GetCostAndUsage (daily, last 7 days)')
+
+        # For top-cost services that are hard to explain (VPC, EC2-Other),
+        # fetch a USAGE_TYPE breakdown so the AI can identify the exact driver
+        top_svc_names = [s['service'] for s in service_costs[:6]]
+        breakdown_services = []
+        if 'Amazon Virtual Private Cloud' in top_svc_names:
+            breakdown_services.append('Amazon Virtual Private Cloud')
+        if 'EC2 - Other' in top_svc_names:
+            breakdown_services.append('EC2 - Other')
+
+        for svc_name in breakdown_services:
+            try:
+                usage_breakdown = ce.get_cost_and_usage(
+                    TimePeriod={'Start': start_30d, 'End': end_date},
+                    Granularity='MONTHLY',
+                    Metrics=['UnblendedCost'],
+                    GroupBy=[{'Type': 'DIMENSION', 'Key': 'USAGE_TYPE'}],
+                    Filter={'Dimensions': {'Key': 'SERVICE', 'Values': [svc_name]}},
+                )
+                usage_items = []
+                for period in usage_breakdown.get('ResultsByTime', []):
+                    for group in period.get('Groups', []):
+                        usage_type = group['Keys'][0]
+                        cost = float(group['Metrics']['UnblendedCost']['Amount'])
+                        if cost > 0.001:
+                            usage_items.append({
+                                'usage_type': usage_type,
+                                'cost_usd': round(cost, 4),
+                            })
+                usage_items.sort(key=lambda x: x['cost_usd'], reverse=True)
+                safe_key = svc_name.replace(' ', '_').replace('-', '_').lower()
+                data[f'{safe_key}_usage_breakdown'] = usage_items
+                actions.append(f'ce:GetCostAndUsage (usage type breakdown for {svc_name})')
+            except Exception as e:
+                logger.warning(f"Usage type breakdown failed for {svc_name}: {e}")
     except Exception as e:
         data['cost_error'] = str(e)
         logger.warning(f"Cost Explorer error: {e}")
@@ -1900,6 +1935,8 @@ IMPORTANT RULES:
 - cost_by_service contains ONLY USD amounts. Do NOT infer usage units unless explicitly in the data.
 - "EC2 - Other" = NAT Gateway hours/data, EBS volumes, data transfer, Elastic IPs, load balancers. NOT EC2 instances. Do NOT recommend Reserved Instances for this line item.
 - "Amazon Virtual Private Cloud" costs = NAT Gateway data processing, VPC endpoints (Interface type cost ~$7.20/month each), Elastic IPs. Use elastic_ips and vpc_endpoints data to identify the exact driver.
+- When amazon_virtual_private_cloud_usage_breakdown is present, use it to show the EXACT cost drivers (e.g. NatGateway-Hours, VpcEndpoint-Hours, ElasticIP:IdleAddress, DataTransfer-Out-Bytes). List each usage type with its cost.
+- When ec2___other_usage_breakdown is present, use it to show the EXACT cost drivers for EC2-Other (e.g. EBS:VolumeUsage.gp2, NatGateway-Hours, DataTransfer-Out-Bytes). List each usage type with its cost.
 - Reserved Instances ONLY apply to "Amazon Elastic Compute Cloud - Compute" and RDS instances, never to EC2-Other or VPC.
 - When unattached_volumes list is present, ALWAYS list each volume by its volumeId, size_gb, type, and monthly_cost_usd. Do NOT just say "6 volumes" — list them individually.
 - When elastic_ips.unattached_list is present, list each by allocationId and publicIp.
