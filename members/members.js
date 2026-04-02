@@ -1267,6 +1267,11 @@ async function askAI() {
         // Show the AI answer
         addAIMessage('answer', data.answer || 'No answer available.');
 
+        // Render inline charts if chartData is present
+        if (data.chartData && data.chartData.length > 0 && window.Chart) {
+            renderAICharts(data.chartData);
+        }
+
         if (data.tipFound) {
             addAIMessage('thinking', 'Tip found in knowledge base ✓');
             var tipNote = $('ai-thinking');
@@ -1287,6 +1292,89 @@ if (aiQuestionInput) aiQuestionInput.onkeydown = function(e) {
 function applyAIFontSize() {
     if (aiChat) aiChat.style.fontSize = aiFontSize + 'px';
     if (aiQuestionInput) aiQuestionInput.style.fontSize = Math.max(14, aiFontSize - 1) + 'px';
+}
+
+var aiInlineCharts = [];
+
+function renderAICharts(chartDataArray) {
+    if (!aiChat || !window.Chart) return;
+
+    // Destroy previous inline charts
+    aiInlineCharts.forEach(function(c) { try { c.destroy(); } catch (e) {} });
+    aiInlineCharts = [];
+
+    var container = document.createElement('div');
+    container.className = 'ai-charts-container';
+    container.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px;margin-bottom:16px;';
+
+    var doughnutColors = [
+        '#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899',
+        '#14b8a6', '#f97316', '#06b6d4', '#84cc16'
+    ];
+
+    chartDataArray.forEach(function(cd) {
+        var card = document.createElement('div');
+        card.style.cssText = 'background:#161b22;border:1px solid #30363d;border-radius:8px;padding:12px;';
+
+        var title = document.createElement('div');
+        title.style.cssText = 'color:#e2e8f0;font-size:0.85em;font-weight:600;margin-bottom:8px;';
+        title.textContent = cd.title || 'Chart';
+        card.appendChild(title);
+
+        var canvas = document.createElement('canvas');
+        canvas.height = cd.type === 'doughnut' ? 200 : 160;
+        card.appendChild(canvas);
+        container.appendChild(card);
+
+        // Build Chart.js config
+        var isDoughnut = cd.type === 'doughnut';
+        var config = {
+            type: cd.type || 'bar',
+            data: {
+                labels: cd.labels || [],
+                datasets: [{
+                    data: cd.data || [],
+                    backgroundColor: isDoughnut ? doughnutColors.slice(0, (cd.data || []).length) : (cd.color || '#6366f1'),
+                    borderColor: isDoughnut ? '#161b22' : (cd.color || '#6366f1'),
+                    borderWidth: isDoughnut ? 2 : 1,
+                    fill: cd.type === 'line' ? 'origin' : undefined,
+                    tension: 0.3,
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                indexAxis: cd.indexAxis || 'x',
+                plugins: {
+                    legend: { display: isDoughnut, position: 'right', labels: { color: '#c9d1d9', font: { size: 10 } } },
+                    tooltip: {
+                        callbacks: {
+                            label: function(ctx) {
+                                return '$' + (ctx.parsed !== undefined
+                                    ? (typeof ctx.parsed === 'object' ? (ctx.parsed.x || ctx.parsed.y || ctx.parsed) : ctx.parsed)
+                                    : ctx.raw
+                                ).toFixed(2);
+                            }
+                        }
+                    }
+                },
+                scales: isDoughnut ? {} : {
+                    x: { ticks: { color: '#8b949e', font: { size: 10 } }, grid: { color: '#21262d' } },
+                    y: { ticks: { color: '#8b949e', font: { size: 10 }, callback: function(v) { return '$' + v; } }, grid: { color: '#21262d' } }
+                }
+            }
+        };
+
+        try {
+            var chart = new Chart(canvas, config);
+            aiInlineCharts.push(chart);
+        } catch (e) {
+            console.warn('Chart render failed:', e);
+        }
+    });
+
+    aiChat.appendChild(container);
+    aiChat.scrollTop = aiChat.scrollHeight;
 }
 if (aiFontDecBtn) aiFontDecBtn.onclick = function() {
     aiFontSize = Math.max(14, aiFontSize - 1);

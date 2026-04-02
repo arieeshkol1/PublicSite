@@ -1458,7 +1458,71 @@ def _invoke_direct_model(question, account_id, member_email):
         'results': [],
         'tipFound': bool(tips_context),
         'agentUsed': False,
+        'chartData': _build_chart_data(account_data),
     })
+
+
+def _build_chart_data(account_data):
+    """Build chart data structures from gathered account data for frontend rendering."""
+    charts = []
+
+    # Chart 1: Top costs by service (horizontal bar)
+    cost_by_service = account_data.get('cost_by_service', [])
+    if cost_by_service:
+        # Filter to services with cost > $0.01 and take top 8
+        top = [s for s in cost_by_service if s['cost_usd'] > 0.01][:8]
+        if top:
+            charts.append({
+                'id': 'service-costs',
+                'title': 'Cost by Service (Last 30 Days)',
+                'type': 'bar',
+                'indexAxis': 'y',
+                'labels': [s['service'].replace('Amazon ', '').replace('AWS ', '')[:25] for s in top],
+                'data': [s['cost_usd'] for s in top],
+                'color': '#6366f1',
+            })
+
+    # Chart 2: Daily cost trend (line)
+    daily = account_data.get('daily_cost_trend', [])
+    if daily and len(daily) > 1:
+        charts.append({
+            'id': 'daily-trend',
+            'title': 'Daily Cost Trend (Last 7 Days)',
+            'type': 'line',
+            'labels': [d['date'][5:] for d in daily],  # MM-DD format
+            'data': [d['cost_usd'] for d in daily],
+            'color': '#10b981',
+        })
+
+    # Chart 3: VPC usage breakdown (doughnut) if available
+    vpc_breakdown = account_data.get('amazon_virtual_private_cloud_usage_breakdown', [])
+    if vpc_breakdown:
+        items = [u for u in vpc_breakdown if u['cost_usd'] > 0.001][:6]
+        if items:
+            charts.append({
+                'id': 'vpc-breakdown',
+                'title': 'VPC Cost Breakdown',
+                'type': 'doughnut',
+                'labels': [u['usage_type'].split('-', 1)[-1] if '-' in u['usage_type'] else u['usage_type'] for u in items],
+                'data': [u['cost_usd'] for u in items],
+                'color': '#8b5cf6',
+            })
+
+    # Chart 4: EC2-Other usage breakdown (doughnut) if available
+    ec2_breakdown = account_data.get('ec2___other_usage_breakdown', [])
+    if ec2_breakdown:
+        items = [u for u in ec2_breakdown if u['cost_usd'] > 0.001][:6]
+        if items:
+            charts.append({
+                'id': 'ec2other-breakdown',
+                'title': 'EC2-Other Cost Breakdown',
+                'type': 'doughnut',
+                'labels': [u['usage_type'].split(':')[-1] if ':' in u['usage_type'] else u['usage_type'] for u in items],
+                'data': [u['cost_usd'] for u in items],
+                'color': '#f59e0b',
+            })
+
+    return charts if charts else None
 
 
 def _search_tips(question):
