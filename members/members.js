@@ -1214,7 +1214,9 @@ function addAIMessage(type, content) {
         }
 
         div.innerHTML =
-            '<div class="lab-msg-output" style="color:#e2e8f0;border-color:#4c1d95;">' + formatted + '</div>' +
+            '<div class="lab-msg-output" style="color:#e2e8f0;border-color:#4c1d95;position:relative;">' +
+            '<button class="ai-copy-btn" title="Copy to clipboard" style="position:absolute;top:6px;right:6px;background:#21262d;border:1px solid #30363d;border-radius:4px;color:#8b949e;cursor:pointer;padding:3px 6px;font-size:0.75em;">📋 Copy</button>' +
+            formatted + '</div>' +
             followUpHtml +
             '<div class="ai-table-area"></div>';
     } else if (type === 'commands') {
@@ -1323,7 +1325,7 @@ function renderSingleChart(container, cd, overrideType) {
 
     function doRender() {
         var card = document.createElement('div');
-        card.style.cssText = 'background:#161b22;border:1px solid #30363d;border-radius:8px;padding:16px;margin-top:8px;max-width:520px;';
+        card.style.cssText = 'background:#161b22;border:1px solid #30363d;border-radius:8px;padding:16px;margin-top:8px;max-width:100%;';
 
         var title = document.createElement('div');
         title.style.cssText = 'color:#e2e8f0;font-size:0.9em;font-weight:600;margin-bottom:10px;';
@@ -1340,13 +1342,19 @@ function renderSingleChart(container, cd, overrideType) {
         // Format toggle buttons
         var toggleRow = document.createElement('div');
         toggleRow.style.cssText = 'display:flex;gap:4px;margin-top:10px;flex-wrap:wrap;';
-        var types = [
-            { key: 'bar', label: '📊 Bar' },
-            { key: 'line', label: '📈 Line' },
-            { key: 'doughnut', label: '🍩 Doughnut' },
-            { key: 'pie', label: '🥧 Pie' },
-            { key: 'polarArea', label: '🎯 Polar' },
-        ];
+        var types;
+        var _isTS = cd.id === 'daily-trend' || cd.id === 'monthly-total-trend';
+        var _isBD = cd.id === 'vpc-breakdown' || cd.id === 'ec2other-breakdown';
+        var _isMM = cd.monthColumns && cd.months && cd.months.length > 1;
+        if (_isTS) {
+            types = [{ key: 'line', label: '📈 Line' }, { key: 'bar', label: '📊 Bar' }];
+        } else if (_isBD) {
+            types = [{ key: 'doughnut', label: '🍩 Doughnut' }, { key: 'pie', label: '🥧 Pie' }, { key: 'bar', label: '📊 Bar' }];
+        } else if (_isMM) {
+            types = [{ key: 'bar', label: '📊 Grouped Bar' }, { key: 'line', label: '📈 Line' }];
+        } else {
+            types = [{ key: 'bar', label: '📊 Bar' }, { key: 'doughnut', label: '🍩 Doughnut' }, { key: 'line', label: '📈 Line' }];
+        }
         types.forEach(function(t) {
             var btn = document.createElement('button');
             btn.className = 'btn btn-outline btn-sm';
@@ -1450,7 +1458,7 @@ function renderTableWithChart(container, cd) {
 
     // Build table
     var tableWrap = document.createElement('div');
-    tableWrap.style.cssText = 'background:#161b22;border:1px solid #30363d;border-radius:8px;padding:12px;margin-top:8px;max-width:520px;overflow-x:auto;';
+    tableWrap.style.cssText = 'background:#161b22;border:1px solid #30363d;border-radius:8px;padding:12px;margin-top:8px;max-width:100%;overflow-x:auto;';
 
     var titleEl = document.createElement('div');
     titleEl.style.cssText = 'color:#e2e8f0;font-size:0.9em;font-weight:600;margin-bottom:8px;';
@@ -1599,13 +1607,35 @@ function renderTableWithChart(container, cd) {
     chartLabel.textContent = 'Visualize:';
     chartRow.appendChild(chartLabel);
 
-    var chartTypes = [
-        { key: 'bar', label: '📊 Bar' },
-        { key: 'line', label: '📈 Line' },
-        { key: 'doughnut', label: '🍩 Doughnut' },
-        { key: 'pie', label: '🥧 Pie' },
-        { key: 'polarArea', label: '🎯 Polar' },
-    ];
+    var chartTypes = [];
+    // Smart chart type suggestions based on data shape
+    var hasMultiMonth = cd.monthColumns && cd.months && cd.months.length > 1;
+    var isTimeSeries = cd.id === 'daily-trend' || cd.id === 'monthly-total-trend';
+    var isBreakdown = cd.id === 'vpc-breakdown' || cd.id === 'ec2other-breakdown';
+
+    if (isTimeSeries) {
+        chartTypes = [
+            { key: 'line', label: '📈 Line' },
+            { key: 'bar', label: '📊 Bar' },
+        ];
+    } else if (isBreakdown) {
+        chartTypes = [
+            { key: 'doughnut', label: '🍩 Doughnut' },
+            { key: 'pie', label: '🥧 Pie' },
+            { key: 'bar', label: '📊 Bar' },
+        ];
+    } else if (hasMultiMonth) {
+        chartTypes = [
+            { key: 'bar', label: '📊 Grouped Bar' },
+            { key: 'line', label: '📈 Line' },
+        ];
+    } else {
+        chartTypes = [
+            { key: 'bar', label: '📊 Bar' },
+            { key: 'doughnut', label: '🍩 Doughnut' },
+            { key: 'line', label: '📈 Line' },
+        ];
+    }
     var chartArea = document.createElement('div');
     chartArea.className = 'ai-chart-render-area';
 
@@ -1643,6 +1673,19 @@ applyAIFontSize();
 
 // Click example questions to populate input
 if (aiChat) aiChat.onclick = function(e) {
+    // Handle copy button
+    var copyBtn = e.target.closest('.ai-copy-btn');
+    if (copyBtn) {
+        var output = copyBtn.closest('.lab-msg-output');
+        if (output) {
+            var text = output.textContent.replace('📋 Copy', '').trim();
+            navigator.clipboard.writeText(text).then(function() {
+                copyBtn.textContent = '✓ Copied';
+                setTimeout(function() { copyBtn.textContent = '📋 Copy'; }, 2000);
+            });
+        }
+        return;
+    }
     // Handle follow-up drill-down buttons
     var followUpBtn = e.target.closest('.ai-followup-btn');
     if (followUpBtn) {
