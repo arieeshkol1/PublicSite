@@ -1365,7 +1365,18 @@ function renderSingleChart(container, cd, overrideType) {
             type: chartType,
             data: {
                 labels: cd.labels || [],
-                datasets: cd.data2 ? [
+                datasets: cd.monthColumns ? (function() {
+                    var colors = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'];
+                    return (cd.months || []).map(function(m, mi) {
+                        return {
+                            label: m,
+                            data: cd.monthColumns[m] || [],
+                            backgroundColor: colors[mi % colors.length],
+                            borderColor: colors[mi % colors.length],
+                            borderWidth: 1,
+                        };
+                    });
+                })() : cd.data2 ? [
                     {
                         label: cd.dataLabel || 'Month 1',
                         data: cd.data || [],
@@ -1449,16 +1460,22 @@ function renderTableWithChart(container, cd) {
     var table = document.createElement('table');
     table.style.cssText = 'width:100%;border-collapse:collapse;font-size:0.85em;color:#c9d1d9;';
 
-    // Header — adapt for comparison data
+    // Header — adapt for comparison or multi-month data
     var hasComparison = cd.data2 && cd.data2.length > 0;
+    var hasMonthColumns = cd.monthColumns && cd.months && cd.months.length > 0;
     var thead = document.createElement('thead');
     var hrow = document.createElement('tr');
-    var headers = hasComparison
-        ? ['#', 'Service', cd.dataLabel || 'Month 1', cd.data2Label || 'Month 2', 'Change']
-        : ['#', 'Item', 'Cost (USD)'];
+    var headers;
+    if (hasMonthColumns) {
+        headers = ['#', 'Service'].concat(cd.months);
+    } else if (hasComparison) {
+        headers = ['#', 'Service', cd.dataLabel || 'Month 1', cd.data2Label || 'Month 2', 'Change'];
+    } else {
+        headers = ['#', 'Item', 'Cost (USD)'];
+    }
     headers.forEach(function(h) {
         var th = document.createElement('th');
-        th.style.cssText = 'text-align:left;padding:6px 8px;border-bottom:1px solid #30363d;color:#8b949e;font-weight:600;';
+        th.style.cssText = 'text-align:left;padding:6px 8px;border-bottom:1px solid #30363d;color:#8b949e;font-weight:600;white-space:nowrap;';
         if (h !== '#' && h !== 'Item' && h !== 'Service') th.style.textAlign = 'right';
         th.textContent = h;
         hrow.appendChild(th);
@@ -1471,6 +1488,48 @@ function renderTableWithChart(container, cd) {
     var labels = cd.labels || [];
     var data = cd.data || [];
     var data2 = cd.data2 || [];
+
+    if (hasMonthColumns) {
+        // Multi-month table
+        var monthTotals = {};
+        cd.months.forEach(function(m) { monthTotals[m] = 0; });
+        labels.forEach(function(label, i) {
+            var tr = document.createElement('tr');
+            tr.style.cssText = 'border-bottom:1px solid #21262d;';
+            var tdNum = document.createElement('td');
+            tdNum.style.cssText = 'padding:5px 8px;color:#8b949e;';
+            tdNum.textContent = (i + 1);
+            tr.appendChild(tdNum);
+            var tdLabel = document.createElement('td');
+            tdLabel.style.cssText = 'padding:5px 8px;white-space:nowrap;';
+            tdLabel.textContent = label;
+            tr.appendChild(tdLabel);
+            cd.months.forEach(function(m) {
+                var val = (cd.monthColumns[m] && cd.monthColumns[m][i]) || 0;
+                monthTotals[m] += val;
+                var td = document.createElement('td');
+                td.style.cssText = 'padding:5px 8px;text-align:right;font-family:monospace;';
+                td.textContent = '$' + val.toFixed(2);
+                tr.appendChild(td);
+            });
+            tbody.appendChild(tr);
+        });
+        table.appendChild(tbody);
+        // Total row
+        var tfoot = document.createElement('tfoot');
+        var tfrow = document.createElement('tr');
+        tfrow.style.cssText = 'border-top:2px solid #30363d;font-weight:600;';
+        var tfe = document.createElement('td'); tfe.colSpan = 2; tfe.style.cssText = 'padding:6px 8px;'; tfe.textContent = 'Total';
+        tfrow.appendChild(tfe);
+        cd.months.forEach(function(m) {
+            var td = document.createElement('td');
+            td.style.cssText = 'padding:6px 8px;text-align:right;font-family:monospace;color:#10b981;';
+            td.textContent = '$' + monthTotals[m].toFixed(2);
+            tfrow.appendChild(td);
+        });
+        tfoot.appendChild(tfrow);
+        table.appendChild(tfoot);
+    } else {
     var total = 0;
     var total2 = 0;
     labels.forEach(function(label, i) {
@@ -1528,6 +1587,7 @@ function renderTableWithChart(container, cd) {
     }
     tfoot.appendChild(tfrow);
     table.appendChild(tfoot);
+    } // end else (single/comparison table)
 
     tableWrap.appendChild(table);
 

@@ -1568,20 +1568,26 @@ def _build_chart_data(account_data):
             'color': '#6366f1',
         })
 
-        # Top services across all months for grouped comparison
+        # Top services across all months — pass full monthly data for multi-column table
         all_svcs = {}
         for m in trend_months:
             for svc, cost in monthly_trend[m].items():
                 all_svcs[svc] = all_svcs.get(svc, 0) + cost
-        top_svcs = sorted(all_svcs.items(), key=lambda x: x[1], reverse=True)[:6]
+        top_svcs = sorted(all_svcs.items(), key=lambda x: x[1], reverse=True)[:8]
         if top_svcs:
-            svc_names = [s[0].replace('Amazon ', '').replace('AWS ', '')[:25] for s in top_svcs]
+            svc_names = [s[0].replace('Amazon ', '').replace('AWS ', '')[:30] for s in top_svcs]
+            # Build per-month data for each service
+            month_columns = {}
+            for m in trend_months:
+                month_columns[m] = [round(monthly_trend.get(m, {}).get(s[0], 0), 2) for s in top_svcs]
             charts.append({
                 'id': 'monthly-service-trend',
                 'title': f'Top Services by Month ({trend_months[0]} to {trend_months[-1]})',
                 'type': 'bar',
                 'labels': svc_names,
-                'data': [monthly_trend.get(trend_months[-1], {}).get(s[0], 0) for s in top_svcs],
+                'monthColumns': month_columns,
+                'months': trend_months,
+                'data': [round(all_svcs[s[0]], 2) for s in top_svcs],
                 'color': '#6366f1',
             })
 
