@@ -1365,7 +1365,22 @@ function renderSingleChart(container, cd, overrideType) {
             type: chartType,
             data: {
                 labels: cd.labels || [],
-                datasets: [{
+                datasets: cd.data2 ? [
+                    {
+                        label: cd.dataLabel || 'Month 1',
+                        data: cd.data || [],
+                        backgroundColor: cd.color || '#6366f1',
+                        borderColor: cd.color || '#6366f1',
+                        borderWidth: 1,
+                    },
+                    {
+                        label: cd.data2Label || 'Month 2',
+                        data: cd.data2 || [],
+                        backgroundColor: cd.color2 || '#10b981',
+                        borderColor: cd.color2 || '#10b981',
+                        borderWidth: 1,
+                    }
+                ] : [{
                     data: cd.data || [],
                     backgroundColor: isRadial ? doughnutColors.slice(0, (cd.data || []).length) : (cd.color || '#6366f1'),
                     borderColor: isRadial ? '#161b22' : (cd.color || '#6366f1'),
@@ -1434,13 +1449,17 @@ function renderTableWithChart(container, cd) {
     var table = document.createElement('table');
     table.style.cssText = 'width:100%;border-collapse:collapse;font-size:0.85em;color:#c9d1d9;';
 
-    // Header
+    // Header — adapt for comparison data
+    var hasComparison = cd.data2 && cd.data2.length > 0;
     var thead = document.createElement('thead');
     var hrow = document.createElement('tr');
-    ['#', 'Item', 'Cost (USD)'].forEach(function(h) {
+    var headers = hasComparison
+        ? ['#', 'Service', cd.dataLabel || 'Month 1', cd.data2Label || 'Month 2', 'Change']
+        : ['#', 'Item', 'Cost (USD)'];
+    headers.forEach(function(h) {
         var th = document.createElement('th');
         th.style.cssText = 'text-align:left;padding:6px 8px;border-bottom:1px solid #30363d;color:#8b949e;font-weight:600;';
-        if (h === 'Cost (USD)') th.style.textAlign = 'right';
+        if (h !== '#' && h !== 'Item' && h !== 'Service') th.style.textAlign = 'right';
         th.textContent = h;
         hrow.appendChild(th);
     });
@@ -1451,7 +1470,9 @@ function renderTableWithChart(container, cd) {
     var tbody = document.createElement('tbody');
     var labels = cd.labels || [];
     var data = cd.data || [];
+    var data2 = cd.data2 || [];
     var total = 0;
+    var total2 = 0;
     labels.forEach(function(label, i) {
         var val = data[i] || 0;
         total += val;
@@ -1473,6 +1494,21 @@ function renderTableWithChart(container, cd) {
         tdVal.textContent = '$' + val.toFixed(2);
         tr.appendChild(tdVal);
 
+        if (hasComparison) {
+            var val2 = data2[i] || 0;
+            total2 += val2;
+            var tdVal2 = document.createElement('td');
+            tdVal2.style.cssText = 'padding:5px 8px;text-align:right;font-family:monospace;';
+            tdVal2.textContent = '$' + val2.toFixed(2);
+            tr.appendChild(tdVal2);
+
+            var diff = val2 - val;
+            var tdDiff = document.createElement('td');
+            tdDiff.style.cssText = 'padding:5px 8px;text-align:right;font-family:monospace;color:' + (diff > 0 ? '#ef4444' : diff < 0 ? '#10b981' : '#8b949e') + ';';
+            tdDiff.textContent = (diff >= 0 ? '+' : '') + '$' + diff.toFixed(2);
+            tr.appendChild(tdDiff);
+        }
+
         tbody.appendChild(tr);
     });
     table.appendChild(tbody);
@@ -1484,6 +1520,12 @@ function renderTableWithChart(container, cd) {
     var tfe = document.createElement('td'); tfe.colSpan = 2; tfe.style.cssText = 'padding:6px 8px;'; tfe.textContent = 'Total';
     var tfv = document.createElement('td'); tfv.style.cssText = 'padding:6px 8px;text-align:right;font-family:monospace;color:#10b981;'; tfv.textContent = '$' + total.toFixed(2);
     tfrow.appendChild(tfe); tfrow.appendChild(tfv);
+    if (hasComparison) {
+        var tfv2 = document.createElement('td'); tfv2.style.cssText = 'padding:6px 8px;text-align:right;font-family:monospace;color:#10b981;'; tfv2.textContent = '$' + total2.toFixed(2);
+        var totalDiff = total2 - total;
+        var tfDiff = document.createElement('td'); tfDiff.style.cssText = 'padding:6px 8px;text-align:right;font-family:monospace;color:' + (totalDiff > 0 ? '#ef4444' : totalDiff < 0 ? '#10b981' : '#8b949e') + ';'; tfDiff.textContent = (totalDiff >= 0 ? '+' : '') + '$' + totalDiff.toFixed(2);
+        tfrow.appendChild(tfv2); tfrow.appendChild(tfDiff);
+    }
     tfoot.appendChild(tfrow);
     table.appendChild(tfoot);
 

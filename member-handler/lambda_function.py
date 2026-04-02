@@ -1522,6 +1522,36 @@ def _build_chart_data(account_data):
                 'color': '#f59e0b',
             })
 
+    # Chart 5: Month comparison (grouped bar) if available
+    comparison = account_data.get('month_comparison')
+    if comparison:
+        m1 = comparison['month1']
+        m2 = comparison['month2']
+        # Merge services from both months
+        all_services = {}
+        for s in m1.get('costs', []):
+            all_services[s['service']] = {'m1': s['cost_usd'], 'm2': 0}
+        for s in m2.get('costs', []):
+            if s['service'] in all_services:
+                all_services[s['service']]['m2'] = s['cost_usd']
+            else:
+                all_services[s['service']] = {'m1': 0, 'm2': s['cost_usd']}
+        # Sort by max cost and take top 8
+        sorted_svcs = sorted(all_services.items(), key=lambda x: max(x[1]['m1'], x[1]['m2']), reverse=True)[:8]
+        if sorted_svcs:
+            charts.append({
+                'id': 'month-comparison',
+                'title': f"{m1['label']} vs {m2['label']}",
+                'type': 'bar',
+                'labels': [s[0].replace('Amazon ', '').replace('AWS ', '')[:25] for s in sorted_svcs],
+                'data': [s[1]['m1'] for s in sorted_svcs],
+                'data2': [s[1]['m2'] for s in sorted_svcs],
+                'data2Label': m2['label'],
+                'dataLabel': m1['label'],
+                'color': '#6366f1',
+                'color2': '#10b981',
+            })
+
     return charts if charts else None
 
 
@@ -1574,6 +1604,91 @@ def _gather_account_data(question, credentials):
         ce = _make_client('ce')
         end_date = datetime.now(timezone.utc).strftime('%Y-%m-%d')
         start_30d = (datetime.now(timezone.utc) - timedelta(days=30)).strftime('%Y-%m-%d')
+
+        # Detect month comparison questions (e.g. "compare Feb and March", "Jan vs Feb")
+        month_names = {
+            'jan': 1, 'january': 1, 'feb': 2, 'february': 2, 'mar': 3, 'march': 3,
+            'apr': 4, 'april': 4, 'may': 5, 'jun': 6, 'june': 6,
+            'jul': 7, 'july': 7, 'aug': 8, 'august': 8, 'sep': 9, 'september': 9,
+            'oct': 10, 'october': 10, 'nov': 11, 'november': 11, 'dec': 12, 'december': 12,
+        }
+        is_comparison = any(kw in question_lower for kw in ['compare', 'vs', 'versus', 'between', 'difference'])
+        mentioned_months = []
+        for name, num in month_names.items():
+            if name in question_lower:
+                if num not in [m[1] for m in mentioned_months]:
+                    mentioned_months.append((name, num))
+        mentioned_months.sort(key=lambda x: x[1])
+
+        # If comparing two specific months, fetch both explicitly
+        if is_comparison and len(mentioned_months) >= 2:
+            now = datetime.now(timezone.utc)
+            # Determine year — assume current year, or previous year if month is in the future
+            year_hint = now.year
+            # Check if user mentioned a year
+            import re as _re
+            year_match = _re.search(r'20\d{2}', question)
+            if year_match:
+                year_hint = int(year_match.group())
+
+            m1 = mentioned_months[0][1]
+            m2 = mentioned_months[1][1]
+
+            # Build date ranges for both months
+            from calendar import monthrange
+            m1_start = f'{year_hint}-{m1:02d}-01'
+            m1_end_day = monthrange(year_hint, m1)[1]
+            m1_end = f'{year_hint}-{m1:02d}-{m1_end_day:02d}'
+            # Use first of next month as end for CE (exclusive end)
+            if m1 == 12:
+                m1_ce_end = f'{year_hint + 1}-01-01'
+            else:
+                m1_ce_end = f'{year_hint}-{m1 + 1:02d}-01'
+
+            m2_start = f'{year_hint}-{m2:02d}-01'
+            if m2 == 12:
+                m2_ce_end = f'{year_hint + 1}-01-01'
+            else:
+                m2_ce_end = f'{year_hint}-{m2 + 1:02d}-01'
+
+            # Fetch month 1
+            m1_data = ce.get_cost_and_usage(
+                TimePeriod={'Start': m1_start, 'End': m1_ce_end},
+                Granularity='MONTHLY',
+                Metrics=['UnblendedCost'],
+                GroupBy=[{'Type': 'DIMENSION', 'Key': 'SERVICE'}],
+            )
+            m1_costs = []
+            for period in m1_data.get('ResultsByTime', []):
+                for group in period.get('Groups', []):
+                    cost = float(group['Metrics']['UnblendedCost']['Amount'])
+                    if cost > 0:
+                        m1_costs.append({'service': group['Keys'][0], 'cost_usd': round(cost, 4)})
+            m1_costs.sort(key=lambda x: x['cost_usd'], reverse=True)
+
+            # Fetch month 2
+            m2_data = ce.get_cost_and_usage(
+                TimePeriod={'Start': m2_start, 'End': m2_ce_end},
+                Granularity='MONTHLY',
+                Metrics=['UnblendedCost'],
+                GroupBy=[{'Type': 'DIMENSION', 'Key': 'SERVICE'}],
+            )
+            m2_costs = []
+            for period in m2_data.get('ResultsByTime', []):
+                for group in period.get('Groups', []):
+                    cost = float(group['Metrics']['UnblendedCost']['Amount'])
+                    if cost > 0:
+                        m2_costs.append({'service': group['Keys'][0], 'cost_usd': round(cost, 4)})
+            m2_costs.sort(key=lambda x: x['cost_usd'], reverse=True)
+
+            m1_label = f'{mentioned_months[0][0].capitalize()} {year_hint}'
+            m2_label = f'{mentioned_months[1][0].capitalize()} {year_hint}'
+
+            data['month_comparison'] = {
+                'month1': {'label': m1_label, 'period': f'{m1_start} to {m1_ce_end}', 'costs': m1_costs},
+                'month2': {'label': m2_label, 'period': f'{m2_start} to {m2_ce_end}', 'costs': m2_costs},
+            }
+            actions.append(f'ce:GetCostAndUsage ({m1_label} vs {m2_label})')
 
         # Monthly cost by service — cost only (no UsageQuantity to avoid unit confusion)
         cost_by_service = ce.get_cost_and_usage(
@@ -2015,7 +2130,7 @@ IMPORTANT RULES:
 - Tax is NEVER actionable. Always list it last or exclude it from the ranked analysis entirely. Do NOT rank Tax above real services.
 - For general cost analysis: collapse ALL services under $0.50 into a single "Minor costs" bullet list at the end. Do NOT give each one its own numbered section.
 - ALWAYS rank services strictly by cost_usd descending. Never rank a cheaper service above a more expensive one.
-- When the user asks a simple factual question like "show costs" or "present cost per service", just list the costs cleanly without recommendations. Only add recommendations when the user asks for optimization, savings, or how to reduce costs.
+- When month_comparison is present, use ONLY that data for the comparison — do NOT use cost_by_service (which is last 30 days). Show a side-by-side comparison with the difference (+ or -) and percentage change for each service. Highlight services with the biggest absolute dollar change.
 - Do NOT use generic percentages. Use real dollar amounts from the data fields.
 - Do NOT list IAM permissions unless a specific fetch failed with an error in the data.
 
