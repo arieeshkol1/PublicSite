@@ -1186,7 +1186,7 @@ function addAIMessage(type, content) {
     } else if (type === 'commands') {
         var cmdsHtml = '<div class="lab-msg-info" style="color:#7ee787;">Commands executed:</div>';
         content.forEach(function(c) {
-            cmdsHtml += '<div class="lab-msg-command" style="font-size:11px;color:#58a6ff;">$ ' + esc(c) + '</div>';
+            cmdsHtml += '<div class="lab-msg-command" style="color:#58a6ff;">$ ' + esc(c) + '</div>';
         });
         div.innerHTML = cmdsHtml;
     } else if (type === 'thinking') {

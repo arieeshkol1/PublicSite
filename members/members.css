@@ -342,7 +342,7 @@
 .lab-msg-output {
     background: #161b22; border: 1px solid #30363d; border-radius: 6px;
     padding: 12px; color: #c9d1d9; white-space: pre-wrap; word-wrap: break-word;
-    max-height: 400px; overflow-y: auto; font-size: 14px; line-height: 1.6;
+    max-height: 400px; overflow-y: auto; line-height: 1.6;
 }
 .lab-msg-error { color: #f85149; }
 .lab-msg-info { color: #8b949e; font-style: italic; padding: 4px 0; }

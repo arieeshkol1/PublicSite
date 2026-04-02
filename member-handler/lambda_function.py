@@ -940,22 +940,46 @@ def handle_generate_template(event):
         logger.warning(f"Failed to upload CF template to S3: {e}")
         template_url = None
 
-    # Build CloudFormation quick-create URL (for new stacks)
-    # and update URL (for existing stacks where role already exists)
+    # Detect whether the stack already exists in the customer account
+    # so the frontend can show Create vs Update automatically
+    stack_exists = False
+    stack_status = None
+    try:
+        role_arn_check = f'arn:aws:iam::{account_id}:role/SlashMyBill-{account_id}'
+        sts_check = boto3.client('sts')
+        assume_check = sts_check.assume_role(
+            RoleArn=role_arn_check,
+            RoleSessionName='SlashMyBillTemplateCheck',
+            ExternalId=external_id,
+        )
+        cf_check = boto3.client(
+            'cloudformation',
+            aws_access_key_id=assume_check['Credentials']['AccessKeyId'],
+            aws_secret_access_key=assume_check['Credentials']['SecretAccessKey'],
+            aws_session_token=assume_check['Credentials']['SessionToken'],
+            region_name='us-east-1',
+        )
+        stacks = cf_check.describe_stacks(StackName=stack_name)
+        if stacks.get('Stacks'):
+            stack_exists = True
+            stack_status = stacks['Stacks'][0].get('StackStatus', '')
+    except ClientError as e:
+        # Stack doesn't exist or role not yet deployed — that's fine
+        pass
+    except Exception as e:
+        logger.warning(f"Stack existence check failed: {e}")
+
+    # Build CloudFormation URLs
     cf_console_url = None
     cf_update_url = None
     if template_url:
         import urllib.parse
-        # Create URL
         create_params = urllib.parse.urlencode({
             'templateURL': template_url,
             'stackName': stack_name,
         })
         cf_console_url = f'https://console.aws.amazon.com/cloudformation/home#/stacks/create/review?{create_params}'
-        # Update URL — used when role already exists (AlreadyExists error)
-        update_params = urllib.parse.urlencode({
-            'templateURL': template_url,
-        })
+        update_params = urllib.parse.urlencode({'templateURL': template_url})
         cf_update_url = (
             f'https://console.aws.amazon.com/cloudformation/home#/stacks/update/template'
             f'?stackId={urllib.parse.quote(f"arn:aws:cloudformation:us-east-1:{account_id}:stack/{stack_name}/", safe="")}'
@@ -970,6 +994,8 @@ def handle_generate_template(event):
         'cfUpdateUrl': cf_update_url,
         'stackName': stack_name,
         'roleName': role_name,
+        'stackExists': stack_exists,
+        'stackStatus': stack_status,
         'instructions': (
             f'If you see "role already exists" when deploying, the stack needs to be UPDATED not created. '
             f'Go to CloudFormation → Stacks → {stack_name} → Update, and use the template URL above.'
@@ -1575,21 +1601,63 @@ def _gather_account_data(question, credentials):
             data['nat_gateway_count'] = len(nat_list)
             actions.append('ec2:DescribeNatGateways')
 
+            # Elastic IPs — unattached ones cost $0.005/hr (~$3.65/month each)
+            eips = ec2.describe_addresses()
+            unattached_eips = [
+                {'allocationId': e.get('AllocationId', ''), 'publicIp': e.get('PublicIp', '')}
+                for e in eips.get('Addresses', [])
+                if not e.get('AssociationId')
+            ]
+            data['elastic_ips'] = {
+                'total': len(eips.get('Addresses', [])),
+                'unattached': len(unattached_eips),
+                'unattached_monthly_cost_usd': round(len(unattached_eips) * 3.65, 2),
+                'unattached_list': unattached_eips[:10],
+            }
+            actions.append('ec2:DescribeAddresses')
+
+            # VPC Endpoints — each interface endpoint costs ~$7.20/month
+            endpoints = ec2.describe_vpc_endpoints(
+                Filters=[{'Name': 'vpc-endpoint-state', 'Values': ['available', 'pending']}]
+            )
+            ep_list = []
+            for ep in endpoints.get('VpcEndpoints', []):
+                ep_list.append({
+                    'endpointId': ep.get('VpcEndpointId', ''),
+                    'type': ep.get('VpcEndpointType', ''),
+                    'serviceName': ep.get('ServiceName', ''),
+                    'state': ep.get('State', ''),
+                })
+            interface_ep_count = sum(1 for e in ep_list if e['type'] == 'Interface')
+            data['vpc_endpoints'] = {
+                'total': len(ep_list),
+                'interface_count': interface_ep_count,
+                'interface_monthly_cost_usd': round(interface_ep_count * 7.20, 2),
+                'endpoints': ep_list[:10],
+            }
+            actions.append('ec2:DescribeVpcEndpoints')
+
             # Also fetch EBS volumes to explain EC2-Other storage costs
             vols = ec2.describe_volumes()
-            vol_summary = {'total_gb': 0, 'gp2_count': 0, 'gp2_gb': 0, 'gp3_count': 0, 'io1_count': 0, 'unattached_count': 0}
+            vol_summary = {'total_gb': 0, 'gp2_count': 0, 'gp2_gb': 0, 'gp3_count': 0, 'io1_count': 0,
+                           'unattached_count': 0, 'unattached_gb': 0}
             for v in vols.get('Volumes', []):
-                vol_summary['total_gb'] += v.get('Size', 0)
+                size = v.get('Size', 0)
+                vol_summary['total_gb'] += size
                 vtype = v.get('VolumeType', '')
                 if vtype == 'gp2':
                     vol_summary['gp2_count'] += 1
-                    vol_summary['gp2_gb'] += v.get('Size', 0)
+                    vol_summary['gp2_gb'] += size
                 elif vtype == 'gp3':
                     vol_summary['gp3_count'] += 1
                 elif vtype == 'io1':
                     vol_summary['io1_count'] += 1
                 if not v.get('Attachments'):
                     vol_summary['unattached_count'] += 1
+                    vol_summary['unattached_gb'] += size
+            # gp2 costs $0.10/GB/month, gp3 costs $0.08/GB/month
+            vol_summary['unattached_monthly_cost_usd'] = round(vol_summary['unattached_gb'] * 0.10, 2)
+            vol_summary['gp2_to_gp3_savings_usd'] = round(vol_summary['gp2_gb'] * 0.02, 2)  # $0.02/GB saving
             data['ebs_summary'] = vol_summary
             actions.append('ec2:DescribeVolumes')
         except Exception as e:
@@ -1605,15 +1673,43 @@ def _gather_account_data(question, credentials):
         except Exception as e:
             data['s3_error'] = str(e)
 
-    # RDS if question mentions RDS, database
-    if any(kw in question_lower for kw in ['rds', 'database', 'db']):
+    # RDS — fetch when it's a top cost or question mentions database
+    top_service_names_rds = [s['service'] for s in data.get('cost_by_service', [])[:8]]
+    if 'Amazon Relational Database Service' in top_service_names_rds or \
+       any(kw in question_lower for kw in ['rds', 'database', 'db']):
         try:
             rds = _make_client('rds')
             dbs = rds.describe_db_instances()
-            data['rds_instances'] = [{'id': d['DBInstanceIdentifier'], 'class': d['DBInstanceClass'], 'engine': d['Engine'], 'status': d['DBInstanceStatus']} for d in dbs.get('DBInstances', [])]
+            data['rds_instances'] = [{'id': d['DBInstanceIdentifier'], 'class': d['DBInstanceClass'],
+                                       'engine': d['Engine'], 'status': d['DBInstanceStatus'],
+                                       'multiAz': d.get('MultiAZ', False),
+                                       'storage_gb': d.get('AllocatedStorage', 0)} for d in dbs.get('DBInstances', [])]
             actions.append('rds:DescribeDBInstances')
         except Exception as e:
             data['rds_error'] = str(e)
+
+    # KMS — fetch key count when KMS is a top cost
+    top_service_names_kms = [s['service'] for s in data.get('cost_by_service', [])[:8]]
+    if 'AWS Key Management Service' in top_service_names_kms or \
+       any(kw in question_lower for kw in ['kms', 'key management', 'encryption key']):
+        try:
+            kms = _make_client('kms')
+            keys = kms.list_keys()
+            aliases = kms.list_aliases()
+            # Customer-managed keys cost $1/month each; AWS-managed are free
+            cmk_count = sum(1 for k in keys.get('Keys', [])
+                            if not any(a.get('AliasName', '').startswith('alias/aws/')
+                                       for a in aliases.get('Aliases', [])
+                                       if a.get('TargetKeyId') == k['KeyId']))
+            data['kms_summary'] = {
+                'total_keys': len(keys.get('Keys', [])),
+                'customer_managed_keys': cmk_count,
+                'monthly_cost_usd': round(cmk_count * 1.0, 2),
+                'note': 'Customer-managed KMS keys cost $1/month each. AWS-managed keys are free.',
+            }
+            actions.append('kms:ListKeys')
+        except Exception as e:
+            data['kms_error'] = str(e)
 
     # Lambda if question mentions Lambda, functions
     if any(kw in question_lower for kw in ['lambda', 'function', 'serverless']):
@@ -1793,12 +1889,15 @@ IMPORTANT RULES:
 - Only reference real AWS services and products. Do NOT invent product names.
 - cost_by_service contains ONLY USD amounts. Do NOT infer usage units unless explicitly in the data.
 - "EC2 - Other" = NAT Gateway hours/data, EBS volumes, data transfer, Elastic IPs, load balancers. NOT EC2 instances. Do NOT recommend Reserved Instances for this line item.
-- "Amazon Virtual Private Cloud" = NAT Gateway data processing, VPC endpoints, Elastic IPs. Use nat_gateways data to show count and recommend consolidation. Each NAT Gateway costs ~$32/month in hourly charges plus $0.045/GB processed.
-- Reserved Instances ONLY apply to "Amazon Elastic Compute Cloud - Compute", never to EC2-Other or VPC.
-- If route53_hosted_zones is present and Route 53 is a significant cost, analyze zone count. Each zone costs $0.50/month. Identify zones with low record counts as deletion candidates.
-- If ebs_summary is present: highlight gp2_count (recommend migrating to gp3, 20% cheaper at same performance) and unattached_count (immediate savings — delete unused volumes).
-- When pricing_context is present for EC2 Compute, show exact on-demand vs 1yr RI monthly cost and saving per instance type.
-- Do NOT use generic percentages. Use real numbers from the data.
+- "Amazon Virtual Private Cloud" costs = NAT Gateway data processing, VPC endpoints (Interface type cost ~$7.20/month each), Elastic IPs. Use elastic_ips and vpc_endpoints data to identify the exact driver.
+- Reserved Instances ONLY apply to "Amazon Elastic Compute Cloud - Compute" and RDS instances, never to EC2-Other or VPC.
+- For EBS: unattached_monthly_cost_usd is the exact saving from deleting unattached volumes. gp2_to_gp3_savings_usd is the saving from migrating gp2 to gp3.
+- For Elastic IPs: unattached ones cost $3.65/month each. Quote unattached_monthly_cost_usd as the exact saving.
+- For VPC endpoints: interface_monthly_cost_usd is the cost. Recommend reviewing if each endpoint is actively used.
+- For KMS: customer_managed_keys × $1/month = monthly_cost_usd. Flag keys that may be unused.
+- For RDS: show instance class, engine, Multi-AZ status. If Multi-AZ is enabled for dev/test, suggest disabling it.
+- Do NOT write analysis for services costing less than $1/month — just list them in a "Minor costs (< $1)" section with no recommendations.
+- Do NOT use generic percentages. Use real dollar amounts from the data fields.
 - Do NOT list IAM permissions unless a specific fetch failed with an error in the data.
 
 User question: {question}
@@ -1807,10 +1906,11 @@ User question: {question}
 Real account data (costs in USD, gathered via AWS APIs):
 {data_text}
 
-Answer ranked by cost impact (highest first). For each significant cost:
-- What the line item actually contains
-- Why it is likely high based on the data (nat_gateways count, ebs_summary, zone count, etc.)
-- The specific action to take with estimated dollar saving"""
+Answer ranked by cost impact (highest first). For each service costing $1 or more:
+- What the line item contains
+- The specific driver based on the data (nat_gateway_count, elastic_ips, vpc_endpoints, ebs_summary, kms_summary, rds_instances)
+- Exact dollar saving with the action to take
+Group all services under $1 into a single "Minor costs" line at the end."""
 
     try:
         response = bedrock_client.invoke_model(
