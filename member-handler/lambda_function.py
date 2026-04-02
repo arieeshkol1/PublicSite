@@ -1545,6 +1545,50 @@ def _gather_account_data(question, credentials):
         except Exception as e:
             data['ec2_error'] = str(e)
 
+    # NAT Gateways — always fetch when EC2-Other or VPC are top costs (they drive those bills)
+    top_service_names = [s['service'] for s in data.get('cost_by_service', [])[:6]]
+    if any(s in top_service_names for s in ['EC2 - Other', 'Amazon Virtual Private Cloud']) or \
+       any(kw in question_lower for kw in ['nat', 'vpc', 'network', 'data transfer']):
+        try:
+            ec2 = _make_client('ec2')
+            nat_gws = ec2.describe_nat_gateways(
+                Filter=[{'Name': 'state', 'Values': ['available', 'pending']}]
+            )
+            nat_list = []
+            for gw in nat_gws.get('NatGateways', []):
+                name_tag = next((t['Value'] for t in gw.get('Tags', []) if t['Key'] == 'Name'), '')
+                nat_list.append({
+                    'natGatewayId': gw['NatGatewayId'],
+                    'state': gw['State'],
+                    'subnetId': gw['SubnetId'],
+                    'vpcId': gw['VpcId'],
+                    'name': name_tag,
+                    'createTime': str(gw.get('CreateTime', '')),
+                })
+            data['nat_gateways'] = nat_list
+            data['nat_gateway_count'] = len(nat_list)
+            actions.append('ec2:DescribeNatGateways')
+
+            # Also fetch EBS volumes to explain EC2-Other storage costs
+            vols = ec2.describe_volumes()
+            vol_summary = {'total_gb': 0, 'gp2_count': 0, 'gp2_gb': 0, 'gp3_count': 0, 'io1_count': 0, 'unattached_count': 0}
+            for v in vols.get('Volumes', []):
+                vol_summary['total_gb'] += v.get('Size', 0)
+                vtype = v.get('VolumeType', '')
+                if vtype == 'gp2':
+                    vol_summary['gp2_count'] += 1
+                    vol_summary['gp2_gb'] += v.get('Size', 0)
+                elif vtype == 'gp3':
+                    vol_summary['gp3_count'] += 1
+                elif vtype == 'io1':
+                    vol_summary['io1_count'] += 1
+                if not v.get('Attachments'):
+                    vol_summary['unattached_count'] += 1
+            data['ebs_summary'] = vol_summary
+            actions.append('ec2:DescribeVolumes')
+        except Exception as e:
+            data['nat_gateway_error'] = str(e)
+
     # S3 if question mentions S3, storage, buckets
     if any(kw in question_lower for kw in ['s3', 'storage', 'bucket']):
         try:
@@ -1575,6 +1619,29 @@ def _gather_account_data(question, credentials):
         except Exception as e:
             data['lambda_error'] = str(e)
 
+    # Route 53 — fetch when it's a top cost or question mentions DNS/Route53
+    top_service_names_r53 = [s['service'] for s in data.get('cost_by_service', [])[:8]]
+    if 'Amazon Route 53' in top_service_names_r53 or \
+       any(kw in question_lower for kw in ['route53', 'route 53', 'dns', 'hosted zone']):
+        try:
+            r53 = _make_client('route53')
+            zones = r53.list_hosted_zones()
+            zone_list = []
+            for z in zones.get('HostedZones', []):
+                zone_list.append({
+                    'name': z['Name'],
+                    'id': z['Id'],
+                    'recordCount': z['ResourceRecordSetCount'],
+                    'private': z['Config'].get('PrivateZone', False),
+                })
+            data['route53_hosted_zones'] = zone_list
+            data['route53_zone_count'] = len(zone_list)
+            # Route 53 pricing: $0.50/month per hosted zone (first 25), $0.10 per million queries
+            data['route53_pricing_note'] = '$0.50/month per hosted zone (first 25 zones). Delete unused zones to reduce costs.'
+            actions.append('route53:ListHostedZones')
+        except Exception as e:
+            data['route53_error'] = str(e)
+
     # Fetch real pricing for top spending services to ground recommendations
     if data.get('cost_by_service'):
         pricing_context = _fetch_pricing_context(data['cost_by_service'])
@@ -1602,18 +1669,7 @@ def _fetch_pricing_context(service_costs):
                 {'Type': 'TERM_MATCH', 'Field': 'capacitystatus', 'Value': 'Used'},
                 {'Type': 'TERM_MATCH', 'Field': 'preInstalledSw', 'Value': 'NA'},
             ],
-            'label': 'EC2 (Linux, shared tenancy)',
-        },
-        'EC2 - Other': {
-            'serviceCode': 'AmazonEC2',
-            'instance_types': ['t3.medium', 't3.large', 'm5.large', 'm5.xlarge', 'c5.large'],
-            'filters': [
-                {'Type': 'TERM_MATCH', 'Field': 'operatingSystem', 'Value': 'Linux'},
-                {'Type': 'TERM_MATCH', 'Field': 'tenancy', 'Value': 'Shared'},
-                {'Type': 'TERM_MATCH', 'Field': 'capacitystatus', 'Value': 'Used'},
-                {'Type': 'TERM_MATCH', 'Field': 'preInstalledSw', 'Value': 'NA'},
-            ],
-            'label': 'EC2 (Linux, shared tenancy)',
+            'label': 'EC2 (Linux, shared tenancy) — RI eligible',
         },
         'Amazon Relational Database Service': {
             'serviceCode': 'AmazonRDS',
@@ -1728,15 +1784,16 @@ def _ask_bedrock_analyze(question, tips_context, account_data, account_id):
     prompt = f"""You are SlashMyBill AI, an AWS FinOps assistant. Analyze the following real data from AWS account {account_id} and answer the user's question.
 
 IMPORTANT RULES:
-- Only reference AWS services and products that actually exist. Do NOT invent product names.
-- The cost_by_service data contains ONLY USD cost amounts. Do NOT infer or mention usage quantities or units (GB, hours, requests) unless explicitly present in the data.
-- "EC2 - Other" in Cost Explorer means NAT Gateway, EBS volumes, data transfer, Elastic IPs, and load balancers — NOT EC2 instances. Explain this clearly and recommend reviewing NAT Gateway and data transfer costs specifically.
-- "Amazon Virtual Private Cloud" costs are NAT Gateway hours/data processing, VPC endpoints, or Elastic IPs — NOT the VPC itself. Identify the likely driver and give specific advice.
-- If a service shows $0 cost, it may be within Free Tier or covered by a Savings Plan — do not speculate beyond these known reasons.
-- Do NOT suggest generic IAM permissions lists — only mention permissions if a specific data fetch actually failed with an error in the data.
-- When pricing_context is present, use the real on-demand vs RI prices to calculate concrete monthly savings. Quote actual dollar figures: "m5.large on-demand = $X/month, 1yr RI = $Y/month, saving $Z/month per instance."
-- Do NOT use generic percentages like "save up to 40%" or "save up to 90%" — use the real numbers from pricing_context.
-- Base all recommendations on real AWS features only: Reserved Instances, Savings Plans, S3 Intelligent-Tiering, S3 Glacier, NAT Gateway optimization, right-sizing.
+- Only reference real AWS services and products. Do NOT invent product names.
+- cost_by_service contains ONLY USD amounts. Do NOT infer usage units unless explicitly in the data.
+- "EC2 - Other" = NAT Gateway hours/data, EBS volumes, data transfer, Elastic IPs, load balancers. NOT EC2 instances. Do NOT recommend Reserved Instances for this line item.
+- "Amazon Virtual Private Cloud" = NAT Gateway data processing, VPC endpoints, Elastic IPs. Use nat_gateways data to show count and recommend consolidation. Each NAT Gateway costs ~$32/month in hourly charges plus $0.045/GB processed.
+- Reserved Instances ONLY apply to "Amazon Elastic Compute Cloud - Compute", never to EC2-Other or VPC.
+- If route53_hosted_zones is present and Route 53 is a significant cost, analyze zone count. Each zone costs $0.50/month. Identify zones with low record counts as deletion candidates.
+- If ebs_summary is present: highlight gp2_count (recommend migrating to gp3, 20% cheaper at same performance) and unattached_count (immediate savings — delete unused volumes).
+- When pricing_context is present for EC2 Compute, show exact on-demand vs 1yr RI monthly cost and saving per instance type.
+- Do NOT use generic percentages. Use real numbers from the data.
+- Do NOT list IAM permissions unless a specific fetch failed with an error in the data.
 
 User question: {question}
 {tips_text}
@@ -1744,12 +1801,10 @@ User question: {question}
 Real account data (costs in USD, gathered via AWS APIs):
 {data_text}
 
-Provide a clear, actionable answer with:
-- Specific dollar amounts from the data (use $ prefix, commas for thousands)
-- For EC2/RDS: use pricing_context to show on-demand vs RI cost and exact monthly saving per instance
-- For "EC2 - Other" and VPC: explain what these line items actually contain and give targeted advice
-- Bullet points for key findings ranked by cost impact
-- Concrete next steps the customer can take today"""
+Answer ranked by cost impact (highest first). For each significant cost:
+- What the line item actually contains
+- Why it is likely high based on the data (nat_gateways count, ebs_summary, zone count, etc.)
+- The specific action to take with estimated dollar saving"""
 
     try:
         response = bedrock_client.invoke_model(
