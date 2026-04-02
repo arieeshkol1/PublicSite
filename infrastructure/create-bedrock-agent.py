@@ -73,6 +73,11 @@ def create_agent_role():
                 "Resource": [
                     f"arn:aws:lambda:{REGION}:{ACCOUNT_ID}:function:SlashMyBill-AgentAction"
                 ]
+            },
+            {
+                "Effect": "Allow",
+                "Action": ["pricing:GetProducts", "pricing:DescribeServices", "pricing:GetAttributeValues"],
+                "Resource": "*"
             }
         ]
     }
@@ -185,6 +190,19 @@ def create_agent_action_group(agent_id):
                         {"name": "service", "in": "query", "required": False, "schema": {"type": "string"}, "description": "AWS service name (e.g., EC2, S3, RDS)"},
                     ],
                     "responses": {"200": {"description": "Tips retrieved"}}
+                }
+            },
+            "/get-aws-pricing": {
+                "post": {
+                    "operationId": "getAWSPricing",
+                    "summary": "Get real-time AWS pricing for any service",
+                    "description": "Queries the AWS Pricing API for current pricing. Use this when customers ask about AWS service costs, pricing comparisons, or want to understand what they will be charged.",
+                    "parameters": [
+                        {"name": "serviceCode", "in": "query", "required": True, "schema": {"type": "string"}, "description": "AWS service code, e.g. AmazonEC2, AmazonS3, AWSLambda, AmazonRDS"},
+                        {"name": "filters", "in": "query", "required": False, "schema": {"type": "string"}, "description": "Comma-separated key=value filters, e.g. instanceType=m5.large,operatingSystem=Linux"},
+                        {"name": "region", "in": "query", "required": False, "schema": {"type": "string"}, "description": "AWS region code, e.g. us-east-1, eu-west-1. Defaults to us-east-1"},
+                    ],
+                    "responses": {"200": {"description": "Pricing data retrieved"}}
                 }
             },
         }

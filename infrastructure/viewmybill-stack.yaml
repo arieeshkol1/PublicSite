@@ -894,6 +894,16 @@ Resources:
                   - dynamodb:Scan
                 Resource:
                   - !GetAtt CostOptimizationTipsTable.Arn
+        - PolicyName: AWSPricingRead
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - pricing:GetProducts
+                  - pricing:DescribeServices
+                  - pricing:GetAttributeValues
+                Resource: '*'
       Tags:
         - Key: Project
           Value: ViewMyBill

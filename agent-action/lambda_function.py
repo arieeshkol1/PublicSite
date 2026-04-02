@@ -43,6 +43,11 @@ def lambda_handler(event, context):
     elif api_path == '/get-optimization-tips':
         service = parameters.get('service', '')
         result = _get_optimization_tips(service)
+    elif api_path == '/get-aws-pricing':
+        service_code = parameters.get('serviceCode', '')
+        filters = parameters.get('filters', '')
+        region = parameters.get('region', 'us-east-1')
+        result = _get_aws_pricing(service_code, filters, region)
     else:
         result = {'error': f'Unknown action: {api_path}'}
 
@@ -172,6 +177,91 @@ def _get_s3_buckets(account_id, member_email):
         return {'buckets': buckets, 'count': len(buckets)}
     except Exception as e:
         return {'error': str(e)}
+
+
+def _get_aws_pricing(service_code, filters_str='', region='us-east-1'):
+    """
+    Query the AWS Pricing API for real-time pricing data.
+    The Pricing API endpoint is always us-east-1 regardless of target region.
+    filters_str: comma-separated key=value pairs, e.g. "instanceType=m5.large,operatingSystem=Linux"
+    """
+    try:
+        pricing = boto3.client('pricing', region_name='us-east-1')
+
+        if not service_code:
+            # Return available service codes if none specified
+            response = pricing.describe_services(MaxResults=100)
+            services = [s['ServiceCode'] for s in response.get('Services', [])]
+            return {'availableServices': services}
+
+        # Build filters from the comma-separated string
+        price_filters = [
+            {'Type': 'TERM_MATCH', 'Field': 'location', 'Value': _region_to_location(region)}
+        ]
+        if filters_str:
+            for pair in filters_str.split(','):
+                if '=' in pair:
+                    key, value = pair.strip().split('=', 1)
+                    price_filters.append({'Type': 'TERM_MATCH', 'Field': key.strip(), 'Value': value.strip()})
+
+        response = pricing.get_products(
+            ServiceCode=service_code,
+            Filters=price_filters,
+            MaxResults=10,
+        )
+
+        results = []
+        for price_str in response.get('PriceList', []):
+            price_item = json.loads(price_str)
+            product = price_item.get('product', {})
+            attributes = product.get('attributes', {})
+            terms = price_item.get('terms', {})
+
+            # Extract on-demand price
+            on_demand = terms.get('OnDemand', {})
+            price_dimensions = []
+            for term_key, term_val in on_demand.items():
+                for dim_key, dim in term_val.get('priceDimensions', {}).items():
+                    usd = dim.get('pricePerUnit', {}).get('USD', '0')
+                    if float(usd) > 0:
+                        price_dimensions.append({
+                            'description': dim.get('description', ''),
+                            'unit': dim.get('unit', ''),
+                            'pricePerUnit_USD': usd,
+                        })
+
+            if price_dimensions:
+                results.append({
+                    'serviceCode': service_code,
+                    'attributes': {k: v for k, v in attributes.items()
+                                   if k in ['instanceType', 'vcpu', 'memory', 'operatingSystem',
+                                            'storageClass', 'volumeType', 'group', 'groupDescription']},
+                    'pricing': price_dimensions,
+                })
+
+        return {
+            'serviceCode': service_code,
+            'region': region,
+            'results': results,
+            'count': len(results),
+        }
+    except Exception as e:
+        return {'error': str(e)}
+
+
+def _region_to_location(region):
+    """Map AWS region code to the location name used by the Pricing API."""
+    mapping = {
+        'us-east-1': 'US East (N. Virginia)',
+        'us-east-2': 'US East (Ohio)',
+        'us-west-1': 'US West (N. California)',
+        'us-west-2': 'US West (Oregon)',
+        'eu-west-1': 'Europe (Ireland)',
+        'eu-central-1': 'Europe (Frankfurt)',
+        'ap-southeast-1': 'Asia Pacific (Singapore)',
+        'ap-northeast-1': 'Asia Pacific (Tokyo)',
+    }
+    return mapping.get(region, 'US East (N. Virginia)')
 
 
 def _get_optimization_tips(service=''):
