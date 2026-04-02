@@ -2241,11 +2241,31 @@ def _gather_account_data(question, credentials):
 
     if total_spend > 0:
         efficiency_score = round((1 - (potential_savings / total_spend)) * 100, 1)
+        savings_breakdown = {}
+        if ebs.get('unattached_monthly_cost_usd', 0) > 0:
+            savings_breakdown['Unattached EBS volumes'] = ebs['unattached_monthly_cost_usd']
+        if ebs.get('gp2_to_gp3_savings_usd', 0) > 0:
+            savings_breakdown['gp2 to gp3 migration'] = ebs['gp2_to_gp3_savings_usd']
+        if eips.get('unattached_monthly_cost_usd', 0) > 0:
+            savings_breakdown['Idle Elastic IPs'] = eips['unattached_monthly_cost_usd']
+        if kms.get('monthly_cost_usd', 0) > 0:
+            savings_breakdown['KMS customer-managed keys'] = kms['monthly_cost_usd']
+        # VPC endpoint charges from deleted resources
+        vpc_ep_savings = 0
+        if vpc_eps.get('total', 0) == 0:
+            vpc_breakdown = data.get('amazon_virtual_private_cloud_usage_breakdown', [])
+            for u in vpc_breakdown:
+                if 'VpcEndpoint' in u.get('usage_type', ''):
+                    vpc_ep_savings += u['cost_usd']
+        if vpc_ep_savings > 0:
+            savings_breakdown['Deleted VPC endpoints (charges stop next month)'] = round(vpc_ep_savings, 2)
+
         data['cost_efficiency'] = {
             'score': efficiency_score,
             'total_spend_usd': round(total_spend, 2),
             'potential_savings_usd': round(potential_savings, 2),
             'savings_pct': round((potential_savings / total_spend) * 100, 1),
+            'savings_breakdown': savings_breakdown,
             'rating': 'Excellent' if efficiency_score >= 90 else 'Good' if efficiency_score >= 75 else 'Needs Improvement' if efficiency_score >= 50 else 'Critical',
         }
 
@@ -2436,7 +2456,9 @@ IMPORTANT RULES:
   If no evidence of waste exists for a service, do NOT include it — say "appears actively used."
 - Do NOT repeat "review X usage to ensure it is necessary" for every service. That is generic filler. Only give specific, actionable advice based on the data.
 - When cost_anomalies is present, highlight the anomalous days with their spike percentage. Explain what might have caused the spike and suggest investigating.
-- When cost_efficiency is present, ALWAYS show the Cost Efficiency Score prominently at the top of general cost analyses. Format: "Cost Efficiency Score: XX% (Rating)". Explain: total spend, potential savings identified, and what drives the savings gap. This is based on the AWS Well-Architected Cost Optimization formula: [1 - (Potential Savings / Total Spend)] × 100%.
+- When cost_efficiency is present, ALWAYS show the Cost Efficiency Score prominently at the top of general cost analyses. Format: "Cost Efficiency Score: XX% (Rating)". Then show a savings breakdown listing EACH component that contributes to potential_savings_usd (e.g. "Unattached EBS: $X, Idle EIPs: $Y, Deleted VPC endpoints: $Z, KMS keys: $W"). Do NOT just show the total — break it down so the user understands where the savings come from.
+- When the user asks a yes/no efficiency question like "is this account efficient?", lead with the score and savings breakdown, then list ONLY the actionable items. Do NOT list every service with "Potential Savings: N/A" — that's noise. Only show services where savings exist.
+- NEVER write "Potential Savings: N/A" — if there are no savings for a service, simply don't mention savings for it.
 
 User question: {question}
 {tips_text}
