@@ -1527,7 +1527,6 @@ def _build_chart_data(account_data):
     if comparison:
         m1 = comparison['month1']
         m2 = comparison['month2']
-        # Merge services from both months
         all_services = {}
         for s in m1.get('costs', []):
             all_services[s['service']] = {'m1': s['cost_usd'], 'm2': 0}
@@ -1536,7 +1535,6 @@ def _build_chart_data(account_data):
                 all_services[s['service']]['m2'] = s['cost_usd']
             else:
                 all_services[s['service']] = {'m1': 0, 'm2': s['cost_usd']}
-        # Sort by max cost and take top 8
         sorted_svcs = sorted(all_services.items(), key=lambda x: max(x[1]['m1'], x[1]['m2']), reverse=True)[:8]
         if sorted_svcs:
             charts.append({
@@ -1550,6 +1548,41 @@ def _build_chart_data(account_data):
                 'dataLabel': m1['label'],
                 'color': '#6366f1',
                 'color2': '#10b981',
+            })
+
+    # Chart 6: Monthly trend (multi-month line) if available
+    monthly_trend = account_data.get('monthly_trend', {})
+    trend_months = account_data.get('monthly_trend_months', [])
+    if len(trend_months) >= 2:
+        # Total cost per month
+        month_totals = []
+        for m in trend_months:
+            total = sum(monthly_trend[m].values())
+            month_totals.append(round(total, 2))
+        charts.append({
+            'id': 'monthly-total-trend',
+            'title': f'Monthly Total Cost ({trend_months[0]} to {trend_months[-1]})',
+            'type': 'line',
+            'labels': trend_months,
+            'data': month_totals,
+            'color': '#6366f1',
+        })
+
+        # Top services across all months for grouped comparison
+        all_svcs = {}
+        for m in trend_months:
+            for svc, cost in monthly_trend[m].items():
+                all_svcs[svc] = all_svcs.get(svc, 0) + cost
+        top_svcs = sorted(all_svcs.items(), key=lambda x: x[1], reverse=True)[:6]
+        if top_svcs:
+            svc_names = [s[0].replace('Amazon ', '').replace('AWS ', '')[:25] for s in top_svcs]
+            charts.append({
+                'id': 'monthly-service-trend',
+                'title': f'Top Services by Month ({trend_months[0]} to {trend_months[-1]})',
+                'type': 'bar',
+                'labels': svc_names,
+                'data': [monthly_trend.get(trend_months[-1], {}).get(s[0], 0) for s in top_svcs],
+                'color': '#6366f1',
             })
 
     return charts if charts else None
@@ -1689,6 +1722,58 @@ def _gather_account_data(question, credentials):
                 'month2': {'label': m2_label, 'period': f'{m2_start} to {m2_ce_end}', 'costs': m2_costs},
             }
             actions.append(f'ce:GetCostAndUsage ({m1_label} vs {m2_label})')
+
+        # Detect relative time comparisons: "last 3 months", "past 6 months", "last quarter"
+        import re as _re2
+        relative_match = _re2.search(r'last\s+(\d+)\s+month', question_lower) or \
+                         _re2.search(r'past\s+(\d+)\s+month', question_lower)
+        if not relative_match and ('last quarter' in question_lower or 'past quarter' in question_lower):
+            # Treat "last quarter" as 3 months
+            class _FakeMatch:
+                def group(self, n): return '3'
+            relative_match = _FakeMatch()
+
+        if relative_match and 'month_comparison' not in data:
+            num_months = min(int(relative_match.group(1)), 12)
+            now = datetime.now(timezone.utc)
+
+            # Fetch monthly data for the requested range
+            # Start from num_months ago, first of that month
+            start_month = now.month - num_months
+            start_year = now.year
+            while start_month <= 0:
+                start_month += 12
+                start_year -= 1
+            range_start = f'{start_year}-{start_month:02d}-01'
+            # End is first of current month + 1 (to include current partial month)
+            if now.month == 12:
+                range_end = f'{now.year + 1}-01-01'
+            else:
+                range_end = f'{now.year}-{now.month + 1:02d}-01'
+
+            multi_month = ce.get_cost_and_usage(
+                TimePeriod={'Start': range_start, 'End': range_end},
+                Granularity='MONTHLY',
+                Metrics=['UnblendedCost'],
+                GroupBy=[{'Type': 'DIMENSION', 'Key': 'SERVICE'}],
+            )
+
+            # Organize by month
+            monthly_data = {}
+            for period in multi_month.get('ResultsByTime', []):
+                period_start = period['TimePeriod']['Start']
+                month_label = period_start[:7]  # YYYY-MM
+                month_costs = {}
+                for group in period.get('Groups', []):
+                    svc = group['Keys'][0]
+                    cost = float(group['Metrics']['UnblendedCost']['Amount'])
+                    if cost > 0:
+                        month_costs[svc] = round(cost, 4)
+                monthly_data[month_label] = month_costs
+
+            data['monthly_trend'] = monthly_data
+            data['monthly_trend_months'] = sorted(monthly_data.keys())
+            actions.append(f'ce:GetCostAndUsage (monthly trend, {range_start} to {range_end})')
 
         # Monthly cost by service — cost only (no UsageQuantity to avoid unit confusion)
         cost_by_service = ce.get_cost_and_usage(
@@ -2131,6 +2216,7 @@ IMPORTANT RULES:
 - For general cost analysis: collapse ALL services under $0.50 into a single "Minor costs" bullet list at the end. Do NOT give each one its own numbered section.
 - ALWAYS rank services strictly by cost_usd descending. Never rank a cheaper service above a more expensive one.
 - When month_comparison is present, use ONLY that data for the comparison — do NOT use cost_by_service (which is last 30 days). Show a side-by-side comparison with the difference (+ or -) and percentage change for each service. Highlight services with the biggest absolute dollar change.
+- When monthly_trend is present, use it to show month-over-month costs. Each key in monthly_trend is a YYYY-MM label with a dict of service→cost. Show a table with months as columns and services as rows. Highlight the trend direction. Do NOT fabricate data for months not in the monthly_trend dict.
 - Do NOT use generic percentages. Use real dollar amounts from the data fields.
 - Do NOT list IAM permissions unless a specific fetch failed with an error in the data.
 
