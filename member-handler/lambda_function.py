@@ -1591,6 +1591,22 @@ def _build_chart_data(account_data):
                 'color': '#6366f1',
             })
 
+    # Chart 7: Lambda invocations (bar) if available
+    lambda_metrics = account_data.get('lambda_metrics', [])
+    if lambda_metrics:
+        active = [m for m in lambda_metrics if m['invocations_30d'] > 0]
+        if active:
+            charts.append({
+                'id': 'lambda-invocations',
+                'title': 'Lambda Invocations (Last 30 Days)',
+                'type': 'bar',
+                'indexAxis': 'y',
+                'labels': [m['functionName'].replace('aws-bill-analyzer-', '')[:25] for m in active],
+                'data': [m['invocations_30d'] for m in active],
+                'color': '#f59e0b',
+                'isCurrency': False,
+            })
+
     return charts if charts else None
 
 
@@ -2322,6 +2338,8 @@ IMPORTANT RULES:
 - For KMS: customer_managed_keys × $1/month = monthly_cost_usd. Flag keys that may be unused.
 - For RDS: show instance class, engine, Multi-AZ status. If Multi-AZ is enabled for dev/test, suggest disabling it.
 - When lambda_metrics is present, use it to show invocation counts, average/max duration, and error counts per function. Identify functions with 0 invocations as candidates for deletion. Identify functions with high avg duration relative to their timeout as optimization candidates.
+- CRITICAL: If a Lambda function's max_duration_ms equals its timeout (timeout × 1000), flag it as "hitting timeout limit — investigate for performance issues or increase timeout."
+- CRITICAL: If a Lambda function has errors_30d > 0 AND errors_30d equals invocations_30d (100% error rate), flag it as "100% error rate — this function is broken and needs immediate attention."
 - When ec2_cpu_metrics is present, use it to show CPU utilization. Instances with avg CPU < 10% are rightsizing candidates. Quote the actual avg/max CPU percentages.
 - The data already contains the resource details. Do NOT tell the customer to "use CloudWatch" or "check Trusted Advisor" to find resources that are already listed in the data.
 - When usage_breakdown shows charges (e.g. VpcEndpoint-Hours: $11.20) but the resource inventory shows 0 resources (e.g. vpc_endpoints.total: 0), you MUST explain: "These charges are from resources that were active earlier in the billing period but have since been deleted. The charges will stop in the next billing cycle." Do NOT say "no cost savings opportunity" and do NOT suggest reviewing resources that no longer exist.

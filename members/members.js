@@ -1200,6 +1200,14 @@ function addAIMessage(type, content) {
             followUps.push('Analyze my S3 buckets for storage class optimization');
         if (answerLower.indexOf('route 53') !== -1 || answerLower.indexOf('hosted zone') !== -1)
             followUps.push('List my Route 53 hosted zones with record counts');
+        if (answerLower.indexOf('lambda') !== -1 || answerLower.indexOf('invocation') !== -1 || answerLower.indexOf('function') !== -1) {
+            if (answerLower.indexOf('error') !== -1)
+                followUps.push('Which Lambda functions have errors?');
+            if (answerLower.indexOf('duration') !== -1 || answerLower.indexOf('timeout') !== -1)
+                followUps.push('Which Lambda functions are slow or hitting timeouts?');
+            if (answerLower.indexOf('0 invocation') !== -1 || answerLower.indexOf('deletion') !== -1)
+                followUps.push('List unused Lambda functions I can delete');
+        }
 
         // Limit to 4 most relevant follow-ups
         followUps = followUps.slice(0, 4);
@@ -1420,14 +1428,14 @@ function renderSingleChart(container, cd, overrideType) {
                                 var val = ctx.parsed !== undefined
                                     ? (typeof ctx.parsed === 'object' ? (ctx.parsed.x || ctx.parsed.y || 0) : ctx.parsed)
                                     : ctx.raw;
-                                return '$' + Number(val).toFixed(2);
+                                return cd.isCurrency === false ? Number(val).toLocaleString() : '$' + Number(val).toFixed(2);
                             }
                         }
                     }
                 },
                 scales: isRadial ? {} : {
                     x: { ticks: { color: '#8b949e', font: { size: 10 } }, grid: { color: '#21262d' } },
-                    y: { ticks: { color: '#8b949e', font: { size: 10 }, callback: function(v) { return '$' + v; } }, grid: { color: '#21262d' } }
+                    y: { ticks: { color: '#8b949e', font: { size: 10 }, callback: function(v) { return cd.isCurrency === false ? v : '$' + v; } }, grid: { color: '#21262d' } }
                 }
             }
         };
