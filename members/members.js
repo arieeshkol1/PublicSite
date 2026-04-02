@@ -1230,6 +1230,17 @@ function addAIMessage(type, content) {
         div.id = 'ai-thinking';
     } else if (type === 'error') {
         div.innerHTML = '<div class="lab-msg-output lab-msg-error">' + esc(content) + '</div>';
+    } else if (type === 'chartOptions') {
+        var chartIcons = { 'bar': '📊', 'line': '📈', 'doughnut': '🍩' };
+        var html = '<div style="color:#8b949e;font-size:0.85em;margin-bottom:6px;">Visualize:</div>';
+        content.forEach(function(cd, idx) {
+            var icon = chartIcons[cd.type] || '📊';
+            html += '<button class="btn btn-outline btn-sm ai-chart-btn" style="margin:3px 4px 3px 0;font-size:0.85em;" data-chart-idx="' + idx + '">'
+                + icon + ' ' + esc(cd.title) + '</button>';
+        });
+        html += '<div class="ai-chart-render-area"></div>';
+        div.innerHTML = html;
+        div.dataset.chartData = JSON.stringify(content);
     }
 
     aiChat.appendChild(div);
@@ -1269,15 +1280,7 @@ async function askAI() {
 
         // Render inline charts if chartData is present
         if (data.chartData && data.chartData.length > 0) {
-            if (window.Chart) {
-                renderAICharts(data.chartData);
-            } else {
-                console.warn('Chart.js not loaded, loading dynamically...');
-                var s = document.createElement('script');
-                s.src = 'https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js';
-                s.onload = function() { renderAICharts(data.chartData); };
-                document.head.appendChild(s);
-            }
+            addAIMessage('chartOptions', data.chartData);
         }
 
         if (data.tipFound) {
@@ -1304,71 +1307,85 @@ function applyAIFontSize() {
 
 var aiInlineCharts = [];
 
-function renderAICharts(chartDataArray) {
-    if (!aiChat || !window.Chart) return;
-
-    // Destroy previous inline charts
+function renderSingleChart(container, cd, overrideType) {
+    // Clear previous chart in this area
+    container.innerHTML = '';
     aiInlineCharts.forEach(function(c) { try { c.destroy(); } catch (e) {} });
     aiInlineCharts = [];
 
-    var container = document.createElement('div');
-    container.className = 'ai-charts-container';
-    container.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px;margin-bottom:16px;';
+    var chartType = overrideType || cd.type || 'bar';
 
-    var doughnutColors = [
-        '#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899',
-        '#14b8a6', '#f97316', '#06b6d4', '#84cc16'
-    ];
-
-    chartDataArray.forEach(function(cd) {
+    function doRender() {
         var card = document.createElement('div');
-        card.style.cssText = 'background:#161b22;border:1px solid #30363d;border-radius:8px;padding:12px;';
+        card.style.cssText = 'background:#161b22;border:1px solid #30363d;border-radius:8px;padding:16px;margin-top:8px;max-width:520px;';
 
         var title = document.createElement('div');
-        title.style.cssText = 'color:#e2e8f0;font-size:0.85em;font-weight:600;margin-bottom:8px;';
+        title.style.cssText = 'color:#e2e8f0;font-size:0.9em;font-weight:600;margin-bottom:10px;';
         title.textContent = cd.title || 'Chart';
         card.appendChild(title);
 
         var canvasWrap = document.createElement('div');
-        canvasWrap.style.cssText = 'position:relative;height:' + (cd.type === 'doughnut' ? '200' : '160') + 'px;';
+        var h = (chartType === 'doughnut' || chartType === 'pie') ? '240' : (chartType === 'bar' && cd.indexAxis === 'y') ? '220' : '180';
+        canvasWrap.style.cssText = 'position:relative;height:' + h + 'px;';
         var canvas = document.createElement('canvas');
         canvasWrap.appendChild(canvas);
         card.appendChild(canvasWrap);
+
+        // Format toggle buttons
+        var toggleRow = document.createElement('div');
+        toggleRow.style.cssText = 'display:flex;gap:4px;margin-top:10px;flex-wrap:wrap;';
+        var types = [
+            { key: 'bar', label: '📊 Bar' },
+            { key: 'line', label: '📈 Line' },
+            { key: 'doughnut', label: '🍩 Doughnut' },
+            { key: 'pie', label: '🥧 Pie' },
+            { key: 'polarArea', label: '🎯 Polar' },
+        ];
+        types.forEach(function(t) {
+            var btn = document.createElement('button');
+            btn.className = 'btn btn-outline btn-sm';
+            btn.style.cssText = 'font-size:0.75em;padding:3px 8px;' + (t.key === chartType ? 'background:#4c1d95;color:#e2e8f0;border-color:#6d28d9;' : '');
+            btn.textContent = t.label;
+            btn.onclick = function() { renderSingleChart(container, cd, t.key); };
+            toggleRow.appendChild(btn);
+        });
+        card.appendChild(toggleRow);
         container.appendChild(card);
 
-        // Build Chart.js config
-        var isDoughnut = cd.type === 'doughnut';
+        var doughnutColors = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316', '#06b6d4', '#84cc16'];
+        var isRadial = chartType === 'doughnut' || chartType === 'pie' || chartType === 'polarArea';
+
         var config = {
-            type: cd.type || 'bar',
+            type: chartType,
             data: {
                 labels: cd.labels || [],
                 datasets: [{
                     data: cd.data || [],
-                    backgroundColor: isDoughnut ? doughnutColors.slice(0, (cd.data || []).length) : (cd.color || '#6366f1'),
-                    borderColor: isDoughnut ? '#161b22' : (cd.color || '#6366f1'),
-                    borderWidth: isDoughnut ? 2 : 1,
-                    fill: cd.type === 'line' ? 'origin' : undefined,
+                    backgroundColor: isRadial ? doughnutColors.slice(0, (cd.data || []).length) : (cd.color || '#6366f1'),
+                    borderColor: isRadial ? '#161b22' : (cd.color || '#6366f1'),
+                    borderWidth: isRadial ? 2 : 1,
+                    fill: chartType === 'line' ? 'origin' : undefined,
                     tension: 0.3,
                 }]
             },
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
-                indexAxis: cd.indexAxis || 'x',
+                indexAxis: (chartType === 'bar' && cd.indexAxis === 'y') ? 'y' : 'x',
                 plugins: {
-                    legend: { display: isDoughnut, position: 'right', labels: { color: '#c9d1d9', font: { size: 10 } } },
+                    legend: { display: isRadial, position: 'right', labels: { color: '#c9d1d9', font: { size: 11 } } },
                     tooltip: {
                         callbacks: {
                             label: function(ctx) {
-                                return '$' + (ctx.parsed !== undefined
-                                    ? (typeof ctx.parsed === 'object' ? (ctx.parsed.x || ctx.parsed.y || ctx.parsed) : ctx.parsed)
-                                    : ctx.raw
-                                ).toFixed(2);
+                                var val = ctx.parsed !== undefined
+                                    ? (typeof ctx.parsed === 'object' ? (ctx.parsed.x || ctx.parsed.y || 0) : ctx.parsed)
+                                    : ctx.raw;
+                                return '$' + Number(val).toFixed(2);
                             }
                         }
                     }
                 },
-                scales: isDoughnut ? {} : {
+                scales: isRadial ? {} : {
                     x: { ticks: { color: '#8b949e', font: { size: 10 } }, grid: { color: '#21262d' } },
                     y: { ticks: { color: '#8b949e', font: { size: 10 }, callback: function(v) { return '$' + v; } }, grid: { color: '#21262d' } }
                 }
@@ -1380,11 +1397,20 @@ function renderAICharts(chartDataArray) {
             aiInlineCharts.push(chart);
         } catch (e) {
             console.warn('Chart render failed:', e);
+            card.innerHTML += '<div style="color:#f85149;font-size:0.85em;">Chart rendering failed.</div>';
         }
-    });
 
-    aiChat.appendChild(container);
-    aiChat.scrollTop = aiChat.scrollHeight;
+        if (aiChat) aiChat.scrollTop = aiChat.scrollHeight;
+    }
+
+    if (window.Chart) {
+        doRender();
+    } else {
+        var s = document.createElement('script');
+        s.src = 'https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js';
+        s.onload = doRender;
+        document.head.appendChild(s);
+    }
 }
 if (aiFontDecBtn) aiFontDecBtn.onclick = function() {
     aiFontSize = Math.max(14, aiFontSize - 1);
@@ -1405,6 +1431,23 @@ if (aiChat) aiChat.onclick = function(e) {
         if (followUpQ && aiQuestionInput) {
             aiQuestionInput.value = followUpQ;
             askAI();
+        }
+        return;
+    }
+    // Handle chart option buttons
+    var chartBtn = e.target.closest('.ai-chart-btn');
+    if (chartBtn) {
+        var idx = parseInt(chartBtn.getAttribute('data-chart-idx'), 10);
+        var msgDiv = chartBtn.closest('.lab-message');
+        if (msgDiv && msgDiv.dataset.chartData) {
+            var allCharts = JSON.parse(msgDiv.dataset.chartData);
+            var cd = allCharts[idx];
+            if (cd) {
+                var renderArea = msgDiv.querySelector('.ai-chart-render-area');
+                if (renderArea) {
+                    renderSingleChart(renderArea, cd);
+                }
+            }
         }
         return;
     }

@@ -2014,6 +2014,8 @@ IMPORTANT RULES:
 - When usage_breakdown shows charges (e.g. VpcEndpoint-Hours: $11.20) but the resource inventory shows 0 resources (e.g. vpc_endpoints.total: 0), explain that the charges are for resources that were active earlier in the billing period but have since been deleted. Do NOT say "no cost savings opportunity" — instead say the charges will stop next month since the resources are already gone.
 - Tax is NEVER actionable. Always list it last or exclude it from the ranked analysis entirely. Do NOT rank Tax above real services.
 - For general cost analysis: collapse ALL services under $0.50 into a single "Minor costs" bullet list at the end. Do NOT give each one its own numbered section.
+- ALWAYS rank services strictly by cost_usd descending. Never rank a cheaper service above a more expensive one.
+- When the user asks a simple factual question like "show costs" or "present cost per service", just list the costs cleanly without recommendations. Only add recommendations when the user asks for optimization, savings, or how to reduce costs.
 - Do NOT use generic percentages. Use real dollar amounts from the data fields.
 - Do NOT list IAM permissions unless a specific fetch failed with an error in the data.
 
