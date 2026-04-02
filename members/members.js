@@ -1215,7 +1215,8 @@ function addAIMessage(type, content) {
 
         div.innerHTML =
             '<div class="lab-msg-output" style="color:#e2e8f0;border-color:#4c1d95;">' + formatted + '</div>' +
-            followUpHtml;
+            followUpHtml +
+            '<div class="ai-table-area"></div>';
     } else if (type === 'commands') {
         var cmdsHtml = '<div class="lab-msg-info" style="color:#7ee787;">Commands executed:</div>';
         content.forEach(function(c) {
@@ -1228,16 +1229,8 @@ function addAIMessage(type, content) {
     } else if (type === 'error') {
         div.innerHTML = '<div class="lab-msg-output lab-msg-error">' + esc(content) + '</div>';
     } else if (type === 'chartOptions') {
-        var chartIcons = { 'bar': '📊', 'line': '📈', 'doughnut': '🍩' };
-        var html = '<div style="color:#8b949e;font-size:0.85em;margin-bottom:6px;">Visualize:</div>';
-        content.forEach(function(cd, idx) {
-            var icon = chartIcons[cd.type] || '📊';
-            html += '<button class="btn btn-outline btn-sm ai-chart-btn" style="margin:3px 4px 3px 0;font-size:0.85em;" data-chart-idx="' + idx + '">'
-                + icon + ' ' + esc(cd.title) + '</button>';
-        });
-        html += '<div class="ai-chart-render-area"></div>';
-        div.innerHTML = html;
-        div.dataset.chartData = JSON.stringify(content);
+        // Deprecated — chart options are now part of the answer message
+        div.innerHTML = '';
     }
 
     aiChat.appendChild(div);
@@ -1275,9 +1268,25 @@ async function askAI() {
         // Show the AI answer
         addAIMessage('answer', data.answer || 'No answer available.');
 
-        // Render inline charts if chartData is present
+        // Attach chartData to the last answer message for table+chart flow
         if (data.chartData && data.chartData.length > 0) {
-            addAIMessage('chartOptions', data.chartData);
+            var lastMsg = aiChat.querySelector('.lab-message:last-child');
+            if (lastMsg) {
+                lastMsg.dataset.chartData = JSON.stringify(data.chartData);
+                // Add "Show as Table" buttons in the table area
+                var tableArea = lastMsg.querySelector('.ai-table-area');
+                if (tableArea) {
+                    var tableIcons = { 'bar': '📊', 'line': '📈', 'doughnut': '🍩' };
+                    var html = '<div style="color:#8b949e;font-size:0.85em;margin-bottom:6px;margin-top:12px;">Show as table:</div>';
+                    data.chartData.forEach(function(cd, idx) {
+                        var icon = tableIcons[cd.type] || '📋';
+                        html += '<button class="btn btn-outline btn-sm ai-table-btn" style="margin:3px 4px 3px 0;font-size:0.85em;" data-chart-idx="' + idx + '">'
+                            + '📋 ' + esc(cd.title) + '</button>';
+                    });
+                    html += '<div class="ai-table-render-area"></div>';
+                    tableArea.innerHTML = html;
+                }
+            }
         }
 
         if (data.tipFound) {
@@ -1409,6 +1418,117 @@ function renderSingleChart(container, cd, overrideType) {
         document.head.appendChild(s);
     }
 }
+
+function renderTableWithChart(container, cd) {
+    container.innerHTML = '';
+
+    // Build table
+    var tableWrap = document.createElement('div');
+    tableWrap.style.cssText = 'background:#161b22;border:1px solid #30363d;border-radius:8px;padding:12px;margin-top:8px;max-width:520px;overflow-x:auto;';
+
+    var titleEl = document.createElement('div');
+    titleEl.style.cssText = 'color:#e2e8f0;font-size:0.9em;font-weight:600;margin-bottom:8px;';
+    titleEl.textContent = cd.title || 'Data';
+    tableWrap.appendChild(titleEl);
+
+    var table = document.createElement('table');
+    table.style.cssText = 'width:100%;border-collapse:collapse;font-size:0.85em;color:#c9d1d9;';
+
+    // Header
+    var thead = document.createElement('thead');
+    var hrow = document.createElement('tr');
+    ['#', 'Item', 'Cost (USD)'].forEach(function(h) {
+        var th = document.createElement('th');
+        th.style.cssText = 'text-align:left;padding:6px 8px;border-bottom:1px solid #30363d;color:#8b949e;font-weight:600;';
+        if (h === 'Cost (USD)') th.style.textAlign = 'right';
+        th.textContent = h;
+        hrow.appendChild(th);
+    });
+    thead.appendChild(hrow);
+    table.appendChild(thead);
+
+    // Body
+    var tbody = document.createElement('tbody');
+    var labels = cd.labels || [];
+    var data = cd.data || [];
+    var total = 0;
+    labels.forEach(function(label, i) {
+        var val = data[i] || 0;
+        total += val;
+        var tr = document.createElement('tr');
+        tr.style.cssText = 'border-bottom:1px solid #21262d;';
+
+        var tdNum = document.createElement('td');
+        tdNum.style.cssText = 'padding:5px 8px;color:#8b949e;';
+        tdNum.textContent = (i + 1);
+        tr.appendChild(tdNum);
+
+        var tdLabel = document.createElement('td');
+        tdLabel.style.cssText = 'padding:5px 8px;';
+        tdLabel.textContent = label;
+        tr.appendChild(tdLabel);
+
+        var tdVal = document.createElement('td');
+        tdVal.style.cssText = 'padding:5px 8px;text-align:right;font-family:monospace;';
+        tdVal.textContent = '$' + val.toFixed(2);
+        tr.appendChild(tdVal);
+
+        tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+
+    // Total row
+    var tfoot = document.createElement('tfoot');
+    var tfrow = document.createElement('tr');
+    tfrow.style.cssText = 'border-top:2px solid #30363d;font-weight:600;';
+    var tfe = document.createElement('td'); tfe.colSpan = 2; tfe.style.cssText = 'padding:6px 8px;'; tfe.textContent = 'Total';
+    var tfv = document.createElement('td'); tfv.style.cssText = 'padding:6px 8px;text-align:right;font-family:monospace;color:#10b981;'; tfv.textContent = '$' + total.toFixed(2);
+    tfrow.appendChild(tfe); tfrow.appendChild(tfv);
+    tfoot.appendChild(tfrow);
+    table.appendChild(tfoot);
+
+    tableWrap.appendChild(table);
+
+    // Chart format buttons below table
+    var chartRow = document.createElement('div');
+    chartRow.style.cssText = 'display:flex;gap:4px;margin-top:12px;flex-wrap:wrap;align-items:center;';
+    var chartLabel = document.createElement('span');
+    chartLabel.style.cssText = 'color:#8b949e;font-size:0.8em;margin-right:4px;';
+    chartLabel.textContent = 'Visualize:';
+    chartRow.appendChild(chartLabel);
+
+    var chartTypes = [
+        { key: 'bar', label: '📊 Bar' },
+        { key: 'line', label: '📈 Line' },
+        { key: 'doughnut', label: '🍩 Doughnut' },
+        { key: 'pie', label: '🥧 Pie' },
+        { key: 'polarArea', label: '🎯 Polar' },
+    ];
+    var chartArea = document.createElement('div');
+    chartArea.className = 'ai-chart-render-area';
+
+    chartTypes.forEach(function(t) {
+        var btn = document.createElement('button');
+        btn.className = 'btn btn-outline btn-sm';
+        btn.style.cssText = 'font-size:0.75em;padding:3px 8px;';
+        btn.textContent = t.label;
+        btn.onclick = function() {
+            // Highlight active
+            chartRow.querySelectorAll('button').forEach(function(b) { b.style.background = ''; b.style.borderColor = ''; });
+            btn.style.background = '#4c1d95';
+            btn.style.borderColor = '#6d28d9';
+            renderSingleChart(chartArea, cd, t.key);
+        };
+        chartRow.appendChild(btn);
+    });
+
+    tableWrap.appendChild(chartRow);
+    tableWrap.appendChild(chartArea);
+    container.appendChild(tableWrap);
+
+    if (aiChat) aiChat.scrollTop = aiChat.scrollHeight;
+}
+
 if (aiFontDecBtn) aiFontDecBtn.onclick = function() {
     aiFontSize = Math.max(14, aiFontSize - 1);
     applyAIFontSize();
@@ -1431,7 +1551,7 @@ if (aiChat) aiChat.onclick = function(e) {
         }
         return;
     }
-    // Handle chart option buttons
+    // Handle chart option buttons (legacy — now handled via table flow)
     var chartBtn = e.target.closest('.ai-chart-btn');
     if (chartBtn) {
         var idx = parseInt(chartBtn.getAttribute('data-chart-idx'), 10);
@@ -1443,6 +1563,23 @@ if (aiChat) aiChat.onclick = function(e) {
                 var renderArea = msgDiv.querySelector('.ai-chart-render-area');
                 if (renderArea) {
                     renderSingleChart(renderArea, cd);
+                }
+            }
+        }
+        return;
+    }
+    // Handle "Show as Table" buttons
+    var tableBtn = e.target.closest('.ai-table-btn');
+    if (tableBtn) {
+        var tidx = parseInt(tableBtn.getAttribute('data-chart-idx'), 10);
+        var tmsgDiv = tableBtn.closest('.lab-message');
+        if (tmsgDiv && tmsgDiv.dataset.chartData) {
+            var tAllCharts = JSON.parse(tmsgDiv.dataset.chartData);
+            var tcd = tAllCharts[tidx];
+            if (tcd) {
+                var tRenderArea = tmsgDiv.querySelector('.ai-table-render-area');
+                if (tRenderArea) {
+                    renderTableWithChart(tRenderArea, tcd);
                 }
             }
         }
