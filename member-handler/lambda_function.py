@@ -824,23 +824,50 @@ def handle_generate_template(event):
                             }
                         ]
                     },
+                    # AWS managed ReadOnlyAccess covers all ~200 services automatically
+                    # and is maintained by AWS. Billing/CE APIs are not included so
+                    # we add those as a separate inline policy below.
+                    'ManagedPolicyArns': [
+                        'arn:aws:iam::aws:policy/ReadOnlyAccess',
+                    ],
                     'Policies': [
                         {
-                            'PolicyName': 'SlashMyBillReadOnly',
+                            'PolicyName': 'SlashMyBillBillingAccess',
                             'PolicyDocument': {
                                 'Version': '2012-10-17',
                                 'Statement': [
                                     {
                                         'Effect': 'Allow',
                                         'Action': [
+                                            # Cost Explorer — core FinOps data
                                             'ce:GetCostAndUsage',
                                             'ce:GetCostForecast',
                                             'ce:GetReservationUtilization',
+                                            'ce:GetReservationCoverage',
                                             'ce:GetSavingsPlansUtilization',
+                                            'ce:GetSavingsPlansCoverage',
+                                            'ce:GetRightsizingRecommendation',
+                                            'ce:GetCostCategories',
+                                            'ce:GetDimensionValues',
+                                            'ce:GetTags',
+                                            'ce:ListCostAllocationTags',
+                                            # Budgets
                                             'budgets:ViewBudget',
-                                            'billingconductor:GetBillingData',
-                                            'billingconductor:GetBillingGroupCostReport',
-                                            'billingconductor:GetCustomLineItemVersions',
+                                            'budgets:DescribeBudgets',
+                                            'budgets:DescribeBudgetActionsForAccount',
+                                            # Cost Optimization Hub
+                                            'cost-optimization-hub:ListRecommendations',
+                                            'cost-optimization-hub:GetRecommendation',
+                                            # Billing / CUR
+                                            'cur:DescribeReportDefinitions',
+                                            'cur:GetClassicReport',
+                                            'cur:GetUsageReport',
+                                            'billing:GetBillingData',
+                                            'billing:GetBillingDetails',
+                                            # Trusted Advisor (cost checks)
+                                            'support:DescribeTrustedAdvisorChecks',
+                                            'support:DescribeTrustedAdvisorCheckResult',
+                                            # Stack self-management (for template update/delete)
                                             'cloudformation:DeleteStack',
                                             'cloudformation:DescribeStacks',
                                             'cloudformation:DescribeStackResources',
@@ -848,64 +875,6 @@ def handle_generate_template(event):
                                             'iam:ListRolePolicies',
                                             'iam:DeleteRolePolicy',
                                             'iam:DeleteRole',
-                                            'cur:DescribeReportDefinitions',
-                                            'cur:GetClassicReport',
-                                            'cur:GetUsageReport',
-                                        ],
-                                        'Resource': '*'
-                                    },
-                                    {
-                                        'Effect': 'Allow',
-                                        'Action': [
-                                            'athena:GetDataCatalog',
-                                            'athena:GetDatabase',
-                                            'athena:GetTableMetadata',
-                                            'athena:ListDatabases',
-                                            'athena:ListTableMetadata',
-                                            'athena:ListWorkGroups',
-                                            'athena:StartQueryExecution',
-                                            'athena:GetQueryExecution',
-                                            'athena:GetQueryResults',
-                                            'athena:StopQueryExecution',
-                                            'glue:GetDatabase',
-                                            'glue:GetDatabases',
-                                            'glue:GetTable',
-                                            'glue:GetTables',
-                                            'glue:GetPartition',
-                                            'glue:GetPartitions',
-                                        ],
-                                        'Resource': '*'
-                                    },
-                                    {
-                                        'Effect': 'Allow',
-                                        'Action': [
-                                            's3:ListAllMyBuckets',
-                                            's3:ListBucket',
-                                            's3:GetBucketLocation',
-                                            's3:GetObject',
-                                        ],
-                                        'Resource': '*'
-                                    },
-                                    {
-                                        'Effect': 'Allow',
-                                        'Action': [
-                                            'cloudwatch:GetMetricData',
-                                            'cloudwatch:GetMetricStatistics',
-                                            'cloudwatch:ListMetrics',
-                                            'ec2:DescribeInstances',
-                                            'ec2:DescribeInstanceTypes',
-                                            'ec2:DescribeVolumes',
-                                            'ec2:DescribeTags',
-                                            'ec2:DescribeRegions',
-                                            'rds:DescribeDBInstances',
-                                            'rds:DescribeDBClusters',
-                                            'rds:DescribeDBLogFiles',
-                                            'ecs:ListClusters',
-                                            'ecs:DescribeClusters',
-                                            'ecs:ListServices',
-                                            'ecs:DescribeServices',
-                                            'ecs:ListTasks',
-                                            'ecs:DescribeTasks',
                                         ],
                                         'Resource': '*'
                                     }
