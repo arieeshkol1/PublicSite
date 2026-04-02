@@ -1891,19 +1891,26 @@ def _ask_bedrock_analyze(question, tips_context, account_data, account_id):
 
     prompt = f"""You are SlashMyBill AI, an AWS FinOps assistant. Analyze the following real data from AWS account {account_id} and answer the user's question.
 
+RESPONSE FOCUS:
+- If the user asks a specific question (e.g. "find unattached EBS volumes", "show my NAT Gateways"), answer ONLY that question with full detail. Do NOT include a full cost breakdown or "Minor costs" section.
+- If the user asks a general question (e.g. "how can I reduce costs", "analyze my spending"), provide the full ranked cost analysis.
+
 IMPORTANT RULES:
 - Only reference real AWS services and products. Do NOT invent product names.
 - cost_by_service contains ONLY USD amounts. Do NOT infer usage units unless explicitly in the data.
 - "EC2 - Other" = NAT Gateway hours/data, EBS volumes, data transfer, Elastic IPs, load balancers. NOT EC2 instances. Do NOT recommend Reserved Instances for this line item.
 - "Amazon Virtual Private Cloud" costs = NAT Gateway data processing, VPC endpoints (Interface type cost ~$7.20/month each), Elastic IPs. Use elastic_ips and vpc_endpoints data to identify the exact driver.
 - Reserved Instances ONLY apply to "Amazon Elastic Compute Cloud - Compute" and RDS instances, never to EC2-Other or VPC.
+- When unattached_volumes list is present, ALWAYS list each volume by its volumeId, size_gb, type, and monthly_cost_usd. Do NOT just say "6 volumes" — list them individually.
+- When elastic_ips.unattached_list is present, list each by allocationId and publicIp.
+- When vpc_endpoints.endpoints is present, list each by endpointId, type, and serviceName.
 - For EBS: unattached_monthly_cost_usd is the exact saving from deleting unattached volumes. gp2_to_gp3_savings_usd is the saving from migrating gp2 to gp3.
 - For Elastic IPs: unattached ones cost $3.65/month each. Quote unattached_monthly_cost_usd as the exact saving.
 - For VPC endpoints: interface_monthly_cost_usd is the cost. Recommend reviewing if each endpoint is actively used.
 - For KMS: customer_managed_keys × $1/month = monthly_cost_usd. Flag keys that may be unused.
 - For RDS: show instance class, engine, Multi-AZ status. If Multi-AZ is enabled for dev/test, suggest disabling it.
-- Do NOT write analysis for services costing less than $0.50/month — just list them in a "Minor costs" section with no recommendations. Exception: RDS and EC2 Compute always get analysis regardless of cost (they have RI savings potential).
-- When listing recommendations, include specific resource IDs from the data (e.g. volume IDs, endpoint IDs, EIP allocation IDs, NAT Gateway IDs) so the customer knows exactly what to act on.
+- The data already contains the resource details. Do NOT tell the customer to "use CloudWatch" or "check Trusted Advisor" to find resources that are already listed in the data.
+- For general cost analysis: services costing less than $0.50/month go in "Minor costs" with no recommendations. Services costing $0.50 or more ALWAYS get individual analysis. Amazon Registrar and VPC are NEVER minor regardless of cost.
 - Do NOT use generic percentages. Use real dollar amounts from the data fields.
 - Do NOT list IAM permissions unless a specific fetch failed with an error in the data.
 
@@ -1913,11 +1920,8 @@ User question: {question}
 Real account data (costs in USD, gathered via AWS APIs):
 {data_text}
 
-Answer ranked by cost impact (highest first). For each service costing $1 or more:
-- What the line item contains
-- The specific driver based on the data (nat_gateway_count, elastic_ips, vpc_endpoints, ebs_summary, kms_summary, rds_instances)
-- Exact dollar saving with the action to take
-Group all services under $1 into a single "Minor costs" line at the end."""
+For general questions: answer ranked by cost impact (highest first), with exact dollar savings and specific resource IDs. Group only truly minor services (< $0.50) at the end.
+For specific questions: answer the question directly with full resource-level detail from the data."""
 
     try:
         response = bedrock_client.invoke_model(
