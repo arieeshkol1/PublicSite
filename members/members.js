@@ -1224,7 +1224,7 @@ function addAIMessage(type, content) {
         });
         div.innerHTML = cmdsHtml;
     } else if (type === 'thinking') {
-        div.innerHTML = '<div class="lab-msg-info" style="color:#a78bfa;"><img src="../SlashMyBill.png" alt="" style="height:16px;vertical-align:middle;margin-right:4px;"> ' + esc(content) + '</div>';
+        div.innerHTML = '<div class="lab-msg-info" style="color:#a78bfa;"><img src="../ninja-black.png" alt="" style="height:32px;vertical-align:middle;margin-right:4px;"> ' + esc(content) + '</div>';
         div.id = 'ai-thinking';
     } else if (type === 'error') {
         div.innerHTML = '<div class="lab-msg-output lab-msg-error">' + esc(content) + '</div>';
