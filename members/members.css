@@ -285,6 +285,9 @@
     border: 1px solid var(--gray-light); border-radius: 0 8px 8px 8px;
     background: var(--white); min-height: 500px;
 }
+#ai-tab.member-tab-content {
+    min-height: 0; height: calc(100vh - 160px); overflow: hidden;
+}
 
 /* Tab toolbar inside tab content */
 .tab-toolbar {
@@ -300,7 +303,7 @@
    Lab Area
    ============================================================ */
 .lab-container {
-    display: flex; flex-direction: column; height: calc(100vh - 160px);
+    display: flex; flex-direction: column; height: 100%;
     background: var(--white); border-radius: 12px; border: 1px solid var(--gray-light);
     overflow: hidden;
 }
