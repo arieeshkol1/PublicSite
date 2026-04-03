@@ -1254,6 +1254,16 @@ function addAIMessage(type, content) {
             '<button class="ai-copy-btn" title="Copy to clipboard" style="position:absolute;top:6px;right:6px;background:#21262d;border:1px solid #30363d;border-radius:4px;color:#8b949e;cursor:pointer;padding:3px 6px;font-size:0.75em;">📋 Copy</button>' +
             formatted + '</div>' +
             followUpHtml +
+            '<div class="ai-feedback-widget" style="margin-top:10px;padding:8px 0;border-top:1px solid #30363d;">' +
+                '<span style="color:#8b949e;font-size:0.85em;margin-right:8px;">Did this help you?</span>' +
+                '<button class="ai-fb-btn ai-fb-up" title="Helpful" style="background:#21262d;border:1px solid #30363d;border-radius:4px;color:#8b949e;cursor:pointer;padding:4px 10px;font-size:1em;margin-right:4px;">👍</button>' +
+                '<button class="ai-fb-btn ai-fb-down" title="Not helpful" style="background:#21262d;border:1px solid #30363d;border-radius:4px;color:#8b949e;cursor:pointer;padding:4px 10px;font-size:1em;">👎</button>' +
+                '<div class="ai-fb-correction" style="display:none;margin-top:8px;">' +
+                    '<input type="text" class="ai-fb-correction-input" placeholder="What was missing or incorrect?" style="background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:8px 10px;color:#c9d1d9;font-size:0.85em;width:70%;margin-right:6px;">' +
+                    '<button class="ai-fb-correction-submit btn btn-primary btn-sm" style="font-size:0.8em;">Submit</button>' +
+                '</div>' +
+                '<div class="ai-fb-status" style="display:none;color:#7ee787;font-size:0.85em;margin-top:6px;"></div>' +
+            '</div>' +
             '<div class="ai-table-area"></div>';
     } else if (type === 'commands') {
         var cmdsHtml = '<div class="lab-msg-info" style="color:#7ee787;">Commands executed:</div>';
@@ -1305,6 +1315,14 @@ async function askAI() {
 
         // Show the AI answer
         addAIMessage('answer', data.answer || 'No answer available.');
+
+        // Store interactionId on the last answer message for feedback
+        if (data.interactionId) {
+            var lastAnswerMsg = aiChat.querySelector('.lab-message:last-child');
+            if (lastAnswerMsg) {
+                lastAnswerMsg.setAttribute('data-interaction-id', data.interactionId);
+            }
+        }
 
         // Attach chartData to the last answer message for table+chart flow
         if (data.chartData && data.chartData.length > 0) {
@@ -1720,6 +1738,77 @@ applyAIFontSize();
 
 // Click example questions to populate input
 if (aiChat) aiChat.onclick = function(e) {
+    // Handle feedback thumbs-up
+    var fbUp = e.target.closest('.ai-fb-up');
+    if (fbUp) {
+        var msgDiv = fbUp.closest('.lab-message');
+        var widget = fbUp.closest('.ai-feedback-widget');
+        if (msgDiv && widget) {
+            fbUp.style.background = '#238636'; fbUp.style.borderColor = '#2ea043'; fbUp.style.color = '#fff';
+            widget.querySelectorAll('.ai-fb-btn').forEach(function(b) { b.disabled = true; });
+            var interactionId = msgDiv.getAttribute('data-interaction-id') || '';
+            var answerEl = msgDiv.querySelector('.lab-msg-output');
+            var agentResponse = answerEl ? answerEl.textContent.replace('📋 Copy', '').trim() : '';
+            var statusEl = widget.querySelector('.ai-fb-status');
+            api('POST', '/members/accounts/ai-feedback', {
+                interactionId: interactionId,
+                feedbackScore: 'yes',
+                userQuestion: (aiQuestionInput && aiQuestionInput.dataset.lastQuestion) || '',
+                agentResponse: agentResponse,
+                accountId: (aiAccountSelect && aiAccountSelect.value) || ''
+            }).then(function() {
+                if (statusEl) { statusEl.style.display = 'block'; statusEl.textContent = 'Thanks for your feedback!'; }
+            }).catch(function(err) {
+                if (statusEl) { statusEl.style.display = 'block'; statusEl.style.color = '#f85149'; statusEl.textContent = 'Failed to send feedback.'; }
+                widget.querySelectorAll('.ai-fb-btn').forEach(function(b) { b.disabled = false; });
+            });
+        }
+        return;
+    }
+    // Handle feedback thumbs-down
+    var fbDown = e.target.closest('.ai-fb-down');
+    if (fbDown) {
+        var msgDiv2 = fbDown.closest('.lab-message');
+        var widget2 = fbDown.closest('.ai-feedback-widget');
+        if (msgDiv2 && widget2) {
+            fbDown.style.background = '#da3633'; fbDown.style.borderColor = '#f85149'; fbDown.style.color = '#fff';
+            widget2.querySelectorAll('.ai-fb-btn').forEach(function(b) { b.disabled = true; });
+            var correctionArea = widget2.querySelector('.ai-fb-correction');
+            if (correctionArea) correctionArea.style.display = 'block';
+            // Also send negative feedback immediately (without correction)
+            var interactionId2 = msgDiv2.getAttribute('data-interaction-id') || '';
+            var answerEl2 = msgDiv2.querySelector('.lab-msg-output');
+            var agentResponse2 = answerEl2 ? answerEl2.textContent.replace('📋 Copy', '').trim() : '';
+            widget2._fbPayload = {
+                interactionId: interactionId2,
+                feedbackScore: 'no',
+                userQuestion: (aiQuestionInput && aiQuestionInput.dataset.lastQuestion) || '',
+                agentResponse: agentResponse2,
+                accountId: (aiAccountSelect && aiAccountSelect.value) || ''
+            };
+        }
+        return;
+    }
+    // Handle correction submit
+    var corrSubmit = e.target.closest('.ai-fb-correction-submit');
+    if (corrSubmit) {
+        var widget3 = corrSubmit.closest('.ai-feedback-widget');
+        if (widget3 && widget3._fbPayload) {
+            var corrInput = widget3.querySelector('.ai-fb-correction-input');
+            var correction = corrInput ? corrInput.value.trim() : '';
+            var payload = Object.assign({}, widget3._fbPayload);
+            if (correction) payload.userCorrection = correction;
+            var statusEl3 = widget3.querySelector('.ai-fb-status');
+            var corrArea = widget3.querySelector('.ai-fb-correction');
+            api('POST', '/members/accounts/ai-feedback', payload).then(function() {
+                if (corrArea) corrArea.style.display = 'none';
+                if (statusEl3) { statusEl3.style.display = 'block'; statusEl3.textContent = 'Thanks for your feedback!'; }
+            }).catch(function() {
+                if (statusEl3) { statusEl3.style.display = 'block'; statusEl3.style.color = '#f85149'; statusEl3.textContent = 'Failed to send feedback.'; }
+            });
+        }
+        return;
+    }
     // Handle copy button
     var copyBtn = e.target.closest('.ai-copy-btn');
     if (copyBtn) {

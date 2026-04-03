@@ -347,7 +347,17 @@
 .lab-msg-error { color: #f85149; }
 .lab-msg-info { color: #8b949e; font-style: italic; padding: 4px 0; }
 
+/* ============================================================
+   AI Feedback Widget
+   ============================================================ */
+.ai-feedback-widget { user-select: none; }
+.ai-fb-btn { transition: background 0.2s, border-color 0.2s; }
+.ai-fb-btn:hover:not(:disabled) { background: #30363d !important; }
+.ai-fb-btn:disabled { opacity: 0.7; cursor: default; }
+.ai-fb-correction-input:focus { border-color: #58a6ff !important; outline: none; }
+
 .lab-input-area {
+    position: sticky; bottom: 0; z-index: 10;
     padding: 12px 20px; border-top: 1px solid #30363d; background: #161b22;
 }
 .lab-input-row { display: flex; align-items: center; gap: 8px; }

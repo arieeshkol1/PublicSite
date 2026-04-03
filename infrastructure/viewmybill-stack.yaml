@@ -406,6 +406,30 @@ Resources:
           Value: ViewMyBill
 
   # ============================================================
+  # DynamoDB Table - Agent Feedback
+  # ============================================================
+  AgentFeedbackTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: MemberPortal-AgentFeedback
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: memberEmail
+          AttributeType: S
+        - AttributeName: interactionId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: memberEmail
+          KeyType: HASH
+        - AttributeName: interactionId
+          KeyType: RANGE
+      SSESpecification:
+        SSEEnabled: true
+      Tags:
+        - Key: Project
+          Value: ViewMyBill
+
+  # ============================================================
   # SES Email Identity - eshkolai.com domain
   # ============================================================
   SESEmailIdentity:
@@ -822,6 +846,15 @@ Resources:
                   - dynamodb:Scan
                 Resource:
                   - !GetAtt CostOptimizationTipsTable.Arn
+        - PolicyName: DynamoDBFeedbackAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                Resource:
+                  - !GetAtt AgentFeedbackTable.Arn
         - PolicyName: AWSPricingRead
           PolicyDocument:
             Version: '2012-10-17'
@@ -863,6 +896,7 @@ Resources:
           BEDROCK_MODEL_ID: !Ref BedrockModelId
           BEDROCK_AGENT_ID: ''
           BEDROCK_AGENT_ALIAS_ID: ''
+          FEEDBACK_TABLE_NAME: !Ref AgentFeedbackTable
       Tags:
         - Key: Project
           Value: ViewMyBill
@@ -1036,6 +1070,13 @@ Resources:
       RouteKey: 'POST /members/accounts/ai-query'
       Target: !Sub 'integrations/${MemberIntegration}'
 
+  MemberAIFeedbackRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'POST /members/accounts/ai-feedback'
+      Target: !Sub 'integrations/${MemberIntegration}'
+
   MemberDashboardGetRoute:
     Type: AWS::ApiGatewayV2::Route
     Properties:
@@ -1155,3 +1196,11 @@ Outputs:
   MemberHandlerFunctionArn:
     Description: Member Handler Lambda function ARN
     Value: !GetAtt MemberHandlerFunction.Arn
+
+  AgentFeedbackTableName:
+    Description: DynamoDB table name for agent feedback
+    Value: !Ref AgentFeedbackTable
+
+  AgentFeedbackTableArn:
+    Description: DynamoDB Agent Feedback table ARN
+    Value: !GetAtt AgentFeedbackTable.Arn

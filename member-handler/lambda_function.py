@@ -35,6 +35,7 @@ TIPS_TABLE_NAME = os.environ.get('TIPS_TABLE_NAME', 'ViewMyBill-CostOptimization
 BEDROCK_MODEL_ID = os.environ.get('BEDROCK_MODEL_ID', 'amazon.nova-2-lite-v1:0')
 BEDROCK_AGENT_ID = os.environ.get('BEDROCK_AGENT_ID', '')
 BEDROCK_AGENT_ALIAS_ID = os.environ.get('BEDROCK_AGENT_ALIAS_ID', '')
+FEEDBACK_TABLE_NAME = os.environ.get('FEEDBACK_TABLE_NAME', 'MemberPortal-AgentFeedback')
 
 # AWS clients
 dynamodb = boto3.resource('dynamodb')
@@ -83,6 +84,7 @@ def lambda_handler(event, context):
         'POST /members/accounts/test': handle_test_connection,
         'POST /members/accounts/execute': handle_execute_command,
         'POST /members/accounts/ai-query': handle_ai_query,
+        'POST /members/accounts/ai-feedback': handle_ai_feedback,
         'GET /members/dashboard': handle_get_dashboard,
         'POST /members/dashboard': handle_add_dashboard_item,
         'DELETE /members/dashboard': handle_delete_dashboard_item,
@@ -1352,6 +1354,129 @@ def handle_execute_command(event):
 
 
 # ============================================================
+# AI Feedback Handler
+# ============================================================
+
+SERVICE_KEYWORD_MAP = {
+    'EC2': ['ec2', 'instance'],
+    'S3': ['s3', 'bucket', 'storage'],
+    'RDS': ['rds', 'database', 'aurora'],
+    'Lambda': ['lambda', 'function', 'serverless'],
+    'EBS': ['ebs', 'volume'],
+    'VPC': ['vpc', 'nat', 'endpoint'],
+    'CloudFront': ['cloudfront', 'cdn'],
+    'DynamoDB': ['dynamodb'],
+    'ECS': ['ecs', 'fargate', 'container'],
+    'EKS': ['eks', 'kubernetes'],
+    'Route53': ['route53', 'dns'],
+    'KMS': ['kms', 'key', 'encrypt'],
+    'ElastiCache': ['elasticache', 'redis', 'memcached'],
+    'Redshift': ['redshift', 'warehouse'],
+    'CloudWatch': ['cloudwatch', 'monitor', 'alarm'],
+    'IAM': ['iam', 'role', 'policy', 'permission'],
+}
+
+
+def _derive_related_service(question):
+    """Match question text against AWS service keywords and return the service name."""
+    question_lower = question.lower()
+    for service, keywords in SERVICE_KEYWORD_MAP.items():
+        for kw in keywords:
+            if kw in question_lower:
+                return service
+    return 'General'
+
+
+def handle_ai_feedback(event):
+    """Handle AI feedback submissions — store feedback and optionally save tip."""
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+
+    member_email = auth['sub']
+
+    try:
+        body = json.loads(event.get('body', '{}'))
+    except (json.JSONDecodeError, TypeError):
+        return create_error_response(400, 'InvalidRequest', 'Invalid request body')
+
+    interaction_id = (body.get('interactionId') or '').strip()
+    feedback_score = (body.get('feedbackScore') or '').strip()
+    user_question = (body.get('userQuestion') or '').strip()
+    agent_response = (body.get('agentResponse') or '').strip()
+    account_id = (body.get('accountId') or '').strip()
+    user_correction = (body.get('userCorrection') or '').strip() or None
+
+    # Validate required fields
+    missing = []
+    if not interaction_id:
+        missing.append('interactionId')
+    if not feedback_score:
+        missing.append('feedbackScore')
+    if not user_question:
+        missing.append('userQuestion')
+    if not agent_response:
+        missing.append('agentResponse')
+    if not account_id:
+        missing.append('accountId')
+    if missing:
+        return create_error_response(400, 'InvalidRequest', f"Missing required fields: {', '.join(missing)}")
+
+    if feedback_score not in ('yes', 'no'):
+        return create_error_response(400, 'InvalidRequest', "feedbackScore must be 'yes' or 'no'")
+
+    related_service = _derive_related_service(user_question)
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    # Write feedback record to DynamoDB
+    feedback_table = dynamodb.Table(FEEDBACK_TABLE_NAME)
+    try:
+        feedback_record = {
+            'memberEmail': member_email,
+            'interactionId': interaction_id,
+            'userQuestion': user_question,
+            'agentResponse': agent_response[:2000],
+            'feedbackScore': feedback_score,
+            'relatedService': related_service,
+            'accountId': account_id,
+            'createdAt': now_iso,
+        }
+        if user_correction:
+            feedback_record['userCorrection'] = user_correction
+        feedback_table.put_item(Item=feedback_record)
+    except ClientError as e:
+        logger.error(f"Failed to write feedback: {e}")
+        return create_error_response(500, 'InternalError', 'Failed to save feedback')
+
+    # If positive feedback, save tip with high-confidence tag
+    if feedback_score == 'yes':
+        tip_id = f'ai-fb-{hashlib.md5(user_question.encode()).hexdigest()[:8]}'
+        tips_table = dynamodb.Table(TIPS_TABLE_NAME)
+        try:
+            tips_table.put_item(
+                Item={
+                    'service': related_service,
+                    'tipId': tip_id,
+                    'title': user_question[:100],
+                    'description': agent_response[:500],
+                    'category': 'ai-generated',
+                    'estimatedSavings': 'varies',
+                    'difficulty': 'medium',
+                    'source': 'user-feedback',
+                    'confidenceTag': 'high-confidence',
+                    'createdAt': now_iso,
+                },
+                ConditionExpression='attribute_not_exists(tipId)',
+            )
+        except ClientError as e:
+            # Duplicate or error — non-critical, feedback was already saved
+            if e.response.get('Error', {}).get('Code') != 'ConditionalCheckFailedException':
+                logger.warning(f"Failed to save feedback tip: {e}")
+
+    return create_response(200, {'success': True})
+
+
+# ============================================================
 # AI Agent Query Handler
 # ============================================================
 
@@ -1376,14 +1501,17 @@ def handle_ai_query(event):
     if not re.fullmatch(r'\d{12}', account_id):
         return create_error_response(400, 'InvalidAccountId', 'Account ID must be exactly 12 digits')
 
+    # Generate unique interactionId for feedback tracking
+    interaction_id = datetime.now(timezone.utc).isoformat() + '-' + secrets.token_hex(4)
+
     # Use Bedrock Agent if configured, otherwise fall back to direct API
     if BEDROCK_AGENT_ID and BEDROCK_AGENT_ALIAS_ID:
-        return _invoke_bedrock_agent(question, account_id, member_email)
+        return _invoke_bedrock_agent(question, account_id, member_email, interaction_id)
     else:
-        return _invoke_direct_model(question, account_id, member_email)
+        return _invoke_direct_model(question, account_id, member_email, interaction_id)
 
 
-def _invoke_bedrock_agent(question, account_id, member_email):
+def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
     """Invoke the Bedrock Agent for a conversational FinOps query."""
     agent_runtime = boto3.client('bedrock-agent-runtime', region_name='us-east-1')
 
@@ -1412,6 +1540,7 @@ def _invoke_bedrock_agent(question, account_id, member_email):
 
         return create_response(200, {
             'answer': answer,
+            'interactionId': interaction_id,
             'commands': ['Bedrock Agent orchestrated the analysis'],
             'results': [],
             'tipFound': False,
@@ -1420,10 +1549,10 @@ def _invoke_bedrock_agent(question, account_id, member_email):
     except Exception as e:
         logger.error(f"Bedrock Agent invocation failed: {e}")
         # Fall back to direct model
-        return _invoke_direct_model(question, account_id, member_email)
+        return _invoke_direct_model(question, account_id, member_email, interaction_id)
 
 
-def _invoke_direct_model(question, account_id, member_email):
+def _invoke_direct_model(question, account_id, member_email, interaction_id):
     """Fallback: use direct Bedrock model API with boto3 data gathering."""
     # Step 1: Search tips
     tips_context = _search_tips(question)
@@ -1454,6 +1583,7 @@ def _invoke_direct_model(question, account_id, member_email):
 
     return create_response(200, {
         'answer': answer,
+        'interactionId': interaction_id,
         'commands': executed_actions,
         'results': [],
         'tipFound': bool(tips_context),
@@ -1649,6 +1779,9 @@ def _search_tips(question):
             tips = result.get('Items', [])
     except ClientError as e:
         logger.warning(f"Tips table query error: {e}")
+
+    # Sort so high-confidence tips appear first (stable sort)
+    tips = sorted(tips, key=lambda t: (0 if t.get('confidenceTag') == 'high-confidence' else 1))
 
     return _decimal_to_native(tips[:10])
 
@@ -2576,7 +2709,8 @@ def _ask_bedrock_analyze(question, tips_context, account_data, account_id):
     if tips_context:
         tips_text = "\n\nRelevant optimization tips from our knowledge base:\n"
         for tip in tips_context[:5]:
-            tips_text += f"- {tip.get('title', '')}: {tip.get('description', '')} (Savings: {tip.get('estimatedSavings', 'N/A')})\n"
+            label = "[Validated] " if tip.get('confidenceTag') == 'high-confidence' else ""
+            tips_text += f"- {label}{tip.get('title', '')}: {tip.get('description', '')} (Savings: {tip.get('estimatedSavings', 'N/A')})\n"
 
     data_text = json.dumps(account_data, indent=2, default=str)
     if len(data_text) > 8000:
@@ -2587,6 +2721,8 @@ def _ask_bedrock_analyze(question, tips_context, account_data, account_id):
 RESPONSE FOCUS:
 - If the user asks a specific question (e.g. "find unattached EBS volumes", "show my NAT Gateways"), answer ONLY that question with full detail. Do NOT include a full cost breakdown or "Minor costs" section.
 - If the user asks a general question (e.g. "how can I reduce costs", "analyze my spending"), provide the full ranked cost analysis.
+- Prioritize strategies from Knowledge Base tips that have historically positive user feedback.
+- If a user corrects you in the chat, acknowledge the correction and adjust recommendations accordingly.
 
 IMPORTANT RULES:
 - Only reference real AWS services and products. Do NOT invent product names.
