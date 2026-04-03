@@ -286,7 +286,10 @@
     background: var(--white); min-height: 500px;
 }
 #ai-tab.member-tab-content {
-    min-height: 0; height: calc(100vh - 160px); overflow: hidden;
+    min-height: 0; height: calc(100vh - 160px); display: flex; flex-direction: column;
+}
+#ai-tab .lab-container {
+    flex: 1; display: flex; flex-direction: column; min-height: 0; overflow: hidden;
 }
 
 /* Tab toolbar inside tab content */
@@ -303,7 +306,7 @@
    Lab Area
    ============================================================ */
 .lab-container {
-    display: flex; flex-direction: column; height: 100%;
+    display: flex; flex-direction: column; flex: 1; min-height: 0;
     background: var(--white); border-radius: 12px; border: 1px solid var(--gray-light);
     overflow: hidden;
 }
@@ -321,7 +324,7 @@
 .lab-account-selector select:focus { border-color: var(--primary); }
 
 .lab-chat {
-    flex: 1; overflow-y: auto; padding: 20px; padding-bottom: 10px; background: #0d1117;
+    flex: 1; overflow-y: auto; padding: 20px; background: #0d1117;
     font-family: 'Consolas', 'Courier New', monospace; font-size: 15px;
     min-height: 0;
 }
@@ -361,7 +364,6 @@
 .ai-fb-correction-input:focus { border-color: #58a6ff !important; outline: none; }
 
 .lab-input-area {
-    position: sticky; bottom: 0; z-index: 10;
     flex-shrink: 0;
     padding: 12px 20px; border-top: 1px solid #30363d; background: #161b22;
 }
