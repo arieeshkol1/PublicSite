@@ -97,7 +97,8 @@
       "title": "Delete incomplete multipart uploads",
       "description": "Incomplete multipart uploads accumulate storage costs. Create a lifecycle rule to abort incomplete uploads after 7 days.",
       "estimatedSavings": "5-15%",
-      "difficulty": "easy"
+      "difficulty": "easy",
+      "automatedCheck": "s3:GetBucketLifecycleConfiguration → check if AbortIncompleteMultipartUpload rule exists per bucket; s3_bucket_analysis[].hasLifecyclePolicy"
     },
     {
       "id": "s3-004",
@@ -106,7 +107,8 @@
       "title": "Manage object versions",
       "description": "If versioning is enabled, set lifecycle rules to delete old versions or transition them to Glacier. Noncurrent versions can accumulate significant costs.",
       "estimatedSavings": "20-40%",
-      "difficulty": "easy"
+      "difficulty": "easy",
+      "automatedCheck": "s3:GetBucketVersioning → check if versioning enabled; s3:GetBucketLifecycleConfiguration → check for NoncurrentVersionExpiration rule"
     },
     {
       "id": "rds-001",
@@ -135,7 +137,8 @@
       "title": "Consider Aurora Serverless v2",
       "description": "For variable database workloads, Aurora Serverless v2 scales automatically and charges only for capacity used. Ideal for dev/test and unpredictable traffic.",
       "estimatedSavings": "30-70%",
-      "difficulty": "medium"
+      "difficulty": "medium",
+      "automatedCheck": "rds:DescribeDBInstances → rds_instances[].engine; check if engine='aurora-mysql' or 'aurora-postgresql'; cloudwatch:RDS/CPUUtilization avg+max → variable workload = candidate for Serverless v2"
     },
     {
       "id": "rds-004",
@@ -164,7 +167,8 @@
       "title": "Use Graviton for Lambda",
       "description": "Configure Lambda functions to use ARM64 architecture (Graviton2). It offers up to 34% better price-performance than x86.",
       "estimatedSavings": "20-34%",
-      "difficulty": "easy"
+      "difficulty": "easy",
+      "automatedCheck": "lambda:ListFunctions → lambda_functions[].Architectures; check if 'x86_64' (not 'arm64') = Graviton migration candidate"
     },
     {
       "id": "lambda-003",
@@ -173,7 +177,8 @@
       "title": "Avoid unnecessary Provisioned Concurrency",
       "description": "Provisioned Concurrency eliminates cold starts but adds cost. Use it only for latency-sensitive production workloads, not dev/test.",
       "estimatedSavings": "varies",
-      "difficulty": "easy"
+      "difficulty": "easy",
+      "automatedCheck": "lambda:GetProvisionedConcurrencyConfig per function → check if provisioned concurrency is set; cloudwatch:Lambda/Invocations → low invocations + provisioned = waste"
     },
     {
       "id": "nat-001",
@@ -202,7 +207,8 @@
       "title": "Optimize CloudFront cache hit ratio",
       "description": "Increase cache TTLs, normalize query strings, and use Origin Shield to improve cache hit ratio. Higher cache hits mean fewer origin requests and lower costs.",
       "estimatedSavings": "20-50%",
-      "difficulty": "medium"
+      "difficulty": "medium",
+      "automatedCheck": "cloudwatch:GetMetricStatistics(CloudFront/CacheHitRate, avg 30d) → low cache hit rate = optimization needed; ce:GetCostAndUsage for CloudFront cost"
     },
     {
       "id": "cloudfront-002",
@@ -211,7 +217,8 @@
       "title": "Use CloudFront Security Savings Bundle",
       "description": "If using CloudFront with WAF, the Security Savings Bundle offers up to 30% savings with a 1-year commitment.",
       "estimatedSavings": "up to 30%",
-      "difficulty": "easy"
+      "difficulty": "easy",
+      "automatedCheck": "ce:GetCostAndUsage → CloudFront cost; if CloudFront + WAF both in top costs = Security Savings Bundle candidate"
     },
     {
       "id": "ebs-001",
@@ -240,7 +247,8 @@
       "title": "Use EBS Snapshots Archive",
       "description": "For snapshots accessed less than once per quarter, move them to Snapshots Archive tier for up to 75% cost reduction.",
       "estimatedSavings": "up to 75%",
-      "difficulty": "easy"
+      "difficulty": "easy",
+      "automatedCheck": "ec2___other_usage_breakdown → EBS:SnapshotUsage cost; if snapshot cost > $10/month = archive candidate for infrequently accessed snapshots"
     },
     {
       "id": "data-transfer-001",
@@ -259,7 +267,8 @@
       "title": "Use CloudFront for internet egress",
       "description": "CloudFront data transfer to internet is cheaper than direct EC2/S3 egress. Use CloudFront even for dynamic content to reduce data transfer costs.",
       "estimatedSavings": "20-40%",
-      "difficulty": "medium"
+      "difficulty": "medium",
+      "automatedCheck": "ce:GetCostAndUsage(usage_type breakdown) → DataTransfer-Out-Bytes cost; if egress > $50/month and no CloudFront = candidate"
     },
     {
       "id": "general-001",
@@ -268,7 +277,8 @@
       "title": "Enable AWS Cost Explorer",
       "description": "Use Cost Explorer to visualize spending patterns, identify cost drivers, and forecast future costs. Enable hourly granularity for detailed analysis.",
       "estimatedSavings": "varies",
-      "difficulty": "easy"
+      "difficulty": "easy",
+      "automatedCheck": "ce:GetCostAndUsage → if API succeeds, Cost Explorer is enabled; cost_by_service data confirms access"
     },
     {
       "id": "general-002",
@@ -277,7 +287,8 @@
       "title": "Set up AWS Budgets with alerts",
       "description": "Create budgets with alert thresholds at 50%, 75%, and 100% of expected spend. Use SNS for real-time notifications.",
       "estimatedSavings": "varies",
-      "difficulty": "easy"
+      "difficulty": "easy",
+      "automatedCheck": "budgets:DescribeBudgets → check if any budgets exist; 0 budgets = setup recommended"
     },
     {
       "id": "general-003",
@@ -286,7 +297,8 @@
       "title": "Enable Cost Anomaly Detection",
       "description": "AWS Cost Anomaly Detection uses ML to identify unusual spending patterns. Configure alerts to catch unexpected cost spikes early.",
       "estimatedSavings": "varies",
-      "difficulty": "easy"
+      "difficulty": "easy",
+      "automatedCheck": "ce:GetAnomalyMonitors → check if anomaly monitors exist; system also runs its own anomaly detection on daily_cost_trend"
     },
     {
       "id": "general-004",
@@ -305,7 +317,8 @@
       "title": "Implement cost allocation tags",
       "description": "Tag all resources with project, environment, and owner tags. Enable cost allocation tags in Billing to track costs by team or application.",
       "estimatedSavings": "varies",
-      "difficulty": "easy"
+      "difficulty": "easy",
+      "automatedCheck": "ce:GetTags → check if cost allocation tags are configured; resourcegroupstaggingapi:GetResources → check tag coverage"
     },
     {
       "id": "general-006",
@@ -314,7 +327,8 @@
       "title": "Compute Savings Plans",
       "description": "Commit to a consistent $/hr spend for 1 or 3 years. Covers EC2, Lambda, and Fargate across any region, instance family, OS, or tenancy. Most flexible commitment option. Purchase via Cost Explorer > Savings Plans. Choose All Upfront for maximum discount.",
       "estimatedSavings": "up to 66%",
-      "difficulty": "medium"
+      "difficulty": "medium",
+      "automatedCheck": "pricing:GetProducts → pricing_context with Compute Savings Plan estimates (~30% discount); ce:GetCostAndUsage for EC2+Lambda+Fargate spend"
     },
     {
       "id": "general-007",
@@ -323,7 +337,8 @@
       "title": "EC2 Instance Savings Plans",
       "description": "Commit to a specific EC2 instance family in a chosen region for 1 or 3 years. Deeper discount than Compute SP but less flexible. Applies regardless of instance size, OS, or tenancy within the family. Best for stable, predictable EC2 workloads.",
       "estimatedSavings": "up to 72%",
-      "difficulty": "medium"
+      "difficulty": "medium",
+      "automatedCheck": "pricing:GetProducts(AmazonEC2, actual instance types) → pricing_context; ec2:DescribeInstances → actual instance family for SP targeting"
     },
     {
       "id": "general-008",
@@ -332,7 +347,8 @@
       "title": "Database Savings Plans",
       "description": "Commit to a consistent $/hr spend on database services for 1 or 3 years. Covers Aurora, RDS, DynamoDB, ElastiCache, DocumentDB, Neptune, Keyspaces, Timestream, and DMS. Applies across instance families, sizes, regions, and engines.",
       "estimatedSavings": "up to 35%",
-      "difficulty": "medium"
+      "difficulty": "medium",
+      "automatedCheck": "pricing:GetProducts(AmazonRDS, actual db classes) → pricing_context; rds:DescribeDBInstances → actual engines for Database SP targeting"
     },
     {
       "id": "general-009",
@@ -341,7 +357,8 @@
       "title": "Standard Reserved Instances",
       "description": "Commit to a specific instance type in a specific region for 1 or 3 years. Deepest discount available. Three payment options: All Upfront (max savings), Partial Upfront, No Upfront. Can be resold on RI Marketplace if no longer needed. Best for steady-state workloads that won't change.",
       "estimatedSavings": "up to 72%",
-      "difficulty": "medium"
+      "difficulty": "medium",
+      "automatedCheck": "pricing:GetProducts → pricing_context.ri_1yr_per_month for Standard RI pricing comparison vs on-demand"
     },
     {
       "id": "general-010",
@@ -350,7 +367,8 @@
       "title": "Convertible Reserved Instances",
       "description": "Like Standard RIs but allow changing instance family, OS, and tenancy during the term. Lower discount than Standard RIs but more flexibility. Cannot be sold on RI Marketplace. Good for workloads that may evolve but will remain on EC2.",
       "estimatedSavings": "up to 66%",
-      "difficulty": "medium"
+      "difficulty": "medium",
+      "automatedCheck": "pricing:GetProducts → pricing_context; compare Convertible RI discount vs Compute Savings Plan flexibility"
     },
     {
       "id": "elb-001",
@@ -389,7 +407,8 @@
       "title": "Reduce KMS API request costs",
       "description": "KMS charges $0.03 per 10,000 API requests. Use data key caching to reduce the number of GenerateDataKey calls. Consider using envelope encryption to minimize direct KMS API calls.",
       "estimatedSavings": "10-50% on API costs",
-      "difficulty": "medium"
+      "difficulty": "medium",
+      "automatedCheck": "cloudwatch:GetMetricStatistics(KMS/NumberOfKeys) → kms_summary; high API request volume in ce:GetCostAndUsage KMS line = caching candidate"
     },
     {
       "id": "vpc-001",
@@ -408,7 +427,8 @@
       "title": "Choose cost-effective AWS regions",
       "description": "AWS pricing varies by region. Compare on-demand pricing across regions using the AWS Pricing Calculator. Consider moving non-latency-sensitive workloads to cheaper regions while respecting data sovereignty requirements.",
       "estimatedSavings": "5-20%",
-      "difficulty": "easy"
+      "difficulty": "easy",
+      "automatedCheck": "ce:GetCostAndUsage(usage_type breakdown) → usage type prefix reveals region (EU-/USE1-/USW2-); pricing:GetProducts across regions for comparison"
     },
     {
       "id": "ec2-008",
@@ -417,7 +437,8 @@
       "title": "Optimize Auto Scaling policies for cost",
       "description": "Fine-tune ASG scaling policies to avoid over-provisioning. Scale up less aggressively and scale down to the minimum needed. Use predictive scaling for workloads with known patterns and target tracking policies for dynamic loads.",
       "estimatedSavings": "15-40%",
-      "difficulty": "medium"
+      "difficulty": "medium",
+      "automatedCheck": "ec2:DescribeAutoScalingGroups → check ASG min/max/desired; cloudwatch:EC2/CPUUtilization → if avg CPU low with high max capacity = over-provisioned ASG"
     },
     {
       "id": "ec2-009",
@@ -426,7 +447,8 @@
       "title": "Use mixed instance fleets with Spot",
       "description": "Configure ASGs with mixed instance policies combining On-Demand and Spot instances. Diversify across multiple instance types and AZs to reduce interruption risk while maximizing Spot savings.",
       "estimatedSavings": "50-80%",
-      "difficulty": "hard"
+      "difficulty": "hard",
+      "automatedCheck": "ec2:DescribeInstances → ec2_instances; pricing_context.capacity_mix for Spot blend recommendation; check if mixed instance fleet configured"
     },
     {
       "id": "ebs-004",
@@ -445,7 +467,8 @@
       "title": "Manage EBS snapshot lifecycle automatically",
       "description": "Use Amazon Data Lifecycle Manager to automate snapshot creation and deletion. Set retention policies to avoid accumulating old snapshots. Delete the initial full snapshot when no longer needed as it consumes the most storage.",
       "estimatedSavings": "20-50% on snapshot costs",
-      "difficulty": "easy"
+      "difficulty": "easy",
+      "automatedCheck": "ec2___other_usage_breakdown → EBS:SnapshotUsage cost; check if Data Lifecycle Manager policies exist via dlm:GetLifecyclePolicies"
     },
     {
       "id": "s3-005",
@@ -454,7 +477,8 @@
       "title": "Use S3 Storage Lens and Analytics",
       "description": "Enable S3 Storage Lens for organization-wide visibility into storage usage and activity trends. Use S3 Analytics to identify objects that can be moved to Infrequent Access or Glacier tiers based on actual access patterns.",
       "estimatedSavings": "20-50%",
-      "difficulty": "easy"
+      "difficulty": "easy",
+      "automatedCheck": "s3:ListBuckets + s3:GetBucketLifecycleConfiguration + s3:ListBucketIntelligentTieringConfigurations → s3_optimization_summary"
     },
     {
       "id": "general-011",
@@ -463,7 +487,8 @@
       "title": "Automate resource tagging",
       "description": "Embed tags in CloudFormation/Terraform templates. Use AWS Organizations tag policies to enforce tagging rules. Set up Lambda functions to auto-tag resources at launch. Consistent tagging enables accurate cost allocation and orphan detection.",
       "estimatedSavings": "varies",
-      "difficulty": "medium"
+      "difficulty": "medium",
+      "automatedCheck": "resourcegroupstaggingapi:GetResources → check tag coverage across resources; low coverage = tagging automation needed"
     },
     {
       "id": "general-012",
@@ -472,7 +497,8 @@
       "title": "Use AWS Cost Optimization Hub",
       "description": "Cost Optimization Hub consolidates and prioritizes cost optimization recommendations across all accounts and regions in your AWS Organization. It surfaces rightsizing, idle resource, and commitment recommendations in one place.",
       "estimatedSavings": "varies",
-      "difficulty": "easy"
+      "difficulty": "easy",
+      "automatedCheck": "ce:GetCostAndUsage + compute-optimizer:GetEC2InstanceRecommendations → system already consolidates these; tip is advisory"
     },
     {
       "id": "general-013",
@@ -481,7 +507,8 @@
       "title": "Implement chargeback with billing groups",
       "description": "Use AWS Enterprise Billing Console to allocate costs to departments or business units. Create billing groups with customized pricing plans and CUR reports per group to drive accountability and identify optimization opportunities per team.",
       "estimatedSavings": "varies",
-      "difficulty": "medium"
+      "difficulty": "medium",
+      "automatedCheck": "ce:GetCostAndUsage → cost_by_service breakdown; if multi-team account with no tag-based allocation = chargeback candidate"
     },
     {
       "id": "general-014",
@@ -490,7 +517,8 @@
       "title": "Sell unused Reserved Instances on RI Marketplace",
       "description": "If you have Standard RIs you no longer need, list them on the AWS RI Marketplace to recoup costs. For future purchases, consider Convertible RIs if workloads may change, or Standard RIs if you want the resale option.",
       "estimatedSavings": "recover unused commitment costs",
-      "difficulty": "medium"
+      "difficulty": "medium",
+      "automatedCheck": "pricing:GetProducts → pricing_context; if RI pricing shown but workload changed = RI Marketplace sell candidate"
     },
     {
       "id": "elb-003",
@@ -499,7 +527,8 @@
       "title": "Use CloudFront to reduce load balancer data transfer",
       "description": "Place CloudFront in front of your ALB to cache responses and reduce data transfer through the load balancer. CloudFront data transfer is cheaper than direct ALB egress and reduces origin load.",
       "estimatedSavings": "20-40% on data transfer",
-      "difficulty": "medium"
+      "difficulty": "medium",
+      "automatedCheck": "elbv2:DescribeLoadBalancers + cloudwatch:ALB/RequestCount → elb_metrics; ce:GetCostAndUsage → DataTransfer cost through ALB; if high = CloudFront candidate"
     },
     {
       "id": "elasticache-001",
@@ -508,7 +537,8 @@
       "title": "Right-size ElastiCache nodes",
       "description": "Monitor memory utilization, CPU, and network metrics. Downsize over-provisioned cache nodes. Consider using ElastiCache Serverless for variable workloads to pay only for data stored and compute used.",
       "estimatedSavings": "20-50%",
-      "difficulty": "medium"
+      "difficulty": "medium",
+      "automatedCheck": "elasticache:DescribeCacheClusters → node types; cloudwatch:ElastiCache/CPUUtilization+FreeableMemory+CurrConnections avg+max 30d → rightsizing"
     },
     {
       "id": "elasticache-002",
@@ -517,7 +547,8 @@
       "title": "Use Reserved Nodes for ElastiCache",
       "description": "For steady-state caching workloads, purchase ElastiCache Reserved Nodes for 1 or 3 years. Covered by Database Savings Plans as well.",
       "estimatedSavings": "30-55%",
-      "difficulty": "medium"
+      "difficulty": "medium",
+      "automatedCheck": "pricing:GetProducts(AmazonElastiCache) → on-demand vs reserved pricing; elasticache:DescribeReservedCacheNodes → check existing reservations"
     },
     {
       "id": "dynamodb-001",
@@ -526,7 +557,8 @@
       "title": "Switch to On-Demand capacity for variable workloads",
       "description": "If your DynamoDB tables have unpredictable traffic, use On-Demand capacity mode to avoid paying for provisioned capacity you don't use. For steady workloads, provisioned mode with auto-scaling is cheaper.",
       "estimatedSavings": "varies",
-      "difficulty": "easy"
+      "difficulty": "easy",
+      "automatedCheck": "dynamodb:DescribeTable → BillingMode (PROVISIONED vs PAY_PER_REQUEST); cloudwatch:DynamoDB/ConsumedReadCapacityUnits+ConsumedWriteCapacityUnits → variable = On-Demand candidate"
     },
     {
       "id": "dynamodb-002",
@@ -535,7 +567,8 @@
       "title": "Use DynamoDB Reserved Capacity",
       "description": "For predictable DynamoDB workloads, purchase reserved capacity for 1 or 3 years. Also covered by Database Savings Plans for more flexibility across database services.",
       "estimatedSavings": "up to 53%",
-      "difficulty": "medium"
+      "difficulty": "medium",
+      "automatedCheck": "dynamodb:DescribeTable → BillingMode=PROVISIONED; cloudwatch:DynamoDB/ConsumedReadCapacityUnits avg+max → steady = reserved capacity candidate"
     },
     {
       "id": "ec2-010",
@@ -544,7 +577,8 @@
       "title": "Match instance family to workload type",
       "description": "Use C-family instances for CPU-intensive workloads instead of general-purpose M-family. Use T-family burstable instances for workloads with periodic CPU spikes. Use AWS Compute Optimizer to analyze running workloads and get instance type recommendations.",
       "estimatedSavings": "15-35%",
-      "difficulty": "medium"
+      "difficulty": "medium",
+      "automatedCheck": "ec2:DescribeInstances → instance type family (t3=burstable, m5=general, c5=compute); cloudwatch:EC2/CPUUtilization pattern → match family to workload"
     },
     {
       "id": "ec2-011",
@@ -553,7 +587,8 @@
       "title": "Use AWS Instance Scheduler for non-production",
       "description": "Deploy the AWS Instance Scheduler solution to automatically start and stop EC2 instances and RDS databases on a schedule. A dev environment used only during office hours (10hrs/day, 7 days) saves ~58% by shutting down the remaining 98 hours per week.",
       "estimatedSavings": "40-65%",
-      "difficulty": "easy"
+      "difficulty": "easy",
+      "automatedCheck": "ec2:DescribeInstances → check tags for Environment=dev/test/staging; if non-prod instances running 24/7 = scheduler candidate"
     },
     {
       "id": "ec2-012",
@@ -562,7 +597,8 @@
       "title": "Enable EC2 hibernation for infrequently used instances",
       "description": "Instead of stopping instances, hibernate them to preserve in-memory state. This avoids cold-start delays when resuming while still saving compute costs during idle periods.",
       "estimatedSavings": "varies",
-      "difficulty": "easy"
+      "difficulty": "easy",
+      "automatedCheck": "ec2:DescribeInstances → check instance state; cloudwatch:EC2/CPUUtilization → long idle periods = hibernation candidate"
     },
     {
       "id": "data-transfer-003",
@@ -571,7 +607,8 @@
       "title": "Use Availability Zone affinity to reduce cross-AZ costs",
       "description": "Cross-AZ data transfer costs $0.01/GB each way. Use AZ affinity routing to keep traffic within the same AZ when possible. Deploy read replicas in each AZ so reads stay local. Balance this with multi-AZ resilience requirements.",
       "estimatedSavings": "10-30% on data transfer",
-      "difficulty": "medium"
+      "difficulty": "medium",
+      "automatedCheck": "ce:GetCostAndUsage(usage_type breakdown) → DataTransfer-Regional-Bytes cost in ec2___other_usage_breakdown"
     },
     {
       "id": "data-transfer-004",
@@ -580,7 +617,8 @@
       "title": "Compress data before transfer",
       "description": "Compress data before transferring between regions, AZs, or to the internet. Use gzip or zstd compression for API responses, log shipping, and backup transfers to reduce volume and associated costs.",
       "estimatedSavings": "30-70% on transfer volume",
-      "difficulty": "easy"
+      "difficulty": "easy",
+      "automatedCheck": "ce:GetCostAndUsage(usage_type breakdown) → DataTransfer-Out-Bytes + DataTransfer-Regional-Bytes total; high volume = compression candidate"
     },
     {
       "id": "rds-005",
@@ -589,7 +627,8 @@
       "title": "Use read replicas to offload database queries",
       "description": "Create RDS read replicas to offload read-heavy queries from the primary instance. This frees capacity on the primary node and can delay or avoid costly instance upsizing. Place replicas in the same AZ as your application for lower latency and no cross-AZ transfer costs.",
       "estimatedSavings": "20-40%",
-      "difficulty": "medium"
+      "difficulty": "medium",
+      "automatedCheck": "rds:DescribeDBInstances → rds_instances[].engine, class; cloudwatch:RDS/ReadIOPS avg+max 30d → high read IOPS = read replica candidate"
     },
     {
       "id": "rds-006",
@@ -598,7 +637,8 @@
       "title": "Migrate from commercial to open-source databases",
       "description": "Migrate from licensed databases (Oracle, SQL Server) to open-source alternatives (PostgreSQL, MySQL) on RDS or Aurora. Eliminates license costs and Aurora offers better price-performance. Use AWS SCT and DMS for migration.",
       "estimatedSavings": "30-60%",
-      "difficulty": "hard"
+      "difficulty": "hard",
+      "automatedCheck": "rds:DescribeDBInstances → rds_instances[].engine; engine='oracle-ee'|'sqlserver-ee'|'sqlserver-se' = migration candidate to PostgreSQL/MySQL"
     },
     {
       "id": "general-015",
@@ -607,7 +647,8 @@
       "title": "Migrate to serverless where possible",
       "description": "Replace always-on EC2 instances with Lambda, Fargate, or Aurora Serverless for variable workloads. Serverless services scale to zero when idle, eliminating costs during low-traffic periods. Ideal for APIs, event processing, and dev/test environments.",
       "estimatedSavings": "30-70%",
-      "difficulty": "medium"
+      "difficulty": "medium",
+      "automatedCheck": "ec2:DescribeInstances → low-utilization instances; cloudwatch:EC2/CPUUtilization avg < 10% + lambda_metrics → if workload is event-driven = serverless candidate"
     },
     {
       "id": "general-016",
@@ -616,7 +657,8 @@
       "title": "Use Amazon Lightsail for simple, predictable workloads",
       "description": "For simple websites, blogs, or small applications, Amazon Lightsail offers fixed monthly pricing starting at $3.50/month including compute, storage, and data transfer. Avoids unpredictable billing from multiple AWS services.",
       "estimatedSavings": "varies",
-      "difficulty": "easy"
+      "difficulty": "easy",
+      "automatedCheck": "ec2:DescribeInstances → single small instance running web server; ce:GetCostAndUsage total < $50/month = Lightsail candidate"
     },
     {
       "id": "general-017",
@@ -625,7 +667,8 @@
       "title": "Set up billing alarms from day one",
       "description": "Create CloudWatch billing alarms for estimated charges immediately when setting up a new AWS account. Set alerts at multiple thresholds (50%, 75%, 100% of expected spend). This catches unexpected cost spikes before they become expensive surprises.",
       "estimatedSavings": "varies",
-      "difficulty": "easy"
+      "difficulty": "easy",
+      "automatedCheck": "cloudwatch:DescribeAlarms(AlarmNamePrefix='Billing') → check if billing alarms exist; 0 alarms = setup recommended"
     },
     {
       "id": "general-018",
@@ -634,7 +677,8 @@
       "title": "Engage your AWS account manager",
       "description": "AWS account managers provide personalized cost-saving recommendations, guidance on pricing models, and access to funding programs for startups. They can connect you with AWS experts and training resources. Reach out regularly for tailored optimization advice.",
       "estimatedSavings": "varies",
-      "difficulty": "easy"
+      "difficulty": "easy",
+      "automatedCheck": "Advisory: no API check — recommend engaging AWS account manager for accounts with > $10K/month spend based on cost_by_service total"
     },
     {
       "id": "efs-001",
@@ -643,7 +687,8 @@
       "title": "Monitor and optimize EFS throughput settings",
       "description": "Review EFS storage usage and switch to Bursting throughput mode if your workload has variable I/O patterns. Use EFS Infrequent Access storage class for files not accessed for 30+ days. Enable lifecycle management to auto-transition files.",
       "estimatedSavings": "up to 92% on IA storage",
-      "difficulty": "easy"
+      "difficulty": "easy",
+      "automatedCheck": "efs:DescribeFileSystems → check ThroughputMode (bursting/provisioned); cloudwatch:EFS/TotalIOBytes avg+max → low I/O with provisioned throughput = switch to bursting"
     }
   ]
 }
