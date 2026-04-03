@@ -17,7 +17,8 @@
       "title": "Right-size EC2 instances",
       "description": "Use AWS Compute Optimizer to analyze historical utilization and identify underutilized instances. Switch to smaller instance types that match actual workload needs.",
       "estimatedSavings": "20-40%",
-      "difficulty": "easy"
+      "difficulty": "easy",
+      "automatedCheck": "cloudwatch:GetMetricStatistics(EC2/CPUUtilization, avg+max 30d) + compute-optimizer:GetEC2InstanceRecommendations → ec2_cpu_metrics.avg_cpu_pct < 20% = OVER-PROVISIONED"
     },
     {
       "id": "ec2-002",
@@ -26,7 +27,8 @@
       "title": "Use Reserved Instances or Savings Plans",
       "description": "For steady-state workloads, commit to 1-year or 3-year Reserved Instances or Savings Plans. Savings Plans offer more flexibility across instance families and regions.",
       "estimatedSavings": "30-72%",
-      "difficulty": "medium"
+      "difficulty": "medium",
+      "automatedCheck": "pricing:GetProducts(AmazonEC2, actual instance types) → pricing_context shows on-demand vs Savings Plan vs Spot pricing per instance"
     },
     {
       "id": "ec2-003",
@@ -35,7 +37,8 @@
       "title": "Use Spot Instances for fault-tolerant workloads",
       "description": "Spot Instances offer up to 90% discount for interruptible workloads like batch processing, CI/CD, and dev/test environments. Use mixed instance fleets with Auto Scaling.",
       "estimatedSavings": "60-90%",
-      "difficulty": "medium"
+      "difficulty": "medium",
+      "automatedCheck": "ec2:DescribeInstances → ec2_instances list; cloudwatch:EC2/CPUUtilization avg+max 30d; pricing_context.capacity_mix for Spot blend"
     },
     {
       "id": "ec2-004",
@@ -44,7 +47,8 @@
       "title": "Schedule non-production instances",
       "description": "Stop dev/test/staging instances outside business hours. Use AWS Instance Scheduler or Lambda functions to automate start/stop schedules.",
       "estimatedSavings": "40-70%",
-      "difficulty": "easy"
+      "difficulty": "easy",
+      "automatedCheck": "ec2:DescribeInstances → check instance tags for Environment=dev/test/staging; cloudwatch:EC2/CPUUtilization off-hours pattern"
     },
     {
       "id": "ec2-005",
@@ -53,7 +57,8 @@
       "title": "Implement Auto Scaling",
       "description": "Configure Auto Scaling groups with scaling policies based on CPU, memory, or custom metrics. Use predictive scaling for workloads with predictable patterns.",
       "estimatedSavings": "20-50%",
-      "difficulty": "medium"
+      "difficulty": "medium",
+      "automatedCheck": "ec2:DescribeInstances → check for Auto Scaling group membership; cloudwatch:EC2/CPUUtilization avg vs max spread"
     },
     {
       "id": "ec2-006",
@@ -62,7 +67,8 @@
       "title": "Use Graviton (ARM) instances",
       "description": "AWS Graviton processors offer up to 40% better price-performance than x86 instances. Consider migrating compatible workloads to Graviton-based instance types.",
       "estimatedSavings": "20-40%",
-      "difficulty": "medium"
+      "difficulty": "medium",
+      "automatedCheck": "ec2:DescribeInstances → check instance type family (t3/m5/c5 = x86, t4g/m6g/c6g = Graviton)"
     },
     {
       "id": "s3-001",
@@ -71,7 +77,8 @@
       "title": "Use S3 Intelligent-Tiering",
       "description": "Enable S3 Intelligent-Tiering for data with unknown or changing access patterns. It automatically moves objects between access tiers based on usage.",
       "estimatedSavings": "40-70%",
-      "difficulty": "easy"
+      "difficulty": "easy",
+      "automatedCheck": "s3:ListBucketIntelligentTieringConfigurations → s3_optimization_summary.without_intelligent_tiering count"
     },
     {
       "id": "s3-002",
@@ -80,7 +87,8 @@
       "title": "Implement lifecycle policies",
       "description": "Create lifecycle rules to transition objects to cheaper storage classes (Standard-IA, Glacier) or delete them after a retention period.",
       "estimatedSavings": "30-60%",
-      "difficulty": "easy"
+      "difficulty": "easy",
+      "automatedCheck": "s3:GetBucketLifecycleConfiguration → s3_optimization_summary.without_lifecycle_policy count"
     },
     {
       "id": "s3-003",
@@ -107,7 +115,8 @@
       "title": "Right-size RDS instances",
       "description": "Monitor CPU, memory, and I/O utilization. Downsize over-provisioned instances or switch to burstable (T-class) instances for variable workloads.",
       "estimatedSavings": "20-50%",
-      "difficulty": "medium"
+      "difficulty": "medium",
+      "automatedCheck": "cloudwatch:GetMetricStatistics(RDS/CPUUtilization+DatabaseConnections+FreeableMemory+ReadIOPS+WriteIOPS, avg+max 30d) → rds_cpu_metrics per instance"
     },
     {
       "id": "rds-002",
@@ -116,7 +125,8 @@
       "title": "Use Reserved Instances for RDS",
       "description": "For production databases with steady usage, purchase RDS Reserved Instances for 1 or 3 years to reduce costs significantly.",
       "estimatedSavings": "30-60%",
-      "difficulty": "medium"
+      "difficulty": "medium",
+      "automatedCheck": "pricing:GetProducts(AmazonRDS, actual db instance classes, actual engine) → pricing_context with on-demand vs SP vs RI pricing"
     },
     {
       "id": "rds-003",
@@ -134,7 +144,8 @@
       "title": "Optimize RDS storage",
       "description": "Use gp3 storage instead of gp2 for better price-performance. Delete old snapshots and reduce allocated storage if over-provisioned.",
       "estimatedSavings": "10-30%",
-      "difficulty": "easy"
+      "difficulty": "easy",
+      "automatedCheck": "ec2:DescribeVolumes → ebs_summary.gp2_count (RDS uses EBS); rds:DescribeDBInstances → storage_gb per instance"
     },
     {
       "id": "lambda-001",
@@ -143,7 +154,8 @@
       "title": "Right-size Lambda memory",
       "description": "Use AWS Lambda Power Tuning to find the optimal memory configuration. More memory means more CPU, which can reduce execution time and cost.",
       "estimatedSavings": "10-50%",
-      "difficulty": "easy"
+      "difficulty": "easy",
+      "automatedCheck": "cloudwatch:GetMetricStatistics(Lambda/Duration+Invocations, avg+max 30d) → lambda_metrics per function; check memory_mb vs avg_duration_ms"
     },
     {
       "id": "lambda-002",
@@ -170,7 +182,8 @@
       "title": "Use VPC Endpoints instead of NAT Gateway",
       "description": "NAT Gateway charges $0.045/GB for data processing. Use VPC Gateway Endpoints (free for S3/DynamoDB) or Interface Endpoints to reduce costs.",
       "estimatedSavings": "40-80%",
-      "difficulty": "medium"
+      "difficulty": "medium",
+      "automatedCheck": "ec2:DescribeVpcEndpoints → vpc_endpoints inventory; cloudwatch:NATGateway/BytesOutToDestination → nat_gateway_metrics.total_bytes_out_30d_gb"
     },
     {
       "id": "nat-002",
@@ -179,7 +192,8 @@
       "title": "Consolidate NAT Gateways",
       "description": "Each NAT Gateway costs ~$32/month plus data processing. Consider using a single NAT Gateway for non-production environments or a NAT instance for low traffic.",
       "estimatedSavings": "30-60%",
-      "difficulty": "medium"
+      "difficulty": "medium",
+      "automatedCheck": "ec2:DescribeNatGateways → nat_gateway_count; cloudwatch:NATGateway/ActiveConnectionCount → nat_gateway_metrics per gateway"
     },
     {
       "id": "cloudfront-001",
@@ -206,7 +220,8 @@
       "title": "Use gp3 instead of gp2",
       "description": "gp3 volumes are 20% cheaper than gp2 and allow independent IOPS/throughput configuration. Migrate existing gp2 volumes to gp3.",
       "estimatedSavings": "20%",
-      "difficulty": "easy"
+      "difficulty": "easy",
+      "automatedCheck": "ec2:DescribeVolumes → ebs_summary.gp2_count + gp2_gb; gp2_to_gp3_savings_usd = gp2_gb * $0.02"
     },
     {
       "id": "ebs-002",
@@ -215,7 +230,8 @@
       "title": "Delete unused EBS snapshots",
       "description": "Old snapshots accumulate costs. Implement a retention policy and use AWS Backup or Lambda to delete snapshots older than the retention period.",
       "estimatedSavings": "10-40%",
-      "difficulty": "easy"
+      "difficulty": "easy",
+      "automatedCheck": "ec2___other_usage_breakdown → EBS:SnapshotUsage cost line item"
     },
     {
       "id": "ebs-003",
@@ -233,7 +249,8 @@
       "title": "Keep traffic within the same region",
       "description": "Cross-region data transfer costs $0.02/GB. Co-locate resources in the same region and use regional endpoints to minimize transfer costs.",
       "estimatedSavings": "varies",
-      "difficulty": "medium"
+      "difficulty": "medium",
+      "automatedCheck": "ce:GetCostAndUsage(usage_type breakdown) → ec2___other_usage_breakdown for DataTransfer-Regional-Bytes cost"
     },
     {
       "id": "data-transfer-002",
@@ -278,7 +295,8 @@
       "title": "Audit and remove unused resources",
       "description": "Regularly audit for idle resources: unattached EBS volumes, unused Elastic IPs, old snapshots, stopped instances. Use AWS Trusted Advisor for recommendations.",
       "estimatedSavings": "10-30%",
-      "difficulty": "easy"
+      "difficulty": "easy",
+      "automatedCheck": "ec2:DescribeVolumes(unattached) + ec2:DescribeAddresses(idle) + lambda_metrics(0 invocations) + kms:ListKeys → combined waste detection"
     },
     {
       "id": "general-005",
@@ -341,7 +359,8 @@
       "title": "Remove idle load balancers",
       "description": "Check if your load balancer is idle (fewer than 100 requests/day over 7 days). Each idle ELB costs ~$200/year. Delete unused load balancers or those with no registered/healthy backend instances.",
       "estimatedSavings": "up to 100% per idle ELB",
-      "difficulty": "easy"
+      "difficulty": "easy",
+      "automatedCheck": "elbv2:DescribeLoadBalancers + cloudwatch:ALB/RequestCount 30d → elb_metrics.total_requests_30d; 0 requests = idle"
     },
     {
       "id": "elb-002",
@@ -350,7 +369,8 @@
       "title": "Right-size load balancer type",
       "description": "Evaluate whether you need an Application Load Balancer (ALB), Network Load Balancer (NLB), or Gateway Load Balancer. NLB is cheaper for simple TCP/UDP traffic. Remove unused listeners and target groups.",
       "estimatedSavings": "10-30%",
-      "difficulty": "medium"
+      "difficulty": "medium",
+      "automatedCheck": "elbv2:DescribeLoadBalancers → elb_metrics.type (application/network); cloudwatch:RequestCount for traffic level"
     },
     {
       "id": "kms-001",
@@ -359,7 +379,8 @@
       "title": "Audit and remove unused KMS keys",
       "description": "Each customer-managed KMS key costs $1/month regardless of usage. Audit keys that have not been used for encryption/decryption in the past 90 days. Disable unused keys and schedule them for deletion. Use AWS-managed keys where possible (free).",
       "estimatedSavings": "$1/month per unused key",
-      "difficulty": "easy"
+      "difficulty": "easy",
+      "automatedCheck": "kms:ListKeys + kms:ListAliases → kms_summary.customer_managed_keys count × $1/month"
     },
     {
       "id": "kms-002",
@@ -377,7 +398,8 @@
       "title": "Check for idle VPC resources",
       "description": "Review VPC for idle NAT Gateways, unused Elastic IPs, and empty subnets. NAT Gateways cost $0.045/hr ($32/month) even with zero traffic. Delete idle resources and consider downsizing by consolidating traffic through fewer NAT Gateways.",
       "estimatedSavings": "$32/month per idle NAT Gateway",
-      "difficulty": "easy"
+      "difficulty": "easy",
+      "automatedCheck": "ec2:DescribeNatGateways + ec2:DescribeAddresses + ec2:DescribeVpcEndpoints → nat_gateway_count, elastic_ips.unattached, vpc_endpoints.total; cloudwatch:NATGateway metrics"
     },
     {
       "id": "ec2-007",
@@ -413,7 +435,8 @@
       "title": "Delete unattached EBS volumes",
       "description": "EBS volumes persist after EC2 termination and continue incurring costs. Find volumes with status 'available' using CloudWatch or Trusted Advisor. Enable 'Delete on Termination' for new instances to prevent orphaned volumes.",
       "estimatedSavings": "100% per orphaned volume",
-      "difficulty": "easy"
+      "difficulty": "easy",
+      "automatedCheck": "ec2:DescribeVolumes → ebs_summary.unattached_count + unattached_volumes list with volumeId, size_gb, monthly_cost_usd"
     },
     {
       "id": "ebs-005",

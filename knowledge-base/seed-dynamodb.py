@@ -45,6 +45,8 @@ def seed_table(tips, table):
                 "estimatedSavings": tip["estimatedSavings"],
                 "difficulty": tip["difficulty"],
             }
+            if "automatedCheck" in tip and tip["automatedCheck"]:
+                item["automatedCheck"] = tip["automatedCheck"]
             try:
                 batch.put_item(Item=item)
                 loaded += 1

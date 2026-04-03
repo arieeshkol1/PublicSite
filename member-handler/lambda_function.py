@@ -2209,176 +2209,294 @@ def _gather_account_data(question, credentials):
         except Exception as e:
             data['lambda_error'] = str(e)
 
-    # CloudWatch metrics — fetch for rightsizing when EC2/RDS are top costs,
-    # or when question asks about usage, savings, efficiency, rightsizing
-    top_svc_names_cw = [s['service'] for s in data.get('cost_by_service', [])[:6]]
-    cw_trigger = any(kw in question_lower for kw in [
-        'lambda', 'invocation', 'transaction', 'execution', 'utilization',
-        'cpu', 'usage', 'metric', 'cloudwatch', 'how many', 'how much',
-        'rightsize', 'rightsizing', 'efficient', 'optimize', 'saving', 'save',
-        'כמה', 'שימוש',
-    ]) or 'Amazon Elastic Compute Cloud - Compute' in top_svc_names_cw \
-       or 'Amazon Relational Database Service' in top_svc_names_cw
-    if cw_trigger:
-        try:
-            cw = _make_client('cloudwatch')
-            now = datetime.now(timezone.utc)
-            start_30d_dt = now - timedelta(days=30)
+    # ============================================================
+    # CloudWatch Rightsizing Metrics — auto-fetch for ALL top-cost services
+    # For each paid service, get peak + average usage over 30 days
+    # ============================================================
+    top_svc_names_cw = [s['service'] for s in data.get('cost_by_service', [])[:8]]
+    try:
+        cw = _make_client('cloudwatch')
+        now = datetime.now(timezone.utc)
+        start_30d_dt = now - timedelta(days=30)
 
-            # Lambda invocation metrics per function
-            if data.get('lambda_functions'):
-                lambda_metrics = []
-                for func in data['lambda_functions'][:10]:  # Top 10 functions
-                    try:
-                        inv_resp = cw.get_metric_statistics(
-                            Namespace='AWS/Lambda',
-                            MetricName='Invocations',
-                            Dimensions=[{'Name': 'FunctionName', 'Value': func['name']}],
-                            StartTime=start_30d_dt,
-                            EndTime=now,
-                            Period=2592000,  # 30 days in one datapoint
-                            Statistics=['Sum'],
-                        )
-                        dur_resp = cw.get_metric_statistics(
-                            Namespace='AWS/Lambda',
-                            MetricName='Duration',
-                            Dimensions=[{'Name': 'FunctionName', 'Value': func['name']}],
-                            StartTime=start_30d_dt,
-                            EndTime=now,
-                            Period=2592000,
-                            Statistics=['Average', 'Maximum'],
-                        )
-                        err_resp = cw.get_metric_statistics(
-                            Namespace='AWS/Lambda',
-                            MetricName='Errors',
-                            Dimensions=[{'Name': 'FunctionName', 'Value': func['name']}],
-                            StartTime=start_30d_dt,
-                            EndTime=now,
-                            Period=2592000,
-                            Statistics=['Sum'],
-                        )
-                        invocations = sum(dp['Sum'] for dp in inv_resp.get('Datapoints', []))
-                        avg_duration = next((dp['Average'] for dp in dur_resp.get('Datapoints', [])), 0)
-                        max_duration = next((dp['Maximum'] for dp in dur_resp.get('Datapoints', [])), 0)
-                        errors = sum(dp['Sum'] for dp in err_resp.get('Datapoints', []))
-                        lambda_metrics.append({
-                            'functionName': func['name'],
-                            'invocations_30d': int(invocations),
-                            'avg_duration_ms': round(avg_duration, 1),
-                            'max_duration_ms': round(max_duration, 1),
-                            'errors_30d': int(errors),
-                            'memory_mb': func.get('memory', 0),
-                        })
-                    except Exception:
-                        pass
-                lambda_metrics.sort(key=lambda x: x['invocations_30d'], reverse=True)
-                data['lambda_metrics'] = lambda_metrics
-                actions.append('cloudwatch:GetMetricStatistics (Lambda invocations, duration, errors)')
+        # Lambda invocation metrics per function
+        if data.get('lambda_functions'):
+            lambda_metrics = []
+            for func in data['lambda_functions'][:10]:
+                try:
+                    inv_resp = cw.get_metric_statistics(
+                        Namespace='AWS/Lambda', MetricName='Invocations',
+                        Dimensions=[{'Name': 'FunctionName', 'Value': func['name']}],
+                        StartTime=start_30d_dt, EndTime=now, Period=2592000, Statistics=['Sum'],
+                    )
+                    dur_resp = cw.get_metric_statistics(
+                        Namespace='AWS/Lambda', MetricName='Duration',
+                        Dimensions=[{'Name': 'FunctionName', 'Value': func['name']}],
+                        StartTime=start_30d_dt, EndTime=now, Period=2592000, Statistics=['Average', 'Maximum'],
+                    )
+                    err_resp = cw.get_metric_statistics(
+                        Namespace='AWS/Lambda', MetricName='Errors',
+                        Dimensions=[{'Name': 'FunctionName', 'Value': func['name']}],
+                        StartTime=start_30d_dt, EndTime=now, Period=2592000, Statistics=['Sum'],
+                    )
+                    invocations = sum(dp['Sum'] for dp in inv_resp.get('Datapoints', []))
+                    avg_duration = next((dp['Average'] for dp in dur_resp.get('Datapoints', [])), 0)
+                    max_duration = next((dp['Maximum'] for dp in dur_resp.get('Datapoints', [])), 0)
+                    errors = sum(dp['Sum'] for dp in err_resp.get('Datapoints', []))
+                    lambda_metrics.append({
+                        'functionName': func['name'], 'invocations_30d': int(invocations),
+                        'avg_duration_ms': round(avg_duration, 1), 'max_duration_ms': round(max_duration, 1),
+                        'errors_30d': int(errors), 'memory_mb': func.get('memory', 0),
+                    })
+                except Exception:
+                    pass
+            lambda_metrics.sort(key=lambda x: x['invocations_30d'], reverse=True)
+            data['lambda_metrics'] = lambda_metrics
+            actions.append('cloudwatch:GetMetricStatistics (Lambda invocations, duration, errors)')
 
-            # EC2 CPU utilization if instances exist
-            if data.get('ec2_instances'):
-                ec2_metrics = []
-                for inst in data['ec2_instances'][:10]:
-                    if inst.get('state') != 'running':
+        # EC2 CPU + Network utilization
+        if data.get('ec2_instances'):
+            ec2_metrics = []
+            for inst in data['ec2_instances'][:10]:
+                if inst.get('state') != 'running':
+                    continue
+                try:
+                    cpu_resp = cw.get_metric_statistics(
+                        Namespace='AWS/EC2', MetricName='CPUUtilization',
+                        Dimensions=[{'Name': 'InstanceId', 'Value': inst['id']}],
+                        StartTime=start_30d_dt, EndTime=now, Period=2592000, Statistics=['Average', 'Maximum'],
+                    )
+                    net_in = cw.get_metric_statistics(
+                        Namespace='AWS/EC2', MetricName='NetworkIn',
+                        Dimensions=[{'Name': 'InstanceId', 'Value': inst['id']}],
+                        StartTime=start_30d_dt, EndTime=now, Period=2592000, Statistics=['Average', 'Maximum'],
+                    )
+                    net_out = cw.get_metric_statistics(
+                        Namespace='AWS/EC2', MetricName='NetworkOut',
+                        Dimensions=[{'Name': 'InstanceId', 'Value': inst['id']}],
+                        StartTime=start_30d_dt, EndTime=now, Period=2592000, Statistics=['Average', 'Maximum'],
+                    )
+                    avg_cpu = next((dp['Average'] for dp in cpu_resp.get('Datapoints', [])), 0)
+                    max_cpu = next((dp['Maximum'] for dp in cpu_resp.get('Datapoints', [])), 0)
+                    avg_net_in = next((dp['Average'] for dp in net_in.get('Datapoints', [])), 0)
+                    avg_net_out = next((dp['Average'] for dp in net_out.get('Datapoints', [])), 0)
+                    note = ''
+                    if avg_cpu < 10 and max_cpu < 30:
+                        note = 'OVER-PROVISIONED — avg CPU very low, consider downsizing'
+                    elif avg_cpu < 20:
+                        note = 'Potentially over-provisioned — monitor before committing'
+                    ec2_metrics.append({
+                        'instanceId': inst['id'], 'type': inst.get('type', ''),
+                        'name': inst.get('name', ''),
+                        'avg_cpu_pct': round(avg_cpu, 1), 'max_cpu_pct': round(max_cpu, 1),
+                        'avg_network_in_mb': round(avg_net_in / (1024*1024), 2),
+                        'avg_network_out_mb': round(avg_net_out / (1024*1024), 2),
+                        'rightsizing_note': note,
+                    })
+                except Exception:
+                    pass
+            if ec2_metrics:
+                data['ec2_cpu_metrics'] = ec2_metrics
+                actions.append('cloudwatch:GetMetricStatistics (EC2 CPU, network)')
+
+        # RDS CPU, connections, memory, read/write IOPS
+        if data.get('rds_instances'):
+            rds_metrics = []
+            for db in data['rds_instances'][:10]:
+                db_id = db.get('id', '')
+                if not db_id or db.get('status') != 'available':
+                    continue
+                try:
+                    cpu_resp = cw.get_metric_statistics(
+                        Namespace='AWS/RDS', MetricName='CPUUtilization',
+                        Dimensions=[{'Name': 'DBInstanceIdentifier', 'Value': db_id}],
+                        StartTime=start_30d_dt, EndTime=now, Period=2592000, Statistics=['Average', 'Maximum'],
+                    )
+                    conn_resp = cw.get_metric_statistics(
+                        Namespace='AWS/RDS', MetricName='DatabaseConnections',
+                        Dimensions=[{'Name': 'DBInstanceIdentifier', 'Value': db_id}],
+                        StartTime=start_30d_dt, EndTime=now, Period=2592000, Statistics=['Average', 'Maximum'],
+                    )
+                    mem_resp = cw.get_metric_statistics(
+                        Namespace='AWS/RDS', MetricName='FreeableMemory',
+                        Dimensions=[{'Name': 'DBInstanceIdentifier', 'Value': db_id}],
+                        StartTime=start_30d_dt, EndTime=now, Period=2592000, Statistics=['Average', 'Minimum'],
+                    )
+                    riops = cw.get_metric_statistics(
+                        Namespace='AWS/RDS', MetricName='ReadIOPS',
+                        Dimensions=[{'Name': 'DBInstanceIdentifier', 'Value': db_id}],
+                        StartTime=start_30d_dt, EndTime=now, Period=2592000, Statistics=['Average', 'Maximum'],
+                    )
+                    wiops = cw.get_metric_statistics(
+                        Namespace='AWS/RDS', MetricName='WriteIOPS',
+                        Dimensions=[{'Name': 'DBInstanceIdentifier', 'Value': db_id}],
+                        StartTime=start_30d_dt, EndTime=now, Period=2592000, Statistics=['Average', 'Maximum'],
+                    )
+                    avg_cpu = next((dp['Average'] for dp in cpu_resp.get('Datapoints', [])), 0)
+                    max_cpu = next((dp['Maximum'] for dp in cpu_resp.get('Datapoints', [])), 0)
+                    avg_conn = next((dp['Average'] for dp in conn_resp.get('Datapoints', [])), 0)
+                    max_conn = next((dp['Maximum'] for dp in conn_resp.get('Datapoints', [])), 0)
+                    avg_mem = next((dp['Average'] for dp in mem_resp.get('Datapoints', [])), 0)
+                    min_mem = next((dp['Minimum'] for dp in mem_resp.get('Datapoints', [])), 0)
+                    avg_riops = next((dp['Average'] for dp in riops.get('Datapoints', [])), 0)
+                    max_riops = next((dp['Maximum'] for dp in riops.get('Datapoints', [])), 0)
+                    avg_wiops = next((dp['Average'] for dp in wiops.get('Datapoints', [])), 0)
+                    max_wiops = next((dp['Maximum'] for dp in wiops.get('Datapoints', [])), 0)
+
+                    note = ''
+                    if avg_cpu < 10 and max_cpu < 30:
+                        note = 'OVER-PROVISIONED — avg CPU very low, downsize instance class'
+                    elif avg_cpu > 80:
+                        note = 'HIGH CPU — consider upsizing or read replicas'
+
+                    rds_metrics.append({
+                        'dbInstanceId': db_id, 'instanceClass': db.get('class', ''),
+                        'engine': db.get('engine', ''), 'multiAz': db.get('multiAz', False),
+                        'storage_gb': db.get('storage_gb', 0),
+                        'avg_cpu_pct': round(avg_cpu, 1), 'max_cpu_pct': round(max_cpu, 1),
+                        'avg_connections': round(avg_conn, 1), 'max_connections': int(max_conn),
+                        'avg_freeable_memory_gb': round(avg_mem / (1024**3), 2) if avg_mem else 0,
+                        'min_freeable_memory_gb': round(min_mem / (1024**3), 2) if min_mem else 0,
+                        'avg_read_iops': round(avg_riops, 1), 'max_read_iops': round(max_riops, 1),
+                        'avg_write_iops': round(avg_wiops, 1), 'max_write_iops': round(max_wiops, 1),
+                        'rightsizing_note': note,
+                    })
+                except Exception:
+                    pass
+            if rds_metrics:
+                data['rds_cpu_metrics'] = rds_metrics
+                actions.append('cloudwatch:GetMetricStatistics (RDS CPU, connections, memory, IOPS)')
+
+        # ELB metrics — request count, active connections
+        if 'Amazon Elastic Load Balancing' in top_svc_names_cw:
+            try:
+                elbv2 = _make_client('elbv2')
+                lbs = elbv2.describe_load_balancers()
+                elb_metrics = []
+                for lb in lbs.get('LoadBalancers', [])[:10]:
+                    lb_name = lb.get('LoadBalancerName', '')
+                    lb_arn = lb.get('LoadBalancerArn', '')
+                    lb_type = lb.get('Type', '')
+                    arn_suffix = lb_arn.split(':loadbalancer/')[-1] if ':loadbalancer/' in lb_arn else ''
+                    if not arn_suffix:
                         continue
                     try:
-                        cpu_resp = cw.get_metric_statistics(
-                            Namespace='AWS/EC2',
-                            MetricName='CPUUtilization',
-                            Dimensions=[{'Name': 'InstanceId', 'Value': inst['id']}],
-                            StartTime=start_30d_dt,
-                            EndTime=now,
-                            Period=2592000,
-                            Statistics=['Average', 'Maximum'],
+                        ns = 'AWS/ApplicationELB' if lb_type == 'application' else 'AWS/NetworkELB'
+                        metric_name = 'RequestCount' if lb_type == 'application' else 'ActiveFlowCount'
+                        req_resp = cw.get_metric_statistics(
+                            Namespace=ns, MetricName=metric_name,
+                            Dimensions=[{'Name': 'LoadBalancer', 'Value': arn_suffix}],
+                            StartTime=start_30d_dt, EndTime=now, Period=2592000, Statistics=['Sum'],
                         )
-                        avg_cpu = next((dp['Average'] for dp in cpu_resp.get('Datapoints', [])), 0)
-                        max_cpu = next((dp['Maximum'] for dp in cpu_resp.get('Datapoints', [])), 0)
-                        ec2_metrics.append({
-                            'instanceId': inst['id'],
-                            'type': inst.get('type', ''),
-                            'name': inst.get('name', ''),
-                            'avg_cpu_pct': round(avg_cpu, 1),
-                            'max_cpu_pct': round(max_cpu, 1),
-                            'rightsizing_note': 'Consider downsizing' if avg_cpu < 10 else '',
+                        total_requests = sum(dp['Sum'] for dp in req_resp.get('Datapoints', []))
+                        note = ''
+                        if total_requests == 0:
+                            note = 'ZERO TRAFFIC — candidate for deletion'
+                        elif total_requests < 1000:
+                            note = 'Very low traffic — consider consolidating'
+                        elb_metrics.append({
+                            'name': lb_name, 'type': lb_type,
+                            'total_requests_30d': int(total_requests),
+                            'rightsizing_note': note,
                         })
                     except Exception:
                         pass
-                if ec2_metrics:
-                    data['ec2_cpu_metrics'] = ec2_metrics
-                    actions.append('cloudwatch:GetMetricStatistics (EC2 CPU utilization)')
+                if elb_metrics:
+                    data['elb_metrics'] = elb_metrics
+                    actions.append('cloudwatch:GetMetricStatistics (ELB requests)')
+            except Exception as e:
+                logger.warning(f"ELB metrics error: {e}")
 
-            # RDS CPU, connections, and memory metrics for rightsizing
-            if data.get('rds_instances'):
-                rds_metrics = []
-                for db in data['rds_instances'][:10]:
-                    db_id = db.get('id', '')
-                    if not db_id or db.get('status') != 'available':
+        # NAT Gateway metrics — bytes processed, active connections
+        if data.get('nat_gateways'):
+            try:
+                nat_metrics = []
+                for gw in data['nat_gateways'][:5]:
+                    gw_id = gw.get('natGatewayId', '')
+                    if not gw_id:
                         continue
                     try:
-                        cpu_resp = cw.get_metric_statistics(
-                            Namespace='AWS/RDS',
-                            MetricName='CPUUtilization',
-                            Dimensions=[{'Name': 'DBInstanceIdentifier', 'Value': db_id}],
-                            StartTime=start_30d_dt,
-                            EndTime=now,
-                            Period=2592000,
-                            Statistics=['Average', 'Maximum'],
+                        bytes_out = cw.get_metric_statistics(
+                            Namespace='AWS/NATGateway', MetricName='BytesOutToDestination',
+                            Dimensions=[{'Name': 'NatGatewayId', 'Value': gw_id}],
+                            StartTime=start_30d_dt, EndTime=now, Period=2592000, Statistics=['Sum'],
                         )
-                        conn_resp = cw.get_metric_statistics(
-                            Namespace='AWS/RDS',
-                            MetricName='DatabaseConnections',
-                            Dimensions=[{'Name': 'DBInstanceIdentifier', 'Value': db_id}],
-                            StartTime=start_30d_dt,
-                            EndTime=now,
-                            Period=2592000,
-                            Statistics=['Average', 'Maximum'],
+                        active_conn = cw.get_metric_statistics(
+                            Namespace='AWS/NATGateway', MetricName='ActiveConnectionCount',
+                            Dimensions=[{'Name': 'NatGatewayId', 'Value': gw_id}],
+                            StartTime=start_30d_dt, EndTime=now, Period=2592000, Statistics=['Average', 'Maximum'],
                         )
-                        mem_resp = cw.get_metric_statistics(
-                            Namespace='AWS/RDS',
-                            MetricName='FreeableMemory',
-                            Dimensions=[{'Name': 'DBInstanceIdentifier', 'Value': db_id}],
-                            StartTime=start_30d_dt,
-                            EndTime=now,
-                            Period=2592000,
-                            Statistics=['Average', 'Minimum'],
-                        )
-                        avg_cpu = next((dp['Average'] for dp in cpu_resp.get('Datapoints', [])), 0)
-                        max_cpu = next((dp['Maximum'] for dp in cpu_resp.get('Datapoints', [])), 0)
-                        avg_conn = next((dp['Average'] for dp in conn_resp.get('Datapoints', [])), 0)
-                        max_conn = next((dp['Maximum'] for dp in conn_resp.get('Datapoints', [])), 0)
-                        avg_mem_bytes = next((dp['Average'] for dp in mem_resp.get('Datapoints', [])), 0)
-                        min_mem_bytes = next((dp['Minimum'] for dp in mem_resp.get('Datapoints', [])), 0)
-
-                        rightsizing_note = ''
-                        if avg_cpu < 10 and max_cpu < 30:
-                            rightsizing_note = 'LOW CPU — consider downsizing instance class'
-                        elif avg_cpu > 80:
-                            rightsizing_note = 'HIGH CPU — consider upsizing or read replicas'
-
-                        rds_metrics.append({
-                            'dbInstanceId': db_id,
-                            'instanceClass': db.get('class', ''),
-                            'engine': db.get('engine', ''),
-                            'multiAz': db.get('multiAz', False),
-                            'storage_gb': db.get('storage_gb', 0),
-                            'avg_cpu_pct': round(avg_cpu, 1),
-                            'max_cpu_pct': round(max_cpu, 1),
-                            'avg_connections': round(avg_conn, 1),
-                            'max_connections': int(max_conn),
-                            'avg_freeable_memory_gb': round(avg_mem_bytes / (1024**3), 2) if avg_mem_bytes else 0,
-                            'min_freeable_memory_gb': round(min_mem_bytes / (1024**3), 2) if min_mem_bytes else 0,
-                            'rightsizing_note': rightsizing_note,
+                        total_bytes = sum(dp['Sum'] for dp in bytes_out.get('Datapoints', []))
+                        avg_conn = next((dp['Average'] for dp in active_conn.get('Datapoints', [])), 0)
+                        max_conn = next((dp['Maximum'] for dp in active_conn.get('Datapoints', [])), 0)
+                        note = ''
+                        if total_bytes < 1024 * 1024:
+                            note = 'VERY LOW TRAFFIC — candidate for deletion'
+                        nat_metrics.append({
+                            'natGatewayId': gw_id, 'vpcId': gw.get('vpcId', ''),
+                            'name': gw.get('name', ''),
+                            'total_bytes_out_30d_gb': round(total_bytes / (1024**3), 2),
+                            'avg_active_connections': round(avg_conn, 1),
+                            'max_active_connections': int(max_conn),
+                            'rightsizing_note': note,
                         })
                     except Exception:
                         pass
-                if rds_metrics:
-                    data['rds_cpu_metrics'] = rds_metrics
-                    actions.append('cloudwatch:GetMetricStatistics (RDS CPU, connections, memory)')
-        except Exception as e:
-            data['cloudwatch_error'] = str(e)
-            logger.warning(f"CloudWatch metrics error: {e}")
+                if nat_metrics:
+                    data['nat_gateway_metrics'] = nat_metrics
+                    actions.append('cloudwatch:GetMetricStatistics (NAT Gateway bytes, connections)')
+            except Exception as e:
+                logger.warning(f"NAT Gateway metrics error: {e}")
 
-    # Route 53 — fetch when it's a top cost or question mentions DNS/Route53
+        # EBS Volume IOPS — identify over-provisioned io1/io2 or underused volumes
+        ebs_data = data.get('ebs_summary', {})
+        if ebs_data.get('total_gb', 0) > 0:
+            try:
+                ec2_vol = _make_client('ec2')
+                vols = ec2_vol.describe_volumes()
+                ebs_metrics = []
+                for v in vols.get('Volumes', [])[:15]:
+                    vid = v['VolumeId']
+                    vtype = v.get('VolumeType', '')
+                    if not v.get('Attachments'):
+                        continue
+                    try:
+                        r_iops = cw.get_metric_statistics(
+                            Namespace='AWS/EBS', MetricName='VolumeReadOps',
+                            Dimensions=[{'Name': 'VolumeId', 'Value': vid}],
+                            StartTime=start_30d_dt, EndTime=now, Period=2592000, Statistics=['Sum'],
+                        )
+                        w_iops = cw.get_metric_statistics(
+                            Namespace='AWS/EBS', MetricName='VolumeWriteOps',
+                            Dimensions=[{'Name': 'VolumeId', 'Value': vid}],
+                            StartTime=start_30d_dt, EndTime=now, Period=2592000, Statistics=['Sum'],
+                        )
+                        total_reads = sum(dp['Sum'] for dp in r_iops.get('Datapoints', []))
+                        total_writes = sum(dp['Sum'] for dp in w_iops.get('Datapoints', []))
+                        avg_read_iops = round(total_reads / (30 * 86400), 1) if total_reads else 0
+                        avg_write_iops = round(total_writes / (30 * 86400), 1) if total_writes else 0
+                        note = ''
+                        if vtype in ('io1', 'io2') and avg_read_iops + avg_write_iops < 100:
+                            note = 'LOW IOPS on provisioned volume — consider switching to gp3'
+                        ebs_metrics.append({
+                            'volumeId': vid, 'type': vtype, 'size_gb': v.get('Size', 0),
+                            'provisioned_iops': v.get('Iops', 0),
+                            'avg_read_iops': avg_read_iops, 'avg_write_iops': avg_write_iops,
+                            'rightsizing_note': note,
+                        })
+                    except Exception:
+                        pass
+                if ebs_metrics:
+                    data['ebs_iops_metrics'] = ebs_metrics
+                    actions.append('cloudwatch:GetMetricStatistics (EBS read/write IOPS)')
+            except Exception as e:
+                logger.warning(f"EBS metrics error: {e}")
+
+    except Exception as e:
+        data['cloudwatch_error'] = str(e)
+        logger.warning(f"CloudWatch metrics error: {e}")
+
+        # Route 53 — fetch when it's a top cost or question mentions DNS/Route53
     top_service_names_r53 = [s['service'] for s in data.get('cost_by_service', [])[:8]]
     if 'Amazon Route 53' in top_service_names_r53 or \
        any(kw in question_lower for kw in ['route53', 'route 53', 'dns', 'hosted zone']):
@@ -2877,6 +2995,8 @@ RESPONSE FOCUS:
 - If the user asks a general question (e.g. "how can I reduce costs", "analyze my spending"), provide the full ranked cost analysis.
 - Prioritize strategies from Knowledge Base tips that have historically positive user feedback.
 - If a user corrects you in the chat, acknowledge the correction and adjust recommendations accordingly.
+- When citing a Knowledge Base tip, if the tip has an automatedCheck field, verify the recommendation against the ACTUAL gathered data described in that check. For example, if tip rds-001 says to check RDS CPU and the rds_cpu_metrics show avg_cpu_pct=45%, state "Your RDS instance averages 45% CPU (peak 72%) — it is RIGHT-SIZED, no downsizing needed." Do NOT recommend downsizing when the data shows healthy utilization.
+- ALWAYS ground tip recommendations in the actual metrics data. Never recommend rightsizing without showing the actual avg and peak usage numbers from the 30-day CloudWatch data.
 
 IMPORTANT RULES:
 - Only reference real AWS services and products. Do NOT invent product names.
@@ -2909,6 +3029,10 @@ IMPORTANT RULES:
 - When ec2_cpu_metrics is present, use it to show CPU utilization. Instances with avg CPU < 10% are rightsizing candidates. Quote the actual avg/max CPU percentages.
 - When rds_cpu_metrics is present, use it for RDS rightsizing analysis. Show each instance's avg/max CPU, avg/max connections, and freeable memory. Instances with avg CPU < 10% and max CPU < 30% are OVER-PROVISIONED — recommend downsizing to a smaller instance class. Instances with avg CPU > 80% may need upsizing or read replicas. Quote the actual metrics. If an RDS instance has low CPU AND high freeable memory, it is clearly oversized — recommend a specific smaller instance class (e.g. db.r5.large → db.r5.medium, db.t3.large → db.t3.medium).
 - CRITICAL RIGHTSIZING RULE: When both rds_cpu_metrics AND pricing_context are present, combine them: first show the utilization data proving the instance is over/under-provisioned, then show the pricing for the recommended right-sized instance class. This is the "Analyze → Rightsize → Commit" workflow in action.
+- When elb_metrics is present, show each load balancer's total requests over 30 days. ELBs with 0 requests are deletion candidates. ELBs with < 1000 requests may be consolidation candidates. Each ALB costs ~$16/month minimum.
+- When nat_gateway_metrics is present, show each NAT Gateway's total bytes processed and active connections. NAT Gateways with very low traffic (< 1MB/30d) are deletion candidates. Each NAT Gateway costs ~$32/month in hourly charges alone plus data processing fees.
+- When ebs_iops_metrics is present, show volumes with provisioned IOPS (io1/io2) that have low actual IOPS usage — recommend switching to gp3 which includes 3000 IOPS free.
+- RIGHTSIZING SUMMARY RULE: For every paid service with metrics data, always present a rightsizing verdict: "RIGHT-SIZED" (usage matches capacity), "OVER-PROVISIONED" (low avg + low peak = downsize), or "UNDER-PROVISIONED" (high peak = upsize). Base this on the avg and max (peak) values from the 30-day CloudWatch data.
 - When eks_clusters or ecs_clusters is present, show cluster count, status, and running tasks. Flag clusters with 0 running tasks as candidates for deletion. For ECS, flag clusters with low task counts relative to registered instances as over-provisioned.
 - When s3_optimization_summary is present, list buckets without lifecycle policies and without Intelligent-Tiering. Recommend enabling S3 Intelligent-Tiering for buckets without it, and adding lifecycle policies to move infrequently accessed data to S3-IA or Glacier.
 - When compute_optimizer_ec2 is present, show the rightsizing recommendations: current instance type, recommended type, finding (OVER_PROVISIONED/UNDER_PROVISIONED/OPTIMIZED), and estimated monthly savings. This is the most authoritative source for rightsizing — prefer it over manual CPU analysis.
