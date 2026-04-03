@@ -2032,8 +2032,11 @@ def _gather_account_data(question, credentials):
         data['cost_error'] = str(e)
         logger.warning(f"Cost Explorer error: {e}")
 
-    # EC2 instances if question mentions EC2, instances, servers
-    if any(kw in question_lower for kw in ['ec2', 'instance', 'server', 'compute', 'running']):
+    # EC2 instances — fetch when question mentions EC2 OR when EC2 Compute is a top cost
+    # (needed for pricing engine to use actual instance types)
+    top_service_names_ec2 = [s['service'] for s in data.get('cost_by_service', [])[:8]]
+    if 'Amazon Elastic Compute Cloud - Compute' in top_service_names_ec2 or \
+       any(kw in question_lower for kw in ['ec2', 'instance', 'server', 'compute', 'running', 'saving', 'save', 'efficient', 'optimize', 'ri', 'reserved']):
         try:
             ec2 = _make_client('ec2')
             instances = ec2.describe_instances()
@@ -2486,61 +2489,66 @@ def _gather_account_data(question, credentials):
     # Cost Efficiency Score — based on identified savings opportunities
     # Formula: [1 - (Potential Savings / Total Optimizable Spend)] × 100%
     # ============================================================
-    total_spend = sum(s['cost_usd'] for s in data.get('cost_by_service', []))
+    total_spend = sum(s['cost_usd'] for s in data.get('cost_by_service', [])
+                      if s.get('service', '') != 'Tax')
     potential_savings = 0.0
+    savings_breakdown = {}
 
     # Unattached EBS volumes
     ebs = data.get('ebs_summary', {})
-    potential_savings += ebs.get('unattached_monthly_cost_usd', 0)
-    potential_savings += ebs.get('gp2_to_gp3_savings_usd', 0)
+    if ebs.get('unattached_monthly_cost_usd', 0) > 0:
+        potential_savings += ebs['unattached_monthly_cost_usd']
+        savings_breakdown['Unattached EBS volumes'] = ebs['unattached_monthly_cost_usd']
+    if ebs.get('gp2_to_gp3_savings_usd', 0) > 0:
+        potential_savings += ebs['gp2_to_gp3_savings_usd']
+        savings_breakdown['gp2 to gp3 migration'] = ebs['gp2_to_gp3_savings_usd']
 
     # Idle Elastic IPs
     eips = data.get('elastic_ips', {})
-    potential_savings += eips.get('unattached_monthly_cost_usd', 0)
+    if eips.get('unattached_monthly_cost_usd', 0) > 0:
+        potential_savings += eips['unattached_monthly_cost_usd']
+        savings_breakdown['Idle Elastic IPs'] = eips['unattached_monthly_cost_usd']
 
     # VPC endpoints (if deleted mid-month, charges will stop)
     vpc_eps = data.get('vpc_endpoints', {})
+    vpc_ep_savings = 0
     if vpc_eps.get('total', 0) == 0:
-        # Charges from deleted endpoints — will stop next month
         vpc_breakdown = data.get('amazon_virtual_private_cloud_usage_breakdown', [])
         for u in vpc_breakdown:
             if 'VpcEndpoint' in u.get('usage_type', ''):
-                potential_savings += u['cost_usd']
+                vpc_ep_savings += u['cost_usd']
+    if vpc_ep_savings > 0:
+        potential_savings += vpc_ep_savings
+        savings_breakdown['Deleted VPC endpoints (charges stop next month)'] = round(vpc_ep_savings, 2)
 
     # KMS customer-managed keys
     kms = data.get('kms_summary', {})
-    potential_savings += kms.get('monthly_cost_usd', 0)
+    if kms.get('monthly_cost_usd', 0) > 0:
+        potential_savings += kms['monthly_cost_usd']
+        savings_breakdown['KMS customer-managed keys'] = kms['monthly_cost_usd']
+
+    # Compute Optimizer savings
+    co_summary = data.get('compute_optimizer_summary', {})
+    if co_summary.get('total_monthly_savings', 0) > 0:
+        potential_savings += co_summary['total_monthly_savings']
+        savings_breakdown['Compute Optimizer rightsizing'] = co_summary['total_monthly_savings']
+
+    # Commitment savings estimate (Savings Plans ~30% on top compute/RDS services)
+    for svc in data.get('cost_by_service', [])[:5]:
+        svc_name = svc.get('service', '')
+        svc_cost = svc.get('cost_usd', 0)
+        if svc_name == 'Amazon Relational Database Service' and svc_cost > 10:
+            sp_saving = round(svc_cost * 0.30, 2)
+            potential_savings += sp_saving
+            savings_breakdown['RDS Savings Plans / Reserved Instances (~30%)'] = sp_saving
+        elif svc_name == 'Amazon Elastic Compute Cloud - Compute' and svc_cost > 10:
+            sp_saving = round(svc_cost * 0.30, 2)
+            potential_savings += sp_saving
+            savings_breakdown['EC2 Savings Plans / Spot Instances (~30-70%)'] = sp_saving
 
     if total_spend > 0:
         efficiency_score = round((1 - (potential_savings / total_spend)) * 100, 1)
-        savings_breakdown = {}
-        if ebs.get('unattached_monthly_cost_usd', 0) > 0:
-            savings_breakdown['Unattached EBS volumes'] = ebs['unattached_monthly_cost_usd']
-        if ebs.get('gp2_to_gp3_savings_usd', 0) > 0:
-            savings_breakdown['gp2 to gp3 migration'] = ebs['gp2_to_gp3_savings_usd']
-        if eips.get('unattached_monthly_cost_usd', 0) > 0:
-            savings_breakdown['Idle Elastic IPs'] = eips['unattached_monthly_cost_usd']
-        if kms.get('monthly_cost_usd', 0) > 0:
-            savings_breakdown['KMS customer-managed keys'] = kms['monthly_cost_usd']
-        # VPC endpoint charges from deleted resources
-        vpc_ep_savings = 0
-        if vpc_eps.get('total', 0) == 0:
-            vpc_breakdown = data.get('amazon_virtual_private_cloud_usage_breakdown', [])
-            for u in vpc_breakdown:
-                if 'VpcEndpoint' in u.get('usage_type', ''):
-                    vpc_ep_savings += u['cost_usd']
-        if vpc_ep_savings > 0:
-            savings_breakdown['Deleted VPC endpoints (charges stop next month)'] = round(vpc_ep_savings, 2)
-
-        # Compute Optimizer savings
-        co_summary = data.get('compute_optimizer_summary', {})
-        if co_summary.get('total_monthly_savings', 0) > 0:
-            potential_savings += co_summary['total_monthly_savings']
-            savings_breakdown['Compute Optimizer rightsizing'] = co_summary['total_monthly_savings']
-
-        # Recalculate score with all savings
-        if total_spend > 0:
-            efficiency_score = round((1 - (potential_savings / total_spend)) * 100, 1)
+        efficiency_score = max(0, efficiency_score)  # floor at 0
 
         data['cost_efficiency'] = {
             'score': efficiency_score,
@@ -2553,7 +2561,7 @@ def _gather_account_data(question, credentials):
 
     # Fetch real pricing for top spending services to ground recommendations
     if data.get('cost_by_service'):
-        pricing_context = _fetch_pricing_context(data['cost_by_service'])
+        pricing_context = _fetch_pricing_context(data['cost_by_service'], data)
         if pricing_context:
             data['pricing_context'] = pricing_context
             actions.append('pricing:GetProducts (on-demand + RI rates for top services)')
@@ -2561,15 +2569,49 @@ def _gather_account_data(question, credentials):
     return data, actions
 
 
-def _fetch_pricing_context(service_costs):
+def _fetch_pricing_context(service_costs, account_data=None):
     """
     Fetch pricing intelligence for top spending services.
-    Modern FinOps approach: Savings Plans > RIs, capacity mix, rightsize-first.
+    Uses ACTUAL instance types from the account (rds_instances, ec2_instances)
+    instead of hardcoded examples. Falls back to common types if no inventory.
     """
+    if account_data is None:
+        account_data = {}
+
+    # Build actual instance type lists from account inventory
+    actual_ec2_types = []
+    for inst in account_data.get('ec2_instances', []):
+        itype = inst.get('type', '')
+        if itype and itype not in actual_ec2_types and inst.get('state') == 'running':
+            actual_ec2_types.append(itype)
+
+    actual_rds_instances = account_data.get('rds_instances', [])
+    actual_rds_types = []
+    for db in actual_rds_instances:
+        db_class = db.get('class', '')
+        if db_class and db_class not in actual_rds_types:
+            actual_rds_types.append(db_class)
+
+    # Detect RDS engine and deployment option from actual instances
+    rds_engine = 'MySQL'  # default fallback
+    rds_deployment = 'Single-AZ'
+    if actual_rds_instances:
+        # Use the engine of the most expensive (first) instance
+        engine_map = {
+            'mysql': 'MySQL', 'postgres': 'PostgreSQL', 'mariadb': 'MariaDB',
+            'oracle-ee': 'Oracle', 'oracle-se2': 'Oracle', 'sqlserver-ee': 'SQL Server',
+            'sqlserver-se': 'SQL Server', 'sqlserver-ex': 'SQL Server',
+            'aurora-mysql': 'Aurora MySQL', 'aurora-postgresql': 'Aurora PostgreSQL',
+        }
+        raw_engine = actual_rds_instances[0].get('engine', 'mysql').lower()
+        rds_engine = engine_map.get(raw_engine, 'MySQL')
+        if any(db.get('multiAz') for db in actual_rds_instances):
+            rds_deployment = 'Multi-AZ'
+
     PRICEABLE_SERVICES = {
         'Amazon Elastic Compute Cloud - Compute': {
             'serviceCode': 'AmazonEC2',
-            'instance_types': ['t3.medium', 't3.large', 'm5.large', 'm5.xlarge', 'c5.large'],
+            'instance_types': actual_ec2_types[:5] if actual_ec2_types else ['t3.medium', 't3.large', 'm5.large'],
             'filters': [
                 {'Type': 'TERM_MATCH', 'Field': 'operatingSystem', 'Value': 'Linux'},
                 {'Type': 'TERM_MATCH', 'Field': 'tenancy', 'Value': 'Shared'},
@@ -2578,16 +2620,18 @@ def _fetch_pricing_context(service_costs):
             ],
             'supports_spot': True,
             'supports_savings_plan': True,
+            'source': 'actual' if actual_ec2_types else 'example',
         },
         'Amazon Relational Database Service': {
             'serviceCode': 'AmazonRDS',
-            'instance_types': ['db.t3.medium', 'db.t3.large', 'db.m5.large'],
+            'instance_types': actual_rds_types[:5] if actual_rds_types else ['db.t3.medium', 'db.t3.large', 'db.m5.large'],
             'filters': [
-                {'Type': 'TERM_MATCH', 'Field': 'databaseEngine', 'Value': 'MySQL'},
-                {'Type': 'TERM_MATCH', 'Field': 'deploymentOption', 'Value': 'Single-AZ'},
+                {'Type': 'TERM_MATCH', 'Field': 'databaseEngine', 'Value': rds_engine},
+                {'Type': 'TERM_MATCH', 'Field': 'deploymentOption', 'Value': rds_deployment},
             ],
             'supports_spot': False,
             'supports_savings_plan': True,
+            'source': 'actual' if actual_rds_types else 'example',
         },
         'Amazon ElastiCache': {
             'serviceCode': 'AmazonElastiCache',
@@ -2597,6 +2641,7 @@ def _fetch_pricing_context(service_costs):
             ],
             'supports_spot': False,
             'supports_savings_plan': False,
+            'source': 'example',
         },
     }
 
@@ -2604,16 +2649,49 @@ def _fetch_pricing_context(service_costs):
     results = {}
     top_services = [s['service'] for s in service_costs[:5]]
 
+    # Detect region from usage type prefixes in cost data
+    # EU- = eu-west-1, USE1- = us-east-1, USW2- = us-west-2, APN1- = ap-northeast-1, etc.
+    region_location_map = {
+        'EU': 'EU (Ireland)',
+        'EUC1': 'EU (Frankfurt)',
+        'EUW2': 'EU (London)',
+        'EUW3': 'EU (Paris)',
+        'EUS1': 'EU (Stockholm)',
+        'USE1': 'US East (N. Virginia)',
+        'USE2': 'US East (Ohio)',
+        'USW1': 'US West (N. California)',
+        'USW2': 'US West (Oregon)',
+        'APN1': 'Asia Pacific (Tokyo)',
+        'APN2': 'Asia Pacific (Seoul)',
+        'APS1': 'Asia Pacific (Singapore)',
+        'APS2': 'Asia Pacific (Sydney)',
+        'SAE1': 'South America (Sao Paulo)',
+        'CAN1': 'Canada (Central)',
+    }
+    pricing_location = 'US East (N. Virginia)'  # default
+    # Check usage breakdowns for region prefix
+    for key in ['amazon_virtual_private_cloud_usage_breakdown', 'ec2___other_usage_breakdown']:
+        for item in account_data.get(key, []):
+            ut = item.get('usage_type', '')
+            for prefix, location in region_location_map.items():
+                if ut.startswith(prefix + '-') or ut.startswith(prefix + ':'):
+                    pricing_location = location
+                    break
+            if pricing_location != 'US East (N. Virginia)':
+                break
+        if pricing_location != 'US East (N. Virginia)':
+            break
+
     for svc_name in top_services:
         if svc_name not in PRICEABLE_SERVICES:
             continue
         cfg = PRICEABLE_SERVICES[svc_name]
 
         pricing_samples = []
-        for instance_type in cfg['instance_types'][:3]:
+        for instance_type in cfg['instance_types'][:5]:
             try:
                 filters = cfg['filters'] + [
-                    {'Type': 'TERM_MATCH', 'Field': 'location', 'Value': 'US East (N. Virginia)'},
+                    {'Type': 'TERM_MATCH', 'Field': 'location', 'Value': pricing_location},
                     {'Type': 'TERM_MATCH', 'Field': 'instanceType', 'Value': instance_type},
                 ]
                 response = pricing_client.get_products(
@@ -2691,6 +2769,7 @@ def _fetch_pricing_context(service_costs):
                 'sample_pricing': pricing_samples,
                 'commitment_strategy': 'Compute Savings Plans (recommended)' if cfg.get('supports_savings_plan') else 'Reserved Instances',
                 'spot_eligible': cfg.get('supports_spot', False),
+                'pricing_source': cfg.get('source', 'example'),
                 'note': (
                     'RIGHTSIZE FIRST: Always rightsize via Compute Optimizer before purchasing commitments. '
                     'Buying Savings Plans on oversized instances locks in waste for 1-3 years. '
@@ -2738,6 +2817,9 @@ IMPORTANT RULES:
   3. CAPACITY MIX: For EC2 compute workloads, recommend a capacity mix: 20-40% Savings Plan (baseline stability) + 60-80% Spot Instances (for fault-tolerant, stateless, batch workloads — up to 70-90% savings). Show the blended cost from capacity_mix data.
   4. When pricing_context is present, show: On-Demand cost → Savings Plan cost (30% savings) → Spot cost (70% savings) → Blended capacity mix cost. Use the actual numbers from the data.
   5. For RDS: recommend Savings Plans. Spot is not available for RDS.
+  6. CRITICAL: When pricing_context.pricing_source is "actual", the instance types shown are the REAL instances running in this account. Present them as "Your db.r5.large instance" not "For example, a db.t3.medium". When pricing_source is "example", clarify these are example types.
+  7. For RDS RI recommendations: ALWAYS use the actual RDS instance classes from rds_instances data. Show the actual engine (PostgreSQL, MySQL, etc.) and deployment option (Single-AZ/Multi-AZ). Never show generic examples when real instance data is available.
+  8. For EC2 Savings Plan recommendations: ALWAYS use the actual EC2 instance types from ec2_instances data. Show pricing for the real running instances, not generic examples.
 - When unattached_volumes list is present, ALWAYS list each volume by its volumeId, size_gb, type, and monthly_cost_usd. Do NOT just say "6 volumes" — list them individually.
 - When elastic_ips.unattached_list is present, list each by allocationId and publicIp.
 - When vpc_endpoints.endpoints is present, list each by endpointId, type, and serviceName.
@@ -2758,6 +2840,7 @@ IMPORTANT RULES:
 - IMPORTANT: Only apply the "deleted mid-month" explanation when the SPECIFIC resource inventory for that service shows 0 AND the usage_breakdown shows charges. Do NOT apply it to services like Amazon Registrar, EC2-Other (EBS), or RDS just because April data is low — that's simply because April just started.
 - Tax is NEVER actionable and NEVER minor. Exclude Tax from the ranked analysis entirely — do not list it as a numbered item or in the minor costs section. Only mention it as a footnote if the user specifically asks about tax.
 - ALWAYS rank services strictly by cost_usd descending. A service costing $1.03 MUST appear above a service costing $0.93.
+- SAVINGS RECOMMENDATIONS SORTING (CRITICAL): When listing savings opportunities or recommendations, ALWAYS sort them by estimated dollar savings descending (highest savings first). A recommendation saving $147/month MUST appear before one saving $37/month. Never list savings in random order.
 - Services costing less than $0.50 MUST be in the "Minor costs" bullet list, not individually numbered. Do NOT give them their own numbered section.
 - For general cost analysis: collapse ALL services under $0.50 into a single "Minor costs" bullet list at the end. Do NOT give each one its own numbered section.
 - ALWAYS rank services strictly by cost_usd descending. Never rank a cheaper service above a more expensive one.
