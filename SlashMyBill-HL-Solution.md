@@ -100,6 +100,11 @@ The `_gather_account_data()` function collects data from the customer's AWS acco
 | `cloudwatch:GetMetricStatistics` | Question mentions usage/invocations | Lambda invocations, EC2 CPU |
 | `route53:ListHostedZones` | Route 53 in top costs | Hosted zone count |
 | `pricing:GetProducts` | Top spending services | On-demand vs RI pricing |
+| `eks:ListClusters` + `eks:DescribeCluster` | EKS/ECS in top costs or question mentions Kubernetes/containers | EKS cluster inventory, status, version |
+| `ecs:ListClusters` + `ecs:DescribeClusters` | EKS/ECS in top costs or question mentions containers | ECS cluster inventory, running tasks, registered instances |
+| `s3:GetBucketLifecycleConfiguration` | S3 in top costs or question mentions storage | Lifecycle policy presence per bucket |
+| `s3:ListBucketIntelligentTieringConfigurations` | S3 in top costs or question mentions storage | Intelligent-Tiering enablement per bucket |
+| `compute-optimizer:GetEC2InstanceRecommendations` | EC2 Compute in top costs or question mentions rightsizing | Rightsizing recommendations with estimated monthly savings |
 
 ### 4.3 Month Comparison (triggered by comparison keywords)
 | Pattern | Action |
@@ -135,6 +140,31 @@ The `_gather_account_data()` function collects data from the customer's AWS acco
 - Functions hitting timeout limits or with 100% error rates
 - VPC endpoints deleted mid-month (charges explained)
 - KMS customer-managed keys ($1/month each)
+- EKS/ECS clusters with 0 running tasks (deletion candidates)
+- ECS clusters with low task-to-instance ratio (over-provisioned nodes)
+- S3 buckets without lifecycle policies (missing data tiering)
+- S3 buckets without Intelligent-Tiering (paying Standard rates for infrequent data)
+- EC2 instances flagged as OVER_PROVISIONED by AWS Compute Optimizer
+
+### 5.5 AWS Compute Optimizer Integration
+- Fetches `compute-optimizer:GetEC2InstanceRecommendations` for rightsizing
+- Shows current instance type, recommended type, finding classification
+- Calculates estimated monthly savings per instance
+- Findings: OVER_PROVISIONED, UNDER_PROVISIONED, OPTIMIZED
+- Savings automatically included in Cost Efficiency Score
+
+### 5.6 Kubernetes/Container Cost Analysis
+- EKS: cluster count, status, version, platform version
+- ECS: cluster count, running tasks, pending tasks, registered instances, active services
+- Flags clusters with 0 running tasks as deletion candidates
+- Identifies over-provisioned ECS clusters (many instances, few tasks)
+
+### 5.7 S3 Storage Optimization
+- Checks each bucket for lifecycle policy presence
+- Checks each bucket for Intelligent-Tiering configuration
+- Reports buckets needing lifecycle policies (data not being tiered)
+- Reports buckets needing Intelligent-Tiering (paying Standard rates unnecessarily)
+- Recommends S3-IA for 30-90 day data, Glacier for 90+ day data
 
 ### 5.5 Knowledge Base (RAG)
 - DynamoDB table: ViewMyBill-CostOptimizationTips (32+ tips by service)

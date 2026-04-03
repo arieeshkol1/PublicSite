@@ -2191,6 +2191,145 @@ def _gather_account_data(question, credentials):
             data['route53_error'] = str(e)
 
     # ============================================================
+    # EKS/ECS Kubernetes & Container Clusters
+    # ============================================================
+    top_svc_names_k8s = [s['service'] for s in data.get('cost_by_service', [])[:10]]
+    if any(s in top_svc_names_k8s for s in ['Amazon Elastic Container Service', 'Amazon Elastic Kubernetes Service',
+                                              'Amazon Elastic Container Service for Kubernetes']) or \
+       any(kw in question_lower for kw in ['eks', 'ecs', 'kubernetes', 'k8s', 'container', 'cluster', 'pod', 'node']):
+        try:
+            # EKS clusters
+            eks = _make_client('eks')
+            eks_clusters = eks.list_clusters().get('clusters', [])
+            eks_details = []
+            for cluster_name in eks_clusters[:5]:
+                try:
+                    detail = eks.describe_cluster(name=cluster_name)['cluster']
+                    eks_details.append({
+                        'name': cluster_name,
+                        'status': detail.get('status', ''),
+                        'version': detail.get('version', ''),
+                        'platformVersion': detail.get('platformVersion', ''),
+                    })
+                except Exception:
+                    eks_details.append({'name': cluster_name, 'status': 'unknown'})
+            data['eks_clusters'] = eks_details
+            data['eks_cluster_count'] = len(eks_clusters)
+            actions.append('eks:ListClusters + eks:DescribeCluster')
+        except Exception as e:
+            data['eks_error'] = str(e)
+
+        try:
+            # ECS clusters
+            ecs = _make_client('ecs')
+            ecs_arns = ecs.list_clusters().get('clusterArns', [])
+            if ecs_arns:
+                ecs_details_resp = ecs.describe_clusters(clusters=ecs_arns[:10])
+                ecs_details = []
+                for c in ecs_details_resp.get('clusters', []):
+                    ecs_details.append({
+                        'name': c.get('clusterName', ''),
+                        'status': c.get('status', ''),
+                        'runningTasks': c.get('runningTasksCount', 0),
+                        'pendingTasks': c.get('pendingTasksCount', 0),
+                        'registeredInstances': c.get('registeredContainerInstancesCount', 0),
+                        'activeServices': c.get('activeServicesCount', 0),
+                    })
+                data['ecs_clusters'] = ecs_details
+            else:
+                data['ecs_clusters'] = []
+            data['ecs_cluster_count'] = len(ecs_arns)
+            actions.append('ecs:ListClusters + ecs:DescribeClusters')
+        except Exception as e:
+            data['ecs_error'] = str(e)
+
+    # ============================================================
+    # S3 Storage Optimization — check for lifecycle policies and Intelligent-Tiering
+    # ============================================================
+    if any(kw in question_lower for kw in ['s3', 'storage', 'bucket', 'lifecycle', 'tiering', 'glacier', 'archive']) or \
+       'Amazon Simple Storage Service' in [s['service'] for s in data.get('cost_by_service', [])[:8]]:
+        try:
+            s3 = _make_client('s3')
+            buckets_resp = s3.list_buckets()
+            bucket_analysis = []
+            for b in buckets_resp.get('Buckets', [])[:15]:
+                bucket_info = {
+                    'name': b['Name'],
+                    'created': str(b['CreationDate']),
+                    'hasLifecyclePolicy': False,
+                    'hasIntelligentTiering': False,
+                }
+                try:
+                    lc = s3.get_bucket_lifecycle_configuration(Bucket=b['Name'])
+                    bucket_info['hasLifecyclePolicy'] = bool(lc.get('Rules', []))
+                    bucket_info['lifecycleRuleCount'] = len(lc.get('Rules', []))
+                except ClientError as lce:
+                    if lce.response['Error']['Code'] == 'NoSuchLifecycleConfiguration':
+                        bucket_info['hasLifecyclePolicy'] = False
+                    else:
+                        bucket_info['lifecycleError'] = str(lce)
+                try:
+                    it_configs = s3.list_bucket_intelligent_tiering_configurations(Bucket=b['Name'])
+                    bucket_info['hasIntelligentTiering'] = bool(it_configs.get('IntelligentTieringConfigurationList', []))
+                except Exception:
+                    pass
+                bucket_analysis.append(bucket_info)
+
+            no_lifecycle = [b for b in bucket_analysis if not b['hasLifecyclePolicy']]
+            no_tiering = [b for b in bucket_analysis if not b['hasIntelligentTiering']]
+            data['s3_bucket_analysis'] = bucket_analysis
+            data['s3_optimization_summary'] = {
+                'total_buckets': len(bucket_analysis),
+                'without_lifecycle_policy': len(no_lifecycle),
+                'without_intelligent_tiering': len(no_tiering),
+                'buckets_needing_lifecycle': [b['name'] for b in no_lifecycle[:5]],
+                'buckets_needing_tiering': [b['name'] for b in no_tiering[:5]],
+            }
+            actions.append('s3:ListBuckets + s3:GetBucketLifecycleConfiguration + s3:ListBucketIntelligentTieringConfigurations')
+        except Exception as e:
+            data['s3_analysis_error'] = str(e)
+
+    # ============================================================
+    # AWS Compute Optimizer — rightsizing recommendations
+    # ============================================================
+    if any(kw in question_lower for kw in ['rightsize', 'rightsizing', 'optimize', 'oversized', 'underutilized',
+                                            'compute optimizer', 'instance type', 'downsize']) or \
+       any(s in [svc['service'] for svc in data.get('cost_by_service', [])[:5]]
+           for s in ['Amazon Elastic Compute Cloud - Compute', 'Amazon Relational Database Service']):
+        try:
+            co = _make_client('compute-optimizer')
+            # EC2 rightsizing recommendations
+            ec2_recs = co.get_ec2_instance_recommendations(maxResults=10)
+            recommendations = []
+            for rec in ec2_recs.get('instanceRecommendations', []):
+                current = rec.get('currentInstanceType', '')
+                finding = rec.get('finding', '')
+                options = rec.get('recommendationOptions', [])
+                top_option = options[0] if options else {}
+                recommendations.append({
+                    'instanceId': rec.get('instanceArn', '').split('/')[-1],
+                    'instanceName': rec.get('instanceName', ''),
+                    'currentType': current,
+                    'finding': finding,
+                    'recommendedType': top_option.get('instanceType', ''),
+                    'estimatedMonthlySavings': top_option.get('estimatedMonthlySavings', {}).get('value', 0),
+                    'savingsCurrency': top_option.get('estimatedMonthlySavings', {}).get('currency', 'USD'),
+                    'performanceRisk': top_option.get('performanceRisk', 0),
+                })
+            if recommendations:
+                data['compute_optimizer_ec2'] = recommendations
+                data['compute_optimizer_summary'] = {
+                    'total_recommendations': len(recommendations),
+                    'over_provisioned': sum(1 for r in recommendations if r['finding'] == 'OVER_PROVISIONED'),
+                    'under_provisioned': sum(1 for r in recommendations if r['finding'] == 'UNDER_PROVISIONED'),
+                    'optimized': sum(1 for r in recommendations if r['finding'] == 'OPTIMIZED'),
+                    'total_monthly_savings': round(sum(r['estimatedMonthlySavings'] for r in recommendations), 2),
+                }
+            actions.append('compute-optimizer:GetEC2InstanceRecommendations')
+        except Exception as e:
+            data['compute_optimizer_error'] = str(e)
+
+    # ============================================================
     # Cost Anomaly Detection — flag daily spikes > 2x the 7-day average
     # ============================================================
     daily_trend = data.get('daily_cost_trend', [])
@@ -2259,6 +2398,16 @@ def _gather_account_data(question, credentials):
                     vpc_ep_savings += u['cost_usd']
         if vpc_ep_savings > 0:
             savings_breakdown['Deleted VPC endpoints (charges stop next month)'] = round(vpc_ep_savings, 2)
+
+        # Compute Optimizer savings
+        co_summary = data.get('compute_optimizer_summary', {})
+        if co_summary.get('total_monthly_savings', 0) > 0:
+            potential_savings += co_summary['total_monthly_savings']
+            savings_breakdown['Compute Optimizer rightsizing'] = co_summary['total_monthly_savings']
+
+        # Recalculate score with all savings
+        if total_spend > 0:
+            efficiency_score = round((1 - (potential_savings / total_spend)) * 100, 1)
 
         data['cost_efficiency'] = {
             'score': efficiency_score,
@@ -2434,6 +2583,9 @@ IMPORTANT RULES:
 - CRITICAL: If a Lambda function's max_duration_ms equals its timeout (timeout × 1000), flag it as "hitting timeout limit — investigate for performance issues or increase timeout."
 - CRITICAL: If a Lambda function has errors_30d > 0 AND errors_30d equals invocations_30d (100% error rate), flag it as "100% error rate — this function is broken and needs immediate attention."
 - When ec2_cpu_metrics is present, use it to show CPU utilization. Instances with avg CPU < 10% are rightsizing candidates. Quote the actual avg/max CPU percentages.
+- When eks_clusters or ecs_clusters is present, show cluster count, status, and running tasks. Flag clusters with 0 running tasks as candidates for deletion. For ECS, flag clusters with low task counts relative to registered instances as over-provisioned.
+- When s3_optimization_summary is present, list buckets without lifecycle policies and without Intelligent-Tiering. Recommend enabling S3 Intelligent-Tiering for buckets without it, and adding lifecycle policies to move infrequently accessed data to S3-IA or Glacier.
+- When compute_optimizer_ec2 is present, show the rightsizing recommendations: current instance type, recommended type, finding (OVER_PROVISIONED/UNDER_PROVISIONED/OPTIMIZED), and estimated monthly savings. This is the most authoritative source for rightsizing — prefer it over manual CPU analysis.
 - The data already contains the resource details. Do NOT tell the customer to "use CloudWatch" or "check Trusted Advisor" to find resources that are already listed in the data.
 - When usage_breakdown shows charges (e.g. VpcEndpoint-Hours: $11.20) but the resource inventory shows 0 resources (e.g. vpc_endpoints.total: 0), you MUST explain: "These charges are from resources that were active earlier in the billing period but have since been deleted. The charges will stop in the next billing cycle." Do NOT say "no cost savings opportunity" and do NOT suggest reviewing resources that no longer exist.
 - IMPORTANT: Only apply the "deleted mid-month" explanation when the SPECIFIC resource inventory for that service shows 0 AND the usage_breakdown shows charges. Do NOT apply it to services like Amazon Registrar, EC2-Other (EBS), or RDS just because April data is low — that's simply because April just started.
