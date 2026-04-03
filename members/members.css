@@ -310,10 +310,10 @@
 }
 .lab-header h2 { font-size: 20px; color: var(--dark); margin: 0; }
 .lab-account-selector { display: flex; align-items: center; gap: 8px; }
-.lab-account-selector label { font-size: 13px; font-weight: 600; color: #374151; }
+.lab-account-selector label { font-size: 15px; font-weight: 600; color: #374151; }
 .lab-account-selector select {
     padding: 6px 12px; border: 1.5px solid var(--gray-light); border-radius: 6px;
-    font-size: 13px; outline: none; min-width: 200px;
+    font-size: 15px; outline: none; min-width: 280px;
 }
 .lab-account-selector select:focus { border-color: var(--primary); }
 
@@ -321,11 +321,11 @@
     flex: 1; overflow-y: auto; padding: 20px; background: #0d1117;
     font-family: 'Consolas', 'Courier New', monospace; font-size: 15px;
 }
-.lab-welcome { text-align: center; padding: 40px 20px; color: #8b949e; }
+.lab-welcome { text-align: left; padding: 20px; color: #8b949e; }
 .lab-welcome-icon { font-size: 48px; margin-bottom: 12px; }
 .lab-welcome h3 { color: #c9d1d9; font-size: 22px; margin-bottom: 8px; }
-.lab-welcome p { font-size: 15px; line-height: 1.6; max-width: 500px; margin: 0 auto 20px; }
-.lab-examples { text-align: left; max-width: 600px; margin: 0 auto; }
+.lab-welcome p { font-size: 15px; line-height: 1.6; max-width: 100%; margin: 0 0 20px; }
+.lab-examples { text-align: left; max-width: 100%; margin: 0; }
 .lab-examples p { margin-bottom: 8px; color: #c9d1d9; }
 .lab-examples code {
     display: block; background: #161b22; border: 1px solid #30363d; border-radius: 6px;

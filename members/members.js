@@ -1059,7 +1059,7 @@ function populateLabAccounts() {
         if (a.connectionStatus === 'connected') {
             var opt = document.createElement('option');
             opt.value = a.accountId;
-            opt.textContent = a.accountId + ' (' + a.roleName + ')';
+            opt.textContent = a.accountId + ' (' + (a.accountName || 'Account ' + a.accountId.slice(-4)) + ')';
             labAccountSelect.appendChild(opt);
         }
     });
@@ -1154,7 +1154,7 @@ function populateAIAccounts() {
         if (a.connectionStatus === 'connected') {
             var opt = document.createElement('option');
             opt.value = a.accountId;
-            opt.textContent = a.accountId + ' (' + a.roleName + ')';
+            opt.textContent = a.accountId + ' (' + (a.accountName || 'Account ' + a.accountId.slice(-4)) + ')';
             aiAccountSelect.appendChild(opt);
         }
     });
@@ -1262,7 +1262,7 @@ function addAIMessage(type, content) {
         });
         div.innerHTML = cmdsHtml;
     } else if (type === 'thinking') {
-        div.innerHTML = '<div class="lab-msg-info" style="color:#a78bfa;"><img src="../ninja-black.png" alt="" style="height:32px;vertical-align:middle;margin-right:4px;"> ' + esc(content) + '</div>';
+        div.innerHTML = '<div class="lab-msg-info" style="color:#a78bfa;"><img src="../small_ninja_icon.png" alt="" style="height:32px;vertical-align:middle;margin-right:4px;"> ' + esc(content) + '</div>';
         div.id = 'ai-thinking';
     } else if (type === 'error') {
         div.innerHTML = '<div class="lab-msg-output lab-msg-error">' + esc(content) + '</div>';
