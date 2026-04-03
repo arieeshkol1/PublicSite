@@ -1581,6 +1581,14 @@ def _invoke_direct_model(question, account_id, member_email, interaction_id):
     # Step 4: Save tip
     _maybe_save_tip(question, answer, tips_context)
 
+    # Build service-based follow-up topics from the bill
+    top_services = []
+    for svc in account_data.get('cost_by_service', [])[:10]:
+        svc_name = svc.get('service', '')
+        cost = svc.get('cost_usd', 0)
+        if cost > 0.5 and svc_name not in ('Tax',):
+            top_services.append({'service': svc_name, 'cost': round(cost, 2)})
+
     return create_response(200, {
         'answer': answer,
         'interactionId': interaction_id,
@@ -1589,6 +1597,7 @@ def _invoke_direct_model(question, account_id, member_email, interaction_id):
         'tipFound': bool(tips_context),
         'agentUsed': False,
         'chartData': _build_chart_data(account_data),
+        'topServices': top_services,
     })
 
 

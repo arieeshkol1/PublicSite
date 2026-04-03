@@ -1161,7 +1161,7 @@ function populateAIAccounts() {
     if (current) aiAccountSelect.value = current;
 }
 
-function addAIMessage(type, content) {
+function addAIMessage(type, content, topServices) {
     if (!aiChat) return;
     var welcome = aiChat.querySelector('.lab-welcome');
     if (welcome) welcome.remove();
@@ -1240,11 +1240,55 @@ function addAIMessage(type, content) {
         // Limit to 4 most relevant follow-ups
         followUps = followUps.slice(0, 4);
 
+        // Generate service-based follow-up topics from the actual bill
+        var serviceTopics = [];
+        var svcTopicMap = {
+            'Amazon Relational Database Service': 'Is my RDS right-sized? Show CPU and pricing options',
+            'Amazon Elastic Compute Cloud - Compute': 'Are my EC2 instances right-sized? Show Savings Plan options',
+            'EC2 - Other': 'Break down my EC2-Other costs (EBS, NAT, data transfer)',
+            'Amazon Virtual Private Cloud': 'Break down my VPC costs and find idle resources',
+            'Amazon Elastic Load Balancing': 'Are any of my load balancers idle or underused?',
+            'AWS Key Management Service': 'List my KMS keys and which are unused',
+            'Amazon Simple Storage Service': 'Analyze my S3 buckets for storage class optimization',
+            'AWS Lambda': 'Show my Lambda functions with invocation counts and errors',
+            'AmazonCloudWatch': 'Can I reduce my CloudWatch costs?',
+            'Amazon Route 53': 'List my Route 53 hosted zones with record counts',
+            'Amazon CloudFront': 'How can I optimize my CloudFront cache hit ratio?',
+            'Amazon ElastiCache': 'Is my ElastiCache right-sized? Show CPU and memory usage',
+            'Amazon DynamoDB': 'Should my DynamoDB tables use on-demand or provisioned capacity?',
+            'Amazon Elastic Container Service': 'Show my ECS clusters with running tasks and utilization',
+            'Amazon Elastic Kubernetes Service': 'Show my EKS clusters with status and version',
+            'AWS Secrets Manager': 'How many secrets do I have and can I consolidate?',
+            'Amazon Elastic Block Store': 'List my EBS volumes with IOPS usage and rightsizing',
+            'Amazon Elastic Container Registry (ECR)': 'Can I clean up old ECR images to save storage?',
+            'AWS Config': 'Can I reduce AWS Config costs by limiting recorded resources?',
+            'Amazon GuardDuty': 'What is my GuardDuty finding volume and cost breakdown?',
+            'AWS Security Hub': 'Can I optimize Security Hub by disabling unused standards?',
+            'Amazon Bedrock': 'What is my Bedrock model usage and cost per invocation?',
+        };
+        if (topServices && topServices.length > 0) {
+            topServices.forEach(function(svc) {
+                var topic = svcTopicMap[svc.service];
+                if (topic && followUps.indexOf(topic) === -1) {
+                    serviceTopics.push({question: topic, service: svc.service, cost: svc.cost});
+                }
+            });
+        }
+
         var followUpHtml = '';
         if (followUps.length > 0) {
             followUpHtml = '<div class="ai-followups" style="margin-top:12px;"><div style="color:#8b949e;font-size:0.85em;margin-bottom:6px;">Drill down:</div>';
             followUps.forEach(function(q) {
                 followUpHtml += '<button class="btn btn-outline btn-sm ai-followup-btn" style="margin:3px 4px 3px 0;font-size:0.85em;" data-question="' + ea(q) + '">' + esc(q) + '</button>';
+            });
+            followUpHtml += '</div>';
+        }
+
+        // Service-based follow-up topics from the bill
+        if (serviceTopics.length > 0) {
+            followUpHtml += '<div class="ai-service-topics" style="margin-top:10px;"><div style="color:#8b949e;font-size:0.85em;margin-bottom:6px;">Explore your services:</div>';
+            serviceTopics.slice(0, 6).forEach(function(st) {
+                followUpHtml += '<button class="btn btn-outline btn-sm ai-followup-btn" style="margin:3px 4px 3px 0;font-size:0.8em;border-color:#4c1d95;color:#a78bfa;" data-question="' + ea(st.question) + '" title="$' + st.cost + '/month">' + esc(st.question) + '</button>';
             });
             followUpHtml += '</div>';
         }
@@ -1314,7 +1358,7 @@ async function askAI() {
         }
 
         // Show the AI answer
-        addAIMessage('answer', data.answer || 'No answer available.');
+        addAIMessage('answer', data.answer || 'No answer available.', data.topServices || []);
 
         // Store interactionId on the last answer message for feedback
         if (data.interactionId) {
