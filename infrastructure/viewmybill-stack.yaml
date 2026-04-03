@@ -616,6 +616,15 @@ Resources:
                   - s3:GetObject
                 Resource:
                   - !Sub 'arn:aws:s3:::${BillStorageBucket}/reports/*'
+        - PolicyName: DynamoDBFeedbackReadAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:Scan
+                Resource:
+                  - !GetAtt AgentFeedbackTable.Arn
       Tags:
         - Key: Project
           Value: ViewMyBill
@@ -643,6 +652,7 @@ Resources:
           LEADS_TABLE_NAME: !Ref LeadsTable
           TIPS_TABLE_NAME: !Ref CostOptimizationTipsTable
           STORAGE_BUCKET: !Ref BillStorageBucket
+          FEEDBACK_TABLE_NAME: !Ref AgentFeedbackTable
       Tags:
         - Key: Project
           Value: ViewMyBill
@@ -726,6 +736,13 @@ Resources:
     Properties:
       ApiId: !Ref ViewMyBillApi
       RouteKey: 'DELETE /admin/tips'
+      Target: !Sub 'integrations/${AdminIntegration}'
+
+  AdminGetFeedbackRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'GET /admin/feedback'
       Target: !Sub 'integrations/${AdminIntegration}'
 
   AdminHandlerInvokePermission:

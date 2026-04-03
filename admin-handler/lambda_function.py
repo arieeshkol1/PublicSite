@@ -1,7 +1,8 @@
 """
 Admin Handler Lambda - Authentication and admin API for the Slash My Bill tool.
 Routes: POST /admin/login, GET /admin/leads, GET /admin/tips,
-        POST /admin/tips, PUT /admin/tips, DELETE /admin/tips
+        POST /admin/tips, PUT /admin/tips, DELETE /admin/tips,
+        GET /admin/feedback
 """
 
 import json
@@ -23,6 +24,7 @@ ADMIN_PASSWORD_HASH = os.environ.get('ADMIN_PASSWORD_HASH', '')
 JWT_SECRET = os.environ.get('JWT_SECRET', '')
 LEADS_TABLE_NAME = os.environ.get('LEADS_TABLE_NAME', 'ViewMyBill-Leads')
 TIPS_TABLE_NAME = os.environ.get('TIPS_TABLE_NAME', 'ViewMyBill-CostOptimizationTips')
+FEEDBACK_TABLE_NAME = os.environ.get('FEEDBACK_TABLE_NAME', 'MemberPortal-AgentFeedback')
 
 dynamodb = boto3.resource('dynamodb')
 s3_client = boto3.client('s3')
@@ -61,6 +63,7 @@ def lambda_handler(event, context):
         'POST /admin/tips': handle_create_tip,
         'PUT /admin/tips': handle_update_tip,
         'DELETE /admin/tips': handle_delete_tip,
+        'GET /admin/feedback': handle_get_feedback,
     }
 
     handler = routes.get(route_key)
@@ -159,6 +162,19 @@ def handle_get_tips(event):
     except ClientError as e:
         logger.error(f"DynamoDB error scanning tips: {e}")
         return create_error_response(500, 'ServerError', 'Failed to retrieve tips')
+
+
+def handle_get_feedback(event):
+    """Return all feedback from the AgentFeedback table, sorted by createdAt descending."""
+    try:
+        table = dynamodb.Table(FEEDBACK_TABLE_NAME)
+        response = table.scan()
+        feedback = _decimal_to_native(response.get('Items', []))
+        feedback.sort(key=lambda x: x.get('createdAt', ''), reverse=True)
+        return create_response(200, {'feedback': feedback})
+    except ClientError as e:
+        logger.error(f"DynamoDB error scanning feedback: {e}")
+        return create_error_response(500, 'ServerError', 'Failed to retrieve feedback')
 
 
 def handle_update_lead(event):

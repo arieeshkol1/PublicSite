@@ -45,6 +45,7 @@
         <nav class="tab-nav">
             <button class="tab-btn active" data-tab="leads">Leads</button>
             <button class="tab-btn" data-tab="tips">Tips</button>
+            <button class="tab-btn" data-tab="feedback">Feedback</button>
         </nav>
 
         <!-- Leads Tab -->
@@ -104,6 +105,32 @@
                 </table>
                 <div id="tips-empty" class="empty-state" hidden>
                     <p>No tips exist yet. Click "Add Tip" to create one.</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Feedback Tab -->
+        <div id="feedback-tab" class="tab-content" hidden>
+            <div class="tab-toolbar">
+                <input type="text" id="feedback-search" class="search-input" placeholder="Search by email, question, service, or correction...">
+            </div>
+            <div class="table-wrapper">
+                <table id="feedback-table" class="data-table">
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th class="sortable" data-col="memberEmail">Member Email <span class="sort-icon">⇅</span></th>
+                            <th class="sortable" data-col="userQuestion">Question <span class="sort-icon">⇅</span></th>
+                            <th class="sortable" data-col="feedbackScore">Score <span class="sort-icon">⇅</span></th>
+                            <th class="sortable" data-col="relatedService">Service <span class="sort-icon">⇅</span></th>
+                            <th>Correction</th>
+                            <th class="sortable" data-col="createdAt">Date <span class="sort-icon">⇅</span></th>
+                        </tr>
+                    </thead>
+                    <tbody id="feedback-tbody"></tbody>
+                </table>
+                <div id="feedback-empty" class="empty-state" hidden>
+                    <p>No agent feedback has been recorded yet.</p>
                 </div>
             </div>
         </div>
