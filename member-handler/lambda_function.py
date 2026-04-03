@@ -2696,11 +2696,17 @@ def _gather_account_data(question, credentials):
         potential_savings += ebs['gp2_to_gp3_savings_usd']
         savings_breakdown['gp2 to gp3 migration'] = ebs['gp2_to_gp3_savings_usd']
 
-    # Idle Elastic IPs
+    # Idle Elastic IPs — from ec2:DescribeAddresses AND from VPC usage breakdown
     eips = data.get('elastic_ips', {})
-    if eips.get('unattached_monthly_cost_usd', 0) > 0:
-        potential_savings += eips['unattached_monthly_cost_usd']
-        savings_breakdown['Idle Elastic IPs'] = eips['unattached_monthly_cost_usd']
+    idle_eip_savings = eips.get('unattached_monthly_cost_usd', 0)
+    # Also check VPC usage breakdown for IdleAddress charges (may not show in DescribeAddresses)
+    vpc_breakdown = data.get('amazon_virtual_private_cloud_usage_breakdown', [])
+    for u in vpc_breakdown:
+        if 'IdleAddress' in u.get('usage_type', '') and u.get('cost_usd', 0) > idle_eip_savings:
+            idle_eip_savings = u['cost_usd']
+    if idle_eip_savings > 0:
+        potential_savings += idle_eip_savings
+        savings_breakdown['Idle Elastic IPs'] = round(idle_eip_savings, 2)
 
     # VPC endpoints (if deleted mid-month, charges will stop)
     vpc_eps = data.get('vpc_endpoints', {})
@@ -3031,18 +3037,25 @@ IMPORTANT RULES:
 - CRITICAL RIGHTSIZING RULE: When both rds_cpu_metrics AND pricing_context are present, combine them: first show the utilization data proving the instance is over/under-provisioned, then show the pricing for the recommended right-sized instance class. This is the "Analyze → Rightsize → Commit" workflow in action.
 - When elb_metrics is present, show each load balancer's total requests over 30 days. ELBs with 0 requests are deletion candidates. ELBs with < 1000 requests may be consolidation candidates. Each ALB costs ~$16/month minimum.
 - When nat_gateway_metrics is present, show each NAT Gateway's total bytes processed and active connections. NAT Gateways with very low traffic (< 1MB/30d) are deletion candidates. Each NAT Gateway costs ~$32/month in hourly charges alone plus data processing fees.
-- When ebs_iops_metrics is present, show volumes with provisioned IOPS (io1/io2) that have low actual IOPS usage — recommend switching to gp3 which includes 3000 IOPS free.
+- When ebs_iops_metrics is present, show volumes with provisioned IOPS (io1/io2) that have low actual IOPS usage — recommend switching to gp3 which includes 3000 IOPS free. For gp3 volumes, show the actual read/write IOPS from the metrics to help the user understand if the volume size can be reduced. NEVER say "you would need to check the actual usage metrics" — the metrics ARE in the data.
+- For EBS gp3 cost questions: gp3 costs $0.08/GB/month. Show the actual volume sizes from ebs_summary. If ebs_iops_metrics shows low IOPS, the volume may be oversized for its workload. Recommend reducing volume size if IOPS are consistently low. Do NOT recommend switching FROM gp3 to gp2 — gp3 is already cheaper than gp2.
 - RIGHTSIZING SUMMARY RULE: For every paid service with metrics data, always present a rightsizing verdict: "RIGHT-SIZED" (usage matches capacity), "OVER-PROVISIONED" (low avg + low peak = downsize), or "UNDER-PROVISIONED" (high peak = upsize). Base this on the avg and max (peak) values from the 30-day CloudWatch data.
 - When eks_clusters or ecs_clusters is present, show cluster count, status, and running tasks. Flag clusters with 0 running tasks as candidates for deletion. For ECS, flag clusters with low task counts relative to registered instances as over-provisioned.
 - When s3_optimization_summary is present, list buckets without lifecycle policies and without Intelligent-Tiering. Recommend enabling S3 Intelligent-Tiering for buckets without it, and adding lifecycle policies to move infrequently accessed data to S3-IA or Glacier.
 - When compute_optimizer_ec2 is present, show the rightsizing recommendations: current instance type, recommended type, finding (OVER_PROVISIONED/UNDER_PROVISIONED/OPTIMIZED), and estimated monthly savings. This is the most authoritative source for rightsizing — prefer it over manual CPU analysis.
-- The data already contains the resource details. Do NOT tell the customer to "use CloudWatch" or "check Trusted Advisor" to find resources that are already listed in the data.
+- The data already contains the resource details. Do NOT tell the customer to "use CloudWatch" or "check Trusted Advisor" or "monitor usage" to find resources that are already listed in the data. The system has ALREADY gathered CloudWatch metrics — use them directly. If ebs_iops_metrics is present, show the actual IOPS numbers. If rds_cpu_metrics is present, show the actual CPU/memory numbers. NEVER say "you would need to check" when the data is already in front of you.
 - When usage_breakdown shows charges (e.g. VpcEndpoint-Hours: $11.20) but the resource inventory shows 0 resources (e.g. vpc_endpoints.total: 0), you MUST explain: "These charges are from resources that were active earlier in the billing period but have since been deleted. The charges will stop in the next billing cycle." Do NOT say "no cost savings opportunity" and do NOT suggest reviewing resources that no longer exist.
 - IMPORTANT: Only apply the "deleted mid-month" explanation when the SPECIFIC resource inventory for that service shows 0 AND the usage_breakdown shows charges. Do NOT apply it to services like Amazon Registrar, EC2-Other (EBS), or RDS just because April data is low — that's simply because April just started.
 - Tax is NEVER actionable and NEVER minor. Exclude Tax from the ranked analysis entirely — do not list it as a numbered item or in the minor costs section. Only mention it as a footnote if the user specifically asks about tax.
+- NON-ACTIONABLE SERVICES: The following services must NEVER appear as "savings opportunities" or numbered recommendations because they are not optimizable:
+  * Tax — proportional to spend, never actionable
+  * Amazon Registrar — annual domain registration fee, not a recurring optimization target
+  * AWS Cost Explorer — monitoring tool, costs $0.01 per API request, essential for visibility
+  * AWS CloudTrail — audit/compliance tool, should not be disabled for cost savings
+  These services should only be mentioned in a cost breakdown if the user asks "what am I spending on?" but NEVER in a "how to save" or "savings opportunities" response.
 - ALWAYS rank services strictly by cost_usd descending. A service costing $1.03 MUST appear above a service costing $0.93.
 - SAVINGS RECOMMENDATIONS SORTING (CRITICAL): When listing savings opportunities or recommendations, ALWAYS sort them by estimated dollar savings descending (highest savings first). A recommendation saving $147/month MUST appear before one saving $37/month. Never list savings in random order.
-- Services costing less than $0.50 MUST be in the "Minor costs" bullet list, not individually numbered. Do NOT give them their own numbered section.
+- Services costing less than $0.50 MUST be in the "Minor costs" bullet list, not individually numbered. Do NOT give them their own numbered section. This applies to ALL response types including "any savings?" questions.
 - For general cost analysis: collapse ALL services under $0.50 into a single "Minor costs" bullet list at the end. Do NOT give each one its own numbered section.
 - ALWAYS rank services strictly by cost_usd descending. Never rank a cheaper service above a more expensive one.
 - When month_comparison is present, use ONLY that data for the comparison — do NOT use cost_by_service (which is last 30 days). Show a side-by-side comparison with the difference (+ or -) and percentage change for each service. Highlight services with the biggest absolute dollar change.
@@ -3061,6 +3074,8 @@ IMPORTANT RULES:
   * KMS customer-managed keys
   * Route 53 hosted zones with very few records
   If no evidence of waste exists for a service, do NOT include it — say "appears actively used."
+- CRITICAL: When cost_by_service shows charges for a service (e.g. RDS: $0.63) but the resource inventory is empty (rds_instances: []), do NOT say "there are no RDS instances." Instead explain: "RDS charges of $0.63 exist but no running instances were found in this region — the instances may be in a different region, or these are residual charges from recently deleted resources." Same logic applies to EC2, ElastiCache, etc.
+- When the user asks "can I rightsize?" or "any savings?", ONLY list services where you have ACTIONABLE data. Do NOT list services with "no instances found" as rightsizing candidates — that's not helpful. Focus on services where you have actual metrics or concrete waste evidence.
 - Do NOT repeat "review X usage to ensure it is necessary" for every service. That is generic filler. Only give specific, actionable advice based on the data.
 - When cost_anomalies is present, highlight the anomalous days with their spike percentage. Explain what might have caused the spike and suggest investigating.
 - When cost_efficiency is present, ALWAYS show the Cost Efficiency Score prominently at the top of general cost analyses. Format: "Cost Efficiency Score: XX% (Rating)". Then show a savings breakdown listing EACH component that contributes to potential_savings_usd (e.g. "Unattached EBS: $X, Idle EIPs: $Y, Deleted VPC endpoints: $Z, KMS keys: $W"). Do NOT just show the total — break it down so the user understands where the savings come from.
