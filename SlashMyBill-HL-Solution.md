@@ -129,9 +129,20 @@ The `_gather_account_data()` function collects data from the customer's AWS acco
 - Reports spike percentage and date
 
 ### 5.3 Real-Time Pricing Engine
-- Fetches on-demand and 1-year No Upfront RI pricing for top spending services
-- Calculates exact monthly savings per instance type
-- Supports EC2, RDS, ElastiCache pricing comparisons
+- Fetches on-demand pricing for top spending services via AWS Pricing API
+- Calculates three pricing tiers per instance type:
+  - On-Demand: full price (baseline reference)
+  - Compute Savings Plan: ~30% discount (recommended default commitment)
+  - Spot Instances: ~70% discount (for fault-tolerant/stateless workloads)
+- Generates capacity mix recommendation per instance type:
+  - 30% Savings Plan (baseline stability) + 70% Spot (cost optimization)
+  - Shows blended monthly cost and total savings vs pure on-demand
+- Reserved Instances kept as fallback only for rigid, high-commitment scenarios
+- Enforces "Rightsize Before You Commit" workflow:
+  1. Analyze utilization via Compute Optimizer
+  2. Recommend rightsizing for OVER_PROVISIONED instances
+  3. Calculate Savings Plan discount on the RIGHT-SIZED instance type
+  4. Never recommend commitments on oversized instances
 
 ### 5.4 Waste Detection
 - Unattached EBS volumes (with volume IDs and per-volume cost)

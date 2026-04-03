@@ -2430,11 +2430,9 @@ def _gather_account_data(question, credentials):
 
 def _fetch_pricing_context(service_costs):
     """
-    For the top spending services that have RI/Savings Plan alternatives,
-    fetch current on-demand and 1-year RI pricing so the AI can quote
-    real savings numbers instead of generic percentages.
+    Fetch pricing intelligence for top spending services.
+    Modern FinOps approach: Savings Plans > RIs, capacity mix, rightsize-first.
     """
-    # Map CE service names to Pricing API service codes + relevant filters
     PRICEABLE_SERVICES = {
         'Amazon Elastic Compute Cloud - Compute': {
             'serviceCode': 'AmazonEC2',
@@ -2445,7 +2443,8 @@ def _fetch_pricing_context(service_costs):
                 {'Type': 'TERM_MATCH', 'Field': 'capacitystatus', 'Value': 'Used'},
                 {'Type': 'TERM_MATCH', 'Field': 'preInstalledSw', 'Value': 'NA'},
             ],
-            'label': 'EC2 (Linux, shared tenancy) — RI eligible',
+            'supports_spot': True,
+            'supports_savings_plan': True,
         },
         'Amazon Relational Database Service': {
             'serviceCode': 'AmazonRDS',
@@ -2454,7 +2453,8 @@ def _fetch_pricing_context(service_costs):
                 {'Type': 'TERM_MATCH', 'Field': 'databaseEngine', 'Value': 'MySQL'},
                 {'Type': 'TERM_MATCH', 'Field': 'deploymentOption', 'Value': 'Single-AZ'},
             ],
-            'label': 'RDS (MySQL, Single-AZ)',
+            'supports_spot': False,
+            'supports_savings_plan': True,
         },
         'Amazon ElastiCache': {
             'serviceCode': 'AmazonElastiCache',
@@ -2462,52 +2462,64 @@ def _fetch_pricing_context(service_costs):
             'filters': [
                 {'Type': 'TERM_MATCH', 'Field': 'cacheEngine', 'Value': 'Redis'},
             ],
-            'label': 'ElastiCache (Redis)',
+            'supports_spot': False,
+            'supports_savings_plan': False,
         },
     }
 
     pricing_client = boto3.client('pricing', region_name='us-east-1')
     results = {}
-
-    # Only price the top 3 services by spend that we know how to price
     top_services = [s['service'] for s in service_costs[:5]]
 
     for svc_name in top_services:
         if svc_name not in PRICEABLE_SERVICES:
             continue
         cfg = PRICEABLE_SERVICES[svc_name]
-        
-        # Fetch pricing for common instance types
+
         pricing_samples = []
-        for instance_type in cfg['instance_types'][:3]:  # Top 3 common types
+        for instance_type in cfg['instance_types'][:3]:
             try:
                 filters = cfg['filters'] + [
                     {'Type': 'TERM_MATCH', 'Field': 'location', 'Value': 'US East (N. Virginia)'},
                     {'Type': 'TERM_MATCH', 'Field': 'instanceType', 'Value': instance_type},
                 ]
                 response = pricing_client.get_products(
-                    ServiceCode=cfg['serviceCode'],
-                    Filters=filters,
-                    MaxResults=1,
+                    ServiceCode=cfg['serviceCode'], Filters=filters, MaxResults=1,
                 )
 
                 for price_str in response.get('PriceList', []):
                     item = json.loads(price_str)
                     terms = item.get('terms', {})
-                    
                     sample = {'instanceType': instance_type}
 
-                    # On-demand
+                    # On-demand price
                     for _, term in terms.get('OnDemand', {}).items():
                         for _, dim in term.get('priceDimensions', {}).items():
                             usd = float(dim.get('pricePerUnit', {}).get('USD', 0))
                             if usd > 0:
-                                sample['onDemand_per_hr_usd'] = round(usd, 4)
-                                sample['onDemand_per_month_usd'] = round(usd * 730, 2)
+                                sample['onDemand_per_hr'] = round(usd, 4)
+                                sample['onDemand_per_month'] = round(usd * 730, 2)
                                 break
                         break
 
-                    # Reserved (1yr, No Upfront)
+                    # Savings Plan estimate (~30% discount on compute)
+                    od_hr = sample.get('onDemand_per_hr', 0)
+                    if od_hr > 0 and cfg.get('supports_savings_plan'):
+                        sp_discount = 0.30  # Typical 1yr Compute Savings Plan discount
+                        sample['savings_plan_per_hr'] = round(od_hr * (1 - sp_discount), 4)
+                        sample['savings_plan_per_month'] = round(od_hr * (1 - sp_discount) * 730, 2)
+                        sample['savings_plan_monthly_saving'] = round(od_hr * sp_discount * 730, 2)
+                        sample['savings_plan_discount_pct'] = round(sp_discount * 100, 0)
+
+                    # Spot estimate (~60-90% discount, use 70% as conservative)
+                    if od_hr > 0 and cfg.get('supports_spot'):
+                        spot_discount = 0.70
+                        sample['spot_per_hr'] = round(od_hr * (1 - spot_discount), 4)
+                        sample['spot_per_month'] = round(od_hr * (1 - spot_discount) * 730, 2)
+                        sample['spot_monthly_saving'] = round(od_hr * spot_discount * 730, 2)
+                        sample['spot_discount_pct'] = round(spot_discount * 100, 0)
+
+                    # RI price (kept as fallback for rigid workloads only)
                     for _, term in terms.get('Reserved', {}).items():
                         term_attrs = term.get('termAttributes', {})
                         if (term_attrs.get('LeaseContractLength') == '1yr' and
@@ -2515,29 +2527,42 @@ def _fetch_pricing_context(service_costs):
                             for _, dim in term.get('priceDimensions', {}).items():
                                 usd = float(dim.get('pricePerUnit', {}).get('USD', 0))
                                 if usd > 0:
-                                    sample['ri_1yr_no_upfront_per_hr_usd'] = round(usd, 4)
-                                    sample['ri_1yr_no_upfront_per_month_usd'] = round(usd * 730, 2)
+                                    sample['ri_1yr_per_hr'] = round(usd, 4)
+                                    sample['ri_1yr_per_month'] = round(usd * 730, 2)
                                     break
                             break
 
-                    # Calculate savings
-                    od = sample.get('onDemand_per_month_usd')
-                    ri = sample.get('ri_1yr_no_upfront_per_month_usd')
-                    if od and ri and od > 0:
-                        sample['monthly_savings_usd'] = round(od - ri, 2)
-                        sample['savings_pct'] = round((1 - ri / od) * 100, 1)
-                    
-                    if 'onDemand_per_month_usd' in sample:
+                    # Capacity mix recommendation (for EC2 compute)
+                    od_month = sample.get('onDemand_per_month', 0)
+                    if od_month > 0 and cfg.get('supports_spot'):
+                        sp_month = sample.get('savings_plan_per_month', od_month)
+                        spot_month = sample.get('spot_per_month', od_month)
+                        # Recommended mix: 30% Savings Plan (baseline) + 70% Spot (fault-tolerant)
+                        sample['capacity_mix'] = {
+                            'baseline_pct': 30,
+                            'baseline_cost_per_instance': round(sp_month, 2),
+                            'spot_pct': 70,
+                            'spot_cost_per_instance': round(spot_month, 2),
+                            'blended_cost_per_instance': round(sp_month * 0.3 + spot_month * 0.7, 2),
+                            'vs_ondemand_saving_pct': round((1 - (sp_month * 0.3 + spot_month * 0.7) / od_month) * 100, 1),
+                        }
+
+                    if 'onDemand_per_month' in sample:
                         pricing_samples.append(sample)
-                        
+
             except Exception as e:
                 logger.warning(f"Pricing fetch failed for {svc_name} {instance_type}: {e}")
 
         if pricing_samples:
             results[svc_name] = {
-                'label': cfg['label'],
                 'sample_pricing': pricing_samples,
-                'note': 'us-east-1 pricing. 1yr No Upfront RI vs on-demand. Multiply monthly savings by number of instances.',
+                'commitment_strategy': 'Compute Savings Plans (recommended)' if cfg.get('supports_savings_plan') else 'Reserved Instances',
+                'spot_eligible': cfg.get('supports_spot', False),
+                'note': (
+                    'RIGHTSIZE FIRST: Always rightsize via Compute Optimizer before purchasing commitments. '
+                    'Buying Savings Plans on oversized instances locks in waste for 1-3 years. '
+                    'Recommended workflow: Analyze utilization → Rightsize → Then commit.'
+                ),
             }
 
     return results if results else None
@@ -2571,6 +2596,12 @@ IMPORTANT RULES:
 - When amazon_virtual_private_cloud_usage_breakdown is present, use it to show the EXACT cost drivers (e.g. NatGateway-Hours, VpcEndpoint-Hours, ElasticIP:IdleAddress, DataTransfer-Out-Bytes). List each usage type with its cost.
 - When ec2___other_usage_breakdown is present, use it to show the EXACT cost drivers for EC2-Other (e.g. EBS:VolumeUsage.gp2, NatGateway-Hours, DataTransfer-Out-Bytes). List each usage type with its cost.
 - Reserved Instances ONLY apply to "Amazon Elastic Compute Cloud - Compute" and RDS instances, never to EC2-Other or VPC.
+- PRICING STRATEGY (CRITICAL — follow this exact sequence):
+  1. RIGHTSIZE FIRST: If compute_optimizer_ec2 data is present showing OVER_PROVISIONED instances, ALWAYS recommend rightsizing BEFORE any commitment purchase. Say: "Do NOT buy Savings Plans on oversized instances — rightsize first to avoid locking in waste for 1-3 years."
+  2. SAVINGS PLANS over RIs: When recommending commitments, default to Compute Savings Plans (more flexible, adapts to architecture changes). Only mention Reserved Instances as a fallback for rigid, high-commitment scenarios. Never recommend RIs as the primary option.
+  3. CAPACITY MIX: For EC2 compute workloads, recommend a capacity mix: 20-40% Savings Plan (baseline stability) + 60-80% Spot Instances (for fault-tolerant, stateless, batch workloads — up to 70-90% savings). Show the blended cost from capacity_mix data.
+  4. When pricing_context is present, show: On-Demand cost → Savings Plan cost (30% savings) → Spot cost (70% savings) → Blended capacity mix cost. Use the actual numbers from the data.
+  5. For RDS: recommend Savings Plans. Spot is not available for RDS.
 - When unattached_volumes list is present, ALWAYS list each volume by its volumeId, size_gb, type, and monthly_cost_usd. Do NOT just say "6 volumes" — list them individually.
 - When elastic_ips.unattached_list is present, list each by allocationId and publicIp.
 - When vpc_endpoints.endpoints is present, list each by endpointId, type, and serviceName.
