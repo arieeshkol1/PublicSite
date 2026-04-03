@@ -357,7 +357,7 @@
 .ai-fb-correction-input:focus { border-color: #58a6ff !important; outline: none; }
 
 .lab-input-area {
-    position: sticky; bottom: 0; z-index: 10;
+    flex-shrink: 0;
     padding: 12px 20px; border-top: 1px solid #30363d; background: #161b22;
 }
 .lab-input-row { display: flex; align-items: center; gap: 8px; }
