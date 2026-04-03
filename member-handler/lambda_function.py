@@ -2062,6 +2062,7 @@ def _gather_account_data(question, credentials):
                         'state': inst['State']['Name'],
                         'name': name_tag,
                         'az': inst.get('Placement', {}).get('AvailabilityZone', ''),
+                        'tags_raw': inst.get('Tags', []),
                     })
             data['ec2_instances'] = instance_list
             actions.append('ec2:DescribeInstances')
@@ -2285,28 +2286,63 @@ def _gather_account_data(question, credentials):
                         Dimensions=[{'Name': 'InstanceId', 'Value': inst['id']}],
                         StartTime=start_30d_dt, EndTime=now, Period=2592000, Statistics=['Average', 'Maximum'],
                     )
+                    # Try CWAgent memory metrics (requires CloudWatch agent installed)
+                    mem_resp = cw.get_metric_statistics(
+                        Namespace='CWAgent', MetricName='mem_used_percent',
+                        Dimensions=[{'Name': 'InstanceId', 'Value': inst['id']}],
+                        StartTime=start_30d_dt, EndTime=now, Period=2592000, Statistics=['Average', 'Maximum'],
+                    )
                     avg_cpu = next((dp['Average'] for dp in cpu_resp.get('Datapoints', [])), 0)
                     max_cpu = next((dp['Maximum'] for dp in cpu_resp.get('Datapoints', [])), 0)
                     avg_net_in = next((dp['Average'] for dp in net_in.get('Datapoints', [])), 0)
                     avg_net_out = next((dp['Average'] for dp in net_out.get('Datapoints', [])), 0)
+                    avg_mem = next((dp['Average'] for dp in mem_resp.get('Datapoints', [])), None)
+                    max_mem = next((dp['Maximum'] for dp in mem_resp.get('Datapoints', [])), None)
+
+                    # Detect environment from tags for scheduling recommendation
+                    env_tag = ''
+                    for tag in inst.get('tags_raw', []):
+                        if tag.get('Key', '').lower() in ('environment', 'env', 'stage'):
+                            env_tag = tag.get('Value', '').lower()
+
                     note = ''
+                    is_non_prod = env_tag in ('dev', 'development', 'test', 'testing', 'staging', 'qa', 'sandbox')
                     if avg_cpu < 10 and max_cpu < 30:
-                        note = 'OVER-PROVISIONED — avg CPU very low, consider downsizing'
+                        if is_non_prod:
+                            note = 'NON-PROD + LOW CPU — consider Instance Scheduler (stop nights/weekends for ~65% savings)'
+                        else:
+                            note = 'OVER-PROVISIONED — avg CPU very low, consider downsizing'
                     elif avg_cpu < 20:
                         note = 'Potentially over-provisioned — monitor before committing'
-                    ec2_metrics.append({
+                    # Check if Graviton migration candidate (x86 instance families)
+                    itype = inst.get('type', '')
+                    is_x86 = any(itype.startswith(f) for f in ['t3.', 'm5.', 'c5.', 'r5.', 'm6i.', 'c6i.', 'r6i.'])
+                    graviton_note = 'Graviton migration candidate (20-40% better price-performance)' if is_x86 else ''
+
+                    metric = {
                         'instanceId': inst['id'], 'type': inst.get('type', ''),
                         'name': inst.get('name', ''),
                         'avg_cpu_pct': round(avg_cpu, 1), 'max_cpu_pct': round(max_cpu, 1),
                         'avg_network_in_mb': round(avg_net_in / (1024*1024), 2),
                         'avg_network_out_mb': round(avg_net_out / (1024*1024), 2),
                         'rightsizing_note': note,
-                    })
+                    }
+                    if avg_mem is not None:
+                        metric['avg_memory_pct'] = round(avg_mem, 1)
+                        metric['max_memory_pct'] = round(max_mem, 1) if max_mem else None
+                        metric['memory_agent_installed'] = True
+                    else:
+                        metric['memory_agent_installed'] = False
+                    if env_tag:
+                        metric['environment_tag'] = env_tag
+                    if graviton_note:
+                        metric['graviton_note'] = graviton_note
+                    ec2_metrics.append(metric)
                 except Exception:
                     pass
             if ec2_metrics:
                 data['ec2_cpu_metrics'] = ec2_metrics
-                actions.append('cloudwatch:GetMetricStatistics (EC2 CPU, network)')
+                actions.append('cloudwatch:GetMetricStatistics (EC2 CPU, memory, network)')
 
         # RDS CPU, connections, memory, read/write IOPS
         if data.get('rds_instances'):
@@ -2578,6 +2614,61 @@ def _gather_account_data(question, credentials):
                 data['ecs_clusters'] = []
             data['ecs_cluster_count'] = len(ecs_arns)
             actions.append('ecs:ListClusters + ecs:DescribeClusters')
+
+            # ECS service-level CloudWatch metrics for rightsizing
+            if data.get('ecs_clusters'):
+                try:
+                    ecs_svc_metrics = []
+                    for cluster in data['ecs_clusters'][:5]:
+                        cname = cluster.get('name', '')
+                        if not cname or cluster.get('activeServices', 0) == 0:
+                            continue
+                        try:
+                            svcs = ecs.list_services(cluster=cname, maxResults=10)
+                            svc_arns = svcs.get('serviceArns', [])
+                            if svc_arns:
+                                svc_details = ecs.describe_services(cluster=cname, services=svc_arns)
+                                for svc in svc_details.get('services', []):
+                                    svc_name = svc.get('serviceName', '')
+                                    try:
+                                        cpu_resp = cw.get_metric_statistics(
+                                            Namespace='AWS/ECS', MetricName='CPUUtilization',
+                                            Dimensions=[{'Name': 'ClusterName', 'Value': cname},
+                                                        {'Name': 'ServiceName', 'Value': svc_name}],
+                                            StartTime=start_30d_dt, EndTime=now, Period=2592000,
+                                            Statistics=['Average', 'Maximum'],
+                                        )
+                                        mem_resp = cw.get_metric_statistics(
+                                            Namespace='AWS/ECS', MetricName='MemoryUtilization',
+                                            Dimensions=[{'Name': 'ClusterName', 'Value': cname},
+                                                        {'Name': 'ServiceName', 'Value': svc_name}],
+                                            StartTime=start_30d_dt, EndTime=now, Period=2592000,
+                                            Statistics=['Average', 'Maximum'],
+                                        )
+                                        avg_cpu = next((dp['Average'] for dp in cpu_resp.get('Datapoints', [])), 0)
+                                        max_cpu = next((dp['Maximum'] for dp in cpu_resp.get('Datapoints', [])), 0)
+                                        avg_mem = next((dp['Average'] for dp in mem_resp.get('Datapoints', [])), 0)
+                                        max_mem = next((dp['Maximum'] for dp in mem_resp.get('Datapoints', [])), 0)
+                                        note = ''
+                                        if avg_cpu < 10 and avg_mem < 20:
+                                            note = 'OVER-PROVISIONED — low CPU and memory, reduce task size or count'
+                                        ecs_svc_metrics.append({
+                                            'cluster': cname, 'service': svc_name,
+                                            'desiredCount': svc.get('desiredCount', 0),
+                                            'runningCount': svc.get('runningCount', 0),
+                                            'avg_cpu_pct': round(avg_cpu, 1), 'max_cpu_pct': round(max_cpu, 1),
+                                            'avg_memory_pct': round(avg_mem, 1), 'max_memory_pct': round(max_mem, 1),
+                                            'rightsizing_note': note,
+                                        })
+                                    except Exception:
+                                        pass
+                        except Exception:
+                            pass
+                    if ecs_svc_metrics:
+                        data['ecs_service_metrics'] = ecs_svc_metrics
+                        actions.append('cloudwatch:GetMetricStatistics (ECS CPU, memory per service)')
+                except Exception as e:
+                    logger.warning(f"ECS service metrics error: {e}")
         except Exception as e:
             data['ecs_error'] = str(e)
 
@@ -3049,6 +3140,12 @@ IMPORTANT RULES:
 - When ebs_iops_metrics is present, show volumes with provisioned IOPS (io1/io2) that have low actual IOPS usage — recommend switching to gp3 which includes 3000 IOPS free. For gp3 volumes, show the actual read/write IOPS from the metrics to help the user understand if the volume size can be reduced. NEVER say "you would need to check the actual usage metrics" — the metrics ARE in the data.
 - For EBS gp3 cost questions: gp3 costs $0.08/GB/month. Show the actual volume sizes from ebs_summary. If ebs_iops_metrics shows low IOPS, the volume may be oversized for its workload. Recommend reducing volume size if IOPS are consistently low. Do NOT recommend switching FROM gp3 to gp2 — gp3 is already cheaper than gp2.
 - RIGHTSIZING SUMMARY RULE: For every paid service with metrics data, always present a rightsizing verdict: "RIGHT-SIZED" (usage matches capacity), "OVER-PROVISIONED" (low avg + low peak = downsize), or "UNDER-PROVISIONED" (high peak = upsize). Base this on the avg and max (peak) values from the 30-day CloudWatch data.
+- COMPUTE OPTIMIZER PRIORITY: When compute_optimizer_ec2 data is present, it is the MOST AUTHORITATIVE source for rightsizing — it uses ML on 14+ days of data. Prefer Compute Optimizer recommendations over static CPU threshold rules. If CO says OPTIMIZED but CPU is low, trust CO.
+- GRAVITON RECOMMENDATION: When ec2_cpu_metrics contains graviton_note for x86 instances (t3, m5, c5, r5, m6i, c6i, r6i families), recommend migrating to Graviton equivalents (t4g, m7g, c7g, r7g) for 20-40% better price-performance. This applies AFTER rightsizing.
+- MEMORY METRICS: When ec2_cpu_metrics contains avg_memory_pct/max_memory_pct (CloudWatch agent installed), use BOTH CPU and memory for rightsizing. An instance with low CPU but high memory (>70%) is NOT over-provisioned — it is memory-bound. Only recommend downsizing when BOTH CPU and memory are low. When memory_agent_installed=false, warn: "Memory metrics unavailable — install CloudWatch agent for accurate rightsizing. CPU-only analysis may miss memory-bound workloads."
+- SCHEDULING RECOMMENDATION: When ec2_cpu_metrics contains environment_tag=dev/test/staging/qa/sandbox AND the instance has low CPU, recommend AWS Instance Scheduler to stop instances during nights and weekends (~65% savings) INSTEAD of just downsizing. Non-production instances running 24/7 are the most common waste pattern.
+- ECS/EKS CONTAINER RIGHTSIZING: When ecs_service_metrics is present, show each service's avg/max CPU and memory utilization. Services with avg CPU < 10% AND avg memory < 20% are over-provisioned — recommend reducing task CPU/memory limits or task count. Kubernetes/container waste from over-provisioned resource requests is one of the most common and least monitored sources of cloud waste.
+- S3 STORAGE OPTIMIZATION: When s3_optimization_summary is present, ALWAYS recommend: (1) S3 Intelligent-Tiering for buckets without it (automatic cost optimization), (2) Lifecycle policies to move data to S3-IA after 30 days and Glacier after 90 days, (3) S3 Storage Lens for organization-wide visibility. S3 storage class optimization is a massive savings opportunity that is often overlooked.
 - When eks_clusters or ecs_clusters is present, show cluster count, status, and running tasks. Flag clusters with 0 running tasks as candidates for deletion. For ECS, flag clusters with low task counts relative to registered instances as over-provisioned.
 - When s3_optimization_summary is present, list buckets without lifecycle policies and without Intelligent-Tiering. Recommend enabling S3 Intelligent-Tiering for buckets without it, and adding lifecycle policies to move infrequently accessed data to S3-IA or Glacier.
 - When compute_optimizer_ec2 is present, show the rightsizing recommendations: current instance type, recommended type, finding (OVER_PROVISIONED/UNDER_PROVISIONED/OPTIMIZED), and estimated monthly savings. This is the most authoritative source for rightsizing — prefer it over manual CPU analysis.

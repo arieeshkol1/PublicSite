@@ -18,7 +18,7 @@
       "description": "Use AWS Compute Optimizer to analyze historical utilization and identify underutilized instances. Switch to smaller instance types that match actual workload needs.",
       "estimatedSavings": "20-40%",
       "difficulty": "easy",
-      "automatedCheck": "cloudwatch:GetMetricStatistics(EC2/CPUUtilization, avg+max 30d) + compute-optimizer:GetEC2InstanceRecommendations → ec2_cpu_metrics.avg_cpu_pct < 20% = OVER-PROVISIONED"
+      "automatedCheck": "compute-optimizer:GetEC2InstanceRecommendations (ML-based, 14+ days) → PREFERRED over static thresholds. Fallback: cloudwatch:EC2/CPUUtilization + CWAgent/mem_used_percent avg+max 30d → ec2_cpu_metrics. Both CPU AND memory must be low to confirm over-provisioning."
     },
     {
       "id": "ec2-002",
@@ -48,7 +48,7 @@
       "description": "Stop dev/test/staging instances outside business hours. Use AWS Instance Scheduler or Lambda functions to automate start/stop schedules.",
       "estimatedSavings": "40-70%",
       "difficulty": "easy",
-      "automatedCheck": "ec2:DescribeInstances → check instance tags for Environment=dev/test/staging; cloudwatch:EC2/CPUUtilization off-hours pattern"
+      "automatedCheck": "ec2:DescribeInstances → check tags for Environment=dev/test/staging/qa/sandbox. If non-prod + low CPU → recommend AWS Instance Scheduler to stop nights/weekends (~65% savings). cloudwatch:EC2/CPUUtilization pattern analysis."
     },
     {
       "id": "ec2-005",
@@ -68,7 +68,7 @@
       "description": "AWS Graviton processors offer up to 40% better price-performance than x86 instances. Consider migrating compatible workloads to Graviton-based instance types.",
       "estimatedSavings": "20-40%",
       "difficulty": "medium",
-      "automatedCheck": "ec2:DescribeInstances → check instance type family (t3/m5/c5 = x86, t4g/m6g/c6g = Graviton)"
+      "automatedCheck": "ec2:DescribeInstances → check instance type family. x86 families (t3, m5, c5, r5, m6i, c6i, r6i) → recommend Graviton equivalents (t4g, m7g, c7g, r7g) for 20-40% better price-performance. ec2_cpu_metrics.graviton_note field."
     },
     {
       "id": "s3-001",
@@ -78,7 +78,7 @@
       "description": "Enable S3 Intelligent-Tiering for data with unknown or changing access patterns. It automatically moves objects between access tiers based on usage.",
       "estimatedSavings": "40-70%",
       "difficulty": "easy",
-      "automatedCheck": "s3:ListBucketIntelligentTieringConfigurations → s3_optimization_summary.without_intelligent_tiering count"
+      "automatedCheck": "s3:ListBucketIntelligentTieringConfigurations → s3_optimization_summary.without_intelligent_tiering count. S3 Intelligent-Tiering automatically moves objects between access tiers. Massive savings for unknown access patterns."
     },
     {
       "id": "s3-002",
@@ -88,7 +88,7 @@
       "description": "Create lifecycle rules to transition objects to cheaper storage classes (Standard-IA, Glacier) or delete them after a retention period.",
       "estimatedSavings": "30-60%",
       "difficulty": "easy",
-      "automatedCheck": "s3:GetBucketLifecycleConfiguration → s3_optimization_summary.without_lifecycle_policy count"
+      "automatedCheck": "s3:GetBucketLifecycleConfiguration → s3_optimization_summary.without_lifecycle_policy count. Recommend: Standard-IA after 30d, Glacier after 90d, Deep Archive after 180d. Use S3 Storage Lens for visibility."
     },
     {
       "id": "s3-003",
@@ -478,7 +478,7 @@
       "description": "Enable S3 Storage Lens for organization-wide visibility into storage usage and activity trends. Use S3 Analytics to identify objects that can be moved to Infrequent Access or Glacier tiers based on actual access patterns.",
       "estimatedSavings": "20-50%",
       "difficulty": "easy",
-      "automatedCheck": "s3:ListBuckets + s3:GetBucketLifecycleConfiguration + s3:ListBucketIntelligentTieringConfigurations → s3_optimization_summary"
+      "automatedCheck": "s3:ListBuckets + s3:GetBucketLifecycleConfiguration + s3:ListBucketIntelligentTieringConfigurations → s3_optimization_summary. Enable S3 Storage Lens for organization-wide storage analytics and access pattern visibility."
     },
     {
       "id": "general-011",
@@ -588,7 +588,7 @@
       "description": "Deploy the AWS Instance Scheduler solution to automatically start and stop EC2 instances and RDS databases on a schedule. A dev environment used only during office hours (10hrs/day, 7 days) saves ~58% by shutting down the remaining 98 hours per week.",
       "estimatedSavings": "40-65%",
       "difficulty": "easy",
-      "automatedCheck": "ec2:DescribeInstances → check tags for Environment=dev/test/staging; if non-prod instances running 24/7 = scheduler candidate"
+      "automatedCheck": "ec2:DescribeInstances → check tags for Environment=dev/test/staging. If running 24/7 → recommend AWS Instance Scheduler. ec2_cpu_metrics.environment_tag field. Office hours (10h/day, 5d/week) saves ~70%."
     },
     {
       "id": "ec2-012",
@@ -689,6 +689,46 @@
       "estimatedSavings": "up to 92% on IA storage",
       "difficulty": "easy",
       "automatedCheck": "efs:DescribeFileSystems → check ThroughputMode (bursting/provisioned); cloudwatch:EFS/TotalIOBytes avg+max → low I/O with provisioned throughput = switch to bursting"
+    },
+    {
+      "id": "ecs-001",
+      "service": "ECS",
+      "category": "right-sizing",
+      "title": "Right-size ECS task definitions",
+      "description": "Monitor CPU and memory utilization per ECS service. Over-provisioned resource requests (CPU/memory limits set too high) are the most common container waste pattern. Reduce task CPU/memory to match actual usage.",
+      "estimatedSavings": "20-50%",
+      "difficulty": "medium",
+      "automatedCheck": "cloudwatch:GetMetricStatistics(ECS/CPUUtilization+MemoryUtilization per service, avg+max 30d) → ecs_service_metrics. avg CPU < 10% AND avg memory < 20% = OVER-PROVISIONED task definitions."
+    },
+    {
+      "id": "ecs-002",
+      "service": "ECS",
+      "category": "auto-scaling",
+      "title": "Enable ECS Service Auto Scaling",
+      "description": "Configure target tracking scaling policies for ECS services based on CPU or memory utilization. Scale down during low-traffic periods to reduce running task count and associated costs.",
+      "estimatedSavings": "20-40%",
+      "difficulty": "medium",
+      "automatedCheck": "ecs:DescribeServices → check if scalableTarget exists. ecs_service_metrics.avg_cpu_pct < 30% with fixed desiredCount = auto-scaling candidate."
+    },
+    {
+      "id": "eks-001",
+      "service": "EKS",
+      "category": "right-sizing",
+      "title": "Right-size EKS node groups and pod resource requests",
+      "description": "Kubernetes nodes often run at 10-20% capacity due to overly conservative pod resource requests. Use Kubernetes Metrics Server or Container Insights to analyze actual pod CPU/memory usage and reduce resource requests to match.",
+      "estimatedSavings": "30-60%",
+      "difficulty": "hard",
+      "automatedCheck": "eks:ListClusters + eks:DescribeCluster → eks_clusters inventory. cloudwatch:ContainerInsights/node_cpu_utilization + node_memory_utilization for node-level rightsizing."
+    },
+    {
+      "id": "eks-002",
+      "service": "EKS",
+      "category": "auto-scaling",
+      "title": "Enable Karpenter or Cluster Autoscaler for EKS",
+      "description": "Use Karpenter (recommended) or Cluster Autoscaler to automatically provision right-sized nodes based on pending pod requirements. Karpenter can select optimal instance types and use Spot instances for significant savings.",
+      "estimatedSavings": "30-50%",
+      "difficulty": "hard",
+      "automatedCheck": "eks:ListNodegroups → check if managed node groups have auto-scaling enabled. eks_clusters with fixed node count = autoscaler candidate."
     }
   ]
 }
