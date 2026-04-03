@@ -2209,10 +2209,17 @@ def _gather_account_data(question, credentials):
         except Exception as e:
             data['lambda_error'] = str(e)
 
-    # CloudWatch metrics — fetch when question asks about usage, invocations, utilization, transactions
-    if any(kw in question_lower for kw in ['lambda', 'invocation', 'transaction', 'execution', 'utilization',
-                                            'cpu', 'usage', 'metric', 'cloudwatch', 'how many', 'how much',
-                                            'כמה', 'שימוש']):
+    # CloudWatch metrics — fetch for rightsizing when EC2/RDS are top costs,
+    # or when question asks about usage, savings, efficiency, rightsizing
+    top_svc_names_cw = [s['service'] for s in data.get('cost_by_service', [])[:6]]
+    cw_trigger = any(kw in question_lower for kw in [
+        'lambda', 'invocation', 'transaction', 'execution', 'utilization',
+        'cpu', 'usage', 'metric', 'cloudwatch', 'how many', 'how much',
+        'rightsize', 'rightsizing', 'efficient', 'optimize', 'saving', 'save',
+        'כמה', 'שימוש',
+    ]) or 'Amazon Elastic Compute Cloud - Compute' in top_svc_names_cw \
+       or 'Amazon Relational Database Service' in top_svc_names_cw
+    if cw_trigger:
         try:
             cw = _make_client('cloudwatch')
             now = datetime.now(timezone.utc)
@@ -2299,6 +2306,74 @@ def _gather_account_data(question, credentials):
                 if ec2_metrics:
                     data['ec2_cpu_metrics'] = ec2_metrics
                     actions.append('cloudwatch:GetMetricStatistics (EC2 CPU utilization)')
+
+            # RDS CPU, connections, and memory metrics for rightsizing
+            if data.get('rds_instances'):
+                rds_metrics = []
+                for db in data['rds_instances'][:10]:
+                    db_id = db.get('id', '')
+                    if not db_id or db.get('status') != 'available':
+                        continue
+                    try:
+                        cpu_resp = cw.get_metric_statistics(
+                            Namespace='AWS/RDS',
+                            MetricName='CPUUtilization',
+                            Dimensions=[{'Name': 'DBInstanceIdentifier', 'Value': db_id}],
+                            StartTime=start_30d_dt,
+                            EndTime=now,
+                            Period=2592000,
+                            Statistics=['Average', 'Maximum'],
+                        )
+                        conn_resp = cw.get_metric_statistics(
+                            Namespace='AWS/RDS',
+                            MetricName='DatabaseConnections',
+                            Dimensions=[{'Name': 'DBInstanceIdentifier', 'Value': db_id}],
+                            StartTime=start_30d_dt,
+                            EndTime=now,
+                            Period=2592000,
+                            Statistics=['Average', 'Maximum'],
+                        )
+                        mem_resp = cw.get_metric_statistics(
+                            Namespace='AWS/RDS',
+                            MetricName='FreeableMemory',
+                            Dimensions=[{'Name': 'DBInstanceIdentifier', 'Value': db_id}],
+                            StartTime=start_30d_dt,
+                            EndTime=now,
+                            Period=2592000,
+                            Statistics=['Average', 'Minimum'],
+                        )
+                        avg_cpu = next((dp['Average'] for dp in cpu_resp.get('Datapoints', [])), 0)
+                        max_cpu = next((dp['Maximum'] for dp in cpu_resp.get('Datapoints', [])), 0)
+                        avg_conn = next((dp['Average'] for dp in conn_resp.get('Datapoints', [])), 0)
+                        max_conn = next((dp['Maximum'] for dp in conn_resp.get('Datapoints', [])), 0)
+                        avg_mem_bytes = next((dp['Average'] for dp in mem_resp.get('Datapoints', [])), 0)
+                        min_mem_bytes = next((dp['Minimum'] for dp in mem_resp.get('Datapoints', [])), 0)
+
+                        rightsizing_note = ''
+                        if avg_cpu < 10 and max_cpu < 30:
+                            rightsizing_note = 'LOW CPU — consider downsizing instance class'
+                        elif avg_cpu > 80:
+                            rightsizing_note = 'HIGH CPU — consider upsizing or read replicas'
+
+                        rds_metrics.append({
+                            'dbInstanceId': db_id,
+                            'instanceClass': db.get('class', ''),
+                            'engine': db.get('engine', ''),
+                            'multiAz': db.get('multiAz', False),
+                            'storage_gb': db.get('storage_gb', 0),
+                            'avg_cpu_pct': round(avg_cpu, 1),
+                            'max_cpu_pct': round(max_cpu, 1),
+                            'avg_connections': round(avg_conn, 1),
+                            'max_connections': int(max_conn),
+                            'avg_freeable_memory_gb': round(avg_mem_bytes / (1024**3), 2) if avg_mem_bytes else 0,
+                            'min_freeable_memory_gb': round(min_mem_bytes / (1024**3), 2) if min_mem_bytes else 0,
+                            'rightsizing_note': rightsizing_note,
+                        })
+                    except Exception:
+                        pass
+                if rds_metrics:
+                    data['rds_cpu_metrics'] = rds_metrics
+                    actions.append('cloudwatch:GetMetricStatistics (RDS CPU, connections, memory)')
         except Exception as e:
             data['cloudwatch_error'] = str(e)
             logger.warning(f"CloudWatch metrics error: {e}")
@@ -2832,6 +2907,8 @@ IMPORTANT RULES:
 - CRITICAL: If a Lambda function's max_duration_ms equals its timeout (timeout × 1000), flag it as "hitting timeout limit — investigate for performance issues or increase timeout."
 - CRITICAL: If a Lambda function has errors_30d > 0 AND errors_30d equals invocations_30d (100% error rate), flag it as "100% error rate — this function is broken and needs immediate attention."
 - When ec2_cpu_metrics is present, use it to show CPU utilization. Instances with avg CPU < 10% are rightsizing candidates. Quote the actual avg/max CPU percentages.
+- When rds_cpu_metrics is present, use it for RDS rightsizing analysis. Show each instance's avg/max CPU, avg/max connections, and freeable memory. Instances with avg CPU < 10% and max CPU < 30% are OVER-PROVISIONED — recommend downsizing to a smaller instance class. Instances with avg CPU > 80% may need upsizing or read replicas. Quote the actual metrics. If an RDS instance has low CPU AND high freeable memory, it is clearly oversized — recommend a specific smaller instance class (e.g. db.r5.large → db.r5.medium, db.t3.large → db.t3.medium).
+- CRITICAL RIGHTSIZING RULE: When both rds_cpu_metrics AND pricing_context are present, combine them: first show the utilization data proving the instance is over/under-provisioned, then show the pricing for the recommended right-sized instance class. This is the "Analyze → Rightsize → Commit" workflow in action.
 - When eks_clusters or ecs_clusters is present, show cluster count, status, and running tasks. Flag clusters with 0 running tasks as candidates for deletion. For ECS, flag clusters with low task counts relative to registered instances as over-provisioned.
 - When s3_optimization_summary is present, list buckets without lifecycle policies and without Intelligent-Tiering. Recommend enabling S3 Intelligent-Tiering for buckets without it, and adding lifecycle policies to move infrequently accessed data to S3-IA or Glacier.
 - When compute_optimizer_ec2 is present, show the rightsizing recommendations: current instance type, recommended type, finding (OVER_PROVISIONED/UNDER_PROVISIONED/OPTIMIZED), and estimated monthly savings. This is the most authoritative source for rightsizing — prefer it over manual CPU analysis.
