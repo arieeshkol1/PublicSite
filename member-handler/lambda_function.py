@@ -79,6 +79,7 @@ def lambda_handler(event, context):
         'GET /members/accounts': handle_get_accounts,
         'POST /members/accounts': handle_add_account,
         'PUT /members/accounts': handle_edit_account,
+        'POST /members/accounts/reorder': handle_reorder_accounts,
         'DELETE /members/accounts': handle_delete_account,
         'POST /members/accounts/template': handle_generate_template,
         'POST /members/accounts/test': handle_test_connection,
@@ -566,8 +567,8 @@ def handle_get_accounts(event):
         logger.error(f"DynamoDB query error: {e}")
         return create_error_response(500, 'ServerError', 'An unexpected error occurred. Please try again.')
 
-    # Sort by addedAt
-    accounts.sort(key=lambda a: a.get('addedAt', ''))
+    # Sort by sortOrder (priority), then addedAt
+    accounts.sort(key=lambda a: (a.get('sortOrder', 999), a.get('addedAt', '')))
 
     # Convert Decimal values for JSON serialization
     accounts = _decimal_to_native(accounts)
@@ -712,6 +713,34 @@ def handle_edit_account(event):
 
     logger.info(f"Account edited for {member_email}: {old_account_id} -> {new_account_id}")
     return create_response(200, {'message': 'Account updated', 'account': new_record})
+
+
+def handle_reorder_accounts(event):
+    """Reorder accounts by setting sortOrder on each."""
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+    member_email = auth['sub']
+    try:
+        body = json.loads(event.get('body', '{}'))
+    except (json.JSONDecodeError, TypeError):
+        return create_error_response(400, 'InvalidRequest', 'Invalid request body')
+
+    order = body.get('order', [])  # list of accountId strings in desired order
+    if not order or not isinstance(order, list):
+        return create_error_response(400, 'InvalidRequest', '"order" must be a non-empty array of accountIds')
+
+    accounts_table = dynamodb.Table(ACCOUNTS_TABLE_NAME)
+    for idx, acct_id in enumerate(order):
+        try:
+            accounts_table.update_item(
+                Key={'memberEmail': member_email, 'accountId': str(acct_id)},
+                UpdateExpression='SET sortOrder = :s',
+                ExpressionAttributeValues={':s': idx},
+            )
+        except ClientError:
+            pass
+    return create_response(200, {'message': 'Accounts reordered'})
 
 
 def handle_delete_account(event):
@@ -1530,16 +1559,28 @@ def handle_ai_query(event):
 
     question = (body.get('question') or '').strip()
     account_id = (body.get('accountId') or '').strip()
+    account_ids = body.get('accountIds', [])
 
     if not question:
         return create_error_response(400, 'InvalidRequest', 'Question is required')
-    if not re.fullmatch(r'\d{12}', account_id):
-        return create_error_response(400, 'InvalidAccountId', 'Account ID must be exactly 12 digits')
+
+    # Support multi-account: accountIds array takes priority over single accountId
+    if account_ids and isinstance(account_ids, list):
+        account_ids = [a.strip() for a in account_ids if re.fullmatch(r'\d{12}', a.strip())]
+    elif account_id and re.fullmatch(r'\d{12}', account_id):
+        account_ids = [account_id]
+    else:
+        return create_error_response(400, 'InvalidAccountId', 'At least one valid 12-digit Account ID is required')
 
     # Generate unique interactionId for feedback tracking
     interaction_id = datetime.now(timezone.utc).isoformat() + '-' + secrets.token_hex(4)
 
-    # Use Bedrock Agent if configured, otherwise fall back to direct API
+    # Multi-account query: gather data from all accounts, then analyze together
+    if len(account_ids) > 1:
+        return _invoke_multi_account(question, account_ids, member_email, interaction_id)
+
+    # Single account query
+    account_id = account_ids[0]
     if BEDROCK_AGENT_ID and BEDROCK_AGENT_ALIAS_ID:
         return _invoke_bedrock_agent(question, account_id, member_email, interaction_id)
     else:
@@ -1634,6 +1675,133 @@ def _invoke_direct_model(question, account_id, member_email, interaction_id):
         'chartData': _build_chart_data(account_data),
         'topServices': top_services,
     })
+
+
+def _invoke_multi_account(question, account_ids, member_email, interaction_id):
+    """Gather data from multiple accounts, merge, and analyze together."""
+    tips_context = _search_tips(question)
+    external_id = hashlib.sha256(member_email.encode('utf-8')).hexdigest()
+    sts_client = boto3.client('sts')
+
+    all_account_data = {}
+    all_actions = []
+    merged_costs = {}  # service -> total cost across all accounts
+
+    for acct_id in account_ids[:5]:  # limit to 5 accounts
+        role_arn = f'arn:aws:iam::{acct_id}:role/SlashMyBill-{acct_id}'
+        try:
+            assume_response = sts_client.assume_role(
+                RoleArn=role_arn, RoleSessionName='SlashMyBillAI', ExternalId=external_id,
+            )
+            credentials = assume_response['Credentials']
+            acct_data, acct_actions = _gather_account_data(question, credentials)
+            all_account_data[acct_id] = acct_data
+            all_actions.extend([f'[{acct_id}] {a}' for a in acct_actions])
+
+            # Merge costs for aggregate view
+            for svc in acct_data.get('cost_by_service', []):
+                key = svc['service']
+                merged_costs[key] = merged_costs.get(key, 0) + svc['cost_usd']
+        except Exception as e:
+            logger.warning(f"Failed to gather data for account {acct_id}: {e}")
+            all_account_data[acct_id] = {'error': str(e)}
+
+    # Build aggregate data for the prompt
+    aggregate = {
+        'total_accounts': len(account_ids),
+        'accounts_analyzed': len([a for a in all_account_data.values() if 'error' not in a]),
+        'aggregate_cost_by_service': sorted(
+            [{'service': s, 'cost_usd': round(c, 4)} for s, c in merged_costs.items()],
+            key=lambda x: x['cost_usd'], reverse=True
+        ),
+        'aggregate_total_spend': round(sum(merged_costs.values()), 2),
+        'per_account_data': {},
+    }
+    for acct_id, acct_data in all_account_data.items():
+        if 'error' not in acct_data:
+            acct_total = sum(s['cost_usd'] for s in acct_data.get('cost_by_service', []))
+            aggregate['per_account_data'][acct_id] = {
+                'total_spend': round(acct_total, 2),
+                'top_services': acct_data.get('cost_by_service', [])[:5],
+                'cost_efficiency': acct_data.get('cost_efficiency'),
+            }
+
+    # Ask Bedrock with multi-account context
+    answer = _ask_bedrock_multi_account(question, tips_context, aggregate, all_account_data, account_ids)
+    _maybe_save_tip(question, answer, tips_context)
+
+    # Build chart data from aggregate
+    agg_chart_data = _build_chart_data({
+        'cost_by_service': aggregate['aggregate_cost_by_service'],
+    })
+
+    top_services = [{'service': s['service'], 'cost': round(s['cost_usd'], 2)}
+                    for s in aggregate['aggregate_cost_by_service'][:10]
+                    if s['cost_usd'] > 0.5 and s['service'] != 'Tax']
+
+    return create_response(200, {
+        'answer': answer,
+        'interactionId': interaction_id,
+        'commands': all_actions,
+        'results': [],
+        'tipFound': bool(tips_context),
+        'agentUsed': False,
+        'chartData': agg_chart_data,
+        'topServices': top_services,
+        'multiAccount': True,
+        'accountIds': account_ids,
+    })
+
+
+def _ask_bedrock_multi_account(question, tips_context, aggregate, all_account_data, account_ids):
+    """Call Bedrock to analyze multi-account data."""
+    bedrock_client = boto3.client('bedrock-runtime', region_name='us-east-1')
+
+    tips_text = ""
+    if tips_context:
+        tips_text = "\n\nRelevant optimization tips from our knowledge base:\n"
+        for tip in tips_context[:5]:
+            label = "[Validated] " if tip.get('confidenceTag') == 'high-confidence' else ""
+            tips_text += f"- {label}{tip.get('title', '')}: {tip.get('description', '')} (Savings: {tip.get('estimatedSavings', 'N/A')})\n"
+
+    data_text = json.dumps(aggregate, indent=2, default=str)
+    if len(data_text) > 6000:
+        data_text = data_text[:6000] + '\n... (truncated)'
+
+    prompt = f"""You are SlashMyBill AI, an AWS FinOps assistant analyzing MULTIPLE AWS accounts.
+
+MULTI-ACCOUNT ANALYSIS RULES:
+1. Start with the AGGREGATE view: total spend across all {len(account_ids)} accounts, top services by combined cost.
+2. Then break down PER ACCOUNT: show each account's total spend and top services.
+3. Identify cross-account patterns: which services are common across accounts, which accounts are the biggest spenders.
+4. Savings recommendations should be ranked by total dollar impact across all accounts.
+5. If one account dominates the spend, highlight it.
+6. Tax is NEVER actionable — exclude from analysis.
+7. Services < $0.50 across all accounts = Minor costs.
+
+User question: {question}
+{tips_text}
+
+Multi-account data ({len(account_ids)} accounts):
+{data_text}
+
+Provide: aggregate analysis first, then per-account breakdown, then cross-account recommendations."""
+
+    try:
+        response = bedrock_client.invoke_model(
+            modelId=BEDROCK_MODEL_ID,
+            contentType='application/json',
+            accept='application/json',
+            body=json.dumps({
+                'messages': [{'role': 'user', 'content': [{'text': prompt}]}],
+                'inferenceConfig': {'maxTokens': 3000, 'temperature': 0.3},
+            }),
+        )
+        response_body = json.loads(response['body'].read())
+        return response_body.get('output', {}).get('message', {}).get('content', [{}])[0].get('text', 'No response from AI.')
+    except Exception as e:
+        logger.error(f"Bedrock multi-account call failed: {e}")
+        return f'AI analysis error: {str(e)}'
 
 
 def _build_chart_data(account_data):

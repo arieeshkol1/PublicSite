@@ -429,6 +429,8 @@ function renderAccounts(accounts) {
             '<td>' + fmtDate(a.addedAt) + '</td>' +
             '<td>' + fmtDate(a.lastTestedAt) + '</td>' +
             '<td class="actions-cell">' +
+                (idx > 0 ? '<button class="btn-icon" data-a="up" data-id="' + ea(a.accountId) + '" title="Move Up" style="font-size:14px;">⬆</button> ' : '<span style="display:inline-block;width:24px;"></span> ') +
+                (idx < accounts.length - 1 ? '<button class="btn-icon" data-a="down" data-id="' + ea(a.accountId) + '" title="Move Down" style="font-size:14px;">⬇</button> ' : '<span style="display:inline-block;width:24px;"></span> ') +
                 '<button class="btn-icon btn-icon-download" data-a="dl" data-id="' + ea(a.accountId) + '" title="Download CF Template">&#8681;</button> ' +
                 '<button class="btn-icon btn-icon-test" data-a="test" data-id="' + ea(a.accountId) + '" title="Test Connection">&#9889;</button> ' +
                 '<button class="btn-icon btn-icon-edit" data-a="edit" data-id="' + ea(a.accountId) + '" title="Edit">&#9998;</button> ' +
@@ -452,7 +454,28 @@ accountsTbody.onclick = function(e) {
     else if (action === 'del') showDeleteDialog(accountId);
     else if (action === 'dl') downloadTemplate(accountId);
     else if (action === 'test') testConnection(accountId, btn);
+    else if (action === 'up' || action === 'down') reorderAccount(accountId, action);
 };
+
+async function reorderAccount(accountId, direction) {
+    var ids = allAccounts.filter(function(a) { return true; }).map(function(a) { return a.accountId; });
+    var idx = ids.indexOf(accountId);
+    if (idx === -1) return;
+    var swapIdx = direction === 'up' ? idx - 1 : idx + 1;
+    if (swapIdx < 0 || swapIdx >= ids.length) return;
+    var tmp = ids[idx]; ids[idx] = ids[swapIdx]; ids[swapIdx] = tmp;
+    try {
+        await api('POST', '/members/accounts/reorder', { order: ids });
+        // Update local order
+        var tmpAcct = allAccounts[idx];
+        allAccounts[idx] = allAccounts[swapIdx];
+        allAccounts[swapIdx] = tmpAcct;
+        renderAccounts(allAccounts);
+        populateAIAccounts();
+    } catch (err) {
+        notify('Failed to reorder accounts.', 'error');
+    }
+}
 
 // ============================================================
 // Add / Edit Account Modal
@@ -1142,17 +1165,32 @@ var aiFontSize = 18;
 
 function populateAIAccounts() {
     if (!aiAccountSelect) return;
-    var current = aiAccountSelect.value;
-    aiAccountSelect.innerHTML = '<option value="">Select an account...</option>';
-    allAccounts.forEach(function(a) {
-        if (a.connectionStatus === 'connected') {
-            var opt = document.createElement('option');
-            opt.value = a.accountId;
-            opt.textContent = a.accountId + ' (' + (a.accountName || 'Account ' + a.accountId.slice(-4)) + ')';
-            aiAccountSelect.appendChild(opt);
-        }
+    aiAccountSelect.innerHTML = '';
+    var connected = allAccounts.filter(function(a) { return a.connectionStatus === 'connected'; });
+    if (!connected.length) {
+        aiAccountSelect.innerHTML = '<div style="color:#8b949e;font-size:0.85em;">No connected accounts</div>';
+        return;
+    }
+    connected.forEach(function(a, idx) {
+        var label = document.createElement('label');
+        label.style.cssText = 'display:flex;align-items:center;gap:6px;padding:3px 0;cursor:pointer;color:#c9d1d9;font-size:0.9em;';
+        var cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.value = a.accountId;
+        cb.className = 'ai-acct-cb';
+        if (idx === 0) cb.checked = true;  // Default: first (highest priority) account checked
+        cb.style.cssText = 'accent-color:#6366f1;';
+        label.appendChild(cb);
+        label.appendChild(document.createTextNode(a.accountId + ' (' + (a.accountName || 'Account ' + a.accountId.slice(-4)) + ')'));
+        aiAccountSelect.appendChild(label);
     });
-    if (current) aiAccountSelect.value = current;
+}
+
+function getSelectedAccountIds() {
+    var cbs = document.querySelectorAll('.ai-acct-cb:checked');
+    var ids = [];
+    cbs.forEach(function(cb) { ids.push(cb.value); });
+    return ids;
 }
 
 function addAIMessage(type, content, topServices) {
@@ -1325,20 +1363,21 @@ function addAIMessage(type, content, topServices) {
 
 async function askAI() {
     if (!aiAccountSelect || !aiQuestionInput) return;
-    var accountId = aiAccountSelect.value;
+    var accountIds = getSelectedAccountIds();
     var question = aiQuestionInput.value.trim();
 
-    if (!accountId) { notify('Please select an account first.', 'error'); return; }
+    if (!accountIds.length) { notify('Please select at least one account.', 'error'); return; }
     if (!question) return;
 
-    addAIMessage('question', question);
+    var acctLabel = accountIds.length === 1 ? accountIds[0] : accountIds.length + ' accounts';
+    addAIMessage('question', question + (accountIds.length > 1 ? ' [' + acctLabel + ']' : ''));
     aiQuestionInput.dataset.lastQuestion = question;
     aiQuestionInput.value = '';
-    addAIMessage('thinking', 'Analyzing your question...');
+    addAIMessage('thinking', 'Analyzing ' + acctLabel + '...');
 
     try {
         var data = await api('POST', '/members/accounts/ai-query', {
-            accountId: accountId,
+            accountIds: accountIds,
             question: question,
         });
 
