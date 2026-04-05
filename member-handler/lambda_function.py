@@ -1464,14 +1464,49 @@ def handle_ai_feedback(event):
                     'difficulty': 'medium',
                     'source': 'user-feedback',
                     'confidenceTag': 'high-confidence',
+                    'positiveCount': 1,
                     'createdAt': now_iso,
                 },
                 ConditionExpression='attribute_not_exists(tipId)',
             )
         except ClientError as e:
-            # Duplicate or error — non-critical, feedback was already saved
-            if e.response.get('Error', {}).get('Code') != 'ConditionalCheckFailedException':
+            if e.response.get('Error', {}).get('Code') == 'ConditionalCheckFailedException':
+                # Tip already exists — increment its positiveCount and ensure high-confidence
+                try:
+                    tips_table.update_item(
+                        Key={'service': related_service, 'tipId': tip_id},
+                        UpdateExpression='SET positiveCount = if_not_exists(positiveCount, :zero) + :one, confidenceTag = :hc',
+                        ExpressionAttributeValues={':zero': 0, ':one': 1, ':hc': 'high-confidence'},
+                    )
+                except Exception:
+                    pass
+            else:
                 logger.warning(f"Failed to save feedback tip: {e}")
+
+    # If negative feedback, decrement positiveCount on the matching tip (if it exists)
+    if feedback_score == 'no':
+        tip_id = f'ai-fb-{hashlib.md5(user_question.encode()).hexdigest()[:8]}'
+        tips_table = dynamodb.Table(TIPS_TABLE_NAME)
+        try:
+            tips_table.update_item(
+                Key={'service': related_service, 'tipId': tip_id},
+                UpdateExpression='SET positiveCount = if_not_exists(positiveCount, :zero) - :one',
+                ExpressionAttributeValues={':zero': 0, ':one': 1},
+                ConditionExpression='attribute_exists(tipId)',
+            )
+            # If positiveCount drops below 0, remove high-confidence tag
+            try:
+                resp = tips_table.get_item(Key={'service': related_service, 'tipId': tip_id})
+                item = resp.get('Item', {})
+                if item.get('positiveCount', 0) <= 0:
+                    tips_table.update_item(
+                        Key={'service': related_service, 'tipId': tip_id},
+                        UpdateExpression='REMOVE confidenceTag',
+                    )
+            except Exception:
+                pass
+        except ClientError:
+            pass  # Tip doesn't exist — nothing to decrement
 
     return create_response(200, {'success': True})
 
@@ -1776,31 +1811,65 @@ def _search_tips(question):
     tips_table = dynamodb.Table(TIPS_TABLE_NAME)
     question_lower = question.lower()
 
-    service_keywords = [
-        'ec2', 's3', 'rds', 'lambda', 'cloudfront', 'dynamodb', 'ebs',
-        'elb', 'ecs', 'eks', 'redshift', 'elasticache', 'route53',
-        'cloudwatch', 'iam', 'vpc', 'nat', 'general', 'cost', 'billing',
-    ]
-    matched_services = [s for s in service_keywords if s in question_lower]
+    # Map keywords to the EXACT service names used in DynamoDB (case-sensitive)
+    keyword_to_service = {
+        'ec2': 'EC2', 's3': 'S3', 'rds': 'RDS', 'lambda': 'Lambda',
+        'cloudfront': 'CloudFront', 'dynamodb': 'DynamoDB', 'ebs': 'EBS',
+        'elb': 'ELB', 'ecs': 'ECS', 'eks': 'EKS', 'redshift': 'Redshift',
+        'elasticache': 'ElastiCache', 'route53': 'Route53', 'route 53': 'Route53',
+        'cloudwatch': 'CloudWatch', 'iam': 'IAM', 'vpc': 'VPC', 'nat': 'NAT Gateway',
+        'kms': 'KMS', 'general': 'General', 'cost': 'General', 'billing': 'General',
+        'save': 'General', 'efficient': 'General', 'optimize': 'General',
+        'data transfer': 'Data Transfer', 'efs': 'EFS',
+    }
+    matched_services = set()
+    for kw, svc in keyword_to_service.items():
+        if kw in question_lower:
+            matched_services.add(svc)
 
     tips = []
     try:
         if matched_services:
-            for svc in matched_services[:3]:
+            for svc in list(matched_services)[:4]:
                 result = tips_table.query(
-                    KeyConditionExpression=boto3.dynamodb.conditions.Key('service').eq(svc.upper())
+                    KeyConditionExpression=boto3.dynamodb.conditions.Key('service').eq(svc)
                 )
                 tips.extend(result.get('Items', []))
+            # Also check AI-GENERATED tips (from auto-save)
+            try:
+                ai_tips = tips_table.query(
+                    KeyConditionExpression=boto3.dynamodb.conditions.Key('service').eq('AI-GENERATED')
+                )
+                tips.extend(ai_tips.get('Items', []))
+            except Exception:
+                pass
         else:
             result = tips_table.scan(Limit=20)
             tips = result.get('Items', [])
     except ClientError as e:
         logger.warning(f"Tips table query error: {e}")
 
-    # Sort so high-confidence tips appear first (stable sort)
-    tips = sorted(tips, key=lambda t: (0 if t.get('confidenceTag') == 'high-confidence' else 1))
+    # Deduplicate by tipId
+    seen = set()
+    unique_tips = []
+    for t in tips:
+        tid = t.get('tipId', '')
+        if tid not in seen:
+            seen.add(tid)
+            unique_tips.append(t)
 
-    return _decimal_to_native(tips[:10])
+    # Sort: high-confidence first, then by feedbackScore (positive count), then curated
+    def _tip_sort_key(t):
+        if t.get('confidenceTag') == 'high-confidence':
+            return (0, -(t.get('positiveCount', 0)))
+        if t.get('source') == 'user-feedback':
+            return (1, -(t.get('positiveCount', 0)))
+        if t.get('source') == 'ai-agent':
+            return (2, 0)
+        return (3, 0)  # curated tips last
+    unique_tips.sort(key=_tip_sort_key)
+
+    return _decimal_to_native(unique_tips[:10])
 
 
 def _gather_account_data(question, credentials):
