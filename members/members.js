@@ -429,8 +429,8 @@ function renderAccounts(accounts) {
             '<td>' + fmtDate(a.addedAt) + '</td>' +
             '<td>' + fmtDate(a.lastTestedAt) + '</td>' +
             '<td class="actions-cell">' +
-                (idx > 0 ? '<button class="btn-icon" data-a="up" data-id="' + ea(a.accountId) + '" title="Move Up" style="font-size:14px;">⬆</button> ' : '<span style="display:inline-block;width:24px;"></span> ') +
-                (idx < accounts.length - 1 ? '<button class="btn-icon" data-a="down" data-id="' + ea(a.accountId) + '" title="Move Down" style="font-size:14px;">⬇</button> ' : '<span style="display:inline-block;width:24px;"></span> ') +
+                (idx > 0 ? '<button class="btn btn-outline btn-sm" data-a="up" data-id="' + ea(a.accountId) + '" title="Move Up" style="padding:2px 6px;font-size:12px;min-width:28px;">▲</button> ' : '<span style="display:inline-block;width:32px;"></span> ') +
+                (idx < accounts.length - 1 ? '<button class="btn btn-outline btn-sm" data-a="down" data-id="' + ea(a.accountId) + '" title="Move Down" style="padding:2px 6px;font-size:12px;min-width:28px;">▼</button> ' : '<span style="display:inline-block;width:32px;"></span> ') +
                 '<button class="btn-icon btn-icon-download" data-a="dl" data-id="' + ea(a.accountId) + '" title="Download CF Template">&#8681;</button> ' +
                 '<button class="btn-icon btn-icon-test" data-a="test" data-id="' + ea(a.accountId) + '" title="Test Connection">&#9889;</button> ' +
                 '<button class="btn-icon btn-icon-edit" data-a="edit" data-id="' + ea(a.accountId) + '" title="Edit">&#9998;</button> ' +
@@ -1171,19 +1171,72 @@ function populateAIAccounts() {
         aiAccountSelect.innerHTML = '<div style="color:#8b949e;font-size:0.85em;">No connected accounts</div>';
         return;
     }
+
+    // Dropdown toggle button
+    var toggleBtn = document.createElement('button');
+    toggleBtn.type = 'button';
+    toggleBtn.className = 'btn btn-outline btn-sm';
+    toggleBtn.style.cssText = 'font-size:0.85em;padding:4px 12px;min-width:180px;text-align:left;position:relative;';
+    function updateToggleLabel() {
+        var checked = document.querySelectorAll('.ai-acct-cb:checked');
+        if (checked.length === 0) toggleBtn.textContent = 'Select accounts...';
+        else if (checked.length === 1) toggleBtn.textContent = checked[0].parentElement.dataset.label || checked[0].value;
+        else toggleBtn.textContent = checked.length + ' accounts selected';
+        toggleBtn.textContent += ' ▾';
+    }
+
+    // Dropdown panel
+    var panel = document.createElement('div');
+    panel.style.cssText = 'display:none;position:absolute;top:100%;left:0;z-index:200;background:#fff;border:1px solid #d0d7de;border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,0.15);min-width:260px;max-height:200px;overflow-y:auto;padding:6px 0;margin-top:4px;';
+
     connected.forEach(function(a, idx) {
-        var label = document.createElement('label');
-        label.style.cssText = 'display:flex;align-items:center;gap:6px;padding:3px 0;cursor:pointer;color:#c9d1d9;font-size:0.9em;';
+        var row = document.createElement('label');
+        row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:6px 12px;cursor:pointer;color:#24292f;font-size:0.85em;white-space:nowrap;';
+        row.dataset.label = a.accountId + ' (' + (a.accountName || 'Account') + ')';
+        row.onmouseenter = function() { row.style.background = '#f6f8fa'; };
+        row.onmouseleave = function() { row.style.background = ''; };
         var cb = document.createElement('input');
         cb.type = 'checkbox';
         cb.value = a.accountId;
         cb.className = 'ai-acct-cb';
-        if (idx === 0) cb.checked = true;  // Default: first (highest priority) account checked
-        cb.style.cssText = 'accent-color:#6366f1;';
-        label.appendChild(cb);
-        label.appendChild(document.createTextNode(a.accountId + ' (' + (a.accountName || 'Account ' + a.accountId.slice(-4)) + ')'));
-        aiAccountSelect.appendChild(label);
+        if (idx === 0) cb.checked = true;
+        cb.style.cssText = 'accent-color:#6366f1;flex-shrink:0;';
+        cb.onchange = updateToggleLabel;
+        row.appendChild(cb);
+        row.appendChild(document.createTextNode(a.accountId + ' (' + (a.accountName || 'Account ' + a.accountId.slice(-4)) + ')'));
+        panel.appendChild(row);
     });
+
+    // Select All / None row
+    var ctrlRow = document.createElement('div');
+    ctrlRow.style.cssText = 'display:flex;gap:8px;padding:6px 12px;border-top:1px solid #d0d7de;margin-top:4px;';
+    var selAll = document.createElement('a');
+    selAll.href = '#'; selAll.textContent = 'Select All';
+    selAll.style.cssText = 'font-size:0.8em;color:#6366f1;text-decoration:none;';
+    selAll.onclick = function(e) { e.preventDefault(); panel.querySelectorAll('.ai-acct-cb').forEach(function(c) { c.checked = true; }); updateToggleLabel(); };
+    var selNone = document.createElement('a');
+    selNone.href = '#'; selNone.textContent = 'Clear';
+    selNone.style.cssText = 'font-size:0.8em;color:#6366f1;text-decoration:none;';
+    selNone.onclick = function(e) { e.preventDefault(); panel.querySelectorAll('.ai-acct-cb').forEach(function(c) { c.checked = false; }); updateToggleLabel(); };
+    ctrlRow.appendChild(selAll);
+    ctrlRow.appendChild(selNone);
+    panel.appendChild(ctrlRow);
+
+    var wrapper = document.createElement('div');
+    wrapper.style.cssText = 'position:relative;display:inline-block;';
+    wrapper.appendChild(toggleBtn);
+    wrapper.appendChild(panel);
+    aiAccountSelect.appendChild(wrapper);
+
+    toggleBtn.onclick = function(e) {
+        e.stopPropagation();
+        panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+    };
+    document.addEventListener('click', function(e) {
+        if (!wrapper.contains(e.target)) panel.style.display = 'none';
+    });
+
+    updateToggleLabel();
 }
 
 function getSelectedAccountIds() {

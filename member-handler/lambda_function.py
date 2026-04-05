@@ -1685,9 +1685,10 @@ def _invoke_multi_account(question, account_ids, member_email, interaction_id):
 
     all_account_data = {}
     all_actions = []
-    merged_costs = {}  # service -> total cost across all accounts
+    merged_costs = {}
+    merged_monthly = {}  # month -> service -> total cost
 
-    for acct_id in account_ids[:5]:  # limit to 5 accounts
+    for acct_id in account_ids[:5]:
         role_arn = f'arn:aws:iam::{acct_id}:role/SlashMyBill-{acct_id}'
         try:
             assume_response = sts_client.assume_role(
@@ -1698,15 +1699,21 @@ def _invoke_multi_account(question, account_ids, member_email, interaction_id):
             all_account_data[acct_id] = acct_data
             all_actions.extend([f'[{acct_id}] {a}' for a in acct_actions])
 
-            # Merge costs for aggregate view
             for svc in acct_data.get('cost_by_service', []):
                 key = svc['service']
                 merged_costs[key] = merged_costs.get(key, 0) + svc['cost_usd']
+
+            # Merge monthly trend data across accounts
+            for month, svc_costs in acct_data.get('monthly_trend', {}).items():
+                if month not in merged_monthly:
+                    merged_monthly[month] = {}
+                for svc, cost in svc_costs.items():
+                    merged_monthly[month][svc] = merged_monthly[month].get(svc, 0) + cost
         except Exception as e:
             logger.warning(f"Failed to gather data for account {acct_id}: {e}")
             all_account_data[acct_id] = {'error': str(e)}
 
-    # Build aggregate data for the prompt
+    # Build aggregate
     aggregate = {
         'total_accounts': len(account_ids),
         'accounts_analyzed': len([a for a in all_account_data.values() if 'error' not in a]),
@@ -1717,23 +1724,55 @@ def _invoke_multi_account(question, account_ids, member_email, interaction_id):
         'aggregate_total_spend': round(sum(merged_costs.values()), 2),
         'per_account_data': {},
     }
+
+    # Include monthly trend in aggregate if available
+    if merged_monthly:
+        aggregate['monthly_trend'] = {m: {s: round(c, 4) for s, c in svcs.items()} for m, svcs in merged_monthly.items()}
+        aggregate['monthly_trend_months'] = sorted(merged_monthly.keys())
+
     for acct_id, acct_data in all_account_data.items():
         if 'error' not in acct_data:
             acct_total = sum(s['cost_usd'] for s in acct_data.get('cost_by_service', []))
-            aggregate['per_account_data'][acct_id] = {
+            per_acct = {
                 'total_spend': round(acct_total, 2),
                 'top_services': acct_data.get('cost_by_service', [])[:5],
                 'cost_efficiency': acct_data.get('cost_efficiency'),
             }
+            if acct_data.get('monthly_trend'):
+                per_acct['monthly_trend'] = acct_data['monthly_trend']
+                per_acct['monthly_trend_months'] = acct_data.get('monthly_trend_months', [])
+            aggregate['per_account_data'][acct_id] = per_acct
 
-    # Ask Bedrock with multi-account context
     answer = _ask_bedrock_multi_account(question, tips_context, aggregate, all_account_data, account_ids)
     _maybe_save_tip(question, answer, tips_context)
 
-    # Build chart data from aggregate
-    agg_chart_data = _build_chart_data({
+    # Build chart data from aggregate including monthly trend
+    chart_source = {
         'cost_by_service': aggregate['aggregate_cost_by_service'],
-    })
+    }
+    if merged_monthly:
+        chart_source['monthly_trend'] = {m: {s: round(c, 4) for s, c in svcs.items()} for m, svcs in merged_monthly.items()}
+        chart_source['monthly_trend_months'] = sorted(merged_monthly.keys())
+    # Merge daily trends
+    merged_daily = {}
+    for acct_data in all_account_data.values():
+        if isinstance(acct_data, dict) and 'error' not in acct_data:
+            for d in acct_data.get('daily_cost_trend', []):
+                date = d['date']
+                merged_daily[date] = merged_daily.get(date, 0) + d['cost_usd']
+    if merged_daily:
+        chart_source['daily_cost_trend'] = [{'date': d, 'cost_usd': round(c, 4)} for d, c in sorted(merged_daily.items())]
+    # Merge efficiency
+    total_savings = sum(a.get('cost_efficiency', {}).get('potential_savings_usd', 0) for a in all_account_data.values() if isinstance(a, dict) and 'error' not in a)
+    total_spend = aggregate['aggregate_total_spend']
+    if total_spend > 0:
+        eff_score = round((1 - total_savings / total_spend) * 100, 1)
+        chart_source['cost_efficiency'] = {
+            'score': max(0, eff_score),
+            'rating': 'Excellent' if eff_score >= 90 else 'Good' if eff_score >= 75 else 'Needs Improvement' if eff_score >= 50 else 'Critical',
+        }
+
+    agg_chart_data = _build_chart_data(chart_source)
 
     top_services = [{'service': s['service'], 'cost': round(s['cost_usd'], 2)}
                     for s in aggregate['aggregate_cost_by_service'][:10]
@@ -1776,8 +1815,12 @@ MULTI-ACCOUNT ANALYSIS RULES:
 3. Identify cross-account patterns: which services are common across accounts, which accounts are the biggest spenders.
 4. Savings recommendations should be ranked by total dollar impact across all accounts.
 5. If one account dominates the spend, highlight it.
-6. Tax is NEVER actionable — exclude from analysis.
-7. Services < $0.50 across all accounts = Minor costs.
+6. NON-ACTIONABLE SERVICES (never list as savings opportunities): Tax, Amazon Registrar (annual domain fee), AWS Cost Explorer, AWS CloudTrail.
+7. Services < $0.50 across all accounts = Minor costs (do not list individually).
+8. When monthly_trend data is present, show month-over-month comparison per account and aggregate.
+9. Do NOT give generic advice like "Reduce Lambda execution time" for services with $0 spend. Only recommend actions where real savings exist.
+10. Do NOT repeat "review X usage" for every service — only give specific, actionable advice based on the data.
+11. ALWAYS rank services by cost descending. ALWAYS rank savings by dollar impact descending.
 
 User question: {question}
 {tips_text}
