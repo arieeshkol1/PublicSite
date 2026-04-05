@@ -1852,7 +1852,48 @@ def _gather_account_data(question, credentials):
                 mentioned_months = [(prev_name, prev_m), (cur_name, cur_m)]
 
         # If comparing two specific months, fetch both explicitly
-        if is_comparison and len(mentioned_months) >= 2:
+        # If 3+ months mentioned, use the monthly_trend path instead
+        if is_comparison and len(mentioned_months) >= 3:
+            # 3+ months — use monthly trend approach
+            now = datetime.now(timezone.utc)
+            year_hint = now.year
+            import re as _re
+            year_match = _re.search(r'20\d{2}', question)
+            if year_match:
+                year_hint = int(year_match.group())
+            from calendar import monthrange
+
+            first_m = mentioned_months[0][1]
+            last_m = mentioned_months[-1][1]
+            range_start = f'{year_hint}-{first_m:02d}-01'
+            if last_m == 12:
+                range_end = f'{year_hint + 1}-01-01'
+            else:
+                range_end = f'{year_hint}-{last_m + 1:02d}-01'
+
+            multi_month = ce.get_cost_and_usage(
+                TimePeriod={'Start': range_start, 'End': range_end},
+                Granularity='MONTHLY',
+                Metrics=['UnblendedCost'],
+                GroupBy=[{'Type': 'DIMENSION', 'Key': 'SERVICE'}],
+            )
+            monthly_data = {}
+            for period in multi_month.get('ResultsByTime', []):
+                period_start = period['TimePeriod']['Start']
+                month_label = period_start[:7]
+                month_costs = {}
+                for group in period.get('Groups', []):
+                    svc = group['Keys'][0]
+                    cost = float(group['Metrics']['UnblendedCost']['Amount'])
+                    if cost > 0:
+                        month_costs[svc] = round(cost, 4)
+                monthly_data[month_label] = month_costs
+
+            data['monthly_trend'] = monthly_data
+            data['monthly_trend_months'] = sorted(monthly_data.keys())
+            actions.append(f'ce:GetCostAndUsage (monthly trend, {range_start} to {range_end})')
+
+        elif is_comparison and len(mentioned_months) >= 2:
             now = datetime.now(timezone.utc)
             # Determine year — assume current year, or previous year if month is in the future
             year_hint = now.year

@@ -1385,9 +1385,9 @@ async function askAI() {
                 if (tableArea) {
                     // Also parse comparison tables from the AI answer text
                     var answerText = data.answer || '';
-                    if (answerText.indexOf('|') !== -1 && (isCompQ || answerText.indexOf('Comparison') !== -1 || answerText.indexOf('vs') !== -1)) {
-                        // Check if a month-comparison chart already exists
-                        var hasCompChart = sortedCharts.some(function(c) { return c.id === 'month-comparison'; });
+                    if (answerText.indexOf('|') !== -1 && (isCompQ || answerText.indexOf('Comparison') !== -1 || answerText.indexOf('vs') !== -1 || answerText.indexOf('Jan') !== -1 || answerText.indexOf('Feb') !== -1 || answerText.indexOf('Mar') !== -1)) {
+                        // Check if a month-comparison or monthly-trend chart already exists
+                        var hasCompChart = sortedCharts.some(function(c) { return c.id === 'month-comparison' || c.id === 'monthly-service-trend'; });
                         if (!hasCompChart) {
                             // Parse markdown table from answer
                             var lines = answerText.split('\n').filter(function(l) { return l.trim().indexOf('|') === 0; });
@@ -1399,20 +1399,52 @@ async function askAI() {
                                     if (cells.length >= 2) dataRows.push(cells);
                                 }
                                 if (dataRows.length > 0 && headerCells.length >= 3) {
-                                    var compChart = {
-                                        id: 'answer-comparison',
-                                        title: 'Month-over-Month Comparison',
-                                        type: 'bar',
-                                        labels: dataRows.map(function(r) { return r[0].replace('Amazon ', '').replace('AWS ', '').substring(0, 25); }),
-                                        data: dataRows.map(function(r) { var v = parseFloat(r[1].replace(/[^0-9.\-]/g, '')); return isNaN(v) ? 0 : v; }),
-                                        data2: dataRows.map(function(r) { var v = r.length >= 3 ? parseFloat(r[2].replace(/[^0-9.\-]/g, '')) : 0; return isNaN(v) ? 0 : v; }),
-                                        dataLabel: headerCells[1] || 'Month 1',
-                                        data2Label: headerCells[2] || 'Month 2',
-                                        color: '#6366f1',
-                                        color2: '#10b981',
-                                    };
-                                    sortedCharts.unshift(compChart);
-                                    lastMsg.dataset.chartData = JSON.stringify(sortedCharts);
+                                    // Detect how many month columns (columns with USD/numbers, excluding Difference/% Change)
+                                    var monthCols = [];
+                                    for (var hi = 1; hi < headerCells.length; hi++) {
+                                        var hdr = headerCells[hi].toLowerCase();
+                                        if (hdr.indexOf('difference') === -1 && hdr.indexOf('%') === -1 && hdr.indexOf('change') === -1) {
+                                            monthCols.push({ idx: hi, label: headerCells[hi].replace(' (USD)', '') });
+                                        }
+                                    }
+                                    if (monthCols.length >= 2) {
+                                        var compLabels = dataRows.map(function(r) { return r[0].replace('Amazon ', '').replace('AWS ', '').substring(0, 25); });
+                                        if (monthCols.length === 2) {
+                                            // 2-month comparison
+                                            var compChart = {
+                                                id: 'answer-comparison',
+                                                title: monthCols[0].label + ' vs ' + monthCols[1].label,
+                                                type: 'bar',
+                                                labels: compLabels,
+                                                data: dataRows.map(function(r) { var v = parseFloat((r[monthCols[0].idx] || '').replace(/[^0-9.\-]/g, '')); return isNaN(v) ? 0 : v; }),
+                                                data2: dataRows.map(function(r) { var v = parseFloat((r[monthCols[1].idx] || '').replace(/[^0-9.\-]/g, '')); return isNaN(v) ? 0 : v; }),
+                                                dataLabel: monthCols[0].label,
+                                                data2Label: monthCols[1].label,
+                                                color: '#6366f1',
+                                                color2: '#10b981',
+                                            };
+                                            sortedCharts.unshift(compChart);
+                                        } else {
+                                            // 3+ month comparison — use monthColumns format
+                                            var mcols = {};
+                                            var mnames = [];
+                                            monthCols.forEach(function(mc) {
+                                                mnames.push(mc.label);
+                                                mcols[mc.label] = dataRows.map(function(r) { var v = parseFloat((r[mc.idx] || '').replace(/[^0-9.\-]/g, '')); return isNaN(v) ? 0 : v; });
+                                            });
+                                            var compChart = {
+                                                id: 'answer-comparison',
+                                                title: mnames.join(' vs '),
+                                                type: 'bar',
+                                                labels: compLabels,
+                                                monthColumns: mcols,
+                                                months: mnames,
+                                                data: dataRows.map(function(r) { var v = parseFloat((r[1] || '').replace(/[^0-9.\-]/g, '')); return isNaN(v) ? 0 : v; }),
+                                            };
+                                            sortedCharts.unshift(compChart);
+                                        }
+                                        lastMsg.dataset.chartData = JSON.stringify(sortedCharts);
+                                    }
                                 }
                             }
                         }
