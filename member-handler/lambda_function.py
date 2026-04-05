@@ -1853,8 +1853,8 @@ def _gather_account_data(question, credentials):
 
         # If comparing two specific months, fetch both explicitly
         # If 3+ months mentioned, use the monthly_trend path instead
-        if is_comparison and len(mentioned_months) >= 3:
-            # 3+ months — use monthly trend approach
+        if is_comparison and len(mentioned_months) >= 2:
+            # Unified approach: fetch the full range from first to last mentioned month
             now = datetime.now(timezone.utc)
             year_hint = now.year
             import re as _re
@@ -1891,76 +1891,19 @@ def _gather_account_data(question, credentials):
 
             data['monthly_trend'] = monthly_data
             data['monthly_trend_months'] = sorted(monthly_data.keys())
-            actions.append(f'ce:GetCostAndUsage (monthly trend, {range_start} to {range_end})')
+            month_labels = [f'{mentioned_months[i][0].capitalize()} {year_hint}' for i in range(len(mentioned_months))]
+            actions.append(f'ce:GetCostAndUsage (monthly trend, {" vs ".join(month_labels)})')
 
-        elif is_comparison and len(mentioned_months) >= 2:
-            now = datetime.now(timezone.utc)
-            # Determine year — assume current year, or previous year if month is in the future
-            year_hint = now.year
-            # Check if user mentioned a year
-            import re as _re
-            year_match = _re.search(r'20\d{2}', question)
-            if year_match:
-                year_hint = int(year_match.group())
-
-            m1 = mentioned_months[0][1]
-            m2 = mentioned_months[1][1]
-
-            # Build date ranges for both months
-            from calendar import monthrange
-            m1_start = f'{year_hint}-{m1:02d}-01'
-            m1_end_day = monthrange(year_hint, m1)[1]
-            m1_end = f'{year_hint}-{m1:02d}-{m1_end_day:02d}'
-            # Use first of next month as end for CE (exclusive end)
-            if m1 == 12:
-                m1_ce_end = f'{year_hint + 1}-01-01'
-            else:
-                m1_ce_end = f'{year_hint}-{m1 + 1:02d}-01'
-
-            m2_start = f'{year_hint}-{m2:02d}-01'
-            if m2 == 12:
-                m2_ce_end = f'{year_hint + 1}-01-01'
-            else:
-                m2_ce_end = f'{year_hint}-{m2 + 1:02d}-01'
-
-            # Fetch month 1
-            m1_data = ce.get_cost_and_usage(
-                TimePeriod={'Start': m1_start, 'End': m1_ce_end},
-                Granularity='MONTHLY',
-                Metrics=['UnblendedCost'],
-                GroupBy=[{'Type': 'DIMENSION', 'Key': 'SERVICE'}],
-            )
-            m1_costs = []
-            for period in m1_data.get('ResultsByTime', []):
-                for group in period.get('Groups', []):
-                    cost = float(group['Metrics']['UnblendedCost']['Amount'])
-                    if cost > 0:
-                        m1_costs.append({'service': group['Keys'][0], 'cost_usd': round(cost, 4)})
-            m1_costs.sort(key=lambda x: x['cost_usd'], reverse=True)
-
-            # Fetch month 2
-            m2_data = ce.get_cost_and_usage(
-                TimePeriod={'Start': m2_start, 'End': m2_ce_end},
-                Granularity='MONTHLY',
-                Metrics=['UnblendedCost'],
-                GroupBy=[{'Type': 'DIMENSION', 'Key': 'SERVICE'}],
-            )
-            m2_costs = []
-            for period in m2_data.get('ResultsByTime', []):
-                for group in period.get('Groups', []):
-                    cost = float(group['Metrics']['UnblendedCost']['Amount'])
-                    if cost > 0:
-                        m2_costs.append({'service': group['Keys'][0], 'cost_usd': round(cost, 4)})
-            m2_costs.sort(key=lambda x: x['cost_usd'], reverse=True)
-
-            m1_label = f'{mentioned_months[0][0].capitalize()} {year_hint}'
-            m2_label = f'{mentioned_months[1][0].capitalize()} {year_hint}'
-
-            data['month_comparison'] = {
-                'month1': {'label': m1_label, 'period': f'{m1_start} to {m1_ce_end}', 'costs': m1_costs},
-                'month2': {'label': m2_label, 'period': f'{m2_start} to {m2_ce_end}', 'costs': m2_costs},
-            }
-            actions.append(f'ce:GetCostAndUsage ({m1_label} vs {m2_label})')
+            # For exactly 2 months, also populate month_comparison for backward compatibility
+            if len(mentioned_months) == 2:
+                m1_key = f'{year_hint}-{first_m:02d}'
+                m2_key = f'{year_hint}-{last_m:02d}'
+                m1_costs = [{'service': s, 'cost_usd': c} for s, c in sorted(monthly_data.get(m1_key, {}).items(), key=lambda x: x[1], reverse=True)]
+                m2_costs = [{'service': s, 'cost_usd': c} for s, c in sorted(monthly_data.get(m2_key, {}).items(), key=lambda x: x[1], reverse=True)]
+                data['month_comparison'] = {
+                    'month1': {'label': month_labels[0], 'period': f'{range_start} to {m2_key}-01', 'costs': m1_costs},
+                    'month2': {'label': month_labels[1], 'period': f'{m2_key}-01 to {range_end}', 'costs': m2_costs},
+                }
 
         # Detect relative time comparisons: "last 3 months", "past 6 months", "last quarter"
         # Also support Hebrew: "3 חודשים", "חודשים אחרונים"
