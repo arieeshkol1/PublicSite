@@ -1693,6 +1693,15 @@ def _build_chart_data(account_data):
     monthly_trend = account_data.get('monthly_trend', {})
     trend_months = account_data.get('monthly_trend_months', [])
     if len(trend_months) >= 2:
+        # Convert YYYY-MM to readable month names
+        _month_labels_map = {'01':'Jan','02':'Feb','03':'Mar','04':'Apr','05':'May','06':'Jun',
+                             '07':'Jul','08':'Aug','09':'Sep','10':'Oct','11':'Nov','12':'Dec'}
+        def _fmt_month(ym):
+            parts = ym.split('-')
+            return f"{_month_labels_map.get(parts[1], parts[1])} {parts[0]}" if len(parts) == 2 else ym
+        readable_months = [_fmt_month(m) for m in trend_months]
+        month_range_label = ' vs '.join(readable_months) if len(trend_months) <= 4 else f'{readable_months[0]} to {readable_months[-1]}'
+
         # Total cost per month
         month_totals = []
         for m in trend_months:
@@ -1700,9 +1709,9 @@ def _build_chart_data(account_data):
             month_totals.append(round(total, 2))
         charts.append({
             'id': 'monthly-total-trend',
-            'title': f'Monthly Total Cost ({trend_months[0]} to {trend_months[-1]})',
+            'title': f'Monthly Total Cost ({month_range_label})',
             'type': 'line',
-            'labels': trend_months,
+            'labels': readable_months,
             'data': month_totals,
             'color': '#6366f1',
         })
@@ -1715,17 +1724,16 @@ def _build_chart_data(account_data):
         top_svcs = sorted(all_svcs.items(), key=lambda x: x[1], reverse=True)[:8]
         if top_svcs:
             svc_names = [s[0].replace('Amazon ', '').replace('AWS ', '')[:30] for s in top_svcs]
-            # Build per-month data for each service
             month_columns = {}
-            for m in trend_months:
-                month_columns[m] = [round(monthly_trend.get(m, {}).get(s[0], 0), 2) for s in top_svcs]
+            for i, m in enumerate(trend_months):
+                month_columns[readable_months[i]] = [round(monthly_trend.get(m, {}).get(s[0], 0), 2) for s in top_svcs]
             charts.append({
                 'id': 'monthly-service-trend',
-                'title': f'Top Services by Month ({trend_months[0]} to {trend_months[-1]})',
+                'title': f'Cost by Service Comparison ({month_range_label})',
                 'type': 'bar',
                 'labels': svc_names,
                 'monthColumns': month_columns,
-                'months': trend_months,
+                'months': readable_months,
                 'data': [round(all_svcs[s[0]], 2) for s in top_svcs],
                 'color': '#6366f1',
             })
