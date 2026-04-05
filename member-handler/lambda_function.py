@@ -1446,8 +1446,6 @@ def handle_ai_feedback(event):
         missing.append('userQuestion')
     if not agent_response:
         missing.append('agentResponse')
-    if not account_id:
-        missing.append('accountId')
     if missing:
         return create_error_response(400, 'InvalidRequest', f"Missing required fields: {', '.join(missing)}")
 
@@ -1467,9 +1465,10 @@ def handle_ai_feedback(event):
             'agentResponse': agent_response[:2000],
             'feedbackScore': feedback_score,
             'relatedService': related_service,
-            'accountId': account_id,
             'createdAt': now_iso,
         }
+        if account_id:
+            feedback_record['accountId'] = account_id
         if user_correction:
             feedback_record['userCorrection'] = user_correction
         feedback_table.put_item(Item=feedback_record)

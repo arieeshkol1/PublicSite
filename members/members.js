@@ -1959,7 +1959,6 @@ if (aiChat) aiChat.onclick = function(e) {
                 feedbackScore: 'yes',
                 userQuestion: (aiQuestionInput && aiQuestionInput.dataset.lastQuestion) || '',
                 agentResponse: agentResponse,
-                accountId: (getSelectedAccountIds()[0]) || ''
             }).then(function() {
                 if (statusEl) { statusEl.style.display = 'block'; statusEl.textContent = 'Thanks for your feedback!'; }
             }).catch(function(err) {
@@ -1988,7 +1987,6 @@ if (aiChat) aiChat.onclick = function(e) {
                 feedbackScore: 'no',
                 userQuestion: (aiQuestionInput && aiQuestionInput.dataset.lastQuestion) || '',
                 agentResponse: agentResponse2,
-                accountId: (getSelectedAccountIds()[0]) || ''
             };
         }
         return;
