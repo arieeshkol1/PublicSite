@@ -1017,7 +1017,7 @@ async function addDashboardItem() {
         title: (dashboardTitleInput && dashboardTitleInput.value || '').trim(),
         prompt: dashboardPromptInput.value.trim(),
         answer: (dashboardAnswerInput && dashboardAnswerInput.value || '').trim(),
-        accountId: (aiAccountSelect && aiAccountSelect.value) || '',
+        accountId: (getSelectedAccountIds()[0]) || '',
     };
     if (dashboardChartConfigInput && dashboardChartConfigInput.value.trim()) {
         try {
@@ -1959,7 +1959,7 @@ if (aiChat) aiChat.onclick = function(e) {
                 feedbackScore: 'yes',
                 userQuestion: (aiQuestionInput && aiQuestionInput.dataset.lastQuestion) || '',
                 agentResponse: agentResponse,
-                accountId: (aiAccountSelect && aiAccountSelect.value) || ''
+                accountId: (getSelectedAccountIds()[0]) || ''
             }).then(function() {
                 if (statusEl) { statusEl.style.display = 'block'; statusEl.textContent = 'Thanks for your feedback!'; }
             }).catch(function(err) {
@@ -1988,7 +1988,7 @@ if (aiChat) aiChat.onclick = function(e) {
                 feedbackScore: 'no',
                 userQuestion: (aiQuestionInput && aiQuestionInput.dataset.lastQuestion) || '',
                 agentResponse: agentResponse2,
-                accountId: (aiAccountSelect && aiAccountSelect.value) || ''
+                accountId: (getSelectedAccountIds()[0]) || ''
             };
         }
         return;
@@ -2075,7 +2075,7 @@ if (aiChat) aiChat.onclick = function(e) {
         pendingVisualize = {
             prompt: visualizeBtn.getAttribute('data-question') || '',
             answer: visualizeBtn.getAttribute('data-answer') || '',
-            accountId: (aiAccountSelect && aiAccountSelect.value) || '',
+            accountId: (getSelectedAccountIds()[0]) || '',
         };
         if (visualizeTitleInput) visualizeTitleInput.value = '';
         if (visualizeTypeSelect) visualizeTypeSelect.value = 'graph';
