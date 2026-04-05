@@ -1832,6 +1832,25 @@ def _gather_account_data(question, credentials):
                     mentioned_months.append((name, num))
         mentioned_months.sort(key=lambda x: x[1])
 
+        # Detect "this month" / "last month" / "previous month" patterns
+        now_dt = datetime.now(timezone.utc)
+        if is_comparison and len(mentioned_months) < 2:
+            has_this = any(kw in question_lower for kw in ['this month', 'current month', 'החודש הזה'])
+            has_last = any(kw in question_lower for kw in ['last month', 'previous month', 'prior month', 'החודש שעבר', 'החודש הקודם'])
+            if has_this and has_last:
+                cur_m = now_dt.month
+                prev_m = cur_m - 1 if cur_m > 1 else 12
+                cur_name = list(month_names.keys())[list(month_names.values()).index(cur_m)]
+                prev_name = list(month_names.keys())[list(month_names.values()).index(prev_m)]
+                mentioned_months = [(prev_name, prev_m), (cur_name, cur_m)]
+            elif has_last and not has_this:
+                # "compare last month" alone — compare last month vs this month
+                cur_m = now_dt.month
+                prev_m = cur_m - 1 if cur_m > 1 else 12
+                cur_name = list(month_names.keys())[list(month_names.values()).index(cur_m)]
+                prev_name = list(month_names.keys())[list(month_names.values()).index(prev_m)]
+                mentioned_months = [(prev_name, prev_m), (cur_name, cur_m)]
+
         # If comparing two specific months, fetch both explicitly
         if is_comparison and len(mentioned_months) >= 2:
             now = datetime.now(timezone.utc)

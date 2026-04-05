@@ -1383,6 +1383,41 @@ async function askAI() {
                 // Add "Show as Table" buttons in the table area
                 var tableArea = lastMsg.querySelector('.ai-table-area');
                 if (tableArea) {
+                    // Also parse comparison tables from the AI answer text
+                    var answerText = data.answer || '';
+                    if (answerText.indexOf('|') !== -1 && (isCompQ || answerText.indexOf('Comparison') !== -1 || answerText.indexOf('vs') !== -1)) {
+                        // Check if a month-comparison chart already exists
+                        var hasCompChart = sortedCharts.some(function(c) { return c.id === 'month-comparison'; });
+                        if (!hasCompChart) {
+                            // Parse markdown table from answer
+                            var lines = answerText.split('\n').filter(function(l) { return l.trim().indexOf('|') === 0; });
+                            if (lines.length >= 3) {
+                                var headerCells = lines[0].split('|').map(function(c) { return c.trim(); }).filter(Boolean);
+                                var dataRows = [];
+                                for (var ri = 2; ri < lines.length; ri++) {
+                                    var cells = lines[ri].split('|').map(function(c) { return c.trim(); }).filter(Boolean);
+                                    if (cells.length >= 2) dataRows.push(cells);
+                                }
+                                if (dataRows.length > 0 && headerCells.length >= 3) {
+                                    var compChart = {
+                                        id: 'answer-comparison',
+                                        title: 'Month-over-Month Comparison',
+                                        type: 'bar',
+                                        labels: dataRows.map(function(r) { return r[0].replace('Amazon ', '').replace('AWS ', '').substring(0, 25); }),
+                                        data: dataRows.map(function(r) { var v = parseFloat(r[1].replace(/[^0-9.\-]/g, '')); return isNaN(v) ? 0 : v; }),
+                                        data2: dataRows.map(function(r) { var v = r.length >= 3 ? parseFloat(r[2].replace(/[^0-9.\-]/g, '')) : 0; return isNaN(v) ? 0 : v; }),
+                                        dataLabel: headerCells[1] || 'Month 1',
+                                        data2Label: headerCells[2] || 'Month 2',
+                                        color: '#6366f1',
+                                        color2: '#10b981',
+                                    };
+                                    sortedCharts.unshift(compChart);
+                                    lastMsg.dataset.chartData = JSON.stringify(sortedCharts);
+                                }
+                            }
+                        }
+                    }
+
                     var html = '<div style="color:#8b949e;font-size:0.85em;margin-bottom:6px;margin-top:12px;">Show as table:</div>';
                     sortedCharts.forEach(function(cd, idx) {
                         html += '<button class="btn btn-outline btn-sm ai-table-btn" style="margin:3px 4px 3px 0;font-size:0.85em;" data-chart-idx="' + idx + '">'
