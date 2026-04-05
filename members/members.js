@@ -930,7 +930,7 @@ function renderMiniTable(values) {
 
 function renderDashboard() {
     if (!dashboardGrid || !dashboardEmpty) return;
-    dashboardCharts.forEach(function(ch) { try { ch.destroy(); } catch (e) {} });
+    dashboardCharts.forEach(function(ch) { try { ch.dispose(); } catch (e) {} });
     dashboardCharts = [];
     dashboardGrid.innerHTML = '';
     dashboardEmpty.hidden = dashboardItems.length > 0;
@@ -957,26 +957,20 @@ function renderDashboard() {
             var cfg = item.chartConfig && item.chartConfig.labels && item.chartConfig.data
                 ? item.chartConfig
                 : buildChartConfigFromText(item.answer || '');
-            var canvas = $(chartId);
-            if (canvas && cfg && window.Chart) {
-                var chart = new Chart(canvas, {
-                    type: cfg.type || 'bar',
-                    data: {
-                        labels: cfg.labels || [],
-                        datasets: [{
-                            label: cfg.datasetLabel || 'Values',
-                            data: cfg.data || [],
-                            borderWidth: 2,
-                            backgroundColor: ['#3b82f6', '#22c55e', '#f59e0b', '#a855f7', '#ef4444', '#06b6d4'],
-                            borderColor: '#1d4ed8'
-                        }]
-                    },
-                    options: {
-                        responsive: true,
-                        maintainAspectRatio: false,
-                        plugins: { legend: { display: true } }
-                    }
-                });
+            var chartDiv = $(chartId);
+            if (chartDiv && cfg && window.echarts) {
+                var chart = echarts.init(chartDiv, 'dark');
+                var dColors = ['#3b82f6','#22c55e','#f59e0b','#a855f7','#ef4444','#06b6d4'];
+                var dLabels = cfg.labels || [];
+                var dValues = cfg.data || [];
+                var dOption = {
+                    tooltip: { trigger: 'axis' },
+                    xAxis: { type: 'category', data: dLabels, axisLabel: { color: '#8b949e', fontSize: 10 } },
+                    yAxis: { type: 'value', axisLabel: { color: '#8b949e' } },
+                    series: [{ type: cfg.type || 'bar', data: dValues.map(function(v,i) { return { value: v, itemStyle: { color: dColors[i%dColors.length] } }; }) }],
+                    grid: { left: 50, right: 10, bottom: 30, top: 10 },
+                };
+                chart.setOption(dOption);
                 dashboardCharts.push(chart);
             }
         }
@@ -1425,141 +1419,148 @@ function applyAIFontSize() {
 var aiInlineCharts = [];
 
 function renderSingleChart(container, cd, overrideType) {
-    // Clear previous chart in this area
     container.innerHTML = '';
-    aiInlineCharts.forEach(function(c) { try { c.destroy(); } catch (e) {} });
+    aiInlineCharts.forEach(function(c) { try { c.dispose(); } catch(e) {} });
     aiInlineCharts = [];
 
     var chartType = overrideType || cd.type || 'bar';
 
-    function doRender() {
-        var card = document.createElement('div');
-        card.style.cssText = 'background:#161b22;border:1px solid #30363d;border-radius:8px;padding:16px;margin-top:8px;max-width:100%;';
+    var card = document.createElement('div');
+    card.style.cssText = 'background:#161b22;border:1px solid #30363d;border-radius:8px;padding:16px;margin-top:8px;max-width:100%;';
 
-        var title = document.createElement('div');
-        title.style.cssText = 'color:#e2e8f0;font-size:0.9em;font-weight:600;margin-bottom:10px;';
-        title.textContent = cd.title || 'Chart';
-        card.appendChild(title);
+    var title = document.createElement('div');
+    title.style.cssText = 'color:#e2e8f0;font-size:0.9em;font-weight:600;margin-bottom:10px;';
+    title.textContent = cd.title || 'Chart';
+    card.appendChild(title);
 
-        var canvasWrap = document.createElement('div');
-        var h = (chartType === 'doughnut' || chartType === 'pie') ? '240' : (chartType === 'bar' && cd.indexAxis === 'y') ? '220' : '180';
-        canvasWrap.style.cssText = 'position:relative;height:' + h + 'px;';
-        var canvas = document.createElement('canvas');
-        canvasWrap.appendChild(canvas);
-        card.appendChild(canvasWrap);
+    var chartDiv = document.createElement('div');
+    var h = (chartType === 'doughnut' || chartType === 'pie') ? 280 : 220;
+    chartDiv.style.cssText = 'width:100%;height:' + h + 'px;';
+    card.appendChild(chartDiv);
 
-        // Format toggle buttons
-        var toggleRow = document.createElement('div');
-        toggleRow.style.cssText = 'display:flex;gap:4px;margin-top:10px;flex-wrap:wrap;';
-        var types;
-        var _isTS = cd.id === 'daily-trend' || cd.id === 'monthly-total-trend';
-        var _isBD = cd.id === 'vpc-breakdown' || cd.id === 'ec2other-breakdown';
-        var _isMM = cd.monthColumns && cd.months && cd.months.length > 1;
-        if (_isTS) {
-            types = [{ key: 'line', label: '📈 Line' }, { key: 'bar', label: '📊 Bar' }];
-        } else if (_isBD) {
-            types = [{ key: 'doughnut', label: '🍩 Doughnut' }, { key: 'pie', label: '🥧 Pie' }, { key: 'bar', label: '📊 Bar' }];
-        } else if (_isMM) {
-            types = [{ key: 'bar', label: '📊 Grouped Bar' }, { key: 'line', label: '📈 Line' }];
-        } else {
-            types = [{ key: 'bar', label: '📊 Bar' }, { key: 'doughnut', label: '🍩 Doughnut' }, { key: 'line', label: '📈 Line' }];
-        }
-        types.forEach(function(t) {
-            var btn = document.createElement('button');
-            btn.className = 'btn btn-outline btn-sm';
-            btn.style.cssText = 'font-size:0.75em;padding:3px 8px;' + (t.key === chartType ? 'background:#4c1d95;color:#e2e8f0;border-color:#6d28d9;' : '');
-            btn.textContent = t.label;
-            btn.onclick = function() { renderSingleChart(container, cd, t.key); };
-            toggleRow.appendChild(btn);
-        });
-        card.appendChild(toggleRow);
-        container.appendChild(card);
+    // Type toggle buttons
+    var toggleRow = document.createElement('div');
+    toggleRow.style.cssText = 'display:flex;gap:4px;margin-top:10px;flex-wrap:wrap;';
+    var _isTS = cd.id === 'daily-trend' || cd.id === 'monthly-total-trend';
+    var _isBD = cd.id === 'vpc-breakdown' || cd.id === 'ec2other-breakdown';
+    var _isMM = cd.monthColumns && cd.months && cd.months.length > 1;
+    var types;
+    if (_isTS) types = [{key:'line',label:'📈 Line'},{key:'bar',label:'📊 Bar'}];
+    else if (_isBD) types = [{key:'pie',label:'🥧 Pie'},{key:'bar',label:'📊 Bar'},{key:'treemap',label:'🗺️ Treemap'}];
+    else if (_isMM) types = [{key:'bar',label:'📊 Grouped Bar'},{key:'line',label:'📈 Line'}];
+    else types = [{key:'bar',label:'📊 Bar'},{key:'pie',label:'🥧 Pie'},{key:'line',label:'📈 Line'},{key:'treemap',label:'🗺️ Treemap'}];
+    types.forEach(function(t) {
+        var btn = document.createElement('button');
+        btn.className = 'btn btn-outline btn-sm';
+        btn.style.cssText = 'font-size:0.75em;padding:3px 8px;' + (t.key === chartType ? 'background:#4c1d95;color:#e2e8f0;border-color:#6d28d9;' : '');
+        btn.textContent = t.label;
+        btn.onclick = function() { renderSingleChart(container, cd, t.key); };
+        toggleRow.appendChild(btn);
+    });
+    card.appendChild(toggleRow);
+    container.appendChild(card);
 
-        var doughnutColors = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316', '#06b6d4', '#84cc16'];
-        var isRadial = chartType === 'doughnut' || chartType === 'pie' || chartType === 'polarArea';
+    if (!window.echarts) { card.innerHTML += '<div style="color:#f85149;">ECharts not loaded.</div>'; return; }
 
-        var config = {
-            type: chartType,
-            data: {
-                labels: cd.labels || [],
-                datasets: cd.monthColumns ? (function() {
-                    var colors = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'];
-                    return (cd.months || []).map(function(m, mi) {
-                        return {
-                            label: m,
-                            data: cd.monthColumns[m] || [],
-                            backgroundColor: colors[mi % colors.length],
-                            borderColor: colors[mi % colors.length],
-                            borderWidth: 1,
-                        };
-                    });
-                })() : cd.data2 ? [
-                    {
-                        label: cd.dataLabel || 'Month 1',
-                        data: cd.data || [],
-                        backgroundColor: cd.color || '#6366f1',
-                        borderColor: cd.color || '#6366f1',
-                        borderWidth: 1,
-                    },
-                    {
-                        label: cd.data2Label || 'Month 2',
-                        data: cd.data2 || [],
-                        backgroundColor: cd.color2 || '#10b981',
-                        borderColor: cd.color2 || '#10b981',
-                        borderWidth: 1,
-                    }
-                ] : [{
-                    data: cd.data || [],
-                    backgroundColor: isRadial ? doughnutColors.slice(0, (cd.data || []).length) : (cd.color || '#6366f1'),
-                    borderColor: isRadial ? '#161b22' : (cd.color || '#6366f1'),
-                    borderWidth: isRadial ? 2 : 1,
-                    fill: chartType === 'line' ? 'origin' : undefined,
-                    tension: 0.3,
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                indexAxis: (chartType === 'bar' && cd.indexAxis === 'y') ? 'y' : 'x',
-                plugins: {
-                    legend: { display: isRadial, position: 'right', labels: { color: '#c9d1d9', font: { size: 11 } } },
-                    tooltip: {
-                        callbacks: {
-                            label: function(ctx) {
-                                var val = ctx.parsed !== undefined
-                                    ? (typeof ctx.parsed === 'object' ? (ctx.parsed.x || ctx.parsed.y || 0) : ctx.parsed)
-                                    : ctx.raw;
-                                return cd.isCurrency === false ? Number(val).toLocaleString() : '$' + Number(val).toFixed(2);
-                            }
-                        }
-                    }
-                },
-                scales: isRadial ? {} : {
-                    x: { ticks: { color: '#8b949e', font: { size: 10 } }, grid: { color: '#21262d' } },
-                    y: { ticks: { color: '#8b949e', font: { size: 10 }, callback: function(v) { return cd.isCurrency === false ? v : '$' + v; } }, grid: { color: '#21262d' } }
-                }
-            }
+    var chart = echarts.init(chartDiv, 'dark');
+    aiInlineCharts.push(chart);
+
+    var colors = ['#6366f1','#10b981','#f59e0b','#ef4444','#8b5cf6','#ec4899','#14b8a6','#f97316','#06b6d4','#84cc16'];
+    var labels = cd.labels || [];
+    var values = cd.data || [];
+    var isCurrency = cd.isCurrency !== false;
+    var fmt = function(v) { return isCurrency ? '$' + Number(v).toFixed(2) : Number(v).toLocaleString(); };
+
+    var option = {};
+
+    if (chartType === 'treemap') {
+        var treeData = labels.map(function(l, i) { return { name: l, value: values[i] || 0 }; });
+        option = {
+            tooltip: { formatter: function(p) { return p.name + ': ' + fmt(p.value); } },
+            series: [{ type: 'treemap', data: treeData, label: { show: true, formatter: '{b}', fontSize: 10 },
+                breadcrumb: { show: false }, itemStyle: { borderColor: '#161b22', borderWidth: 2 } }]
         };
-
-        try {
-            var chart = new Chart(canvas, config);
-            aiInlineCharts.push(chart);
-        } catch (e) {
-            console.warn('Chart render failed:', e);
-            card.innerHTML += '<div style="color:#f85149;font-size:0.85em;">Chart rendering failed.</div>';
+    } else if (chartType === 'pie' || chartType === 'doughnut') {
+        var pieData = labels.map(function(l, i) { return { name: l, value: values[i] || 0 }; });
+        option = {
+            tooltip: { trigger: 'item', formatter: function(p) { return p.name + ': ' + fmt(p.value) + ' (' + p.percent + '%)'; } },
+            legend: { type: 'scroll', orient: 'vertical', right: 10, top: 20, textStyle: { color: '#c9d1d9', fontSize: 10 } },
+            series: [{ type: 'pie', radius: chartType === 'doughnut' ? ['40%','70%'] : ['0%','70%'],
+                center: ['40%','50%'], data: pieData, label: { show: false },
+                emphasis: { label: { show: true, fontSize: 12 } } }],
+            color: colors,
+        };
+    } else if (chartType === 'line') {
+        if (cd.monthColumns && cd.months) {
+            var series = cd.months.map(function(m, mi) {
+                return { name: m, type: 'line', data: cd.monthColumns[m] || [], smooth: true,
+                    lineStyle: { width: 2 }, areaStyle: { opacity: 0.1 } };
+            });
+            option = {
+                tooltip: { trigger: 'axis', formatter: function(ps) { var s = ps[0].axisValue + '<br>'; ps.forEach(function(p) { s += p.marker + p.seriesName + ': ' + fmt(p.value) + '<br>'; }); return s; } },
+                legend: { textStyle: { color: '#c9d1d9' } },
+                xAxis: { type: 'category', data: labels, axisLabel: { color: '#8b949e', fontSize: 10 } },
+                yAxis: { type: 'value', axisLabel: { color: '#8b949e', formatter: function(v) { return isCurrency ? '$'+v : v; } } },
+                series: series, color: colors, grid: { left: 60, right: 20, bottom: 30, top: 40 },
+            };
+        } else {
+            option = {
+                tooltip: { trigger: 'axis', formatter: function(ps) { return ps[0].axisValue + ': ' + fmt(ps[0].value); } },
+                xAxis: { type: 'category', data: labels, axisLabel: { color: '#8b949e', fontSize: 10, rotate: labels.length > 6 ? 30 : 0 } },
+                yAxis: { type: 'value', axisLabel: { color: '#8b949e', formatter: function(v) { return isCurrency ? '$'+v : v; } } },
+                series: [{ type: 'line', data: values, smooth: true, areaStyle: { opacity: 0.15 },
+                    lineStyle: { color: '#6366f1', width: 2 }, itemStyle: { color: '#6366f1' } }],
+                grid: { left: 60, right: 20, bottom: 30, top: 20 },
+            };
         }
-
-        if (aiChat) aiChat.scrollTop = aiChat.scrollHeight;
-    }
-
-    if (window.Chart) {
-        doRender();
     } else {
-        var s = document.createElement('script');
-        s.src = 'https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js';
-        s.onload = doRender;
-        document.head.appendChild(s);
+        // bar (default)
+        var isHorizontal = cd.indexAxis === 'y';
+        if (cd.monthColumns && cd.months) {
+            var series = cd.months.map(function(m, mi) {
+                return { name: m, type: 'bar', data: cd.monthColumns[m] || [] };
+            });
+            option = {
+                tooltip: { trigger: 'axis', formatter: function(ps) { var s = ps[0].axisValue + '<br>'; ps.forEach(function(p) { s += p.marker + p.seriesName + ': ' + fmt(p.value) + '<br>'; }); return s; } },
+                legend: { textStyle: { color: '#c9d1d9' } },
+                xAxis: { type: 'category', data: labels, axisLabel: { color: '#8b949e', fontSize: 10 } },
+                yAxis: { type: 'value', axisLabel: { color: '#8b949e', formatter: function(v) { return isCurrency ? '$'+v : v; } } },
+                series: series, color: colors, grid: { left: 60, right: 20, bottom: 30, top: 40 },
+            };
+        } else if (cd.data2) {
+            option = {
+                tooltip: { trigger: 'axis' },
+                legend: { data: [cd.dataLabel || 'Month 1', cd.data2Label || 'Month 2'], textStyle: { color: '#c9d1d9' } },
+                xAxis: { type: 'category', data: labels, axisLabel: { color: '#8b949e', fontSize: 10 } },
+                yAxis: { type: 'value', axisLabel: { color: '#8b949e', formatter: function(v) { return '$'+v; } } },
+                series: [
+                    { name: cd.dataLabel || 'Month 1', type: 'bar', data: values, itemStyle: { color: '#6366f1' } },
+                    { name: cd.data2Label || 'Month 2', type: 'bar', data: cd.data2, itemStyle: { color: '#10b981' } }
+                ],
+                grid: { left: 60, right: 20, bottom: 30, top: 40 },
+            };
+        } else if (isHorizontal) {
+            option = {
+                tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' }, formatter: function(ps) { return ps[0].name + ': ' + fmt(ps[0].value); } },
+                xAxis: { type: 'value', axisLabel: { color: '#8b949e', formatter: function(v) { return isCurrency ? '$'+v : v; } } },
+                yAxis: { type: 'category', data: labels, axisLabel: { color: '#8b949e', fontSize: 10, width: 120, overflow: 'truncate' } },
+                series: [{ type: 'bar', data: values.map(function(v, i) { return { value: v, itemStyle: { color: colors[i % colors.length] } }; }) }],
+                grid: { left: 140, right: 20, bottom: 20, top: 10 },
+            };
+        } else {
+            option = {
+                tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' }, formatter: function(ps) { return ps[0].name + ': ' + fmt(ps[0].value); } },
+                xAxis: { type: 'category', data: labels, axisLabel: { color: '#8b949e', fontSize: 10, rotate: labels.length > 5 ? 30 : 0 } },
+                yAxis: { type: 'value', axisLabel: { color: '#8b949e', formatter: function(v) { return isCurrency ? '$'+v : v; } } },
+                series: [{ type: 'bar', data: values.map(function(v, i) { return { value: v, itemStyle: { color: colors[i % colors.length] } }; }) }],
+                grid: { left: 60, right: 20, bottom: 40, top: 10 },
+            };
+        }
     }
+
+    try { chart.setOption(option); } catch(e) { console.warn('ECharts render failed:', e); }
+    window.addEventListener('resize', function() { try { chart.resize(); } catch(e) {} });
+    if (aiChat) aiChat.scrollTop = aiChat.scrollHeight;
 }
 
 function renderTableWithChart(container, cd) {
