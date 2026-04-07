@@ -1231,12 +1231,21 @@ def handle_dashboard_data(event):
 
     # Build response
     total_spend = round(sum(merged_costs.values()), 2)
-    # Previous month estimate from monthly_trend
+    # MoM from monthly_trend: compare last two calendar months
     sorted_months = sorted(merged_monthly.keys())
+    current_month_spend = 0
     prev_month_spend = 0
+    if len(sorted_months) >= 1:
+        current_month_spend = round(sum(merged_monthly[sorted_months[-1]].values()), 2)
     if len(sorted_months) >= 2:
         prev_month_spend = round(sum(merged_monthly[sorted_months[-2]].values()), 2)
-    mom_change = round(((total_spend - prev_month_spend) / prev_month_spend * 100) if prev_month_spend > 0 else 0, 1)
+    # Use total_spend from cost_by_service as the primary number, but MoM from trend
+    if prev_month_spend > 0 and current_month_spend > 0:
+        mom_change = round(((current_month_spend - prev_month_spend) / prev_month_spend * 100), 1)
+    elif prev_month_spend > 0:
+        mom_change = round(((total_spend - prev_month_spend) / prev_month_spend * 100), 1)
+    else:
+        mom_change = 0
     eff_score = round((1 - total_savings / total_spend) * 100, 1) if total_spend > 0 else 100
 
     # Daily trend with anomaly detection

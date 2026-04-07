@@ -2268,7 +2268,6 @@ function renderDashboardWidgets(data) {
     _addWidget(grid, 'dash-waste', 'Waste Detection', 250);
     _addWidget(grid, 'dash-rightsizing', 'Rightsizing Summary', 250);
     _addWidget(grid, 'dash-monthly', 'Monthly Trend', 250);
-    _addWidget(grid, 'dash-accounts', 'Account Comparison', 250);
 
     // Render ECharts
     setTimeout(function() {
@@ -2278,7 +2277,6 @@ function renderDashboardWidgets(data) {
         _renderRightsizing(data.rightsizing || {}, data.waste || {});
         _renderWaste(data.waste || {});
         _renderMonthly(data.monthlyTrend || {});
-        _renderAccountComparison(data.perAccount || []);
     }, 100);
 }
 
