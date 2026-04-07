@@ -90,6 +90,8 @@ def lambda_handler(event, context):
         'GET /members/dashboard-data': handle_dashboard_data,
         'POST /members/dashboard': handle_add_dashboard_item,
         'DELETE /members/dashboard': handle_delete_dashboard_item,
+        'GET /members/allocation-rules': handle_get_allocation_rules,
+        'POST /members/allocation-rules': handle_save_allocation_rules,
     }
 
     handler = routes.get(route_key)
@@ -1259,6 +1261,17 @@ def handle_dashboard_data(event):
     over_count = sum(1 for r in all_rightsizing if r['finding'] == 'OVER_PROVISIONED')
     all_rightsizing.sort(key=lambda x: x.get('monthlySavings', 0), reverse=True)
 
+    # Load and apply allocation rules (Virtual Tagging)
+    allocation_data = None
+    try:
+        members_table = dynamodb.Table(MEMBERS_TABLE_NAME)
+        member = members_table.get_item(Key={'email': member_email}).get('Item') or {}
+        alloc_rules = member.get('allocationRules') or []
+        if alloc_rules:
+            allocation_data = _apply_allocation_rules(cost_by_service, per_account, alloc_rules)
+    except Exception as e:
+        logger.warning(f"Allocation rules error: {e}")
+
     return create_response(200, {
         'summary': {
             'totalSpend': total_spend,
@@ -1284,6 +1297,7 @@ def handle_dashboard_data(event):
         },
         'perAccount': per_account,
         'containers': containers,
+        'costAllocation': allocation_data,
     })
 
 
@@ -1395,6 +1409,129 @@ def handle_delete_dashboard_item(event):
         return create_error_response(500, 'ServerError', 'Failed to delete dashboard item')
 
     return create_response(200, {'message': 'Dashboard item deleted', 'id': item_id})
+
+
+# ============================================================
+# Cost Allocation Rules (Virtual Tagging)
+# ============================================================
+
+def handle_get_allocation_rules(event):
+    """Get the member's cost allocation rules."""
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+    member_email = auth['sub']
+    members_table = dynamodb.Table(MEMBERS_TABLE_NAME)
+    try:
+        member = members_table.get_item(Key={'email': member_email}).get('Item') or {}
+        rules = member.get('allocationRules') or []
+    except ClientError:
+        rules = []
+    return create_response(200, {'rules': _decimal_to_native(rules)})
+
+
+def handle_save_allocation_rules(event):
+    """Save the member's cost allocation rules (replaces all rules)."""
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+    member_email = auth['sub']
+    try:
+        body = json.loads(event.get('body', '{}'))
+    except (json.JSONDecodeError, TypeError):
+        return create_error_response(400, 'InvalidRequest', 'Invalid request body')
+
+    rules = body.get('rules', [])
+    if not isinstance(rules, list):
+        return create_error_response(400, 'InvalidRequest', '"rules" must be an array')
+
+    # Validate each rule
+    valid_rules = []
+    for r in rules[:50]:  # max 50 rules
+        rule = {
+            'name': str(r.get('name', '')).strip()[:100],
+            'matchType': r.get('matchType', 'account'),  # account, service, tag, default
+            'matchValue': str(r.get('matchValue', '')).strip()[:200],
+            'businessUnit': str(r.get('businessUnit', '')).strip()[:100],
+        }
+        if rule['name'] and rule['businessUnit']:
+            valid_rules.append(rule)
+
+    members_table = dynamodb.Table(MEMBERS_TABLE_NAME)
+    try:
+        members_table.update_item(
+            Key={'email': member_email},
+            UpdateExpression='SET allocationRules = :rules',
+            ExpressionAttributeValues={':rules': valid_rules},
+        )
+    except ClientError as e:
+        logger.error(f"Failed to save allocation rules: {e}")
+        return create_error_response(500, 'ServerError', 'Failed to save rules')
+
+    return create_response(200, {'message': 'Rules saved', 'count': len(valid_rules)})
+
+
+def _apply_allocation_rules(cost_by_service, per_account, rules):
+    """Apply virtual tagging rules to cost data and return cost-by-business-unit."""
+    if not rules:
+        return None
+
+    bu_costs = {}  # business_unit -> total cost
+    unallocated = 0
+    default_bu = None
+
+    # Find default rule
+    for r in rules:
+        if r.get('matchType') == 'default':
+            default_bu = r.get('businessUnit', 'Unallocated')
+
+    for acct in per_account:
+        acct_id = acct.get('accountId', '')
+        acct_total = acct.get('totalSpend', 0)
+        matched = False
+
+        for r in rules:
+            mt = r.get('matchType', '')
+            mv = r.get('matchValue', '').lower()
+            bu = r.get('businessUnit', '')
+
+            if mt == 'account' and mv == acct_id:
+                bu_costs[bu] = bu_costs.get(bu, 0) + acct_total
+                matched = True
+                break
+
+        if not matched:
+            # Try service-level matching from the account's top services
+            for svc in acct.get('topServices', []):
+                svc_name = svc.get('service', '').lower()
+                svc_cost = svc.get('cost_usd', 0)
+                svc_matched = False
+                for r in rules:
+                    mt = r.get('matchType', '')
+                    mv = r.get('matchValue', '').lower()
+                    bu = r.get('businessUnit', '')
+                    if mt == 'service' and (mv in svc_name or svc_name.startswith(mv)):
+                        bu_costs[bu] = bu_costs.get(bu, 0) + svc_cost
+                        svc_matched = True
+                        break
+                if not svc_matched:
+                    if default_bu:
+                        bu_costs[default_bu] = bu_costs.get(default_bu, 0) + svc_cost
+                    else:
+                        unallocated += svc_cost
+
+    if unallocated > 0:
+        bu_costs['Unallocated'] = bu_costs.get('Unallocated', 0) + unallocated
+
+    total = sum(bu_costs.values())
+    result = sorted(
+        [{'businessUnit': bu, 'cost': round(c, 2), 'pct': round(c / total * 100, 1) if total > 0 else 0}
+         for bu, c in bu_costs.items()],
+        key=lambda x: x['cost'], reverse=True
+    )
+    allocated_pct = round((1 - bu_costs.get('Unallocated', 0) / total) * 100, 1) if total > 0 else 100
+
+    return {'businessUnits': result, 'allocatedPct': allocated_pct, 'totalAllocated': round(total, 2)}
 
 
 def handle_execute_command(event):

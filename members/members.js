@@ -2255,8 +2255,9 @@ function renderDashboardWidgets(data) {
     grid.innerHTML = '';
     _addWidget(grid, 'dash-treemap', 'Cost by Service', 300);
     _addWidget(grid, 'dash-daily', 'Daily Cost Trend (30d)', 250);
-    _addWidget(grid, 'dash-rightsizing', 'Rightsizing Summary', 250);
+    _addWidget(grid, 'dash-allocation', 'Cost Allocation by Business Unit <button class="btn btn-outline btn-sm" style="font-size:0.7em;margin-left:8px;padding:2px 6px;" onclick="showAllocationRulesModal();">Manage Rules</button>', 280);
     _addWidget(grid, 'dash-waste', 'Waste Detection', 250);
+    _addWidget(grid, 'dash-rightsizing', 'Rightsizing Summary', 250);
     _addWidget(grid, 'dash-monthly', 'Monthly Trend', 250);
     _addWidget(grid, 'dash-accounts', 'Account Comparison', 250);
 
@@ -2264,6 +2265,7 @@ function renderDashboardWidgets(data) {
     setTimeout(function() {
         _renderTreemap(data.costByService || []);
         _renderDailyTrend(data.dailyTrend || []);
+        _renderAllocationTreemap(data.costAllocation || null);
         _renderRightsizing(data.rightsizing || {}, data.waste || {});
         _renderWaste(data.waste || {});
         _renderMonthly(data.monthlyTrend || {});
@@ -2377,6 +2379,109 @@ function _renderAccountComparison(perAccount) {
         yAxis: { type: 'category', data: valid.map(function(a) { return (a.accountName || a.accountId).substring(0,20); }), axisLabel: { color: '#8b949e' } },
         series: [{ type: 'bar', data: valid.map(function(a,i) { return { value: a.totalSpend, itemStyle: { color: colors[i%colors.length] } }; }) }],
         grid: { left: 100, right: 10, bottom: 20, top: 10 },
+    });
+    window.addEventListener('resize', function() { chart.resize(); });
+}
+
+
+// ============================================================
+// Cost Allocation Rules (Virtual Tagging)
+// ============================================================
+var allocRulesCache = null;
+
+async function loadAllocationRules() {
+    try {
+        var data = await api('GET', '/members/allocation-rules');
+        allocRulesCache = data.rules || [];
+        return allocRulesCache;
+    } catch (e) { allocRulesCache = []; return []; }
+}
+
+function showAllocationRulesModal() {
+    var existing = allocRulesCache || [];
+    var modal = document.createElement('div');
+    modal.className = 'modal-overlay';
+    modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);z-index:1000;display:flex;align-items:center;justify-content:center;';
+    var card = document.createElement('div');
+    card.style.cssText = 'background:#fff;border-radius:12px;padding:24px;max-width:600px;width:90%;max-height:80vh;overflow-y:auto;';
+    card.innerHTML = '<h2 style="margin-top:0;">Cost Allocation Rules</h2>' +
+        '<p style="color:#6b7280;font-size:0.85em;">Map accounts and services to business units for cost allocation.</p>' +
+        '<div id="alloc-rules-list"></div>' +
+        '<button id="alloc-add-rule" class="btn btn-outline btn-sm" style="margin-top:8px;">+ Add Rule</button>' +
+        '<div style="margin-top:16px;display:flex;gap:8px;justify-content:flex-end;">' +
+        '<button id="alloc-cancel" class="btn btn-outline">Cancel</button>' +
+        '<button id="alloc-save" class="btn btn-primary">Save Rules</button></div>';
+    modal.appendChild(card);
+    document.body.appendChild(modal);
+
+    function renderRules(rules) {
+        var list = card.querySelector('#alloc-rules-list');
+        list.innerHTML = '';
+        rules.forEach(function(r, idx) {
+            var row = document.createElement('div');
+            row.style.cssText = 'display:flex;gap:6px;align-items:center;margin-bottom:6px;flex-wrap:wrap;';
+            row.innerHTML =
+                '<input type="text" value="' + ea(r.name || '') + '" placeholder="Rule name" style="flex:1;min-width:100px;padding:4px 8px;border:1px solid #d0d7de;border-radius:4px;font-size:0.85em;" data-field="name">' +
+                '<select style="padding:4px;border:1px solid #d0d7de;border-radius:4px;font-size:0.85em;" data-field="matchType">' +
+                '<option value="account"' + (r.matchType === 'account' ? ' selected' : '') + '>Account ID</option>' +
+                '<option value="service"' + (r.matchType === 'service' ? ' selected' : '') + '>Service Name</option>' +
+                '<option value="tag"' + (r.matchType === 'tag' ? ' selected' : '') + '>Tag Value</option>' +
+                '<option value="default"' + (r.matchType === 'default' ? ' selected' : '') + '>Default (catch-all)</option></select>' +
+                '<input type="text" value="' + ea(r.matchValue || '') + '" placeholder="Match value" style="flex:1;min-width:100px;padding:4px 8px;border:1px solid #d0d7de;border-radius:4px;font-size:0.85em;" data-field="matchValue">' +
+                '<input type="text" value="' + ea(r.businessUnit || '') + '" placeholder="Business Unit" style="flex:1;min-width:100px;padding:4px 8px;border:1px solid #d0d7de;border-radius:4px;font-size:0.85em;font-weight:600;" data-field="businessUnit">' +
+                '<button class="btn-icon btn-icon-delete" style="font-size:14px;cursor:pointer;" data-del="' + idx + '">&#128465;</button>';
+            list.appendChild(row);
+        });
+    }
+    renderRules(existing);
+
+    card.querySelector('#alloc-add-rule').onclick = function() {
+        existing.push({name: '', matchType: 'account', matchValue: '', businessUnit: ''});
+        renderRules(existing);
+    };
+    card.querySelector('#alloc-rules-list').onclick = function(e) {
+        var del = e.target.closest('[data-del]');
+        if (del) { existing.splice(parseInt(del.dataset.del), 10, 1); existing = existing.filter(Boolean); renderRules(existing); }
+    };
+    card.querySelector('#alloc-cancel').onclick = function() { modal.remove(); };
+    card.querySelector('#alloc-save').onclick = async function() {
+        var rows = card.querySelectorAll('#alloc-rules-list > div');
+        var rules = [];
+        rows.forEach(function(row) {
+            var r = {};
+            row.querySelectorAll('[data-field]').forEach(function(inp) { r[inp.dataset.field] = inp.value; });
+            if (r.name && r.businessUnit) rules.push(r);
+        });
+        try {
+            await api('POST', '/members/allocation-rules', {rules: rules});
+            allocRulesCache = rules;
+            modal.remove();
+            dashDataCache = null;
+            loadDashboardData();
+            notify('Allocation rules saved.', 'success');
+        } catch (e) { notify('Failed to save rules: ' + (e.message || ''), 'error'); }
+    };
+    modal.onclick = function(e) { if (e.target === modal) modal.remove(); };
+}
+
+function _renderAllocationTreemap(allocation) {
+    var el = $('dash-allocation');
+    if (!el) return;
+    if (!allocation || !allocation.businessUnits || !allocation.businessUnits.length) {
+        el.innerHTML = '<div style="color:#6b7280;font-size:0.85em;padding:20px;text-align:center;">' +
+            'No allocation rules defined.<br><button class="btn btn-outline btn-sm" style="margin-top:8px;" onclick="showAllocationRulesModal();">+ Create Rules</button></div>';
+        return;
+    }
+    if (!window.echarts) { el.innerHTML = '<div style="color:#ef4444;">ECharts not loaded</div>'; return; }
+    var chart = echarts.init(el, null);
+    var colors = ['#6366f1','#10b981','#f59e0b','#ef4444','#8b5cf6','#ec4899','#14b8a6','#f97316'];
+    chart.setOption({
+        tooltip: { formatter: function(p) { return p.name + ': $' + p.value.toFixed(2) + ' (' + (p.data.pct || 0) + '%)'; } },
+        series: [{ type: 'treemap', data: allocation.businessUnits.map(function(bu) {
+            return { name: bu.businessUnit, value: bu.cost, pct: bu.pct };
+        }), label: { show: true, formatter: '{b}\n${c}', fontSize: 11 }, breadcrumb: { show: false },
+            itemStyle: { borderColor: '#fff', borderWidth: 2 } }],
+        color: colors,
     });
     window.addEventListener('resize', function() { chart.resize(); });
 }
