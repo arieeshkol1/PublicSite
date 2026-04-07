@@ -2204,27 +2204,66 @@ function getDashSelectedAccountIds() {
 }
 
 async function loadDashboardData() {
-    var now = Date.now();
-    if (dashDataCache && (now - dashDataCacheTime) < DASH_CACHE_TTL) {
-        renderDashboardWidgets(dashDataCache);
-        return;
-    }
     var kpiBar = $('dash-kpi-bar');
     var grid = $('dash-grid');
-    if (kpiBar) kpiBar.innerHTML = '<div style="color:#8b949e;padding:20px;">Loading dashboard data from your accounts...</div>';
-    if (grid) grid.innerHTML = '';
-    try {
-        var selectedIds = getDashSelectedAccountIds();
-        var url = '/members/dashboard-data';
-        if (selectedIds.length > 0) url += '?accountIds=' + selectedIds.join(',');
-        var data = await api('GET', url);
-        dashDataCache = data;
-        dashDataCacheTime = Date.now();
-        renderDashboardWidgets(data);
-    } catch (e) {
-        console.error('Dashboard load error:', e);
-        if (kpiBar) kpiBar.innerHTML = '<div style="color:#f85149;padding:20px;">Dashboard loading failed: ' + esc(e.message || 'Unknown error') + '<br><br><button class="btn btn-outline btn-sm" onclick="dashDataCache=null;loadDashboardData();">Retry</button></div>';
-    }
+    if (!kpiBar || !grid) { console.error('Dashboard containers not found'); return; }
+
+    // MOCK DATA — replace with API call once UI is verified
+    var data = {
+        summary: {
+            totalSpend: 856.42, previousMonthSpend: 1023.15, monthOverMonthChange: -16.3,
+            efficiencyScore: 75.9, efficiencyRating: 'Good', potentialSavings: 147.20,
+            savingsBreakdown: {'RDS Savings Plans': 98.40, 'Idle EIPs': 3.65, 'KMS Keys': 2.00, 'gp2 to gp3': 8.50},
+            totalAccounts: 2, accountsAnalyzed: 2,
+        },
+        costByService: [
+            {service: 'Relational Database Service', cost: 490.60, pct: 57.3},
+            {service: 'EC2 Compute', cost: 78.26, pct: 9.1},
+            {service: 'Virtual Private Cloud', cost: 73.44, pct: 8.6},
+            {service: 'CloudWatch', cost: 58.24, pct: 6.8},
+            {service: 'EC2 - Other', cost: 60.80, pct: 7.1},
+            {service: 'Elastic Load Balancing', cost: 54.30, pct: 6.3},
+            {service: 'Security Hub', cost: 15.55, pct: 1.8},
+            {service: 'Route 53', cost: 2.06, pct: 0.2},
+        ],
+        dailyTrend: [
+            {date: '2026-03-28', cost: 28.5, isAnomaly: false, spikePct: 0},
+            {date: '2026-03-29', cost: 27.8, isAnomaly: false, spikePct: 0},
+            {date: '2026-03-30', cost: 29.1, isAnomaly: false, spikePct: 0},
+            {date: '2026-03-31', cost: 28.3, isAnomaly: false, spikePct: 0},
+            {date: '2026-04-01', cost: 30.2, isAnomaly: false, spikePct: 0},
+            {date: '2026-04-02', cost: 58.7, isAnomaly: true, spikePct: 95.2},
+            {date: '2026-04-03', cost: 31.5, isAnomaly: false, spikePct: 0},
+        ],
+        monthlyTrend: {
+            '2026-01': {'RDS': 480, 'EC2': 95, 'VPC': 45, 'Other': 120},
+            '2026-02': {'RDS': 490, 'EC2': 82, 'VPC': 68, 'Other': 105},
+            '2026-03': {'RDS': 491, 'EC2': 78, 'VPC': 73, 'Other': 98},
+        },
+        rightsizing: {
+            overProvisioned: 2,
+            topOpportunities: [
+                {resource: 'i-0abc123', currentType: 'm5.xlarge', recommendedType: 'm5.large', monthlySavings: 48.50, account: '991105135552'},
+                {resource: 'db-prod-01', currentType: 'db.r5.large', recommendedType: 'db.r5.medium', monthlySavings: 32.10, account: '960915223703'},
+            ],
+        },
+        waste: {
+            totalWaste: 42.50,
+            items: [
+                {type: 'Unattached EBS', resource: 'vol-0abc123 (100GB gp2)', monthlyCost: 10.00, account: '991105135552'},
+                {type: 'Idle Elastic IPs', resource: '2 EIPs', monthlyCost: 7.30, account: '991105135552'},
+                {type: 'Deleted VPC Endpoints', resource: 'Charges stop next month', monthlyCost: 16.20, account: '960915223703'},
+                {type: 'KMS Keys', resource: '3 customer-managed keys', monthlyCost: 3.00, account: '960915223703'},
+                {type: 'gp2 Volumes', resource: '5 volumes (migrate to gp3)', monthlyCost: 6.00, account: '991105135552'},
+            ],
+        },
+        perAccount: [
+            {accountId: '991105135552', accountName: 'Sandbox', totalSpend: 423.20, efficiencyScore: 78.5},
+            {accountId: '960915223703', accountName: 'Management', totalSpend: 433.22, efficiencyScore: 73.2},
+        ],
+    };
+
+    renderDashboardWidgets(data);
 }
 
 function renderDashboardWidgets(data) {
