@@ -901,7 +901,7 @@ function activateMemberTab(tabId) {
         c.hidden = c.id !== tabId;
     });
     if (tabId === 'ai-tab') populateAIAccounts();
-    if (tabId === 'dash-tab') { populateDashAccounts(); loadDashboardData(); }
+    if (tabId === 'dash-tab') { console.log('Dashboard tab activated'); populateDashAccounts(); loadDashboardData(); }
 }
 
 // ============================================================
