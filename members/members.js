@@ -2261,15 +2261,15 @@ function renderDashboardWidgets(data) {
 
     // Grid widgets
     grid.innerHTML = '';
-    _addWidget(grid, 'dash-treemap', 'Cost by Service', 300);
-    _addWidget(grid, 'dash-daily', 'Daily Cost Trend (30d)', 250);
-    _addWidget(grid, 'dash-allocation', 'Cost Allocation by Business Unit <button class="btn btn-outline btn-sm" style="font-size:0.7em;margin-left:8px;padding:2px 6px;" onclick="showAllocationRulesModal();">Manage Rules</button>', 280);
-    _addWidget(grid, 'dash-waste', 'Waste Detection', 250);
-    _addWidget(grid, 'dash-rightsizing', 'Rightsizing Summary', 250);
-    _addWidget(grid, 'dash-monthly', 'Monthly Cost by Service', 320);
+    _addWidget(grid, 'dash-treemap', 'Cost by Service', 300, 'Show me my cost breakdown by service');
+    _addWidget(grid, 'dash-daily', 'Daily Cost Trend (30d)', 250, 'Are there any cost anomalies in the last 30 days?');
+    _addWidget(grid, 'dash-allocation', 'Cost Allocation by Business Unit <button class="btn btn-outline btn-sm" style="font-size:0.7em;margin-left:8px;padding:2px 6px;" onclick="showAllocationRulesModal();">Manage Rules</button>', 280, 'Break down my costs by business unit');
+    _addWidget(grid, 'dash-waste', 'Waste Detection', 250, 'What services do I not need? Show me all waste.');
+    _addWidget(grid, 'dash-rightsizing', 'Rightsizing Summary', 250, 'Is there any service we can rightsize?');
+    _addWidget(grid, 'dash-monthly', 'Monthly Cost by Service', 320, 'Compare my costs over the last 3 months');
 
-    // Unit Economics widget (only if data exists)
-    _addWidget(grid, 'dash-unit-economics', 'Unit Cost Trend <button class="btn btn-outline btn-sm" style="font-size:0.7em;margin-left:8px;padding:2px 6px;" onclick="showBusinessMetricsModal();">Add Metrics</button>', 280);
+    // Unit Economics widget
+    _addWidget(grid, 'dash-unit-economics', 'Unit Cost Trend <button class="btn btn-outline btn-sm" style="font-size:0.7em;margin-left:8px;padding:2px 6px;" onclick="showBusinessMetricsModal();">Add Metrics</button>', 280, 'How is my cost per unit trending?');
 
     // Render ECharts
     setTimeout(function() {
@@ -2289,12 +2289,24 @@ function _kpiCard(label, value, color) {
         '<div style="color:' + color + ';font-size:1.3em;font-weight:700;">' + value + '</div></div>';
 }
 
-function _addWidget(grid, id, title, height) {
+function _addWidget(grid, id, title, height, aiQuestion) {
     var w = document.createElement('div');
-    w.style.cssText = 'background:#161b22;border:1px solid #30363d;border-radius:8px;padding:14px;';
-    w.innerHTML = '<div style="color:#e2e8f0;font-size:0.9em;font-weight:600;margin-bottom:8px;">' + title + '</div>' +
+    w.style.cssText = 'background:#f0f4f8;border:1px solid #d0d7de;border-radius:8px;padding:14px;';
+    var aiLink = aiQuestion ? ' <a href="#" style="font-size:0.7em;color:#6366f1;text-decoration:none;float:right;" onclick="event.preventDefault();_askAIFromDashboard(\'' + aiQuestion.replace(/'/g, "\\'") + '\');">Ask AI \u25b6</a>' : '';
+    w.innerHTML = '<div style="color:#1f2937;font-size:0.9em;font-weight:600;margin-bottom:8px;">' + title + aiLink + '</div>' +
         '<div id="' + id + '" style="width:100%;height:' + height + 'px;"></div>';
     grid.appendChild(w);
+}
+
+function _askAIFromDashboard(question) {
+    document.querySelector('[data-tab="ai-tab"]').click();
+    setTimeout(function() {
+        var inp = document.getElementById('ai-question-input');
+        if (inp) {
+            inp.value = question;
+            document.getElementById('ai-ask-btn').click();
+        }
+    }, 300);
 }
 
 function _renderTreemap(costByService) {
