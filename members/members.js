@@ -2147,7 +2147,7 @@ async function loadDashboardData() {
     }
     var kpiBar = $('dash-kpi-bar');
     var grid = $('dash-grid');
-    if (kpiBar) kpiBar.innerHTML = '<div style="color:#8b949e;">Loading dashboard data...</div>';
+    if (kpiBar) kpiBar.innerHTML = '<div style="color:#8b949e;padding:20px;">Loading dashboard data from your accounts...</div>';
     if (grid) grid.innerHTML = '';
     try {
         var data = await api('GET', '/members/dashboard-data');
@@ -2155,7 +2155,8 @@ async function loadDashboardData() {
         dashDataCacheTime = Date.now();
         renderDashboardWidgets(data);
     } catch (e) {
-        if (kpiBar) kpiBar.innerHTML = '<div style="color:#f85149;">Failed to load dashboard: ' + esc(e.message || 'Error') + '</div>';
+        console.error('Dashboard load error:', e);
+        if (kpiBar) kpiBar.innerHTML = '<div style="color:#f85149;padding:20px;">Dashboard loading failed: ' + esc(e.message || 'Unknown error') + '<br><br><button class="btn btn-outline btn-sm" onclick="dashDataCache=null;loadDashboardData();">Retry</button></div>';
     }
 }
 
