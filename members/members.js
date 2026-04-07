@@ -2252,7 +2252,6 @@ function renderDashboardWidgets(data) {
     }
 
     kpiBar.innerHTML =
-        _kpiCard('Total Spend', '$' + (s.totalSpend || 0).toLocaleString(undefined, {minimumFractionDigits:2}), '#1f2937') +
         _kpiCard('Month-over-Month', momArrow + ' ' + Math.abs(s.monthOverMonthChange || 0) + '%', momColor) +
         _kpiCard('Efficiency Score', (s.efficiencyScore || 0) + '% (' + (s.efficiencyRating || '') + ')', effColor) +
         '<div style="background:#f0f4f8;border:1px solid #d0d7de;border-radius:8px;padding:12px 16px;flex:1;min-width:130px;cursor:pointer;" title="' + ea(savingsTooltip) + '" onclick="document.querySelector(\'[data-tab=ai-tab]\').click();setTimeout(function(){var inp=document.getElementById(\'ai-question-input\');if(inp){inp.value=\'Where can I save money?\';document.getElementById(\'ai-ask-btn\').click();}},300);">' +
@@ -2267,7 +2266,7 @@ function renderDashboardWidgets(data) {
     _addWidget(grid, 'dash-allocation', 'Cost Allocation by Business Unit <button class="btn btn-outline btn-sm" style="font-size:0.7em;margin-left:8px;padding:2px 6px;" onclick="showAllocationRulesModal();">Manage Rules</button>', 280);
     _addWidget(grid, 'dash-waste', 'Waste Detection', 250);
     _addWidget(grid, 'dash-rightsizing', 'Rightsizing Summary', 250);
-    _addWidget(grid, 'dash-monthly', 'Monthly Trend', 250);
+    _addWidget(grid, 'dash-monthly', 'Monthly Cost by Service', 320);
 
     // Unit Economics widget (only if data exists)
     _addWidget(grid, 'dash-unit-economics', 'Unit Cost Trend <button class="btn btn-outline btn-sm" style="font-size:0.7em;margin-left:8px;padding:2px 6px;" onclick="showBusinessMetricsModal();">Add Metrics</button>', 280);
@@ -2364,16 +2363,50 @@ function _renderWaste(waste) {
 function _renderMonthly(monthlyTrend) {
     var el = $('dash-monthly'); if (!el || !window.echarts) return;
     var months = Object.keys(monthlyTrend).sort();
-    if (months.length < 1) { el.innerHTML = '<div style="color:#8b949e;font-size:0.85em;">No monthly data yet</div>'; return; }
-    var totals = months.map(function(m) { return Math.round(Object.values(monthlyTrend[m]).reduce(function(a,b){return a+b;},0)*100)/100; });
+    if (months.length < 1) { el.innerHTML = '<div style="color:#6b7280;font-size:0.85em;">No monthly data yet</div>'; return; }
+
+    // Get all services across all months and find top ones
+    var allSvcs = {};
+    months.forEach(function(m) {
+        Object.entries(monthlyTrend[m]).forEach(function(e) {
+            allSvcs[e[0]] = (allSvcs[e[0]] || 0) + e[1];
+        });
+    });
+    // Remove Tax
+    delete allSvcs['Tax'];
+    // Sort by total cost, take top 8
+    var topSvcs = Object.entries(allSvcs).sort(function(a,b){return b[1]-a[1];}).slice(0, 8).map(function(e){return e[0];});
+
     var labels = months.map(function(m) { var p=m.split('-'); var mn=['','Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']; return (mn[parseInt(p[1])]||p[1])+' '+p[0]; });
-    var chart = echarts.init(el, 'dark');
+    var colors = ['#6366f1','#10b981','#f59e0b','#ef4444','#8b5cf6','#ec4899','#14b8a6','#f97316'];
+
+    var series = topSvcs.map(function(svc, i) {
+        return {
+            name: svc.replace('Amazon ','').replace('AWS ','').substring(0, 25),
+            type: 'bar',
+            stack: 'total',
+            data: months.map(function(m) { return Math.round((monthlyTrend[m][svc] || 0) * 100) / 100; }),
+            itemStyle: { color: colors[i % colors.length] },
+            emphasis: { focus: 'series' },
+        };
+    });
+
+    var chart = echarts.init(el, null);
     chart.setOption({
-        tooltip: { trigger: 'axis', formatter: function(ps) { return ps[0].axisValue + ': $' + ps[0].value.toFixed(2); } },
-        xAxis: { type: 'category', data: labels, axisLabel: { color: '#8b949e', fontSize: 10 } },
-        yAxis: { type: 'value', axisLabel: { color: '#8b949e', formatter: '${value}' } },
-        series: [{ type: 'bar', data: totals.map(function(v,i) { return { value: v, itemStyle: { color: ['#6366f1','#10b981','#f59e0b','#ef4444','#8b5cf6','#ec4899'][i%6] } }; }) }],
-        grid: { left: 50, right: 10, bottom: 25, top: 10 },
+        tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' },
+            formatter: function(ps) {
+                var s = ps[0].axisValue + '<br>';
+                var total = 0;
+                ps.forEach(function(p) { if (p.value > 0) { s += p.marker + p.seriesName + ': $' + p.value.toFixed(2) + '<br>'; total += p.value; } });
+                s += '<strong>Total: $' + total.toFixed(2) + '</strong>';
+                return s;
+            }
+        },
+        legend: { type: 'scroll', bottom: 0, textStyle: { color: '#6b7280', fontSize: 10 }, itemWidth: 12, itemHeight: 8 },
+        xAxis: { type: 'category', data: labels, axisLabel: { color: '#6b7280', fontSize: 10 } },
+        yAxis: { type: 'value', axisLabel: { color: '#6b7280', formatter: '${value}' }, splitLine: { lineStyle: { color: '#e5e7eb' } } },
+        series: series,
+        grid: { left: 55, right: 10, bottom: 50, top: 10 },
     });
     window.addEventListener('resize', function() { chart.resize(); });
 }
