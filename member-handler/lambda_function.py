@@ -134,6 +134,29 @@ def validate_token(event):
     return decoded
 
 
+def _verify_account_ownership(member_email, account_ids):
+    """Verify that all given account IDs belong to the authenticated member.
+    Returns True if all accounts are owned, or an error response dict if not.
+    """
+    if not account_ids:
+        return True
+    accounts_table = dynamodb.Table(ACCOUNTS_TABLE_NAME)
+    try:
+        result = accounts_table.query(
+            KeyConditionExpression=boto3.dynamodb.conditions.Key('memberEmail').eq(member_email),
+            ProjectionExpression='accountId',
+        )
+        owned_ids = {item['accountId'] for item in result.get('Items', [])}
+    except ClientError:
+        return create_error_response(500, 'ServerError', 'Failed to verify account ownership')
+
+    for aid in account_ids:
+        if aid not in owned_ids:
+            logger.warning(f"Lateral access attempt: {member_email} tried to access account {aid}")
+            return create_error_response(403, 'Forbidden', f'Account {aid} does not belong to you')
+    return True
+
+
 # ============================================================
 # Registration handler (3-step OTP flow)
 # ============================================================
@@ -1056,6 +1079,11 @@ def handle_test_connection(event):
     if not re.fullmatch(r'\d{12}', account_id):
         return create_error_response(400, 'InvalidAccountId', 'Account ID must be exactly 12 digits')
 
+    # Verify account ownership
+    ownership = _verify_account_ownership(member_email, [account_id])
+    if isinstance(ownership, dict):
+        return ownership
+
     role_arn = f'arn:aws:iam::{account_id}:role/SlashMyBill-{account_id}'
     external_id = hashlib.sha256(member_email.encode('utf-8')).hexdigest()
 
@@ -1859,6 +1887,11 @@ def handle_execute_command(event):
     if not command:
         return create_error_response(400, 'InvalidRequest', 'Command is required')
 
+    # Verify account ownership — prevent lateral access
+    ownership = _verify_account_ownership(member_email, [account_id])
+    if isinstance(ownership, dict):
+        return ownership
+
     # Parse the AWS CLI command: "aws <service> <action> [--param value ...]"
     parts = command.split()
     if len(parts) < 3 or parts[0] != 'aws':
@@ -2192,6 +2225,11 @@ def handle_ai_query(event):
 
     # Generate unique interactionId for feedback tracking
     interaction_id = datetime.now(timezone.utc).isoformat() + '-' + secrets.token_hex(4)
+
+    # Verify account ownership — prevent lateral access
+    ownership = _verify_account_ownership(member_email, account_ids)
+    if isinstance(ownership, dict):
+        return ownership
 
     # Multi-account query: gather data from all accounts, then analyze together
     if len(account_ids) > 1:
