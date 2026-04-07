@@ -901,7 +901,7 @@ function activateMemberTab(tabId) {
         c.hidden = c.id !== tabId;
     });
     if (tabId === 'ai-tab') populateAIAccounts();
-    if (tabId === 'dash-tab') loadDashboardData();
+    if (tabId === 'dash-tab') { populateDashAccounts(); loadDashboardData(); }
 }
 
 // ============================================================
@@ -2139,6 +2139,70 @@ var dashDataCache = null;
 var dashDataCacheTime = 0;
 var DASH_CACHE_TTL = 300000; // 5 minutes
 
+function populateDashAccounts() {
+    var el = $('dash-account-select');
+    if (!el) return;
+    el.innerHTML = '';
+    var connected = allAccounts.filter(function(a) { return a.connectionStatus === 'connected'; });
+    if (!connected.length) { el.innerHTML = '<span style="color:#8b949e;font-size:0.85em;">No connected accounts</span>'; return; }
+
+    var toggleBtn = document.createElement('button');
+    toggleBtn.type = 'button';
+    toggleBtn.className = 'btn btn-outline btn-sm';
+    toggleBtn.style.cssText = 'font-size:0.85em;padding:4px 12px;min-width:180px;text-align:left;';
+    function updateLabel() {
+        var checked = el.querySelectorAll('.dash-acct-cb:checked');
+        if (checked.length === 0) toggleBtn.textContent = 'Select accounts...';
+        else if (checked.length === 1) toggleBtn.textContent = checked[0].parentElement.dataset.label || checked[0].value;
+        else toggleBtn.textContent = checked.length + ' accounts selected';
+        toggleBtn.textContent += ' \u25be';
+    }
+
+    var panel = document.createElement('div');
+    panel.style.cssText = 'display:none;position:absolute;top:100%;left:0;z-index:200;background:#fff;border:1px solid #d0d7de;border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,0.15);min-width:260px;max-height:200px;overflow-y:auto;padding:6px 0;margin-top:4px;';
+
+    connected.forEach(function(a, idx) {
+        var row = document.createElement('label');
+        row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:6px 12px;cursor:pointer;color:#24292f;font-size:0.85em;white-space:nowrap;';
+        row.dataset.label = a.accountId + ' (' + (a.accountName || 'Account') + ')';
+        row.onmouseenter = function() { row.style.background = '#f6f8fa'; };
+        row.onmouseleave = function() { row.style.background = ''; };
+        var cb = document.createElement('input');
+        cb.type = 'checkbox'; cb.value = a.accountId; cb.className = 'dash-acct-cb';
+        cb.checked = true; // All accounts selected by default for dashboard
+        cb.style.cssText = 'accent-color:#6366f1;flex-shrink:0;';
+        cb.onchange = function() { updateLabel(); dashDataCache = null; loadDashboardData(); };
+        row.appendChild(cb);
+        row.appendChild(document.createTextNode(a.accountId + ' (' + (a.accountName || 'Account ' + a.accountId.slice(-4)) + ')'));
+        panel.appendChild(row);
+    });
+
+    var ctrlRow = document.createElement('div');
+    ctrlRow.style.cssText = 'display:flex;gap:8px;padding:6px 12px;border-top:1px solid #d0d7de;margin-top:4px;';
+    var selAll = document.createElement('a');
+    selAll.href = '#'; selAll.textContent = 'Select All'; selAll.style.cssText = 'font-size:0.8em;color:#6366f1;text-decoration:none;';
+    selAll.onclick = function(e) { e.preventDefault(); panel.querySelectorAll('.dash-acct-cb').forEach(function(c) { c.checked = true; }); updateLabel(); dashDataCache = null; loadDashboardData(); };
+    var selNone = document.createElement('a');
+    selNone.href = '#'; selNone.textContent = 'Clear'; selNone.style.cssText = 'font-size:0.8em;color:#6366f1;text-decoration:none;';
+    selNone.onclick = function(e) { e.preventDefault(); panel.querySelectorAll('.dash-acct-cb').forEach(function(c) { c.checked = false; }); updateLabel(); };
+    ctrlRow.appendChild(selAll); ctrlRow.appendChild(selNone);
+    panel.appendChild(ctrlRow);
+
+    var wrapper = document.createElement('div');
+    wrapper.style.cssText = 'position:relative;display:inline-block;';
+    wrapper.appendChild(toggleBtn); wrapper.appendChild(panel);
+    el.appendChild(wrapper);
+
+    toggleBtn.onclick = function(e) { e.stopPropagation(); panel.style.display = panel.style.display === 'none' ? 'block' : 'none'; };
+    document.addEventListener('click', function(e) { if (!wrapper.contains(e.target)) panel.style.display = 'none'; });
+    updateLabel();
+}
+
+function getDashSelectedAccountIds() {
+    var cbs = document.querySelectorAll('.dash-acct-cb:checked');
+    var ids = []; cbs.forEach(function(cb) { ids.push(cb.value); }); return ids;
+}
+
 async function loadDashboardData() {
     var now = Date.now();
     if (dashDataCache && (now - dashDataCacheTime) < DASH_CACHE_TTL) {
@@ -2150,7 +2214,10 @@ async function loadDashboardData() {
     if (kpiBar) kpiBar.innerHTML = '<div style="color:#8b949e;padding:20px;">Loading dashboard data from your accounts...</div>';
     if (grid) grid.innerHTML = '';
     try {
-        var data = await api('GET', '/members/dashboard-data');
+        var selectedIds = getDashSelectedAccountIds();
+        var url = '/members/dashboard-data';
+        if (selectedIds.length > 0) url += '?accountIds=' + selectedIds.join(',');
+        var data = await api('GET', url);
         dashDataCache = data;
         dashDataCacheTime = Date.now();
         renderDashboardWidgets(data);
@@ -2161,6 +2228,9 @@ async function loadDashboardData() {
 }
 
 function renderDashboardWidgets(data) {
+    // Wire refresh button
+    var refreshBtn = $('dash-refresh-btn');
+    if (refreshBtn) refreshBtn.onclick = function() { dashDataCache = null; loadDashboardData(); };
     var kpiBar = $('dash-kpi-bar');
     var grid = $('dash-grid');
     if (!kpiBar || !grid) return;

@@ -1111,11 +1111,16 @@ def handle_test_connection(event):
 
 
 def handle_dashboard_data(event):
-    """Return comprehensive FinOps dashboard data across all connected accounts."""
+    """Return comprehensive FinOps dashboard data for selected accounts."""
     auth = validate_token(event)
     if isinstance(auth, dict) and 'statusCode' in auth:
         return auth
     member_email = auth['sub']
+
+    # Get accountIds from query string (optional — if not provided, use all connected)
+    qs = event.get('queryStringParameters') or {}
+    requested_ids = (qs.get('accountIds') or '').split(',')
+    requested_ids = [a.strip() for a in requested_ids if a.strip()]
 
     # Get all connected accounts
     accounts_table = dynamodb.Table(ACCOUNTS_TABLE_NAME)
@@ -1126,6 +1131,10 @@ def handle_dashboard_data(event):
         accounts = [a for a in result.get('Items', []) if a.get('connectionStatus') == 'connected']
     except ClientError:
         accounts = []
+
+    # Filter to requested accounts if specified
+    if requested_ids:
+        accounts = [a for a in accounts if a['accountId'] in requested_ids]
 
     if not accounts:
         return create_response(200, {'summary': {'totalSpend': 0, 'totalAccounts': 0}})
