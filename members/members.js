@@ -2244,12 +2244,21 @@ function renderDashboardWidgets(data) {
     var momColor = s.monthOverMonthChange <= 0 ? '#10b981' : '#ef4444';
     var momArrow = s.monthOverMonthChange <= 0 ? '▼' : '▲';
     var effColor = s.efficiencyScore >= 90 ? '#10b981' : s.efficiencyScore >= 75 ? '#f59e0b' : '#ef4444';
+    // Build savings breakdown tooltip
+    var savingsTooltip = '';
+    if (s.savingsBreakdown) {
+        var entries = Object.entries(s.savingsBreakdown).sort(function(a,b){return b[1]-a[1];});
+        savingsTooltip = entries.map(function(e){return e[0]+': $'+e[1].toFixed(2);}).join('\n');
+    }
+
     kpiBar.innerHTML =
-        _kpiCard('Total Spend', '$' + (s.totalSpend || 0).toLocaleString(undefined, {minimumFractionDigits:2}), '#e2e8f0') +
+        _kpiCard('Total Spend', '$' + (s.totalSpend || 0).toLocaleString(undefined, {minimumFractionDigits:2}), '#1f2937') +
         _kpiCard('Month-over-Month', momArrow + ' ' + Math.abs(s.monthOverMonthChange || 0) + '%', momColor) +
         _kpiCard('Efficiency Score', (s.efficiencyScore || 0) + '% (' + (s.efficiencyRating || '') + ')', effColor) +
-        _kpiCard('Potential Savings', '$' + (s.potentialSavings || 0).toLocaleString(undefined, {minimumFractionDigits:2}), '#f59e0b') +
-        _kpiCard('Accounts', (s.accountsAnalyzed || 0) + ' / ' + (s.totalAccounts || 0), '#8b5cf6');
+        '<div style="background:#f0f4f8;border:1px solid #d0d7de;border-radius:8px;padding:12px 16px;flex:1;min-width:130px;cursor:pointer;" title="' + ea(savingsTooltip) + '" onclick="document.querySelector(\'[data-tab=ai-tab]\').click();setTimeout(function(){var inp=document.getElementById(\'ai-question-input\');if(inp){inp.value=\'Where can I save money?\';document.getElementById(\'ai-ask-btn\').click();}},300);">' +
+            '<div style="color:#6b7280;font-size:0.75em;">Potential Savings \u25b6</div>' +
+            '<div style="color:#f59e0b;font-size:1.3em;font-weight:700;">$' + (s.potentialSavings || 0).toLocaleString(undefined, {minimumFractionDigits:2}) + '</div></div>' +
+        _kpiCard('Accounts', (s.accountsAnalyzed || 0) + ' / ' + (s.totalAccounts || 0), '#6366f1');
 
     // Grid widgets
     grid.innerHTML = '';
@@ -2353,7 +2362,7 @@ function _renderWaste(waste) {
 function _renderMonthly(monthlyTrend) {
     var el = $('dash-monthly'); if (!el || !window.echarts) return;
     var months = Object.keys(monthlyTrend).sort();
-    if (months.length < 2) { el.innerHTML = '<div style="color:#8b949e;font-size:0.85em;">Need 2+ months of data</div>'; return; }
+    if (months.length < 1) { el.innerHTML = '<div style="color:#8b949e;font-size:0.85em;">No monthly data yet</div>'; return; }
     var totals = months.map(function(m) { return Math.round(Object.values(monthlyTrend[m]).reduce(function(a,b){return a+b;},0)*100)/100; });
     var labels = months.map(function(m) { var p=m.split('-'); var mn=['','Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']; return (mn[parseInt(p[1])]||p[1])+' '+p[0]; });
     var chart = echarts.init(el, 'dark');
@@ -2445,7 +2454,11 @@ function showAllocationRulesModal() {
                 var header = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">' +
                     '<input type="text" value="' + ea(bu.name || '') + '" placeholder="Business Unit Name (e.g. Data Science Team)" style="font-size:1em;font-weight:600;border:1px solid #d0d7de;border-radius:4px;padding:4px 8px;flex:1;margin-right:8px;" data-bu-name="' + bi + '">' +
                     '<button style="background:none;border:none;cursor:pointer;font-size:16px;color:#ef4444;" data-del-bu="' + bi + '">\u2716</button></div>';
-                var rulesHtml = '<div style="padding-left:12px;" data-rules-for="' + bi + '">';
+                var rulesHtml = '<div style="padding-left:12px;" data-rules-for="' + bi + '">' +
+                    '<div style="margin-bottom:6px;font-size:0.85em;display:flex;align-items:center;gap:6px;">' +
+                    '<span style="color:#6b7280;">Match rules using:</span>' +
+                    '<label style="cursor:pointer;"><input type="radio" name="logic-' + bi + '" value="or"' + ((bu.ruleLogic || 'or') === 'or' ? ' checked' : '') + ' data-logic="' + bi + '"> <strong>OR</strong> (any rule matches)</label>' +
+                    '<label style="cursor:pointer;"><input type="radio" name="logic-' + bi + '" value="and"' + (bu.ruleLogic === 'and' ? ' checked' : '') + ' data-logic="' + bi + '"> <strong>AND</strong> (all rules must match)</label></div>';
                 (bu.rules || []).forEach(function(r, ri) {
                     rulesHtml += '<div style="display:flex;gap:4px;align-items:center;margin-bottom:4px;font-size:0.85em;">' +
                         '<span style="color:#6b7280;">IF</span>' +
@@ -2495,7 +2508,10 @@ function showAllocationRulesModal() {
                         rules.push({dimension: dim.value, operator: op ? op.value : 'equals', value: val.value.trim()});
                     }
                 });
-                if (name && rules.length) finalBUs.push({name: name, rules: rules});
+                if (name && rules.length) {
+                    var logicRadio = card.querySelector('input[name="logic-' + bi + '"]:checked');
+                    finalBUs.push({name: name, rules: rules, ruleLogic: logicRadio ? logicRadio.value : 'or'});
+                }
             });
             var mode = card.querySelector('input[name="shared-mode"]:checked');
             try {

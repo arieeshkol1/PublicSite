@@ -1165,7 +1165,7 @@ def handle_dashboard_data(event):
             )
             creds = assume_resp['Credentials']
             # Gather data with a broad question to trigger all checks
-            acct_data, _ = _gather_account_data('how efficient is my account? rightsizing savings', creds)
+            acct_data, _ = _gather_account_data('how efficient is my account? rightsizing savings compare last 3 months', creds)
 
             acct_total = sum(s['cost_usd'] for s in acct_data.get('cost_by_service', []) if s.get('service') != 'Tax')
             for svc in acct_data.get('cost_by_service', []):
@@ -1453,6 +1453,7 @@ def handle_save_allocation_rules(event):
     for bu in business_units[:20]:  # max 20 business units
         unit = {
             'name': str(bu.get('name', '')).strip()[:100],
+            'ruleLogic': bu.get('ruleLogic', 'or') if bu.get('ruleLogic') in ('or', 'and') else 'or',
             'rules': [],
         }
         for r in (bu.get('rules') or [])[:10]:  # max 10 rules per BU
@@ -1534,32 +1535,37 @@ def _apply_allocation_rules(cost_by_service, per_account, alloc_config):
 
             for bu in business_units:
                 bu_name = bu.get('name', '')
-                for rule in bu.get('rules', []):
+                rule_logic = bu.get('ruleLogic', 'or')  # 'or' or 'and'
+                rules = bu.get('rules', [])
+                if not rules:
+                    continue
+
+                def _eval_rule(rule):
                     dim = rule.get('dimension', '')
                     op = rule.get('operator', 'equals')
                     val = str(rule.get('value', '')).lower()
-
-                    hit = False
                     if dim == 'account':
-                        hit = (val == acct_id)
+                        return val == acct_id
                     elif dim == 'service':
                         if op == 'equals':
-                            hit = (val == svc_name or val in svc_name)
+                            return val == svc_name or val in svc_name
                         elif op == 'contains':
-                            hit = (val in svc_name)
+                            return val in svc_name
                         elif op == 'startsWith':
-                            hit = svc_name.startswith(val)
+                            return svc_name.startswith(val)
                     elif dim == 'tag':
-                        # Tag matching would require tag data in the service costs
-                        # For now, match against account name as a proxy
                         acct_name = (acct.get('accountName') or '').lower()
-                        hit = (val in acct_name)
+                        return val in acct_name
+                    return False
 
-                    if hit:
-                        bu_costs[bu_name] = bu_costs.get(bu_name, 0) + svc_cost
-                        matched = True
-                        break
-                if matched:
+                if rule_logic == 'and':
+                    bu_match = all(_eval_rule(r) for r in rules)
+                else:  # 'or' (default)
+                    bu_match = any(_eval_rule(r) for r in rules)
+
+                if bu_match:
+                    bu_costs[bu_name] = bu_costs.get(bu_name, 0) + svc_cost
+                    matched = True
                     break
 
             if not matched:
