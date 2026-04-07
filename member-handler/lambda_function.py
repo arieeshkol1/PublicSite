@@ -87,6 +87,7 @@ def lambda_handler(event, context):
         'POST /members/accounts/ai-query': handle_ai_query,
         'POST /members/accounts/ai-feedback': handle_ai_feedback,
         'GET /members/dashboard': handle_get_dashboard,
+        'GET /members/dashboard-data': handle_dashboard_data,
         'POST /members/dashboard': handle_add_dashboard_item,
         'DELETE /members/dashboard': handle_delete_dashboard_item,
     }
@@ -1107,6 +1108,174 @@ def handle_test_connection(event):
     _update_connection_status(accounts_table, member_email, account_id, 'connected', now_iso)
     logger.info(f"Connection test successful for account {account_id}, member {member_email}")
     return create_response(200, {'status': 'connected', 'message': 'Connection verified. Cost data is accessible.'})
+
+
+def handle_dashboard_data(event):
+    """Return comprehensive FinOps dashboard data across all connected accounts."""
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+    member_email = auth['sub']
+
+    # Get all connected accounts
+    accounts_table = dynamodb.Table(ACCOUNTS_TABLE_NAME)
+    try:
+        result = accounts_table.query(
+            KeyConditionExpression=boto3.dynamodb.conditions.Key('memberEmail').eq(member_email)
+        )
+        accounts = [a for a in result.get('Items', []) if a.get('connectionStatus') == 'connected']
+    except ClientError:
+        accounts = []
+
+    if not accounts:
+        return create_response(200, {'summary': {'totalSpend': 0, 'totalAccounts': 0}})
+
+    accounts.sort(key=lambda a: (a.get('sortOrder', 999), a.get('addedAt', '')))
+    external_id = hashlib.sha256(member_email.encode('utf-8')).hexdigest()
+    sts_client = boto3.client('sts')
+
+    merged_costs = {}
+    merged_daily = {}
+    merged_monthly = {}
+    all_waste = []
+    all_rightsizing = []
+    per_account = []
+    total_savings = 0
+    savings_breakdown = {}
+    containers = {'ecsClusters': [], 'eksClusters': []}
+
+    for acct in accounts[:5]:
+        acct_id = acct['accountId']
+        acct_name = acct.get('accountName', f'Account {acct_id[-4:]}')
+        try:
+            assume_resp = sts_client.assume_role(
+                RoleArn=f'arn:aws:iam::{acct_id}:role/SlashMyBill-{acct_id}',
+                RoleSessionName='SlashMyBillDash', ExternalId=external_id,
+            )
+            creds = assume_resp['Credentials']
+            # Gather data with a broad question to trigger all checks
+            acct_data, _ = _gather_account_data('how efficient is my account? rightsizing savings', creds)
+
+            acct_total = sum(s['cost_usd'] for s in acct_data.get('cost_by_service', []) if s.get('service') != 'Tax')
+            for svc in acct_data.get('cost_by_service', []):
+                if svc['service'] != 'Tax':
+                    merged_costs[svc['service']] = merged_costs.get(svc['service'], 0) + svc['cost_usd']
+            for d in acct_data.get('daily_cost_trend', []):
+                merged_daily[d['date']] = merged_daily.get(d['date'], 0) + d['cost_usd']
+            for m, svcs in acct_data.get('monthly_trend', {}).items():
+                if m not in merged_monthly:
+                    merged_monthly[m] = {}
+                for s, c in svcs.items():
+                    merged_monthly[m][s] = merged_monthly[m].get(s, 0) + c
+
+            # Waste items
+            ebs = acct_data.get('ebs_summary', {})
+            if ebs.get('unattached_count', 0) > 0:
+                for v in ebs.get('unattached_volumes', []):
+                    all_waste.append({'type': 'Unattached EBS', 'resource': v.get('volumeId', ''),
+                                      'monthlyCost': v.get('monthly_cost_usd', 0), 'account': acct_id})
+            eips = acct_data.get('elastic_ips', {})
+            if eips.get('unattached', 0) > 0:
+                all_waste.append({'type': 'Idle Elastic IPs', 'resource': f'{eips["unattached"]} EIPs',
+                                  'monthlyCost': eips.get('unattached_monthly_cost_usd', 0), 'account': acct_id})
+            kms = acct_data.get('kms_summary', {})
+            if kms.get('monthly_cost_usd', 0) > 0:
+                all_waste.append({'type': 'KMS Keys', 'resource': f'{kms.get("customer_managed_keys", 0)} keys',
+                                  'monthlyCost': kms['monthly_cost_usd'], 'account': acct_id})
+
+            # Rightsizing from Compute Optimizer
+            for rec in acct_data.get('compute_optimizer_ec2', []):
+                if rec.get('finding') == 'OVER_PROVISIONED':
+                    all_rightsizing.append({
+                        'resource': rec.get('instanceId', ''), 'currentType': rec.get('currentType', ''),
+                        'recommendedType': rec.get('recommendedType', ''), 'finding': rec['finding'],
+                        'monthlySavings': rec.get('estimatedMonthlySavings', 0), 'account': acct_id,
+                    })
+
+            # Efficiency
+            eff = acct_data.get('cost_efficiency', {})
+            acct_savings = eff.get('potential_savings_usd', 0)
+            total_savings += acct_savings
+            for k, v in eff.get('savings_breakdown', {}).items():
+                savings_breakdown[k] = savings_breakdown.get(k, 0) + v
+
+            # Containers
+            for c in acct_data.get('ecs_clusters', []):
+                containers['ecsClusters'].append({**c, 'account': acct_id})
+            for c in acct_data.get('eks_clusters', []):
+                containers['eksClusters'].append({**c, 'account': acct_id})
+            # ECS service metrics
+            for sm in acct_data.get('ecs_service_metrics', []):
+                containers['ecsClusters'].append({**sm, 'account': acct_id, 'hasMetrics': True})
+
+            per_account.append({
+                'accountId': acct_id, 'accountName': acct_name,
+                'totalSpend': round(acct_total, 2),
+                'efficiencyScore': eff.get('score', 0),
+                'topServices': acct_data.get('cost_by_service', [])[:5],
+            })
+        except Exception as e:
+            logger.warning(f"Dashboard data failed for {acct_id}: {e}")
+            per_account.append({'accountId': acct_id, 'accountName': acct_name, 'error': str(e)})
+
+    # Build response
+    total_spend = round(sum(merged_costs.values()), 2)
+    # Previous month estimate from monthly_trend
+    sorted_months = sorted(merged_monthly.keys())
+    prev_month_spend = 0
+    if len(sorted_months) >= 2:
+        prev_month_spend = round(sum(merged_monthly[sorted_months[-2]].values()), 2)
+    mom_change = round(((total_spend - prev_month_spend) / prev_month_spend * 100) if prev_month_spend > 0 else 0, 1)
+    eff_score = round((1 - total_savings / total_spend) * 100, 1) if total_spend > 0 else 100
+
+    # Daily trend with anomaly detection
+    daily_list = sorted(merged_daily.items())
+    daily_costs = [c for _, c in daily_list]
+    avg_daily = sum(daily_costs) / len(daily_costs) if daily_costs else 0
+    daily_trend = []
+    for date, cost in daily_list:
+        is_anomaly = cost > avg_daily * 2 and avg_daily > 0
+        daily_trend.append({
+            'date': date, 'cost': round(cost, 4),
+            'isAnomaly': is_anomaly,
+            'spikePct': round((cost / avg_daily - 1) * 100, 1) if is_anomaly else 0,
+        })
+
+    cost_by_service = sorted(
+        [{'service': s, 'cost': round(c, 2), 'pct': round(c / total_spend * 100, 1) if total_spend > 0 else 0}
+         for s, c in merged_costs.items() if c > 0.01],
+        key=lambda x: x['cost'], reverse=True
+    )
+
+    over_count = sum(1 for r in all_rightsizing if r['finding'] == 'OVER_PROVISIONED')
+    all_rightsizing.sort(key=lambda x: x.get('monthlySavings', 0), reverse=True)
+
+    return create_response(200, {
+        'summary': {
+            'totalSpend': total_spend,
+            'previousMonthSpend': prev_month_spend,
+            'monthOverMonthChange': mom_change,
+            'efficiencyScore': max(0, eff_score),
+            'efficiencyRating': 'Excellent' if eff_score >= 90 else 'Good' if eff_score >= 75 else 'Needs Improvement' if eff_score >= 50 else 'Critical',
+            'potentialSavings': round(total_savings, 2),
+            'savingsBreakdown': {k: round(v, 2) for k, v in savings_breakdown.items()},
+            'totalAccounts': len(accounts),
+            'accountsAnalyzed': len([a for a in per_account if 'error' not in a]),
+        },
+        'costByService': cost_by_service,
+        'dailyTrend': daily_trend,
+        'monthlyTrend': {m: {s: round(c, 2) for s, c in svcs.items()} for m, svcs in merged_monthly.items()},
+        'rightsizing': {
+            'overProvisioned': over_count,
+            'topOpportunities': all_rightsizing[:5],
+        },
+        'waste': {
+            'totalWaste': round(sum(w['monthlyCost'] for w in all_waste), 2),
+            'items': all_waste,
+        },
+        'perAccount': per_account,
+        'containers': containers,
+    })
 
 
 def handle_get_dashboard(event):

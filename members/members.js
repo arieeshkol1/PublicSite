@@ -901,6 +901,7 @@ function activateMemberTab(tabId) {
         c.hidden = c.id !== tabId;
     });
     if (tabId === 'ai-tab') populateAIAccounts();
+    if (tabId === 'dash-tab') loadDashboardData();
 }
 
 // ============================================================
@@ -2129,3 +2130,178 @@ async function saveVisualizedAnswer() {
 if (visualizeCloseBtn) visualizeCloseBtn.onclick = closeVisualizeModal;
 if (visualizeCancelBtn) visualizeCancelBtn.onclick = closeVisualizeModal;
 if (visualizeSaveBtn) visualizeSaveBtn.onclick = saveVisualizedAnswer;
+
+
+// ============================================================
+// FinOps Dashboard
+// ============================================================
+var dashDataCache = null;
+var dashDataCacheTime = 0;
+var DASH_CACHE_TTL = 300000; // 5 minutes
+
+async function loadDashboardData() {
+    var now = Date.now();
+    if (dashDataCache && (now - dashDataCacheTime) < DASH_CACHE_TTL) {
+        renderDashboardWidgets(dashDataCache);
+        return;
+    }
+    var kpiBar = $('dash-kpi-bar');
+    var grid = $('dash-grid');
+    if (kpiBar) kpiBar.innerHTML = '<div style="color:#8b949e;">Loading dashboard data...</div>';
+    if (grid) grid.innerHTML = '';
+    try {
+        var data = await api('GET', '/members/dashboard-data');
+        dashDataCache = data;
+        dashDataCacheTime = Date.now();
+        renderDashboardWidgets(data);
+    } catch (e) {
+        if (kpiBar) kpiBar.innerHTML = '<div style="color:#f85149;">Failed to load dashboard: ' + esc(e.message || 'Error') + '</div>';
+    }
+}
+
+function renderDashboardWidgets(data) {
+    var kpiBar = $('dash-kpi-bar');
+    var grid = $('dash-grid');
+    if (!kpiBar || !grid) return;
+    var s = data.summary || {};
+
+    // KPI Bar
+    var momColor = s.monthOverMonthChange <= 0 ? '#10b981' : '#ef4444';
+    var momArrow = s.monthOverMonthChange <= 0 ? '▼' : '▲';
+    var effColor = s.efficiencyScore >= 90 ? '#10b981' : s.efficiencyScore >= 75 ? '#f59e0b' : '#ef4444';
+    kpiBar.innerHTML =
+        _kpiCard('Total Spend', '$' + (s.totalSpend || 0).toLocaleString(undefined, {minimumFractionDigits:2}), '#e2e8f0') +
+        _kpiCard('Month-over-Month', momArrow + ' ' + Math.abs(s.monthOverMonthChange || 0) + '%', momColor) +
+        _kpiCard('Efficiency Score', (s.efficiencyScore || 0) + '% (' + (s.efficiencyRating || '') + ')', effColor) +
+        _kpiCard('Potential Savings', '$' + (s.potentialSavings || 0).toLocaleString(undefined, {minimumFractionDigits:2}), '#f59e0b') +
+        _kpiCard('Accounts', (s.accountsAnalyzed || 0) + ' / ' + (s.totalAccounts || 0), '#8b5cf6');
+
+    // Grid widgets
+    grid.innerHTML = '';
+    _addWidget(grid, 'dash-treemap', 'Cost by Service', 300);
+    _addWidget(grid, 'dash-daily', 'Daily Cost Trend (30d)', 250);
+    _addWidget(grid, 'dash-rightsizing', 'Rightsizing Summary', 250);
+    _addWidget(grid, 'dash-waste', 'Waste Detection', 250);
+    _addWidget(grid, 'dash-monthly', 'Monthly Trend', 250);
+    _addWidget(grid, 'dash-accounts', 'Account Comparison', 250);
+
+    // Render ECharts
+    setTimeout(function() {
+        _renderTreemap(data.costByService || []);
+        _renderDailyTrend(data.dailyTrend || []);
+        _renderRightsizing(data.rightsizing || {}, data.waste || {});
+        _renderWaste(data.waste || {});
+        _renderMonthly(data.monthlyTrend || {});
+        _renderAccountComparison(data.perAccount || []);
+    }, 100);
+}
+
+function _kpiCard(label, value, color) {
+    return '<div style="background:#161b22;border:1px solid #30363d;border-radius:8px;padding:12px 16px;flex:1;min-width:130px;">' +
+        '<div style="color:#8b949e;font-size:0.75em;">' + label + '</div>' +
+        '<div style="color:' + color + ';font-size:1.3em;font-weight:700;">' + value + '</div></div>';
+}
+
+function _addWidget(grid, id, title, height) {
+    var w = document.createElement('div');
+    w.style.cssText = 'background:#161b22;border:1px solid #30363d;border-radius:8px;padding:14px;';
+    w.innerHTML = '<div style="color:#e2e8f0;font-size:0.9em;font-weight:600;margin-bottom:8px;">' + title + '</div>' +
+        '<div id="' + id + '" style="width:100%;height:' + height + 'px;"></div>';
+    grid.appendChild(w);
+}
+
+function _renderTreemap(costByService) {
+    var el = $('dash-treemap'); if (!el || !window.echarts) return;
+    var chart = echarts.init(el, 'dark');
+    chart.setOption({
+        tooltip: { formatter: function(p) { return p.name + ': $' + p.value.toFixed(2) + ' (' + (p.data.pct || 0) + '%)'; } },
+        series: [{ type: 'treemap', data: costByService.map(function(s) { return { name: s.service.replace('Amazon ','').replace('AWS ',''), value: s.cost, pct: s.pct }; }),
+            label: { show: true, formatter: '{b}\n${c}', fontSize: 10 }, breadcrumb: { show: false },
+            itemStyle: { borderColor: '#161b22', borderWidth: 2 } }]
+    });
+    window.addEventListener('resize', function() { chart.resize(); });
+}
+
+function _renderDailyTrend(daily) {
+    var el = $('dash-daily'); if (!el || !window.echarts || !daily.length) return;
+    var chart = echarts.init(el, 'dark');
+    var anomalyData = daily.filter(function(d) { return d.isAnomaly; }).map(function(d) {
+        return { coord: [d.date.substring(5), d.cost], value: d.cost, spikePct: d.spikePct };
+    });
+    chart.setOption({
+        tooltip: { trigger: 'axis', formatter: function(ps) { var d = ps[0]; var tip = d.axisValue + ': $' + d.value.toFixed(2); var orig = daily.find(function(x){return x.date.substring(5)===d.axisValue;}); if(orig&&orig.isAnomaly) tip+=' ⚠️ +'+orig.spikePct+'% spike'; return tip; } },
+        xAxis: { type: 'category', data: daily.map(function(d) { return d.date.substring(5); }), axisLabel: { color: '#8b949e', fontSize: 10 } },
+        yAxis: { type: 'value', axisLabel: { color: '#8b949e', formatter: '${value}' } },
+        series: [{ type: 'line', data: daily.map(function(d) { return d.cost; }), smooth: true,
+            areaStyle: { opacity: 0.15 }, lineStyle: { color: '#10b981' }, itemStyle: { color: '#10b981' },
+            markPoint: { data: anomalyData.map(function(a) { return { coord: a.coord, value: '⚠️', itemStyle: { color: '#ef4444' } }; }),
+                label: { show: true, fontSize: 14 }, symbolSize: 30 } }],
+        grid: { left: 50, right: 10, bottom: 25, top: 15 },
+    });
+    window.addEventListener('resize', function() { chart.resize(); });
+}
+
+function _renderRightsizing(rs, waste) {
+    var el = $('dash-rightsizing'); if (!el) return;
+    var html = '<div style="display:flex;gap:12px;margin-bottom:10px;">';
+    html += '<div style="text-align:center;flex:1;"><div style="color:#ef4444;font-size:1.8em;font-weight:700;">' + (rs.overProvisioned || 0) + '</div><div style="color:#8b949e;font-size:0.75em;">Over-Provisioned</div></div>';
+    html += '</div>';
+    if (rs.topOpportunities && rs.topOpportunities.length > 0) {
+        html += '<div style="font-size:0.8em;color:#8b949e;margin-bottom:4px;">Top Opportunities:</div>';
+        rs.topOpportunities.slice(0, 4).forEach(function(o) {
+            html += '<div style="font-size:0.8em;color:#c9d1d9;padding:3px 0;border-bottom:1px solid #21262d;">' +
+                '<span style="color:#f59e0b;">' + (o.currentType || '') + '</span> → <span style="color:#10b981;">' + (o.recommendedType || '') + '</span>' +
+                ' <span style="color:#10b981;float:right;">-$' + (o.monthlySavings || 0).toFixed(2) + '/mo</span></div>';
+        });
+    } else {
+        html += '<div style="color:#10b981;font-size:0.85em;margin-top:8px;">No over-provisioned resources detected ✓</div>';
+    }
+    el.innerHTML = html;
+}
+
+function _renderWaste(waste) {
+    var el = $('dash-waste'); if (!el) return;
+    var html = '<div style="color:#ef4444;font-size:1.5em;font-weight:700;margin-bottom:8px;">$' + (waste.totalWaste || 0).toFixed(2) + '<span style="color:#8b949e;font-size:0.5em;"> /month waste</span></div>';
+    if (waste.items && waste.items.length > 0) {
+        waste.items.slice(0, 6).forEach(function(w) {
+            html += '<div style="font-size:0.8em;color:#c9d1d9;padding:3px 0;border-bottom:1px solid #21262d;">' +
+                esc(w.type) + ': ' + esc(w.resource) + ' <span style="color:#ef4444;float:right;">$' + (w.monthlyCost || 0).toFixed(2) + '</span></div>';
+        });
+    } else {
+        html += '<div style="color:#10b981;font-size:0.85em;">No waste detected ✓</div>';
+    }
+    el.innerHTML = html;
+}
+
+function _renderMonthly(monthlyTrend) {
+    var el = $('dash-monthly'); if (!el || !window.echarts) return;
+    var months = Object.keys(monthlyTrend).sort();
+    if (months.length < 2) { el.innerHTML = '<div style="color:#8b949e;font-size:0.85em;">Need 2+ months of data</div>'; return; }
+    var totals = months.map(function(m) { return Math.round(Object.values(monthlyTrend[m]).reduce(function(a,b){return a+b;},0)*100)/100; });
+    var labels = months.map(function(m) { var p=m.split('-'); var mn=['','Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']; return (mn[parseInt(p[1])]||p[1])+' '+p[0]; });
+    var chart = echarts.init(el, 'dark');
+    chart.setOption({
+        tooltip: { trigger: 'axis', formatter: function(ps) { return ps[0].axisValue + ': $' + ps[0].value.toFixed(2); } },
+        xAxis: { type: 'category', data: labels, axisLabel: { color: '#8b949e', fontSize: 10 } },
+        yAxis: { type: 'value', axisLabel: { color: '#8b949e', formatter: '${value}' } },
+        series: [{ type: 'bar', data: totals.map(function(v,i) { return { value: v, itemStyle: { color: ['#6366f1','#10b981','#f59e0b','#ef4444','#8b5cf6','#ec4899'][i%6] } }; }) }],
+        grid: { left: 50, right: 10, bottom: 25, top: 10 },
+    });
+    window.addEventListener('resize', function() { chart.resize(); });
+}
+
+function _renderAccountComparison(perAccount) {
+    var el = $('dash-accounts'); if (!el || !window.echarts) return;
+    var valid = perAccount.filter(function(a) { return !a.error && a.totalSpend > 0; });
+    if (!valid.length) { el.innerHTML = '<div style="color:#8b949e;font-size:0.85em;">No account data</div>'; return; }
+    var chart = echarts.init(el, 'dark');
+    var colors = ['#6366f1','#10b981','#f59e0b','#ef4444','#8b5cf6'];
+    chart.setOption({
+        tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' }, formatter: function(ps) { return ps[0].name + ': $' + ps[0].value.toFixed(2); } },
+        xAxis: { type: 'value', axisLabel: { color: '#8b949e', formatter: '${value}' } },
+        yAxis: { type: 'category', data: valid.map(function(a) { return (a.accountName || a.accountId).substring(0,20); }), axisLabel: { color: '#8b949e' } },
+        series: [{ type: 'bar', data: valid.map(function(a,i) { return { value: a.totalSpend, itemStyle: { color: colors[i%colors.length] } }; }) }],
+        grid: { left: 100, right: 10, bottom: 20, top: 10 },
+    });
+    window.addEventListener('resize', function() { chart.resize(); });
+}

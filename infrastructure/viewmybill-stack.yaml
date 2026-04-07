@@ -1108,6 +1108,13 @@ Resources:
       RouteKey: 'GET /members/dashboard'
       Target: !Sub 'integrations/${MemberIntegration}'
 
+  MemberDashboardDataRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'GET /members/dashboard-data'
+      Target: !Sub 'integrations/${MemberIntegration}'
+
   MemberDashboardAddRoute:
     Type: AWS::ApiGatewayV2::Route
     Properties:
