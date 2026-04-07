@@ -1156,6 +1156,7 @@ def handle_dashboard_data(event):
     total_savings = 0
     savings_breakdown = {}
     containers = {'ecsClusters': [], 'eksClusters': []}
+    all_discovered_metrics = []
 
     for acct in accounts[:5]:
         acct_id = acct['accountId']
@@ -1220,6 +1221,15 @@ def handle_dashboard_data(event):
             # ECS service metrics
             for sm in acct_data.get('ecs_service_metrics', []):
                 containers['ecsClusters'].append({**sm, 'account': acct_id, 'hasMetrics': True})
+
+            # Auto-discover IT metrics for unit economics
+            try:
+                discovered = _auto_discover_it_metrics(creds)
+                for d in discovered:
+                    d['account'] = acct_id
+                all_discovered_metrics.extend(discovered)
+            except Exception:
+                pass
 
             per_account.append({
                 'accountId': acct_id, 'accountName': acct_name,
@@ -1310,6 +1320,7 @@ def handle_dashboard_data(event):
         'containers': containers,
         'costAllocation': allocation_data,
         'unitEconomics': _get_unit_economics(member_email, merged_monthly) if merged_monthly else None,
+        'discoveredMetrics': all_discovered_metrics,
     })
 
 
@@ -1575,7 +1586,7 @@ def _get_unit_economics(member_email, monthly_trend):
         result = table.query(
             KeyConditionExpression=boto3.dynamodb.conditions.Key('memberEmail').eq(member_email),
             ScanIndexForward=False,
-            Limit=12,
+            Limit=24,
         )
         metrics = _decimal_to_native(result.get('Items', []))
     except Exception:
@@ -1584,7 +1595,6 @@ def _get_unit_economics(member_email, monthly_trend):
     if not metrics or not monthly_trend:
         return None
 
-    # Group metrics by month
     by_month = {}
     for m in metrics:
         month = m.get('metricMonth', '')
@@ -1592,7 +1602,6 @@ def _get_unit_economics(member_email, monthly_trend):
             by_month[month] = []
         by_month[month].append(m)
 
-    # Calculate unit cost per month
     unit_costs = []
     for month in sorted(monthly_trend.keys()):
         total_cost = sum(monthly_trend[month].values())
@@ -1606,13 +1615,13 @@ def _get_unit_economics(member_email, monthly_trend):
                         'metricName': bm.get('metricName', ''),
                         'volume': vol,
                         'totalCost': round(total_cost, 2),
-                        'costPerUnit': round(total_cost / vol, 4),
+                        'costPerUnit': round(total_cost / vol, 6),
+                        'source': bm.get('source', 'manual'),
                     })
 
     if not unit_costs:
         return None
 
-    # Get the primary metric (most recent)
     primary = metrics[0].get('metricName', '')
     primary_trend = [uc for uc in unit_costs if uc['metricName'] == primary]
 
@@ -1621,6 +1630,95 @@ def _get_unit_economics(member_email, monthly_trend):
         'trend': primary_trend,
         'allMetrics': list(set(m.get('metricName', '') for m in metrics)),
     }
+
+
+def _auto_discover_it_metrics(credentials):
+    """Auto-discover real IT metrics from AWS services for unit economics."""
+    discovered = []
+    try:
+        # DynamoDB table item counts (proxy for "users" or "records")
+        ddb = boto3.client('dynamodb',
+            aws_access_key_id=credentials['AccessKeyId'],
+            aws_secret_access_key=credentials['SecretAccessKey'],
+            aws_session_token=credentials['SessionToken'],
+            region_name='us-east-1')
+        tables = ddb.list_tables().get('TableNames', [])
+        for tname in tables[:10]:
+            try:
+                desc = ddb.describe_table(TableName=tname)
+                count = desc['Table'].get('ItemCount', 0)
+                if count > 0:
+                    discovered.append({
+                        'metricName': f'DynamoDB:{tname} items',
+                        'volume': count,
+                        'source': 'aws-dynamodb',
+                        'description': f'{count:,} items in {tname}',
+                    })
+            except Exception:
+                pass
+
+        # API Gateway request count (last 30 days via CloudWatch)
+        cw = boto3.client('cloudwatch',
+            aws_access_key_id=credentials['AccessKeyId'],
+            aws_secret_access_key=credentials['SecretAccessKey'],
+            aws_session_token=credentials['SessionToken'],
+            region_name='us-east-1')
+        now = datetime.now(timezone.utc)
+        start = now - timedelta(days=30)
+        try:
+            apigw_resp = cw.get_metric_statistics(
+                Namespace='AWS/ApiGateway', MetricName='Count',
+                StartTime=start, EndTime=now, Period=2592000, Statistics=['Sum'],
+            )
+            total_requests = sum(dp['Sum'] for dp in apigw_resp.get('Datapoints', []))
+            if total_requests > 0:
+                discovered.append({
+                    'metricName': 'API Gateway Requests (30d)',
+                    'volume': int(total_requests),
+                    'source': 'aws-cloudwatch',
+                    'description': f'{int(total_requests):,} API requests in 30 days',
+                })
+        except Exception:
+            pass
+
+        # Lambda total invocations (last 30 days)
+        try:
+            lam_resp = cw.get_metric_statistics(
+                Namespace='AWS/Lambda', MetricName='Invocations',
+                StartTime=start, EndTime=now, Period=2592000, Statistics=['Sum'],
+            )
+            total_invocations = sum(dp['Sum'] for dp in lam_resp.get('Datapoints', []))
+            if total_invocations > 0:
+                discovered.append({
+                    'metricName': 'Lambda Invocations (30d)',
+                    'volume': int(total_invocations),
+                    'source': 'aws-cloudwatch',
+                    'description': f'{int(total_invocations):,} Lambda invocations in 30 days',
+                })
+        except Exception:
+            pass
+
+        # S3 total objects
+        try:
+            s3 = boto3.client('s3',
+                aws_access_key_id=credentials['AccessKeyId'],
+                aws_secret_access_key=credentials['SecretAccessKey'],
+                aws_session_token=credentials['SessionToken'],
+                region_name='us-east-1')
+            buckets = s3.list_buckets().get('Buckets', [])
+            discovered.append({
+                'metricName': 'S3 Buckets',
+                'volume': len(buckets),
+                'source': 'aws-s3',
+                'description': f'{len(buckets)} S3 buckets',
+            })
+        except Exception:
+            pass
+
+    except Exception as e:
+        logger.warning(f"IT metrics discovery error: {e}")
+
+    return discovered
 
 
 def _apply_allocation_rules(cost_by_service, per_account, alloc_config):
