@@ -1204,6 +1204,25 @@ def handle_dashboard_data(event):
                     merged_costs[svc['service']] = merged_costs.get(svc['service'], 0) + svc['cost_usd']
             for d in acct_data.get('daily_cost_trend', []):
                 merged_daily[d['date']] = merged_daily.get(d['date'], 0) + d['cost_usd']
+
+            # Fetch 30-day daily trend for dashboard (the standard gather only does 7 days)
+            try:
+                ce_30d = boto3.client('ce',
+                    aws_access_key_id=creds['AccessKeyId'],
+                    aws_secret_access_key=creds['SecretAccessKey'],
+                    aws_session_token=creds['SessionToken'])
+                end_date = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+                start_30d = (datetime.now(timezone.utc) - timedelta(days=30)).strftime('%Y-%m-%d')
+                daily_30d = ce_30d.get_cost_and_usage(
+                    TimePeriod={'Start': start_30d, 'End': end_date},
+                    Granularity='DAILY', Metrics=['UnblendedCost'],
+                )
+                for period in daily_30d.get('ResultsByTime', []):
+                    d_date = period['TimePeriod']['Start']
+                    d_cost = float(period['Total']['UnblendedCost']['Amount'])
+                    merged_daily[d_date] = merged_daily.get(d_date, 0) + d_cost
+            except Exception:
+                pass  # Fall back to 7-day data from _gather_account_data
             for m, svcs in acct_data.get('monthly_trend', {}).items():
                 if m not in merged_monthly:
                     merged_monthly[m] = {}

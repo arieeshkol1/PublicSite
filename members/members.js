@@ -214,7 +214,10 @@ function showView(name) {
     }
     if (name === 'dashboard') {
         headerEmail.textContent = getMemberEmail() || '';
-        loadAccounts();
+        loadAccounts().then(function() {
+            populateDashAccounts();
+            loadDashboardData();
+        });
         loadDashboard();
     }
 }
@@ -900,8 +903,18 @@ function activateMemberTab(tabId) {
     document.querySelectorAll('.member-tab-content').forEach(function(c) {
         c.hidden = c.id !== tabId;
     });
-    if (tabId === 'ai-tab') populateAIAccounts();
-    if (tabId === 'dash-tab') { console.log('Dashboard tab activated'); populateDashAccounts(); loadDashboardData(); }
+    if (tabId === 'ai-tab') {
+        _syncAccountSelection('dash'); // save dash selection before switching
+        populateAIAccounts();
+        _applySharedSelection('ai-acct-cb'); // apply shared selection to AI tab
+    }
+    if (tabId === 'dash-tab') {
+        _syncAccountSelection('ai'); // save AI selection before switching
+        console.log('Dashboard tab activated');
+        populateDashAccounts();
+        _applySharedSelection('dash-acct-cb'); // apply shared selection to dash tab
+        loadDashboardData();
+    }
 }
 
 // ============================================================
@@ -1163,6 +1176,28 @@ var aiAccountSelect = $('ai-account-select');
 var aiFontDecBtn = $('ai-font-dec');
 var aiFontIncBtn = $('ai-font-inc');
 var aiFontSize = 18;
+
+// Shared account selection state across tabs
+var _sharedSelectedAccounts = null; // null = use defaults
+
+function _syncAccountSelection(source) {
+    // Save current selection from the source selector
+    var ids;
+    if (source === 'dash') {
+        ids = getDashSelectedAccountIds();
+    } else {
+        ids = getSelectedAccountIds();
+    }
+    if (ids.length > 0) _sharedSelectedAccounts = ids;
+}
+
+function _applySharedSelection(checkboxClass) {
+    if (!_sharedSelectedAccounts) return;
+    var cbs = document.querySelectorAll('.' + checkboxClass);
+    cbs.forEach(function(cb) {
+        cb.checked = _sharedSelectedAccounts.indexOf(cb.value) !== -1;
+    });
+}
 
 function populateAIAccounts() {
     if (!aiAccountSelect) return;
@@ -2254,7 +2289,7 @@ function renderDashboardWidgets(data) {
     kpiBar.innerHTML =
         _kpiCard('Month-over-Month', momArrow + ' ' + Math.abs(s.monthOverMonthChange || 0) + '%', momColor) +
         _kpiCard('Efficiency Score', (s.efficiencyScore || 0) + '% (' + (s.efficiencyRating || '') + ')', effColor) +
-        '<div style="background:#f0f4f8;border:1px solid #d0d7de;border-radius:8px;padding:12px 16px;flex:1;min-width:130px;cursor:pointer;" title="' + ea(savingsTooltip) + '" onclick="document.querySelector(\'[data-tab=ai-tab]\').click();setTimeout(function(){var inp=document.getElementById(\'ai-question-input\');if(inp){inp.value=\'Where can I save money?\';document.getElementById(\'ai-ask-btn\').click();}},300);">' +
+        '<div style="background:#f0f4f8;border:1px solid #d0d7de;border-radius:8px;padding:12px 16px;flex:1;min-width:130px;cursor:pointer;" title="' + ea(savingsTooltip) + '" onclick="_syncAccountSelection(\'dash\');document.querySelector(\'[data-tab=ai-tab]\').click();setTimeout(function(){var inp=document.getElementById(\'ai-question-input\');if(inp){inp.value=\'Where can I save money?\';document.getElementById(\'ai-ask-btn\').click();}},300);">' +
             '<div style="color:#6b7280;font-size:0.75em;">Potential Savings \u25b6</div>' +
             '<div style="color:#f59e0b;font-size:1.3em;font-weight:700;">$' + (s.potentialSavings || 0).toLocaleString(undefined, {minimumFractionDigits:2}) + '</div></div>' +
         _kpiCard('Accounts', (s.accountsAnalyzed || 0) + ' / ' + (s.totalAccounts || 0), '#6366f1');
@@ -2292,13 +2327,14 @@ function _kpiCard(label, value, color) {
 function _addWidget(grid, id, title, height, aiQuestion) {
     var w = document.createElement('div');
     w.style.cssText = 'background:#f0f4f8;border:1px solid #d0d7de;border-radius:8px;padding:14px;';
-    var aiLink = aiQuestion ? ' <a href="#" style="font-size:0.7em;color:#6366f1;text-decoration:none;float:right;" onclick="event.preventDefault();_askAIFromDashboard(\'' + aiQuestion.replace(/'/g, "\\'") + '\');">Ask AI \u25b6</a>' : '';
+    var aiLink = aiQuestion ? ' <a href="#" style="font-size:0.7em;color:#6366f1;text-decoration:none;float:right;" onclick="event.preventDefault();_askAIFromDashboard(\'' + aiQuestion.replace(/'/g, "\\'") + '\');">Chat \u25b6</a>' : '';
     w.innerHTML = '<div style="color:#1f2937;font-size:0.9em;font-weight:600;margin-bottom:8px;">' + title + aiLink + '</div>' +
         '<div id="' + id + '" style="width:100%;height:' + height + 'px;"></div>';
     grid.appendChild(w);
 }
 
 function _askAIFromDashboard(question) {
+    _syncAccountSelection('dash'); // preserve dashboard account selection
     document.querySelector('[data-tab="ai-tab"]').click();
     setTimeout(function() {
         var inp = document.getElementById('ai-question-input');

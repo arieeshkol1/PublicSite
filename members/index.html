@@ -6,7 +6,7 @@
     <title>Member Portal - SlashMyBill</title>
     <link rel="icon" type="image/png" href="../SlashMyBill.png">
     <link rel="stylesheet" href="../styles.css">
-    <link rel="stylesheet" href="members.css?v=16">
+    <link rel="stylesheet" href="members.css?v=17">
     <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
 </head>
 <body>
@@ -163,11 +163,11 @@
 
         <div class="dashboard-content">
             <div class="member-tabs">
-                <button class="member-tab active" data-tab="accounts-tab">Accounts</button>
-                <button class="member-tab" data-tab="ai-tab">AI Agent</button>
-                <button class="member-tab" data-tab="dash-tab">Dashboard</button>
+                <button class="member-tab active" data-tab="dash-tab">Observe</button>
+                <button class="member-tab" data-tab="ai-tab">Chat</button>
+                <button class="member-tab" data-tab="accounts-tab">Configure</button>
             </div>
-            <div id="accounts-tab" class="member-tab-content">
+            <div id="accounts-tab" class="member-tab-content" hidden>
             <div class="tab-toolbar">
                 <h2>AWS Accounts</h2>
                 <button id="add-account-btn" class="btn btn-primary btn-sm">+ Add Account</button>
@@ -233,7 +233,7 @@
                 </div>
             </div>
             </div>
-            <div id="dash-tab" class="member-tab-content" hidden>
+            <div id="dash-tab" class="member-tab-content">
                 <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
                     <h2 style="margin:0;">Dashboard</h2>
                     <div style="display:flex;align-items:center;gap:8px;">
@@ -421,6 +421,6 @@
         <span id="notification-message"></span>
     </div>
 
-    <script src="members.js?v=16"></script>
+    <script src="members.js?v=17"></script>
 </body>
 </html>
