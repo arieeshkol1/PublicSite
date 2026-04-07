@@ -2398,70 +2398,120 @@ async function loadAllocationRules() {
 }
 
 function showAllocationRulesModal() {
-    var existing = allocRulesCache || [];
-    var modal = document.createElement('div');
-    modal.className = 'modal-overlay';
-    modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);z-index:1000;display:flex;align-items:center;justify-content:center;';
-    var card = document.createElement('div');
-    card.style.cssText = 'background:#fff;border-radius:12px;padding:24px;max-width:600px;width:90%;max-height:80vh;overflow-y:auto;';
-    card.innerHTML = '<h2 style="margin-top:0;">Cost Allocation Rules</h2>' +
-        '<p style="color:#6b7280;font-size:0.85em;">Map accounts and services to business units for cost allocation.</p>' +
-        '<div id="alloc-rules-list"></div>' +
-        '<button id="alloc-add-rule" class="btn btn-outline btn-sm" style="margin-top:8px;">+ Add Rule</button>' +
-        '<div style="margin-top:16px;display:flex;gap:8px;justify-content:flex-end;">' +
-        '<button id="alloc-cancel" class="btn btn-outline">Cancel</button>' +
-        '<button id="alloc-save" class="btn btn-primary">Save Rules</button></div>';
-    modal.appendChild(card);
-    document.body.appendChild(modal);
+    loadAllocationRules().then(function() {
+        var config = allocRulesCache || {};
+        var bus = (config.businessUnits || config || []);
+        if (Array.isArray(bus) && bus.length > 0 && bus[0].matchType) {
+            // Legacy format — convert
+            var converted = {};
+            bus.forEach(function(r) {
+                var bu = r.businessUnit || r.name || 'Default';
+                if (!converted[bu]) converted[bu] = {name: bu, rules: []};
+                converted[bu].rules.push({dimension: r.matchType || 'account', operator: 'equals', value: r.matchValue || ''});
+            });
+            bus = Object.values(converted);
+        }
+        if (!Array.isArray(bus)) bus = config.businessUnits || [];
+        var sharedMode = config.sharedCostMode || 'proportional';
 
-    function renderRules(rules) {
-        var list = card.querySelector('#alloc-rules-list');
-        list.innerHTML = '';
-        rules.forEach(function(r, idx) {
-            var row = document.createElement('div');
-            row.style.cssText = 'display:flex;gap:6px;align-items:center;margin-bottom:6px;flex-wrap:wrap;';
-            row.innerHTML =
-                '<input type="text" value="' + ea(r.name || '') + '" placeholder="Rule name" style="flex:1;min-width:100px;padding:4px 8px;border:1px solid #d0d7de;border-radius:4px;font-size:0.85em;" data-field="name">' +
-                '<select style="padding:4px;border:1px solid #d0d7de;border-radius:4px;font-size:0.85em;" data-field="matchType">' +
-                '<option value="account"' + (r.matchType === 'account' ? ' selected' : '') + '>Account ID</option>' +
-                '<option value="service"' + (r.matchType === 'service' ? ' selected' : '') + '>Service Name</option>' +
-                '<option value="tag"' + (r.matchType === 'tag' ? ' selected' : '') + '>Tag Value</option>' +
-                '<option value="default"' + (r.matchType === 'default' ? ' selected' : '') + '>Default (catch-all)</option></select>' +
-                '<input type="text" value="' + ea(r.matchValue || '') + '" placeholder="Match value" style="flex:1;min-width:100px;padding:4px 8px;border:1px solid #d0d7de;border-radius:4px;font-size:0.85em;" data-field="matchValue">' +
-                '<input type="text" value="' + ea(r.businessUnit || '') + '" placeholder="Business Unit" style="flex:1;min-width:100px;padding:4px 8px;border:1px solid #d0d7de;border-radius:4px;font-size:0.85em;font-weight:600;" data-field="businessUnit">' +
-                '<button class="btn-icon btn-icon-delete" style="font-size:14px;cursor:pointer;" data-del="' + idx + '">&#128465;</button>';
-            list.appendChild(row);
-        });
-    }
-    renderRules(existing);
+        var modal = document.createElement('div');
+        modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);z-index:1000;display:flex;align-items:center;justify-content:center;';
+        var card = document.createElement('div');
+        card.style.cssText = 'background:#fff;border-radius:12px;padding:24px;max-width:700px;width:95%;max-height:85vh;overflow-y:auto;';
 
-    card.querySelector('#alloc-add-rule').onclick = function() {
-        existing.push({name: '', matchType: 'account', matchValue: '', businessUnit: ''});
-        renderRules(existing);
-    };
-    card.querySelector('#alloc-rules-list').onclick = function(e) {
-        var del = e.target.closest('[data-del]');
-        if (del) { existing.splice(parseInt(del.dataset.del), 10, 1); existing = existing.filter(Boolean); renderRules(existing); }
-    };
-    card.querySelector('#alloc-cancel').onclick = function() { modal.remove(); };
-    card.querySelector('#alloc-save').onclick = async function() {
-        var rows = card.querySelectorAll('#alloc-rules-list > div');
-        var rules = [];
-        rows.forEach(function(row) {
-            var r = {};
-            row.querySelectorAll('[data-field]').forEach(function(inp) { r[inp.dataset.field] = inp.value; });
-            if (r.name && r.businessUnit) rules.push(r);
-        });
-        try {
-            await api('POST', '/members/allocation-rules', {rules: rules});
-            allocRulesCache = rules;
-            modal.remove();
-            dashDataCache = null;
-            loadDashboardData();
-            notify('Allocation rules saved.', 'success');
-        } catch (e) { notify('Failed to save rules: ' + (e.message || ''), 'error'); }
-    };
-    modal.onclick = function(e) { if (e.target === modal) modal.remove(); };
+        card.innerHTML =
+            '<h2 style="margin-top:0;color:#1f2937;">Define Business Units</h2>' +
+            '<p style="color:#6b7280;font-size:0.85em;">Allocate costs to teams using "If-This-Then-That" rules. Assign costs IF Account equals X, OR Service equals Y, OR Tag contains Z.</p>' +
+            '<div id="bu-list"></div>' +
+            '<button id="bu-add" class="btn btn-outline btn-sm" style="margin-top:10px;">+ Add Business Unit</button>' +
+            '<hr style="margin:16px 0;border-color:#e5e7eb;">' +
+            '<div style="margin-bottom:12px;"><strong style="color:#1f2937;">Shared Cost Splitting</strong><p style="color:#6b7280;font-size:0.8em;margin:4px 0;">How should untaggable costs (support, networking) be split?</p>' +
+            '<label style="display:block;padding:3px 0;cursor:pointer;font-size:0.9em;"><input type="radio" name="shared-mode" value="even"' + (sharedMode === 'even' ? ' checked' : '') + '> Split Evenly across all units</label>' +
+            '<label style="display:block;padding:3px 0;cursor:pointer;font-size:0.9em;"><input type="radio" name="shared-mode" value="proportional"' + (sharedMode === 'proportional' ? ' checked' : '') + '> Proportional (based on each unit\'s spend)</label>' +
+            '<label style="display:block;padding:3px 0;cursor:pointer;font-size:0.9em;"><input type="radio" name="shared-mode" value="custom"' + (sharedMode === 'custom' ? ' checked' : '') + '> Custom Percentage</label></div>' +
+            '<div style="display:flex;gap:8px;justify-content:flex-end;">' +
+            '<button id="bu-cancel" class="btn btn-outline">Cancel</button>' +
+            '<button id="bu-save" class="btn btn-primary">Save Business Units</button></div>';
+
+        modal.appendChild(card);
+        document.body.appendChild(modal);
+
+        function renderBUs() {
+            var list = card.querySelector('#bu-list');
+            list.innerHTML = '';
+            bus.forEach(function(bu, bi) {
+                var box = document.createElement('div');
+                box.style.cssText = 'background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:12px;margin-bottom:10px;';
+                var header = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">' +
+                    '<input type="text" value="' + ea(bu.name || '') + '" placeholder="Business Unit Name (e.g. Data Science Team)" style="font-size:1em;font-weight:600;border:1px solid #d0d7de;border-radius:4px;padding:4px 8px;flex:1;margin-right:8px;" data-bu-name="' + bi + '">' +
+                    '<button style="background:none;border:none;cursor:pointer;font-size:16px;color:#ef4444;" data-del-bu="' + bi + '">\u2716</button></div>';
+                var rulesHtml = '<div style="padding-left:12px;" data-rules-for="' + bi + '">';
+                (bu.rules || []).forEach(function(r, ri) {
+                    rulesHtml += '<div style="display:flex;gap:4px;align-items:center;margin-bottom:4px;font-size:0.85em;">' +
+                        '<span style="color:#6b7280;">IF</span>' +
+                        '<select data-rule-dim="' + bi + '-' + ri + '" style="padding:3px;border:1px solid #d0d7de;border-radius:4px;">' +
+                        '<option value="account"' + (r.dimension === 'account' ? ' selected' : '') + '>Account ID</option>' +
+                        '<option value="service"' + (r.dimension === 'service' ? ' selected' : '') + '>Service</option>' +
+                        '<option value="tag"' + (r.dimension === 'tag' ? ' selected' : '') + '>Tag</option></select>' +
+                        '<select data-rule-op="' + bi + '-' + ri + '" style="padding:3px;border:1px solid #d0d7de;border-radius:4px;">' +
+                        '<option value="equals"' + (r.operator === 'equals' ? ' selected' : '') + '>equals</option>' +
+                        '<option value="contains"' + (r.operator === 'contains' ? ' selected' : '') + '>contains</option>' +
+                        '<option value="startsWith"' + (r.operator === 'startsWith' ? ' selected' : '') + '>starts with</option></select>' +
+                        '<input type="text" value="' + ea(r.value || '') + '" placeholder="Value" style="flex:1;padding:3px 6px;border:1px solid #d0d7de;border-radius:4px;" data-rule-val="' + bi + '-' + ri + '">' +
+                        '<button style="background:none;border:none;cursor:pointer;color:#ef4444;" data-del-rule="' + bi + '-' + ri + '">\u2716</button></div>';
+                });
+                rulesHtml += '<button class="btn btn-outline btn-sm" style="font-size:0.75em;margin-top:4px;" data-add-rule="' + bi + '">+ Add Rule</button></div>';
+                box.innerHTML = header + rulesHtml;
+                list.appendChild(box);
+            });
+        }
+        renderBUs();
+
+        card.querySelector('#bu-add').onclick = function() {
+            bus.push({name: '', rules: [{dimension: 'account', operator: 'equals', value: ''}]});
+            renderBUs();
+        };
+        card.querySelector('#bu-list').onclick = function(e) {
+            var delBu = e.target.closest('[data-del-bu]');
+            if (delBu) { bus.splice(parseInt(delBu.dataset.delBu), 1); renderBUs(); return; }
+            var addRule = e.target.closest('[data-add-rule]');
+            if (addRule) { bus[parseInt(addRule.dataset.addRule)].rules.push({dimension: 'account', operator: 'equals', value: ''}); renderBUs(); return; }
+            var delRule = e.target.closest('[data-del-rule]');
+            if (delRule) { var p = delRule.dataset.delRule.split('-'); bus[parseInt(p[0])].rules.splice(parseInt(p[1]), 1); renderBUs(); }
+        };
+        card.querySelector('#bu-cancel').onclick = function() { modal.remove(); };
+        card.querySelector('#bu-save').onclick = async function() {
+            // Collect data from form
+            var finalBUs = [];
+            bus.forEach(function(bu, bi) {
+                var nameInput = card.querySelector('[data-bu-name="' + bi + '"]');
+                var name = nameInput ? nameInput.value.trim() : bu.name;
+                var rules = [];
+                (bu.rules || []).forEach(function(r, ri) {
+                    var dim = card.querySelector('[data-rule-dim="' + bi + '-' + ri + '"]');
+                    var op = card.querySelector('[data-rule-op="' + bi + '-' + ri + '"]');
+                    var val = card.querySelector('[data-rule-val="' + bi + '-' + ri + '"]');
+                    if (dim && val && val.value.trim()) {
+                        rules.push({dimension: dim.value, operator: op ? op.value : 'equals', value: val.value.trim()});
+                    }
+                });
+                if (name && rules.length) finalBUs.push({name: name, rules: rules});
+            });
+            var mode = card.querySelector('input[name="shared-mode"]:checked');
+            try {
+                var resp = await api('POST', '/members/allocation-rules', {
+                    businessUnits: finalBUs,
+                    sharedCostMode: mode ? mode.value : 'proportional',
+                });
+                allocRulesCache = {businessUnits: finalBUs, sharedCostMode: mode ? mode.value : 'proportional', status: 'processing'};
+                modal.remove();
+                dashDataCache = null;
+                loadDashboardData();
+                notify(resp.message || 'Business units saved!', 'success');
+            } catch (e) { notify('Failed: ' + (e.message || ''), 'error'); }
+        };
+        modal.onclick = function(e) { if (e.target === modal) modal.remove(); };
+    });
 }
 
 function _renderAllocationTreemap(allocation) {
@@ -2469,11 +2519,26 @@ function _renderAllocationTreemap(allocation) {
     if (!el) return;
     if (!allocation || !allocation.businessUnits || !allocation.businessUnits.length) {
         el.innerHTML = '<div style="color:#6b7280;font-size:0.85em;padding:20px;text-align:center;">' +
-            'No allocation rules defined.<br><button class="btn btn-outline btn-sm" style="margin-top:8px;" onclick="showAllocationRulesModal();">+ Create Rules</button></div>';
+            'No business units defined yet.<br><button class="btn btn-outline btn-sm" style="margin-top:8px;" onclick="showAllocationRulesModal();">+ Define Business Units</button></div>';
         return;
     }
-    if (!window.echarts) { el.innerHTML = '<div style="color:#ef4444;">ECharts not loaded</div>'; return; }
-    var chart = echarts.init(el, null);
+    // Show processing status if applicable
+    var statusHtml = '';
+    if (allocation.status === 'processing') {
+        statusHtml = '<div style="background:#fef3c7;color:#92400e;padding:6px 10px;border-radius:4px;font-size:0.8em;margin-bottom:8px;">\u23f3 Processing... Dashboard will fully reflect these allocations within 24 hours.</div>';
+    }
+    var allocPct = allocation.allocatedPct || 0;
+    var pctColor = allocPct >= 90 ? '#10b981' : allocPct >= 70 ? '#f59e0b' : '#ef4444';
+    var headerHtml = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">' +
+        '<span style="font-size:0.8em;color:' + pctColor + ';font-weight:700;">' + allocPct + '% allocated</span>' +
+        '<span style="font-size:0.75em;color:#6b7280;">Shared: ' + (allocation.sharedCostMode || 'proportional') + '</span></div>';
+
+    el.innerHTML = statusHtml + headerHtml + '<div id="dash-alloc-chart" style="width:100%;height:200px;"></div>';
+
+    if (!window.echarts) return;
+    var chartEl = document.getElementById('dash-alloc-chart');
+    if (!chartEl) return;
+    var chart = echarts.init(chartEl, null);
     var colors = ['#6366f1','#10b981','#f59e0b','#ef4444','#8b5cf6','#ec4899','#14b8a6','#f97316'];
     chart.setOption({
         tooltip: { formatter: function(p) { return p.name + ': $' + p.value.toFixed(2) + ' (' + (p.data.pct || 0) + '%)'; } },

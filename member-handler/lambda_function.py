@@ -1431,7 +1431,7 @@ def handle_get_allocation_rules(event):
 
 
 def handle_save_allocation_rules(event):
-    """Save the member's cost allocation rules (replaces all rules)."""
+    """Save the member's virtual tagging business units and rules."""
     auth = validate_token(event)
     if isinstance(auth, dict) and 'statusCode' in auth:
         return auth
@@ -1441,87 +1441,151 @@ def handle_save_allocation_rules(event):
     except (json.JSONDecodeError, TypeError):
         return create_error_response(400, 'InvalidRequest', 'Invalid request body')
 
-    rules = body.get('rules', [])
-    if not isinstance(rules, list):
-        return create_error_response(400, 'InvalidRequest', '"rules" must be an array')
+    business_units = body.get('businessUnits', [])
+    shared_cost_mode = body.get('sharedCostMode', 'proportional')  # even, proportional, custom
+    custom_splits = body.get('customSplits', {})  # {buName: percentage}
 
-    # Validate each rule
-    valid_rules = []
-    for r in rules[:50]:  # max 50 rules
-        rule = {
-            'name': str(r.get('name', '')).strip()[:100],
-            'matchType': r.get('matchType', 'account'),  # account, service, tag, default
-            'matchValue': str(r.get('matchValue', '')).strip()[:200],
-            'businessUnit': str(r.get('businessUnit', '')).strip()[:100],
+    if not isinstance(business_units, list):
+        return create_error_response(400, 'InvalidRequest', '"businessUnits" must be an array')
+
+    # Validate and normalize business units
+    valid_units = []
+    for bu in business_units[:20]:  # max 20 business units
+        unit = {
+            'name': str(bu.get('name', '')).strip()[:100],
+            'rules': [],
         }
-        if rule['name'] and rule['businessUnit']:
-            valid_rules.append(rule)
+        for r in (bu.get('rules') or [])[:10]:  # max 10 rules per BU
+            rule = {
+                'dimension': r.get('dimension', 'account'),  # account, service, tag
+                'operator': r.get('operator', 'equals'),  # equals, contains, startsWith
+                'value': str(r.get('value', '')).strip()[:200],
+            }
+            if rule['value']:
+                unit['rules'].append(rule)
+        if unit['name'] and unit['rules']:
+            valid_units.append(unit)
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    allocation_config = {
+        'businessUnits': valid_units,
+        'sharedCostMode': shared_cost_mode if shared_cost_mode in ('even', 'proportional', 'custom') else 'proportional',
+        'customSplits': {k: min(100, max(0, float(v))) for k, v in (custom_splits or {}).items()} if shared_cost_mode == 'custom' else {},
+        'status': 'processing',
+        'updatedAt': now_iso,
+    }
 
     members_table = dynamodb.Table(MEMBERS_TABLE_NAME)
     try:
         members_table.update_item(
             Key={'email': member_email},
             UpdateExpression='SET allocationRules = :rules',
-            ExpressionAttributeValues={':rules': valid_rules},
+            ExpressionAttributeValues={':rules': allocation_config},
         )
     except ClientError as e:
         logger.error(f"Failed to save allocation rules: {e}")
         return create_error_response(500, 'ServerError', 'Failed to save rules')
 
-    return create_response(200, {'message': 'Rules saved', 'count': len(valid_rules)})
+    return create_response(200, {
+        'message': 'Business units saved! Your Dashboard will reflect these allocations within 24 hours.',
+        'count': len(valid_units),
+        'status': 'processing',
+    })
 
 
-def _apply_allocation_rules(cost_by_service, per_account, rules):
+def _apply_allocation_rules(cost_by_service, per_account, alloc_config):
     """Apply virtual tagging rules to cost data and return cost-by-business-unit."""
-    if not rules:
+    if not alloc_config:
         return None
 
-    bu_costs = {}  # business_unit -> total cost
-    unallocated = 0
-    default_bu = None
+    # Support both old format (list of rules) and new format (config object)
+    if isinstance(alloc_config, list):
+        # Legacy format — convert
+        business_units = []
+        for r in alloc_config:
+            business_units.append({
+                'name': r.get('businessUnit', r.get('name', '')),
+                'rules': [{'dimension': r.get('matchType', 'account'), 'operator': 'equals', 'value': r.get('matchValue', '')}],
+            })
+        shared_cost_mode = 'proportional'
+        custom_splits = {}
+    else:
+        business_units = alloc_config.get('businessUnits', [])
+        shared_cost_mode = alloc_config.get('sharedCostMode', 'proportional')
+        custom_splits = alloc_config.get('customSplits', {})
 
-    # Find default rule
-    for r in rules:
-        if r.get('matchType') == 'default':
-            default_bu = r.get('businessUnit', 'Unallocated')
+    if not business_units:
+        return None
 
+    bu_costs = {}  # bu_name -> allocated cost
+    unmatched_cost = 0
+    total_cost = 0
+
+    # Process each account's costs against business unit rules
     for acct in per_account:
-        acct_id = acct.get('accountId', '')
-        acct_total = acct.get('totalSpend', 0)
-        matched = False
+        if 'error' in acct:
+            continue
+        acct_id = str(acct.get('accountId', ''))
+        for svc in acct.get('topServices', []):
+            svc_name = (svc.get('service') or '').lower()
+            svc_cost = svc.get('cost_usd', 0)
+            total_cost += svc_cost
+            matched = False
 
-        for r in rules:
-            mt = r.get('matchType', '')
-            mv = r.get('matchValue', '').lower()
-            bu = r.get('businessUnit', '')
+            for bu in business_units:
+                bu_name = bu.get('name', '')
+                for rule in bu.get('rules', []):
+                    dim = rule.get('dimension', '')
+                    op = rule.get('operator', 'equals')
+                    val = str(rule.get('value', '')).lower()
 
-            if mt == 'account' and mv == acct_id:
-                bu_costs[bu] = bu_costs.get(bu, 0) + acct_total
-                matched = True
-                break
+                    hit = False
+                    if dim == 'account':
+                        hit = (val == acct_id)
+                    elif dim == 'service':
+                        if op == 'equals':
+                            hit = (val == svc_name or val in svc_name)
+                        elif op == 'contains':
+                            hit = (val in svc_name)
+                        elif op == 'startsWith':
+                            hit = svc_name.startswith(val)
+                    elif dim == 'tag':
+                        # Tag matching would require tag data in the service costs
+                        # For now, match against account name as a proxy
+                        acct_name = (acct.get('accountName') or '').lower()
+                        hit = (val in acct_name)
 
-        if not matched:
-            # Try service-level matching from the account's top services
-            for svc in acct.get('topServices', []):
-                svc_name = svc.get('service', '').lower()
-                svc_cost = svc.get('cost_usd', 0)
-                svc_matched = False
-                for r in rules:
-                    mt = r.get('matchType', '')
-                    mv = r.get('matchValue', '').lower()
-                    bu = r.get('businessUnit', '')
-                    if mt == 'service' and (mv in svc_name or svc_name.startswith(mv)):
-                        bu_costs[bu] = bu_costs.get(bu, 0) + svc_cost
-                        svc_matched = True
+                    if hit:
+                        bu_costs[bu_name] = bu_costs.get(bu_name, 0) + svc_cost
+                        matched = True
                         break
-                if not svc_matched:
-                    if default_bu:
-                        bu_costs[default_bu] = bu_costs.get(default_bu, 0) + svc_cost
-                    else:
-                        unallocated += svc_cost
+                if matched:
+                    break
 
-    if unallocated > 0:
-        bu_costs['Unallocated'] = bu_costs.get('Unallocated', 0) + unallocated
+            if not matched:
+                unmatched_cost += svc_cost
+
+    # Split shared/unmatched costs
+    if unmatched_cost > 0 and business_units:
+        if shared_cost_mode == 'even':
+            share = unmatched_cost / len(business_units)
+            for bu in business_units:
+                bu_costs[bu['name']] = bu_costs.get(bu['name'], 0) + share
+        elif shared_cost_mode == 'custom' and custom_splits:
+            for bu in business_units:
+                pct = custom_splits.get(bu['name'], 0) / 100
+                bu_costs[bu['name']] = bu_costs.get(bu['name'], 0) + unmatched_cost * pct
+        else:  # proportional (default)
+            total_matched = sum(bu_costs.values())
+            if total_matched > 0:
+                for bu_name in list(bu_costs.keys()):
+                    ratio = bu_costs[bu_name] / total_matched
+                    bu_costs[bu_name] += unmatched_cost * ratio
+            else:
+                bu_costs['Unallocated'] = unmatched_cost
+
+    if not bu_costs:
+        return None
 
     total = sum(bu_costs.values())
     result = sorted(
@@ -1530,8 +1594,15 @@ def _apply_allocation_rules(cost_by_service, per_account, rules):
         key=lambda x: x['cost'], reverse=True
     )
     allocated_pct = round((1 - bu_costs.get('Unallocated', 0) / total) * 100, 1) if total > 0 else 100
+    status = alloc_config.get('status', 'active') if isinstance(alloc_config, dict) else 'active'
 
-    return {'businessUnits': result, 'allocatedPct': allocated_pct, 'totalAllocated': round(total, 2)}
+    return {
+        'businessUnits': result,
+        'allocatedPct': allocated_pct,
+        'totalAllocated': round(total, 2),
+        'sharedCostMode': shared_cost_mode,
+        'status': status,
+    }
 
 
 def handle_execute_command(event):
@@ -3751,6 +3822,7 @@ IMPORTANT RULES:
 - SCHEDULING RECOMMENDATION: When ec2_cpu_metrics contains environment_tag=dev/test/staging/qa/sandbox AND the instance has low CPU, recommend AWS Instance Scheduler to stop instances during nights and weekends (~65% savings) INSTEAD of just downsizing. Non-production instances running 24/7 are the most common waste pattern.
 - ECS/EKS CONTAINER RIGHTSIZING: When ecs_service_metrics is present, show each service's avg/max CPU and memory utilization. Services with avg CPU < 10% AND avg memory < 20% are over-provisioned — recommend reducing task CPU/memory limits or task count. Kubernetes/container waste from over-provisioned resource requests is one of the most common and least monitored sources of cloud waste.
 - S3 STORAGE OPTIMIZATION: When s3_optimization_summary is present, ALWAYS recommend: (1) S3 Intelligent-Tiering for buckets without it (automatic cost optimization), (2) Lifecycle policies to move data to S3-IA after 30 days and Glacier after 90 days, (3) S3 Storage Lens for organization-wide visibility. S3 storage class optimization is a massive savings opportunity that is often overlooked.
+- BUSINESS UNIT / VIRTUAL TAGGING: If the user mentions a team name or business unit (e.g., "Data Science team", "Production", "Dev team"), check if the account data contains cost_allocation with businessUnits. If a matching business unit exists, focus the analysis on the services and accounts mapped to that business unit. Show the business unit's total cost, its percentage of total spend, and the services driving its costs.
 - When eks_clusters or ecs_clusters is present, show cluster count, status, and running tasks. Flag clusters with 0 running tasks as candidates for deletion. For ECS, flag clusters with low task counts relative to registered instances as over-provisioned.
 - When s3_optimization_summary is present, list buckets without lifecycle policies and without Intelligent-Tiering. Recommend enabling S3 Intelligent-Tiering for buckets without it, and adding lifecycle policies to move infrequently accessed data to S3-IA or Glacier.
 - When compute_optimizer_ec2 is present, show the rightsizing recommendations: current instance type, recommended type, finding (OVER_PROVISIONED/UNDER_PROVISIONED/OPTIMIZED), and estimated monthly savings. This is the most authoritative source for rightsizing — prefer it over manual CPU analysis.
