@@ -2269,6 +2269,9 @@ function renderDashboardWidgets(data) {
     _addWidget(grid, 'dash-rightsizing', 'Rightsizing Summary', 250);
     _addWidget(grid, 'dash-monthly', 'Monthly Trend', 250);
 
+    // Unit Economics widget (only if data exists)
+    _addWidget(grid, 'dash-unit-economics', 'Unit Cost Trend <button class="btn btn-outline btn-sm" style="font-size:0.7em;margin-left:8px;padding:2px 6px;" onclick="showBusinessMetricsModal();">Add Metrics</button>', 280);
+
     // Render ECharts
     setTimeout(function() {
         _renderTreemap(data.costByService || []);
@@ -2277,6 +2280,7 @@ function renderDashboardWidgets(data) {
         _renderRightsizing(data.rightsizing || {}, data.waste || {});
         _renderWaste(data.waste || {});
         _renderMonthly(data.monthlyTrend || {});
+        _renderUnitEconomics(data.unitEconomics || null);
     }, 100);
 }
 
@@ -2563,4 +2567,87 @@ function _renderAllocationTreemap(allocation) {
         color: colors,
     });
     window.addEventListener('resize', function() { chart.resize(); });
+}
+
+
+// ============================================================
+// Unit Economics
+// ============================================================
+function _renderUnitEconomics(ue) {
+    var el = $('dash-unit-economics');
+    if (!el) return;
+    if (!ue || !ue.trend || !ue.trend.length) {
+        el.innerHTML = '<div style="color:#6b7280;font-size:0.85em;padding:20px;text-align:center;">' +
+            'No business metrics defined yet.<br>Add monthly volumes (users, transactions, etc.) to see unit cost trends.' +
+            '<br><button class="btn btn-outline btn-sm" style="margin-top:8px;" onclick="showBusinessMetricsModal();">+ Add Business Metrics</button></div>';
+        return;
+    }
+    if (!window.echarts) return;
+    var chart = echarts.init(el, null);
+    var months = ue.trend.map(function(t) { var p=t.month.split('-'); var mn=['','Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']; return (mn[parseInt(p[1])]||p[1])+' '+p[0]; });
+    var volumes = ue.trend.map(function(t) { return t.volume; });
+    var unitCosts = ue.trend.map(function(t) { return t.costPerUnit; });
+    chart.setOption({
+        tooltip: { trigger: 'axis', formatter: function(ps) { var s = ps[0].axisValue + '<br>'; ps.forEach(function(p) { s += p.marker + p.seriesName + ': ' + (p.seriesName.indexOf('Cost') > -1 ? '$' + p.value.toFixed(4) : p.value.toLocaleString()) + '<br>'; }); return s; } },
+        legend: { textStyle: { color: '#374151' }, top: 0 },
+        xAxis: { type: 'category', data: months, axisLabel: { color: '#6b7280', fontSize: 10 } },
+        yAxis: [
+            { type: 'value', name: ue.metricName, nameTextStyle: { color: '#6b7280', fontSize: 10 }, axisLabel: { color: '#6b7280' }, splitLine: { lineStyle: { color: '#e5e7eb' } } },
+            { type: 'value', name: 'Cost/Unit', nameTextStyle: { color: '#6b7280', fontSize: 10 }, axisLabel: { color: '#6b7280', formatter: '${value}' }, splitLine: { show: false } }
+        ],
+        series: [
+            { name: ue.metricName + ' Volume', type: 'bar', yAxisIndex: 0, data: volumes, itemStyle: { color: '#6366f1', opacity: 0.7 } },
+            { name: 'Cost per ' + ue.metricName, type: 'line', yAxisIndex: 1, data: unitCosts, smooth: true, lineStyle: { color: '#10b981', width: 3 }, itemStyle: { color: '#10b981' }, symbol: 'circle', symbolSize: 8 }
+        ],
+        grid: { left: 60, right: 60, bottom: 25, top: 40 },
+    });
+    window.addEventListener('resize', function() { chart.resize(); });
+}
+
+function showBusinessMetricsModal() {
+    var modal = document.createElement('div');
+    modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);z-index:1000;display:flex;align-items:center;justify-content:center;';
+    var card = document.createElement('div');
+    card.style.cssText = 'background:#fff;border-radius:12px;padding:24px;max-width:500px;width:90%;max-height:80vh;overflow-y:auto;';
+    card.innerHTML =
+        '<h2 style="margin-top:0;color:#1f2937;">Business Metrics</h2>' +
+        '<p style="color:#6b7280;font-size:0.85em;">Enter your monthly business volumes to calculate unit costs (e.g., cost per user, cost per transaction).</p>' +
+        '<div class="form-group" style="margin-bottom:12px;">' +
+            '<label style="font-weight:600;font-size:0.9em;color:#374151;">Metric Name</label>' +
+            '<input type="text" id="bm-name" placeholder="e.g. ActiveUsers, Transactions, API_Calls" style="width:100%;padding:6px 10px;border:1px solid #d0d7de;border-radius:4px;margin-top:4px;box-sizing:border-box;">' +
+        '</div>' +
+        '<div class="form-group" style="margin-bottom:12px;">' +
+            '<label style="font-weight:600;font-size:0.9em;color:#374151;">Month (YYYY-MM)</label>' +
+            '<input type="month" id="bm-month" style="width:100%;padding:6px 10px;border:1px solid #d0d7de;border-radius:4px;margin-top:4px;box-sizing:border-box;">' +
+        '</div>' +
+        '<div class="form-group" style="margin-bottom:12px;">' +
+            '<label style="font-weight:600;font-size:0.9em;color:#374151;">Volume</label>' +
+            '<input type="number" id="bm-volume" placeholder="e.g. 50000" style="width:100%;padding:6px 10px;border:1px solid #d0d7de;border-radius:4px;margin-top:4px;box-sizing:border-box;">' +
+        '</div>' +
+        '<div id="bm-error" style="color:#ef4444;font-size:0.85em;margin-bottom:8px;"></div>' +
+        '<div style="display:flex;gap:8px;justify-content:flex-end;">' +
+            '<button id="bm-cancel" class="btn btn-outline">Cancel</button>' +
+            '<button id="bm-save" class="btn btn-primary">Save Metric</button></div>';
+    modal.appendChild(card);
+    document.body.appendChild(modal);
+
+    card.querySelector('#bm-cancel').onclick = function() { modal.remove(); };
+    card.querySelector('#bm-save').onclick = async function() {
+        var name = card.querySelector('#bm-name').value.trim();
+        var month = card.querySelector('#bm-month').value;
+        var volume = parseFloat(card.querySelector('#bm-volume').value);
+        var errEl = card.querySelector('#bm-error');
+        if (!name || !month || isNaN(volume) || volume <= 0) {
+            errEl.textContent = 'All fields are required. Volume must be > 0.';
+            return;
+        }
+        try {
+            await api('POST', '/members/business-metrics', { metricName: name, metricMonth: month, metricVolume: volume });
+            modal.remove();
+            dashDataCache = null;
+            loadDashboardData();
+            notify('Business metric saved! Unit costs will update.', 'success');
+        } catch (e) { errEl.textContent = e.message || 'Failed to save.'; }
+    };
+    modal.onclick = function(e) { if (e.target === modal) modal.remove(); };
 }

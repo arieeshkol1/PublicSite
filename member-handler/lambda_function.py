@@ -92,6 +92,8 @@ def lambda_handler(event, context):
         'DELETE /members/dashboard': handle_delete_dashboard_item,
         'GET /members/allocation-rules': handle_get_allocation_rules,
         'POST /members/allocation-rules': handle_save_allocation_rules,
+        'GET /members/business-metrics': handle_get_business_metrics,
+        'POST /members/business-metrics': handle_save_business_metrics,
     }
 
     handler = routes.get(route_key)
@@ -1307,6 +1309,7 @@ def handle_dashboard_data(event):
         'perAccount': per_account,
         'containers': containers,
         'costAllocation': allocation_data,
+        'unitEconomics': _get_unit_economics(member_email, merged_monthly) if merged_monthly else None,
     })
 
 
@@ -1501,6 +1504,123 @@ def handle_save_allocation_rules(event):
         'count': len(valid_units),
         'status': 'processing',
     })
+
+
+BUSINESS_METRICS_TABLE = os.environ.get('BUSINESS_METRICS_TABLE', 'MemberPortal-BusinessMetrics')
+
+
+def handle_get_business_metrics(event):
+    """Get business metrics for the member."""
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+    member_email = auth['sub']
+    try:
+        table = dynamodb.Table(BUSINESS_METRICS_TABLE)
+        result = table.query(
+            KeyConditionExpression=boto3.dynamodb.conditions.Key('memberEmail').eq(member_email),
+            ScanIndexForward=False,
+            Limit=24,  # last 24 months
+        )
+        metrics = _decimal_to_native(result.get('Items', []))
+    except ClientError:
+        metrics = []
+    return create_response(200, {'metrics': metrics})
+
+
+def handle_save_business_metrics(event):
+    """Save or update a business metric for a specific month."""
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+    member_email = auth['sub']
+    try:
+        body = json.loads(event.get('body', '{}'))
+    except (json.JSONDecodeError, TypeError):
+        return create_error_response(400, 'InvalidRequest', 'Invalid request body')
+
+    metric_month = (body.get('metricMonth') or '').strip()  # e.g. "2026-03"
+    metric_name = (body.get('metricName') or '').strip()[:100]
+    metric_volume = body.get('metricVolume', 0)
+
+    if not metric_month or not metric_name:
+        return create_error_response(400, 'InvalidRequest', 'metricMonth and metricName are required')
+
+    try:
+        metric_volume = float(metric_volume)
+    except (ValueError, TypeError):
+        return create_error_response(400, 'InvalidRequest', 'metricVolume must be a number')
+
+    table = dynamodb.Table(BUSINESS_METRICS_TABLE)
+    try:
+        table.put_item(Item={
+            'memberEmail': member_email,
+            'metricMonth': metric_month,
+            'metricName': metric_name,
+            'metricVolume': Decimal(str(metric_volume)),
+            'businessUnitLink': (body.get('businessUnitLink') or '').strip()[:100] or None,
+            'updatedAt': datetime.now(timezone.utc).isoformat(),
+        })
+    except ClientError as e:
+        logger.error(f"Failed to save business metric: {e}")
+        return create_error_response(500, 'ServerError', 'Failed to save metric')
+
+    return create_response(200, {'message': 'Business metric saved'})
+
+
+def _get_unit_economics(member_email, monthly_trend):
+    """Calculate unit economics from business metrics and monthly cost data."""
+    try:
+        table = dynamodb.Table(BUSINESS_METRICS_TABLE)
+        result = table.query(
+            KeyConditionExpression=boto3.dynamodb.conditions.Key('memberEmail').eq(member_email),
+            ScanIndexForward=False,
+            Limit=12,
+        )
+        metrics = _decimal_to_native(result.get('Items', []))
+    except Exception:
+        return None
+
+    if not metrics or not monthly_trend:
+        return None
+
+    # Group metrics by month
+    by_month = {}
+    for m in metrics:
+        month = m.get('metricMonth', '')
+        if month not in by_month:
+            by_month[month] = []
+        by_month[month].append(m)
+
+    # Calculate unit cost per month
+    unit_costs = []
+    for month in sorted(monthly_trend.keys()):
+        total_cost = sum(monthly_trend[month].values())
+        month_metrics = by_month.get(month, [])
+        if month_metrics:
+            for bm in month_metrics:
+                vol = bm.get('metricVolume', 0)
+                if vol > 0:
+                    unit_costs.append({
+                        'month': month,
+                        'metricName': bm.get('metricName', ''),
+                        'volume': vol,
+                        'totalCost': round(total_cost, 2),
+                        'costPerUnit': round(total_cost / vol, 4),
+                    })
+
+    if not unit_costs:
+        return None
+
+    # Get the primary metric (most recent)
+    primary = metrics[0].get('metricName', '')
+    primary_trend = [uc for uc in unit_costs if uc['metricName'] == primary]
+
+    return {
+        'metricName': primary,
+        'trend': primary_trend,
+        'allMetrics': list(set(m.get('metricName', '') for m in metrics)),
+    }
 
 
 def _apply_allocation_rules(cost_by_service, per_account, alloc_config):
@@ -3838,6 +3958,7 @@ IMPORTANT RULES:
 - ECS/EKS CONTAINER RIGHTSIZING: When ecs_service_metrics is present, show each service's avg/max CPU and memory utilization. Services with avg CPU < 10% AND avg memory < 20% are over-provisioned — recommend reducing task CPU/memory limits or task count. Kubernetes/container waste from over-provisioned resource requests is one of the most common and least monitored sources of cloud waste.
 - S3 STORAGE OPTIMIZATION: When s3_optimization_summary is present, ALWAYS recommend: (1) S3 Intelligent-Tiering for buckets without it (automatic cost optimization), (2) Lifecycle policies to move data to S3-IA after 30 days and Glacier after 90 days, (3) S3 Storage Lens for organization-wide visibility. S3 storage class optimization is a massive savings opportunity that is often overlooked.
 - BUSINESS UNIT / VIRTUAL TAGGING: If the user mentions a team name or business unit (e.g., "Data Science team", "Production", "Dev team"), check if the account data contains cost_allocation with businessUnits. If a matching business unit exists, focus the analysis on the services and accounts mapped to that business unit. Show the business unit's total cost, its percentage of total spend, and the services driving its costs.
+- UNIT ECONOMICS: If the account data contains business_metrics, cross-reference cost changes with business volume changes. If costs increased by 20% but business volume increased by 40%, the cost per unit DECREASED — frame this as "efficient scaling" not "cost overrun". Always show: total cost, business volume, and cost per unit when business metrics are available.
 - When eks_clusters or ecs_clusters is present, show cluster count, status, and running tasks. Flag clusters with 0 running tasks as candidates for deletion. For ECS, flag clusters with low task counts relative to registered instances as over-provisioned.
 - When s3_optimization_summary is present, list buckets without lifecycle policies and without Intelligent-Tiering. Recommend enabling S3 Intelligent-Tiering for buckets without it, and adding lifecycle policies to move infrequently accessed data to S3-IA or Glacier.
 - When compute_optimizer_ec2 is present, show the rightsizing recommendations: current instance type, recommended type, finding (OVER_PROVISIONED/UNDER_PROVISIONED/OPTIMIZED), and estimated monthly savings. This is the most authoritative source for rightsizing — prefer it over manual CPU analysis.
