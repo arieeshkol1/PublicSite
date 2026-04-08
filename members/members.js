@@ -3283,18 +3283,25 @@ async function _actRunScan(accountIds) {
     if (totalBanner) totalBanner.style.display = 'none';
     if (scanBtn) { scanBtn.disabled = true; scanBtn.textContent = 'Scanning…'; }
 
+    // All 7 scan categories — always shown regardless of findings
+    var ALL_CATEGORIES = [
+        { type: 'elastic-ip',   icon: '🌐', title: 'Unassociated Elastic IPs',   cleanMsg: 'No unassociated Elastic IPs found' },
+        { type: 'ebs-volume',   icon: '💾', title: 'Unattached EBS Volumes',      cleanMsg: 'No unattached EBS volumes found' },
+        { type: 'load-balancer',icon: '⚖️', title: 'Idle Load Balancers',         cleanMsg: 'No idle load balancers found' },
+        { type: 's3-lifecycle', icon: '🪣', title: 'S3 Buckets Needing Attention',cleanMsg: 'All S3 buckets have lifecycle policies' },
+        { type: 'ec2-idle',     icon: '🖥️', title: 'Idle EC2 Instances',          cleanMsg: 'No idle EC2 instances found (CPU ≥ 5%)' },
+        { type: 'rds-idle',     icon: '🗄️', title: 'Idle RDS Instances',          cleanMsg: 'No idle RDS instances found' },
+        { type: 'ebs-snapshot', icon: '📸', title: 'Stale EBS Snapshots (180d+)', cleanMsg: 'No snapshots older than 180 days' },
+    ];
+
     try {
         var data = await api('POST', '/members/actions/scan', { accountIds: accountIds });
         _actScanData = data;
 
         if (status) {
             var ts = new Date(data.scannedAt || Date.now()).toLocaleTimeString();
-            status.textContent = 'Scanned ' + (data.scannedAccounts || 0) + ' account(s) at ' + ts;
-        }
-
-        if (!data.cards || data.cards.length === 0) {
-            if (empty) { empty.style.display = 'block'; empty.querySelector('div:nth-child(2)').textContent = '✅ No waste found — your accounts look clean!'; }
-            return;
+            status.textContent = 'Scanned ' + (data.scannedAccounts || 0) + ' account(s) at ' + ts +
+                (data.totalSavings > 0 ? ' · ' + (data.cards || []).filter(function(c){return c.count > 0;}).length + ' issue(s) found' : ' · All clean ✅');
         }
 
         // Show total savings banner
@@ -3304,9 +3311,25 @@ async function _actRunScan(accountIds) {
             if (amtEl) amtEl.textContent = '$' + data.totalSavings.toFixed(2) + '/month';
         }
 
-        // Render cards
-        data.cards.forEach(function(card) {
-            if (grid) grid.appendChild(_actBuildCard(card));
+        // Build a map of returned cards by type (may have multiple accounts per type)
+        var cardsByType = {};
+        (data.cards || []).forEach(function(card) {
+            if (!cardsByType[card.type]) cardsByType[card.type] = [];
+            cardsByType[card.type].push(card);
+        });
+
+        // Always render all 7 categories
+        ALL_CATEGORIES.forEach(function(cat) {
+            var found = cardsByType[cat.type] || [];
+            if (found.length > 0) {
+                // Render each found card
+                found.forEach(function(card) {
+                    if (grid) grid.appendChild(_actBuildCard(card));
+                });
+            } else {
+                // Render a "clean" placeholder card
+                if (grid) grid.appendChild(_actBuildCleanCard(cat));
+            }
         });
 
     } catch (err) {
@@ -3315,6 +3338,21 @@ async function _actRunScan(accountIds) {
     } finally {
         if (scanBtn) { scanBtn.disabled = false; scanBtn.textContent = '🔍 Scan for Waste'; }
     }
+}
+
+function _actBuildCleanCard(cat) {
+    var div = document.createElement('div');
+    div.style.cssText = 'background:#161b22;border:1px solid #21262d;border-radius:12px;padding:20px;display:flex;flex-direction:column;gap:8px;opacity:0.7;';
+    div.innerHTML =
+        '<div style="display:flex;justify-content:space-between;align-items:center;">' +
+            '<div style="display:flex;gap:10px;align-items:center;">' +
+                '<span style="font-size:1.6em;">' + cat.icon + '</span>' +
+                '<div style="font-weight:600;color:#8b949e;font-size:0.9em;">' + esc(cat.title) + '</div>' +
+            '</div>' +
+            '<span style="color:#16a34a;font-size:1.1em;">✓</span>' +
+        '</div>' +
+        '<div style="color:#6b7280;font-size:0.82em;">' + esc(cat.cleanMsg) + '</div>';
+    return div;
 }
 
 function _actBuildCard(card) {
