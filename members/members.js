@@ -3427,7 +3427,8 @@ async function _actBrowseBucket(accountId, bucketName) {
     card.style.cssText = 'background:#1c2128;border:1px solid #30363d;border-radius:12px;width:700px;max-width:95vw;max-height:85vh;display:flex;flex-direction:column;box-shadow:0 8px 32px rgba(0,0,0,0.5);';
 
     card.innerHTML =
-        '<div style="padding:16px 20px;border-bottom:1px solid #30363d;display:flex;justify-content:space-between;align-items:center;">' +
+        // ── Header ──────────────────────────────────────────────────
+        '<div style="padding:16px 20px;border-bottom:1px solid #30363d;display:flex;justify-content:space-between;align-items:center;flex-shrink:0;">' +
             '<div>' +
                 '<div style="font-weight:700;color:#e6edf3;font-size:1em;">🪣 ' + esc(bucketName) + '</div>' +
                 '<div id="browse-summary" style="color:#6b7280;font-size:0.8em;margin-top:2px;">Loading…</div>' +
@@ -3438,17 +3439,28 @@ async function _actBrowseBucket(accountId, bucketName) {
                     '<option value="largest">Largest first</option>' +
                     '<option value="newest">Newest first</option>' +
                 '</select>' +
-                '<button onclick="document.getElementById(\'act-browse-modal\').remove();" style="background:none;border:none;color:#8b949e;font-size:1.3em;cursor:pointer;">✕</button>' +
+                '<button onclick="document.getElementById(\'act-browse-modal\').remove();" style="background:none;border:none;color:#8b949e;font-size:1.3em;cursor:pointer;padding:4px;">✕</button>' +
             '</div>' +
         '</div>' +
-        '<div id="browse-aged-banner" style="display:none;background:#3b1f1f;border-bottom:1px solid #7f1d1d;padding:8px 20px;font-size:0.82em;color:#fca5a5;"></div>' +
-        '<div id="browse-body" style="flex:1;overflow-y:auto;padding:0;">' +
+        // ── Aged banner ──────────────────────────────────────────────
+        '<div id="browse-aged-banner" style="display:none;background:#3b1f1f;border-bottom:1px solid #7f1d1d;padding:8px 20px;font-size:0.82em;color:#fca5a5;flex-shrink:0;"></div>' +
+        // ── Object list ──────────────────────────────────────────────
+        '<div id="browse-body" style="flex:1;overflow-y:auto;padding:0;min-height:0;">' +
             '<div style="padding:40px;text-align:center;color:#6b7280;">Loading bucket contents…</div>' +
+        '</div>' +
+        // ── Action footer ────────────────────────────────────────────
+        '<div style="padding:14px 20px;border-top:1px solid #30363d;display:flex;gap:10px;align-items:center;flex-shrink:0;background:#161b22;border-radius:0 0 12px 12px;">' +
+            '<div style="flex:1;font-size:0.8em;color:#6b7280;">Actions apply to the entire bucket</div>' +
+            '<button id="browse-lifecycle-btn" class="btn btn-outline btn-sm" style="font-size:0.82em;border-color:#6366f1;color:#6366f1;">📋 Apply Lifecycle Policy</button>' +
+            '<button id="browse-delete-btn" class="btn btn-sm" style="font-size:0.82em;background:#7f1d1d;color:#fca5a5;border:1px solid #ef4444;">🗑 Delete All Objects</button>' +
         '</div>';
 
     modal.appendChild(card);
     modal.onclick = function(e) { if (e.target === modal) modal.remove(); };
     document.body.appendChild(modal);
+
+    // Track browse data for action buttons
+    var _browseData = null;
 
     async function loadBrowse(sortBy) {
         var bodyEl = document.getElementById('browse-body');
@@ -3462,6 +3474,7 @@ async function _actBrowseBucket(accountId, bucketName) {
                 bucketName: bucketName,
                 sortBy: sortBy || 'oldest',
             });
+            _browseData = data;
 
             if (summaryEl) {
                 summaryEl.innerHTML =
@@ -3488,7 +3501,7 @@ async function _actBrowseBucket(accountId, bucketName) {
             }
 
             var rows = '<table style="width:100%;border-collapse:collapse;font-size:0.82em;">' +
-                '<thead><tr style="background:#161b22;position:sticky;top:0;">' +
+                '<thead><tr style="background:#161b22;position:sticky;top:0;z-index:1;">' +
                     '<th style="padding:8px 12px;text-align:left;color:#8b949e;font-weight:600;border-bottom:1px solid #30363d;">Object Key</th>' +
                     '<th style="padding:8px 12px;text-align:right;color:#8b949e;font-weight:600;border-bottom:1px solid #30363d;">Size</th>' +
                     '<th style="padding:8px 12px;text-align:right;color:#8b949e;font-weight:600;border-bottom:1px solid #30363d;">Last Modified</th>' +
@@ -3518,6 +3531,58 @@ async function _actBrowseBucket(accountId, bucketName) {
         } catch (err) {
             if (bodyEl) bodyEl.innerHTML = '<div style="padding:40px;text-align:center;color:#ef4444;">Error: ' + esc(err.message || 'Failed to load') + '</div>';
         }
+    }
+
+    // ── Apply Lifecycle Policy button ────────────────────────────────
+    var lifecycleBtn = document.getElementById('browse-lifecycle-btn');
+    if (lifecycleBtn) {
+        lifecycleBtn.onclick = async function() {
+            if (!confirm('Apply S3 Intelligent-Tiering lifecycle policy to "' + bucketName + '"?\n\nThis will transition objects older than 90 days to Intelligent-Tiering automatically. This is safe and reversible.')) return;
+            lifecycleBtn.disabled = true; lifecycleBtn.textContent = '⏳ Applying…';
+            try {
+                var result = await api('POST', '/members/actions/execute', {
+                    accountId: accountId,
+                    actionType: 's3-lifecycle',
+                    resourceIds: [bucketName],
+                });
+                var ok = (result.succeeded || []).length > 0;
+                lifecycleBtn.textContent = ok ? '✓ Policy Applied' : '⚠ Failed';
+                lifecycleBtn.style.color = ok ? '#10b981' : '#ef4444';
+                lifecycleBtn.style.borderColor = ok ? '#10b981' : '#ef4444';
+                if (!ok && result.failed && result.failed[0]) notify('Lifecycle error: ' + result.failed[0].error, 'error');
+            } catch (err) {
+                lifecycleBtn.disabled = false; lifecycleBtn.textContent = '📋 Apply Lifecycle Policy';
+                notify('Failed: ' + (err.message || 'Unknown error'), 'error');
+            }
+        };
+    }
+
+    // ── Delete All Objects button ────────────────────────────────────
+    var deleteBtn = document.getElementById('browse-delete-btn');
+    if (deleteBtn) {
+        deleteBtn.onclick = async function() {
+            var objCount = _browseData ? _browseData.totalObjects : '?';
+            var sizeGb = _browseData ? _browseData.totalSizeGb.toFixed(3) : '?';
+            if (!confirm('⚠ DELETE ALL OBJECTS in "' + bucketName + '"?\n\n' + objCount + ' objects · ' + sizeGb + ' GB\n\nThis is IRREVERSIBLE. The bucket itself will remain but all contents will be permanently deleted.\n\nType OK to confirm.')) return;
+            deleteBtn.disabled = true; deleteBtn.textContent = '⏳ Deleting…';
+            try {
+                var result = await api('POST', '/members/actions/execute', {
+                    accountId: accountId,
+                    actionType: 's3-delete-objects',
+                    resourceIds: [bucketName],
+                });
+                var deleted = (result.succeeded || []).length > 0 ? result.succeeded[0].deleted || 0 : 0;
+                deleteBtn.textContent = '✓ ' + deleted + ' objects deleted';
+                deleteBtn.style.background = '#14532d';
+                deleteBtn.style.color = '#6ee7b7';
+                deleteBtn.style.borderColor = '#16a34a';
+                // Reload the browse view
+                setTimeout(function() { loadBrowse(document.getElementById('browse-sort') ? document.getElementById('browse-sort').value : 'oldest'); }, 1000);
+            } catch (err) {
+                deleteBtn.disabled = false; deleteBtn.textContent = '🗑 Delete All Objects';
+                notify('Delete failed: ' + (err.message || 'Unknown error'), 'error');
+            }
+        };
     }
 
     // Initial load

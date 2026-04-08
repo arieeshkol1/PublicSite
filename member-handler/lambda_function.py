@@ -1010,6 +1010,8 @@ def handle_generate_template(event):
                                             's3:ListBucket',
                                             's3:GetObject',
                                             's3:HeadObject',
+                                            's3:DeleteObject',
+                                            's3:DeleteObjects',
                                         ],
                                         'Resource': '*'
                                     }
@@ -2195,6 +2197,31 @@ def handle_actions_execute(event):
                 )
                 results.append({'id': bucket_name, 'status': 'lifecycle-applied', 'rule': 'Intelligent-Tiering after 90 days'})
                 logger.info(f"Applied lifecycle to S3 bucket {bucket_name} in account {account_id} by {member_email}")
+            except ClientError as e:
+                errors.append({'id': bucket_name, 'error': str(e.response['Error']['Message'])})
+
+    elif action_type == 's3-delete-objects':
+        # Delete ALL objects in the bucket (paginated batch delete)
+        s3 = _make_client_from_creds('s3', creds)
+        for bucket_name in resource_ids:
+            try:
+                total_deleted = 0
+                paginator = s3.get_paginator('list_objects_v2')
+                for page in paginator.paginate(Bucket=bucket_name):
+                    objects = page.get('Contents', [])
+                    if not objects:
+                        break
+                    # Batch delete up to 1000 at a time
+                    delete_resp = s3.delete_objects(
+                        Bucket=bucket_name,
+                        Delete={'Objects': [{'Key': o['Key']} for o in objects], 'Quiet': True}
+                    )
+                    total_deleted += len(objects) - len(delete_resp.get('Errors', []))
+                    if delete_resp.get('Errors'):
+                        for err in delete_resp['Errors'][:3]:
+                            errors.append({'id': bucket_name + '/' + err['Key'], 'error': err.get('Message', 'Delete failed')})
+                results.append({'id': bucket_name, 'status': 'objects-deleted', 'deleted': total_deleted})
+                logger.info(f"Deleted {total_deleted} objects from s3://{bucket_name} in account {account_id} by {member_email}")
             except ClientError as e:
                 errors.append({'id': bucket_name, 'error': str(e.response['Error']['Message'])})
     else:
