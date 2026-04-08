@@ -1226,20 +1226,74 @@ def handle_dashboard_data(event):
             except Exception:
                 pass  # Fall back to 7-day data from _gather_account_data
 
-            # Fetch hourly cost trend (last 48 hours) for real-time waste detection
+            # Fetch hourly usage metrics (last 24h) via CloudWatch for real-time waste detection
+            # CloudWatch is always available — no need for CE hourly granularity
             try:
-                start_48h = (datetime.now(timezone.utc) - timedelta(hours=48)).strftime('%Y-%m-%dT%H:%M:%SZ')
-                end_now = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
-                hourly_resp = ce_30d.get_cost_and_usage(
-                    TimePeriod={'Start': (datetime.now(timezone.utc) - timedelta(days=2)).strftime('%Y-%m-%d'),
-                                'End': datetime.now(timezone.utc).strftime('%Y-%m-%d')},
-                    Granularity='HOURLY', Metrics=['UnblendedCost'],
-                )
-                for period in hourly_resp.get('ResultsByTime', []):
-                    h_start = period['TimePeriod']['Start']
-                    h_cost = float(period['Total']['UnblendedCost']['Amount'])
-                    if h_cost > 0:
-                        merged_hourly[h_start] = merged_hourly.get(h_start, 0) + h_cost
+                cw_hourly = boto3.client('cloudwatch',
+                    aws_access_key_id=creds['AccessKeyId'],
+                    aws_secret_access_key=creds['SecretAccessKey'],
+                    aws_session_token=creds['SessionToken'],
+                    region_name='us-east-1')
+                h_start = datetime.now(timezone.utc) - timedelta(hours=24)
+                h_end = datetime.now(timezone.utc)
+
+                # EC2 aggregate NetworkIn (bytes/hour — proxy for traffic cost)
+                try:
+                    net_resp = cw_hourly.get_metric_statistics(
+                        Namespace='AWS/EC2', MetricName='NetworkIn',
+                        StartTime=h_start, EndTime=h_end, Period=3600, Statistics=['Sum'],
+                    )
+                    for dp in net_resp.get('Datapoints', []):
+                        ts = dp['Timestamp'].strftime('%Y-%m-%dT%H:00')
+                        # Convert bytes to estimated cost ($0.09/GB)
+                        gb = dp['Sum'] / (1024**3)
+                        est_cost = gb * 0.09
+                        merged_hourly[ts] = merged_hourly.get(ts, 0) + est_cost
+                except Exception:
+                    pass
+
+                # NAT Gateway bytes (proxy for data processing cost)
+                try:
+                    nat_resp = cw_hourly.get_metric_statistics(
+                        Namespace='AWS/NATGateway', MetricName='BytesOutToDestination',
+                        StartTime=h_start, EndTime=h_end, Period=3600, Statistics=['Sum'],
+                    )
+                    for dp in nat_resp.get('Datapoints', []):
+                        ts = dp['Timestamp'].strftime('%Y-%m-%dT%H:00')
+                        gb = dp['Sum'] / (1024**3)
+                        est_cost = gb * 0.045  # NAT GW data processing rate
+                        merged_hourly[ts] = merged_hourly.get(ts, 0) + est_cost
+                except Exception:
+                    pass
+
+                # Lambda invocations (proxy for compute cost)
+                try:
+                    lam_resp = cw_hourly.get_metric_statistics(
+                        Namespace='AWS/Lambda', MetricName='Invocations',
+                        StartTime=h_start, EndTime=h_end, Period=3600, Statistics=['Sum'],
+                    )
+                    for dp in lam_resp.get('Datapoints', []):
+                        ts = dp['Timestamp'].strftime('%Y-%m-%dT%H:00')
+                        # Rough estimate: $0.0000002 per invocation
+                        est_cost = dp['Sum'] * 0.0000002
+                        merged_hourly[ts] = merged_hourly.get(ts, 0) + est_cost
+                except Exception:
+                    pass
+
+                # Also try CE HOURLY if available (some accounts have it enabled)
+                try:
+                    hourly_resp = ce_30d.get_cost_and_usage(
+                        TimePeriod={'Start': (datetime.now(timezone.utc) - timedelta(days=2)).strftime('%Y-%m-%d'),
+                                    'End': datetime.now(timezone.utc).strftime('%Y-%m-%d')},
+                        Granularity='HOURLY', Metrics=['UnblendedCost'],
+                    )
+                    for period in hourly_resp.get('ResultsByTime', []):
+                        h_ts = period['TimePeriod']['Start'][:16]
+                        h_cost = float(period['Total']['UnblendedCost']['Amount'])
+                        if h_cost > 0:
+                            merged_hourly[h_ts] = h_cost  # CE data overrides estimates
+                except Exception:
+                    pass  # CE hourly not enabled — CloudWatch estimates are used
             except Exception:
                 pass
 

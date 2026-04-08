@@ -2426,7 +2426,7 @@ function _renderDailyChart(daily) {
 
 function _renderHourlyTrend(hourly) {
     var el = $('dash-daily'); if (!el || !window.echarts) return;
-    if (!hourly.length) { el.innerHTML = '<div style="color:#6b7280;font-size:0.85em;padding:20px;">No hourly data available (requires Cost Explorer hourly granularity enabled)</div>'; return; }
+    if (!hourly.length) { el.innerHTML = '<div style="color:#6b7280;font-size:0.85em;padding:20px;">No hourly usage data detected in the last 24 hours.</div>'; return; }
     var chart = echarts.init(el, null);
     // Detect anomalies: > 3x the average hourly cost
     var costs = hourly.map(function(h) { return h.cost; });
