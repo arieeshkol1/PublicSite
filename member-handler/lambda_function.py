@@ -1227,7 +1227,6 @@ def handle_dashboard_data(event):
                 pass  # Fall back to 7-day data from _gather_account_data
 
             # Fetch hourly usage metrics (last 24h) via CloudWatch for real-time waste detection
-            # CloudWatch is always available — no need for CE hourly granularity
             try:
                 cw_hourly = boto3.client('cloudwatch',
                     aws_access_key_id=creds['AccessKeyId'],
@@ -1237,50 +1236,7 @@ def handle_dashboard_data(event):
                 h_start = datetime.now(timezone.utc) - timedelta(hours=24)
                 h_end = datetime.now(timezone.utc)
 
-                # EC2 aggregate NetworkIn (bytes/hour — proxy for traffic cost)
-                try:
-                    net_resp = cw_hourly.get_metric_statistics(
-                        Namespace='AWS/EC2', MetricName='NetworkIn',
-                        StartTime=h_start, EndTime=h_end, Period=3600, Statistics=['Sum'],
-                    )
-                    for dp in net_resp.get('Datapoints', []):
-                        ts = dp['Timestamp'].strftime('%Y-%m-%dT%H:00')
-                        # Convert bytes to estimated cost ($0.09/GB)
-                        gb = dp['Sum'] / (1024**3)
-                        est_cost = gb * 0.09
-                        merged_hourly[ts] = merged_hourly.get(ts, 0) + est_cost
-                except Exception:
-                    pass
-
-                # NAT Gateway bytes (proxy for data processing cost)
-                try:
-                    nat_resp = cw_hourly.get_metric_statistics(
-                        Namespace='AWS/NATGateway', MetricName='BytesOutToDestination',
-                        StartTime=h_start, EndTime=h_end, Period=3600, Statistics=['Sum'],
-                    )
-                    for dp in nat_resp.get('Datapoints', []):
-                        ts = dp['Timestamp'].strftime('%Y-%m-%dT%H:00')
-                        gb = dp['Sum'] / (1024**3)
-                        est_cost = gb * 0.045  # NAT GW data processing rate
-                        merged_hourly[ts] = merged_hourly.get(ts, 0) + est_cost
-                except Exception:
-                    pass
-
-                # Lambda invocations (proxy for compute cost)
-                try:
-                    lam_resp = cw_hourly.get_metric_statistics(
-                        Namespace='AWS/Lambda', MetricName='Invocations',
-                        StartTime=h_start, EndTime=h_end, Period=3600, Statistics=['Sum'],
-                    )
-                    for dp in lam_resp.get('Datapoints', []):
-                        ts = dp['Timestamp'].strftime('%Y-%m-%dT%H:00')
-                        # Rough estimate: $0.0000002 per invocation
-                        est_cost = dp['Sum'] * 0.0000002
-                        merged_hourly[ts] = merged_hourly.get(ts, 0) + est_cost
-                except Exception:
-                    pass
-
-                # Also try CE HOURLY if available (some accounts have it enabled)
+                # Try CE HOURLY first (most accurate if enabled)
                 try:
                     hourly_resp = ce_30d.get_cost_and_usage(
                         TimePeriod={'Start': (datetime.now(timezone.utc) - timedelta(days=2)).strftime('%Y-%m-%d'),
@@ -1291,9 +1247,41 @@ def handle_dashboard_data(event):
                         h_ts = period['TimePeriod']['Start'][:16]
                         h_cost = float(period['Total']['UnblendedCost']['Amount'])
                         if h_cost > 0:
-                            merged_hourly[h_ts] = h_cost  # CE data overrides estimates
+                            merged_hourly[h_ts] = h_cost
                 except Exception:
-                    pass  # CE hourly not enabled — CloudWatch estimates are used
+                    pass
+
+                # If CE hourly didn't work, estimate from daily cost split into 24 hours
+                if not merged_hourly:
+                    # Use the last 3 days of daily data, split each day into 24 equal hours
+                    for d in acct_data.get('daily_cost_trend', []):
+                        daily_cost = d.get('cost_usd', 0)
+                        if daily_cost > 0:
+                            hourly_est = daily_cost / 24
+                            for h in range(24):
+                                ts = f"{d['date']}T{h:02d}:00"
+                                merged_hourly[ts] = merged_hourly.get(ts, 0) + hourly_est
+
+                    # Now overlay CloudWatch spikes on top of the flat estimate
+                    # This shows WHERE the spikes happen even if we can't get exact hourly costs
+                    metrics_to_check = [
+                        ('AWS/EC2', 'NetworkIn', 0.09 / (1024**3)),  # $/byte
+                        ('AWS/NATGateway', 'BytesOutToDestination', 0.045 / (1024**3)),
+                        ('AWS/Lambda', 'Invocations', 0.0000002),
+                    ]
+                    for ns, metric, rate in metrics_to_check:
+                        try:
+                            resp = cw_hourly.get_metric_statistics(
+                                Namespace=ns, MetricName=metric,
+                                StartTime=h_start, EndTime=h_end, Period=3600, Statistics=['Sum'],
+                            )
+                            for dp in sorted(resp.get('Datapoints', []), key=lambda x: x['Timestamp']):
+                                ts = dp['Timestamp'].strftime('%Y-%m-%dT%H:00')
+                                est = dp['Sum'] * rate
+                                if est > 0.001:
+                                    merged_hourly[ts] = merged_hourly.get(ts, 0) + est
+                        except Exception:
+                            pass
             except Exception:
                 pass
 
