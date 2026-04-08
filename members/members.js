@@ -891,6 +891,8 @@ accountsTbody.onclick = function(e) {
     else if (action === 'del') showDeleteDialog(accountId);
     else if (action === 'dl') downloadTemplate(accountId);
     else if (action === 'test') testConnection(accountId, btn);
+    else if (action === 'up' || action === 'down') reorderAccount(accountId, action);
+    else if (action === 'hourly') showEnableHourlyModal(accountId);
 };
 
 // ============================================================
