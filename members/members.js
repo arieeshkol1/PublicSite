@@ -2878,19 +2878,19 @@ function showEnableHourlyModal(accountId) {
         '<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:16px;margin:16px 0;">' +
             '<div style="font-weight:600;color:#16a34a;margin-bottom:8px;">Steps to enable:</div>' +
             '<ol style="color:#1f2937;font-size:0.9em;margin:0;padding-left:20px;">' +
-                '<li>Sign in to AWS account <strong>' + accountId + '</strong></li>' +
-                '<li>Go to <strong>Billing → Cost Explorer → Preferences</strong></li>' +
-                '<li>Check <strong>"Hourly and Resource Level Data"</strong></li>' +
-                '<li>Click <strong>Save Preferences</strong></li>' +
-                '<li>Wait 24 hours for data to become available</li>' +
+                '<li>Sign in to the <strong>management (payer) account</strong> for ' + accountId + '</li>' +
+                '<li>Go to <strong>AWS Cost Management \u2192 Cost Explorer \u2192 Settings</strong></li>' +
+                '<li>Under "Cost Explorer", check <strong>"Hourly and Resource Level Data"</strong></li>' +
+                '<li>Click <strong>Save</strong></li>' +
+                '<li>Wait 24 hours for hourly data to become available</li>' +
             '</ol>' +
         '</div>' +
         '<div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:12px;margin-bottom:16px;">' +
-            '<div style="font-size:0.85em;color:#1e40af;"><strong>Note:</strong> Enabling hourly granularity adds ~$0.01 per 1,000 requests to your Cost Explorer costs. This is typically less than $1/month.</div>' +
+            '<div style="font-size:0.85em;color:#1e40af;"><strong>Note:</strong> Enabling hourly granularity adds ~$0.01 per 1,000 requests to your Cost Explorer costs (typically &lt;$1/month). For linked accounts, this must be enabled from the management (payer) account.</div>' +
         '</div>' +
         '<div style="display:flex;gap:8px;justify-content:flex-end;">' +
             '<button onclick="this.closest(\'.modal-overlay\') ? this.closest(\'.modal-overlay\').remove() : this.parentElement.parentElement.parentElement.remove();" class="btn btn-outline">Close</button>' +
-            '<a href="https://console.aws.amazon.com/cost-management/home#/preferences" target="_blank" rel="noopener" class="btn btn-primary" style="text-decoration:none;">Open AWS Console →</a>' +
+            '<a href="https://us-east-1.console.aws.amazon.com/cost-management/home?region=us-east-1#/settings" target="_blank" rel="noopener" class="btn btn-primary" style="text-decoration:none;">Open Cost Explorer Settings \u2192</a>' +
         '</div>';
     card.querySelector('.btn-outline').onclick = function() { modal.remove(); };
     modal.appendChild(card);
