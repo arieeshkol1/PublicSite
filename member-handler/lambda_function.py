@@ -2092,127 +2092,164 @@ def handle_actions_scan(event):
             instances_resp = ec2.describe_instances(
                 Filters=[{'Name': 'instance-state-name', 'Values': ['running']}]
             )
-            idle_ec2 = []
-            for reservation in instances_resp.get('Reservations', [])[:20]:
-                for inst in reservation.get('Instances', []):
-                    iid = inst['InstanceId']
-                    itype = inst.get('InstanceType', '')
-                    # Get 14-day avg CPU
-                    try:
-                        cpu_resp = cw.get_metric_statistics(
-                            Namespace='AWS/EC2', MetricName='CPUUtilization',
-                            Dimensions=[{'Name': 'InstanceId', 'Value': iid}],
-                            StartTime=now_dt - timedelta(days=14), EndTime=now_dt,
-                            Period=1209600, Statistics=['Average'],
-                        )
-                        dps = cpu_resp.get('Datapoints', [])
-                        avg_cpu = dps[0]['Average'] if dps else None
-                    except Exception:
-                        avg_cpu = None
+            all_instances = [
+                inst
+                for r in instances_resp.get('Reservations', [])
+                for inst in r.get('Instances', [])
+            ][:15]  # cap at 15
 
+            if all_instances:
+                # Batch CloudWatch query — one call for all instances
+                metric_queries = []
+                for i, inst in enumerate(all_instances):
+                    metric_queries.append({
+                        'Id': f'cpu{i}',
+                        'MetricStat': {
+                            'Metric': {
+                                'Namespace': 'AWS/EC2',
+                                'MetricName': 'CPUUtilization',
+                                'Dimensions': [{'Name': 'InstanceId', 'Value': inst['InstanceId']}],
+                            },
+                            'Period': 1209600,  # 14 days
+                            'Stat': 'Average',
+                        },
+                        'ReturnData': True,
+                    })
+
+                cw_resp = cw.get_metric_data(
+                    MetricDataQueries=metric_queries,
+                    StartTime=now_dt - timedelta(days=14),
+                    EndTime=now_dt,
+                )
+                cpu_by_id = {}
+                for result in cw_resp.get('MetricDataResults', []):
+                    idx = int(result['Id'].replace('cpu', ''))
+                    vals = result.get('Values', [])
+                    if vals:
+                        cpu_by_id[all_instances[idx]['InstanceId']] = vals[0]
+
+                idle_ec2 = []
+                for inst in all_instances:
+                    iid = inst['InstanceId']
+                    avg_cpu = cpu_by_id.get(iid)
                     if avg_cpu is not None and avg_cpu < 5.0:
-                        # Check if in ASG
                         tags = {t['Key']: t['Value'] for t in inst.get('Tags', [])}
-                        in_asg = 'aws:autoscaling:groupName' in tags
-                        asg_name = tags.get('aws:autoscaling:groupName', '')
-                        name_tag = tags.get('Name', iid)
                         idle_ec2.append({
                             'id': iid,
-                            'name': name_tag,
-                            'type': itype,
+                            'name': tags.get('Name', iid),
+                            'type': inst.get('InstanceType', ''),
                             'avgCpu': round(avg_cpu, 2),
-                            'inAsg': in_asg,
-                            'asgName': asg_name,
+                            'inAsg': 'aws:autoscaling:groupName' in tags,
+                            'asgName': tags.get('aws:autoscaling:groupName', ''),
                             'az': inst.get('Placement', {}).get('AvailabilityZone', ''),
                         })
 
-            if idle_ec2:
-                # Rough savings: on-demand price ~$0.05/hr average for t3/m5 family
-                savings = len(idle_ec2) * 0.05 * 730
-                total_savings += savings
-                all_cards.append({
-                    'cardId': f'ec2-idle-{account_id}',
-                    'accountId': account_id,
-                    'accountLabel': acct_label,
-                    'type': 'ec2-idle',
-                    'title': 'Idle EC2 Instances',
-                    'icon': '🖥️',
-                    'count': len(idle_ec2),
-                    'description': f'{len(idle_ec2)} running instance(s) with avg CPU < 5% over 14 days',
-                    'monthlySavings': round(savings, 2),
-                    'risk': 'high',
-                    'resources': idle_ec2,
-                    'note': 'Instances in Auto Scaling Groups require ASG capacity update before termination.',
-                })
+                if idle_ec2:
+                    savings = len(idle_ec2) * 0.05 * 730
+                    total_savings += savings
+                    all_cards.append({
+                        'cardId': f'ec2-idle-{account_id}',
+                        'accountId': account_id,
+                        'accountLabel': acct_label,
+                        'type': 'ec2-idle',
+                        'title': 'Idle EC2 Instances',
+                        'icon': '🖥️',
+                        'count': len(idle_ec2),
+                        'description': f'{len(idle_ec2)} running instance(s) with avg CPU < 5% over 14 days',
+                        'monthlySavings': round(savings, 2),
+                        'risk': 'high',
+                        'resources': idle_ec2,
+                        'note': 'Instances in Auto Scaling Groups will be detached before stopping.',
+                    })
         except Exception as e:
             logger.warning(f"EC2 idle scan failed for {account_id}: {e}")
 
         # ── 6. Idle RDS Instances (CPU < 5% over 14 days) ────────────
         try:
             rds = _make_client_from_creds('rds', creds)
-            dbs = rds.describe_db_instances().get('DBInstances', [])
-            idle_rds = []
-            for db in dbs[:10]:
-                if db.get('DBInstanceStatus') != 'available':
-                    continue
-                db_id = db['DBInstanceIdentifier']
-                db_class = db.get('DBInstanceClass', '')
-                try:
-                    cpu_resp = cw.get_metric_statistics(
-                        Namespace='AWS/RDS', MetricName='CPUUtilization',
-                        Dimensions=[{'Name': 'DBInstanceIdentifier', 'Value': db_id}],
-                        StartTime=now_dt - timedelta(days=14), EndTime=now_dt,
-                        Period=1209600, Statistics=['Average'],
-                    )
-                    conn_resp = cw.get_metric_statistics(
-                        Namespace='AWS/RDS', MetricName='DatabaseConnections',
-                        Dimensions=[{'Name': 'DBInstanceIdentifier', 'Value': db_id}],
-                        StartTime=now_dt - timedelta(days=14), EndTime=now_dt,
-                        Period=1209600, Statistics=['Maximum'],
-                    )
-                    avg_cpu = cpu_resp['Datapoints'][0]['Average'] if cpu_resp.get('Datapoints') else None
-                    max_conn = conn_resp['Datapoints'][0]['Maximum'] if conn_resp.get('Datapoints') else None
-                except Exception:
-                    avg_cpu = None
-                    max_conn = None
+            dbs = [d for d in rds.describe_db_instances().get('DBInstances', [])
+                   if d.get('DBInstanceStatus') == 'available'][:8]
 
-                if avg_cpu is not None and avg_cpu < 5.0 and (max_conn is None or max_conn < 2):
-                    idle_rds.append({
-                        'id': db_id,
-                        'class': db_class,
-                        'engine': db.get('Engine', ''),
-                        'multiAz': db.get('MultiAZ', False),
-                        'avgCpu': round(avg_cpu, 2) if avg_cpu is not None else None,
-                        'maxConnections': int(max_conn) if max_conn is not None else None,
+            if dbs:
+                # Batch CloudWatch query for all RDS instances
+                metric_queries = []
+                for i, db in enumerate(dbs):
+                    db_id = db['DBInstanceIdentifier']
+                    metric_queries.append({
+                        'Id': f'cpu{i}',
+                        'MetricStat': {
+                            'Metric': {'Namespace': 'AWS/RDS', 'MetricName': 'CPUUtilization',
+                                       'Dimensions': [{'Name': 'DBInstanceIdentifier', 'Value': db_id}]},
+                            'Period': 1209600, 'Stat': 'Average',
+                        }, 'ReturnData': True,
+                    })
+                    metric_queries.append({
+                        'Id': f'conn{i}',
+                        'MetricStat': {
+                            'Metric': {'Namespace': 'AWS/RDS', 'MetricName': 'DatabaseConnections',
+                                       'Dimensions': [{'Name': 'DBInstanceIdentifier', 'Value': db_id}]},
+                            'Period': 1209600, 'Stat': 'Maximum',
+                        }, 'ReturnData': True,
                     })
 
-            if idle_rds:
-                savings = len(idle_rds) * 50  # conservative ~$50/mo for small RDS
-                total_savings += savings
-                all_cards.append({
-                    'cardId': f'rds-idle-{account_id}',
-                    'accountId': account_id,
-                    'accountLabel': acct_label,
-                    'type': 'rds-idle',
-                    'title': 'Idle RDS Instances',
-                    'icon': '🗄️',
-                    'count': len(idle_rds),
-                    'description': f'{len(idle_rds)} RDS instance(s) with avg CPU < 5% and < 2 connections over 14 days',
-                    'monthlySavings': round(savings, 2),
-                    'risk': 'high',
-                    'resources': idle_rds,
-                    'note': 'A final snapshot will be taken automatically before deletion.',
-                })
+                cw_resp = cw.get_metric_data(
+                    MetricDataQueries=metric_queries,
+                    StartTime=now_dt - timedelta(days=14),
+                    EndTime=now_dt,
+                )
+                cpu_map = {}
+                conn_map = {}
+                for result in cw_resp.get('MetricDataResults', []):
+                    rid = result['Id']
+                    vals = result.get('Values', [])
+                    if rid.startswith('cpu'):
+                        idx = int(rid.replace('cpu', ''))
+                        if vals: cpu_map[dbs[idx]['DBInstanceIdentifier']] = vals[0]
+                    elif rid.startswith('conn'):
+                        idx = int(rid.replace('conn', ''))
+                        if vals: conn_map[dbs[idx]['DBInstanceIdentifier']] = vals[0]
+
+                idle_rds = []
+                for db in dbs:
+                    db_id = db['DBInstanceIdentifier']
+                    avg_cpu = cpu_map.get(db_id)
+                    max_conn = conn_map.get(db_id, 0)
+                    if avg_cpu is not None and avg_cpu < 5.0 and max_conn < 2:
+                        idle_rds.append({
+                            'id': db_id,
+                            'class': db.get('DBInstanceClass', ''),
+                            'engine': db.get('Engine', ''),
+                            'multiAz': db.get('MultiAZ', False),
+                            'avgCpu': round(avg_cpu, 2),
+                            'maxConnections': int(max_conn),
+                        })
+
+                if idle_rds:
+                    savings = len(idle_rds) * 50
+                    total_savings += savings
+                    all_cards.append({
+                        'cardId': f'rds-idle-{account_id}',
+                        'accountId': account_id,
+                        'accountLabel': acct_label,
+                        'type': 'rds-idle',
+                        'title': 'Idle RDS Instances',
+                        'icon': '🗄️',
+                        'count': len(idle_rds),
+                        'description': f'{len(idle_rds)} RDS instance(s) with avg CPU < 5% and < 2 connections over 14 days',
+                        'monthlySavings': round(savings, 2),
+                        'risk': 'high',
+                        'resources': idle_rds,
+                        'note': 'A final snapshot will be taken automatically before deletion.',
+                    })
         except Exception as e:
             logger.warning(f"RDS idle scan failed for {account_id}: {e}")
 
         # ── 7. Stale EBS Snapshots (> 180 days old) ──────────────────
         try:
-            # Only own-account snapshots
-            account_id_str = account_id
             snaps_resp = ec2.describe_snapshots(
                 OwnerIds=['self'],
                 Filters=[{'Name': 'status', 'Values': ['completed']}],
+                MaxResults=100,  # cap to avoid timeout
             )
             cutoff = datetime.now(timezone.utc) - timedelta(days=180)
             stale_snaps = []
@@ -2232,10 +2269,8 @@ def handle_actions_scan(event):
                     })
 
             if stale_snaps:
-                # EBS snapshot storage: $0.05/GB/month
                 savings = total_snap_gb * 0.05
                 total_savings += savings
-                # Sort oldest first
                 stale_snaps.sort(key=lambda s: s['ageDays'], reverse=True)
                 all_cards.append({
                     'cardId': f'snap-{account_id}',
