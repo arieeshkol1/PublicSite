@@ -2582,14 +2582,15 @@ def _invoke_multi_account(question, account_ids, member_email, interaction_id):
     for acct_id, acct_data in all_account_data.items():
         if 'error' not in acct_data:
             acct_total = sum(s['cost_usd'] for s in acct_data.get('cost_by_service', []))
-            per_acct = {
-                'total_spend': round(acct_total, 2),
-                'top_services': acct_data.get('cost_by_service', [])[:5],
-                'cost_efficiency': acct_data.get('cost_efficiency'),
-            }
-            if acct_data.get('monthly_trend'):
-                per_acct['monthly_trend'] = acct_data['monthly_trend']
-                per_acct['monthly_trend_months'] = acct_data.get('monthly_trend_months', [])
+
+            # Pass through ALL gathered data so the AI can answer any specific question.
+            # Exclude only keys that are redundant or too large for the prompt.
+            _exclude_keys = {'daily_cost_trend', 'cost_error', 'cloudwatch_error',
+                             'ec2_error', 'rds_error', 's3_error', 'lambda_error',
+                             'nat_gateway_error', 'kms_error'}
+            per_acct = {k: v for k, v in acct_data.items() if k not in _exclude_keys}
+            per_acct['total_spend'] = round(acct_total, 2)
+
             aggregate['per_account_data'][acct_id] = per_acct
 
     answer = _ask_bedrock_multi_account(question, tips_context, aggregate, all_account_data, account_ids)
@@ -2652,24 +2653,62 @@ def _ask_bedrock_multi_account(question, tips_context, aggregate, all_account_da
             label = "[Validated] " if tip.get('confidenceTag') == 'high-confidence' else ""
             tips_text += f"- {label}{tip.get('title', '')}: {tip.get('description', '')} (Savings: {tip.get('estimatedSavings', 'N/A')})\n"
 
-    data_text = json.dumps(aggregate, indent=2, default=str)
-    if len(data_text) > 6000:
-        data_text = data_text[:6000] + '\n... (truncated)'
+    # Trim per-account data to keep prompt manageable while preserving all key metrics
+    trimmed_aggregate = dict(aggregate)
+    trimmed_per_account = {}
+    for acct_id, acct_data in aggregate.get('per_account_data', {}).items():
+        trimmed = dict(acct_data)
+        # Cap list fields to avoid blowing the prompt
+        if trimmed.get('cost_by_service'):
+            trimmed['cost_by_service'] = trimmed['cost_by_service'][:12]
+        if trimmed.get('ec2_instances'):
+            trimmed['ec2_instances'] = trimmed['ec2_instances'][:8]
+        if trimmed.get('lambda_functions'):
+            trimmed['lambda_functions'] = trimmed['lambda_functions'][:10]
+        if trimmed.get('lambda_metrics'):
+            trimmed['lambda_metrics'] = trimmed['lambda_metrics'][:10]
+        if trimmed.get('rds_instances'):
+            trimmed['rds_instances'] = trimmed['rds_instances'][:8]
+        if trimmed.get('nat_gateways'):
+            trimmed['nat_gateways'] = trimmed['nat_gateways'][:5]
+        if trimmed.get('vpc_endpoints', {}).get('endpoints'):
+            trimmed['vpc_endpoints']['endpoints'] = trimmed['vpc_endpoints']['endpoints'][:5]
+        if trimmed.get('route53_hosted_zones'):
+            trimmed['route53_hosted_zones'] = trimmed['route53_hosted_zones'][:10]
+        trimmed_per_account[acct_id] = trimmed
+    trimmed_aggregate['per_account_data'] = trimmed_per_account
+
+    data_text = json.dumps(trimmed_aggregate, indent=2, default=str)
+    if len(data_text) > 10000:
+        data_text = data_text[:10000] + '\n... (truncated)'
 
     prompt = f"""You are SlashMyBill AI, an AWS FinOps assistant analyzing MULTIPLE AWS accounts.
 
-MULTI-ACCOUNT ANALYSIS RULES:
-1. Start with the AGGREGATE view: total spend across all {len(account_ids)} accounts, top services by combined cost.
-2. Then break down PER ACCOUNT: show each account's total spend and top services.
-3. Identify cross-account patterns: which services are common across accounts, which accounts are the biggest spenders.
-4. Savings recommendations should be ranked by total dollar impact across all accounts.
-5. If one account dominates the spend, highlight it.
-6. NON-ACTIONABLE SERVICES (never list as savings opportunities): Tax, Amazon Registrar (annual domain fee), AWS Cost Explorer, AWS CloudTrail.
-7. Services < $0.50 across all accounts = Minor costs (do not list individually).
-8. When monthly_trend data is present, show month-over-month comparison per account and aggregate.
-9. Do NOT give generic advice like "Reduce Lambda execution time" for services with $0 spend. Only recommend actions where real savings exist.
-10. Do NOT repeat "review X usage" for every service — only give specific, actionable advice based on the data.
-11. ALWAYS rank services by cost descending. ALWAYS rank savings by dollar impact descending.
+CRITICAL RULE: Read the user's question carefully. If it is a SPECIFIC question (e.g. "list Lambda transactions", "show EC2 usage", "compare costs for Jan Feb March"), answer THAT question DIRECTLY and completely using the data provided. Do NOT default to a generic cost summary. The specific answer must come FIRST.
+
+SPECIFIC QUESTION HANDLING:
+- If the user asks about Lambda invocations/transactions: use lambda_metrics (invocations_30d per function) and monthly_trend (Lambda cost per month). Show per-function breakdown per account.
+- If the user asks about EC2: use ec2_instances and ec2_cpu_metrics. Show instance IDs, types, CPU utilization.
+- If the user asks about RDS: use rds_instances and rds_cpu_metrics. Show DB identifiers, instance class, CPU, connections.
+- If the user asks about S3: use s3_buckets. Show bucket names and count per account.
+- If the user asks about NAT Gateway: use nat_gateways and nat_gateway_metrics. Show gateway IDs, state, bytes transferred.
+- If the user asks about EBS: use ebs_summary. Show total volumes, unattached count, gp2 vs gp3 breakdown.
+- If the user asks about VPC/endpoints: use vpc_endpoints and elastic_ips. Show endpoint types, unattached EIPs.
+- If the user asks about KMS: use kms_summary. Show total keys, customer-managed key count.
+- If the user asks about Route 53: use route53_hosted_zones. Show zone names and record counts.
+- If the user asks for a monthly comparison (Jan/Feb/March): use monthly_trend data — each key is YYYY-MM with service→cost dict. Show a table per account.
+- If the user asks about a specific service: show ONLY that service's data across all accounts with exact numbers.
+- Only after answering the specific question, add a brief cross-account summary if relevant.
+
+GENERAL QUESTION RULES (only apply when the question is broad/general):
+1. Start with AGGREGATE view: total spend across all {len(account_ids)} accounts, top services by combined cost.
+2. Then break down PER ACCOUNT: each account's total spend and top services.
+3. Identify cross-account patterns.
+4. Savings recommendations ranked by total dollar impact.
+5. NON-ACTIONABLE SERVICES (never list as savings): Tax, Amazon Registrar, AWS Cost Explorer, AWS CloudTrail.
+6. Services < $0.50 across all accounts = Minor costs (do not list individually).
+7. Do NOT give generic advice for services with $0 spend.
+8. ALWAYS rank services by cost descending.
 
 User question: {question}
 {tips_text}
@@ -2677,7 +2716,7 @@ User question: {question}
 Multi-account data ({len(account_ids)} accounts):
 {data_text}
 
-Provide: aggregate analysis first, then per-account breakdown, then cross-account recommendations."""
+Answer the user's question directly using the actual data above. Quote specific numbers, function names, and account IDs."""
 
     try:
         response = bedrock_client.invoke_model(
