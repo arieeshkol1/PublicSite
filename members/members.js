@@ -3379,12 +3379,22 @@ function _actBuildCard(card) {
         }
         resourcesHtml += '</div>';
     } else {
-        // Default resource list for EIP, EBS, LB
+        // Default resource list for EIP, EBS, LB, EC2, RDS, Snapshots
         resourcesHtml =
             '<div style="background:#161b22;border-radius:6px;padding:8px 10px;max-height:130px;overflow-y:auto;">' +
             (card.resources || []).slice(0, 8).map(function(r) {
                 var label = r.id || r.name || r.arn || '';
-                var sub = r.ip ? ' · ' + r.ip : r.size ? ' · ' + r.size + ' GB ' + (r.type || '') : r.dns ? ' · ' + r.dns.substring(0, 28) : '';
+                var sub = '';
+                if (card.type === 'ec2-idle') {
+                    sub = ' · ' + (r.type || '') + ' · CPU ' + (r.avgCpu != null ? r.avgCpu + '%' : '?');
+                    if (r.inAsg) sub += ' · ⚠ In ASG';
+                } else if (card.type === 'rds-idle') {
+                    sub = ' · ' + (r.class || '') + ' · ' + (r.engine || '') + ' · CPU ' + (r.avgCpu != null ? r.avgCpu + '%' : '?');
+                } else if (card.type === 'ebs-snapshot') {
+                    sub = ' · ' + (r.size || 0) + ' GB · ' + (r.ageDays || 0) + 'd old';
+                } else {
+                    sub = r.ip ? ' · ' + r.ip : r.size ? ' · ' + r.size + ' GB ' + (r.type || '') : r.dns ? ' · ' + r.dns.substring(0, 28) : '';
+                }
                 return '<div style="font-size:0.78em;color:#c9d1d9;padding:2px 0;border-bottom:1px solid #21262d;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="' + ea(label) + '">' +
                     '<span style="color:#6366f1;">▸</span> ' + esc(label.length > 42 ? label.substring(0, 42) + '…' : label) + '<span style="color:#6b7280;">' + esc(sub) + '</span></div>';
             }).join('') +
@@ -3392,10 +3402,17 @@ function _actBuildCard(card) {
             '</div>';
     }
 
+    var cleanupLabel = card.type === 's3-lifecycle' ? '🧹 Apply Lifecycle Rules'
+        : card.type === 'ec2-idle' ? '⏹ Stop Instances'
+        : card.type === 'rds-idle' ? '🗑 Delete (with snapshot)'
+        : card.type === 'ebs-snapshot' ? '🗑 Delete Snapshots'
+        : '🧹 Clean Up Now';
+
     var footerHtml =
         '<div style="display:flex;justify-content:space-between;align-items:center;">' +
             '<span style="background:' + riskBg + ';color:' + riskColor + ';font-size:0.75em;padding:2px 8px;border-radius:10px;font-weight:600;">' + (card.risk || 'low').toUpperCase() + ' RISK</span>' +
-            '<button class="btn btn-primary btn-sm act-cleanup-btn" data-card-id="' + ea(card.cardId) + '" style="font-size:0.82em;">🧹 Apply Lifecycle Rules</button>' +
+            (card.note ? '<span style="font-size:0.72em;color:#f59e0b;max-width:200px;text-align:right;">' + esc(card.note) + '</span>' : '') +
+            '<button class="btn btn-primary btn-sm act-cleanup-btn" data-card-id="' + ea(card.cardId) + '" style="font-size:0.82em;' + (card.risk === 'high' ? 'background:#dc2626;border-color:#dc2626;' : '') + '">' + cleanupLabel + '</button>' +
         '</div>';
 
     div.innerHTML = headerHtml + resourcesHtml + footerHtml;
@@ -3630,6 +3647,9 @@ async function _actExecute(card) {
         if (card.type === 'ebs-volume') return r.id;
         if (card.type === 'load-balancer') return r.arn;
         if (card.type === 's3-lifecycle') return r.name;
+        if (card.type === 'ec2-idle') return r.id;
+        if (card.type === 'rds-idle') return r.id;
+        if (card.type === 'ebs-snapshot') return r.id;
         return r.id || r.name;
     }).filter(Boolean);
 

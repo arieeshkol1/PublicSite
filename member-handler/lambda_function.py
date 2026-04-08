@@ -1012,6 +1012,16 @@ def handle_generate_template(event):
                                             's3:HeadObject',
                                             's3:DeleteObject',
                                             's3:DeleteObjects',
+                                            # Idle EC2 / RDS / Snapshot cleanup
+                                            'ec2:StopInstances',
+                                            'ec2:TerminateInstances',
+                                            'ec2:DescribeInstanceAttribute',
+                                            'autoscaling:DescribeAutoScalingInstances',
+                                            'autoscaling:DetachInstances',
+                                            'autoscaling:UpdateAutoScalingGroup',
+                                            'ec2:DeleteSnapshot',
+                                            'rds:DeleteDBInstance',
+                                            'rds:DescribeDBInstances',
                                         ],
                                         'Resource': '*'
                                     }
@@ -2075,6 +2085,174 @@ def handle_actions_scan(event):
         except Exception as e:
             logger.warning(f"S3 scan failed for {account_id}: {e}")
 
+        # ── 5. Idle EC2 Instances (CPU < 5% over 14 days) ────────────
+        try:
+            cw = _make_client_from_creds('cloudwatch', creds)
+            now_dt = datetime.now(timezone.utc)
+            instances_resp = ec2.describe_instances(
+                Filters=[{'Name': 'instance-state-name', 'Values': ['running']}]
+            )
+            idle_ec2 = []
+            for reservation in instances_resp.get('Reservations', [])[:20]:
+                for inst in reservation.get('Instances', []):
+                    iid = inst['InstanceId']
+                    itype = inst.get('InstanceType', '')
+                    # Get 14-day avg CPU
+                    try:
+                        cpu_resp = cw.get_metric_statistics(
+                            Namespace='AWS/EC2', MetricName='CPUUtilization',
+                            Dimensions=[{'Name': 'InstanceId', 'Value': iid}],
+                            StartTime=now_dt - timedelta(days=14), EndTime=now_dt,
+                            Period=1209600, Statistics=['Average'],
+                        )
+                        dps = cpu_resp.get('Datapoints', [])
+                        avg_cpu = dps[0]['Average'] if dps else None
+                    except Exception:
+                        avg_cpu = None
+
+                    if avg_cpu is not None and avg_cpu < 5.0:
+                        # Check if in ASG
+                        tags = {t['Key']: t['Value'] for t in inst.get('Tags', [])}
+                        in_asg = 'aws:autoscaling:groupName' in tags
+                        asg_name = tags.get('aws:autoscaling:groupName', '')
+                        name_tag = tags.get('Name', iid)
+                        idle_ec2.append({
+                            'id': iid,
+                            'name': name_tag,
+                            'type': itype,
+                            'avgCpu': round(avg_cpu, 2),
+                            'inAsg': in_asg,
+                            'asgName': asg_name,
+                            'az': inst.get('Placement', {}).get('AvailabilityZone', ''),
+                        })
+
+            if idle_ec2:
+                # Rough savings: on-demand price ~$0.05/hr average for t3/m5 family
+                savings = len(idle_ec2) * 0.05 * 730
+                total_savings += savings
+                all_cards.append({
+                    'cardId': f'ec2-idle-{account_id}',
+                    'accountId': account_id,
+                    'accountLabel': acct_label,
+                    'type': 'ec2-idle',
+                    'title': 'Idle EC2 Instances',
+                    'icon': '🖥️',
+                    'count': len(idle_ec2),
+                    'description': f'{len(idle_ec2)} running instance(s) with avg CPU < 5% over 14 days',
+                    'monthlySavings': round(savings, 2),
+                    'risk': 'high',
+                    'resources': idle_ec2,
+                    'note': 'Instances in Auto Scaling Groups require ASG capacity update before termination.',
+                })
+        except Exception as e:
+            logger.warning(f"EC2 idle scan failed for {account_id}: {e}")
+
+        # ── 6. Idle RDS Instances (CPU < 5% over 14 days) ────────────
+        try:
+            rds = _make_client_from_creds('rds', creds)
+            dbs = rds.describe_db_instances().get('DBInstances', [])
+            idle_rds = []
+            for db in dbs[:10]:
+                if db.get('DBInstanceStatus') != 'available':
+                    continue
+                db_id = db['DBInstanceIdentifier']
+                db_class = db.get('DBInstanceClass', '')
+                try:
+                    cpu_resp = cw.get_metric_statistics(
+                        Namespace='AWS/RDS', MetricName='CPUUtilization',
+                        Dimensions=[{'Name': 'DBInstanceIdentifier', 'Value': db_id}],
+                        StartTime=now_dt - timedelta(days=14), EndTime=now_dt,
+                        Period=1209600, Statistics=['Average'],
+                    )
+                    conn_resp = cw.get_metric_statistics(
+                        Namespace='AWS/RDS', MetricName='DatabaseConnections',
+                        Dimensions=[{'Name': 'DBInstanceIdentifier', 'Value': db_id}],
+                        StartTime=now_dt - timedelta(days=14), EndTime=now_dt,
+                        Period=1209600, Statistics=['Maximum'],
+                    )
+                    avg_cpu = cpu_resp['Datapoints'][0]['Average'] if cpu_resp.get('Datapoints') else None
+                    max_conn = conn_resp['Datapoints'][0]['Maximum'] if conn_resp.get('Datapoints') else None
+                except Exception:
+                    avg_cpu = None
+                    max_conn = None
+
+                if avg_cpu is not None and avg_cpu < 5.0 and (max_conn is None or max_conn < 2):
+                    idle_rds.append({
+                        'id': db_id,
+                        'class': db_class,
+                        'engine': db.get('Engine', ''),
+                        'multiAz': db.get('MultiAZ', False),
+                        'avgCpu': round(avg_cpu, 2) if avg_cpu is not None else None,
+                        'maxConnections': int(max_conn) if max_conn is not None else None,
+                    })
+
+            if idle_rds:
+                savings = len(idle_rds) * 50  # conservative ~$50/mo for small RDS
+                total_savings += savings
+                all_cards.append({
+                    'cardId': f'rds-idle-{account_id}',
+                    'accountId': account_id,
+                    'accountLabel': acct_label,
+                    'type': 'rds-idle',
+                    'title': 'Idle RDS Instances',
+                    'icon': '🗄️',
+                    'count': len(idle_rds),
+                    'description': f'{len(idle_rds)} RDS instance(s) with avg CPU < 5% and < 2 connections over 14 days',
+                    'monthlySavings': round(savings, 2),
+                    'risk': 'high',
+                    'resources': idle_rds,
+                    'note': 'A final snapshot will be taken automatically before deletion.',
+                })
+        except Exception as e:
+            logger.warning(f"RDS idle scan failed for {account_id}: {e}")
+
+        # ── 7. Stale EBS Snapshots (> 180 days old) ──────────────────
+        try:
+            # Only own-account snapshots
+            account_id_str = account_id
+            snaps_resp = ec2.describe_snapshots(
+                OwnerIds=['self'],
+                Filters=[{'Name': 'status', 'Values': ['completed']}],
+            )
+            cutoff = datetime.now(timezone.utc) - timedelta(days=180)
+            stale_snaps = []
+            total_snap_gb = 0
+            for snap in snaps_resp.get('Snapshots', []):
+                start_time = snap.get('StartTime')
+                if start_time and start_time.replace(tzinfo=timezone.utc) < cutoff:
+                    age_days = (datetime.now(timezone.utc) - start_time.replace(tzinfo=timezone.utc)).days
+                    vol_size = snap.get('VolumeSize', 0)
+                    total_snap_gb += vol_size
+                    stale_snaps.append({
+                        'id': snap['SnapshotId'],
+                        'size': vol_size,
+                        'ageDays': age_days,
+                        'description': snap.get('Description', '')[:60],
+                        'volumeId': snap.get('VolumeId', ''),
+                    })
+
+            if stale_snaps:
+                # EBS snapshot storage: $0.05/GB/month
+                savings = total_snap_gb * 0.05
+                total_savings += savings
+                # Sort oldest first
+                stale_snaps.sort(key=lambda s: s['ageDays'], reverse=True)
+                all_cards.append({
+                    'cardId': f'snap-{account_id}',
+                    'accountId': account_id,
+                    'accountLabel': acct_label,
+                    'type': 'ebs-snapshot',
+                    'title': 'Stale EBS Snapshots',
+                    'icon': '📸',
+                    'count': len(stale_snaps),
+                    'description': f'{len(stale_snaps)} snapshot(s) older than 180 days — {total_snap_gb} GB total',
+                    'monthlySavings': round(savings, 2),
+                    'risk': 'low',
+                    'resources': stale_snaps[:20],
+                })
+        except Exception as e:
+            logger.warning(f"Snapshot scan failed for {account_id}: {e}")
+
     all_cards.sort(key=lambda c: (c.get('monthlySavings') or 0), reverse=True)
     return create_response(200, {
         'cards': all_cards,
@@ -2200,8 +2378,7 @@ def handle_actions_execute(event):
             except ClientError as e:
                 errors.append({'id': bucket_name, 'error': str(e.response['Error']['Message'])})
 
-    elif action_type == 's3-delete-objects':
-        # Delete ALL objects in the bucket (paginated batch delete)
+    elif action_type == 's3-delete-objects':        # Delete ALL objects in the bucket (paginated batch delete)
         s3 = _make_client_from_creds('s3', creds)
         for bucket_name in resource_ids:
             try:
@@ -2224,6 +2401,89 @@ def handle_actions_execute(event):
                 logger.info(f"Deleted {total_deleted} objects from s3://{bucket_name} in account {account_id} by {member_email}")
             except ClientError as e:
                 errors.append({'id': bucket_name, 'error': str(e.response['Error']['Message'])})
+
+    elif action_type == 'ec2-idle':
+        ec2 = _make_client_from_creds('ec2', creds)
+        asg_client = _make_client_from_creds('autoscaling', creds)
+        for inst_id in resource_ids:
+            try:
+                # JIT check: verify still running and still low CPU
+                check = ec2.describe_instances(InstanceIds=[inst_id])
+                reservations = check.get('Reservations', [])
+                if not reservations:
+                    errors.append({'id': inst_id, 'error': 'Instance not found'})
+                    continue
+                inst = reservations[0]['Instances'][0]
+                if inst.get('State', {}).get('Name') != 'running':
+                    errors.append({'id': inst_id, 'error': f'Instance state is now "{inst["State"]["Name"]}" — skipped'})
+                    continue
+
+                # ASG check — detach from ASG before stopping
+                tags = {t['Key']: t['Value'] for t in inst.get('Tags', [])}
+                asg_name = tags.get('aws:autoscaling:groupName', '')
+                if asg_name:
+                    try:
+                        # Decrement desired capacity and detach
+                        asg_client.detach_instances(
+                            InstanceIds=[inst_id],
+                            AutoScalingGroupName=asg_name,
+                            ShouldDecrementDesiredCapacity=True,
+                        )
+                        logger.info(f"Detached {inst_id} from ASG {asg_name}")
+                    except Exception as asg_err:
+                        errors.append({'id': inst_id, 'error': f'ASG detach failed: {str(asg_err)} — skipped for safety'})
+                        continue
+
+                # Stop (not terminate) — safer default, user can terminate manually
+                ec2.stop_instances(InstanceIds=[inst_id])
+                results.append({'id': inst_id, 'status': 'stopped', 'asgDetached': bool(asg_name)})
+                logger.info(f"Stopped EC2 {inst_id} in account {account_id} by {member_email}")
+            except ClientError as e:
+                errors.append({'id': inst_id, 'error': str(e.response['Error']['Message'])})
+
+    elif action_type == 'rds-idle':
+        rds = _make_client_from_creds('rds', creds)
+        for db_id in resource_ids:
+            try:
+                # JIT check: verify still available and still idle
+                check = rds.describe_db_instances(DBInstanceIdentifier=db_id)
+                db = check['DBInstances'][0]
+                if db.get('DBInstanceStatus') != 'available':
+                    errors.append({'id': db_id, 'error': f'RDS status is now "{db["DBInstanceStatus"]}" — skipped'})
+                    continue
+                # Delete with final snapshot (safety guardrail — always keep a backup)
+                snapshot_id = f'slashmybill-final-{db_id}-{int(datetime.now(timezone.utc).timestamp())}'
+                rds.delete_db_instance(
+                    DBInstanceIdentifier=db_id,
+                    SkipFinalSnapshot=False,
+                    FinalDBSnapshotIdentifier=snapshot_id,
+                )
+                results.append({'id': db_id, 'status': 'deleting', 'finalSnapshot': snapshot_id})
+                logger.info(f"Deleting RDS {db_id} with snapshot {snapshot_id} in account {account_id} by {member_email}")
+            except ClientError as e:
+                errors.append({'id': db_id, 'error': str(e.response['Error']['Message'])})
+
+    elif action_type == 'ebs-snapshot':
+        ec2 = _make_client_from_creds('ec2', creds)
+        for snap_id in resource_ids:
+            try:
+                # JIT check: verify snapshot still exists and is still old
+                check = ec2.describe_snapshots(SnapshotIds=[snap_id])
+                snaps = check.get('Snapshots', [])
+                if not snaps:
+                    errors.append({'id': snap_id, 'error': 'Snapshot not found'})
+                    continue
+                snap = snaps[0]
+                age_days = (datetime.now(timezone.utc) - snap['StartTime'].replace(tzinfo=timezone.utc)).days
+                if age_days < 180:
+                    errors.append({'id': snap_id, 'error': f'Snapshot is now only {age_days} days old — skipped for safety'})
+                    continue
+                ec2.delete_snapshot(SnapshotId=snap_id)
+                results.append({'id': snap_id, 'status': 'deleted', 'ageDays': age_days, 'sizeGb': snap.get('VolumeSize', 0)})
+                logger.info(f"Deleted snapshot {snap_id} ({age_days}d old) in account {account_id} by {member_email}")
+            except ClientError as e:
+                errors.append({'id': snap_id, 'error': str(e.response['Error']['Message'])})
+
     else:
         return create_error_response(400, 'InvalidRequest', f'Unknown actionType: {action_type}')
 
