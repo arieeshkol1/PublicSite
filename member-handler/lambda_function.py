@@ -94,6 +94,8 @@ def lambda_handler(event, context):
         'POST /members/allocation-rules': handle_save_allocation_rules,
         'GET /members/business-metrics': handle_get_business_metrics,
         'POST /members/business-metrics': handle_save_business_metrics,
+        'POST /members/actions/scan': handle_actions_scan,
+        'POST /members/actions/execute': handle_actions_execute,
     }
 
     handler = routes.get(route_key)
@@ -995,6 +997,15 @@ def handle_generate_template(event):
                                             'iam:ListRolePolicies',
                                             'iam:DeleteRolePolicy',
                                             'iam:DeleteRole',
+                                            # Level 1 cleanup actions
+                                            'ec2:ReleaseAddress',
+                                            'ec2:DeleteVolume',
+                                            'elasticloadbalancing:DeleteLoadBalancer',
+                                            's3:PutBucketLifecycleConfiguration',
+                                            's3:GetBucketLifecycleConfiguration',
+                                            's3:GetBucketLocation',
+                                            's3:ListBucketMultipartUploads',
+                                            's3:AbortMultipartUpload',
                                         ],
                                         'Resource': '*'
                                     }
@@ -1798,6 +1809,326 @@ def handle_save_business_metrics(event):
         return create_error_response(500, 'ServerError', 'Failed to save metric')
 
     return create_response(200, {'message': 'Business metric saved'})
+
+
+# ============================================================
+# Act Tab — Level 1 Resource Hygiene Scan & Execute
+# ============================================================
+
+def _assume_role_for_account(member_email, account_id):
+    """Assume cross-account role and return boto3 credentials dict, or raise."""
+    role_arn = f'arn:aws:iam::{account_id}:role/SlashMyBill-{account_id}'
+    external_id = hashlib.sha256(member_email.encode('utf-8')).hexdigest()
+    sts = boto3.client('sts')
+    resp = sts.assume_role(RoleArn=role_arn, RoleSessionName='SlashMyBillAct', ExternalId=external_id)
+    return resp['Credentials']
+
+
+def _make_client_from_creds(service, creds, region='us-east-1'):
+    return boto3.client(
+        service,
+        aws_access_key_id=creds['AccessKeyId'],
+        aws_secret_access_key=creds['SecretAccessKey'],
+        aws_session_token=creds['SessionToken'],
+        region_name=region,
+    )
+
+
+def handle_actions_scan(event):
+    """Scan connected accounts for Level-1 waste: unattached EIPs, EBS, idle LBs, S3 without lifecycle."""
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+    member_email = auth['sub']
+
+    try:
+        body = json.loads(event.get('body', '{}'))
+    except (json.JSONDecodeError, TypeError):
+        return create_error_response(400, 'InvalidRequest', 'Invalid request body')
+
+    account_ids = body.get('accountIds') or []
+    if not account_ids:
+        # Default to all connected accounts
+        accounts_table = dynamodb.Table(ACCOUNTS_TABLE_NAME)
+        try:
+            result = accounts_table.query(
+                KeyConditionExpression=boto3.dynamodb.conditions.Key('memberEmail').eq(member_email)
+            )
+            account_ids = [a['accountId'] for a in result.get('Items', []) if a.get('connectionStatus') == 'connected']
+        except ClientError:
+            return create_error_response(500, 'ServerError', 'Failed to load accounts')
+
+    if not account_ids:
+        return create_response(200, {'cards': [], 'totalSavings': 0})
+
+    # Verify ownership
+    ownership = _verify_account_ownership(member_email, account_ids)
+    if isinstance(ownership, dict):
+        return ownership
+
+    all_cards = []
+    total_savings = 0.0
+
+    for account_id in account_ids[:5]:
+        try:
+            creds = _assume_role_for_account(member_email, account_id)
+        except Exception as e:
+            logger.warning(f"Cannot assume role for {account_id}: {e}")
+            continue
+
+        acct_label = f'Account {account_id[-4:]}'
+
+        # ── 1. Unassociated Elastic IPs ──────────────────────────────
+        try:
+            ec2 = _make_client_from_creds('ec2', creds)
+            eips = ec2.describe_addresses()
+            unattached = [a for a in eips.get('Addresses', []) if not a.get('AssociationId')]
+            if unattached:
+                savings = len(unattached) * 3.65  # $0.005/hr × 730 hr/mo
+                total_savings += savings
+                all_cards.append({
+                    'cardId': f'eip-{account_id}',
+                    'accountId': account_id,
+                    'accountLabel': acct_label,
+                    'type': 'elastic-ip',
+                    'title': 'Unassociated Elastic IPs',
+                    'icon': '🌐',
+                    'count': len(unattached),
+                    'description': f'{len(unattached)} Elastic IP(s) not attached to any instance',
+                    'monthlySavings': round(savings, 2),
+                    'risk': 'low',
+                    'resources': [{'id': a['AllocationId'], 'ip': a.get('PublicIp', ''), 'region': a.get('NetworkBorderGroup', 'us-east-1')} for a in unattached],
+                })
+        except Exception as e:
+            logger.warning(f"EIP scan failed for {account_id}: {e}")
+
+        # ── 2. Unattached EBS Volumes ─────────────────────────────────
+        try:
+            vols = ec2.describe_volumes(Filters=[{'Name': 'status', 'Values': ['available']}])
+            avail_vols = vols.get('Volumes', [])
+            if avail_vols:
+                total_gb = sum(v.get('Size', 0) for v in avail_vols)
+                # gp2=$0.10/GB, gp3=$0.08/GB — use $0.10 as conservative estimate
+                savings = total_gb * 0.10
+                total_savings += savings
+                all_cards.append({
+                    'cardId': f'ebs-{account_id}',
+                    'accountId': account_id,
+                    'accountLabel': acct_label,
+                    'type': 'ebs-volume',
+                    'title': 'Unattached EBS Volumes',
+                    'icon': '💾',
+                    'count': len(avail_vols),
+                    'description': f'{len(avail_vols)} volume(s) totalling {total_gb} GB not attached to any instance',
+                    'monthlySavings': round(savings, 2),
+                    'risk': 'low',
+                    'resources': [{'id': v['VolumeId'], 'size': v.get('Size', 0), 'type': v.get('VolumeType', ''), 'az': v.get('AvailabilityZone', ''), 'created': str(v.get('CreateTime', ''))} for v in avail_vols],
+                })
+        except Exception as e:
+            logger.warning(f"EBS scan failed for {account_id}: {e}")
+
+        # ── 3. Idle Load Balancers (0 healthy targets) ────────────────
+        try:
+            elbv2 = _make_client_from_creds('elbv2', creds)
+            lbs = elbv2.describe_load_balancers().get('LoadBalancers', [])
+            idle_lbs = []
+            for lb in lbs:
+                try:
+                    tgs = elbv2.describe_target_groups(LoadBalancerArn=lb['LoadBalancerArn']).get('TargetGroups', [])
+                    healthy = 0
+                    for tg in tgs:
+                        health = elbv2.describe_target_health(TargetGroupArn=tg['TargetGroupArn'])
+                        healthy += sum(1 for t in health.get('TargetHealthDescriptions', []) if t.get('TargetHealth', {}).get('State') == 'healthy')
+                    if healthy == 0 and len(tgs) > 0:
+                        idle_lbs.append({'arn': lb['LoadBalancerArn'], 'name': lb['LoadBalancerName'], 'type': lb.get('Type', ''), 'dns': lb.get('DNSName', '')})
+                except Exception:
+                    pass
+            if idle_lbs:
+                savings = len(idle_lbs) * 16.43  # ~$0.0225/hr ALB base × 730
+                total_savings += savings
+                all_cards.append({
+                    'cardId': f'lb-{account_id}',
+                    'accountId': account_id,
+                    'accountLabel': acct_label,
+                    'type': 'load-balancer',
+                    'title': 'Idle Load Balancers',
+                    'icon': '⚖️',
+                    'count': len(idle_lbs),
+                    'description': f'{len(idle_lbs)} load balancer(s) with 0 healthy targets',
+                    'monthlySavings': round(savings, 2),
+                    'risk': 'medium',
+                    'resources': idle_lbs,
+                })
+        except Exception as e:
+            logger.warning(f"LB scan failed for {account_id}: {e}")
+
+        # ── 4. S3 Buckets Without Lifecycle Rules ─────────────────────
+        try:
+            s3 = _make_client_from_creds('s3', creds)
+            buckets = s3.list_buckets().get('Buckets', [])
+            no_lifecycle = []
+            for b in buckets[:20]:  # cap at 20 to avoid timeout
+                bname = b['Name']
+                try:
+                    s3.get_bucket_lifecycle_configuration(Bucket=bname)
+                except ClientError as ce:
+                    if ce.response['Error']['Code'] == 'NoSuchLifecycleConfiguration':
+                        no_lifecycle.append({'name': bname, 'created': str(b.get('CreationDate', ''))})
+                    # Other errors (access denied etc.) — skip silently
+                except Exception:
+                    pass
+            if no_lifecycle:
+                all_cards.append({
+                    'cardId': f's3-{account_id}',
+                    'accountId': account_id,
+                    'accountLabel': acct_label,
+                    'type': 's3-lifecycle',
+                    'title': 'S3 Buckets Without Lifecycle Rules',
+                    'icon': '🪣',
+                    'count': len(no_lifecycle),
+                    'description': f'{len(no_lifecycle)} bucket(s) have no lifecycle policy — old data may be accumulating in Standard storage',
+                    'monthlySavings': None,  # Savings depend on bucket size
+                    'risk': 'low',
+                    'resources': no_lifecycle[:10],
+                    'action': 'Enable S3 Intelligent-Tiering or transition objects >90 days to Glacier Instant Retrieval',
+                })
+        except Exception as e:
+            logger.warning(f"S3 lifecycle scan failed for {account_id}: {e}")
+
+    all_cards.sort(key=lambda c: (c.get('monthlySavings') or 0), reverse=True)
+    return create_response(200, {
+        'cards': all_cards,
+        'totalSavings': round(total_savings, 2),
+        'scannedAccounts': len(account_ids),
+        'scannedAt': datetime.now(timezone.utc).isoformat(),
+    })
+
+
+def handle_actions_execute(event):
+    """Execute a Level-1 cleanup action with JIT safety checks."""
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+    member_email = auth['sub']
+
+    try:
+        body = json.loads(event.get('body', '{}'))
+    except (json.JSONDecodeError, TypeError):
+        return create_error_response(400, 'InvalidRequest', 'Invalid request body')
+
+    account_id = (body.get('accountId') or '').strip()
+    action_type = (body.get('actionType') or '').strip()  # elastic-ip | ebs-volume | load-balancer | s3-lifecycle
+    resource_ids = body.get('resourceIds') or []  # list of IDs to act on
+
+    if not re.fullmatch(r'\d{12}', account_id):
+        return create_error_response(400, 'InvalidAccountId', 'Account ID must be exactly 12 digits')
+    if not action_type:
+        return create_error_response(400, 'InvalidRequest', 'actionType is required')
+    if not resource_ids:
+        return create_error_response(400, 'InvalidRequest', 'resourceIds is required')
+
+    # Verify ownership
+    ownership = _verify_account_ownership(member_email, [account_id])
+    if isinstance(ownership, dict):
+        return ownership
+
+    try:
+        creds = _assume_role_for_account(member_email, account_id)
+    except Exception as e:
+        return create_error_response(400, 'ConnectionFailed', f'Cannot access account {account_id}: {str(e)}')
+
+    results = []
+    errors = []
+
+    if action_type == 'elastic-ip':
+        ec2 = _make_client_from_creds('ec2', creds)
+        for alloc_id in resource_ids:
+            try:
+                # JIT check: verify still unassociated
+                check = ec2.describe_addresses(AllocationIds=[alloc_id])
+                addr = check.get('Addresses', [{}])[0]
+                if addr.get('AssociationId'):
+                    errors.append({'id': alloc_id, 'error': 'EIP is now associated — skipped for safety'})
+                    continue
+                ec2.release_address(AllocationId=alloc_id)
+                results.append({'id': alloc_id, 'status': 'released', 'ip': addr.get('PublicIp', '')})
+                logger.info(f"Released EIP {alloc_id} in account {account_id} by {member_email}")
+            except ClientError as e:
+                errors.append({'id': alloc_id, 'error': str(e.response['Error']['Message'])})
+
+    elif action_type == 'ebs-volume':
+        ec2 = _make_client_from_creds('ec2', creds)
+        for vol_id in resource_ids:
+            try:
+                # JIT check: verify still available (unattached)
+                check = ec2.describe_volumes(VolumeIds=[vol_id])
+                vol = check.get('Volumes', [{}])[0]
+                if vol.get('State') != 'available':
+                    errors.append({'id': vol_id, 'error': f'Volume state is now "{vol.get("State")}" — skipped for safety'})
+                    continue
+                ec2.delete_volume(VolumeId=vol_id)
+                results.append({'id': vol_id, 'status': 'deleted', 'size': vol.get('Size', 0)})
+                logger.info(f"Deleted EBS volume {vol_id} in account {account_id} by {member_email}")
+            except ClientError as e:
+                errors.append({'id': vol_id, 'error': str(e.response['Error']['Message'])})
+
+    elif action_type == 'load-balancer':
+        elbv2 = _make_client_from_creds('elbv2', creds)
+        for lb_arn in resource_ids:
+            try:
+                # JIT check: verify still has 0 healthy targets
+                tgs = elbv2.describe_target_groups(LoadBalancerArn=lb_arn).get('TargetGroups', [])
+                healthy = 0
+                for tg in tgs:
+                    health = elbv2.describe_target_health(TargetGroupArn=tg['TargetGroupArn'])
+                    healthy += sum(1 for t in health.get('TargetHealthDescriptions', []) if t.get('TargetHealth', {}).get('State') == 'healthy')
+                if healthy > 0:
+                    errors.append({'id': lb_arn, 'error': f'Load balancer now has {healthy} healthy target(s) — skipped for safety'})
+                    continue
+                elbv2.delete_load_balancer(LoadBalancerArn=lb_arn)
+                results.append({'id': lb_arn, 'status': 'deleted'})
+                logger.info(f"Deleted LB {lb_arn} in account {account_id} by {member_email}")
+            except ClientError as e:
+                errors.append({'id': lb_arn, 'error': str(e.response['Error']['Message'])})
+
+    elif action_type == 's3-lifecycle':
+        s3 = _make_client_from_creds('s3', creds)
+        for bucket_name in resource_ids:
+            try:
+                # Apply Intelligent-Tiering + Glacier transition after 90 days
+                s3.put_bucket_lifecycle_configuration(
+                    Bucket=bucket_name,
+                    LifecycleConfiguration={
+                        'Rules': [
+                            {
+                                'ID': 'SlashMyBill-CostOptimization',
+                                'Status': 'Enabled',
+                                'Filter': {'Prefix': ''},
+                                'Transitions': [
+                                    {'Days': 90, 'StorageClass': 'INTELLIGENT_TIERING'},
+                                ],
+                                'NoncurrentVersionTransitions': [
+                                    {'NoncurrentDays': 30, 'StorageClass': 'GLACIER_IR'},
+                                ],
+                                'AbortIncompleteMultipartUpload': {'DaysAfterInitiation': 7},
+                            }
+                        ]
+                    }
+                )
+                results.append({'id': bucket_name, 'status': 'lifecycle-applied', 'rule': 'Intelligent-Tiering after 90 days'})
+                logger.info(f"Applied lifecycle to S3 bucket {bucket_name} in account {account_id} by {member_email}")
+            except ClientError as e:
+                errors.append({'id': bucket_name, 'error': str(e.response['Error']['Message'])})
+    else:
+        return create_error_response(400, 'InvalidRequest', f'Unknown actionType: {action_type}')
+
+    return create_response(200, {
+        'actionType': action_type,
+        'accountId': account_id,
+        'succeeded': results,
+        'failed': errors,
+        'executedAt': datetime.now(timezone.utc).isoformat(),
+    })
 
 
 def _get_unit_economics(member_email, monthly_trend):

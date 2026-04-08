@@ -3171,3 +3171,220 @@ function showEnableHourlyModal(accountId) {
         };
     }
 }
+
+// ============================================================
+// Act Tab — Level 1 Resource Hygiene
+// ============================================================
+var _actScanData = null;
+var _actPendingCard = null;
+
+(function initActTab() {
+    var scanBtn = $('act-scan-btn');
+    var accountSelect = $('act-account-select');
+    if (!scanBtn) return;
+
+    // Populate account selector when accounts load
+    var _origLoadAccounts = window.loadAccounts;
+    window.loadAccounts = async function() {
+        if (_origLoadAccounts) await _origLoadAccounts.apply(this, arguments);
+        _actPopulateAccountSelect();
+    };
+
+    scanBtn.onclick = async function() {
+        var selectedId = accountSelect ? accountSelect.value : '';
+        var accountIds = selectedId ? [selectedId] : [];
+        await _actRunScan(accountIds);
+    };
+})();
+
+function _actPopulateAccountSelect() {
+    var sel = $('act-account-select');
+    if (!sel || !window.allAccounts) return;
+    // Keep first "All" option, rebuild the rest
+    while (sel.options.length > 1) sel.remove(1);
+    (window.allAccounts || []).filter(function(a) { return a.connectionStatus === 'connected'; }).forEach(function(a) {
+        var opt = document.createElement('option');
+        opt.value = a.accountId;
+        opt.textContent = (a.accountName || a.accountId) + ' (' + a.accountId.slice(-4) + ')';
+        sel.appendChild(opt);
+    });
+}
+
+async function _actRunScan(accountIds) {
+    var status = $('act-scan-status');
+    var grid = $('act-cards-grid');
+    var empty = $('act-empty');
+    var totalBanner = $('act-total-savings');
+    var scanBtn = $('act-scan-btn');
+
+    if (status) status.textContent = '🔍 Scanning accounts for idle resources…';
+    if (grid) grid.innerHTML = '';
+    if (empty) empty.style.display = 'none';
+    if (totalBanner) totalBanner.style.display = 'none';
+    if (scanBtn) { scanBtn.disabled = true; scanBtn.textContent = 'Scanning…'; }
+
+    try {
+        var data = await api('POST', '/members/actions/scan', { accountIds: accountIds });
+        _actScanData = data;
+
+        if (status) {
+            var ts = new Date(data.scannedAt || Date.now()).toLocaleTimeString();
+            status.textContent = 'Scanned ' + (data.scannedAccounts || 0) + ' account(s) at ' + ts;
+        }
+
+        if (!data.cards || data.cards.length === 0) {
+            if (empty) { empty.style.display = 'block'; empty.querySelector('div:nth-child(2)').textContent = '✅ No waste found — your accounts look clean!'; }
+            return;
+        }
+
+        // Show total savings banner
+        if (data.totalSavings > 0 && totalBanner) {
+            totalBanner.style.display = 'flex';
+            var amtEl = $('act-total-savings-amount');
+            if (amtEl) amtEl.textContent = '$' + data.totalSavings.toFixed(2) + '/month';
+        }
+
+        // Render cards
+        data.cards.forEach(function(card) {
+            if (grid) grid.appendChild(_actBuildCard(card));
+        });
+
+    } catch (err) {
+        if (status) status.textContent = '❌ Scan failed: ' + (err.message || 'Unknown error');
+        if (empty) empty.style.display = 'block';
+    } finally {
+        if (scanBtn) { scanBtn.disabled = false; scanBtn.textContent = '🔍 Scan for Waste'; }
+    }
+}
+
+function _actBuildCard(card) {
+    var riskColor = card.risk === 'low' ? '#16a34a' : card.risk === 'medium' ? '#d97706' : '#dc2626';
+    var riskBg = card.risk === 'low' ? '#f0fdf4' : card.risk === 'medium' ? '#fffbeb' : '#fef2f2';
+
+    var div = document.createElement('div');
+    div.style.cssText = 'background:#1c2128;border:1px solid #30363d;border-radius:12px;padding:20px;display:flex;flex-direction:column;gap:12px;';
+
+    // Header
+    var savingsHtml = card.monthlySavings != null
+        ? '<span style="color:#10b981;font-size:1.1em;font-weight:700;">$' + card.monthlySavings.toFixed(2) + '<span style="font-size:0.7em;color:#6b7280;">/mo</span></span>'
+        : '<span style="color:#6b7280;font-size:0.85em;">Savings vary</span>';
+
+    div.innerHTML =
+        '<div style="display:flex;justify-content:space-between;align-items:flex-start;">' +
+            '<div style="display:flex;gap:10px;align-items:center;">' +
+                '<span style="font-size:1.8em;">' + (card.icon || '🔧') + '</span>' +
+                '<div>' +
+                    '<div style="font-weight:700;color:#e6edf3;font-size:0.95em;">' + esc(card.title) + '</div>' +
+                    '<div style="color:#6b7280;font-size:0.78em;">' + esc(card.accountLabel || '') + '</div>' +
+                '</div>' +
+            '</div>' +
+            savingsHtml +
+        '</div>' +
+        '<div style="color:#8b949e;font-size:0.85em;">' + esc(card.description) + '</div>' +
+        // Resource list
+        '<div style="background:#161b22;border-radius:6px;padding:8px 10px;max-height:120px;overflow-y:auto;">' +
+            (card.resources || []).slice(0, 8).map(function(r) {
+                var label = r.id || r.name || r.arn || JSON.stringify(r);
+                var sub = r.ip ? ' · ' + r.ip : r.size ? ' · ' + r.size + ' GB ' + (r.type || '') : r.dns ? ' · ' + r.dns.substring(0, 30) : '';
+                return '<div style="font-size:0.78em;color:#c9d1d9;padding:2px 0;border-bottom:1px solid #21262d;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="' + ea(label) + '">' +
+                    '<span style="color:#6366f1;">▸</span> ' + esc(label.length > 40 ? label.substring(0, 40) + '…' : label) + '<span style="color:#6b7280;">' + esc(sub) + '</span></div>';
+            }).join('') +
+            (card.resources && card.resources.length > 8 ? '<div style="color:#6b7280;font-size:0.75em;padding-top:4px;">+' + (card.resources.length - 8) + ' more</div>' : '') +
+        '</div>' +
+        // Risk badge + action
+        '<div style="display:flex;justify-content:space-between;align-items:center;">' +
+            '<span style="background:' + riskBg + ';color:' + riskColor + ';font-size:0.75em;padding:2px 8px;border-radius:10px;font-weight:600;">' + (card.risk || 'low').toUpperCase() + ' RISK</span>' +
+            '<button class="btn btn-primary btn-sm act-cleanup-btn" data-card-id="' + ea(card.cardId) + '" style="font-size:0.82em;">🧹 Clean Up Now</button>' +
+        '</div>';
+
+    // Wire up the cleanup button
+    div.querySelector('.act-cleanup-btn').onclick = function() {
+        _actShowConfirm(card);
+    };
+
+    return div;
+}
+
+function _actShowConfirm(card) {
+    _actPendingCard = card;
+    var dialog = $('act-confirm-dialog');
+    var title = $('act-confirm-title');
+    var body = $('act-confirm-body');
+    var resDiv = $('act-confirm-resources');
+    var execBtn = $('act-confirm-execute-btn');
+    if (!dialog) return;
+
+    if (title) title.textContent = 'Confirm: ' + card.title;
+    if (body) body.textContent = card.description + ' — ' + (card.resources || []).length + ' resource(s) will be affected in ' + (card.accountLabel || card.accountId) + '.';
+    if (resDiv) resDiv.innerHTML = (card.resources || []).map(function(r) {
+        return '<div style="padding:2px 0;">▸ ' + esc(r.id || r.name || r.arn || '') + (r.ip ? ' (' + r.ip + ')' : '') + (r.size ? ' — ' + r.size + ' GB' : '') + '</div>';
+    }).join('');
+
+    if (execBtn) {
+        execBtn.onclick = function() {
+            dialog.hidden = true;
+            _actExecute(card);
+        };
+    }
+    dialog.hidden = false;
+}
+
+async function _actExecute(card) {
+    var status = $('act-scan-status');
+    var cleanupBtn = document.querySelector('[data-card-id="' + card.cardId + '"]');
+
+    if (cleanupBtn) { cleanupBtn.disabled = true; cleanupBtn.textContent = '⏳ Executing…'; }
+    if (status) status.textContent = '⚡ Executing cleanup for ' + card.title + '…';
+
+    // Build resource IDs list based on type
+    var resourceIds = (card.resources || []).map(function(r) {
+        if (card.type === 'elastic-ip') return r.id;
+        if (card.type === 'ebs-volume') return r.id;
+        if (card.type === 'load-balancer') return r.arn;
+        if (card.type === 's3-lifecycle') return r.name;
+        return r.id || r.name;
+    }).filter(Boolean);
+
+    try {
+        var result = await api('POST', '/members/actions/execute', {
+            accountId: card.accountId,
+            actionType: card.type,
+            resourceIds: resourceIds,
+        });
+
+        var succeeded = (result.succeeded || []).length;
+        var failed = (result.failed || []).length;
+        var msg = '✅ ' + succeeded + ' resource(s) cleaned up';
+        if (failed > 0) msg += ', ⚠️ ' + failed + ' skipped (safety check or error)';
+        if (status) status.textContent = msg;
+        notify(msg, succeeded > 0 ? 'success' : 'error');
+
+        // Show per-resource results inline
+        if (cleanupBtn) {
+            cleanupBtn.textContent = succeeded + ' done' + (failed > 0 ? ', ' + failed + ' skipped' : '');
+            cleanupBtn.style.background = succeeded > 0 ? '#16a34a' : '#d97706';
+            cleanupBtn.disabled = true;
+        }
+
+        // Show failed details if any
+        if (failed > 0 && result.failed) {
+            result.failed.forEach(function(f) {
+                notify('Skipped ' + f.id + ': ' + f.error, 'error', 6000);
+            });
+        }
+
+    } catch (err) {
+        if (status) status.textContent = '❌ Execution failed: ' + (err.message || 'Unknown error');
+        notify('Execution failed: ' + (err.message || 'Unknown error'), 'error');
+        if (cleanupBtn) { cleanupBtn.disabled = false; cleanupBtn.textContent = '🧹 Clean Up Now'; }
+    }
+}
+
+// Populate account select when Act tab is clicked
+document.querySelectorAll('.member-tab').forEach(function(tab) {
+    if (tab.dataset.tab === 'act-tab') {
+        tab.addEventListener('click', function() {
+            _actPopulateAccountSelect();
+        });
+    }
+});
