@@ -1936,19 +1936,21 @@ def handle_actions_scan(event):
             elbv2 = _make_client_from_creds('elbv2', creds)
             lbs = elbv2.describe_load_balancers().get('LoadBalancers', [])
             idle_lbs = []
-            for lb in lbs:
+            for lb in lbs[:10]:  # cap at 10 to stay within timeout
                 try:
                     tgs = elbv2.describe_target_groups(LoadBalancerArn=lb['LoadBalancerArn']).get('TargetGroups', [])
+                    if not tgs:
+                        continue  # No target groups = provisioning or unused
                     healthy = 0
-                    for tg in tgs:
+                    for tg in tgs[:3]:  # check first 3 TGs only
                         health = elbv2.describe_target_health(TargetGroupArn=tg['TargetGroupArn'])
                         healthy += sum(1 for t in health.get('TargetHealthDescriptions', []) if t.get('TargetHealth', {}).get('State') == 'healthy')
-                    if healthy == 0 and len(tgs) > 0:
+                    if healthy == 0:
                         idle_lbs.append({'arn': lb['LoadBalancerArn'], 'name': lb['LoadBalancerName'], 'type': lb.get('Type', ''), 'dns': lb.get('DNSName', '')})
                 except Exception:
                     pass
             if idle_lbs:
-                savings = len(idle_lbs) * 16.43  # ~$0.0225/hr ALB base × 730
+                savings = len(idle_lbs) * 16.43
                 total_savings += savings
                 all_cards.append({
                     'cardId': f'lb-{account_id}',
@@ -1969,13 +1971,11 @@ def handle_actions_scan(event):
         # ── 4. S3 Buckets — no lifecycle, inactive, or aged data ─────
         try:
             s3 = _make_client_from_creds('s3', creds)
-            cw = _make_client_from_creds('cloudwatch', creds)
             buckets = s3.list_buckets().get('Buckets', [])
             now_dt = datetime.now(timezone.utc)
-            cutoff_90 = now_dt - timedelta(days=90)
             flagged = []
 
-            for b in buckets[:25]:  # cap to avoid timeout
+            for b in buckets[:20]:  # cap to avoid timeout
                 bname = b['Name']
                 bucket_info = {
                     'name': bname,
@@ -1984,11 +1984,11 @@ def handle_actions_scan(event):
                     'sizeGb': 0.0,
                     'objectCount': 0,
                     'estimatedMonthlyCost': 0.0,
-                    'lastModifiedDays': None,  # days since last object change
+                    'lastModifiedDays': None,
                     'reasons': [],
                 }
 
-                # Check lifecycle
+                # Check lifecycle (fast — single API call)
                 try:
                     lc = s3.get_bucket_lifecycle_configuration(Bucket=bname)
                     bucket_info['hasLifecycle'] = bool(lc.get('Rules', []))
@@ -1999,70 +1999,32 @@ def handle_actions_scan(event):
                 except Exception:
                     pass
 
-                # Get size + object count from CloudWatch (BucketSizeBytes + NumberOfObjects)
+                # Quick object sample to check last activity (max 5 objects)
                 try:
-                    size_resp = cw.get_metric_statistics(
-                        Namespace='AWS/S3',
-                        MetricName='BucketSizeBytes',
-                        Dimensions=[
-                            {'Name': 'BucketName', 'Value': bname},
-                            {'Name': 'StorageType', 'Value': 'StandardStorage'},
-                        ],
-                        StartTime=now_dt - timedelta(days=3),
-                        EndTime=now_dt,
-                        Period=86400,
-                        Statistics=['Average'],
-                    )
-                    dps = sorted(size_resp.get('Datapoints', []), key=lambda x: x['Timestamp'], reverse=True)
-                    if dps:
-                        size_bytes = dps[0]['Average']
-                        bucket_info['sizeGb'] = round(size_bytes / (1024 ** 3), 3)
-                        # S3 Standard: $0.023/GB/month
-                        bucket_info['estimatedMonthlyCost'] = round(bucket_info['sizeGb'] * 0.023, 4)
-
-                    obj_resp = cw.get_metric_statistics(
-                        Namespace='AWS/S3',
-                        MetricName='NumberOfObjects',
-                        Dimensions=[
-                            {'Name': 'BucketName', 'Value': bname},
-                            {'Name': 'StorageType', 'Value': 'AllStorageTypes'},
-                        ],
-                        StartTime=now_dt - timedelta(days=3),
-                        EndTime=now_dt,
-                        Period=86400,
-                        Statistics=['Average'],
-                    )
-                    obj_dps = sorted(obj_resp.get('Datapoints', []), key=lambda x: x['Timestamp'], reverse=True)
-                    if obj_dps:
-                        bucket_info['objectCount'] = int(obj_dps[0]['Average'])
-                except Exception:
-                    pass  # CloudWatch metrics may not exist for empty/new buckets
-
-                # Check last activity: list objects sorted by LastModified, get most recent
-                try:
-                    objs = s3.list_objects_v2(Bucket=bname, MaxKeys=1)
-                    # list_objects_v2 doesn't sort by date — use list_object_versions or head approach
-                    # Instead use list_objects with sorted result from a small sample
-                    sample = s3.list_objects_v2(Bucket=bname, MaxKeys=50)
+                    sample = s3.list_objects_v2(Bucket=bname, MaxKeys=5)
                     contents = sample.get('Contents', [])
                     if contents:
                         latest = max(contents, key=lambda o: o['LastModified'])
                         days_ago = (now_dt - latest['LastModified'].replace(tzinfo=timezone.utc)).days
                         bucket_info['lastModifiedDays'] = days_ago
+                        # Rough size estimate from sample
+                        total_sample_size = sum(o['Size'] for o in contents)
+                        bucket_info['sizeGb'] = round(total_sample_size / (1024 ** 3), 4)
+                        bucket_info['objectCount'] = sample.get('KeyCount', len(contents))
+                        bucket_info['estimatedMonthlyCost'] = round(bucket_info['sizeGb'] * 0.023, 4)
                         if days_ago >= 90:
                             bucket_info['reasons'].append(f'inactive_{days_ago}d')
                     else:
-                        bucket_info['lastModifiedDays'] = None  # empty bucket
+                        bucket_info['lastModifiedDays'] = None
                         bucket_info['reasons'].append('empty')
                 except Exception:
                     pass
 
-                # Flag bucket if any reason found
+                # Flag if any reason found
                 if bucket_info['reasons']:
                     flagged.append(bucket_info)
 
             if flagged:
-                # Sort: inactive/aged first, then by size desc
                 def _sort_key(b):
                     inactive = any('inactive' in r for r in b['reasons'])
                     return (0 if inactive else 1, -b['sizeGb'])
@@ -2072,17 +2034,13 @@ def handle_actions_scan(event):
                 total_s3_cost = sum(b['estimatedMonthlyCost'] for b in flagged)
                 total_savings += total_s3_cost
 
-                # Build reason labels
                 def _reason_label(reasons):
                     labels = []
-                    if 'no_lifecycle' in reasons:
-                        labels.append('No lifecycle policy')
-                    if 'empty' in reasons:
-                        labels.append('Empty bucket')
+                    if 'no_lifecycle' in reasons: labels.append('No lifecycle policy')
+                    if 'empty' in reasons: labels.append('Empty bucket')
                     for r in reasons:
                         if r.startswith('inactive_'):
-                            days = r.split('_')[1].replace('d', '')
-                            labels.append(f'No activity for {days} days')
+                            labels.append(f'No activity for {r.split("_")[1]} days')
                     return ' · '.join(labels) if labels else 'Flagged'
 
                 all_cards.append({
@@ -2093,9 +2051,9 @@ def handle_actions_scan(event):
                     'title': 'S3 Buckets Needing Attention',
                     'icon': '🪣',
                     'count': len(flagged),
-                    'description': f'{len(flagged)} bucket(s) flagged — {round(total_s3_gb, 1)} GB total, est. ${round(total_s3_cost, 2)}/month in Standard storage',
+                    'description': f'{len(flagged)} bucket(s) flagged — est. ${round(total_s3_cost, 2)}/month in Standard storage',
                     'monthlySavings': round(total_s3_cost, 2) if total_s3_cost > 0 else None,
-                    'totalGb': round(total_s3_gb, 2),
+                    'totalGb': round(total_s3_gb, 4),
                     'risk': 'low',
                     'resources': [
                         {
