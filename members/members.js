@@ -3340,6 +3340,50 @@ async function _actRunScan(accountIds) {
     }
 }
 
+function _actShowRedeployGuide(accountId) {
+    var existing = document.getElementById('act-redeploy-modal');
+    if (existing) existing.remove();
+
+    var modal = document.createElement('div');
+    modal.id = 'act-redeploy-modal';
+    modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.6);z-index:700;display:flex;align-items:center;justify-content:center;';
+
+    var card = document.createElement('div');
+    card.style.cssText = 'background:#1c2128;border:1px solid #30363d;border-radius:12px;padding:24px;max-width:520px;width:95%;box-shadow:0 8px 32px rgba(0,0,0,0.5);';
+    card.innerHTML =
+        '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">' +
+            '<h3 style="margin:0;color:#e6edf3;">🔐 Update IAM Role Permissions</h3>' +
+            '<button onclick="document.getElementById(\'act-redeploy-modal\').remove();" style="background:none;border:none;color:#8b949e;font-size:1.3em;cursor:pointer;">✕</button>' +
+        '</div>' +
+        '<div style="background:#1e3a5f;border:1px solid #2563eb;border-radius:8px;padding:12px;margin-bottom:16px;font-size:0.85em;color:#93c5fd;">' +
+            '<strong>Why is this needed?</strong> The SlashMyBill IAM role in your AWS account was deployed with read-only permissions. ' +
+            'Write actions (apply lifecycle policies, delete objects, stop instances, delete snapshots) require additional permissions that were added in a newer version of the CloudFormation template.' +
+        '</div>' +
+        '<div style="background:#161b22;border-radius:8px;padding:14px;margin-bottom:16px;">' +
+            '<div style="font-weight:600;color:#e6edf3;margin-bottom:10px;">Steps to update:</div>' +
+            '<ol style="color:#c9d1d9;font-size:0.85em;margin:0;padding-left:20px;line-height:1.8;">' +
+                '<li>Go to the <strong>Configure</strong> tab in SlashMyBill</li>' +
+                '<li>Click the <strong>↓ Download CF Template</strong> button for account <code style="background:#21262d;padding:1px 4px;border-radius:3px;">' + esc(accountId) + '</code></li>' +
+                '<li>In your AWS Console, go to <strong>CloudFormation → Stacks</strong></li>' +
+                '<li>Find the stack <code style="background:#21262d;padding:1px 4px;border-radius:3px;">SlashMyBill-Access-' + esc(accountId) + '</code></li>' +
+                '<li>Click <strong>Update</strong> → <strong>Replace current template</strong> → upload the new template</li>' +
+                '<li>Review the IAM permission changes and confirm the update</li>' +
+            '</ol>' +
+        '</div>' +
+        '<div style="background:#3b1f1f;border:1px solid #7f1d1d;border-radius:8px;padding:10px;margin-bottom:16px;font-size:0.82em;color:#fca5a5;">' +
+            '⚠ <strong>Important:</strong> The updated template adds write permissions for S3 (lifecycle + delete), EC2 (stop), RDS (delete), and EBS snapshots (delete). ' +
+            'Only grant these if you trust SlashMyBill to perform cleanup actions on your behalf. All actions require explicit confirmation before execution.' +
+        '</div>' +
+        '<div style="display:flex;gap:8px;justify-content:flex-end;">' +
+            '<button onclick="document.getElementById(\'act-redeploy-modal\').remove();" class="btn btn-outline">Close</button>' +
+            '<button onclick="document.getElementById(\'act-redeploy-modal\').remove();document.querySelector(\'[data-tab=accounts-tab]\').click();" class="btn btn-primary">Go to Configure Tab →</button>' +
+        '</div>';
+
+    modal.appendChild(card);
+    modal.onclick = function(e) { if (e.target === modal) modal.remove(); };
+    document.body.appendChild(modal);
+}
+
 function _actBuildCleanCard(cat) {
     var div = document.createElement('div');
     div.style.cssText = 'background:#161b22;border:1px solid #21262d;border-radius:12px;padding:20px;display:flex;flex-direction:column;gap:8px;opacity:0.7;';
@@ -3446,10 +3490,20 @@ function _actBuildCard(card) {
         : card.type === 'ebs-snapshot' ? '🗑 Delete Snapshots'
         : '🧹 Clean Up Now';
 
+    // Write-action types need the updated CF template
+    var needsWritePerms = ['s3-lifecycle', 'ec2-idle', 'rds-idle', 'ebs-snapshot', 'ebs-volume', 'elastic-ip', 'load-balancer'].indexOf(card.type) !== -1;
+    var permWarningHtml = needsWritePerms
+        ? '<div style="background:#1e3a5f;border:1px solid #2563eb;border-radius:6px;padding:8px 10px;font-size:0.78em;color:#93c5fd;">' +
+            '⚠ <strong>Requires updated IAM role.</strong> Write actions (delete/lifecycle) need the latest CloudFormation template deployed in your AWS account. ' +
+            '<button onclick="_actShowRedeployGuide(\'' + ea(card.accountId) + '\')" style="background:none;border:none;color:#60a5fa;cursor:pointer;text-decoration:underline;font-size:1em;padding:0;">How to update →</button>' +
+          '</div>'
+        : '';
+
     var footerHtml =
+        permWarningHtml +
         '<div style="display:flex;justify-content:space-between;align-items:center;">' +
             '<span style="background:' + riskBg + ';color:' + riskColor + ';font-size:0.75em;padding:2px 8px;border-radius:10px;font-weight:600;">' + (card.risk || 'low').toUpperCase() + ' RISK</span>' +
-            (card.note ? '<span style="font-size:0.72em;color:#f59e0b;max-width:200px;text-align:right;">' + esc(card.note) + '</span>' : '') +
+            (card.note ? '<span style="font-size:0.72em;color:#f59e0b;max-width:180px;text-align:right;">' + esc(card.note) + '</span>' : '') +
             '<button class="btn btn-primary btn-sm act-cleanup-btn" data-card-id="' + ea(card.cardId) + '" style="font-size:0.82em;' + (card.risk === 'high' ? 'background:#dc2626;border-color:#dc2626;' : '') + '">' + cleanupLabel + '</button>' +
         '</div>';
 
@@ -3504,10 +3558,16 @@ async function _actBrowseBucket(accountId, bucketName) {
             '<div style="padding:40px;text-align:center;color:#6b7280;">Loading bucket contents…</div>' +
         '</div>' +
         // ── Action footer ────────────────────────────────────────────
-        '<div style="padding:14px 20px;border-top:1px solid #30363d;display:flex;gap:10px;align-items:center;flex-shrink:0;background:#161b22;border-radius:0 0 12px 12px;">' +
-            '<div style="flex:1;font-size:0.8em;color:#6b7280;">Actions apply to the entire bucket</div>' +
-            '<button id="browse-lifecycle-btn" class="btn btn-outline btn-sm" style="font-size:0.82em;border-color:#6366f1;color:#6366f1;">📋 Apply Lifecycle Policy</button>' +
-            '<button id="browse-delete-btn" class="btn btn-sm" style="font-size:0.82em;background:#7f1d1d;color:#fca5a5;border:1px solid #ef4444;">🗑 Delete All Objects</button>' +
+        '<div style="padding:14px 20px;border-top:1px solid #30363d;display:flex;flex-direction:column;gap:8px;flex-shrink:0;background:#161b22;border-radius:0 0 12px 12px;">' +
+            '<div style="background:#1e3a5f;border:1px solid #2563eb;border-radius:6px;padding:8px 10px;font-size:0.78em;color:#93c5fd;">' +
+                '⚠ <strong>Write actions require the updated IAM role.</strong> If you get an "Access Denied" error, redeploy the CloudFormation template from the Configure tab. ' +
+                '<button onclick="_actShowRedeployGuide(\'' + ea(accountId) + '\')" style="background:none;border:none;color:#60a5fa;cursor:pointer;text-decoration:underline;font-size:1em;padding:0;">How to update →</button>' +
+            '</div>' +
+            '<div style="display:flex;gap:10px;align-items:center;">' +
+                '<div style="flex:1;font-size:0.8em;color:#6b7280;">Actions apply to the entire bucket</div>' +
+                '<button id="browse-lifecycle-btn" class="btn btn-outline btn-sm" style="font-size:0.82em;border-color:#6366f1;color:#6366f1;">📋 Apply Lifecycle Policy</button>' +
+                '<button id="browse-delete-btn" class="btn btn-sm" style="font-size:0.82em;background:#7f1d1d;color:#fca5a5;border:1px solid #ef4444;">🗑 Delete All Objects</button>' +
+            '</div>' +
         '</div>';
 
     modal.appendChild(card);
