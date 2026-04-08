@@ -2425,27 +2425,53 @@ function _toggleTrendView(mode) {
     }
 }
 
+// ============================================================
+// Cost by Service Treemap — 2-phase drill-down
+// ============================================================
+var _treemapChart = null;
+var _treemapLevel = 'services'; // 'services' | 'usageTypes'
+var _treemapCurrentService = null;
+var _treemapServiceData = [];
+var _treemapColors = ['#6366f1','#10b981','#f59e0b','#ef4444','#8b5cf6','#ec4899','#14b8a6','#f97316','#06b6d4','#84cc16'];
+
 function _renderTreemap(costByService, drillDown) {
     _dashDrillDown = drillDown || {};
+    _treemapServiceData = costByService || [];
     var el = $('dash-treemap'); if (!el || !window.echarts) return;
-    var chart = echarts.init(el, null);
 
-    // Flat treemap — no children (avoids broken ECharts drill-down)
-    // Clicking a tile opens a detail panel instead
-    var colors = ['#6366f1','#10b981','#f59e0b','#ef4444','#8b5cf6','#ec4899','#14b8a6','#f97316','#06b6d4','#84cc16'];
-    var treeData = costByService.map(function(s, i) {
+    if (_treemapChart) { try { _treemapChart.dispose(); } catch(e){} }
+    _treemapChart = echarts.init(el, null);
+    _treemapLevel = 'services';
+    _treemapCurrentService = null;
+
+    _renderTreemapServices();
+    window.addEventListener('resize', function() { if (_treemapChart) _treemapChart.resize(); });
+}
+
+function _renderTreemapServices() {
+    var el = $('dash-treemap'); if (!el) return;
+
+    // Remove any existing breadcrumb
+    var old = document.getElementById('treemap-breadcrumb');
+    if (old) old.remove();
+
+    var treeData = _treemapServiceData.map(function(s, i) {
+        // Normalize service name — strip Amazon/AWS prefix for display
+        var displayName = s.service.replace(/^Amazon\s+/,'').replace(/^AWS\s+/,'');
         return {
-            name: s.service.replace('Amazon ','').replace('AWS ',''),
+            name: displayName,
             fullName: s.service,
             value: s.cost,
             pct: s.pct,
-            itemStyle: { color: colors[i % colors.length] }
+            itemStyle: { color: _treemapColors[i % _treemapColors.length] }
         };
     });
 
-    chart.setOption({
+    _treemapChart.setOption({
         tooltip: { formatter: function(p) {
-            return (p.data.fullName || p.name) + ': $' + p.value.toFixed(2) + (p.data.pct ? ' (' + p.data.pct + '%)' : '') + '<br><span style="color:#aaa;font-size:11px;">Click for details</span>';
+            return '<b>' + (p.data.fullName || p.name) + '</b><br>$' + p.value.toFixed(2) +
+                (p.data.pct ? ' (' + p.data.pct + '%)' : '') +
+                '<br><span style="color:#aaa;font-size:11px;">Click to drill down ▼</span>';
         }},
         series: [{ type: 'treemap', data: treeData,
             label: { show: true, formatter: function(p) { return p.name + '\n$' + p.value.toFixed(2); }, fontSize: 11, color: '#fff' },
@@ -2454,14 +2480,89 @@ function _renderTreemap(costByService, drillDown) {
             levels: [{ itemStyle: { borderWidth: 3, gapWidth: 3 } }],
             roam: false,
         }],
+    }, true);
+
+    _treemapChart.off('click');
+    _treemapChart.on('click', function(params) {
+        var svc = params.data;
+        _drillIntoService(svc.fullName || svc.name, svc.value, svc.pct, svc.itemStyle && svc.itemStyle.color);
+    });
+    _treemapLevel = 'services';
+}
+
+function _drillIntoService(serviceName, totalCost, pct, color) {
+    // Look up usage types
+    var svcKey = serviceName.replace(/ /g, '_').replace(/-/g, '_');
+    var svcKeyShort = serviceName.replace(/^Amazon\s+/,'').replace(/^AWS\s+/,'').replace(/ /g, '_').replace(/-/g, '_');
+    var dd = _dashDrillDown[svcKey] || _dashDrillDown[svcKeyShort];
+
+    if (!dd || !dd.usageTypes || dd.usageTypes.length === 0) {
+        // No usage type data — show the side panel instead
+        _showServiceDrillPanel(serviceName, totalCost, pct, color);
+        return;
+    }
+
+    _treemapLevel = 'usageTypes';
+    _treemapCurrentService = { name: serviceName, cost: totalCost, pct: pct, color: color };
+
+    // Add breadcrumb above the chart
+    var el = $('dash-treemap');
+    var breadcrumb = document.createElement('div');
+    breadcrumb.id = 'treemap-breadcrumb';
+    breadcrumb.style.cssText = 'display:flex;align-items:center;gap:6px;padding:6px 0 4px;font-size:0.82em;';
+    breadcrumb.innerHTML =
+        '<button onclick="_renderTreemapServices();" style="background:none;border:none;color:#6366f1;cursor:pointer;font-size:0.9em;padding:2px 6px;border-radius:4px;border:1px solid #6366f1;">← All Services</button>' +
+        '<span style="color:#6b7280;">›</span>' +
+        '<span style="color:#e6edf3;font-weight:600;">' + esc(serviceName.replace(/^Amazon\s+/,'').replace(/^AWS\s+/,'')) + '</span>' +
+        '<span style="color:#10b981;margin-left:4px;">$' + totalCost.toFixed(2) + '</span>' +
+        '<button onclick="_showServiceDrillPanel(' + JSON.stringify(serviceName) + ',' + totalCost + ',' + JSON.stringify(pct||'') + ',' + JSON.stringify(color||'#6366f1') + ');" style="background:none;border:none;color:#8b949e;cursor:pointer;font-size:0.85em;margin-left:auto;padding:2px 6px;border-radius:4px;border:1px solid #30363d;">Details ↗</button>';
+    el.parentNode.insertBefore(breadcrumb, el);
+
+    // Build usage type treemap data
+    var items = dd.usageTypes.slice().sort(function(a,b){ return b.cost - a.cost; });
+    var baseColor = color || '#6366f1';
+    var utData = items.map(function(ut, i) {
+        var label = ut.usageType || ut.name || 'Unknown';
+        var shortLabel = label.split(':').pop().split('/').pop();
+        // Shade the base color slightly per item
+        return {
+            name: shortLabel,
+            fullName: label,
+            value: ut.cost,
+            itemStyle: { color: _shadeColor(baseColor, i * -8) }
+        };
     });
 
-    // Click → show detail panel
-    chart.on('click', function(params) {
-        _showServiceDrillPanel(params.data.fullName || params.name, params.data.value, params.data.pct, params.color);
-    });
+    _treemapChart.setOption({
+        tooltip: { formatter: function(p) {
+            return '<b>' + (p.data.fullName || p.name) + '</b><br>$' + p.value.toFixed(2) +
+                '<br><span style="color:#aaa;font-size:11px;">Click for details panel</span>';
+        }},
+        series: [{ type: 'treemap', data: utData,
+            label: { show: true, formatter: function(p) { return p.name + '\n$' + p.value.toFixed(2); }, fontSize: 10, color: '#fff' },
+            breadcrumb: { show: false },
+            itemStyle: { borderColor: '#fff', borderWidth: 1 },
+            levels: [{ itemStyle: { borderWidth: 2, gapWidth: 2 } }],
+            roam: false,
+        }],
+    }, true);
 
-    window.addEventListener('resize', function() { chart.resize(); });
+    _treemapChart.off('click');
+    _treemapChart.on('click', function(params) {
+        // Clicking a usage type tile opens the side panel for the parent service
+        _showServiceDrillPanel(serviceName, totalCost, pct, color);
+    });
+}
+
+function _shadeColor(hex, percent) {
+    // Lighten/darken a hex color by percent (-100 to 100)
+    try {
+        var num = parseInt(hex.replace('#',''), 16);
+        var r = Math.min(255, Math.max(0, (num >> 16) + percent));
+        var g = Math.min(255, Math.max(0, ((num >> 8) & 0xff) + percent));
+        var b = Math.min(255, Math.max(0, (num & 0xff) + percent));
+        return '#' + ((1 << 24) | (r << 16) | (g << 8) | b).toString(16).slice(1);
+    } catch(e) { return hex; }
 }
 
 function _showServiceDrillPanel(serviceName, totalCost, pct, color) {
