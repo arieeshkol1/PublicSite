@@ -6,7 +6,7 @@
     <title>Member Portal - SlashMyBill</title>
     <link rel="icon" type="image/png" href="../SlashMyBill.png">
     <link rel="stylesheet" href="../styles.css">
-    <link rel="stylesheet" href="members.css?v=21">
+    <link rel="stylesheet" href="members.css?v=22">
     <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
 </head>
 <body>
@@ -172,9 +172,7 @@
                 <div class="tab-toolbar">
                     <h2>Act <span style="font-size:0.65em;color:#6b7280;font-weight:400;">Level 1 — Resource Hygiene</span></h2>
                     <div style="display:flex;gap:8px;align-items:center;">
-                        <select id="act-account-select" class="form-input" style="min-width:160px;padding:6px 10px;font-size:0.85em;background:#161b22;color:#e6edf3;border:1px solid #30363d;border-radius:6px;">
-                            <option value="">All Connected Accounts</option>
-                        </select>
+                        <div id="act-account-select" style="display:inline-block;"></div>
                         <button id="act-scan-btn" class="btn btn-primary btn-sm">&#128269; Scan for Waste</button>
                     </div>
                 </div>
@@ -485,6 +483,6 @@
         <span id="notification-message"></span>
     </div>
 
-    <script src="members.js?v=21"></script>
+    <script src="members.js?v=22"></script>
 </body>
 </html>

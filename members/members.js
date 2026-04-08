@@ -979,6 +979,11 @@ function activateMemberTab(tabId) {
         _applySharedSelection('dash-acct-cb'); // apply shared selection to dash tab
         loadDashboardData();
     }
+    if (tabId === 'act-tab') {
+        _syncAccountSelection('dash'); // save current selection
+        populateActAccounts();
+        _applySharedSelection('act-acct-cb'); // apply shared selection to Act tab
+    }
 }
 
 // ============================================================
@@ -1249,6 +1254,8 @@ function _syncAccountSelection(source) {
     var ids;
     if (source === 'dash') {
         ids = getDashSelectedAccountIds();
+    } else if (source === 'act') {
+        ids = getActSelectedAccountIds();
     } else {
         ids = getSelectedAccountIds();
     }
@@ -3178,37 +3185,90 @@ function showEnableHourlyModal(accountId) {
 var _actScanData = null;
 var _actPendingCard = null;
 
+function populateActAccounts() {
+    var el = $('act-account-select');
+    if (!el) return;
+    el.innerHTML = '';
+    var connected = allAccounts.filter(function(a) { return a.connectionStatus === 'connected'; });
+    if (!connected.length) {
+        el.innerHTML = '<span style="color:#8b949e;font-size:0.85em;">No connected accounts</span>';
+        return;
+    }
+
+    var toggleBtn = document.createElement('button');
+    toggleBtn.type = 'button';
+    toggleBtn.className = 'btn btn-outline btn-sm';
+    toggleBtn.style.cssText = 'font-size:0.85em;padding:4px 12px;min-width:180px;text-align:left;';
+
+    function updateActLabel() {
+        var checked = el.querySelectorAll('.act-acct-cb:checked');
+        if (checked.length === 0) toggleBtn.textContent = 'Select accounts...';
+        else if (checked.length === 1) toggleBtn.textContent = checked[0].parentElement.dataset.label || checked[0].value;
+        else toggleBtn.textContent = checked.length + ' accounts selected';
+        toggleBtn.textContent += ' \u25be';
+    }
+
+    var panel = document.createElement('div');
+    panel.style.cssText = 'display:none;position:absolute;top:100%;left:0;z-index:200;background:#fff;border:1px solid #d0d7de;border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,0.15);min-width:260px;max-height:200px;overflow-y:auto;padding:6px 0;margin-top:4px;';
+
+    connected.forEach(function(a) {
+        var row = document.createElement('label');
+        row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:6px 12px;cursor:pointer;color:#24292f;font-size:0.85em;white-space:nowrap;';
+        row.dataset.label = a.accountId + ' (' + (a.accountName || 'Account') + ')';
+        row.onmouseenter = function() { row.style.background = '#f6f8fa'; };
+        row.onmouseleave = function() { row.style.background = ''; };
+        var cb = document.createElement('input');
+        cb.type = 'checkbox'; cb.value = a.accountId; cb.className = 'act-acct-cb';
+        cb.checked = true;
+        cb.style.cssText = 'accent-color:#6366f1;flex-shrink:0;';
+        cb.onchange = updateActLabel;
+        row.appendChild(cb);
+        row.appendChild(document.createTextNode(a.accountId + ' (' + (a.accountName || 'Account ' + a.accountId.slice(-4)) + ')'));
+        panel.appendChild(row);
+    });
+
+    var ctrlRow = document.createElement('div');
+    ctrlRow.style.cssText = 'display:flex;gap:8px;padding:6px 12px;border-top:1px solid #d0d7de;margin-top:4px;';
+    var selAll = document.createElement('a');
+    selAll.href = '#'; selAll.textContent = 'Select All'; selAll.style.cssText = 'font-size:0.8em;color:#6366f1;text-decoration:none;';
+    selAll.onclick = function(e) { e.preventDefault(); panel.querySelectorAll('.act-acct-cb').forEach(function(c) { c.checked = true; }); updateActLabel(); };
+    var selNone = document.createElement('a');
+    selNone.href = '#'; selNone.textContent = 'Clear'; selNone.style.cssText = 'font-size:0.8em;color:#6366f1;text-decoration:none;';
+    selNone.onclick = function(e) { e.preventDefault(); panel.querySelectorAll('.act-acct-cb').forEach(function(c) { c.checked = false; }); updateActLabel(); };
+    ctrlRow.appendChild(selAll); ctrlRow.appendChild(selNone);
+    panel.appendChild(ctrlRow);
+
+    var wrapper = document.createElement('div');
+    wrapper.style.cssText = 'position:relative;display:inline-block;';
+    wrapper.appendChild(toggleBtn); wrapper.appendChild(panel);
+    el.appendChild(wrapper);
+
+    toggleBtn.onclick = function(e) { e.stopPropagation(); panel.style.display = panel.style.display === 'none' ? 'block' : 'none'; };
+    document.addEventListener('click', function(e) { if (!wrapper.contains(e.target)) panel.style.display = 'none'; });
+    updateActLabel();
+}
+
+function getActSelectedAccountIds() {
+    var cbs = document.querySelectorAll('.act-acct-cb:checked');
+    var ids = []; cbs.forEach(function(cb) { ids.push(cb.value); }); return ids;
+}
+
+function _syncActSelection() {
+    // Save Act selection into shared state
+    var ids = getActSelectedAccountIds();
+    if (ids.length > 0) _sharedSelectedAccounts = ids;
+}
+
 (function initActTab() {
     var scanBtn = $('act-scan-btn');
-    var accountSelect = $('act-account-select');
     if (!scanBtn) return;
 
-    // Populate account selector when accounts load
-    var _origLoadAccounts = window.loadAccounts;
-    window.loadAccounts = async function() {
-        if (_origLoadAccounts) await _origLoadAccounts.apply(this, arguments);
-        _actPopulateAccountSelect();
-    };
-
     scanBtn.onclick = async function() {
-        var selectedId = accountSelect ? accountSelect.value : '';
-        var accountIds = selectedId ? [selectedId] : [];
+        _syncActSelection();
+        var accountIds = getActSelectedAccountIds();
         await _actRunScan(accountIds);
     };
 })();
-
-function _actPopulateAccountSelect() {
-    var sel = $('act-account-select');
-    if (!sel || !window.allAccounts) return;
-    // Keep first "All" option, rebuild the rest
-    while (sel.options.length > 1) sel.remove(1);
-    (window.allAccounts || []).filter(function(a) { return a.connectionStatus === 'connected'; }).forEach(function(a) {
-        var opt = document.createElement('option');
-        opt.value = a.accountId;
-        opt.textContent = (a.accountName || a.accountId) + ' (' + a.accountId.slice(-4) + ')';
-        sel.appendChild(opt);
-    });
-}
 
 async function _actRunScan(accountIds) {
     var status = $('act-scan-status');
@@ -3380,11 +3440,4 @@ async function _actExecute(card) {
     }
 }
 
-// Populate account select when Act tab is clicked
-document.querySelectorAll('.member-tab').forEach(function(tab) {
-    if (tab.dataset.tab === 'act-tab') {
-        tab.addEventListener('click', function() {
-            _actPopulateAccountSelect();
-        });
-    }
-});
+// Populate account select when Act tab is clicked — handled by activateMemberTab
