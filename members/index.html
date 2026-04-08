@@ -288,7 +288,8 @@
                 <div class="wizard-progress">
                     <div class="wizard-step-indicator active" id="wiz-ind-1"><span>1</span> Download Template</div>
                     <div class="wizard-step-indicator" id="wiz-ind-2"><span>2</span> Deploy in AWS</div>
-                    <div class="wizard-step-indicator" id="wiz-ind-3"><span>3</span> Test Connection</div>
+                    <div class="wizard-step-indicator" id="wiz-ind-3"><span>3</span> Enable Hourly</div>
+                    <div class="wizard-step-indicator" id="wiz-ind-4"><span>4</span> Test Connection</div>
                 </div>
 
                 <!-- Step 1: Download & Launch CloudFormation -->
@@ -325,10 +326,26 @@
                     <div class="wizard-note">Once the stack shows CREATE_COMPLETE, click "Next" to test the connection.</div>
                 </div>
 
-                <!-- Step 3: Test Connection -->
+                <!-- Step 3: Enable Hourly Granularity -->
                 <div id="wiz-step-3" class="wizard-step-content" hidden>
+                    <div class="wizard-icon">&#9201;</div>
+                    <h3>Step 3: Enable Hourly Cost Data</h3>
+                    <p>For real-time cost monitoring, enable hourly granularity in Cost Explorer. This lets SlashMyBill detect cost spikes within hours instead of days.</p>
+                    <div class="wizard-info-box">
+                        <p><strong>What it does:</strong> Enables hourly cost breakdown in AWS Cost Explorer</p>
+                        <p><strong>Cost:</strong> ~$0.01 per 1,000 API requests (typically &lt;$1/month)</p>
+                        <p><strong>Time to activate:</strong> 24 hours after enabling</p>
+                    </div>
+                    <a id="wiz-hourly-btn" href="https://console.aws.amazon.com/cost-management/home#/preferences" target="_blank" rel="noopener" class="btn btn-primary btn-full">
+                        &#9201; Open Cost Explorer Preferences
+                    </a>
+                    <div class="wizard-note">Check "Hourly and Resource Level Data" and click Save. You can also skip this and enable later.</div>
+                </div>
+
+                <!-- Step 4: Test Connection -->
+                <div id="wiz-step-4" class="wizard-step-content" hidden>
                     <div class="wizard-icon">&#9889;</div>
-                    <h3>Step 3: Test the Connection</h3>
+                    <h3>Step 4: Test the Connection</h3>
                     <p>Let's verify that SlashMyBill can access your AWS account's billing data through the role you just created.</p>
                     <div id="wiz-test-result" class="wizard-test-result" hidden></div>
                     <button id="wiz-test-btn" class="btn btn-primary btn-full">

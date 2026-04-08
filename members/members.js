@@ -436,6 +436,7 @@ function renderAccounts(accounts) {
                 (idx < accounts.length - 1 ? '<button class="btn btn-outline btn-sm" data-a="down" data-id="' + ea(a.accountId) + '" title="Move Down" style="padding:2px 6px;font-size:12px;min-width:28px;">▼</button> ' : '<span style="display:inline-block;width:32px;"></span> ') +
                 '<button class="btn-icon btn-icon-download" data-a="dl" data-id="' + ea(a.accountId) + '" title="Download CF Template">&#8681;</button> ' +
                 '<button class="btn-icon btn-icon-test" data-a="test" data-id="' + ea(a.accountId) + '" title="Test Connection">&#9889;</button> ' +
+                '<button class="btn-icon" data-a="hourly" data-id="' + ea(a.accountId) + '" title="Enable Hourly Cost Data" style="font-size:11px;">&#9201;</button> ' +
                 '<button class="btn-icon btn-icon-edit" data-a="edit" data-id="' + ea(a.accountId) + '" title="Edit">&#9998;</button> ' +
                 '<button class="btn-icon btn-icon-delete" data-a="del" data-id="' + ea(a.accountId) + '" title="Delete">&#128465;</button>' +
             '</td>';
@@ -458,6 +459,7 @@ accountsTbody.onclick = function(e) {
     else if (action === 'dl') downloadTemplate(accountId);
     else if (action === 'test') testConnection(accountId, btn);
     else if (action === 'up' || action === 'down') reorderAccount(accountId, action);
+    else if (action === 'hourly') showEnableHourlyModal(accountId);
 };
 
 async function reorderAccount(accountId, direction) {
@@ -644,9 +646,11 @@ var wizardClose = $('wizard-close');
 var wizStep1 = $('wiz-step-1');
 var wizStep2 = $('wiz-step-2');
 var wizStep3 = $('wiz-step-3');
+var wizStep4 = $('wiz-step-4');
 var wizInd1 = $('wiz-ind-1');
 var wizInd2 = $('wiz-ind-2');
 var wizInd3 = $('wiz-ind-3');
+var wizInd4 = $('wiz-ind-4');
 var wizBackBtn = $('wiz-back-btn');
 var wizNextBtn = $('wiz-next-btn');
 var wizFinishBtn = $('wiz-finish-btn');
@@ -725,14 +729,16 @@ function updateWizardStep() {
     wizStep1.hidden = wizardStep !== 1;
     wizStep2.hidden = wizardStep !== 2;
     wizStep3.hidden = wizardStep !== 3;
+    if (wizStep4) wizStep4.hidden = wizardStep !== 4;
 
     wizInd1.className = 'wizard-step-indicator' + (wizardStep === 1 ? ' active' : wizardStep > 1 ? ' done' : '');
     wizInd2.className = 'wizard-step-indicator' + (wizardStep === 2 ? ' active' : wizardStep > 2 ? ' done' : '');
-    wizInd3.className = 'wizard-step-indicator' + (wizardStep === 3 ? ' active' : '');
+    wizInd3.className = 'wizard-step-indicator' + (wizardStep === 3 ? ' active' : wizardStep > 3 ? ' done' : '');
+    if (wizInd4) wizInd4.className = 'wizard-step-indicator' + (wizardStep === 4 ? ' active' : '');
 
     wizBackBtn.hidden = wizardStep <= 1;
-    wizNextBtn.hidden = wizardStep >= 3;
-    wizFinishBtn.hidden = wizardStep < 3;
+    wizNextBtn.hidden = wizardStep >= 4;
+    wizFinishBtn.hidden = wizardStep < 4;
 }
 
 wizNextBtn.onclick = function() {
@@ -740,7 +746,7 @@ wizNextBtn.onclick = function() {
         notify('Please download the template first.', 'error');
         return;
     }
-    if (wizardStep < 3) {
+    if (wizardStep < 4) {
         wizardStep++;
         updateWizardStep();
     }
@@ -864,6 +870,7 @@ renderAccounts = function(accounts) {
                 setupBtn +
                 '<button class="btn-icon btn-icon-download" data-a="dl" data-id="' + ea(a.accountId) + '" title="Download CF Template">&#8681;</button> ' +
                 '<button class="btn-icon btn-icon-test" data-a="test" data-id="' + ea(a.accountId) + '" title="Test Connection">&#9889;</button> ' +
+                '<button class="btn-icon" data-a="hourly" data-id="' + ea(a.accountId) + '" title="Enable Hourly Cost Data" style="font-size:11px;">&#9201;</button> ' +
                 '<button class="btn-icon btn-icon-edit" data-a="edit" data-id="' + ea(a.accountId) + '" title="Edit">&#9998;</button> ' +
                 '<button class="btn-icon btn-icon-delete" data-a="del" data-id="' + ea(a.accountId) + '" title="Delete">&#128465;</button>' +
             '</td>';
@@ -2851,4 +2858,41 @@ function showBusinessMetricsModal() {
         } catch (e) { errEl.textContent = e.message || 'Failed to save.'; }
     };
     modal.onclick = function(e) { if (e.target === modal) modal.remove(); };
+}
+
+
+// ============================================================
+// Enable Hourly Cost Data
+// ============================================================
+function showEnableHourlyModal(accountId) {
+    var consoleUrl = 'https://' + accountId + '.signin.aws.amazon.com/console/billing/home#/preferences';
+    var modal = document.createElement('div');
+    modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);z-index:1000;display:flex;align-items:center;justify-content:center;';
+    var card = document.createElement('div');
+    card.style.cssText = 'background:#fff;border-radius:12px;padding:24px;max-width:550px;width:95%;max-height:80vh;overflow-y:auto;';
+    card.innerHTML =
+        '<h2 style="margin-top:0;color:#1f2937;">Enable Hourly Cost Data</h2>' +
+        '<p style="color:#6b7280;font-size:0.9em;">To get real-time hourly cost tracking in SlashMyBill, you need to enable hourly granularity in your AWS account\'s Cost Explorer settings.</p>' +
+        '<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:16px;margin:16px 0;">' +
+            '<div style="font-weight:600;color:#16a34a;margin-bottom:8px;">Steps to enable:</div>' +
+            '<ol style="color:#1f2937;font-size:0.9em;margin:0;padding-left:20px;">' +
+                '<li>Sign in to AWS account <strong>' + accountId + '</strong></li>' +
+                '<li>Go to <strong>Billing → Cost Explorer → Preferences</strong></li>' +
+                '<li>Check <strong>"Hourly and Resource Level Data"</strong></li>' +
+                '<li>Click <strong>Save Preferences</strong></li>' +
+                '<li>Wait 24 hours for data to become available</li>' +
+            '</ol>' +
+        '</div>' +
+        '<div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:12px;margin-bottom:16px;">' +
+            '<div style="font-size:0.85em;color:#1e40af;"><strong>Note:</strong> Enabling hourly granularity adds ~$0.01 per 1,000 requests to your Cost Explorer costs. This is typically less than $1/month.</div>' +
+        '</div>' +
+        '<div style="display:flex;gap:8px;justify-content:flex-end;">' +
+            '<button onclick="this.closest(\'.modal-overlay\') ? this.closest(\'.modal-overlay\').remove() : this.parentElement.parentElement.parentElement.remove();" class="btn btn-outline">Close</button>' +
+            '<a href="https://console.aws.amazon.com/cost-management/home#/preferences" target="_blank" rel="noopener" class="btn btn-primary" style="text-decoration:none;">Open AWS Console →</a>' +
+        '</div>';
+    card.querySelector('.btn-outline').onclick = function() { modal.remove(); };
+    modal.appendChild(card);
+    modal.className = 'modal-overlay';
+    modal.onclick = function(e) { if (e.target === modal) modal.remove(); };
+    document.body.appendChild(modal);
 }
