@@ -1177,7 +1177,9 @@ def handle_dashboard_data(event):
 
     merged_costs = {}
     merged_daily = {}
+    merged_hourly = {}
     merged_monthly = {}
+    drill_down_data = {}
     all_waste = []
     all_rightsizing = []
     per_account = []
@@ -1223,6 +1225,52 @@ def handle_dashboard_data(event):
                     merged_daily[d_date] = merged_daily.get(d_date, 0) + d_cost
             except Exception:
                 pass  # Fall back to 7-day data from _gather_account_data
+
+            # Fetch hourly cost trend (last 48 hours) for real-time waste detection
+            try:
+                start_48h = (datetime.now(timezone.utc) - timedelta(hours=48)).strftime('%Y-%m-%dT%H:%M:%SZ')
+                end_now = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+                hourly_resp = ce_30d.get_cost_and_usage(
+                    TimePeriod={'Start': (datetime.now(timezone.utc) - timedelta(days=2)).strftime('%Y-%m-%d'),
+                                'End': datetime.now(timezone.utc).strftime('%Y-%m-%d')},
+                    Granularity='HOURLY', Metrics=['UnblendedCost'],
+                )
+                for period in hourly_resp.get('ResultsByTime', []):
+                    h_start = period['TimePeriod']['Start']
+                    h_cost = float(period['Total']['UnblendedCost']['Amount'])
+                    if h_cost > 0:
+                        merged_hourly[h_start] = merged_hourly.get(h_start, 0) + h_cost
+            except Exception:
+                pass
+
+            # Fetch usage type breakdown for drill-down (top services)
+            try:
+                for svc in acct_data.get('cost_by_service', [])[:6]:
+                    svc_name = svc.get('service', '')
+                    if svc_name in ('Tax',) or svc.get('cost_usd', 0) < 1:
+                        continue
+                    try:
+                        ut_resp = ce_30d.get_cost_and_usage(
+                            TimePeriod={'Start': start_30d, 'End': end_date},
+                            Granularity='MONTHLY', Metrics=['UnblendedCost'],
+                            GroupBy=[{'Type': 'DIMENSION', 'Key': 'USAGE_TYPE'}],
+                            Filter={'Dimensions': {'Key': 'SERVICE', 'Values': [svc_name]}},
+                        )
+                        usage_items = []
+                        for p in ut_resp.get('ResultsByTime', []):
+                            for g in p.get('Groups', []):
+                                cost = float(g['Metrics']['UnblendedCost']['Amount'])
+                                if cost > 0.01:
+                                    usage_items.append({'usageType': g['Keys'][0], 'cost': round(cost, 4)})
+                        if usage_items:
+                            usage_items.sort(key=lambda x: x['cost'], reverse=True)
+                            svc_key = svc_name.replace(' ', '_').replace('-', '_')
+                            drill_down_data[svc_key] = {'service': svc_name, 'usageTypes': usage_items[:10]}
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
             for m, svcs in acct_data.get('monthly_trend', {}).items():
                 if m not in merged_monthly:
                     merged_monthly[m] = {}
@@ -1366,6 +1414,8 @@ def handle_dashboard_data(event):
         'perAccount': per_account,
         'containers': containers,
         'costAllocation': allocation_data,
+        'hourlyTrend': sorted([{'hour': h, 'cost': round(c, 4)} for h, c in merged_hourly.items()], key=lambda x: x['hour']) if merged_hourly else [],
+        'drillDown': drill_down_data,
         'unitEconomics': _get_unit_economics(member_email, merged_monthly) if merged_monthly else None,
         'discoveredMetrics': all_discovered_metrics,
     })

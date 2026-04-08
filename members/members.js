@@ -2297,7 +2297,7 @@ function renderDashboardWidgets(data) {
     // Grid widgets
     grid.innerHTML = '';
     _addWidget(grid, 'dash-treemap', 'Cost by Service', 300, 'Show me my cost breakdown by service');
-    _addWidget(grid, 'dash-daily', 'Daily Cost Trend (30d)', 250, 'Are there any cost anomalies in the last 30 days?');
+    _addWidget(grid, 'dash-daily', 'Cost Trend <span id="dash-trend-toggle" style="font-size:0.7em;margin-left:8px;"><button class="btn btn-outline btn-sm" style="padding:1px 6px;font-size:0.8em;" onclick="_toggleTrendView(\'daily\')">Daily</button> <button class="btn btn-outline btn-sm" style="padding:1px 6px;font-size:0.8em;background:#6366f1;color:#fff;border-color:#6366f1;" onclick="_toggleTrendView(\'hourly\')">Hourly</button></span>', 250, 'Are there any cost anomalies?');
     _addWidget(grid, 'dash-allocation', 'Cost Allocation by Business Unit <button class="btn btn-outline btn-sm" style="font-size:0.7em;margin-left:8px;padding:2px 6px;" onclick="showAllocationRulesModal();">Manage Rules</button>', 280, 'Break down my costs by business unit');
     _addWidget(grid, 'dash-waste', 'Waste Detection', 250, 'What services do I not need? Show me all waste.');
     _addWidget(grid, 'dash-rightsizing', 'Rightsizing Summary', 250, 'Is there any service we can rightsize?');
@@ -2308,8 +2308,8 @@ function renderDashboardWidgets(data) {
 
     // Render ECharts
     setTimeout(function() {
-        _renderTreemap(data.costByService || []);
-        _renderDailyTrend(data.dailyTrend || []);
+        _renderTreemap(data.costByService || [], data.drillDown || {});
+        _renderDailyTrend(data.dailyTrend || [], data.hourlyTrend || []);
         _renderAllocationTreemap(data.costAllocation || null);
         _renderRightsizing(data.rightsizing || {}, data.waste || {});
         _renderWaste(data.waste || {});
@@ -2345,33 +2345,105 @@ function _askAIFromDashboard(question) {
     }, 300);
 }
 
-function _renderTreemap(costByService) {
+var _dashDailyData = null;
+var _dashHourlyData = null;
+var _dashDrillDown = {};
+
+function _toggleTrendView(mode) {
+    var btns = document.querySelectorAll('#dash-trend-toggle button');
+    btns.forEach(function(b) { b.style.background = ''; b.style.color = ''; b.style.borderColor = ''; });
+    if (mode === 'hourly') {
+        btns[1].style.background = '#6366f1'; btns[1].style.color = '#fff'; btns[1].style.borderColor = '#6366f1';
+        _renderHourlyTrend(_dashHourlyData || []);
+    } else {
+        btns[0].style.background = '#6366f1'; btns[0].style.color = '#fff'; btns[0].style.borderColor = '#6366f1';
+        _renderDailyChart(_dashDailyData || []);
+    }
+}
+
+function _renderTreemap(costByService, drillDown) {
+    _dashDrillDown = drillDown || {};
     var el = $('dash-treemap'); if (!el || !window.echarts) return;
-    var chart = echarts.init(el, 'dark');
+    var chart = echarts.init(el, null);
+
+    // Build treemap data with children for drill-down
+    var treeData = costByService.map(function(s) {
+        var svcKey = s.service.replace(/ /g, '_').replace(/-/g, '_');
+        var dd = _dashDrillDown[svcKey];
+        var item = { name: s.service.replace('Amazon ','').replace('AWS ',''), value: s.cost, pct: s.pct };
+        if (dd && dd.usageTypes) {
+            item.children = dd.usageTypes.map(function(ut) {
+                return { name: ut.usageType.split(':').pop().split('-').pop(), value: ut.cost, fullName: ut.usageType };
+            });
+        }
+        return item;
+    });
+
     chart.setOption({
-        tooltip: { formatter: function(p) { return p.name + ': $' + p.value.toFixed(2) + ' (' + (p.data.pct || 0) + '%)'; } },
-        series: [{ type: 'treemap', data: costByService.map(function(s) { return { name: s.service.replace('Amazon ','').replace('AWS ',''), value: s.cost, pct: s.pct }; }),
-            label: { show: true, formatter: '{b}\n${c}', fontSize: 10 }, breadcrumb: { show: false },
-            itemStyle: { borderColor: '#161b22', borderWidth: 2 } }]
+        tooltip: { formatter: function(p) {
+            var name = p.data.fullName || p.name;
+            return name + ': $' + p.value.toFixed(2) + (p.data.pct ? ' (' + p.data.pct + '%)' : '');
+        }},
+        series: [{ type: 'treemap', data: treeData,
+            label: { show: true, formatter: '{b}\n${c}', fontSize: 10 },
+            breadcrumb: { show: true, itemStyle: { color: '#6366f1' }, textStyle: { color: '#fff', fontSize: 10 } },
+            upperLabel: { show: true, height: 20, color: '#fff', fontSize: 10 },
+            itemStyle: { borderColor: '#fff', borderWidth: 2 },
+            levels: [
+                { itemStyle: { borderWidth: 3, gapWidth: 3 }, upperLabel: { show: false } },
+                { itemStyle: { borderWidth: 1, gapWidth: 1 }, label: { fontSize: 9 } }
+            ],
+        }],
+        color: ['#6366f1','#10b981','#f59e0b','#ef4444','#8b5cf6','#ec4899','#14b8a6','#f97316','#06b6d4','#84cc16'],
     });
     window.addEventListener('resize', function() { chart.resize(); });
 }
 
-function _renderDailyTrend(daily) {
+function _renderDailyTrend(daily, hourly) {
+    _dashDailyData = daily;
+    _dashHourlyData = hourly;
+    _renderDailyChart(daily);
+}
+
+function _renderDailyChart(daily) {
     var el = $('dash-daily'); if (!el || !window.echarts || !daily.length) return;
-    var chart = echarts.init(el, 'dark');
-    var anomalyData = daily.filter(function(d) { return d.isAnomaly; }).map(function(d) {
-        return { coord: [d.date.substring(5), d.cost], value: d.cost, spikePct: d.spikePct };
+    var chart = echarts.init(el, null);
+    var anomalyPoints = daily.filter(function(d) { return d.isAnomaly; }).map(function(d) {
+        return { xAxis: d.date.substring(5), yAxis: d.cost, value: '+' + d.spikePct + '%' };
     });
     chart.setOption({
-        tooltip: { trigger: 'axis', formatter: function(ps) { var d = ps[0]; var tip = d.axisValue + ': $' + d.value.toFixed(2); var orig = daily.find(function(x){return x.date.substring(5)===d.axisValue;}); if(orig&&orig.isAnomaly) tip+=' ⚠️ +'+orig.spikePct+'% spike'; return tip; } },
-        xAxis: { type: 'category', data: daily.map(function(d) { return d.date.substring(5); }), axisLabel: { color: '#8b949e', fontSize: 10 } },
-        yAxis: { type: 'value', axisLabel: { color: '#8b949e', formatter: '${value}' } },
+        tooltip: { trigger: 'axis', formatter: function(ps) { var d = ps[0]; var tip = d.axisValue + ': $' + d.value.toFixed(2); var orig = daily.find(function(x){return x.date.substring(5)===d.axisValue;}); if(orig&&orig.isAnomaly) tip+=' \u26a0\ufe0f +'+orig.spikePct+'% spike'; return tip; } },
+        xAxis: { type: 'category', data: daily.map(function(d) { return d.date.substring(5); }), axisLabel: { color: '#6b7280', fontSize: 9, rotate: daily.length > 15 ? 45 : 0 } },
+        yAxis: { type: 'value', axisLabel: { color: '#6b7280', formatter: '${value}' }, splitLine: { lineStyle: { color: '#e5e7eb' } } },
         series: [{ type: 'line', data: daily.map(function(d) { return d.cost; }), smooth: true,
-            areaStyle: { opacity: 0.15 }, lineStyle: { color: '#10b981' }, itemStyle: { color: '#10b981' },
-            markPoint: { data: anomalyData.map(function(a) { return { coord: a.coord, value: '⚠️', itemStyle: { color: '#ef4444' } }; }),
-                label: { show: true, fontSize: 14 }, symbolSize: 30 } }],
-        grid: { left: 50, right: 10, bottom: 25, top: 15 },
+            areaStyle: { opacity: 0.15, color: '#10b981' }, lineStyle: { color: '#10b981' }, itemStyle: { color: '#10b981' },
+            markPoint: { data: anomalyPoints.map(function(a) { return { coord: [a.xAxis, a.yAxis], value: '\u26a0\ufe0f', itemStyle: { color: '#ef4444' } }; }),
+                label: { show: true, fontSize: 12 }, symbolSize: 25 } }],
+        grid: { left: 50, right: 10, bottom: 30, top: 15 },
+    });
+    window.addEventListener('resize', function() { chart.resize(); });
+}
+
+function _renderHourlyTrend(hourly) {
+    var el = $('dash-daily'); if (!el || !window.echarts) return;
+    if (!hourly.length) { el.innerHTML = '<div style="color:#6b7280;font-size:0.85em;padding:20px;">No hourly data available (requires Cost Explorer hourly granularity enabled)</div>'; return; }
+    var chart = echarts.init(el, null);
+    // Detect anomalies: > 3x the average hourly cost
+    var costs = hourly.map(function(h) { return h.cost; });
+    var avg = costs.reduce(function(a,b){return a+b;},0) / costs.length;
+    chart.setOption({
+        tooltip: { trigger: 'axis', formatter: function(ps) {
+            var h = ps[0]; var cost = h.value;
+            var tip = h.axisValue + ': $' + cost.toFixed(4);
+            if (cost > avg * 3) tip += ' \u26a0\ufe0f SPIKE (' + Math.round((cost/avg-1)*100) + '% above avg)';
+            return tip;
+        }},
+        xAxis: { type: 'category', data: hourly.map(function(h) { return h.hour.substring(11, 16) || h.hour.substring(5); }), axisLabel: { color: '#6b7280', fontSize: 8, rotate: 45 } },
+        yAxis: { type: 'value', axisLabel: { color: '#6b7280', formatter: '${value}' }, splitLine: { lineStyle: { color: '#e5e7eb' } } },
+        series: [{ type: 'bar', data: hourly.map(function(h) {
+            return { value: h.cost, itemStyle: { color: h.cost > avg * 3 ? '#ef4444' : '#6366f1' } };
+        }) }],
+        grid: { left: 50, right: 10, bottom: 40, top: 10 },
     });
     window.addEventListener('resize', function() { chart.resize(); });
 }
