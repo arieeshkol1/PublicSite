@@ -1207,6 +1207,13 @@ Resources:
       RouteKey: 'POST /members/actions/execute'
       Target: !Sub 'integrations/${MemberIntegration}'
 
+  MemberActBrowseBucketRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'POST /members/actions/browse-bucket'
+      Target: !Sub 'integrations/${MemberIntegration}'
+
   MemberHandlerInvokePermission:
     Type: AWS::Lambda::Permission
     Properties:

@@ -3319,17 +3319,17 @@ async function _actRunScan(accountIds) {
 
 function _actBuildCard(card) {
     var riskColor = card.risk === 'low' ? '#16a34a' : card.risk === 'medium' ? '#d97706' : '#dc2626';
-    var riskBg = card.risk === 'low' ? '#f0fdf4' : card.risk === 'medium' ? '#fffbeb' : '#fef2f2';
+    var riskBg = card.risk === 'low' ? 'rgba(22,163,74,0.15)' : card.risk === 'medium' ? 'rgba(217,119,6,0.15)' : 'rgba(220,38,38,0.15)';
 
     var div = document.createElement('div');
     div.style.cssText = 'background:#1c2128;border:1px solid #30363d;border-radius:12px;padding:20px;display:flex;flex-direction:column;gap:12px;';
 
-    // Header
     var savingsHtml = card.monthlySavings != null
-        ? '<span style="color:#10b981;font-size:1.1em;font-weight:700;">$' + card.monthlySavings.toFixed(2) + '<span style="font-size:0.7em;color:#6b7280;">/mo</span></span>'
-        : '<span style="color:#6b7280;font-size:0.85em;">Savings vary</span>';
+        ? '<div style="text-align:right;"><div style="color:#10b981;font-size:1.2em;font-weight:700;">$' + card.monthlySavings.toFixed(2) + '</div><div style="color:#6b7280;font-size:0.72em;">/month savings</div></div>'
+        : '<div style="color:#6b7280;font-size:0.82em;">Savings vary</div>';
 
-    div.innerHTML =
+    // Header
+    var headerHtml =
         '<div style="display:flex;justify-content:space-between;align-items:flex-start;">' +
             '<div style="display:flex;gap:10px;align-items:center;">' +
                 '<span style="font-size:1.8em;">' + (card.icon || '🔧') + '</span>' +
@@ -3340,29 +3340,192 @@ function _actBuildCard(card) {
             '</div>' +
             savingsHtml +
         '</div>' +
-        '<div style="color:#8b949e;font-size:0.85em;">' + esc(card.description) + '</div>' +
-        // Resource list
-        '<div style="background:#161b22;border-radius:6px;padding:8px 10px;max-height:120px;overflow-y:auto;">' +
+        '<div style="color:#8b949e;font-size:0.85em;">' + esc(card.description) + '</div>';
+
+    // S3 card gets special per-bucket rows with Browse button
+    var resourcesHtml;
+    if (card.type === 's3-lifecycle') {
+        resourcesHtml = '<div style="display:flex;flex-direction:column;gap:4px;">';
+        (card.resources || []).slice(0, 10).forEach(function(r) {
+            var sizeLabel = r.sizeGb > 0 ? (r.sizeGb >= 1 ? r.sizeGb.toFixed(2) + ' GB' : (r.sizeGb * 1024).toFixed(1) + ' MB') : '—';
+            var costLabel = r.estimatedMonthlyCost > 0 ? '$' + r.estimatedMonthlyCost.toFixed(3) + '/mo' : '';
+            var activityLabel = r.lastModifiedDays != null
+                ? (r.lastModifiedDays >= 90 ? '<span style="color:#ef4444;">⚠ ' + r.lastModifiedDays + 'd ago</span>' : '<span style="color:#6b7280;">' + r.lastModifiedDays + 'd ago</span>')
+                : '<span style="color:#6b7280;">empty</span>';
+            var reasonBadges = (r.reasons || []).map(function(reason) {
+                if (reason === 'no_lifecycle') return '<span style="background:#1e3a5f;color:#60a5fa;font-size:0.7em;padding:1px 5px;border-radius:3px;margin-right:3px;">No lifecycle</span>';
+                if (reason === 'empty') return '<span style="background:#1f2937;color:#9ca3af;font-size:0.7em;padding:1px 5px;border-radius:3px;margin-right:3px;">Empty</span>';
+                if (reason.startsWith('inactive_')) return '<span style="background:#3b1f1f;color:#f87171;font-size:0.7em;padding:1px 5px;border-radius:3px;margin-right:3px;">Inactive ' + reason.split('_')[1] + '</span>';
+                return '';
+            }).join('');
+
+            resourcesHtml +=
+                '<div style="background:#161b22;border-radius:6px;padding:8px 10px;">' +
+                    '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">' +
+                        '<div style="flex:1;min-width:0;">' +
+                            '<div style="font-size:0.82em;color:#c9d1d9;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="' + ea(r.name) + '">' + esc(r.name) + '</div>' +
+                            '<div style="font-size:0.75em;margin-top:2px;">' + reasonBadges + '</div>' +
+                        '</div>' +
+                        '<div style="text-align:right;white-space:nowrap;flex-shrink:0;">' +
+                            '<div style="font-size:0.78em;color:#e6edf3;">' + sizeLabel + (costLabel ? ' · <span style="color:#10b981;">' + costLabel + '</span>' : '') + '</div>' +
+                            '<div style="font-size:0.75em;margin-top:1px;">' + activityLabel + '</div>' +
+                        '</div>' +
+                        '<button class="btn btn-outline btn-sm act-browse-btn" data-bucket="' + ea(r.name) + '" style="font-size:0.75em;padding:2px 8px;flex-shrink:0;">Browse</button>' +
+                    '</div>' +
+                '</div>';
+        });
+        if (card.resources && card.resources.length > 10) {
+            resourcesHtml += '<div style="color:#6b7280;font-size:0.75em;padding:4px 0;">+' + (card.resources.length - 10) + ' more buckets</div>';
+        }
+        resourcesHtml += '</div>';
+    } else {
+        // Default resource list for EIP, EBS, LB
+        resourcesHtml =
+            '<div style="background:#161b22;border-radius:6px;padding:8px 10px;max-height:130px;overflow-y:auto;">' +
             (card.resources || []).slice(0, 8).map(function(r) {
-                var label = r.id || r.name || r.arn || JSON.stringify(r);
-                var sub = r.ip ? ' · ' + r.ip : r.size ? ' · ' + r.size + ' GB ' + (r.type || '') : r.dns ? ' · ' + r.dns.substring(0, 30) : '';
+                var label = r.id || r.name || r.arn || '';
+                var sub = r.ip ? ' · ' + r.ip : r.size ? ' · ' + r.size + ' GB ' + (r.type || '') : r.dns ? ' · ' + r.dns.substring(0, 28) : '';
                 return '<div style="font-size:0.78em;color:#c9d1d9;padding:2px 0;border-bottom:1px solid #21262d;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="' + ea(label) + '">' +
-                    '<span style="color:#6366f1;">▸</span> ' + esc(label.length > 40 ? label.substring(0, 40) + '…' : label) + '<span style="color:#6b7280;">' + esc(sub) + '</span></div>';
+                    '<span style="color:#6366f1;">▸</span> ' + esc(label.length > 42 ? label.substring(0, 42) + '…' : label) + '<span style="color:#6b7280;">' + esc(sub) + '</span></div>';
             }).join('') +
             (card.resources && card.resources.length > 8 ? '<div style="color:#6b7280;font-size:0.75em;padding-top:4px;">+' + (card.resources.length - 8) + ' more</div>' : '') +
-        '</div>' +
-        // Risk badge + action
+            '</div>';
+    }
+
+    var footerHtml =
         '<div style="display:flex;justify-content:space-between;align-items:center;">' +
             '<span style="background:' + riskBg + ';color:' + riskColor + ';font-size:0.75em;padding:2px 8px;border-radius:10px;font-weight:600;">' + (card.risk || 'low').toUpperCase() + ' RISK</span>' +
-            '<button class="btn btn-primary btn-sm act-cleanup-btn" data-card-id="' + ea(card.cardId) + '" style="font-size:0.82em;">🧹 Clean Up Now</button>' +
+            '<button class="btn btn-primary btn-sm act-cleanup-btn" data-card-id="' + ea(card.cardId) + '" style="font-size:0.82em;">🧹 Apply Lifecycle Rules</button>' +
         '</div>';
 
-    // Wire up the cleanup button
-    div.querySelector('.act-cleanup-btn').onclick = function() {
-        _actShowConfirm(card);
-    };
+    div.innerHTML = headerHtml + resourcesHtml + footerHtml;
+
+    // Wire cleanup button
+    div.querySelector('.act-cleanup-btn').onclick = function() { _actShowConfirm(card); };
+
+    // Wire Browse buttons (S3 only)
+    div.querySelectorAll('.act-browse-btn').forEach(function(btn) {
+        btn.onclick = function(e) {
+            e.stopPropagation();
+            _actBrowseBucket(card.accountId, btn.dataset.bucket);
+        };
+    });
 
     return div;
+}
+
+async function _actBrowseBucket(accountId, bucketName) {
+    // Build and show the browse modal
+    var existing = document.getElementById('act-browse-modal');
+    if (existing) existing.remove();
+
+    var modal = document.createElement('div');
+    modal.id = 'act-browse-modal';
+    modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.6);z-index:600;display:flex;align-items:center;justify-content:center;';
+
+    var card = document.createElement('div');
+    card.style.cssText = 'background:#1c2128;border:1px solid #30363d;border-radius:12px;width:700px;max-width:95vw;max-height:85vh;display:flex;flex-direction:column;box-shadow:0 8px 32px rgba(0,0,0,0.5);';
+
+    card.innerHTML =
+        '<div style="padding:16px 20px;border-bottom:1px solid #30363d;display:flex;justify-content:space-between;align-items:center;">' +
+            '<div>' +
+                '<div style="font-weight:700;color:#e6edf3;font-size:1em;">🪣 ' + esc(bucketName) + '</div>' +
+                '<div id="browse-summary" style="color:#6b7280;font-size:0.8em;margin-top:2px;">Loading…</div>' +
+            '</div>' +
+            '<div style="display:flex;gap:8px;align-items:center;">' +
+                '<select id="browse-sort" style="background:#161b22;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:4px 8px;font-size:0.82em;">' +
+                    '<option value="oldest">Oldest first</option>' +
+                    '<option value="largest">Largest first</option>' +
+                    '<option value="newest">Newest first</option>' +
+                '</select>' +
+                '<button onclick="document.getElementById(\'act-browse-modal\').remove();" style="background:none;border:none;color:#8b949e;font-size:1.3em;cursor:pointer;">✕</button>' +
+            '</div>' +
+        '</div>' +
+        '<div id="browse-aged-banner" style="display:none;background:#3b1f1f;border-bottom:1px solid #7f1d1d;padding:8px 20px;font-size:0.82em;color:#fca5a5;"></div>' +
+        '<div id="browse-body" style="flex:1;overflow-y:auto;padding:0;">' +
+            '<div style="padding:40px;text-align:center;color:#6b7280;">Loading bucket contents…</div>' +
+        '</div>';
+
+    modal.appendChild(card);
+    modal.onclick = function(e) { if (e.target === modal) modal.remove(); };
+    document.body.appendChild(modal);
+
+    async function loadBrowse(sortBy) {
+        var bodyEl = document.getElementById('browse-body');
+        var summaryEl = document.getElementById('browse-summary');
+        var agedBanner = document.getElementById('browse-aged-banner');
+        if (bodyEl) bodyEl.innerHTML = '<div style="padding:40px;text-align:center;color:#6b7280;">Loading…</div>';
+
+        try {
+            var data = await api('POST', '/members/actions/browse-bucket', {
+                accountId: accountId,
+                bucketName: bucketName,
+                sortBy: sortBy || 'oldest',
+            });
+
+            if (summaryEl) {
+                summaryEl.innerHTML =
+                    '<span style="color:#e6edf3;">' + (data.totalObjects || 0).toLocaleString() + ' objects</span>' +
+                    ' · <span style="color:#e6edf3;">' + (data.totalSizeGb || 0).toFixed(3) + ' GB</span>' +
+                    ' · <span style="color:#10b981;">$' + (data.estimatedMonthlyCost || 0).toFixed(3) + '/mo</span>' +
+                    (data.truncated ? ' <span style="color:#f59e0b;">(showing first 500)</span>' : '');
+            }
+
+            if (agedBanner) {
+                if (data.agedObjects > 0) {
+                    agedBanner.style.display = 'block';
+                    agedBanner.innerHTML = '⚠ <strong>' + data.agedObjects + ' objects</strong> are 90+ days old (' +
+                        data.agedSizeGb.toFixed(3) + ' GB · $' + data.agedMonthlyCost.toFixed(3) + '/mo) — candidates for Glacier Instant Retrieval';
+                } else {
+                    agedBanner.style.display = 'none';
+                }
+            }
+
+            if (!bodyEl) return;
+            if (!data.objects || data.objects.length === 0) {
+                bodyEl.innerHTML = '<div style="padding:40px;text-align:center;color:#6b7280;">Bucket is empty</div>';
+                return;
+            }
+
+            var rows = '<table style="width:100%;border-collapse:collapse;font-size:0.82em;">' +
+                '<thead><tr style="background:#161b22;position:sticky;top:0;">' +
+                    '<th style="padding:8px 12px;text-align:left;color:#8b949e;font-weight:600;border-bottom:1px solid #30363d;">Object Key</th>' +
+                    '<th style="padding:8px 12px;text-align:right;color:#8b949e;font-weight:600;border-bottom:1px solid #30363d;">Size</th>' +
+                    '<th style="padding:8px 12px;text-align:right;color:#8b949e;font-weight:600;border-bottom:1px solid #30363d;">Last Modified</th>' +
+                    '<th style="padding:8px 12px;text-align:right;color:#8b949e;font-weight:600;border-bottom:1px solid #30363d;">Age</th>' +
+                    '<th style="padding:8px 12px;text-align:left;color:#8b949e;font-weight:600;border-bottom:1px solid #30363d;">Class</th>' +
+                '</tr></thead><tbody>';
+
+            data.objects.forEach(function(obj) {
+                var sizeStr = obj.sizeBytes >= 1073741824
+                    ? (obj.sizeBytes / 1073741824).toFixed(2) + ' GB'
+                    : obj.sizeBytes >= 1048576
+                        ? (obj.sizeBytes / 1048576).toFixed(1) + ' MB'
+                        : (obj.sizeBytes / 1024).toFixed(0) + ' KB';
+                var ageColor = obj.aged ? '#ef4444' : obj.ageDays > 30 ? '#f59e0b' : '#6b7280';
+                var keyShort = obj.key.length > 55 ? '…' + obj.key.slice(-52) : obj.key;
+                rows +=
+                    '<tr style="border-bottom:1px solid #21262d;" onmouseenter="this.style.background=\'#21262d\'" onmouseleave="this.style.background=\'\'">' +
+                        '<td style="padding:6px 12px;color:#c9d1d9;max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + ea(obj.key) + '">' + esc(keyShort) + '</td>' +
+                        '<td style="padding:6px 12px;text-align:right;color:#e6edf3;white-space:nowrap;">' + sizeStr + '</td>' +
+                        '<td style="padding:6px 12px;text-align:right;color:#6b7280;white-space:nowrap;">' + esc(obj.lastModified) + '</td>' +
+                        '<td style="padding:6px 12px;text-align:right;white-space:nowrap;color:' + ageColor + ';font-weight:' + (obj.aged ? '600' : '400') + ';">' + obj.ageDays + 'd' + (obj.aged ? ' ⚠' : '') + '</td>' +
+                        '<td style="padding:6px 12px;color:#6b7280;font-size:0.9em;">' + esc(obj.storageClass || 'STANDARD') + '</td>' +
+                    '</tr>';
+            });
+            rows += '</tbody></table>';
+            bodyEl.innerHTML = rows;
+        } catch (err) {
+            if (bodyEl) bodyEl.innerHTML = '<div style="padding:40px;text-align:center;color:#ef4444;">Error: ' + esc(err.message || 'Failed to load') + '</div>';
+        }
+    }
+
+    // Initial load
+    loadBrowse('oldest');
+
+    // Sort change
+    var sortSel = document.getElementById('browse-sort');
+    if (sortSel) sortSel.onchange = function() { loadBrowse(this.value); };
 }
 
 function _actShowConfirm(card) {

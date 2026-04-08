@@ -96,6 +96,7 @@ def lambda_handler(event, context):
         'POST /members/business-metrics': handle_save_business_metrics,
         'POST /members/actions/scan': handle_actions_scan,
         'POST /members/actions/execute': handle_actions_execute,
+        'POST /members/actions/browse-bucket': handle_browse_bucket,
     }
 
     handler = routes.get(route_key)
@@ -1006,6 +1007,9 @@ def handle_generate_template(event):
                                             's3:GetBucketLocation',
                                             's3:ListBucketMultipartUploads',
                                             's3:AbortMultipartUpload',
+                                            's3:ListBucket',
+                                            's3:GetObject',
+                                            's3:HeadObject',
                                         ],
                                         'Resource': '*'
                                     }
@@ -1962,38 +1966,154 @@ def handle_actions_scan(event):
         except Exception as e:
             logger.warning(f"LB scan failed for {account_id}: {e}")
 
-        # ── 4. S3 Buckets Without Lifecycle Rules ─────────────────────
+        # ── 4. S3 Buckets — no lifecycle, inactive, or aged data ─────
         try:
             s3 = _make_client_from_creds('s3', creds)
+            cw = _make_client_from_creds('cloudwatch', creds)
             buckets = s3.list_buckets().get('Buckets', [])
-            no_lifecycle = []
-            for b in buckets[:20]:  # cap at 20 to avoid timeout
+            now_dt = datetime.now(timezone.utc)
+            cutoff_90 = now_dt - timedelta(days=90)
+            flagged = []
+
+            for b in buckets[:25]:  # cap to avoid timeout
                 bname = b['Name']
+                bucket_info = {
+                    'name': bname,
+                    'created': str(b.get('CreationDate', '')),
+                    'hasLifecycle': False,
+                    'sizeGb': 0.0,
+                    'objectCount': 0,
+                    'estimatedMonthlyCost': 0.0,
+                    'lastModifiedDays': None,  # days since last object change
+                    'reasons': [],
+                }
+
+                # Check lifecycle
                 try:
-                    s3.get_bucket_lifecycle_configuration(Bucket=bname)
+                    lc = s3.get_bucket_lifecycle_configuration(Bucket=bname)
+                    bucket_info['hasLifecycle'] = bool(lc.get('Rules', []))
                 except ClientError as ce:
                     if ce.response['Error']['Code'] == 'NoSuchLifecycleConfiguration':
-                        no_lifecycle.append({'name': bname, 'created': str(b.get('CreationDate', ''))})
-                    # Other errors (access denied etc.) — skip silently
+                        bucket_info['hasLifecycle'] = False
+                        bucket_info['reasons'].append('no_lifecycle')
                 except Exception:
                     pass
-            if no_lifecycle:
+
+                # Get size + object count from CloudWatch (BucketSizeBytes + NumberOfObjects)
+                try:
+                    size_resp = cw.get_metric_statistics(
+                        Namespace='AWS/S3',
+                        MetricName='BucketSizeBytes',
+                        Dimensions=[
+                            {'Name': 'BucketName', 'Value': bname},
+                            {'Name': 'StorageType', 'Value': 'StandardStorage'},
+                        ],
+                        StartTime=now_dt - timedelta(days=3),
+                        EndTime=now_dt,
+                        Period=86400,
+                        Statistics=['Average'],
+                    )
+                    dps = sorted(size_resp.get('Datapoints', []), key=lambda x: x['Timestamp'], reverse=True)
+                    if dps:
+                        size_bytes = dps[0]['Average']
+                        bucket_info['sizeGb'] = round(size_bytes / (1024 ** 3), 3)
+                        # S3 Standard: $0.023/GB/month
+                        bucket_info['estimatedMonthlyCost'] = round(bucket_info['sizeGb'] * 0.023, 4)
+
+                    obj_resp = cw.get_metric_statistics(
+                        Namespace='AWS/S3',
+                        MetricName='NumberOfObjects',
+                        Dimensions=[
+                            {'Name': 'BucketName', 'Value': bname},
+                            {'Name': 'StorageType', 'Value': 'AllStorageTypes'},
+                        ],
+                        StartTime=now_dt - timedelta(days=3),
+                        EndTime=now_dt,
+                        Period=86400,
+                        Statistics=['Average'],
+                    )
+                    obj_dps = sorted(obj_resp.get('Datapoints', []), key=lambda x: x['Timestamp'], reverse=True)
+                    if obj_dps:
+                        bucket_info['objectCount'] = int(obj_dps[0]['Average'])
+                except Exception:
+                    pass  # CloudWatch metrics may not exist for empty/new buckets
+
+                # Check last activity: list objects sorted by LastModified, get most recent
+                try:
+                    objs = s3.list_objects_v2(Bucket=bname, MaxKeys=1)
+                    # list_objects_v2 doesn't sort by date — use list_object_versions or head approach
+                    # Instead use list_objects with sorted result from a small sample
+                    sample = s3.list_objects_v2(Bucket=bname, MaxKeys=50)
+                    contents = sample.get('Contents', [])
+                    if contents:
+                        latest = max(contents, key=lambda o: o['LastModified'])
+                        days_ago = (now_dt - latest['LastModified'].replace(tzinfo=timezone.utc)).days
+                        bucket_info['lastModifiedDays'] = days_ago
+                        if days_ago >= 90:
+                            bucket_info['reasons'].append(f'inactive_{days_ago}d')
+                    else:
+                        bucket_info['lastModifiedDays'] = None  # empty bucket
+                        bucket_info['reasons'].append('empty')
+                except Exception:
+                    pass
+
+                # Flag bucket if any reason found
+                if bucket_info['reasons']:
+                    flagged.append(bucket_info)
+
+            if flagged:
+                # Sort: inactive/aged first, then by size desc
+                def _sort_key(b):
+                    inactive = any('inactive' in r for r in b['reasons'])
+                    return (0 if inactive else 1, -b['sizeGb'])
+                flagged.sort(key=_sort_key)
+
+                total_s3_gb = sum(b['sizeGb'] for b in flagged)
+                total_s3_cost = sum(b['estimatedMonthlyCost'] for b in flagged)
+                total_savings += total_s3_cost
+
+                # Build reason labels
+                def _reason_label(reasons):
+                    labels = []
+                    if 'no_lifecycle' in reasons:
+                        labels.append('No lifecycle policy')
+                    if 'empty' in reasons:
+                        labels.append('Empty bucket')
+                    for r in reasons:
+                        if r.startswith('inactive_'):
+                            days = r.split('_')[1].replace('d', '')
+                            labels.append(f'No activity for {days} days')
+                    return ' · '.join(labels) if labels else 'Flagged'
+
                 all_cards.append({
                     'cardId': f's3-{account_id}',
                     'accountId': account_id,
                     'accountLabel': acct_label,
                     'type': 's3-lifecycle',
-                    'title': 'S3 Buckets Without Lifecycle Rules',
+                    'title': 'S3 Buckets Needing Attention',
                     'icon': '🪣',
-                    'count': len(no_lifecycle),
-                    'description': f'{len(no_lifecycle)} bucket(s) have no lifecycle policy — old data may be accumulating in Standard storage',
-                    'monthlySavings': None,  # Savings depend on bucket size
+                    'count': len(flagged),
+                    'description': f'{len(flagged)} bucket(s) flagged — {round(total_s3_gb, 1)} GB total, est. ${round(total_s3_cost, 2)}/month in Standard storage',
+                    'monthlySavings': round(total_s3_cost, 2) if total_s3_cost > 0 else None,
+                    'totalGb': round(total_s3_gb, 2),
                     'risk': 'low',
-                    'resources': no_lifecycle[:10],
-                    'action': 'Enable S3 Intelligent-Tiering or transition objects >90 days to Glacier Instant Retrieval',
+                    'resources': [
+                        {
+                            'name': b['name'],
+                            'created': b['created'],
+                            'sizeGb': b['sizeGb'],
+                            'objectCount': b['objectCount'],
+                            'estimatedMonthlyCost': b['estimatedMonthlyCost'],
+                            'lastModifiedDays': b['lastModifiedDays'],
+                            'reasons': b['reasons'],
+                            'reasonLabel': _reason_label(b['reasons']),
+                        }
+                        for b in flagged[:15]
+                    ],
+                    'action': 'Apply S3 Intelligent-Tiering lifecycle or transition aged objects to Glacier Instant Retrieval',
                 })
         except Exception as e:
-            logger.warning(f"S3 lifecycle scan failed for {account_id}: {e}")
+            logger.warning(f"S3 scan failed for {account_id}: {e}")
 
     all_cards.sort(key=lambda c: (c.get('monthlySavings') or 0), reverse=True)
     return create_response(200, {
@@ -2129,6 +2249,89 @@ def handle_actions_execute(event):
         'failed': errors,
         'executedAt': datetime.now(timezone.utc).isoformat(),
     })
+
+
+def handle_browse_bucket(event):
+    """Return top objects in an S3 bucket sorted by LastModified (oldest first for aged data review)."""
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+    member_email = auth['sub']
+
+    try:
+        body = json.loads(event.get('body', '{}'))
+    except (json.JSONDecodeError, TypeError):
+        return create_error_response(400, 'InvalidRequest', 'Invalid request body')
+
+    account_id = (body.get('accountId') or '').strip()
+    bucket_name = (body.get('bucketName') or '').strip()
+    sort_by = (body.get('sortBy') or 'oldest').strip()  # 'oldest' | 'largest' | 'newest'
+
+    if not re.fullmatch(r'\d{12}', account_id):
+        return create_error_response(400, 'InvalidAccountId', 'Account ID must be exactly 12 digits')
+    if not bucket_name:
+        return create_error_response(400, 'InvalidRequest', 'bucketName is required')
+
+    ownership = _verify_account_ownership(member_email, [account_id])
+    if isinstance(ownership, dict):
+        return ownership
+
+    try:
+        creds = _assume_role_for_account(member_email, account_id)
+    except Exception as e:
+        return create_error_response(400, 'ConnectionFailed', str(e))
+
+    s3 = _make_client_from_creds('s3', creds)
+    now_dt = datetime.now(timezone.utc)
+
+    try:
+        # Paginate up to 500 objects for analysis
+        objects = []
+        paginator = s3.get_paginator('list_objects_v2')
+        for page in paginator.paginate(Bucket=bucket_name, PaginationConfig={'MaxItems': 500}):
+            for obj in page.get('Contents', []):
+                last_mod = obj['LastModified'].replace(tzinfo=timezone.utc)
+                age_days = (now_dt - last_mod).days
+                objects.append({
+                    'key': obj['Key'],
+                    'sizeBytes': obj['Size'],
+                    'sizeGb': round(obj['Size'] / (1024 ** 3), 6),
+                    'lastModified': last_mod.strftime('%Y-%m-%d'),
+                    'ageDays': age_days,
+                    'storageClass': obj.get('StorageClass', 'STANDARD'),
+                    'aged': age_days >= 90,
+                })
+
+        total_objects = len(objects)
+        total_size_gb = round(sum(o['sizeGb'] for o in objects), 4)
+        aged_objects = [o for o in objects if o['aged']]
+        aged_size_gb = round(sum(o['sizeGb'] for o in aged_objects), 4)
+        estimated_cost = round(total_size_gb * 0.023, 4)  # S3 Standard $0.023/GB
+        aged_cost = round(aged_size_gb * 0.023, 4)
+
+        # Sort
+        if sort_by == 'oldest':
+            objects.sort(key=lambda o: o['ageDays'], reverse=True)
+        elif sort_by == 'largest':
+            objects.sort(key=lambda o: o['sizeBytes'], reverse=True)
+        else:  # newest
+            objects.sort(key=lambda o: o['ageDays'])
+
+        return create_response(200, {
+            'bucketName': bucket_name,
+            'totalObjects': total_objects,
+            'totalSizeGb': total_size_gb,
+            'estimatedMonthlyCost': estimated_cost,
+            'agedObjects': len(aged_objects),
+            'agedSizeGb': aged_size_gb,
+            'agedMonthlyCost': aged_cost,
+            'objects': objects[:100],  # top 100 after sort
+            'truncated': total_objects > 500,
+        })
+    except ClientError as e:
+        return create_error_response(400, 'S3Error', str(e.response['Error']['Message']))
+    except Exception as e:
+        return create_error_response(500, 'ServerError', str(e))
 
 
 def _get_unit_economics(member_email, monthly_trend):
