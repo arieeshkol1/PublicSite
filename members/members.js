@@ -422,13 +422,18 @@ function renderAccounts(accounts) {
     accountsEmpty.hidden = true;
     accounts.forEach(function(a, idx) {
         var statusClass = 'status-' + (a.connectionStatus || 'pending');
+        var hourlyBadge = a.connectionStatus === 'connected'
+            ? (a.hourlyEnabled
+                ? '<span title="Hourly granularity enabled" style="color:#16a34a;font-size:11px;margin-left:4px;">⏱✓</span>'
+                : '<span title="Hourly granularity not enabled — click ⏱ to enable" style="color:#d97706;font-size:11px;margin-left:4px;">⏱✗</span>')
+            : '';
         var tr = document.createElement('tr');
         tr.innerHTML =
             '<td style="color:#999;font-size:12px">' + (idx + 1) + '</td>' +
             '<td>' + esc(a.accountId || '') + '</td>' +
             '<td>' + esc(a.accountName || '-') + '</td>' +
             '<td>' + esc(a.roleName || '') + '</td>' +
-            '<td><span class="status-badge ' + statusClass + '">' + esc(a.connectionStatus || 'pending') + '</span></td>' +
+            '<td><span class="status-badge ' + statusClass + '">' + esc(a.connectionStatus || 'pending') + '</span>' + hourlyBadge + '</td>' +
             '<td>' + fmtDate(a.addedAt) + '</td>' +
             '<td>' + fmtDate(a.lastTestedAt) + '</td>' +
             '<td class="actions-cell">' +
@@ -617,8 +622,17 @@ async function testConnection(accountId, btn) {
     try {
         showLoading();
         var data = await api('POST', '/members/accounts/test', { accountId: accountId });
-        notify(data.message || 'Connection test complete.', 'success');
+        var msg = data.message || 'Connection test complete.';
+        notify(msg, 'success');
         await loadAccounts();
+        // If hourly is not enabled, show the enable modal after a short delay
+        if (data.hourlyEnabled === false) {
+            setTimeout(function() {
+                if (confirm('Hourly granularity is not enabled on this account.\n\nWould you like to see how to enable it for real-time cost tracking?')) {
+                    showEnableHourlyModal(accountId);
+                }
+            }, 800);
+        }
     } catch (err) {
         notify(err.message || 'Connection test failed.', 'error');
         await loadAccounts();
@@ -795,7 +809,12 @@ wizTestBtn.onclick = async function() {
         var data = await api('POST', '/members/accounts/test', { accountId: wizardAccountId });
         wizTestResult.hidden = false;
         wizTestResult.className = 'wizard-test-result test-success';
-        wizTestResult.innerHTML = '<strong>&#10003; Connection Successful!</strong><br>' + (data.message || 'Cost data is accessible.');
+        var hourlyNote = data.hourlyEnabled
+            ? ' <span style="color:#16a34a;">⏱✓ Hourly enabled</span>'
+            : ' <span style="color:#d97706;">⏱✗ Hourly not enabled</span>';
+        wizTestResult.innerHTML = '<strong>&#10003; Connection Successful!</strong>' + hourlyNote + '<br>' + (data.message || 'Cost data is accessible.');
+        // Update hourly status section
+        _updateWizHourlyStatus(data.hourlyEnabled);
     } catch (err) {
         wizTestResult.hidden = false;
         if (err.message && err.message.includes('Cost Explorer')) {
@@ -809,6 +828,37 @@ wizTestBtn.onclick = async function() {
         await loadAccounts();
     }
 };
+
+function _updateWizHourlyStatus(enabled) {
+    var statusDiv = $('wiz-hourly-status');
+    if (!statusDiv) return;
+    if (enabled === true) {
+        statusDiv.innerHTML = '<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:6px;padding:8px 12px;color:#16a34a;font-size:0.85em;">✓ Hourly granularity is <strong>enabled</strong> on this account.</div>';
+    } else if (enabled === false) {
+        statusDiv.innerHTML = '<div style="background:#fff7ed;border:1px solid #fed7aa;border-radius:6px;padding:8px 12px;color:#92400e;font-size:0.85em;">✗ Not enabled yet. Click "Open CE Settings" above, enable "Hourly and Resource Level Data", then check again after 24–48 hours.</div>';
+    } else {
+        statusDiv.innerHTML = '';
+    }
+}
+
+var wizCheckHourlyBtn = $('wiz-check-hourly-btn');
+if (wizCheckHourlyBtn) {
+    wizCheckHourlyBtn.onclick = async function() {
+        if (!wizardAccountId) return;
+        wizCheckHourlyBtn.disabled = true;
+        wizCheckHourlyBtn.textContent = 'Checking...';
+        try {
+            var data = await api('POST', '/members/accounts/test', { accountId: wizardAccountId });
+            _updateWizHourlyStatus(data.hourlyEnabled);
+            await loadAccounts();
+        } catch (err) {
+            _updateWizHourlyStatus(null);
+        } finally {
+            wizCheckHourlyBtn.disabled = false;
+            wizCheckHourlyBtn.textContent = 'Check Hourly Status';
+        }
+    };
+}
 
 // Override the add account flow to show wizard after adding
 var _originalAccountFormSubmit = accountForm.onsubmit;
@@ -857,13 +907,18 @@ renderAccounts = function(accounts) {
         var setupBtn = (a.connectionStatus === 'pending' || a.connectionStatus === 'failed')
             ? '<button class="btn-icon btn-icon-test" data-a="setup" data-id="' + ea(a.accountId) + '" title="Setup Wizard" style="background:rgba(0,102,255,0.1);color:#0066ff;">&#9881;</button> '
             : '';
+        var hourlyBadge2 = a.connectionStatus === 'connected'
+            ? (a.hourlyEnabled
+                ? '<span title="Hourly granularity enabled" style="color:#16a34a;font-size:11px;margin-left:4px;">⏱✓</span>'
+                : '<span title="Hourly granularity not enabled — click ⏱ to enable" style="color:#d97706;font-size:11px;margin-left:4px;">⏱✗</span>')
+            : '';
         var tr = document.createElement('tr');
         tr.innerHTML =
             '<td style="color:#999;font-size:12px">' + (idx + 1) + '</td>' +
             '<td>' + esc(a.accountId || '') + '</td>' +
             '<td>' + esc(a.accountName || '-') + '</td>' +
             '<td>' + esc(a.roleName || '') + '</td>' +
-            '<td><span class="status-badge ' + statusClass + '">' + esc(a.connectionStatus || 'pending') + '</span></td>' +
+            '<td><span class="status-badge ' + statusClass + '">' + esc(a.connectionStatus || 'pending') + '</span>' + hourlyBadge2 + '</td>' +
             '<td>' + fmtDate(a.addedAt) + '</td>' +
             '<td>' + fmtDate(a.lastTestedAt) + '</td>' +
             '<td class="actions-cell">' +
@@ -2375,37 +2430,127 @@ function _renderTreemap(costByService, drillDown) {
     var el = $('dash-treemap'); if (!el || !window.echarts) return;
     var chart = echarts.init(el, null);
 
-    // Build treemap data with children for drill-down
-    var treeData = costByService.map(function(s) {
-        var svcKey = s.service.replace(/ /g, '_').replace(/-/g, '_');
-        var dd = _dashDrillDown[svcKey];
-        var item = { name: s.service.replace('Amazon ','').replace('AWS ',''), value: s.cost, pct: s.pct };
-        if (dd && dd.usageTypes) {
-            item.children = dd.usageTypes.map(function(ut) {
-                return { name: ut.usageType.split(':').pop().split('-').pop(), value: ut.cost, fullName: ut.usageType };
-            });
-        }
-        return item;
+    // Flat treemap — no children (avoids broken ECharts drill-down)
+    // Clicking a tile opens a detail panel instead
+    var colors = ['#6366f1','#10b981','#f59e0b','#ef4444','#8b5cf6','#ec4899','#14b8a6','#f97316','#06b6d4','#84cc16'];
+    var treeData = costByService.map(function(s, i) {
+        return {
+            name: s.service.replace('Amazon ','').replace('AWS ',''),
+            fullName: s.service,
+            value: s.cost,
+            pct: s.pct,
+            itemStyle: { color: colors[i % colors.length] }
+        };
     });
 
     chart.setOption({
         tooltip: { formatter: function(p) {
-            var name = p.data.fullName || p.name;
-            return name + ': $' + p.value.toFixed(2) + (p.data.pct ? ' (' + p.data.pct + '%)' : '');
+            return (p.data.fullName || p.name) + ': $' + p.value.toFixed(2) + (p.data.pct ? ' (' + p.data.pct + '%)' : '') + '<br><span style="color:#aaa;font-size:11px;">Click for details</span>';
         }},
         series: [{ type: 'treemap', data: treeData,
-            label: { show: true, formatter: '{b}\n${c}', fontSize: 10 },
-            breadcrumb: { show: true, itemStyle: { color: '#6366f1' }, textStyle: { color: '#fff', fontSize: 10 } },
-            upperLabel: { show: true, height: 20, color: '#fff', fontSize: 10 },
+            label: { show: true, formatter: function(p) { return p.name + '\n$' + p.value.toFixed(2); }, fontSize: 11, color: '#fff' },
+            breadcrumb: { show: false },
             itemStyle: { borderColor: '#fff', borderWidth: 2 },
-            levels: [
-                { itemStyle: { borderWidth: 3, gapWidth: 3 }, upperLabel: { show: false } },
-                { itemStyle: { borderWidth: 1, gapWidth: 1 }, label: { fontSize: 9 } }
-            ],
+            levels: [{ itemStyle: { borderWidth: 3, gapWidth: 3 } }],
+            roam: false,
         }],
-        color: ['#6366f1','#10b981','#f59e0b','#ef4444','#8b5cf6','#ec4899','#14b8a6','#f97316','#06b6d4','#84cc16'],
     });
+
+    // Click → show detail panel
+    chart.on('click', function(params) {
+        _showServiceDrillPanel(params.data.fullName || params.name, params.data.value, params.data.pct, params.color);
+    });
+
     window.addEventListener('resize', function() { chart.resize(); });
+}
+
+function _showServiceDrillPanel(serviceName, totalCost, pct, color) {
+    // Find drill-down data
+    var svcKey = serviceName.replace(/ /g, '_').replace(/-/g, '_');
+    // Also try without Amazon/AWS prefix
+    var svcKeyShort = serviceName.replace('Amazon ','').replace('AWS ','').replace(/ /g, '_').replace(/-/g, '_');
+    var dd = _dashDrillDown[svcKey] || _dashDrillDown[svcKeyShort];
+
+    // Remove existing panel
+    var existing = document.getElementById('svc-drill-panel');
+    if (existing) existing.remove();
+
+    var panel = document.createElement('div');
+    panel.id = 'svc-drill-panel';
+    panel.style.cssText = 'position:fixed;top:0;right:0;width:420px;max-width:95vw;height:100vh;background:#1c2128;border-left:2px solid #30363d;z-index:500;overflow-y:auto;box-shadow:-4px 0 20px rgba(0,0,0,0.4);display:flex;flex-direction:column;';
+
+    var header = '<div style="padding:16px 20px;border-bottom:1px solid #30363d;display:flex;align-items:center;justify-content:space-between;">' +
+        '<div>' +
+            '<div style="font-size:1.1em;font-weight:700;color:#e6edf3;">' + esc(serviceName.replace('Amazon ','').replace('AWS ','')) + '</div>' +
+            '<div style="color:#10b981;font-size:1.3em;font-weight:700;">$' + (totalCost||0).toFixed(2) + (pct ? ' <span style="color:#6b7280;font-size:0.75em;">(' + pct + '%)</span>' : '') + '</div>' +
+        '</div>' +
+        '<button onclick="document.getElementById(\'svc-drill-panel\').remove();" style="background:none;border:none;color:#8b949e;font-size:1.4em;cursor:pointer;padding:4px;">✕</button>' +
+    '</div>';
+
+    var body = '<div style="padding:16px 20px;flex:1;">';
+
+    if (dd && dd.usageTypes && dd.usageTypes.length > 0) {
+        // Sort by cost desc
+        var items = dd.usageTypes.slice().sort(function(a,b){ return b.cost - a.cost; });
+        var maxCost = items[0].cost;
+
+        body += '<div style="color:#8b949e;font-size:0.8em;margin-bottom:12px;text-transform:uppercase;letter-spacing:0.05em;">Usage Type Breakdown</div>';
+
+        // Mini bar chart using divs
+        items.forEach(function(ut, i) {
+            var barPct = maxCost > 0 ? (ut.cost / maxCost * 100) : 0;
+            var label = ut.usageType || ut.name || 'Unknown';
+            // Shorten label: take last meaningful segment
+            var shortLabel = label.split(':').pop().split('/').pop();
+            body += '<div style="margin-bottom:10px;">' +
+                '<div style="display:flex;justify-content:space-between;margin-bottom:3px;">' +
+                    '<span style="color:#c9d1d9;font-size:0.82em;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + esc(label) + '">' + esc(shortLabel) + '</span>' +
+                    '<span style="color:#10b981;font-size:0.82em;font-weight:600;white-space:nowrap;margin-left:8px;">$' + ut.cost.toFixed(2) + '</span>' +
+                '</div>' +
+                '<div style="background:#21262d;border-radius:3px;height:6px;">' +
+                    '<div style="background:' + (color || '#6366f1') + ';width:' + barPct.toFixed(1) + '%;height:6px;border-radius:3px;transition:width 0.4s;"></div>' +
+                '</div>' +
+            '</div>';
+        });
+
+        // Total row
+        body += '<div style="border-top:1px solid #30363d;padding-top:10px;margin-top:4px;display:flex;justify-content:space-between;">' +
+            '<span style="color:#8b949e;font-size:0.85em;">Total</span>' +
+            '<span style="color:#e6edf3;font-weight:700;">$' + (totalCost||0).toFixed(2) + '</span>' +
+        '</div>';
+    } else {
+        body += '<div style="color:#8b949e;font-size:0.9em;padding:20px 0;">No usage type breakdown available for this service.<br><br>Usage type data is fetched when Cost Explorer has resource-level data enabled.</div>';
+    }
+
+    // Chat link
+    body += '<div style="margin-top:20px;padding-top:16px;border-top:1px solid #30363d;">' +
+        '<button onclick="_drillToChat(this);" data-svc="' + ea(serviceName) + '" class="btn btn-primary" style="width:100%;font-size:0.9em;">💬 Ask AI about ' + esc(serviceName.replace('Amazon ','').replace('AWS ','')) + '</button>' +
+    '</div>';
+
+    body += '</div>';
+
+    panel.innerHTML = header + body;
+
+    // Close on outside click
+    panel.addEventListener('click', function(e) { e.stopPropagation(); });
+    document.addEventListener('click', function _closeDrill(e) {
+        var p = document.getElementById('svc-drill-panel');
+        if (p && !p.contains(e.target)) { p.remove(); document.removeEventListener('click', _closeDrill); }
+    });
+
+    document.body.appendChild(panel);
+}
+
+function _drillToChat(btn) {
+    var serviceName = btn.dataset.svc || btn;
+    var panel = document.getElementById('svc-drill-panel');
+    if (panel) panel.remove();
+    _syncAccountSelection('dash');
+    document.querySelector('[data-tab="ai-tab"]').click();
+    setTimeout(function() {
+        var q = 'Break down my ' + serviceName + ' costs in detail — what are the main usage types and how can I reduce them?';
+        if (aiQuestionInput) { aiQuestionInput.value = q; aiQuestionInput.focus(); }
+    }, 300);
 }
 
 function _renderDailyTrend(daily, hourly) {
@@ -2867,7 +3012,6 @@ function showBusinessMetricsModal() {
 // Enable Hourly Cost Data
 // ============================================================
 function showEnableHourlyModal(accountId) {
-    var consoleUrl = 'https://' + accountId + '.signin.aws.amazon.com/console/billing/home#/preferences';
     var modal = document.createElement('div');
     modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);z-index:1000;display:flex;align-items:center;justify-content:center;';
     var card = document.createElement('div');
@@ -2882,19 +3026,47 @@ function showEnableHourlyModal(accountId) {
                 '<li>Go to <strong>AWS Cost Management \u2192 Cost Explorer \u2192 Settings</strong></li>' +
                 '<li>Under "Cost Explorer", check <strong>"Hourly and Resource Level Data"</strong></li>' +
                 '<li>Click <strong>Save</strong></li>' +
-                '<li>Wait 24 hours for hourly data to become available</li>' +
+                '<li>Wait 24\u201348 hours for hourly data to become available</li>' +
             '</ol>' +
         '</div>' +
-        '<div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:12px;margin-bottom:16px;">' +
-            '<div style="font-size:0.85em;color:#1e40af;"><strong>Note:</strong> Enabling hourly granularity adds ~$0.01 per 1,000 requests to your Cost Explorer costs (typically &lt;$1/month). For linked accounts, this must be enabled from the management (payer) account.</div>' +
+        '<div style="background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;padding:12px;margin-bottom:12px;">' +
+            '<div style="font-size:0.85em;color:#92400e;"><strong>Why console-only?</strong> AWS does not currently provide an API to enable this setting programmatically. It must be done manually in the console once per account.</div>' +
         '</div>' +
-        '<div style="display:flex;gap:8px;justify-content:flex-end;">' +
-            '<button onclick="this.closest(\'.modal-overlay\') ? this.closest(\'.modal-overlay\').remove() : this.parentElement.parentElement.parentElement.remove();" class="btn btn-outline">Close</button>' +
+        '<div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:12px;margin-bottom:16px;">' +
+            '<div style="font-size:0.85em;color:#1e40af;"><strong>Cost:</strong> ~$0.01 per 1,000 usage records/month (typically &lt;$1/month). For linked accounts, enable from the management (payer) account.</div>' +
+        '</div>' +
+        '<div id="hourly-check-result-' + accountId + '" style="margin-bottom:12px;"></div>' +
+        '<div style="display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;">' +
+            '<button id="hourly-check-btn-' + accountId + '" class="btn btn-outline">Check Status</button>' +
             '<a href="https://us-east-1.console.aws.amazon.com/cost-management/home?region=us-east-1#/settings" target="_blank" rel="noopener" class="btn btn-primary" style="text-decoration:none;">Open Cost Explorer Settings \u2192</a>' +
         '</div>';
-    card.querySelector('.btn-outline').onclick = function() { modal.remove(); };
     modal.appendChild(card);
     modal.className = 'modal-overlay';
     modal.onclick = function(e) { if (e.target === modal) modal.remove(); };
     document.body.appendChild(modal);
+
+    // Wire up the Check Status button
+    var checkBtn = document.getElementById('hourly-check-btn-' + accountId);
+    var resultDiv = document.getElementById('hourly-check-result-' + accountId);
+    if (checkBtn) {
+        checkBtn.onclick = async function() {
+            checkBtn.disabled = true;
+            checkBtn.textContent = 'Checking...';
+            resultDiv.innerHTML = '';
+            try {
+                var data = await api('POST', '/members/accounts/test', { accountId: accountId });
+                if (data.hourlyEnabled) {
+                    resultDiv.innerHTML = '<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:6px;padding:10px;color:#16a34a;font-size:0.9em;">✓ Hourly granularity is <strong>enabled</strong> on this account.</div>';
+                } else {
+                    resultDiv.innerHTML = '<div style="background:#fff7ed;border:1px solid #fed7aa;border-radius:6px;padding:10px;color:#92400e;font-size:0.9em;">✗ Hourly granularity is <strong>not yet enabled</strong>. After enabling in the console, wait 24\u201348 hours and check again.</div>';
+                }
+                await loadAccounts();
+            } catch (err) {
+                resultDiv.innerHTML = '<div style="background:#fef2f2;border:1px solid #fecaca;border-radius:6px;padding:10px;color:#dc2626;font-size:0.9em;">Error: ' + esc(err.message || 'Check failed') + '</div>';
+            } finally {
+                checkBtn.disabled = false;
+                checkBtn.textContent = 'Check Status';
+            }
+        };
+    }
 }

@@ -804,6 +804,44 @@ def handle_delete_account(event):
             ExternalId=external_id,
         )
         creds = assume['Credentials']
+
+        # First, clean up the IAM role (detach policies, delete inline policies, delete role)
+        # This is needed because CloudFormation can't delete a role with policies attached
+        iam = boto3.client(
+            'iam',
+            aws_access_key_id=creds['AccessKeyId'],
+            aws_secret_access_key=creds['SecretAccessKey'],
+            aws_session_token=creds['SessionToken'],
+            region_name='us-east-1',
+        )
+        role_name = f'SlashMyBill-{account_id}'
+        try:
+            # Detach all managed policies
+            attached = iam.list_attached_role_policies(RoleName=role_name).get('AttachedPolicies', [])
+            for pol in attached:
+                try:
+                    iam.detach_role_policy(RoleName=role_name, PolicyArn=pol['PolicyArn'])
+                except Exception:
+                    pass
+
+            # Delete all inline policies
+            inline = iam.list_role_policies(RoleName=role_name).get('PolicyNames', [])
+            for pol_name in inline:
+                try:
+                    iam.delete_role_policy(RoleName=role_name, PolicyName=pol_name)
+                except Exception:
+                    pass
+
+            # Delete the role itself
+            try:
+                iam.delete_role(RoleName=role_name)
+                logger.info(f"Deleted IAM role {role_name} in account {account_id}")
+            except Exception as e:
+                logger.warning(f"Could not delete role {role_name}: {e}")
+        except Exception as e:
+            logger.warning(f"IAM cleanup failed for {role_name}: {e}")
+
+        # Now delete the CloudFormation stack
         cf = boto3.client(
             'cloudformation',
             aws_access_key_id=creds['AccessKeyId'],
@@ -927,6 +965,9 @@ def handle_generate_template(event):
                                             'ce:GetDimensionValues',
                                             'ce:GetTags',
                                             'ce:ListCostAllocationTags',
+                                            'ce:GetApproximateUsageRecords',
+                                            'ce:UpdatePreferences',
+                                            'ce:GetPreferences',
                                             # Budgets
                                             'budgets:ViewBudget',
                                             'budgets:DescribeBudgets',
@@ -1136,10 +1177,51 @@ def handle_test_connection(event):
             'Please verify the role policy includes ce:GetCostAndUsage permission.'
         )
 
+    # Step 3: Probe hourly granularity availability
+    hourly_enabled = False
+    try:
+        end_dt = datetime.now(timezone.utc)
+        start_dt = end_dt - timedelta(days=2)
+        hourly_resp = ce_client.get_cost_and_usage(
+            TimePeriod={
+                'Start': start_dt.strftime('%Y-%m-%d'),
+                'End': end_dt.strftime('%Y-%m-%d'),
+            },
+            Granularity='HOURLY',
+            Metrics=['UnblendedCost'],
+        )
+        # If we get results with hourly data, it's enabled
+        results = hourly_resp.get('ResultsByTime', [])
+        hourly_enabled = len(results) > 2  # Daily would give <=2, hourly gives 24+
+    except ClientError as e:
+        err_code = (e.response or {}).get('Error', {}).get('Code', '')
+        err_msg = (e.response or {}).get('Error', {}).get('Message', '')
+        if 'BillNotEnabled' in err_code or 'hourly' in err_msg.lower() or 'granularity' in err_msg.lower():
+            hourly_enabled = False
+        else:
+            logger.warning(f"Hourly probe failed for {account_id}: {e}")
+            hourly_enabled = False
+
     # Full success
     _update_connection_status(accounts_table, member_email, account_id, 'connected', now_iso)
-    logger.info(f"Connection test successful for account {account_id}, member {member_email}")
-    return create_response(200, {'status': 'connected', 'message': 'Connection verified. Cost data is accessible.'})
+
+    # Store hourly status on the account record
+    try:
+        accounts_table.update_item(
+            Key={'memberEmail': member_email, 'accountId': account_id},
+            UpdateExpression='SET hourlyEnabled = :h',
+            ExpressionAttributeValues={':h': hourly_enabled},
+        )
+    except ClientError:
+        pass  # Non-critical
+
+    logger.info(f"Connection test successful for account {account_id}, member {member_email}, hourly={hourly_enabled}")
+    msg = 'Connection verified. Cost data is accessible.'
+    if hourly_enabled:
+        msg += ' Hourly granularity is enabled ✓'
+    else:
+        msg += ' Hourly granularity is NOT enabled — enable it in Cost Explorer Settings for real-time tracking.'
+    return create_response(200, {'status': 'connected', 'hourlyEnabled': hourly_enabled, 'message': msg})
 
 
 def handle_dashboard_data(event):

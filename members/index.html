@@ -6,7 +6,7 @@
     <title>Member Portal - SlashMyBill</title>
     <link rel="icon" type="image/png" href="../SlashMyBill.png">
     <link rel="stylesheet" href="../styles.css">
-    <link rel="stylesheet" href="members.css?v=17">
+    <link rel="stylesheet" href="members.css?v=18">
     <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
 </head>
 <body>
@@ -342,16 +342,25 @@
                     <div class="wizard-note">Check "Hourly and Resource Level Data" and click Save. You can also skip this and enable later.</div>
                 </div>
 
-                <!-- Step 4: Test Connection -->
+                <!-- Step 4: Test Connection + Hourly Check -->
                 <div id="wiz-step-4" class="wizard-step-content" hidden>
                     <div class="wizard-icon">&#9889;</div>
-                    <h3>Step 4: Test the Connection</h3>
-                    <p>Let's verify that SlashMyBill can access your AWS account's billing data through the role you just created.</p>
+                    <h3>Step 4: Test &amp; Configure</h3>
+                    <p>Verify the connection and optionally enable hourly cost tracking for real-time insights.</p>
                     <div id="wiz-test-result" class="wizard-test-result" hidden></div>
                     <button id="wiz-test-btn" class="btn btn-primary btn-full">
                         &#9889; Test Connection
                     </button>
-                    <div class="wizard-note">This will attempt to assume the IAM role and read your Cost Explorer data.</div>
+                    <div class="wizard-note" style="margin-bottom:16px;">This will attempt to assume the IAM role and read your Cost Explorer data.</div>
+                    <div id="wiz-hourly-section" style="border-top:1px solid #e5e7eb;padding-top:16px;margin-top:4px;">
+                        <div style="font-weight:600;color:#1f2937;margin-bottom:6px;">&#9201; Hourly Cost Tracking <span style="font-size:11px;color:#6b7280;font-weight:400;">(optional, recommended)</span></div>
+                        <p style="font-size:0.85em;color:#6b7280;margin:0 0 10px;">Enables real-time hourly cost charts. Must be enabled manually in AWS Cost Explorer Settings (management account only).</p>
+                        <div id="wiz-hourly-status" style="margin-bottom:10px;"></div>
+                        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                            <button id="wiz-check-hourly-btn" class="btn btn-outline btn-sm" style="font-size:13px;">Check Hourly Status</button>
+                            <a href="https://us-east-1.console.aws.amazon.com/cost-management/home?region=us-east-1#/settings" target="_blank" rel="noopener" class="btn btn-outline btn-sm" style="font-size:13px;text-decoration:none;">Open CE Settings &#8599;</a>
+                        </div>
+                    </div>
                 </div>
             </div>
             <div class="modal-footer">
@@ -438,6 +447,6 @@
         <span id="notification-message"></span>
     </div>
 
-    <script src="members.js?v=17"></script>
+    <script src="members.js?v=18"></script>
 </body>
 </html>
