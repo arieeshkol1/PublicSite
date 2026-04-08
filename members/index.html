@@ -6,7 +6,7 @@
     <title>Member Portal - SlashMyBill</title>
     <link rel="icon" type="image/png" href="../SlashMyBill.png">
     <link rel="stylesheet" href="../styles.css">
-    <link rel="stylesheet" href="members.css?v=19">
+    <link rel="stylesheet" href="members.css?v=20">
     <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
 </head>
 <body>
@@ -166,6 +166,10 @@
                 <button class="member-tab active" data-tab="dash-tab">Observe</button>
                 <button class="member-tab" data-tab="ai-tab">Chat</button>
                 <button class="member-tab" data-tab="accounts-tab">Configure</button>
+                <button class="member-tab" data-tab="act-tab">Act</button>
+            </div>
+            <div id="act-tab" class="member-tab-content" hidden>
+                <div style="padding:40px;color:#e6edf3;font-size:1.1em;">Hello World</div>
             </div>
             <div id="accounts-tab" class="member-tab-content" hidden>
             <div class="tab-toolbar">
@@ -447,6 +451,6 @@
         <span id="notification-message"></span>
     </div>
 
-    <script src="members.js?v=19"></script>
+    <script src="members.js?v=20"></script>
 </body>
 </html>
