@@ -3364,10 +3364,13 @@ async function _actRunScan(accountIds) {
         ALL_CATEGORIES.forEach(function(cat) {
             var found = cardsByType[cat.type] || [];
             if (found.length > 0) {
-                // Render each found card
-                found.forEach(function(card) {
-                    if (grid) grid.appendChild(_actBuildCard(card));
-                });
+                if (found.length === 1) {
+                    // Single account — render as-is
+                    if (grid) grid.appendChild(_actBuildCard(found[0]));
+                } else {
+                    // Multiple accounts — merge into one combined card
+                    if (grid) grid.appendChild(_actBuildMergedCard(cat, found));
+                }
             } else {
                 // Render a "clean" placeholder card
                 if (grid) grid.appendChild(_actBuildCleanCard(cat));
@@ -3441,6 +3444,37 @@ function _actBuildCleanCard(cat) {
     return div;
 }
 
+function _actBuildMergedCard(cat, cards) {
+    // Merge multiple per-account cards of the same type into one combined card
+    var totalCount = cards.reduce(function(s, c) { return s + (c.count || 0); }, 0);
+    var totalSavings = cards.reduce(function(s, c) { return s + (c.monthlySavings || 0); }, 0);
+    var highestRisk = cards.some(function(c) { return c.risk === 'high'; }) ? 'high'
+        : cards.some(function(c) { return c.risk === 'medium'; }) ? 'medium' : 'low';
+
+    // Build a merged card using the first card as template, with all resources combined
+    var merged = Object.assign({}, cards[0], {
+        cardId: cards[0].cardId + '-merged',
+        count: totalCount,
+        monthlySavings: totalSavings > 0 ? round2(totalSavings) : null,
+        risk: highestRisk,
+        description: totalCount + ' ' + cat.title.toLowerCase() + ' across ' + cards.length + ' accounts',
+        // Combine resources with account labels
+        resources: cards.reduce(function(all, card) {
+            return all.concat((card.resources || []).map(function(r) {
+                return Object.assign({}, r, {
+                    _accountLabel: card.accountLabel || card.accountId,
+                    _accountId: card.accountId,
+                });
+            }));
+        }, []),
+        _mergedAccounts: cards.map(function(c) { return c.accountLabel || c.accountId; }),
+    });
+
+    return _actBuildCard(merged);
+}
+
+function round2(n) { return Math.round(n * 100) / 100; }
+
 function _actBuildCard(card) {
     var riskColor = card.risk === 'low' ? '#16a34a' : card.risk === 'medium' ? '#d97706' : '#dc2626';
     var riskBg = card.risk === 'low' ? 'rgba(22,163,74,0.15)' : card.risk === 'medium' ? 'rgba(217,119,6,0.15)' : 'rgba(220,38,38,0.15)';
@@ -3487,14 +3521,14 @@ function _actBuildCard(card) {
                 '<div style="background:#161b22;border-radius:6px;padding:8px 10px;">' +
                     '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">' +
                         '<div style="flex:1;min-width:0;">' +
-                            '<div style="font-size:0.82em;color:#c9d1d9;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="' + ea(r.name) + '">' + esc(r.name) + '</div>' +
+                            '<div style="font-size:0.82em;color:#c9d1d9;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="' + ea(r.name) + '">' + esc(r.name) + (r._accountLabel ? ' <span style="color:#6b7280;font-size:0.85em;">(' + esc(r._accountLabel) + ')</span>' : '') + '</div>' +
                             '<div style="font-size:0.75em;margin-top:2px;">' + reasonBadges + '</div>' +
                         '</div>' +
                         '<div style="text-align:right;white-space:nowrap;flex-shrink:0;">' +
                             '<div style="font-size:0.78em;color:#e6edf3;">' + sizeLabel + (costLabel ? ' · <span style="color:#10b981;">' + costLabel + '</span>' : '') + '</div>' +
                             '<div style="font-size:0.75em;margin-top:1px;">' + activityLabel + '</div>' +
                         '</div>' +
-                        '<button class="btn btn-outline btn-sm act-browse-btn" data-bucket="' + ea(r.name) + '" style="font-size:0.75em;padding:2px 8px;flex-shrink:0;">Browse</button>' +
+                        '<button class="btn btn-outline btn-sm act-browse-btn" data-bucket="' + ea(r.name) + '" data-account="' + ea(r._accountId || card.accountId) + '" style="font-size:0.75em;padding:2px 8px;flex-shrink:0;">Browse</button>' +
                     '</div>' +
                 '</div>';
         });
@@ -3558,7 +3592,8 @@ function _actBuildCard(card) {
     div.querySelectorAll('.act-browse-btn').forEach(function(btn) {
         btn.onclick = function(e) {
             e.stopPropagation();
-            _actBrowseBucket(card.accountId, btn.dataset.bucket);
+            var accountId = btn.dataset.account || card.accountId;
+            _actBrowseBucket(accountId, btn.dataset.bucket);
         };
     });
 
