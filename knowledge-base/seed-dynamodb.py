@@ -44,6 +44,12 @@ def seed_table(tips, table):
                 "description": tip["description"],
                 "estimatedSavings": tip["estimatedSavings"],
                 "difficulty": tip["difficulty"],
+                # Phase 1 scan engine fields
+                "checkImplemented": tip.get("checkImplemented", False),
+                "actionType": tip.get("actionType", "pending"),
+                "actionLabel": tip.get("actionLabel", "Coming Soon"),
+                "level": tip.get("level", 2),
+                "serviceKey": tip.get("serviceKey", tip["service"]),
             }
             if "automatedCheck" in tip and tip["automatedCheck"]:
                 item["automatedCheck"] = tip["automatedCheck"]

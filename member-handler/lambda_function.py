@@ -996,7 +996,9 @@ def handle_generate_template(event):
                                             'cloudformation:GetTemplate',
                                             'iam:GetRole',
                                             'iam:ListRolePolicies',
+                                            'iam:ListAttachedRolePolicies',
                                             'iam:DeleteRolePolicy',
+                                            'iam:DetachRolePolicy',
                                             'iam:DeleteRole',
                                             # Level 1 cleanup actions
                                             'ec2:ReleaseAddress',
