@@ -3883,19 +3883,24 @@ function _renderFindingsWidget(scan) {
         var question = _findingToQuestion(f);
         html +=
             '<div class="ai-finding-row" data-question="' + ea(question) + '" ' +
-            'style="display:flex;align-items:center;gap:10px;padding:7px 14px;border-bottom:1px solid #21262d;cursor:pointer;" ' +
-            'onmouseenter="this.style.background=\'#1f2937\'" onmouseleave="this.style.background=\'\'">' +
-                '<span style="font-size:0.9em;flex-shrink:0;">' + severityDot(savings) + '</span>' +
-                '<div style="flex:1;min-width:0;">' +
-                    '<div style="color:#c9d1d9;font-size:0.82em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' +
+            'style="display:flex;align-items:center;gap:10px;padding:9px 14px;border-bottom:1px solid #21262d;" ' +
+            'onmouseenter="this.style.background=\'rgba(99,102,241,0.07)\'" onmouseleave="this.style.background=\'\'">' +
+                // Severity dot
+                '<span style="font-size:1em;flex-shrink:0;">' + severityDot(savings) + '</span>' +
+                // Tip text — clickable, fills input
+                '<div class="ai-finding-text" style="flex:1;min-width:0;cursor:pointer;">' +
+                    '<div style="color:#c9d1d9;font-size:0.9em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' +
                         (savings > 0 ? '<span style="color:' + severityColor(savings) + ';font-weight:700;margin-right:6px;">$' + savings.toFixed(2) + '/mo</span>' : '') +
                         esc(f.tipTitle || f.service || '') +
                     '</div>' +
-                    '<div style="color:#6b7280;font-size:0.75em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' +
+                    '<div style="color:#6b7280;font-size:0.8em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px;">' +
                         esc(question) +
                     '</div>' +
                 '</div>' +
-                '<span style="color:#6366f1;font-size:0.75em;flex-shrink:0;">Ask ▶</span>' +
+                // Ask button — larger, prominent
+                '<button class="ai-finding-ask-btn" style="flex-shrink:0;background:#6366f1;color:#fff;border:none;border-radius:6px;' +
+                'padding:5px 12px;font-size:0.95em;font-weight:600;cursor:pointer;white-space:nowrap;" ' +
+                'onmouseenter="this.style.background=\'#4f46e5\'" onmouseleave="this.style.background=\'#6366f1\'">Ask ▶</button>' +
             '</div>';
     });
 
@@ -3911,7 +3916,7 @@ function _renderFindingsWidget(scan) {
 
     list.innerHTML = html;
 
-    // Event delegation — avoids inline onclick attribute quoting issues
+    // Event delegation — both tip text and Ask button fill the input
     list.onclick = function(e) {
         var row = e.target.closest('.ai-finding-row');
         if (!row) return;
