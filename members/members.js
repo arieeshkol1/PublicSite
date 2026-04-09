@@ -1580,7 +1580,9 @@ async function askAI() {
                     qLower.indexOf('kms') !== -1 || qLower.indexOf('encryption key') !== -1 ||
                     qLower.indexOf('lifecycle') !== -1 || qLower.indexOf('bucket') !== -1 ||
                     qLower.indexOf('snapshot') !== -1 || qLower.indexOf('elastic ip') !== -1 ||
-                    qLower.indexOf('nat gateway') !== -1 || qLower.indexOf('vpc endpoint') !== -1
+                    qLower.indexOf('nat gateway') !== -1 || qLower.indexOf('vpc endpoint') !== -1 ||
+                    qLower.indexOf('budget') !== -1 || qLower.indexOf('cost alert') !== -1 ||
+                    qLower.indexOf('billing alarm') !== -1
                 );
                 if (isSpecificServiceQ) {
                     // Only keep charts directly relevant to the question

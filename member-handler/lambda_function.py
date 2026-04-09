@@ -4392,6 +4392,7 @@ def _gather_account_data(question, credentials):
         'lambda function', 'invocation', 'serverless function',                               # Lambda
         'rds instance', 'database instance', 'db instance',                                   # RDS specific
         'snapshot', 'ebs snapshot',                                                            # Snapshots
+        'budget', 'cost alert', 'billing alarm', 'spend limit',                               # Budgets
     ])
     top_service_names = [s['service'] for s in data.get('cost_by_service', [])[:6]]
     if not _specific_service_question and (
@@ -4543,6 +4544,37 @@ def _gather_account_data(question, credentials):
             actions.append('lambda:ListFunctions')
         except Exception as e:
             data['lambda_error'] = str(e)
+
+    # Budgets — fetch when question mentions budgets/alerts/cost alerts
+    if any(kw in question_lower for kw in ['budget', 'alert', 'cost alert', 'billing alarm', 'spend limit']):
+        try:
+            budgets_client = _make_client('budgets')
+            # Need account_id for describe_budgets — derive from STS
+            sts = boto3.client('sts',
+                aws_access_key_id=credentials['AccessKeyId'],
+                aws_secret_access_key=credentials['SecretAccessKey'],
+                aws_session_token=credentials['SessionToken'],
+            )
+            acct_id = sts.get_caller_identity()['Account']
+            blist = budgets_client.describe_budgets(AccountId=acct_id).get('Budgets', [])
+            data['budgets'] = [
+                {
+                    'name': b.get('BudgetName', ''),
+                    'type': b.get('BudgetType', ''),
+                    'limit': float(b.get('BudgetLimit', {}).get('Amount', 0)),
+                    'currency': b.get('BudgetLimit', {}).get('Unit', 'USD'),
+                    'timeUnit': b.get('TimeUnit', ''),
+                    'actualSpend': float(b.get('CalculatedSpend', {}).get('ActualSpend', {}).get('Amount', 0)),
+                    'forecastedSpend': float(b.get('CalculatedSpend', {}).get('ForecastedSpend', {}).get('Amount', 0)),
+                }
+                for b in blist
+            ]
+            data['budget_count'] = len(blist)
+            actions.append('budgets:DescribeBudgets')
+        except Exception as e:
+            data['budgets'] = []
+            data['budget_count'] = 0
+            logger.warning(f"Budgets fetch failed: {e}")
 
     # ============================================================
     # CloudWatch Rightsizing Metrics — auto-fetch for ALL top-cost services
@@ -5470,6 +5502,7 @@ IMPORTANT RULES:
 - MEMORY METRICS: When ec2_cpu_metrics contains avg_memory_pct/max_memory_pct (CloudWatch agent installed), use BOTH CPU and memory for rightsizing. An instance with low CPU but high memory (>70%) is NOT over-provisioned — it is memory-bound. Only recommend downsizing when BOTH CPU and memory are low. When memory_agent_installed=false, warn: "Memory metrics unavailable — install CloudWatch agent for accurate rightsizing. CPU-only analysis may miss memory-bound workloads."
 - SCHEDULING RECOMMENDATION: When ec2_cpu_metrics contains environment_tag=dev/test/staging/qa/sandbox AND the instance has low CPU, recommend AWS Instance Scheduler to stop instances during nights and weekends (~65% savings) INSTEAD of just downsizing. Non-production instances running 24/7 are the most common waste pattern.
 - ECS/EKS CONTAINER RIGHTSIZING: When ecs_service_metrics is present, show each service's avg/max CPU and memory utilization. Services with avg CPU < 10% AND avg memory < 20% are over-provisioned — recommend reducing task CPU/memory limits or task count. Kubernetes/container waste from over-provisioned resource requests is one of the most common and least monitored sources of cloud waste.
+- BUDGETS: When budgets or budget_count is present in the data, ALWAYS check it first. If budget_count == 0: state "No budgets are configured for this account" and recommend setting one up using the actual current monthly spend as the budget limit (e.g., "Your last 30-day spend was $46.31 — suggest setting a monthly budget at $50 with alerts at 80% ($40) and 100% ($50)"). If budgets exist: list them by name, type, limit, and current spend vs limit. Do NOT invent budget amounts — use the actual cost_by_service total. Do NOT give generic AWS console steps — give specific recommended values based on the real spend data.
 - S3 STORAGE OPTIMIZATION: When s3_optimization_summary or s3_bucket_analysis is present, list ALL buckets without lifecycle policies with their exact names. The count in the summary MUST match the number of buckets listed — never say "12 out of 15" if you list 16. For each bucket, state whether it has a lifecycle policy. Do NOT give generic AWS console instructions — instead tell the user they can apply lifecycle policies directly from the SlashMyBill Act tab (🪣 S3 Buckets card) with one click. Recommend: (1) S3 Intelligent-Tiering for unknown access patterns, (2) Standard-IA after 30 days + Glacier after 90 days for logs/archives, (3) Abort incomplete multipart uploads after 7 days.
 - BUSINESS UNIT / VIRTUAL TAGGING: If the user mentions a team name or business unit (e.g., "Data Science team", "Production", "Dev team"), check if the account data contains cost_allocation with businessUnits. If a matching business unit exists, focus the analysis on the services and accounts mapped to that business unit. Show the business unit's total cost, its percentage of total spend, and the services driving its costs.
 - UNIT ECONOMICS: If the account data contains business_metrics, cross-reference cost changes with business volume changes. If costs increased by 20% but business volume increased by 40%, the cost per unit DECREASED — frame this as "efficient scaling" not "cost overrun". Always show: total cost, business volume, and cost per unit when business metrics are available.
