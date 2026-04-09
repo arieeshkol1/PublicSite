@@ -1573,6 +1573,27 @@ async function askAI() {
                 var qLower = (aiQuestionInput && aiQuestionInput.dataset.lastQuestion || '').toLowerCase();
                 var isCompQ = qLower.indexOf('compare') !== -1 || qLower.indexOf('month') !== -1 ||
                     qLower.indexOf('trend') !== -1 || qLower.indexOf('last') !== -1;
+
+                // Filter out irrelevant charts for specific service questions
+                // KMS, S3 lifecycle, Lambda, snapshots etc. don't need cost/daily/efficiency tables
+                var isSpecificServiceQ = (
+                    qLower.indexOf('kms') !== -1 || qLower.indexOf('encryption key') !== -1 ||
+                    qLower.indexOf('lifecycle') !== -1 || qLower.indexOf('bucket') !== -1 ||
+                    qLower.indexOf('snapshot') !== -1 || qLower.indexOf('elastic ip') !== -1 ||
+                    qLower.indexOf('nat gateway') !== -1 || qLower.indexOf('vpc endpoint') !== -1
+                );
+                if (isSpecificServiceQ) {
+                    // Only keep charts directly relevant to the question
+                    sortedCharts = sortedCharts.filter(function(c) {
+                        var id = (c.id || '').toLowerCase();
+                        var title = (c.title || '').toLowerCase();
+                        // Always exclude generic cost/daily/efficiency for specific service questions
+                        if (id === 'cost-by-service' || id === 'daily-cost-trend' || id === 'cost-efficiency-score') return false;
+                        if (title.indexOf('cost by service') !== -1 || title.indexOf('daily cost') !== -1 || title.indexOf('efficiency score') !== -1) return false;
+                        return true;
+                    });
+                }
+
                 if (isCompQ) {
                     // Put monthly trend/comparison charts first
                     sortedCharts.sort(function(a, b) {
@@ -1652,12 +1673,13 @@ async function askAI() {
                         }
                     }
 
-                    var html = '<div style="color:#8b949e;font-size:0.85em;margin-bottom:6px;margin-top:12px;">Show as table:</div>';
+                    var html = sortedCharts.length > 0
+                        ? '<div style="color:#8b949e;font-size:0.85em;margin-bottom:6px;margin-top:12px;">Show as table:</div>'
+                        : '';
                     sortedCharts.forEach(function(cd, idx) {
                         html += '<button class="btn btn-outline btn-sm ai-table-btn" style="margin:3px 4px 3px 0;font-size:0.85em;" data-chart-idx="' + idx + '">'
                             + '📋 ' + esc(cd.title) + '</button>';
-                    });
-                    html += '<div class="ai-table-render-area"></div>';
+                    });                    html += '<div class="ai-table-render-area"></div>';
                     tableArea.innerHTML = html;
                 }
             }

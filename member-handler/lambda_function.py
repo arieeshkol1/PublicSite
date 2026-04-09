@@ -4385,10 +4385,16 @@ def _gather_account_data(question, credentials):
             data['ec2_error'] = str(e)
 
     # NAT Gateways — always fetch when EC2-Other or VPC are top costs (they drive those bills)
-    # SKIP if question is specifically about S3/lifecycle/buckets — irrelevant data wastes tokens
-    is_s3_specific = any(kw in question_lower for kw in ['lifecycle', 'bucket', 's3 bucket', 'intelligent-tier', 'glacier', 'storage class'])
+    # SKIP if question is specifically about a single service — irrelevant data wastes tokens
+    _specific_service_question = any(kw in question_lower for kw in [
+        'lifecycle', 'bucket', 's3 bucket', 'intelligent-tier', 'glacier', 'storage class',  # S3
+        'kms', 'key management', 'encryption key', 'customer-managed key',                    # KMS
+        'lambda function', 'invocation', 'serverless function',                               # Lambda
+        'rds instance', 'database instance', 'db instance',                                   # RDS specific
+        'snapshot', 'ebs snapshot',                                                            # Snapshots
+    ])
     top_service_names = [s['service'] for s in data.get('cost_by_service', [])[:6]]
-    if not is_s3_specific and (
+    if not _specific_service_question and (
         any(s in top_service_names for s in ['EC2 - Other', 'Amazon Virtual Private Cloud']) or
         any(kw in question_lower for kw in ['nat', 'vpc', 'network', 'data transfer'])
     ):
