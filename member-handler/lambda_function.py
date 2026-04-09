@@ -3826,7 +3826,7 @@ SPECIFIC QUESTION HANDLING:
 - If the user asks about Lambda invocations/transactions: use lambda_metrics (invocations_30d per function) and monthly_trend (Lambda cost per month). Show per-function breakdown per account.
 - If the user asks about EC2: use ec2_instances and ec2_cpu_metrics. Show instance IDs, types, CPU utilization.
 - If the user asks about RDS: use rds_instances and rds_cpu_metrics. Show DB identifiers, instance class, CPU, connections.
-- If the user asks about S3: use s3_buckets. Show bucket names and count per account.
+- If the user asks about S3: use s3_buckets (per account). Show bucket names and count **per account separately** — never merge accounts or report only one. List ALL buckets without lifecycle policies from ALL accounts. Count must match the list length exactly.
 - If the user asks about NAT Gateway: use nat_gateways and nat_gateway_metrics. Show gateway IDs, state, bytes transferred.
 - If the user asks about EBS: use ebs_summary. Show total volumes, unattached count, gp2 vs gp3 breakdown.
 - If the user asks about VPC/endpoints: use vpc_endpoints and elastic_ips. Show endpoint types, unattached EIPs.
@@ -4385,9 +4385,13 @@ def _gather_account_data(question, credentials):
             data['ec2_error'] = str(e)
 
     # NAT Gateways — always fetch when EC2-Other or VPC are top costs (they drive those bills)
+    # SKIP if question is specifically about S3/lifecycle/buckets — irrelevant data wastes tokens
+    is_s3_specific = any(kw in question_lower for kw in ['lifecycle', 'bucket', 's3 bucket', 'intelligent-tier', 'glacier', 'storage class'])
     top_service_names = [s['service'] for s in data.get('cost_by_service', [])[:6]]
-    if any(s in top_service_names for s in ['EC2 - Other', 'Amazon Virtual Private Cloud']) or \
-       any(kw in question_lower for kw in ['nat', 'vpc', 'network', 'data transfer']):
+    if not is_s3_specific and (
+        any(s in top_service_names for s in ['EC2 - Other', 'Amazon Virtual Private Cloud']) or
+        any(kw in question_lower for kw in ['nat', 'vpc', 'network', 'data transfer'])
+    ):
         try:
             ec2 = _make_client('ec2')
             nat_gws = ec2.describe_nat_gateways(
@@ -5460,11 +5464,11 @@ IMPORTANT RULES:
 - MEMORY METRICS: When ec2_cpu_metrics contains avg_memory_pct/max_memory_pct (CloudWatch agent installed), use BOTH CPU and memory for rightsizing. An instance with low CPU but high memory (>70%) is NOT over-provisioned — it is memory-bound. Only recommend downsizing when BOTH CPU and memory are low. When memory_agent_installed=false, warn: "Memory metrics unavailable — install CloudWatch agent for accurate rightsizing. CPU-only analysis may miss memory-bound workloads."
 - SCHEDULING RECOMMENDATION: When ec2_cpu_metrics contains environment_tag=dev/test/staging/qa/sandbox AND the instance has low CPU, recommend AWS Instance Scheduler to stop instances during nights and weekends (~65% savings) INSTEAD of just downsizing. Non-production instances running 24/7 are the most common waste pattern.
 - ECS/EKS CONTAINER RIGHTSIZING: When ecs_service_metrics is present, show each service's avg/max CPU and memory utilization. Services with avg CPU < 10% AND avg memory < 20% are over-provisioned — recommend reducing task CPU/memory limits or task count. Kubernetes/container waste from over-provisioned resource requests is one of the most common and least monitored sources of cloud waste.
-- S3 STORAGE OPTIMIZATION: When s3_optimization_summary is present, ALWAYS recommend: (1) S3 Intelligent-Tiering for buckets without it (automatic cost optimization), (2) Lifecycle policies to move data to S3-IA after 30 days and Glacier after 90 days, (3) S3 Storage Lens for organization-wide visibility. S3 storage class optimization is a massive savings opportunity that is often overlooked.
+- S3 STORAGE OPTIMIZATION: When s3_optimization_summary or s3_bucket_analysis is present, list ALL buckets without lifecycle policies with their exact names. The count in the summary MUST match the number of buckets listed — never say "12 out of 15" if you list 16. For each bucket, state whether it has a lifecycle policy. Do NOT give generic AWS console instructions — instead tell the user they can apply lifecycle policies directly from the SlashMyBill Act tab (🪣 S3 Buckets card) with one click. Recommend: (1) S3 Intelligent-Tiering for unknown access patterns, (2) Standard-IA after 30 days + Glacier after 90 days for logs/archives, (3) Abort incomplete multipart uploads after 7 days.
 - BUSINESS UNIT / VIRTUAL TAGGING: If the user mentions a team name or business unit (e.g., "Data Science team", "Production", "Dev team"), check if the account data contains cost_allocation with businessUnits. If a matching business unit exists, focus the analysis on the services and accounts mapped to that business unit. Show the business unit's total cost, its percentage of total spend, and the services driving its costs.
 - UNIT ECONOMICS: If the account data contains business_metrics, cross-reference cost changes with business volume changes. If costs increased by 20% but business volume increased by 40%, the cost per unit DECREASED — frame this as "efficient scaling" not "cost overrun". Always show: total cost, business volume, and cost per unit when business metrics are available.
 - When eks_clusters or ecs_clusters is present, show cluster count, status, and running tasks. Flag clusters with 0 running tasks as candidates for deletion. For ECS, flag clusters with low task counts relative to registered instances as over-provisioned.
-- When s3_optimization_summary is present, list buckets without lifecycle policies and without Intelligent-Tiering. Recommend enabling S3 Intelligent-Tiering for buckets without it, and adding lifecycle policies to move infrequently accessed data to S3-IA or Glacier.
+- When s3_optimization_summary is present, list ALL buckets without lifecycle policies (exact names, exact count). Recommend enabling S3 Intelligent-Tiering and adding lifecycle policies. Direct the user to the Act tab to apply policies with one click — do NOT give manual AWS console steps.
 - When compute_optimizer_ec2 is present, show the rightsizing recommendations: current instance type, recommended type, finding (OVER_PROVISIONED/UNDER_PROVISIONED/OPTIMIZED), and estimated monthly savings. This is the most authoritative source for rightsizing — prefer it over manual CPU analysis.
 - The data already contains the resource details. Do NOT tell the customer to "use CloudWatch" or "check Trusted Advisor" or "monitor usage" to find resources that are already listed in the data. The system has ALREADY gathered CloudWatch metrics — use them directly. If ebs_iops_metrics is present, show the actual IOPS numbers. If rds_cpu_metrics is present, show the actual CPU/memory numbers. NEVER say "you would need to check" when the data is already in front of you.
 - When usage_breakdown shows charges (e.g. VpcEndpoint-Hours: $11.20) but the resource inventory shows 0 resources (e.g. vpc_endpoints.total: 0), you MUST explain: "These charges are from resources that were active earlier in the billing period but have since been deleted. The charges will stop in the next billing cycle." Do NOT say "no cost savings opportunity" and do NOT suggest reviewing resources that no longer exist.
