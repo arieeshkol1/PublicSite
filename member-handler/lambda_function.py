@@ -95,6 +95,7 @@ def lambda_handler(event, context):
         'GET /members/business-metrics': handle_get_business_metrics,
         'POST /members/business-metrics': handle_save_business_metrics,
         'POST /members/actions/scan': handle_actions_scan,
+        'GET /members/actions/last-scan': handle_get_last_scan,
         'POST /members/actions/execute': handle_actions_execute,
         'POST /members/actions/browse-bucket': handle_browse_bucket,
     }
@@ -1956,13 +1957,19 @@ def handle_actions_scan(event):
     all_cards.sort(key=lambda c: (c.get('monthlySavings') or 0), reverse=True)
     all_findings.sort(key=lambda f: (f.get('savingsUsd') or 0), reverse=True)
 
-    return create_response(200, {
+    scanned_at = datetime.now(timezone.utc).isoformat()
+    result = create_response(200, {
         'cards': all_cards,
         'findings': all_findings,
         'totalSavings': round(total_savings, 2),
         'scannedAccounts': len(account_ids),
-        'scannedAt': datetime.now(timezone.utc).isoformat(),
+        'scannedAt': scanned_at,
     })
+
+    # Cache top findings for the Chat widget
+    _save_last_scan(member_email, account_ids, all_findings[:10], round(total_savings, 2), scanned_at)
+
+    return result
 
 
 def _load_tips_from_db():
@@ -2576,6 +2583,40 @@ _SCAN_REGISTRY = {
     # Level 3 — Architecture / Commitment
     'general-014': _check_ri_marketplace,
 }
+
+
+
+def _save_last_scan(member_email, account_ids, findings, total_savings, scanned_at):
+    """Persist top findings to Members table for the Chat widget."""
+    try:
+        members_table = dynamodb.Table(MEMBERS_TABLE_NAME)
+        members_table.update_item(
+            Key={'email': member_email},
+            UpdateExpression='SET lastScan = :s',
+            ExpressionAttributeValues={':s': {
+                'accountIds': account_ids,
+                'findings': findings[:10],
+                'totalSavings': str(round(total_savings, 2)),
+                'scannedAt': scanned_at,
+            }},
+        )
+    except Exception as e:
+        logger.warning(f"Failed to save last scan: {e}")
+
+
+def handle_get_last_scan(event):
+    """Return the cached last scan result for the Chat widget."""
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+    member_email = auth['sub']
+    try:
+        members_table = dynamodb.Table(MEMBERS_TABLE_NAME)
+        member = members_table.get_item(Key={'email': member_email}).get('Item') or {}
+        last_scan = _decimal_to_native(member.get('lastScan') or {})
+        return create_response(200, {'lastScan': last_scan})
+    except ClientError as e:
+        return create_error_response(500, 'ServerError', 'Failed to load last scan')
 
 
 def handle_actions_execute(event):

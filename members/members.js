@@ -3787,3 +3787,176 @@ async function _actExecute(card) {
 }
 
 // Populate account select when Act tab is clicked — handled by activateMemberTab
+
+// ============================================================
+// Phase 2 — Chat Tab "Top Findings" Widget
+// ============================================================
+var _findingsWidgetOpen = true;
+var _lastScanData = null;
+
+// Load last scan when Chat tab is activated
+var _origActivateMemberTab = activateMemberTab;
+activateMemberTab = function(tabId) {
+    _origActivateMemberTab(tabId);
+    if (tabId === 'ai-tab') {
+        _loadFindingsWidget();
+    }
+};
+
+async function _loadFindingsWidget() {
+    try {
+        var data = await api('GET', '/members/actions/last-scan');
+        var scan = data.lastScan;
+        if (!scan || !scan.findings || scan.findings.length === 0) {
+            _showFindingsEmpty();
+            return;
+        }
+        _lastScanData = scan;
+        _renderFindingsWidget(scan);
+    } catch (err) {
+        _showFindingsEmpty();
+    }
+}
+
+function _showFindingsEmpty() {
+    var widget = $('ai-findings-widget');
+    var list = $('ai-findings-list');
+    if (!widget) return;
+    widget.style.display = 'block';
+    if (list) list.innerHTML =
+        '<div style="padding:10px 14px;color:#6b7280;font-size:0.82em;">' +
+        'No scan results yet. <button onclick="_runScanFromChat();" style="background:none;border:none;color:#6366f1;cursor:pointer;text-decoration:underline;font-size:1em;padding:0;">Run a scan</button> to see top findings here.' +
+        '</div>';
+    var title = $('ai-findings-title');
+    if (title) title.textContent = 'Top Findings';
+}
+
+function _renderFindingsWidget(scan) {
+    var widget = $('ai-findings-widget');
+    var list = $('ai-findings-list');
+    var title = $('ai-findings-title');
+    var badge = $('ai-findings-badge');
+    var ts = $('ai-findings-ts');
+    if (!widget || !list) return;
+
+    widget.style.display = 'block';
+
+    var findings = (scan.findings || []).filter(function(f) { return f.status === 'found'; }).slice(0, 5);
+    var totalSavings = parseFloat(scan.totalSavings || 0);
+
+    if (title) title.textContent = 'Top Findings  ·  $' + totalSavings.toFixed(2) + '/mo potential savings';
+    if (badge && findings.length > 0) { badge.style.display = 'inline'; badge.textContent = findings.length; }
+    if (ts && scan.scannedAt) {
+        var d = new Date(scan.scannedAt);
+        var mins = Math.round((Date.now() - d.getTime()) / 60000);
+        ts.textContent = mins < 60 ? mins + 'm ago' : Math.round(mins/60) + 'h ago';
+    }
+
+    if (!_findingsWidgetOpen) {
+        list.style.display = 'none';
+        var chev = $('ai-findings-chevron');
+        if (chev) chev.textContent = '▶';
+    }
+
+    if (findings.length === 0) {
+        list.innerHTML = '<div style="padding:10px 14px;color:#10b981;font-size:0.82em;">✅ No issues found — your accounts look clean!</div>';
+        return;
+    }
+
+    var severityColor = function(savings) {
+        if (savings >= 20) return '#ef4444';
+        if (savings >= 5) return '#f59e0b';
+        return '#10b981';
+    };
+    var severityDot = function(savings) {
+        if (savings >= 20) return '🔴';
+        if (savings >= 5) return '🟡';
+        return '🟢';
+    };
+
+    var html = '';
+    findings.forEach(function(f) {
+        var savings = f.savingsUsd || 0;
+        var question = _findingToQuestion(f);
+        html +=
+            '<div class="ai-finding-row" style="display:flex;align-items:center;gap:10px;padding:7px 14px;border-bottom:1px solid #21262d;cursor:pointer;" ' +
+            'onclick="_askFromFinding(' + JSON.stringify(question) + ');" ' +
+            'onmouseenter="this.style.background=\'#1f2937\'" onmouseleave="this.style.background=\'\'">' +
+                '<span style="font-size:0.9em;flex-shrink:0;">' + severityDot(savings) + '</span>' +
+                '<div style="flex:1;min-width:0;">' +
+                    '<div style="color:#c9d1d9;font-size:0.82em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' +
+                        (savings > 0 ? '<span style="color:' + severityColor(savings) + ';font-weight:700;margin-right:6px;">$' + savings.toFixed(2) + '/mo</span>' : '') +
+                        esc(f.tipTitle || f.service || '') +
+                    '</div>' +
+                    '<div style="color:#6b7280;font-size:0.75em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' +
+                        '→ ' + esc(question) +
+                    '</div>' +
+                '</div>' +
+                '<span style="color:#6366f1;font-size:0.75em;flex-shrink:0;">Ask ▶</span>' +
+            '</div>';
+    });
+
+    // Footer: total + "See all in Act"
+    var moreCount = (scan.findings || []).filter(function(f) { return f.status === 'found'; }).length - findings.length;
+    html += '<div style="padding:7px 14px;display:flex;justify-content:space-between;align-items:center;">' +
+        '<span style="color:#6b7280;font-size:0.75em;">' +
+            (moreCount > 0 ? moreCount + ' more finding(s)' : 'All findings shown') +
+        '</span>' +
+        '<button onclick="document.querySelector(\'[data-tab=act-tab]\').click();" ' +
+        'style="background:none;border:none;color:#6366f1;font-size:0.78em;cursor:pointer;text-decoration:underline;padding:0;">See all in Act ▶</button>' +
+    '</div>';
+
+    list.innerHTML = html;
+}
+
+function _findingToQuestion(f) {
+    var tipId = f.tipId || '';
+    var title = f.tipTitle || '';
+    var svc = f.service || '';
+    // Map tip to a natural language question
+    var qmap = {
+        'ebs-004': 'How do I safely delete my unattached EBS volumes?',
+        'ebs-002': 'Which EBS snapshots are older than 180 days and safe to delete?',
+        'vpc-001': 'How do I release my unassociated Elastic IPs?',
+        's3-002':  'Which S3 buckets need lifecycle policies and how do I set them up?',
+        'elb-001': 'Which load balancers are idle and how do I safely remove them?',
+        'ec2-001': 'Which EC2 instances are over-provisioned and what should I resize them to?',
+        'ec2-003': 'Which of my EC2 instances are good candidates for Spot pricing?',
+        'ec2-006': 'Which EC2 instances can I migrate to Graviton for better price-performance?',
+        'rds-001': 'Which RDS instances are idle and what should I do with them?',
+        'kms-001': 'Which KMS customer-managed keys might be unused?',
+        'general-002': 'How do I set up AWS Budgets with cost alerts?',
+        'general-014': 'Do I have underutilized Reserved Instances I should sell on the RI Marketplace?',
+    };
+    return qmap[tipId] || ('Tell me more about: ' + title + (svc ? ' (' + svc + ')' : ''));
+}
+
+function _askFromFinding(question) {
+    if (aiQuestionInput) {
+        aiQuestionInput.value = question;
+        aiQuestionInput.focus();
+        // Auto-scroll chat to bottom
+        if (aiChat) aiChat.scrollTop = aiChat.scrollHeight;
+    }
+}
+
+function _toggleFindingsWidget() {
+    _findingsWidgetOpen = !_findingsWidgetOpen;
+    var list = $('ai-findings-list');
+    var chev = $('ai-findings-chevron');
+    if (list) list.style.display = _findingsWidgetOpen ? 'block' : 'none';
+    if (chev) chev.textContent = _findingsWidgetOpen ? '▼' : '▶';
+}
+
+async function _runScanFromChat() {
+    var status = $('ai-findings-title');
+    if (status) status.textContent = '🔍 Scanning…';
+    try {
+        var accountIds = getSelectedAccountIds();
+        var data = await api('POST', '/members/actions/scan', { accountIds: accountIds });
+        _lastScanData = data;
+        _renderFindingsWidget(data);
+    } catch (err) {
+        if (status) status.textContent = 'Scan failed: ' + (err.message || 'error');
+    }
+}

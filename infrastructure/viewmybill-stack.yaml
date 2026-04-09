@@ -1200,6 +1200,13 @@ Resources:
       RouteKey: 'POST /members/actions/scan'
       Target: !Sub 'integrations/${MemberIntegration}'
 
+  MemberActLastScanRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'GET /members/actions/last-scan'
+      Target: !Sub 'integrations/${MemberIntegration}'
+
   MemberActExecuteRoute:
     Type: AWS::ApiGatewayV2::Route
     Properties:
