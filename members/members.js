@@ -3882,8 +3882,8 @@ function _renderFindingsWidget(scan) {
         var savings = f.savingsUsd || 0;
         var question = _findingToQuestion(f);
         html +=
-            '<div class="ai-finding-row" style="display:flex;align-items:center;gap:10px;padding:7px 14px;border-bottom:1px solid #21262d;cursor:pointer;" ' +
-            'onclick="_askFromFinding(' + JSON.stringify(question) + ');" ' +
+            '<div class="ai-finding-row" data-question="' + ea(question) + '" ' +
+            'style="display:flex;align-items:center;gap:10px;padding:7px 14px;border-bottom:1px solid #21262d;cursor:pointer;" ' +
             'onmouseenter="this.style.background=\'#1f2937\'" onmouseleave="this.style.background=\'\'">' +
                 '<span style="font-size:0.9em;flex-shrink:0;">' + severityDot(savings) + '</span>' +
                 '<div style="flex:1;min-width:0;">' +
@@ -3892,7 +3892,7 @@ function _renderFindingsWidget(scan) {
                         esc(f.tipTitle || f.service || '') +
                     '</div>' +
                     '<div style="color:#6b7280;font-size:0.75em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' +
-                        '→ ' + esc(question) +
+                        esc(question) +
                     '</div>' +
                 '</div>' +
                 '<span style="color:#6366f1;font-size:0.75em;flex-shrink:0;">Ask ▶</span>' +
@@ -3910,6 +3910,17 @@ function _renderFindingsWidget(scan) {
     '</div>';
 
     list.innerHTML = html;
+
+    // Event delegation — avoids inline onclick attribute quoting issues
+    list.onclick = function(e) {
+        var row = e.target.closest('.ai-finding-row');
+        if (!row) return;
+        var q = row.dataset.question;
+        if (q && aiQuestionInput) {
+            aiQuestionInput.value = q;
+            aiQuestionInput.focus();
+        }
+    };
 }
 
 function _findingToQuestion(f) {
