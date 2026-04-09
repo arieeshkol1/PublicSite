@@ -2196,9 +2196,7 @@ if (aiChat) aiChat.onclick = function(e) {
     }
     if (e.target.tagName === 'CODE' && e.target.closest('.lab-examples')) {
         aiQuestionInput.value = e.target.textContent;
-        var welcome = $('ai-welcome-screen');
-        if (welcome) welcome.style.display = 'none';
-        askAI();
+        aiQuestionInput.focus();
     }
 };
 
