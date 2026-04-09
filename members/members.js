@@ -2050,6 +2050,21 @@ if (aiFontIncBtn) aiFontIncBtn.onclick = function() {
 };
 applyAIFontSize();
 
+// Refresh Findings button — always visible in chat header
+var aiRefreshFindingsBtn = $('ai-refresh-findings-btn');
+if (aiRefreshFindingsBtn) {
+    aiRefreshFindingsBtn.onclick = async function() {
+        aiRefreshFindingsBtn.disabled = true;
+        aiRefreshFindingsBtn.textContent = '⏳ Scanning…';
+        try {
+            await _runScanFromChat();
+        } finally {
+            aiRefreshFindingsBtn.disabled = false;
+            aiRefreshFindingsBtn.innerHTML = '&#8635; Refresh Findings';
+        }
+    };
+}
+
 // Click example questions to populate input
 if (aiChat) aiChat.onclick = function(e) {
     // Handle feedback thumbs-up
