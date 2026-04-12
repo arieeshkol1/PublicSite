@@ -174,13 +174,13 @@ document.addEventListener('DOMContentLoaded', () => {
   function updateFilePickerState() {
     const verified = otpState === OTP_STATE.VERIFIED;
     if (verified) {
-      filePickerWrapper.classList.remove('vmb-file-picker-disabled');
-      filePickerWrapper.classList.add('vmb-file-picker-enabled');
+      filePickerWrapper.classList.remove('vmb-file-picker-disabled', 'smb-file-picker-disabled');
+      filePickerWrapper.classList.add('smb-file-picker-enabled');
       fileOverlay.hidden = true;
       fileInput.disabled = false;
     } else {
-      filePickerWrapper.classList.add('vmb-file-picker-disabled');
-      filePickerWrapper.classList.remove('vmb-file-picker-enabled');
+      filePickerWrapper.classList.add('smb-file-picker-disabled');
+      filePickerWrapper.classList.remove('vmb-file-picker-enabled', 'smb-file-picker-enabled');
       fileOverlay.hidden = false;
       fileInput.disabled = true;
       fileInput.value = '';
