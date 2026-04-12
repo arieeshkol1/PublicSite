@@ -565,6 +565,43 @@ TIER_FEATURES = {
 }
 
 AI_CREDITS = {'free': 100, 'growth': -1}  # -1 = unlimited
+SCAN_CREDIT_COST = 10  # Each scan costs 10 credits
+AI_QUERY_CREDIT_COST = 1  # Each AI question costs 1 credit
+
+
+def _check_and_consume_credits(member_email: str, tier: str, cost: int) -> dict:
+    """Check if member has enough credits and consume them. Returns None if OK, or error response."""
+    max_credits = AI_CREDITS.get(tier, 100)
+    if max_credits < 0:  # unlimited
+        return None
+
+    members_table = dynamodb.Table(MEMBERS_TABLE_NAME)
+    try:
+        member = members_table.get_item(Key={'email': member_email}).get('Item', {})
+        credits_used = int(member.get('aiCreditsUsed', 0))
+        credits_remaining = max(0, max_credits - credits_used)
+    except Exception:
+        credits_used = 0
+        credits_remaining = max_credits
+
+    if credits_remaining < cost:
+        return create_error_response(403, 'CreditsExhausted',
+            f'Not enough credits. This action costs {cost} credits but you have {credits_remaining} remaining. '
+            f'Upgrade to Growth ($50/mo) for unlimited usage.',
+            extra={'creditsUsed': credits_used, 'creditsTotal': max_credits,
+                   'creditsRemaining': credits_remaining, 'creditCost': cost, 'currentTier': tier})
+
+    # Consume credits
+    try:
+        members_table.update_item(
+            Key={'email': member_email},
+            UpdateExpression='SET aiCreditsUsed = if_not_exists(aiCreditsUsed, :zero) + :cost',
+            ExpressionAttributeValues={':zero': 0, ':cost': cost}
+        )
+    except Exception:
+        pass
+
+    return None
 
 
 def _check_feature_access(tier: str, feature: str) -> bool:
@@ -1291,6 +1328,7 @@ def handle_dashboard_data(event):
     merged_daily = {}
     merged_hourly = {}
     merged_monthly = {}
+    merged_regional = {}
     drill_down_data = {}
     all_waste = []
     all_rightsizing = []
@@ -1861,12 +1899,11 @@ def handle_actions_scan(event):
         return auth
     member_email = auth['sub']
 
-    # Tier gate: Actions tab requires Growth tier
+    # Credits check: scan costs 10 credits for Free tier
     tier = _get_member_tier(member_email)
-    if not _check_feature_access(tier, 'actions'):
-        return create_error_response(403, 'UpgradeRequired',
-            'The Actions tab requires the Growth plan ($50/mo). Upgrade to unlock automated cleanup, AI Agent, and more.',
-            extra={'requiredTier': 'growth', 'currentTier': tier})
+    credit_err = _check_and_consume_credits(member_email, tier, SCAN_CREDIT_COST)
+    if credit_err:
+        return credit_err
 
     try:
         body = json.loads(event.get('body', '{}'))
@@ -3559,25 +3596,11 @@ def handle_ai_query(event):
 
     member_email = auth['sub']
 
-    # Check AI credits for Free tier
+    # Check AI credits
     tier = _get_member_tier(member_email)
-    max_credits = AI_CREDITS.get(tier, 100)
-    credits_used = 0
-    credits_remaining = max_credits
-
-    if max_credits > 0:  # -1 = unlimited
-        members_table = dynamodb.Table(MEMBERS_TABLE_NAME)
-        try:
-            member = members_table.get_item(Key={'email': member_email}).get('Item', {})
-            credits_used = int(member.get('aiCreditsUsed', 0))
-            credits_remaining = max(0, max_credits - credits_used)
-        except Exception:
-            pass
-
-        if credits_remaining <= 0:
-            return create_error_response(403, 'CreditsExhausted',
-                'You have used all 100 free AI questions. Upgrade to Growth ($50/mo) for unlimited AI queries.',
-                extra={'creditsUsed': credits_used, 'creditsTotal': max_credits, 'creditsRemaining': 0, 'currentTier': tier})
+    credit_err = _check_and_consume_credits(member_email, tier, AI_QUERY_CREDIT_COST)
+    if credit_err:
+        return credit_err
 
     try:
         body = json.loads(event.get('body', '{}'))
@@ -3615,24 +3638,15 @@ def handle_ai_query(event):
     else:
         result = _invoke_direct_model(question, account_ids[0], member_email, interaction_id)
 
-    # Increment AI credits used (for Free tier tracking)
-    if result.get('statusCode') == 200 and max_credits > 0:
-        try:
-            members_table = dynamodb.Table(MEMBERS_TABLE_NAME)
-            members_table.update_item(
-                Key={'email': member_email},
-                UpdateExpression='SET aiCreditsUsed = if_not_exists(aiCreditsUsed, :zero) + :one',
-                ExpressionAttributeValues={':zero': 0, ':one': 1}
-            )
-            credits_remaining = max(0, credits_remaining - 1)
-        except Exception:
-            pass
-
     # Inject credits info into the response body
+    max_credits = AI_CREDITS.get(tier, 100)
     if max_credits > 0 and result.get('statusCode') == 200:
         try:
+            members_table = dynamodb.Table(MEMBERS_TABLE_NAME)
+            member = members_table.get_item(Key={'email': member_email}).get('Item', {})
+            used = int(member.get('aiCreditsUsed', 0))
             resp_body = json.loads(result.get('body', '{}'))
-            resp_body['aiCredits'] = {'used': credits_used + 1, 'total': max_credits, 'remaining': credits_remaining}
+            resp_body['aiCredits'] = {'used': used, 'total': max_credits, 'remaining': max(0, max_credits - used)}
             result['body'] = json.dumps(resp_body)
         except Exception:
             pass
