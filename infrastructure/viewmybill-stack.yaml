@@ -361,7 +361,7 @@ Resources:
                   - cognito-idp:GetUser
                   - cognito-idp:ListUsers
                 Resource:
-                  - !GetAtt MemberUserPool.Arn
+                  - !Sub 'arn:aws:cognito-idp:${AWS::Region}:${AWS::AccountId}:userpool/*'
       Tags:
         - Key: Project
           Value: ViewMyBill
@@ -979,8 +979,8 @@ Resources:
           BEDROCK_AGENT_ALIAS_ID: ''
           FEEDBACK_TABLE_NAME: !Ref AgentFeedbackTable
           BUSINESS_METRICS_TABLE: !Ref BusinessMetricsTable
-          COGNITO_USER_POOL_ID: !Ref MemberUserPool
-          COGNITO_CLIENT_ID: !GetAtt MemberUserPoolClient.ClientId
+          COGNITO_USER_POOL_ID: ''
+          COGNITO_CLIENT_ID: ''
       Tags:
         - Key: Project
           Value: ViewMyBill
@@ -1288,16 +1288,12 @@ Outputs:
       Name: ViewMyBill-ApiEndpoint
 
   CognitoUserPoolId:
-    Description: Cognito User Pool ID for member authentication
-    Value: !Ref MemberUserPool
-    Export:
-      Name: ViewMyBill-CognitoUserPoolId
+    Description: Cognito User Pool ID (managed outside this stack)
+    Value: 'See AWS Cognito console - SlashMyBill-Members pool'
 
   CognitoClientId:
-    Description: Cognito App Client ID
-    Value: !GetAtt MemberUserPoolClient.ClientId
-    Export:
-      Name: ViewMyBill-CognitoClientId
+    Description: Cognito App Client ID (managed outside this stack)
+    Value: 'See AWS Cognito console - SlashMyBill-MemberPortal client'
 
   BillAnalyzerFunctionArn:
     Description: Bill Analyzer Lambda function ARN
