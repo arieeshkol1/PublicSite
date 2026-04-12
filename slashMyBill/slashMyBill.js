@@ -141,13 +141,13 @@ document.addEventListener('DOMContentLoaded', () => {
       case OTP_STATE.UNVERIFIED:
         otpSection.hidden = true;
         verifyBtn.hidden = false;
-        verifyBtn.querySelector('span').textContent = 'Verify my email';
+        (verifyBtn.querySelector('span') || verifyBtn).textContent = 'Verify my email';
         verifyBtn.classList.remove('vmb-loading-btn');
         setVerifyStatus('', '');
         break;
       case OTP_STATE.SENDING:
         verifyBtn.disabled = true;
-        verifyBtn.querySelector('span').textContent = 'Sending...';
+        (verifyBtn.querySelector('span') || verifyBtn).textContent = 'Sending...';
         verifyBtn.classList.add('vmb-loading-btn');
         otpError.textContent = '';
         break;
@@ -191,7 +191,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function setVerifyStatus(msg, type) {
     verifyStatus.textContent = msg;
-    verifyStatus.className = 'vmb-verify-status';
+    verifyStatus.className = 'smb-verify-status';
     if (type === 'success') verifyStatus.classList.add('vmb-status-success');
     else if (type === 'error') verifyStatus.classList.add('vmb-status-error');
   }
@@ -296,9 +296,10 @@ document.addEventListener('DOMContentLoaded', () => {
   // Section visibility helpers
   function showSection(s) { s.removeAttribute('hidden'); }
   function hideSection(s) { s.setAttribute('hidden', ''); }
-  function showLoading() { hideSection(form.closest('.vmb-form-section')); hideSection(resultsSection); hideSection(errorSection); showSection(loadingSection); }
+  const formSection = document.getElementById('vmb-form-section') || form.closest('.smb-form-section') || form.closest('.vmb-form-section');
+  function showLoading() { hideSection(formSection); hideSection(resultsSection); hideSection(errorSection); showSection(loadingSection); }
   function showResults(summary, url, originalFilename) {
-    hideSection(loadingSection); hideSection(errorSection); hideSection(form.closest('.vmb-form-section'));
+    hideSection(loadingSection); hideSection(errorSection); hideSection(formSection);
     summaryText.textContent = summary;
     const now = new Date();
     const dateStr = now.getFullYear().toString()
@@ -320,8 +321,8 @@ document.addEventListener('DOMContentLoaded', () => {
         showSection(resultsSection);
       });
   }
-  function showError(message) { hideSection(loadingSection); hideSection(resultsSection); hideSection(form.closest('.vmb-form-section')); errorMessage.textContent = message; showSection(errorSection); }
-  function resetToForm() { hideSection(errorSection); hideSection(resultsSection); hideSection(loadingSection); showSection(form.closest('.vmb-form-section')); submitBtn.disabled = false; updateSubmitState(); }
+  function showError(message) { hideSection(loadingSection); hideSection(resultsSection); hideSection(formSection); errorMessage.textContent = message; showSection(errorSection); }
+  function resetToForm() { hideSection(errorSection); hideSection(resultsSection); hideSection(loadingSection); showSection(formSection); submitBtn.disabled = false; updateSubmitState(); }
 
   function getErrorMessage(error, context) {
     if (error.name === 'AbortError') return 'Request timed out. Please try again';

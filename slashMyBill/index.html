@@ -3,7 +3,6 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <!-- Google tag (gtag.js) -->
     <script async src="https://www.googletagmanager.com/gtag/js?id=G-SLW7ZXWV23"></script>
     <script>
       window.dataLayer = window.dataLayer || [];
@@ -14,410 +13,428 @@
     <meta name="description" content="Upload your AWS bill and get AI-powered analysis with cost-saving recommendations">
     <title>SlashMyCloudBill — Stop Overpaying for AWS</title>
     <link rel="icon" type="image/png" href="/SlashMyBill.png">
-    <link rel="stylesheet" href="/styles.css">
     <link rel="stylesheet" href="slashMyBill.css">
-    <link rel="stylesheet" href="pipeline.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 </head>
 <body>
-    <!-- Navigation -->
-    <nav class="navbar">
-        <div class="container">
-            <a href="/" class="nav-brand">
-                <img src="/SlashMyBill.png" alt="SlashMyCloudBill Logo">
-                <span>SlashMyCloudBill</span>
-            </a>
-            <button class="hamburger" aria-label="Toggle menu" onclick="this.classList.toggle('active'); document.querySelector('.nav-menu').classList.toggle('active');">
-                <span></span>
-                <span></span>
-                <span></span>
+
+    <!-- ── Navigation ── -->
+    <nav class="smb-nav">
+        <div class="smb-container smb-nav-inner">
+            <a href="/" class="smb-logo">SlashMyCloudBill</a>
+            <button class="smb-hamburger" aria-label="Toggle menu" onclick="this.classList.toggle('open');document.querySelector('.smb-nav-links').classList.toggle('open')">
+                <span></span><span></span><span></span>
             </button>
-            <ul class="nav-menu">
-                <li><a href="/" class="nav-active">Home</a></li>
-                <li><a href="/members/">Member Portal</a></li>
-                <li><a href="#vmb-form" class="nav-cta" onclick="document.querySelector('.hamburger').classList.remove('active'); document.querySelector('.nav-menu').classList.remove('active');">Analyze My Bill</a></li>
+            <ul class="smb-nav-links">
+                <li><a href="#how-it-works">How It Works</a></li>
+                <li><a href="#why-us">Why Us</a></li>
+                <li><a href="#what-to-expect">Timeline</a></li>
+                <li><a href="/members/" class="smb-nav-login">Login</a></li>
+                <li><a href="#vmb-form" class="smb-btn smb-btn-cta" onclick="document.querySelector('.smb-hamburger').classList.remove('open');document.querySelector('.smb-nav-links').classList.remove('open')">Analyze My Bill</a></li>
             </ul>
         </div>
     </nav>
 
-    <!-- Hero Section -->
-    <section class="hero vmb-hero">
-        <div class="hero-content">
-            <div class="hero-badge">
-                <i class="fas fa-bolt"></i>
-                <span>Free AWS Bill Analysis</span>
+    <!-- ── Hero ── -->
+    <section class="smb-hero">
+        <div class="smb-container smb-hero-inner">
+            <h1>Stop Overpaying<br>for <span class="smb-coral">AWS</span></h1>
+            <p class="smb-hero-sub">Upload your AWS invoice and our AI finds every dollar you're wasting — in minutes. Fix it yourself free, or let our experts handle it.</p>
+            <div class="smb-hero-btns">
+                <a href="#vmb-form" class="smb-btn smb-btn-cta smb-btn-lg">Analyze My Bill &rarr;</a>
+                <a href="#how-it-works" class="smb-btn smb-btn-ghost smb-btn-lg">How It Works</a>
             </div>
-            <h1>Stop Overpaying for <span class="gradient-text">AWS</span></h1>
-            <p class="hero-subtitle">Upload your AWS invoice and our AI finds every dollar you're wasting — in minutes. Then choose: fix it yourself free, or let our experts do it for you.</p>
-            <div class="vmb-pipeline-stats">
-                <div class="vmb-pipeline-stat">
-                    <div class="vmb-pipeline-stat-number">30%</div>
-                    <div class="vmb-pipeline-stat-label">Average Savings Found</div>
-                </div>
-                <div class="vmb-pipeline-stat">
-                    <div class="vmb-pipeline-stat-number">5 min</div>
-                    <div class="vmb-pipeline-stat-label">Analysis Time</div>
-                </div>
-                <div class="vmb-pipeline-stat">
-                    <div class="vmb-pipeline-stat-number">Free</div>
-                    <div class="vmb-pipeline-stat-label">No Credit Card</div>
-                </div>
-            </div>
-            <div class="vmb-trust-bar">
-                <span class="vmb-trust-item"><i class="fas fa-shield-alt"></i> Bill deleted within 24h</span>
-                <span class="vmb-trust-item"><i class="fas fa-lock"></i> HTTPS encrypted</span>
-                <span class="vmb-trust-item"><i class="fas fa-eye-slash"></i> Never shared</span>
-                <span class="vmb-trust-item"><i class="fas fa-robot"></i> Powered by Amazon Bedrock</span>
+            <div class="smb-stats">
+                <div class="smb-stat"><span class="smb-stat-num">30%</span><span class="smb-stat-label">Average Savings Found</span></div>
+                <div class="smb-stat-divider"></div>
+                <div class="smb-stat"><span class="smb-stat-num">5 min</span><span class="smb-stat-label">Analysis Time</span></div>
+                <div class="smb-stat-divider"></div>
+                <div class="smb-stat"><span class="smb-stat-num">Free</span><span class="smb-stat-label">No Credit Card</span></div>
             </div>
         </div>
     </section>
 
-    <!-- Upload Form Section -->
-    <section class="vmb-form-section">
-        <div class="container">
-            <form id="vmb-form" class="vmb-form" novalidate>
-                <div class="vmb-contact-fields">
-                    <div class="form-group">
-                        <label for="vmb-name">
-                            <i class="fas fa-user"></i> Full Name
-                        </label>
-                        <input
-                            type="text"
-                            id="vmb-name"
-                            name="name"
-                            required
-                            placeholder="John Doe"
-                            autocomplete="name"
-                            aria-describedby="vmb-name-error"
-                        >
-                        <span id="vmb-name-error" class="vmb-field-error" role="alert" aria-live="polite"></span>
+    <!-- ── Upload Form ── -->
+    <section class="smb-form-section" id="vmb-form-section">
+        <div class="smb-container">
+            <div class="smb-section-header">
+                <h2>Analyze Your AWS Bill</h2>
+                <p>Verify your email, upload your invoice, and get your free report in minutes.</p>
+            </div>
+            <form id="vmb-form" class="smb-form" novalidate>
+                <div class="smb-form-grid">
+                    <div class="smb-field">
+                        <label for="vmb-name">Full Name</label>
+                        <input type="text" id="vmb-name" name="name" required placeholder="John Doe" autocomplete="name">
+                        <span id="vmb-name-error" class="smb-error" role="alert" aria-live="polite"></span>
                     </div>
-
-                    <div class="form-group">
-                        <label for="vmb-company">
-                            <i class="fas fa-building"></i> Company Name
-                        </label>
-                        <input
-                            type="text"
-                            id="vmb-company"
-                            name="company"
-                            required
-                            placeholder="Acme Inc."
-                            autocomplete="organization"
-                            aria-describedby="vmb-company-error"
-                        >
-                        <span id="vmb-company-error" class="vmb-field-error" role="alert" aria-live="polite"></span>
+                    <div class="smb-field">
+                        <label for="vmb-company">Company Name</label>
+                        <input type="text" id="vmb-company" name="company" required placeholder="Acme Inc." autocomplete="organization">
+                        <span id="vmb-company-error" class="smb-error" role="alert" aria-live="polite"></span>
                     </div>
-
-                    <div class="form-group">
-                        <label for="vmb-email">
-                            <i class="fas fa-envelope"></i> Email Address
-                        </label>
-                        <input
-                            type="email"
-                            id="vmb-email"
-                            name="email"
-                            required
-                            placeholder="your.email@example.com"
-                            autocomplete="email"
-                            aria-describedby="vmb-email-error"
-                        >
-                        <span id="vmb-email-error" class="vmb-field-error" role="alert" aria-live="polite"></span>
+                    <div class="smb-field">
+                        <label for="vmb-email">Email Address</label>
+                        <input type="email" id="vmb-email" name="email" required placeholder="you@company.com" autocomplete="email">
+                        <span id="vmb-email-error" class="smb-error" role="alert" aria-live="polite"></span>
                     </div>
-
-                    <div class="form-group">
-                        <label for="vmb-phone">
-                            <i class="fas fa-phone"></i> Phone Number
-                        </label>
-                        <input
-                            type="tel"
-                            id="vmb-phone"
-                            name="phone"
-                            required
-                            placeholder="+1 (555) 123-4567"
-                            autocomplete="tel"
-                            aria-describedby="vmb-phone-error"
-                        >
-                        <span id="vmb-phone-error" class="vmb-field-error" role="alert" aria-live="polite"></span>
+                    <div class="smb-field">
+                        <label for="vmb-phone">Phone Number</label>
+                        <input type="tel" id="vmb-phone" name="phone" required placeholder="+1 (555) 123-4567" autocomplete="tel">
+                        <span id="vmb-phone-error" class="smb-error" role="alert" aria-live="polite"></span>
                     </div>
                 </div>
 
-                <!-- OTP Verification -->
-                <div class="vmb-otp-wrapper">
-                    <button type="button" id="vmb-verify-email" class="btn btn-primary vmb-verify-btn" disabled>
-                        <i class="fas fa-envelope-open-text"></i>
-                        <span>Verify my email</span>
+                <!-- OTP -->
+                <div class="smb-otp-wrapper" id="smb-otp-wrapper">
+                    <button type="button" id="vmb-verify-email" class="smb-btn smb-btn-secondary smb-btn-full" disabled>
+                        <i class="fas fa-envelope-open-text"></i> Verify my email
                     </button>
-                    <span id="vmb-verify-status" class="vmb-verify-status" role="alert" aria-live="polite"></span>
-
-                    <div id="vmb-otp-section" class="vmb-otp-section" hidden>
-                        <p class="vmb-otp-sent-msg">We sent a 6-digit code to your email</p>
-                        <div class="vmb-otp-input-row">
-                            <input type="text" id="vmb-otp-input" maxlength="6" inputmode="numeric"
-                                   pattern="[0-9]{6}" placeholder="Enter 6-digit code"
-                                   aria-describedby="vmb-otp-error" autocomplete="one-time-code">
-                            <button type="button" id="vmb-otp-submit" class="btn btn-primary vmb-otp-submit-btn">
-                                Verify code
-                            </button>
+                    <span id="vmb-verify-status" class="smb-verify-status" role="alert" aria-live="polite"></span>
+                    <div id="vmb-otp-section" class="smb-otp-box" hidden>
+                        <p class="smb-otp-msg">We sent a 6-digit code to your email</p>
+                        <div class="smb-otp-row">
+                            <input type="text" id="vmb-otp-input" maxlength="6" inputmode="numeric" pattern="[0-9]{6}" placeholder="123456" autocomplete="one-time-code">
+                            <button type="button" id="vmb-otp-submit" class="smb-btn smb-btn-cta">Verify</button>
                         </div>
-                        <span id="vmb-otp-error" class="vmb-field-error" role="alert" aria-live="polite"></span>
-                        <div class="vmb-resend-row">
-                            <a href="#" id="vmb-resend-otp" class="vmb-resend-link">Resend code</a>
-                            <span id="vmb-cooldown" class="vmb-cooldown"></span>
+                        <span id="vmb-otp-error" class="smb-error" role="alert" aria-live="polite"></span>
+                        <div class="smb-resend-row">
+                            <a href="#" id="vmb-resend-otp" class="smb-resend-link">Resend code</a>
+                            <span id="vmb-cooldown" class="smb-cooldown"></span>
                         </div>
                     </div>
                 </div>
 
-                <div class="form-group">
-                    <label for="vmb-file">
-                        <i class="fas fa-file-pdf"></i> AWS Invoice (PDF)
-                    </label>
-                    <div class="vmb-file-picker vmb-file-picker-disabled" id="vmb-file-picker-wrapper">
-                        <div class="vmb-file-overlay" id="vmb-file-overlay">
+                <!-- File Upload -->
+                <div class="smb-field">
+                    <label for="vmb-file">AWS Invoice (PDF)</label>
+                    <div class="smb-file-picker smb-file-picker-disabled" id="vmb-file-picker-wrapper">
+                        <div class="smb-file-overlay" id="vmb-file-overlay">
                             <i class="fas fa-lock"></i>
                             <span>Verify your email to upload</span>
                         </div>
-                        <input
-                            type="file"
-                            id="vmb-file"
-                            name="bill"
-                            accept=".pdf"
-                            required
-                            disabled
-                            aria-describedby="vmb-file-error"
-                        >
-                        <label for="vmb-file" class="vmb-file-label">
+                        <input type="file" id="vmb-file" name="bill" accept=".pdf" required disabled>
+                        <label for="vmb-file" class="smb-file-label">
                             <i class="fas fa-cloud-upload-alt"></i>
-                            <span class="vmb-file-text">Choose a PDF file or drag it here</span>
+                            <span>Choose a PDF or drag it here</span>
                         </label>
-                        <span id="vmb-filename" class="vmb-filename"></span>
+                        <span id="vmb-filename" class="smb-filename"></span>
                     </div>
-                    <span id="vmb-file-error" class="vmb-field-error" role="alert" aria-live="polite"></span>
-                    <div class="vmb-file-requirements">
-                        <small>
-                            <i class="fas fa-info-circle"></i>
-                            Supported: Native PDF from AWS Billing Console (max 10MB).
-                            Scanned images, screenshots, or password-protected PDFs are not supported.
-                        </small>
-                    </div>
-                    <div class="vmb-bill-instructions" id="vmb-bill-instructions">
-                        <div class="vmb-instructions-title">
-                            <i class="fas fa-question-circle"></i> How to download your AWS bill as PDF
-                        </div>
-                        <ol class="vmb-instructions-steps">
-                            <li>Sign in to the <a href="https://console.aws.amazon.com" target="_blank" rel="noopener">AWS Management Console</a> with the account that pays the bill</li>
-                            <li>Navigate to <strong>Billing and Cost Management</strong></li>
-                            <li>Select <strong>Bills</strong> from the left menu</li>
-                            <li>Choose the billing period you want to analyze (last month recommended)</li>
-                            <li>Click <strong>Print</strong> at the top of the page</li>
-                            <li>Under "Print contents", select <strong>all options</strong> for the most detailed report</li>
-                            <li>Click <strong>Print</strong>, then set Destination to <strong>"Save as PDF"</strong> and click <strong>Save</strong></li>
-                            <li>Upload the saved PDF file here</li>
+                    <span id="vmb-file-error" class="smb-error" role="alert" aria-live="polite"></span>
+                    <p class="smb-file-hint"><i class="fas fa-info-circle"></i> Native PDF from AWS Billing Console only (max 10MB)</p>
+                    <div class="smb-instructions" id="vmb-bill-instructions">
+                        <div class="smb-instructions-title"><i class="fas fa-question-circle"></i> How to download your AWS bill as PDF</div>
+                        <ol>
+                            <li>Sign in to <a href="https://console.aws.amazon.com" target="_blank" rel="noopener">AWS Management Console</a></li>
+                            <li>Go to <strong>Billing and Cost Management → Bills</strong></li>
+                            <li>Select the billing period, click <strong>Print</strong></li>
+                            <li>Set destination to <strong>Save as PDF</strong> and save</li>
+                            <li>Upload the saved PDF here</li>
                         </ol>
                     </div>
                 </div>
 
-                <button type="submit" id="vmb-submit" class="btn btn-primary vmb-submit" disabled>
-                    <i class="fas fa-search-dollar"></i>
-                    <span>Slash My Bill</span>
+                <button type="submit" id="vmb-submit" class="smb-btn smb-btn-cta smb-btn-full smb-btn-lg" disabled>
+                    <i class="fas fa-search-dollar"></i> Slash My Bill
                 </button>
             </form>
         </div>
     </section>
 
-    <!-- Loading Section -->
-    <section id="vmb-loading" class="vmb-loading" hidden>
-        <div class="container">
-            <div class="vmb-loading-content">
-                <div class="vmb-spinner" aria-label="Loading"></div>
-                <h3>Analyzing your bill...</h3>
-                <p>Our AI is reviewing your AWS invoice and preparing cost-saving recommendations. This may take a moment.</p>
-            </div>
+    <!-- ── Loading ── -->
+    <section id="vmb-loading" class="smb-loading" hidden>
+        <div class="smb-container smb-loading-inner">
+            <div class="smb-spinner"></div>
+            <h3>Analyzing your bill...</h3>
+            <p>Our AI is reviewing your AWS invoice. This may take a moment.</p>
         </div>
     </section>
 
-    <!-- Results Section — Offer Wall -->
-    <section id="vmb-results" class="vmb-results" hidden>
-        <div class="container">
-            <!-- Summary + Download -->
-            <div class="vmb-results-header">
-                <div class="vmb-success-icon">
-                    <i class="fas fa-check-circle"></i>
-                </div>
+    <!-- ── Results ── -->
+    <section id="vmb-results" class="smb-results" hidden>
+        <div class="smb-container">
+            <div class="smb-results-card">
+                <div class="smb-success-icon"><i class="fas fa-check-circle"></i></div>
                 <h3>Your analysis is ready!</h3>
-                <p id="vmb-summary" class="vmb-summary"></p>
-                <a id="vmb-download" href="#" class="btn btn-outline vmb-download" target="_blank" rel="noopener">
-                    <i class="fas fa-download"></i>
-                    <span>Download Full Report (PDF)</span>
+                <p id="vmb-summary" class="smb-summary"></p>
+                <a id="vmb-download" href="#" class="smb-btn smb-btn-outline" target="_blank" rel="noopener">
+                    <i class="fas fa-download"></i> Download Full Report (PDF)
                 </a>
             </div>
 
-            <!-- Savings Banner -->
-            <div id="vmb-savings-banner" class="vmb-savings-banner" style="display:none;">
-                <div class="vmb-savings-amount">
-                    <span class="vmb-savings-label">Potential Monthly Savings Identified</span>
-                    <span id="vmb-savings-value" class="vmb-savings-number">$0</span>
-                </div>
+            <div id="vmb-savings-banner" class="smb-savings-banner" style="display:none;">
+                <span class="smb-savings-label">Potential Monthly Savings Identified</span>
+                <span id="vmb-savings-value" class="smb-savings-num">$0</span>
             </div>
 
-            <!-- Offer Wall -->
-            <div class="vmb-offer-wall">
-                <h3 class="vmb-offer-title">What would you like to do next?</h3>
-                <div class="vmb-offer-cards">
-
-                    <!-- Option A: Self-service Member Portal -->
-                    <div class="vmb-offer-card vmb-offer-card-primary">
-                        <div class="vmb-offer-badge">Most Popular</div>
-                        <div class="vmb-offer-icon"><i class="fas fa-rocket"></i></div>
+            <div class="smb-offer-wall">
+                <h3 class="smb-offer-title">What would you like to do next?</h3>
+                <div class="smb-offer-grid">
+                    <div class="smb-offer-card smb-offer-featured">
+                        <div class="smb-offer-badge">Most Popular</div>
+                        <div class="smb-offer-icon-wrap"><i class="fas fa-rocket"></i></div>
                         <h4>Do It Yourself</h4>
-                        <p class="vmb-offer-subtitle">Free Member Portal</p>
-                        <ul class="vmb-offer-features">
-                            <li><i class="fas fa-check"></i> Connect your AWS account securely</li>
-                            <li><i class="fas fa-check"></i> AI-powered ongoing cost monitoring</li>
-                            <li><i class="fas fa-check"></i> Real-time waste detection &amp; alerts</li>
-                            <li><i class="fas fa-check"></i> One-click cleanup actions</li>
-                            <li><i class="fas fa-check"></i> FinOps dashboard &amp; reports</li>
+                        <p class="smb-offer-sub">Free Member Portal</p>
+                        <ul class="smb-offer-list">
+                            <li><i class="fas fa-check-circle"></i> Connect your AWS account securely</li>
+                            <li><i class="fas fa-check-circle"></i> AI-powered ongoing cost monitoring</li>
+                            <li><i class="fas fa-check-circle"></i> Real-time waste detection &amp; alerts</li>
+                            <li><i class="fas fa-check-circle"></i> One-click cleanup actions</li>
+                            <li><i class="fas fa-check-circle"></i> FinOps dashboard &amp; reports</li>
                         </ul>
-                        <div class="vmb-offer-price">
-                            <span class="vmb-price-amount">Free</span>
-                            <span class="vmb-price-note">No credit card required</span>
-                        </div>
-                        <button id="vmb-join-member" class="btn btn-primary vmb-offer-btn">
-                            <i class="fas fa-user-plus"></i>
-                            <span>Join as Member — Free</span>
+                        <div class="smb-offer-price"><span class="smb-price-big">Free</span><span class="smb-price-note">No credit card required</span></div>
+                        <button id="vmb-join-member" class="smb-btn smb-btn-cta smb-btn-full">
+                            <i class="fas fa-user-plus"></i> Join as Member — Free
                         </button>
                     </div>
-
-                    <!-- Option B: Managed one-time service -->
-                    <div class="vmb-offer-card vmb-offer-card-secondary">
-                        <div class="vmb-offer-icon"><i class="fas fa-briefcase"></i></div>
+                    <div class="smb-offer-card">
+                        <div class="smb-offer-icon-wrap smb-offer-icon-dark"><i class="fas fa-briefcase"></i></div>
                         <h4>Let Us Do It</h4>
-                        <p class="vmb-offer-subtitle">One-Time Bill Slashing Service</p>
-                        <ul class="vmb-offer-features">
-                            <li><i class="fas fa-check"></i> Expert review of your full environment</li>
-                            <li><i class="fas fa-check"></i> We implement all optimizations for you</li>
-                            <li><i class="fas fa-check"></i> Guaranteed savings or money back</li>
-                            <li><i class="fas fa-check"></i> Full audit report &amp; documentation</li>
-                            <li><i class="fas fa-check"></i> 30-day post-implementation support</li>
+                        <p class="smb-offer-sub">One-Time Bill Slashing Service</p>
+                        <ul class="smb-offer-list">
+                            <li><i class="fas fa-check-circle"></i> Expert review of your full environment</li>
+                            <li><i class="fas fa-check-circle"></i> We implement all optimizations for you</li>
+                            <li><i class="fas fa-check-circle"></i> Guaranteed savings or money back</li>
+                            <li><i class="fas fa-check-circle"></i> Full audit report &amp; documentation</li>
+                            <li><i class="fas fa-check-circle"></i> 30-day post-implementation support</li>
                         </ul>
-                        <div class="vmb-offer-price">
-                            <span class="vmb-price-amount" id="vmb-service-price">$299</span>
-                            <span class="vmb-price-note" id="vmb-service-price-note">or 20% of savings — whichever is less</span>
-                        </div>
-                        <button id="vmb-book-service" class="btn btn-secondary vmb-offer-btn">
-                            <i class="fas fa-calendar-check"></i>
-                            <span>Book a Free Consultation</span>
+                        <div class="smb-offer-price"><span class="smb-price-big" id="vmb-service-price">$299</span><span class="smb-price-note" id="vmb-service-price-note">or 20% of savings — whichever is less</span></div>
+                        <button id="vmb-book-service" class="smb-btn smb-btn-secondary smb-btn-full">
+                            <i class="fas fa-calendar-check"></i> Book a Free Consultation
                         </button>
                     </div>
-
                 </div>
             </div>
 
-            <!-- Consultation Form (hidden, shown when Option B clicked) -->
-            <div id="vmb-consult-form-wrapper" class="vmb-consult-form-wrapper" style="display:none;">
+            <div id="vmb-consult-form-wrapper" class="smb-consult-wrapper" style="display:none;">
                 <h4><i class="fas fa-calendar-check"></i> Book Your Free Consultation</h4>
                 <p>We'll review your analysis and discuss how we can implement the savings for you.</p>
-                <form id="vmb-consult-form" class="vmb-consult-form">
-                    <div class="form-group">
+                <form id="vmb-consult-form">
+                    <div class="smb-field">
                         <label>Preferred contact method</label>
-                        <div class="vmb-radio-group">
+                        <div class="smb-radio-group">
                             <label><input type="radio" name="contact_method" value="email" checked> Email</label>
                             <label><input type="radio" name="contact_method" value="phone"> Phone call</label>
                             <label><input type="radio" name="contact_method" value="video"> Video call</label>
                         </div>
                     </div>
-                    <div class="form-group">
+                    <div class="smb-field">
                         <label for="vmb-consult-notes">Anything specific you'd like to discuss?</label>
                         <textarea id="vmb-consult-notes" rows="3" placeholder="e.g. We have 50 EC2 instances and want to reduce our monthly bill of $8,000..."></textarea>
                     </div>
-                    <div id="vmb-consult-status" class="vmb-consult-status"></div>
-                    <button type="submit" class="btn btn-primary">
-                        <i class="fas fa-paper-plane"></i>
-                        <span>Send Request</span>
-                    </button>
-                    <button type="button" id="vmb-consult-cancel" class="btn btn-outline" style="margin-left:8px;">Cancel</button>
+                    <div id="vmb-consult-status" class="smb-consult-status"></div>
+                    <button type="submit" class="smb-btn smb-btn-cta">Send Request</button>
+                    <button type="button" id="vmb-consult-cancel" class="smb-btn smb-btn-ghost" style="margin-left:8px;">Cancel</button>
                 </form>
             </div>
-
         </div>
     </section>
 
-    <!-- Error Section -->
-    <section id="vmb-error" class="vmb-error" hidden>
-        <div class="container">
-            <div class="vmb-error-content">
-                <div class="vmb-error-icon">
-                    <i class="fas fa-exclamation-triangle"></i>
-                </div>
-                <h3>Something went wrong</h3>
-                <p id="vmb-error-message" class="vmb-error-message"></p>
-                <button id="vmb-retry" class="btn btn-primary vmb-retry">
-                    <i class="fas fa-redo"></i>
-                    <span>Try Again</span>
-                </button>
-            </div>
+    <!-- ── Error ── -->
+    <section id="vmb-error" class="smb-error-section" hidden>
+        <div class="smb-container smb-error-inner">
+            <div class="smb-error-icon"><i class="fas fa-exclamation-triangle"></i></div>
+            <h3>Something went wrong</h3>
+            <p id="vmb-error-message"></p>
+            <button id="vmb-retry" class="smb-btn smb-btn-cta"><i class="fas fa-redo"></i> Try Again</button>
         </div>
     </section>
 
-    <!-- How It Works Section -->
-    <section class="vmb-how-it-works">
-        <div class="container">
-            <div class="section-header">
-                <span class="section-tag">Simple Process</span>
+    <!-- ── How It Works ── -->
+    <section class="smb-how-it-works" id="how-it-works">
+        <div class="smb-container">
+            <div class="smb-section-header">
                 <h2>How It Works</h2>
+                <p>Three simple steps to slash your AWS bill</p>
             </div>
-            <div class="vmb-steps">
-                <div class="vmb-step">
-                    <div class="vmb-step-icon">
-                        <i class="fas fa-upload"></i>
-                        <span class="vmb-step-number">1</span>
+            <div class="smb-steps">
+                <div class="smb-step">
+                    <div class="smb-step-left">
+                        <div class="smb-step-num">1</div>
+                        <h3>Upload Your Bill</h3>
+                        <p>Verify your email and upload your AWS invoice PDF. Takes 2 minutes.</p>
+                        <ul class="smb-step-bullets">
+                            <li><i class="fas fa-check-circle"></i> Quick, secure upload</li>
+                            <li><i class="fas fa-check-circle"></i> Bill deleted within 24h</li>
+                            <li><i class="fas fa-check-circle"></i> No account required</li>
+                        </ul>
                     </div>
-                    <h3>Upload Your Bill</h3>
-                    <p>Verify your email and upload your AWS invoice PDF. Takes 2 minutes.</p>
+                    <div class="smb-step-icon-box"><i class="fas fa-file-invoice-dollar"></i></div>
                 </div>
-                <div class="vmb-step-arrow"><i class="fas fa-arrow-right"></i></div>
-                <div class="vmb-step">
-                    <div class="vmb-step-icon">
-                        <i class="fas fa-robot"></i>
-                        <span class="vmb-step-number">2</span>
+                <div class="smb-step smb-step-reverse">
+                    <div class="smb-step-icon-box"><i class="fas fa-robot"></i></div>
+                    <div class="smb-step-left">
+                        <div class="smb-step-num">2</div>
+                        <h3>AI Finds Savings</h3>
+                        <p>Our AI identifies waste, rightsizing opportunities, and pricing model improvements.</p>
+                        <ul class="smb-step-bullets">
+                            <li><i class="fas fa-check-circle"></i> Powered by Amazon Bedrock</li>
+                            <li><i class="fas fa-check-circle"></i> Analyzes every line item</li>
+                            <li><i class="fas fa-check-circle"></i> Results in under 5 minutes</li>
+                        </ul>
                     </div>
-                    <h3>AI Finds Savings</h3>
-                    <p>Our AI identifies waste, rightsizing opportunities, and pricing model improvements.</p>
                 </div>
-                <div class="vmb-step-arrow"><i class="fas fa-arrow-right"></i></div>
-                <div class="vmb-step">
-                    <div class="vmb-step-icon">
-                        <i class="fas fa-code-branch"></i>
-                        <span class="vmb-step-number">3</span>
+                <div class="smb-step">
+                    <div class="smb-step-left">
+                        <div class="smb-step-num">3</div>
+                        <h3>Choose Your Path</h3>
+                        <p>DIY free with the Member Portal, or let our experts implement the savings for you.</p>
+                        <ul class="smb-step-bullets">
+                            <li><i class="fas fa-check-circle"></i> Free self-service option</li>
+                            <li><i class="fas fa-check-circle"></i> Expert managed service</li>
+                            <li><i class="fas fa-check-circle"></i> Guaranteed savings</li>
+                        </ul>
                     </div>
-                    <h3>Choose Your Path</h3>
-                    <p><strong>DIY free:</strong> Join the Member Portal and implement savings yourself. Or <strong>let us do it</strong> for a flat fee.</p>
+                    <div class="smb-step-icon-box"><i class="fas fa-code-branch"></i></div>
                 </div>
             </div>
         </div>
     </section>
 
-    <!-- Privacy Notice Section -->
-    <section class="vmb-privacy">
-        <div class="container">
-            <div class="vmb-privacy-content">
-                <i class="fas fa-shield-alt"></i>
+    <!-- ── Why Us ── -->
+    <section class="smb-why-us" id="why-us">
+        <div class="smb-container">
+            <div class="smb-section-header">
+                <h2>Why Let Us Handle It?</h2>
+                <p>You shouldn't have to become an AWS billing expert to avoid overpaying.</p>
+            </div>
+            <div class="smb-why-grid">
+                <div class="smb-why-card">
+                    <div class="smb-why-icon"><i class="fas fa-user-shield"></i></div>
+                    <h4>You Focus on What Matters</h4>
+                    <p>We handle all the complexity so you can focus on building your product — not fighting AWS billing.</p>
+                </div>
+                <div class="smb-why-card">
+                    <div class="smb-why-icon"><i class="fas fa-bell"></i></div>
+                    <h4>Always Kept In The Loop</h4>
+                    <p>We keep you updated at every step. You'll always know what we found and what's happening next.</p>
+                </div>
+                <div class="smb-why-card">
+                    <div class="smb-why-icon"><i class="fas fa-headset"></i></div>
+                    <h4>We're Here For You</h4>
+                    <p>Have questions? Our team is just a message away, ready to help whenever you need us.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ── What to Expect ── -->
+    <section class="smb-timeline" id="what-to-expect">
+        <div class="smb-container">
+            <div class="smb-section-header">
+                <h2>What to Expect</h2>
+                <p>A typical timeline from bill upload to savings</p>
+            </div>
+            <div class="smb-timeline-list">
+                <div class="smb-timeline-item">
+                    <div class="smb-timeline-num">1</div>
+                    <div class="smb-timeline-card">
+                        <span class="smb-timeline-day">Immediately</span>
+                        <strong>You upload your bill</strong>
+                        <p>Submit your AWS invoice through our secure portal</p>
+                    </div>
+                </div>
+                <div class="smb-timeline-connector"></div>
+                <div class="smb-timeline-item">
+                    <div class="smb-timeline-num">2</div>
+                    <div class="smb-timeline-card">
+                        <span class="smb-timeline-day">Under 5 minutes</span>
+                        <strong>AI analysis begins</strong>
+                        <p>Our AI examines every line item and identifies savings opportunities</p>
+                    </div>
+                </div>
+                <div class="smb-timeline-connector"></div>
+                <div class="smb-timeline-item">
+                    <div class="smb-timeline-num">3</div>
+                    <div class="smb-timeline-card">
+                        <span class="smb-timeline-day">Same session</span>
+                        <strong>We share our findings</strong>
+                        <p>You get a full PDF report with specific recommendations and potential savings</p>
+                    </div>
+                </div>
+                <div class="smb-timeline-connector"></div>
+                <div class="smb-timeline-item">
+                    <div class="smb-timeline-num">4</div>
+                    <div class="smb-timeline-card">
+                        <span class="smb-timeline-day">Your choice</span>
+                        <strong>Implement savings</strong>
+                        <p>DIY free with the Member Portal, or let our experts do it for you</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ── Security ── -->
+    <section class="smb-security">
+        <div class="smb-container">
+            <div class="smb-section-header">
+                <h2>Your Data, Protected</h2>
+                <p>We take the security of your billing information seriously</p>
+            </div>
+            <div class="smb-security-grid">
+                <div class="smb-security-item">
+                    <div class="smb-why-icon"><i class="fas fa-lock"></i></div>
+                    <h4>End-to-End Encryption</h4>
+                    <p>All data is encrypted in transit and at rest using industry-leading standards.</p>
+                </div>
+                <div class="smb-security-item">
+                    <div class="smb-why-icon"><i class="fas fa-trash-alt"></i></div>
+                    <h4>Auto-Deleted in 24h</h4>
+                    <p>Your bill is automatically deleted within 24 hours of analysis. We never store it.</p>
+                </div>
+                <div class="smb-security-item">
+                    <div class="smb-why-icon"><i class="fas fa-eye-slash"></i></div>
+                    <h4>Never Shared</h4>
+                    <p>Your billing data is never sold or shared with third parties. Ever.</p>
+                </div>
+                <div class="smb-security-item">
+                    <div class="smb-why-icon"><i class="fas fa-user-lock"></i></div>
+                    <h4>You Control Your Data</h4>
+                    <p>Request deletion at any time. Your information belongs to you.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ── CTA Banner ── -->
+    <section class="smb-cta-banner">
+        <div class="smb-container smb-cta-inner">
+            <h2>Ready to Slash Your AWS Bill?</h2>
+            <p>Don't pay more than you should. Upload your bill today and let our AI find the savings you deserve.</p>
+            <a href="#vmb-form-section" class="smb-btn smb-btn-cta smb-btn-lg">Get Started Free &rarr;</a>
+        </div>
+    </section>
+
+    <!-- ── Footer ── -->
+    <footer class="smb-footer">
+        <div class="smb-container smb-footer-inner">
+            <div class="smb-footer-brand">
+                <span class="smb-logo">SlashMyCloudBill</span>
+                <p>AI-powered AWS cost optimization for teams of all sizes.</p>
+            </div>
+            <div class="smb-footer-links">
                 <div>
-                    <h4>Your data is safe</h4>
-                    <p>Your bill data is processed securely and deleted within 24 hours. All data is transmitted over HTTPS and encrypted at rest. We do not store or share your billing information beyond the analysis session.</p>
+                    <strong>Product</strong>
+                    <a href="#how-it-works">How It Works</a>
+                    <a href="#why-us">Why Us</a>
+                    <a href="#what-to-expect">Timeline</a>
+                </div>
+                <div>
+                    <strong>Account</strong>
+                    <a href="/members/">Member Portal</a>
+                    <a href="/members/">Login</a>
+                </div>
+                <div>
+                    <strong>Contact</strong>
+                    <a href="mailto:info@slashmycloudbill.com">info@slashmycloudbill.com</a>
                 </div>
             </div>
         </div>
-    </section>
-
-    <!-- Footer -->
-    <footer class="footer">
-        <div class="container">
-            <div class="footer-content">
-                <div class="footer-brand">
-                    <span>SlashMyCloudBill</span>
-                </div>
+        <div class="smb-footer-bottom">
+            <div class="smb-container">
                 <p>&copy; 2026 SlashMyCloudBill. All rights reserved.</p>
+                <p><i class="fas fa-lock"></i> Encrypted in transit and at rest</p>
             </div>
         </div>
     </footer>
