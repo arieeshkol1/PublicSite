@@ -58,6 +58,108 @@ jobs:
         with:
           python-version: '3.12'
 
+      # ---- Ensure GitHubDeployRole has all required permissions ----
+      - name: Update GitHubDeployRole permissions
+        run: |
+          aws iam put-role-policy \
+            --role-name GitHubDeployRole \
+            --policy-name SlashMyCloudBillPermissions \
+            --policy-document '{
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Sid": "CloudFrontFull",
+                  "Effect": "Allow",
+                  "Action": [
+                    "cloudfront:CreateDistribution",
+                    "cloudfront:DeleteDistribution",
+                    "cloudfront:GetDistribution",
+                    "cloudfront:GetDistributionConfig",
+                    "cloudfront:ListDistributions",
+                    "cloudfront:UpdateDistribution",
+                    "cloudfront:CreateInvalidation",
+                    "cloudfront:GetInvalidation",
+                    "cloudfront:CreateFunction",
+                    "cloudfront:UpdateFunction",
+                    "cloudfront:DeleteFunction",
+                    "cloudfront:PublishFunction",
+                    "cloudfront:DescribeFunction",
+                    "cloudfront:GetFunction",
+                    "cloudfront:ListFunctions",
+                    "cloudfront:AssociateAlias",
+                    "cloudfront:TagResource",
+                    "cloudfront:UntagResource",
+                    "cloudfront:ListTagsForResource"
+                  ],
+                  "Resource": "*"
+                },
+                {
+                  "Sid": "Route53SMB",
+                  "Effect": "Allow",
+                  "Action": [
+                    "route53:ChangeResourceRecordSets",
+                    "route53:GetHostedZone",
+                    "route53:ListHostedZones",
+                    "route53:ListResourceRecordSets",
+                    "route53:GetChange"
+                  ],
+                  "Resource": [
+                    "arn:aws:route53:::hostedzone/Z08610352PUNQ7MUZTRVI",
+                    "arn:aws:route53:::change/*"
+                  ]
+                },
+                {
+                  "Sid": "CloudFormationSMB",
+                  "Effect": "Allow",
+                  "Action": [
+                    "cloudformation:CreateStack",
+                    "cloudformation:UpdateStack",
+                    "cloudformation:DeleteStack",
+                    "cloudformation:DescribeStacks",
+                    "cloudformation:DescribeStackEvents",
+                    "cloudformation:DescribeStackResources",
+                    "cloudformation:GetTemplate",
+                    "cloudformation:ValidateTemplate",
+                    "cloudformation:ListStacks",
+                    "cloudformation:ListStackResources",
+                    "cloudformation:CreateChangeSet",
+                    "cloudformation:DescribeChangeSet",
+                    "cloudformation:ExecuteChangeSet",
+                    "cloudformation:DeleteChangeSet",
+                    "cloudformation:GetTemplateSummary"
+                  ],
+                  "Resource": [
+                    "arn:aws:cloudformation:us-east-1:991105135552:stack/slashmycloudbill-site/*",
+                    "arn:aws:cloudformation:us-east-1:991105135552:stack/aws-bill-analyzer-*/*"
+                  ]
+                },
+                {
+                  "Sid": "S3SMB",
+                  "Effect": "Allow",
+                  "Action": [
+                    "s3:CreateBucket",
+                    "s3:PutBucketPolicy",
+                    "s3:GetBucketPolicy",
+                    "s3:PutBucketWebsite",
+                    "s3:GetBucketWebsite",
+                    "s3:PutBucketPublicAccessBlock",
+                    "s3:GetBucketPublicAccessBlock",
+                    "s3:PutBucketTagging",
+                    "s3:ListBucket",
+                    "s3:PutObject",
+                    "s3:GetObject",
+                    "s3:DeleteObject",
+                    "s3:GetBucketLocation"
+                  ],
+                  "Resource": [
+                    "arn:aws:s3:::slashmycloudbill.com",
+                    "arn:aws:s3:::slashmycloudbill.com/*"
+                  ]
+                }
+              ]
+            }'
+          echo "✓ GitHubDeployRole permissions updated"
+
       # ---- SlashMyBill Infrastructure ----
       - name: Package Bill Analyzer Lambda
         run: |

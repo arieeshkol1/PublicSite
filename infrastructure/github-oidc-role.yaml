@@ -159,6 +159,7 @@ Resources:
               - iam:UntagRole
             Resource:
               - !Sub 'arn:aws:iam::${AWSAccountId}:role/aws-bill-analyzer-*'
+              - !Sub 'arn:aws:iam::${AWSAccountId}:role/GitHubDeployRole'
           
           # API Gateway Permissions
           - Sid: APIGatewayManagement
@@ -200,18 +201,39 @@ Resources:
           - Sid: CloudFrontManagement
             Effect: Allow
             Action:
-              - cloudfront:CreateInvalidation
+              - cloudfront:CreateDistribution
+              - cloudfront:DeleteDistribution
               - cloudfront:GetDistribution
               - cloudfront:GetDistributionConfig
               - cloudfront:ListDistributions
               - cloudfront:UpdateDistribution
+              - cloudfront:CreateInvalidation
+              - cloudfront:GetInvalidation
               - cloudfront:CreateFunction
               - cloudfront:UpdateFunction
+              - cloudfront:DeleteFunction
               - cloudfront:PublishFunction
               - cloudfront:DescribeFunction
+              - cloudfront:GetFunction
               - cloudfront:ListFunctions
               - cloudfront:AssociateAlias
+              - cloudfront:TagResource
+              - cloudfront:UntagResource
+              - cloudfront:ListTagsForResource
             Resource: '*'
+
+          # Route 53 Permissions (needed for slashmycloudbill.com DNS)
+          - Sid: Route53Management
+            Effect: Allow
+            Action:
+              - route53:ChangeResourceRecordSets
+              - route53:GetHostedZone
+              - route53:ListHostedZones
+              - route53:ListResourceRecordSets
+              - route53:GetChange
+            Resource:
+              - arn:aws:route53:::hostedzone/Z08610352PUNQ7MUZTRVI
+              - arn:aws:route53:::change/*
 
           # ACM Certificate Permissions (needed for slashmycloudbill.com)
           - Sid: ACMCertificateManagement
