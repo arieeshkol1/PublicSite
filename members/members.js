@@ -2439,7 +2439,6 @@ function renderDashboardWidgets(data) {
     _addWidget(grid, 'dash-daily', 'Cost Trend <span id="dash-trend-toggle" style="font-size:0.7em;margin-left:8px;"><button class="btn btn-outline btn-sm" style="padding:1px 6px;font-size:0.8em;" onclick="_toggleTrendView(\'daily\')">Daily</button> <button class="btn btn-outline btn-sm" style="padding:1px 6px;font-size:0.8em;background:#6366f1;color:#fff;border-color:#6366f1;" onclick="_toggleTrendView(\'hourly\')">Hourly</button></span>', 250, 'Are there any cost anomalies?');
     _addWidget(grid, 'dash-allocation', 'Cost Allocation by Business Unit <button class="btn btn-outline btn-sm" style="font-size:0.7em;margin-left:8px;padding:2px 6px;" onclick="showAllocationRulesModal();">Manage Rules</button>', 280, 'Break down my costs by business unit');
     _addWidget(grid, 'dash-waste', 'Waste Detection', 250, 'What services do I not need? Show me all waste.');
-    _addWidget(grid, 'dash-rightsizing', 'Rightsizing Summary', 250, 'Is there any service we can rightsize?');
     _addWidget(grid, 'dash-monthly', 'Monthly Cost by Service', 320, 'Compare my costs over the last 3 months');
 
     // Unit Economics widget
@@ -2456,7 +2455,6 @@ function renderDashboardWidgets(data) {
         _renderTreemap(data.costByService || [], data.drillDown || {});
         _renderDailyTrend(data.dailyTrend || [], data.hourlyTrend || []);
         _renderAllocationTreemap(data.costAllocation || null);
-        _renderRightsizing(data.rightsizing || {}, data.waste || {});
         _renderWaste(data.waste || {});
         _renderMonthly(data.monthlyTrend || {});
         _renderUnitEconomics(data.unitEconomics || null);
