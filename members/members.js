@@ -2427,6 +2427,9 @@ function renderDashboardWidgets(data) {
     // Unit Economics widget
     _addWidget(grid, 'dash-unit-economics', 'Unit Cost Trend <button class="btn btn-outline btn-sm" style="font-size:0.7em;margin-left:8px;padding:2px 6px;" onclick="showBusinessMetricsModal();">Add Metrics</button>', 280, 'How is my cost per unit trending?');
 
+    // Regional Cost widget
+    _addWidget(grid, 'dash-regional', 'Cost by Region', 300, 'Show me my cost breakdown by region');
+
     // Render ECharts
     setTimeout(function() {
         _renderTreemap(data.costByService || [], data.drillDown || {});
@@ -2436,6 +2439,7 @@ function renderDashboardWidgets(data) {
         _renderWaste(data.waste || {});
         _renderMonthly(data.monthlyTrend || {});
         _renderUnitEconomics(data.unitEconomics || null);
+        _renderRegionalPie(data.costByRegion || []);
     }, 100);
 }
 
@@ -3067,6 +3071,37 @@ function _renderUnitEconomics(ue) {
         grid: { left: 60, right: 60, bottom: 25, top: 40 },
     });
     window.addEventListener('resize', function() { chart.resize(); });
+}
+
+function _renderRegionalPie(costByRegion) {
+    var container = $('dash-regional');
+    if (!container) return;
+    if (!costByRegion || costByRegion.length === 0) {
+        container.innerHTML = '<div style="color:#9ca3af;text-align:center;padding:40px 0;">No regional cost data available</div>';
+        return;
+    }
+    var colors = ['#6366f1','#10b981','#f59e0b','#ef4444','#3b82f6','#8b5cf6','#ec4899','#14b8a6','#f97316','#06b6d4','#84cc16','#a855f7'];
+    var total = costByRegion.reduce(function(s,r){return s+r.cost;},0);
+    var pieData = costByRegion.map(function(r,i){
+        var label = r.region || 'Global';
+        if (label === 'global') label = 'Global (no region)';
+        return {value:r.cost, name:label + ' ($' + r.cost.toFixed(2) + ', ' + r.pct + '%)', itemStyle:{color:colors[i%colors.length]}};
+    });
+    var chart = echarts.init(container);
+    chart.setOption({
+        tooltip:{trigger:'item',formatter:'{b}'},
+        series:[{
+            type:'pie',
+            radius:['35%','70%'],
+            center:['50%','55%'],
+            data:pieData,
+            label:{show:true,fontSize:10,formatter:'{b}',overflow:'truncate',width:120},
+            emphasis:{itemStyle:{shadowBlur:10,shadowOffsetX:0,shadowColor:'rgba(0,0,0,0.3)'}},
+            animationType:'scale',
+        }]
+    });
+    dashboardCharts.push(chart);
+    window.addEventListener('resize',function(){chart.resize();});
 }
 
 function showBusinessMetricsModal() {

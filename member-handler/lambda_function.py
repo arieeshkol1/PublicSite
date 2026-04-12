@@ -1388,6 +1388,22 @@ def handle_dashboard_data(event):
             except Exception:
                 pass  # Fall back to 7-day data from _gather_account_data
 
+            # Fetch cost by region (last 30 days)
+            try:
+                region_resp = ce_30d.get_cost_and_usage(
+                    TimePeriod={'Start': start_30d, 'End': end_date},
+                    Granularity='MONTHLY', Metrics=['UnblendedCost'],
+                    GroupBy=[{'Type': 'DIMENSION', 'Key': 'REGION'}],
+                )
+                for period in region_resp.get('ResultsByTime', []):
+                    for group in period.get('Groups', []):
+                        region_name = group['Keys'][0]
+                        region_cost = float(group['Metrics']['UnblendedCost']['Amount'])
+                        if region_cost > 0.01 and region_name:
+                            merged_regional[region_name] = merged_regional.get(region_name, 0) + region_cost
+            except Exception:
+                pass
+
             # Fetch hourly usage metrics (last 24h) via CloudWatch for real-time waste detection
             try:
                 cw_hourly = boto3.client('cloudwatch',
@@ -1622,6 +1638,11 @@ def handle_dashboard_data(event):
         'drillDown': drill_down_data,
         'unitEconomics': _get_unit_economics(member_email, merged_monthly) if merged_monthly else None,
         'discoveredMetrics': all_discovered_metrics,
+        'costByRegion': sorted(
+            [{'region': r, 'cost': round(c, 2), 'pct': round(c / total_spend * 100, 1) if total_spend > 0 else 0}
+             for r, c in merged_regional.items() if c > 0.01],
+            key=lambda x: x['cost'], reverse=True
+        ),
     })
 
 
