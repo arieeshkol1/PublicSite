@@ -303,6 +303,7 @@ def handle_register(event):
                     "createdAt": now_iso,
                     "lastLoginAt": None,
                     "favoriteQueries": [],
+                    "tier": "free",
                 })
         except ClientError as e:
             logger.warning(f"Profile create error (non-critical): {e}")
@@ -367,7 +368,13 @@ def handle_login(event):
                 pass
 
             logger.info(f"Member Cognito login successful for: {email}")
-            return create_response(200, {"token": access_token, "refreshToken": refresh_token, "email": email, "displayName": display_name})
+            member_tier = 'free'
+            try:
+                m = members_table.get_item(Key={"email": email}).get("Item", {})
+                member_tier = m.get('tier', 'free')
+            except Exception:
+                pass
+            return create_response(200, {"token": access_token, "refreshToken": refresh_token, "email": email, "displayName": display_name, "tier": member_tier, "tierLimit": _get_tier_limit(member_tier)})
 
         except cognito_client.exceptions.NotAuthorizedException:
             return create_error_response(401, "AuthError", "Invalid email or password")
@@ -517,6 +524,11 @@ def handle_get_accounts(event):
     return create_response(200, {'accounts': accounts})
 
 
+def _get_tier_limit(tier: str) -> int:
+    """Return max AWS accounts allowed per tier."""
+    return {'free': 1, 'growth': 5, 'scale': 20}.get(tier, 1)
+
+
 def handle_add_account(event):
     """Add a new AWS account."""
     auth = validate_token(event)
@@ -547,6 +559,29 @@ def handle_add_account(event):
     except ClientError as e:
         logger.error(f"DynamoDB read error: {e}")
         return create_error_response(500, 'ServerError', 'An unexpected error occurred. Please try again.')
+
+    # Enforce tier account limit
+    try:
+        all_accounts = accounts_table.query(
+            KeyConditionExpression=boto3.dynamodb.conditions.Key('memberEmail').eq(member_email),
+            Select='COUNT'
+        )
+        current_count = all_accounts.get('Count', 0)
+        members_table = dynamodb.Table(MEMBERS_TABLE_NAME)
+        member = members_table.get_item(Key={'email': member_email}).get('Item', {})
+        tier = member.get('tier', 'free')
+        limit = _get_tier_limit(tier)
+        if current_count >= limit:
+            tier_names = {'free': 'Free (Tier 1)', 'growth': 'Growth (Tier 2)', 'scale': 'Scale (Tier 3)'}
+            next_tier = {'free': 'Growth', 'growth': 'Scale', 'scale': 'Scale'}
+            return create_error_response(403, 'TierLimitReached',
+                f'Your {tier_names.get(tier, tier)} plan allows up to {limit} AWS account{"s" if limit > 1 else ""}. '
+                f'Upgrade to {next_tier.get(tier, "a higher")} tier to connect more accounts.',
+                extra={'currentTier': tier, 'limit': limit, 'currentCount': current_count}
+            )
+    except ClientError as e:
+        logger.error(f"Tier limit check error: {e}")
+        # Non-blocking — allow the add if check fails
 
     now_iso = datetime.now(timezone.utc).isoformat()
     role_name = f'SlashMyBill-{account_id}'
@@ -5608,14 +5643,17 @@ def create_response(status_code, body):
     }
 
 
-def create_error_response(status_code, error_type, message):
+def create_error_response(status_code, error_type, message, extra=None):
     """Return an error response following the existing Lambda pattern."""
+    body = {
+        'error': error_type,
+        'message': message,
+        'code': status_code,
+    }
+    if extra:
+        body.update(extra)
     return {
         'statusCode': status_code,
         'headers': cors_headers(),
-        'body': json.dumps({
-            'error': error_type,
-            'message': message,
-            'code': status_code,
-        }),
+        'body': json.dumps(body),
     }
