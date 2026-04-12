@@ -198,7 +198,26 @@ Resources:
             Action:
               - cloudfront:CreateInvalidation
               - cloudfront:GetDistribution
+              - cloudfront:GetDistributionConfig
               - cloudfront:ListDistributions
+              - cloudfront:UpdateDistribution
+              - cloudfront:CreateFunction
+              - cloudfront:UpdateFunction
+              - cloudfront:PublishFunction
+              - cloudfront:DescribeFunction
+              - cloudfront:ListFunctions
+              - cloudfront:AssociateAlias
+            Resource: '*'
+
+          # ACM Certificate Permissions (needed for slashmycloudbill.com)
+          - Sid: ACMCertificateManagement
+            Effect: Allow
+            Action:
+              - acm:RequestCertificate
+              - acm:DescribeCertificate
+              - acm:ListCertificates
+              - acm:DeleteCertificate
+              - acm:AddTagsToCertificate
             Resource: '*'
           
           # CloudFormation Permissions

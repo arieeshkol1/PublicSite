@@ -1,0 +1,122 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'slashmycloudbill.com — SSL certificate, CloudFront alias, Route 53 DNS'
+
+Parameters:
+  CloudFrontDistributionId:
+    Type: String
+    Default: 'E12JIHGHK40OLE'
+    Description: Existing CloudFront distribution ID
+
+  CloudFrontDomain:
+    Type: String
+    Default: 'd13k71im98zj35.cloudfront.net'
+    Description: CloudFront distribution domain name
+
+  HostedZoneId:
+    Type: String
+    Default: 'Z08610352PUNQ7MUZTRVI'
+    Description: Route 53 hosted zone ID for slashmycloudbill.com
+
+Resources:
+
+  # ── SSL Certificate ────────────────────────────────────────────────────
+  SlashMyCloudBillCert:
+    Type: AWS::CertificateManager::Certificate
+    Properties:
+      DomainName: slashmycloudbill.com
+      SubjectAlternativeNames:
+        - www.slashmycloudbill.com
+      ValidationMethod: DNS
+      DomainValidationOptions:
+        - DomainName: slashmycloudbill.com
+          HostedZoneId: !Ref HostedZoneId
+        - DomainName: www.slashmycloudbill.com
+          HostedZoneId: !Ref HostedZoneId
+      Tags:
+        - Key: Project
+          Value: SlashMyCloudBill
+
+  # ── Route 53 DNS Records ───────────────────────────────────────────────
+  SlashMyCloudBillDnsA:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: slashmycloudbill.com
+      Type: A
+      AliasTarget:
+        HostedZoneId: Z2FDTNDATAQYW2
+        DNSName: !Ref CloudFrontDomain
+        EvaluateTargetHealth: false
+
+  SlashMyCloudBillDnsAAAA:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: slashmycloudbill.com
+      Type: AAAA
+      AliasTarget:
+        HostedZoneId: Z2FDTNDATAQYW2
+        DNSName: !Ref CloudFrontDomain
+        EvaluateTargetHealth: false
+
+  SlashMyCloudBillWwwDns:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: www.slashmycloudbill.com
+      Type: A
+      AliasTarget:
+        HostedZoneId: Z2FDTNDATAQYW2
+        DNSName: !Ref CloudFrontDomain
+        EvaluateTargetHealth: false
+
+  # ── CloudFront Function for URL routing ───────────────────────────────
+  SlashMyCloudBillRouterFunction:
+    Type: AWS::CloudFront::Function
+    Properties:
+      Name: SlashMyCloudBill-Router
+      AutoPublish: true
+      FunctionConfig:
+        Comment: Routes slashmycloudbill.com to SlashMyBill paths
+        Runtime: cloudfront-js-2.0
+      FunctionCode: |
+        function handler(event) {
+            var request = event.request;
+            var host = (request.headers.host && request.headers.host.value) || '';
+            var uri = request.uri;
+
+            if (host.indexOf('slashmycloudbill.com') === -1) {
+                return request;
+            }
+
+            if (uri === '/' || uri === '') {
+                request.uri = '/slashMyBill/index.html';
+                return request;
+            }
+
+            if (uri.startsWith('/members') || uri.startsWith('/admin') || uri.startsWith('/slashMyBill')) {
+                return request;
+            }
+
+            var ext = uri.split('.').pop().toLowerCase();
+            var staticExts = ['css','js','png','jpg','jpeg','gif','svg','ico','woff','woff2','ttf','map'];
+            if (staticExts.indexOf(ext) !== -1) {
+                return request;
+            }
+
+            request.uri = '/slashMyBill' + uri;
+            return request;
+        }
+
+Outputs:
+  CertificateArn:
+    Description: ACM Certificate ARN for slashmycloudbill.com
+    Value: !Ref SlashMyCloudBillCert
+    Export:
+      Name: SlashMyCloudBill-CertArn
+
+  RouterFunctionArn:
+    Description: CloudFront Function ARN for URL routing
+    Value: !GetAtt SlashMyCloudBillRouterFunction.FunctionARN
+    Export:
+      Name: SlashMyCloudBill-RouterFunctionArn

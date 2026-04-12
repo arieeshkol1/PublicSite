@@ -15,6 +15,8 @@ on:
       - '*.ico'
       - 'slashMyBill/**'
       - 'infrastructure/viewmybill-stack.yaml'
+      - 'infrastructure/slashmycloudbill-stack.yaml'
+      - 'infrastructure/github-oidc-role.yaml'
       - 'bill-analyzer/**'
       - 'upload-handler/**'
       - 'otp-handler/**'
@@ -262,11 +264,105 @@ jobs:
             --paths "/*"
           echo "✓ Cache invalidated"
 
+      - name: Deploy slashmycloudbill.com stack (cert + DNS + CF function)
+        run: |
+          echo "Deploying slashmycloudbill.com infrastructure..."
+          aws cloudformation deploy \
+            --template-file infrastructure/slashmycloudbill-stack.yaml \
+            --stack-name slashmycloudbill-setup \
+            --capabilities CAPABILITY_IAM \
+            --no-fail-on-empty-changeset \
+            --tags Project=SlashMyCloudBill || echo "⚠ slashmycloudbill stack deploy failed (may need manual cert validation)"
+          echo "✓ slashmycloudbill.com stack deployed"
+
+      - name: Update CloudFront distribution with slashmycloudbill.com alias
+        run: |
+          # Get the certificate ARN from the stack output
+          CERT_ARN=$(aws cloudformation describe-stacks \
+            --stack-name slashmycloudbill-setup \
+            --query "Stacks[0].Outputs[?OutputKey=='CertificateArn'].OutputValue" \
+            --output text 2>/dev/null || echo "")
+
+          FUNC_ARN=$(aws cloudformation describe-stacks \
+            --stack-name slashmycloudbill-setup \
+            --query "Stacks[0].Outputs[?OutputKey=='RouterFunctionArn'].OutputValue" \
+            --output text 2>/dev/null || echo "")
+
+          if [ -z "$CERT_ARN" ] || [ "$CERT_ARN" = "None" ]; then
+            echo "⚠ Certificate not yet issued — skipping CloudFront update. Re-run after cert validates."
+            exit 0
+          fi
+
+          # Check cert is ISSUED
+          CERT_STATUS=$(aws acm describe-certificate --certificate-arn "$CERT_ARN" --region us-east-1 \
+            --query "Certificate.Status" --output text 2>/dev/null || echo "PENDING")
+
+          if [ "$CERT_STATUS" != "ISSUED" ]; then
+            echo "⚠ Certificate status: $CERT_STATUS — skipping CloudFront update. Re-run after cert validates."
+            exit 0
+          fi
+
+          echo "Certificate ISSUED. Updating CloudFront distribution..."
+
+          # Get current distribution config
+          DIST_CONFIG=$(aws cloudfront get-distribution-config --id ${{ env.CLOUDFRONT_ID }})
+          ETAG=$(echo "$DIST_CONFIG" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['ETag'])")
+          CONFIG=$(echo "$DIST_CONFIG" | python3 -c "import sys,json; d=json.load(sys.stdin); print(json.dumps(d['DistributionConfig']))")
+
+          # Add aliases and certificate via Python
+          UPDATED_CONFIG=$(python3 << 'PYEOF'
+          import json, os, sys
+
+          config = json.loads(os.environ['CONFIG'])
+          cert_arn = os.environ['CERT_ARN']
+          func_arn = os.environ.get('FUNC_ARN', '')
+
+          # Add aliases
+          aliases = config.get('Aliases', {})
+          items = aliases.get('Items', [])
+          for domain in ['slashmycloudbill.com', 'www.slashmycloudbill.com']:
+              if domain not in items:
+                  items.append(domain)
+          config['Aliases'] = {'Quantity': len(items), 'Items': items}
+
+          # Update viewer certificate
+          config['ViewerCertificate'] = {
+              'ACMCertificateArn': cert_arn,
+              'SSLSupportMethod': 'sni-only',
+              'MinimumProtocolVersion': 'TLSv1.2_2021',
+              'CloudFrontDefaultCertificate': False
+          }
+
+          # Add CloudFront Function to default cache behavior
+          if func_arn:
+              dcb = config.get('DefaultCacheBehavior', {})
+              fa = dcb.get('FunctionAssociations', {'Quantity': 0, 'Items': []})
+              existing = [f for f in fa.get('Items', []) if 'SlashMyCloudBill' not in f.get('FunctionARN', '')]
+              existing.append({'FunctionARN': func_arn, 'EventType': 'viewer-request'})
+              dcb['FunctionAssociations'] = {'Quantity': len(existing), 'Items': existing}
+              config['DefaultCacheBehavior'] = dcb
+
+          print(json.dumps(config))
+          PYEOF
+          )
+
+          export CONFIG="$CONFIG"
+          export CERT_ARN="$CERT_ARN"
+          export FUNC_ARN="$FUNC_ARN"
+
+          aws cloudfront update-distribution \
+            --id ${{ env.CLOUDFRONT_ID }} \
+            --distribution-config "$UPDATED_CONFIG" \
+            --if-match "$ETAG" > /dev/null
+
+          echo "✓ CloudFront updated with slashmycloudbill.com"
+
       - name: Summary
         run: |
           echo "=== Deploy Complete ==="
           echo "Website: https://www.eshkolai.com"
           echo "SlashMyBill: https://www.eshkolai.com/slashMyBill/"
+          echo "SlashMyCloudBill: https://slashmycloudbill.com (after DNS propagates)"
           echo "Admin: https://www.eshkolai.com/admin/"
           echo "Member Portal: https://www.eshkolai.com/members/"
           echo "API: ${{ steps.api-url.outputs.api_endpoint }}"
