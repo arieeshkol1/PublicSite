@@ -245,6 +245,8 @@ jobs:
             --cache-control "no-cache, no-store, must-revalidate" --content-type "text/css"
           aws s3 cp members/members.js s3://${{ env.S3_BUCKET }}/members/members.js \
             --cache-control "no-cache, no-store, must-revalidate" --content-type "application/javascript"
+          aws s3 cp members/help.js s3://${{ env.S3_BUCKET }}/members/help.js \
+            --cache-control "no-cache, no-store, must-revalidate" --content-type "application/javascript"
           echo "✓ Member Portal frontend deployed"
 
       - name: Sync to eshkolai.com bucket
