@@ -1,0 +1,295 @@
+﻿/* ============================================================
+   SlashMyBill Marketing Pipeline Styles
+   ============================================================ */
+
+/* ── Savings Banner ─────────────────────────────────────────── */
+.vmb-savings-banner {
+    background: linear-gradient(135deg, #064e3b, #065f46);
+    border-radius: 16px;
+    padding: 28px 32px;
+    text-align: center;
+    margin: 24px 0;
+    box-shadow: 0 8px 32px rgba(6, 78, 59, 0.3);
+}
+.vmb-savings-label {
+    display: block;
+    color: #6ee7b7;
+    font-size: 0.9em;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-bottom: 8px;
+}
+.vmb-savings-number {
+    display: block;
+    color: #fff;
+    font-size: 3em;
+    font-weight: 800;
+    line-height: 1;
+}
+
+/* ── Results Header ─────────────────────────────────────────── */
+.vmb-results-header {
+    text-align: center;
+    padding: 32px 0 16px;
+}
+.vmb-results-header .vmb-success-icon {
+    font-size: 3em;
+    color: #10b981;
+    margin-bottom: 12px;
+}
+.vmb-results-header h3 {
+    font-size: 1.8em;
+    color: #1f2937;
+    margin-bottom: 8px;
+}
+.vmb-results-header .vmb-summary {
+    color: #6b7280;
+    font-size: 1em;
+    max-width: 600px;
+    margin: 0 auto 20px;
+    line-height: 1.6;
+}
+.vmb-download {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.9em;
+}
+
+/* ── Offer Wall ─────────────────────────────────────────────── */
+.vmb-offer-wall {
+    padding: 32px 0 48px;
+}
+.vmb-offer-title {
+    text-align: center;
+    font-size: 1.6em;
+    color: #1f2937;
+    margin-bottom: 32px;
+    font-weight: 700;
+}
+.vmb-offer-cards {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 24px;
+    max-width: 860px;
+    margin: 0 auto;
+}
+@media (max-width: 640px) {
+    .vmb-offer-cards { grid-template-columns: 1fr; }
+}
+
+.vmb-offer-card {
+    border-radius: 16px;
+    padding: 32px 28px;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    transition: transform 0.2s, box-shadow 0.2s;
+}
+.vmb-offer-card:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 16px 48px rgba(0,0,0,0.12);
+}
+.vmb-offer-card-primary {
+    background: #fff;
+    border: 2px solid #6366f1;
+    box-shadow: 0 8px 32px rgba(99,102,241,0.15);
+}
+.vmb-offer-card-secondary {
+    background: #fff;
+    border: 2px solid #e5e7eb;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.06);
+}
+
+.vmb-offer-badge {
+    position: absolute;
+    top: -12px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: #6366f1;
+    color: #fff;
+    font-size: 0.75em;
+    font-weight: 700;
+    padding: 4px 14px;
+    border-radius: 20px;
+    white-space: nowrap;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.vmb-offer-icon {
+    font-size: 2.2em;
+    color: #6366f1;
+    text-align: center;
+}
+.vmb-offer-card-secondary .vmb-offer-icon {
+    color: #374151;
+}
+
+.vmb-offer-card h4 {
+    font-size: 1.3em;
+    font-weight: 700;
+    color: #1f2937;
+    text-align: center;
+    margin: 0;
+}
+.vmb-offer-subtitle {
+    text-align: center;
+    color: #6b7280;
+    font-size: 0.88em;
+    margin: -8px 0 0;
+}
+
+.vmb-offer-features {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    flex: 1;
+}
+.vmb-offer-features li {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    font-size: 0.88em;
+    color: #374151;
+    line-height: 1.4;
+}
+.vmb-offer-features li i {
+    color: #10b981;
+    flex-shrink: 0;
+    margin-top: 2px;
+}
+
+.vmb-offer-price {
+    text-align: center;
+    padding: 12px 0;
+    border-top: 1px solid #f3f4f6;
+    border-bottom: 1px solid #f3f4f6;
+}
+.vmb-price-amount {
+    display: block;
+    font-size: 2em;
+    font-weight: 800;
+    color: #1f2937;
+    line-height: 1;
+}
+.vmb-price-note {
+    display: block;
+    font-size: 0.78em;
+    color: #6b7280;
+    margin-top: 4px;
+}
+
+.vmb-offer-btn {
+    width: 100%;
+    justify-content: center;
+    font-size: 0.95em;
+    padding: 14px 20px;
+    border-radius: 10px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+/* ── Consultation Form ──────────────────────────────────────── */
+.vmb-consult-form-wrapper {
+    background: #f9fafb;
+    border: 1px solid #e5e7eb;
+    border-radius: 16px;
+    padding: 32px;
+    max-width: 560px;
+    margin: 0 auto 48px;
+}
+.vmb-consult-form-wrapper h4 {
+    font-size: 1.2em;
+    color: #1f2937;
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.vmb-consult-form-wrapper p {
+    color: #6b7280;
+    font-size: 0.9em;
+    margin-bottom: 20px;
+}
+.vmb-radio-group {
+    display: flex;
+    gap: 20px;
+    flex-wrap: wrap;
+}
+.vmb-radio-group label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.9em;
+    color: #374151;
+    cursor: pointer;
+}
+.vmb-consult-form textarea {
+    width: 100%;
+    padding: 10px 14px;
+    border: 1px solid #d1d5db;
+    border-radius: 8px;
+    font-size: 0.9em;
+    resize: vertical;
+    font-family: inherit;
+    box-sizing: border-box;
+}
+.vmb-consult-status {
+    font-size: 0.88em;
+    margin-bottom: 12px;
+    min-height: 20px;
+}
+.vmb-consult-status.success { color: #059669; }
+.vmb-consult-status.error { color: #dc2626; }
+
+/* ── Hero Stats (pipeline version) ─────────────────────────── */
+.vmb-pipeline-stats {
+    display: flex;
+    gap: 32px;
+    justify-content: center;
+    flex-wrap: wrap;
+    margin: 32px 0;
+}
+.vmb-pipeline-stat {
+    text-align: center;
+}
+.vmb-pipeline-stat-number {
+    font-size: 2.2em;
+    font-weight: 800;
+    color: #6366f1;
+    line-height: 1;
+}
+.vmb-pipeline-stat-label {
+    font-size: 0.82em;
+    color: #6b7280;
+    margin-top: 4px;
+}
+
+/* ── Trust Bar ──────────────────────────────────────────────── */
+.vmb-trust-bar {
+    display: flex;
+    gap: 24px;
+    justify-content: center;
+    flex-wrap: wrap;
+    padding: 16px 0;
+    border-top: 1px solid #f3f4f6;
+    border-bottom: 1px solid #f3f4f6;
+    margin: 24px 0;
+}
+.vmb-trust-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.82em;
+    color: #6b7280;
+}
+.vmb-trust-item i {
+    color: #10b981;
+}

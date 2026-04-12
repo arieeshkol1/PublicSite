@@ -4061,3 +4061,35 @@ async function _runScanFromChat() {
         if (status) status.textContent = 'Scan failed: ' + (err.message || 'error');
     }
 }
+
+// ============================================================
+// Pipeline Entry — Pre-fill from Bill Check redirect
+// ============================================================
+(function handlePipelineEntry() {
+    var params = new URLSearchParams(window.location.search);
+    var email = params.get('email');
+    var source = params.get('source');
+    var savings = params.get('savings');
+
+    if (!email || source !== 'bill-check') return;
+
+    // If already logged in, skip to dashboard
+    if (getToken()) return;
+
+    // Show register view with email pre-filled and a welcome message
+    showView('register');
+
+    // Pre-fill email
+    if (regEmail) regEmail.value = email;
+
+    // Show a welcome banner above the form
+    var loginCard = document.querySelector('#register-view .login-card');
+    if (loginCard) {
+        var banner = document.createElement('div');
+        banner.style.cssText = 'background:linear-gradient(135deg,#064e3b,#065f46);border-radius:10px;padding:14px 18px;margin-bottom:16px;color:#fff;font-size:0.9em;';
+        var savingsText = savings ? ' We found <strong>$' + parseInt(savings).toLocaleString() + '/month</strong> in potential savings.' : '';
+        banner.innerHTML = '🎉 <strong>Your bill analysis is complete!</strong>' + savingsText +
+            '<br>Create a free account to connect your AWS account and start saving.';
+        loginCard.insertBefore(banner, loginCard.firstChild);
+    }
+})();

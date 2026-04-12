@@ -456,3 +456,202 @@ document.addEventListener('DOMContentLoaded', () => {
   updateFilePickerState();
   updateVerifyButton();
 });
+
+
+// ============================================================
+// Marketing Pipeline — Offer Wall Logic
+// ============================================================
+
+(function initPipeline() {
+    // Extract savings amount from AI summary text
+    function extractSavings(summaryText) {
+        if (!summaryText) return null;
+        // Match patterns like "$1,234", "$1.2K", "$12,345/month"
+        var patterns = [
+            /\$([0-9,]+(?:\.[0-9]+)?)\s*(?:\/month|per month|monthly|\/mo)/i,
+            /save\s+\$([0-9,]+(?:\.[0-9]+)?)/i,
+            /savings?\s+of\s+\$([0-9,]+(?:\.[0-9]+)?)/i,
+            /\$([0-9,]+(?:\.[0-9]+)?)\s+(?:in\s+)?(?:potential\s+)?savings/i,
+            /\$([0-9,]+(?:\.[0-9]+)?)/,
+        ];
+        for (var i = 0; i < patterns.length; i++) {
+            var m = summaryText.match(patterns[i]);
+            if (m) {
+                var val = parseFloat(m[1].replace(/,/g, ''));
+                if (!isNaN(val) && val > 0) return val;
+            }
+        }
+        return null;
+    }
+
+    // Format savings for display
+    function formatSavings(amount) {
+        if (amount >= 1000) return '$' + (amount / 1000).toFixed(1) + 'K';
+        return '$' + Math.round(amount).toLocaleString();
+    }
+
+    // Calculate service price: min($299, 20% of savings)
+    function calcServicePrice(savings) {
+        if (!savings) return '$299';
+        var pct = Math.round(savings * 0.20);
+        var price = Math.min(299, pct);
+        return '$' + price;
+    }
+
+    // Override showResults to also trigger the offer wall
+    var _origShowResults = window._pipelineShowResults;
+
+    // Hook into the results display
+    var _origSummaryEl = null;
+    var _pipelineEmail = null;
+    var _pipelineSavings = null;
+
+    // Intercept the summary text being set to extract savings
+    var summaryObserver = null;
+    function watchSummary() {
+        var summaryEl = document.getElementById('vmb-summary');
+        if (!summaryEl) return;
+        summaryObserver = new MutationObserver(function() {
+            var text = summaryEl.textContent || '';
+            if (text) {
+                _pipelineSavings = extractSavings(text);
+                updateOfferWall(_pipelineSavings);
+            }
+        });
+        summaryObserver.observe(summaryEl, { childList: true, characterData: true, subtree: true });
+    }
+
+    function updateOfferWall(savings) {
+        // Show savings banner
+        var banner = document.getElementById('vmb-savings-banner');
+        var savingsVal = document.getElementById('vmb-savings-value');
+        if (banner && savings && savings > 50) {
+            savingsVal.textContent = formatSavings(savings) + '/month';
+            banner.style.display = 'block';
+        }
+
+        // Update service price
+        var priceEl = document.getElementById('vmb-service-price');
+        var priceNote = document.getElementById('vmb-service-price-note');
+        if (priceEl && savings) {
+            var price = calcServicePrice(savings);
+            priceEl.textContent = price;
+            if (priceNote) {
+                var pct = Math.round(savings * 0.20);
+                if (pct < 299) {
+                    priceNote.textContent = '20% of your ' + formatSavings(savings) + ' savings';
+                } else {
+                    priceNote.textContent = 'flat fee — capped at $299';
+                }
+            }
+        }
+    }
+
+    // Get the verified email from the OTP flow
+    function getVerifiedEmail() {
+        // The email is stored in verifiedEmail variable in the main closure
+        // We read it from the input since it's verified at that point
+        var emailInput = document.getElementById('vmb-email');
+        return emailInput ? emailInput.value.trim().toLowerCase() : '';
+    }
+
+    // Wire up "Join as Member" button
+    document.addEventListener('DOMContentLoaded', function() {
+        watchSummary();
+
+        var joinBtn = document.getElementById('vmb-join-member');
+        if (joinBtn) {
+            joinBtn.onclick = function() {
+                var email = getVerifiedEmail();
+                var savings = _pipelineSavings;
+                // Redirect to member portal with email pre-filled
+                var url = '../members/?email=' + encodeURIComponent(email);
+                if (savings) url += '&savings=' + Math.round(savings);
+                url += '&source=bill-check';
+                // Tag the lead
+                _tagLead(email, 'member-signup', savings);
+                window.location.href = url;
+            };
+        }
+
+        // Wire up "Book Consultation" button
+        var bookBtn = document.getElementById('vmb-book-service');
+        if (bookBtn) {
+            bookBtn.onclick = function() {
+                var wrapper = document.getElementById('vmb-consult-form-wrapper');
+                if (wrapper) {
+                    wrapper.style.display = 'block';
+                    wrapper.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                }
+                _tagLead(getVerifiedEmail(), 'consultation-interest', _pipelineSavings);
+            };
+        }
+
+        // Cancel consultation form
+        var cancelBtn = document.getElementById('vmb-consult-cancel');
+        if (cancelBtn) {
+            cancelBtn.onclick = function() {
+                var wrapper = document.getElementById('vmb-consult-form-wrapper');
+                if (wrapper) wrapper.style.display = 'none';
+            };
+        }
+
+        // Consultation form submit
+        var consultForm = document.getElementById('vmb-consult-form');
+        if (consultForm) {
+            consultForm.onsubmit = async function(e) {
+                e.preventDefault();
+                var statusEl = document.getElementById('vmb-consult-status');
+                var submitBtn = consultForm.querySelector('[type=submit]');
+                var email = getVerifiedEmail();
+                var method = (consultForm.querySelector('[name=contact_method]:checked') || {}).value || 'email';
+                var notes = (document.getElementById('vmb-consult-notes') || {}).value || '';
+
+                submitBtn.disabled = true;
+                submitBtn.querySelector('span').textContent = 'Sending...';
+
+                try {
+                    // Send to the contact form / leads endpoint
+                    await fetch(API_GATEWAY_URL + '/send-otp', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            email: email,
+                            type: 'consultation-request',
+                            contactMethod: method,
+                            notes: notes,
+                            savings: _pipelineSavings,
+                        })
+                    });
+                    statusEl.className = 'vmb-consult-status success';
+                    statusEl.textContent = '✓ Request sent! We\'ll be in touch within 24 hours.';
+                    submitBtn.querySelector('span').textContent = 'Sent!';
+                    _tagLead(email, 'consultation-booked', _pipelineSavings);
+                } catch (err) {
+                    statusEl.className = 'vmb-consult-status error';
+                    statusEl.textContent = 'Failed to send. Please email us at info@eshkolai.com';
+                    submitBtn.disabled = false;
+                    submitBtn.querySelector('span').textContent = 'Send Request';
+                }
+            };
+        }
+    });
+
+    // Tag lead with pipeline stage
+    function _tagLead(email, stage, savings) {
+        if (!email) return;
+        try {
+            fetch(API_GATEWAY_URL + '/admin/leads/sync-billing', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    email: email,
+                    pipelineStage: stage,
+                    potentialSavings: savings || 0,
+                    timestamp: new Date().toISOString(),
+                })
+            });
+        } catch (e) { /* non-critical */ }
+    }
+
+})();

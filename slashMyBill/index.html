@@ -16,6 +16,7 @@
     <link rel="icon" type="image/png" href="../SlashMyBill.png">
     <link rel="stylesheet" href="../styles.css">
     <link rel="stylesheet" href="slashMyBill.css">
+    <link rel="stylesheet" href="pipeline.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 </head>
 <body>
@@ -47,11 +48,31 @@
     <section class="hero vmb-hero">
         <div class="hero-content">
             <div class="hero-badge">
-                <i class="fas fa-file-invoice-dollar"></i>
-                <span>AI-Powered Analysis</span>
+                <i class="fas fa-bolt"></i>
+                <span>Free AWS Bill Analysis</span>
             </div>
-            <h1>Slash My <span class="gradient-text">Bill</span></h1>
-            <p class="hero-subtitle">Upload your AWS invoice and get a detailed analysis with cost-saving recommendations, powered by Amazon Bedrock AI</p>
+            <h1>Stop Overpaying for <span class="gradient-text">AWS</span></h1>
+            <p class="hero-subtitle">Upload your AWS invoice and our AI finds every dollar you're wasting — in minutes. Then choose: fix it yourself free, or let our experts do it for you.</p>
+            <div class="vmb-pipeline-stats">
+                <div class="vmb-pipeline-stat">
+                    <div class="vmb-pipeline-stat-number">30%</div>
+                    <div class="vmb-pipeline-stat-label">Average Savings Found</div>
+                </div>
+                <div class="vmb-pipeline-stat">
+                    <div class="vmb-pipeline-stat-number">5 min</div>
+                    <div class="vmb-pipeline-stat-label">Analysis Time</div>
+                </div>
+                <div class="vmb-pipeline-stat">
+                    <div class="vmb-pipeline-stat-number">Free</div>
+                    <div class="vmb-pipeline-stat-label">No Credit Card</div>
+                </div>
+            </div>
+            <div class="vmb-trust-bar">
+                <span class="vmb-trust-item"><i class="fas fa-shield-alt"></i> Bill deleted within 24h</span>
+                <span class="vmb-trust-item"><i class="fas fa-lock"></i> HTTPS encrypted</span>
+                <span class="vmb-trust-item"><i class="fas fa-eye-slash"></i> Never shared</span>
+                <span class="vmb-trust-item"><i class="fas fa-robot"></i> Powered by Amazon Bedrock</span>
+            </div>
         </div>
     </section>
 
@@ -219,20 +240,109 @@
         </div>
     </section>
 
-    <!-- Results Section -->
+    <!-- Results Section — Offer Wall -->
     <section id="vmb-results" class="vmb-results" hidden>
         <div class="container">
-            <div class="vmb-results-content">
+            <!-- Summary + Download -->
+            <div class="vmb-results-header">
                 <div class="vmb-success-icon">
                     <i class="fas fa-check-circle"></i>
                 </div>
-                <h3>Your report is ready!</h3>
+                <h3>Your analysis is ready!</h3>
                 <p id="vmb-summary" class="vmb-summary"></p>
-                <a id="vmb-download" href="#" class="btn btn-primary vmb-download" target="_blank" rel="noopener">
+                <a id="vmb-download" href="#" class="btn btn-outline vmb-download" target="_blank" rel="noopener">
                     <i class="fas fa-download"></i>
-                    <span>Download Report (PDF)</span>
+                    <span>Download Full Report (PDF)</span>
                 </a>
             </div>
+
+            <!-- Savings Banner -->
+            <div id="vmb-savings-banner" class="vmb-savings-banner" style="display:none;">
+                <div class="vmb-savings-amount">
+                    <span class="vmb-savings-label">Potential Monthly Savings Identified</span>
+                    <span id="vmb-savings-value" class="vmb-savings-number">$0</span>
+                </div>
+            </div>
+
+            <!-- Offer Wall -->
+            <div class="vmb-offer-wall">
+                <h3 class="vmb-offer-title">What would you like to do next?</h3>
+                <div class="vmb-offer-cards">
+
+                    <!-- Option A: Self-service Member Portal -->
+                    <div class="vmb-offer-card vmb-offer-card-primary">
+                        <div class="vmb-offer-badge">Most Popular</div>
+                        <div class="vmb-offer-icon"><i class="fas fa-rocket"></i></div>
+                        <h4>Do It Yourself</h4>
+                        <p class="vmb-offer-subtitle">Free Member Portal</p>
+                        <ul class="vmb-offer-features">
+                            <li><i class="fas fa-check"></i> Connect your AWS account securely</li>
+                            <li><i class="fas fa-check"></i> AI-powered ongoing cost monitoring</li>
+                            <li><i class="fas fa-check"></i> Real-time waste detection &amp; alerts</li>
+                            <li><i class="fas fa-check"></i> One-click cleanup actions</li>
+                            <li><i class="fas fa-check"></i> FinOps dashboard &amp; reports</li>
+                        </ul>
+                        <div class="vmb-offer-price">
+                            <span class="vmb-price-amount">Free</span>
+                            <span class="vmb-price-note">No credit card required</span>
+                        </div>
+                        <button id="vmb-join-member" class="btn btn-primary vmb-offer-btn">
+                            <i class="fas fa-user-plus"></i>
+                            <span>Join as Member — Free</span>
+                        </button>
+                    </div>
+
+                    <!-- Option B: Managed one-time service -->
+                    <div class="vmb-offer-card vmb-offer-card-secondary">
+                        <div class="vmb-offer-icon"><i class="fas fa-briefcase"></i></div>
+                        <h4>Let Us Do It</h4>
+                        <p class="vmb-offer-subtitle">One-Time Bill Slashing Service</p>
+                        <ul class="vmb-offer-features">
+                            <li><i class="fas fa-check"></i> Expert review of your full environment</li>
+                            <li><i class="fas fa-check"></i> We implement all optimizations for you</li>
+                            <li><i class="fas fa-check"></i> Guaranteed savings or money back</li>
+                            <li><i class="fas fa-check"></i> Full audit report &amp; documentation</li>
+                            <li><i class="fas fa-check"></i> 30-day post-implementation support</li>
+                        </ul>
+                        <div class="vmb-offer-price">
+                            <span class="vmb-price-amount" id="vmb-service-price">$299</span>
+                            <span class="vmb-price-note" id="vmb-service-price-note">or 20% of savings — whichever is less</span>
+                        </div>
+                        <button id="vmb-book-service" class="btn btn-secondary vmb-offer-btn">
+                            <i class="fas fa-calendar-check"></i>
+                            <span>Book a Free Consultation</span>
+                        </button>
+                    </div>
+
+                </div>
+            </div>
+
+            <!-- Consultation Form (hidden, shown when Option B clicked) -->
+            <div id="vmb-consult-form-wrapper" class="vmb-consult-form-wrapper" style="display:none;">
+                <h4><i class="fas fa-calendar-check"></i> Book Your Free Consultation</h4>
+                <p>We'll review your analysis and discuss how we can implement the savings for you.</p>
+                <form id="vmb-consult-form" class="vmb-consult-form">
+                    <div class="form-group">
+                        <label>Preferred contact method</label>
+                        <div class="vmb-radio-group">
+                            <label><input type="radio" name="contact_method" value="email" checked> Email</label>
+                            <label><input type="radio" name="contact_method" value="phone"> Phone call</label>
+                            <label><input type="radio" name="contact_method" value="video"> Video call</label>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="vmb-consult-notes">Anything specific you'd like to discuss?</label>
+                        <textarea id="vmb-consult-notes" rows="3" placeholder="e.g. We have 50 EC2 instances and want to reduce our monthly bill of $8,000..."></textarea>
+                    </div>
+                    <div id="vmb-consult-status" class="vmb-consult-status"></div>
+                    <button type="submit" class="btn btn-primary">
+                        <i class="fas fa-paper-plane"></i>
+                        <span>Send Request</span>
+                    </button>
+                    <button type="button" id="vmb-consult-cancel" class="btn btn-outline" style="margin-left:8px;">Cancel</button>
+                </form>
+            </div>
+
         </div>
     </section>
 
@@ -266,30 +376,26 @@
                         <i class="fas fa-upload"></i>
                         <span class="vmb-step-number">1</span>
                     </div>
-                    <h3>Upload</h3>
-                    <p>Enter your email and upload your AWS invoice PDF from the AWS Billing Console</p>
+                    <h3>Upload Your Bill</h3>
+                    <p>Verify your email and upload your AWS invoice PDF. Takes 2 minutes.</p>
                 </div>
-                <div class="vmb-step-arrow">
-                    <i class="fas fa-arrow-right"></i>
-                </div>
+                <div class="vmb-step-arrow"><i class="fas fa-arrow-right"></i></div>
                 <div class="vmb-step">
                     <div class="vmb-step-icon">
                         <i class="fas fa-robot"></i>
                         <span class="vmb-step-number">2</span>
                     </div>
-                    <h3>Analyze</h3>
-                    <p>Our AI reviews your bill, identifies spending patterns, and finds cost-saving opportunities</p>
+                    <h3>AI Finds Savings</h3>
+                    <p>Our AI identifies waste, rightsizing opportunities, and pricing model improvements.</p>
                 </div>
-                <div class="vmb-step-arrow">
-                    <i class="fas fa-arrow-right"></i>
-                </div>
+                <div class="vmb-step-arrow"><i class="fas fa-arrow-right"></i></div>
                 <div class="vmb-step">
                     <div class="vmb-step-icon">
-                        <i class="fas fa-download"></i>
+                        <i class="fas fa-code-branch"></i>
                         <span class="vmb-step-number">3</span>
                     </div>
-                    <h3>Download</h3>
-                    <p>Get a comprehensive PDF report with summaries, explanations, and actionable recommendations</p>
+                    <h3>Choose Your Path</h3>
+                    <p><strong>DIY free:</strong> Join the Member Portal and implement savings yourself. Or <strong>let us do it</strong> for a flat fee.</p>
                 </div>
             </div>
         </div>
