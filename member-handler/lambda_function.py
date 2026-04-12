@@ -226,6 +226,7 @@ def handle_register(event):
                 return create_error_response(500, "ServerError", "An unexpected error occurred.")
 
         # Full sign-up with email + password in one step
+        pre_verified = body.get("preVerified", False)
         try:
             try:
                 cognito_client.admin_get_user(UserPoolId=COGNITO_USER_POOL_ID, Username=email)
@@ -233,15 +234,41 @@ def handle_register(event):
             except cognito_client.exceptions.UserNotFoundException:
                 pass
 
-            cognito_client.sign_up(
-                ClientId=COGNITO_CLIENT_ID,
-                Username=email,
-                Password=password,
-                UserAttributes=[
-                    {"Name": "email", "Value": email},
-                ],
-            )
-            return create_response(200, {"message": "OTP sent successfully", "email": email})
+            if pre_verified:
+                # Email already verified via OTP on bill upload — skip Cognito verification
+                cognito_client.admin_create_user(
+                    UserPoolId=COGNITO_USER_POOL_ID,
+                    Username=email,
+                    UserAttributes=[{"Name": "email", "Value": email}, {"Name": "email_verified", "Value": "true"}],
+                    MessageAction="SUPPRESS",
+                )
+                cognito_client.admin_set_user_password(
+                    UserPoolId=COGNITO_USER_POOL_ID,
+                    Username=email,
+                    Password=password,
+                    Permanent=True,
+                )
+                # Create profile in DynamoDB
+                members_table = dynamodb.Table(MEMBERS_TABLE_NAME)
+                now_iso = datetime.now(timezone.utc).isoformat()
+                try:
+                    members_table.put_item(
+                        Item={"email": email, "displayName": email.split("@")[0], "createdAt": now_iso, "lastLoginAt": None, "favoriteQueries": [], "tier": "free"},
+                        ConditionExpression="attribute_not_exists(email)",
+                    )
+                except ClientError:
+                    pass
+                return create_response(201, {"message": "Registration successful", "email": email, "preVerified": True})
+            else:
+                cognito_client.sign_up(
+                    ClientId=COGNITO_CLIENT_ID,
+                    Username=email,
+                    Password=password,
+                    UserAttributes=[
+                        {"Name": "email", "Value": email},
+                    ],
+                )
+                return create_response(200, {"message": "OTP sent successfully", "email": email})
         except cognito_client.exceptions.UsernameExistsException:
             return create_error_response(409, "ConflictError", "An account with this email already exists")
         except cognito_client.exceptions.InvalidPasswordException as e:
@@ -520,12 +547,37 @@ def handle_get_accounts(event):
     # Convert Decimal values for JSON serialization
     accounts = _decimal_to_native(accounts)
 
-    return create_response(200, {'accounts': accounts})
+    # Include tier info for frontend feature gating
+    tier = _get_member_tier(member_email)
+    limit = _get_tier_limit(tier)
+
+    return create_response(200, {'accounts': accounts, 'tier': tier, 'tierLimit': limit})
 
 
 def _get_tier_limit(tier: str) -> int:
     """Return max AWS accounts allowed per tier."""
-    return {'free': 1, 'growth': 5, 'scale': 20}.get(tier, 1)
+    return {'free': 1, 'growth': 20}.get(tier, 1)
+
+
+TIER_FEATURES = {
+    'free': {'dashboard', 'accounts', 'waste_detection'},
+    'growth': {'dashboard', 'accounts', 'waste_detection', 'actions', 'ai_agent', 'office_hours', 'virtual_tagging', 'unit_economics'},
+}
+
+
+def _check_feature_access(tier: str, feature: str) -> bool:
+    """Check if a tier has access to a specific feature."""
+    return feature in TIER_FEATURES.get(tier, TIER_FEATURES['free'])
+
+
+def _get_member_tier(email: str) -> str:
+    """Get the member's current tier from DynamoDB."""
+    try:
+        members_table = dynamodb.Table(MEMBERS_TABLE_NAME)
+        item = members_table.get_item(Key={'email': email}).get('Item', {})
+        return item.get('tier', 'free')
+    except Exception:
+        return 'free'
 
 
 def handle_add_account(event):
@@ -571,13 +623,16 @@ def handle_add_account(event):
         tier = member.get('tier', 'free')
         limit = _get_tier_limit(tier)
         if current_count >= limit:
-            tier_names = {'free': 'Free (Tier 1)', 'growth': 'Growth (Tier 2)', 'scale': 'Scale (Tier 3)'}
-            next_tier = {'free': 'Growth', 'growth': 'Scale', 'scale': 'Scale'}
-            return create_error_response(403, 'TierLimitReached',
-                f'Your {tier_names.get(tier, tier)} plan allows up to {limit} AWS account{"s" if limit > 1 else ""}. '
-                f'Upgrade to {next_tier.get(tier, "a higher")} tier to connect more accounts.',
-                extra={'currentTier': tier, 'limit': limit, 'currentCount': current_count}
-            )
+            if tier == 'free':
+                return create_error_response(403, 'TierLimitReached',
+                    f'Your Free plan allows 1 AWS account. Upgrade to Growth ($50/mo) to connect up to 20 accounts.',
+                    extra={'currentTier': tier, 'limit': limit, 'currentCount': current_count}
+                )
+            else:
+                return create_error_response(403, 'TierLimitReached',
+                    f'You have reached the maximum of {limit} accounts for your {tier.title()} plan.',
+                    extra={'currentTier': tier, 'limit': limit, 'currentCount': current_count}
+                )
     except ClientError as e:
         logger.error(f"Tier limit check error: {e}")
         # Non-blocking — allow the add if check fails
@@ -1798,16 +1853,18 @@ def _make_client_from_creds(service, creds, region='us-east-1'):
 
 
 def handle_actions_scan(event):
-    """Tips-driven scan engine v2.
-    
-    Loads tips from DynamoDB, gates checks by services actually present
-    in the account (from CE cost data), evaluates each tip via a registry
-    of check functions, and returns findings sorted by savings impact.
-    """
+    """Tips-driven scan engine v2."""
     auth = validate_token(event)
     if isinstance(auth, dict) and 'statusCode' in auth:
         return auth
     member_email = auth['sub']
+
+    # Tier gate: Actions tab requires Growth tier
+    tier = _get_member_tier(member_email)
+    if not _check_feature_access(tier, 'actions'):
+        return create_error_response(403, 'UpgradeRequired',
+            'The Actions tab requires the Growth plan ($50/mo). Upgrade to unlock automated cleanup, AI Agent, and more.',
+            extra={'requiredTier': 'growth', 'currentTier': tier})
 
     try:
         body = json.loads(event.get('body', '{}'))
@@ -3499,6 +3556,13 @@ def handle_ai_query(event):
         return auth
 
     member_email = auth['sub']
+
+    # Tier gate: AI Agent requires Growth tier
+    tier = _get_member_tier(member_email)
+    if not _check_feature_access(tier, 'ai_agent'):
+        return create_error_response(403, 'UpgradeRequired',
+            'The AI Agent requires the Growth plan ($50/mo). Upgrade to unlock AI-powered cost analysis.',
+            extra={'requiredTier': 'growth', 'currentTier': tier})
 
     try:
         body = json.loads(event.get('body', '{}'))
