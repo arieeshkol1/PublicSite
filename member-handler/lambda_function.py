@@ -560,9 +560,11 @@ def _get_tier_limit(tier: str) -> int:
 
 
 TIER_FEATURES = {
-    'free': {'dashboard', 'accounts', 'waste_detection'},
+    'free': {'dashboard', 'accounts', 'waste_detection', 'ai_agent'},
     'growth': {'dashboard', 'accounts', 'waste_detection', 'actions', 'ai_agent', 'office_hours', 'virtual_tagging', 'unit_economics'},
 }
+
+AI_CREDITS = {'free': 100, 'growth': -1}  # -1 = unlimited
 
 
 def _check_feature_access(tier: str, feature: str) -> bool:
@@ -3557,12 +3559,25 @@ def handle_ai_query(event):
 
     member_email = auth['sub']
 
-    # Tier gate: AI Agent requires Growth tier
+    # Check AI credits for Free tier
     tier = _get_member_tier(member_email)
-    if not _check_feature_access(tier, 'ai_agent'):
-        return create_error_response(403, 'UpgradeRequired',
-            'The AI Agent requires the Growth plan ($50/mo). Upgrade to unlock AI-powered cost analysis.',
-            extra={'requiredTier': 'growth', 'currentTier': tier})
+    max_credits = AI_CREDITS.get(tier, 100)
+    credits_used = 0
+    credits_remaining = max_credits
+
+    if max_credits > 0:  # -1 = unlimited
+        members_table = dynamodb.Table(MEMBERS_TABLE_NAME)
+        try:
+            member = members_table.get_item(Key={'email': member_email}).get('Item', {})
+            credits_used = int(member.get('aiCreditsUsed', 0))
+            credits_remaining = max(0, max_credits - credits_used)
+        except Exception:
+            pass
+
+        if credits_remaining <= 0:
+            return create_error_response(403, 'CreditsExhausted',
+                'You have used all 100 free AI questions. Upgrade to Growth ($50/mo) for unlimited AI queries.',
+                extra={'creditsUsed': credits_used, 'creditsTotal': max_credits, 'creditsRemaining': 0, 'currentTier': tier})
 
     try:
         body = json.loads(event.get('body', '{}'))
@@ -3594,14 +3609,35 @@ def handle_ai_query(event):
 
     # Multi-account query: gather data from all accounts, then analyze together
     if len(account_ids) > 1:
-        return _invoke_multi_account(question, account_ids, member_email, interaction_id)
-
-    # Single account query
-    account_id = account_ids[0]
-    if BEDROCK_AGENT_ID and BEDROCK_AGENT_ALIAS_ID:
-        return _invoke_bedrock_agent(question, account_id, member_email, interaction_id)
+        result = _invoke_multi_account(question, account_ids, member_email, interaction_id)
+    elif BEDROCK_AGENT_ID and BEDROCK_AGENT_ALIAS_ID:
+        result = _invoke_bedrock_agent(question, account_ids[0], member_email, interaction_id)
     else:
-        return _invoke_direct_model(question, account_id, member_email, interaction_id)
+        result = _invoke_direct_model(question, account_ids[0], member_email, interaction_id)
+
+    # Increment AI credits used (for Free tier tracking)
+    if result.get('statusCode') == 200 and max_credits > 0:
+        try:
+            members_table = dynamodb.Table(MEMBERS_TABLE_NAME)
+            members_table.update_item(
+                Key={'email': member_email},
+                UpdateExpression='SET aiCreditsUsed = if_not_exists(aiCreditsUsed, :zero) + :one',
+                ExpressionAttributeValues={':zero': 0, ':one': 1}
+            )
+            credits_remaining = max(0, credits_remaining - 1)
+        except Exception:
+            pass
+
+    # Inject credits info into the response body
+    if max_credits > 0 and result.get('statusCode') == 200:
+        try:
+            resp_body = json.loads(result.get('body', '{}'))
+            resp_body['aiCredits'] = {'used': credits_used + 1, 'total': max_credits, 'remaining': credits_remaining}
+            result['body'] = json.dumps(resp_body)
+        except Exception:
+            pass
+
+    return result
 
 
 def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
