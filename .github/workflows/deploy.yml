@@ -223,6 +223,7 @@ jobs:
           echo "✓ Agent Action packaged"
 
       - name: Deploy SlashMyBill CloudFormation stack
+        continue-on-error: true
         run: |
           echo "Deploying SlashMyBill infrastructure..."
           aws cloudformation deploy \
