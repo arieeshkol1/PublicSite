@@ -59,64 +59,9 @@ Parameters:
 
 Resources:
 
-  # ============================================================
-  # Cognito User Pool — Member Authentication (Lite tier)
-  # ============================================================
-  MemberUserPool:
-    Type: AWS::Cognito::UserPool
-    Properties:
-      UserPoolName: SlashMyBill-Members
-      UsernameAttributes:
-        - email
-      AutoVerifiedAttributes:
-        - email
-      EmailVerificationMessage: 'Your SlashMyBill verification code is {####}'
-      EmailVerificationSubject: 'Your SlashMyBill verification code'
-      Policies:
-        PasswordPolicy:
-          MinimumLength: 8
-          RequireUppercase: false
-          RequireLowercase: false
-          RequireNumbers: false
-          RequireSymbols: false
-          TemporaryPasswordValidityDays: 7
-      Schema:
-        - Name: email
-          AttributeDataType: String
-          Required: true
-          Mutable: true
-        - Name: displayName
-          AttributeDataType: String
-          Required: false
-          Mutable: true
-      AccountRecoverySetting:
-        RecoveryMechanisms:
-          - Name: verified_email
-            Priority: 1
-      UserPoolAddOns:
-        AdvancedSecurityMode: OFF
-      Tags:
-        - Key: Project
-          Value: ViewMyBill
-
-  MemberUserPoolClient:
-    Type: AWS::Cognito::UserPoolClient
-    Properties:
-      ClientName: SlashMyBill-MemberPortal
-      UserPoolId: !Ref MemberUserPool
-      GenerateSecret: false
-      ExplicitAuthFlows:
-        - ALLOW_USER_PASSWORD_AUTH
-        - ALLOW_REFRESH_TOKEN_AUTH
-        - ALLOW_USER_SRP_AUTH
-      AccessTokenValidity: 24
-      IdTokenValidity: 24
-      RefreshTokenValidity: 30
-      TokenValidityUnits:
-        AccessToken: hours
-        IdToken: hours
-        RefreshToken: days
-      PreventUserExistenceErrors: ENABLED
+  # NOTE: Cognito UserPool (SlashMyBill-Members) and UserPoolClient are managed
+  # outside this stack — deployed directly. Do not add them here as the
+  # EarlyValidation hook blocks Cognito resources in stack updates.
 
   # ============================================================
   # DynamoDB Table - Leads (Contact Information)
@@ -539,8 +484,13 @@ Resources:
   # ============================================================
   # SES Email Identity - eshkolai.com domain
   # ============================================================
-  # SES EmailIdentity managed outside CloudFormation (already configured)
-  # SESEmailIdentity removed to avoid EarlyValidation hook failures
+  # SES EmailIdentity — managed by CloudFormation (do not remove)
+  SESEmailIdentity:
+    Type: AWS::SES::EmailIdentity
+    Properties:
+      EmailIdentity: eshkolai.com
+      DkimSigningAttributes:
+        NextSigningKeyLength: RSA_2048_BIT
 
   # ============================================================
   # API Gateway - HTTP API
