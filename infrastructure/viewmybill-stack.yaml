@@ -981,8 +981,8 @@ Resources:
           BEDROCK_AGENT_ALIAS_ID: ''
           FEEDBACK_TABLE_NAME: !Ref AgentFeedbackTable
           BUSINESS_METRICS_TABLE: !Ref BusinessMetricsTable
-          COGNITO_USER_POOL_ID: ''
-          COGNITO_CLIENT_ID: ''
+          COGNITO_USER_POOL_ID: 'us-east-1_FlR2CmFu0'
+          COGNITO_CLIENT_ID: '3shmdb332mm8sjheopdu9sg8o4'
       Tags:
         - Key: Project
           Value: ViewMyBill
