@@ -22,12 +22,58 @@ var HELP_CONTENT = {
           and reduce your cloud spending across multiple AWS accounts.</p>
           <p>The platform has four main areas:</p>
           <ul>
-            <li><strong>Observe</strong> — FinOps dashboard with 7 interactive charts</li>
-            <li><strong>Chat</strong> — Ask natural language questions about your AWS costs</li>
-            <li><strong>Act</strong> — Scan for waste and clean up idle resources</li>
+            <li><strong>Observe</strong> — FinOps dashboard with interactive charts and regional cost breakdown</li>
+            <li><strong>Chat</strong> — Ask natural language questions about your AWS costs (100 free credits)</li>
+            <li><strong>Act</strong> — Scan for waste and clean up idle resources (10 credits per scan)</li>
             <li><strong>Configure</strong> — Connect and manage your AWS accounts</li>
           </ul>
-          <p><strong>Platform URL:</strong> <a href="https://www.eshkolai.com/members/" target="_blank">eshkolai.com/members</a></p>
+          <p><strong>Platform URL:</strong> <a href="https://slashmycloudbill.com/members/" target="_blank">slashmycloudbill.com/members</a></p>
+        `
+      },
+      {
+        id: 'pricing',
+        heading: 'Plans & Credits',
+        icon: '💰',
+        content: `
+          <h4>Free Plan</h4>
+          <ul>
+            <li><strong>1 AWS Account</strong></li>
+            <li>BI dashboard with all charts (cost by service, daily trend, waste detection, rightsizing, regional breakdown)</li>
+            <li>100 credits included — AI questions cost 1 credit, scans cost 10 credits</li>
+            <li>Read-only — manual cleanup based on recommendations</li>
+            <li>Free forever, no credit card required</li>
+          </ul>
+          <h4>Growth Plan — $50/month + 20% revshare</h4>
+          <ul>
+            <li><strong>Up to 20 AWS Accounts</strong></li>
+            <li>Everything in Free, plus:</li>
+            <li>Unlimited AI questions and scans (no credit limits)</li>
+            <li>1-click automated cleanup (Actions tab)</li>
+            <li>AI Agent with full execution capabilities</li>
+            <li>Office Hours auto-shutdown for dev environments</li>
+            <li>Virtual Tagging &amp; Unit Economics</li>
+            <li>20% revshare on savings we generate — vs 35% at ProsperOps</li>
+          </ul>
+          <div class="help-tip">💡 Your current plan and remaining credits are shown in the header bar next to your email.</div>
+          <p>To upgrade, click the <strong>Upgrade</strong> button in the header.</p>
+        `
+      },
+      {
+        id: 'credits',
+        heading: 'How Credits Work',
+        icon: '🎫',
+        content: `
+          <p>Free plan members get <strong>100 credits</strong> to use across the platform:</p>
+          <table class="help-table">
+            <tr><th>Action</th><th>Credit Cost</th></tr>
+            <tr><td>AI Chat question</td><td>1 credit</td></tr>
+            <tr><td>Scan for Savings (Act tab)</td><td>10 credits</td></tr>
+            <tr><td>Dashboard refresh</td><td>Free (no credits)</td></tr>
+            <tr><td>Account management</td><td>Free (no credits)</td></tr>
+          </table>
+          <p>Your remaining credits are displayed at the bottom of the Chat panel and in the header.</p>
+          <p>When credits run out, upgrade to Growth for unlimited usage.</p>
+          <div class="help-note">⚠ Credits do not reset monthly on the Free plan. Upgrade to Growth for unlimited access.</div>
         `
       },
       {
@@ -35,14 +81,21 @@ var HELP_CONTENT = {
         heading: 'Creating Your Account',
         icon: '👤',
         content: `
+          <p><strong>From the landing page (after bill analysis):</strong></p>
           <ol>
-            <li>Click <strong>Register</strong> on the login page</li>
-            <li>Enter your email and click <strong>Send Code</strong></li>
-            <li>Enter the 6-digit code from your email (valid 5 minutes)</li>
-            <li>Set a password (minimum 8 characters)</li>
-            <li>Log in with your email and password</li>
+            <li>Click <strong>Start Free</strong> on the results page</li>
+            <li>Your email is pre-verified — just set a password</li>
+            <li>Account is created instantly, no additional verification needed</li>
           </ol>
-          <div class="help-tip">💡 If you don't receive the email, check spam. You can request a new code after 60 seconds.</div>
+          <p><strong>Direct registration:</strong></p>
+          <ol>
+            <li>Go to <a href="https://slashmycloudbill.com/members/" target="_blank">slashmycloudbill.com/members</a></li>
+            <li>Click <strong>Register</strong></li>
+            <li>Enter your email and password</li>
+            <li>Enter the 6-digit verification code from your email</li>
+            <li>Log in with your credentials</li>
+          </ol>
+          <div class="help-tip">💡 If you already verified your email during bill analysis, the verification step is skipped automatically.</div>
         `
       }
     ]
@@ -222,7 +275,7 @@ var HELP_CONTENT = {
         heading: 'Asking Questions',
         icon: '💬',
         content: `
-          <p>Type your question in the Ask box and press Enter or click Ask.</p>
+          <p>Type your question in the Ask box and press Enter or click Ask. Each question costs <strong>1 credit</strong> (Free plan) or is unlimited (Growth plan).</p>
           <p><strong>Example questions:</strong></p>
           <ul>
             <li>"How efficient is my account?"</li>
@@ -234,6 +287,7 @@ var HELP_CONTENT = {
             <li>"How do I set up AWS Budgets with cost alerts?"</li>
             <li>"Which of my instances can use Spot pricing?"</li>
           </ul>
+          <p>Your remaining credits are shown at the bottom of the chat panel.</p>
           <div class="help-tip">💡 For multi-account questions, select multiple accounts using the account dropdown. The AI will provide per-account breakdowns.</div>
         `
       },
@@ -274,6 +328,7 @@ var HELP_CONTENT = {
         heading: 'Running a Scan',
         icon: '🔍',
         content: `
+          <p>Each scan costs <strong>10 credits</strong> (Free plan) or is unlimited (Growth plan).</p>
           <ol>
             <li>Select accounts using the dropdown</li>
             <li>Click <strong>🔍 Scan for Waste</strong></li>
@@ -281,6 +336,7 @@ var HELP_CONTENT = {
             <li>Review the 7 category cards</li>
           </ol>
           <p>Each category always shows — either a ✓ clean card or a ⚠ findings card with savings amount.</p>
+          <div class="help-tip">💡 On the Free plan, use scans wisely — each one costs 10 of your 100 credits. Growth plan members get unlimited scans.</div>
         `
       },
       {
@@ -399,7 +455,7 @@ function initHelp() {
     </div>
     <div id="help-body" style="flex:1;padding:16px 20px;overflow-y:auto;"></div>
     <div style="padding:12px 20px;border-top:1px solid #e5e7eb;background:#f9fafb;flex-shrink:0;font-size:0.78em;color:#6b7280;text-align:center;">
-      SlashMyBill Help v1.0 · <a href="mailto:support@eshkolai.com" style="color:#6366f1;">support@eshkolai.com</a>
+      SlashMyBill Help v2.0 · <a href="mailto:info@slashmycloudbill.com" style="color:#6366f1;">info@slashmycloudbill.com</a>
     </div>
   `;
 
