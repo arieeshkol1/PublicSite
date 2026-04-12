@@ -540,12 +540,8 @@ Resources:
   # ============================================================
   # SES Email Identity - eshkolai.com domain
   # ============================================================
-  SESEmailIdentity:
-    Type: AWS::SES::EmailIdentity
-    Properties:
-      EmailIdentity: eshkolai.com
-      DkimSigningAttributes:
-        NextSigningKeyLength: RSA_2048_BIT
+  # SES EmailIdentity managed outside CloudFormation (already configured)
+  # SESEmailIdentity removed to avoid EarlyValidation hook failures
 
   # ============================================================
   # API Gateway - HTTP API
