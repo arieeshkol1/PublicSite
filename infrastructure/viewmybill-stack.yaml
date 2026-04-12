@@ -94,8 +94,7 @@ Resources:
           - Name: verified_email
             Priority: 1
       UserPoolAddOns:
-        AdvancedSecurityMode: 'OFF'
-      DeletionProtection: ACTIVE
+        AdvancedSecurityMode: OFF
       Tags:
         - Key: Project
           Value: ViewMyBill
