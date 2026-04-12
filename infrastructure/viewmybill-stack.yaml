@@ -505,6 +505,8 @@ Resources:
         AllowOrigins:
           - 'https://eshkolai.com'
           - 'https://www.eshkolai.com'
+          - 'https://slashmycloudbill.com'
+          - 'https://www.slashmycloudbill.com'
         AllowMethods:
           - GET
           - POST
