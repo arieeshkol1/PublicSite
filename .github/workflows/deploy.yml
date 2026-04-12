@@ -346,7 +346,11 @@ jobs:
         run: |
           echo "Deploying slashmycloudbill.com infrastructure..."
 
-          # Create/update the CloudFront function BEFORE the stack (stack references it)
+          ACCOUNT_ID="991105135552"
+          SMB_CERT="arn:aws:acm:us-east-1:991105135552:certificate/5f9cd85b-591f-4787-963b-8f616c448588"
+          SMB_HOSTED_ZONE="Z08610352PUNQ7MUZTRVI"
+
+          # ── CloudFront function ──────────────────────────────────────────
           aws cloudfront create-function \
             --name "SlashMyCloudBill-Router" \
             --function-config 'Comment=Routes slashmycloudbill.com,Runtime=cloudfront-js-2.0' \
@@ -359,47 +363,86 @@ jobs:
             --function-code fileb://infrastructure/cf-function-slashmycloudbill.js > /dev/null
           FN_ETAG2=$(aws cloudfront describe-function --name "SlashMyCloudBill-Router" --query "ETag" --output text)
           aws cloudfront publish-function --name "SlashMyCloudBill-Router" --if-match "$FN_ETAG2" > /dev/null
+          FN_ARN="arn:aws:cloudfront::${ACCOUNT_ID}:function/SlashMyCloudBill-Router"
           echo "✓ CloudFront function ready"
 
-          # Deploy the stack (S3 bucket + CloudFront distribution + Route53)
-          aws cloudformation deploy \
-            --template-file infrastructure/slashmycloudbill-site-stack.yaml \
-            --stack-name slashmycloudbill-site \
-            --capabilities CAPABILITY_IAM \
-            --no-fail-on-empty-changeset \
-            --tags Project=SlashMyCloudBill
-          echo "✓ slashmycloudbill.com stack deployed"
+          # ── S3 bucket ────────────────────────────────────────────────────
+          aws s3api create-bucket --bucket slashmycloudbill.com --region us-east-1 2>/dev/null || echo "Bucket exists"
+          aws s3api put-public-access-block --bucket slashmycloudbill.com \
+            --public-access-block-configuration \
+            "BlockPublicAcls=false,IgnorePublicAcls=false,BlockPublicPolicy=false,RestrictPublicBuckets=false"
+          aws s3api put-bucket-policy --bucket slashmycloudbill.com --policy \
+            '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":"*","Action":"s3:GetObject","Resource":"arn:aws:s3:::slashmycloudbill.com/*"}]}'
+          echo "✓ S3 bucket ready"
 
-          # Attach the CloudFront function to the new distribution
-          SMB_DIST_ID=$(aws cloudformation describe-stacks \
-            --stack-name slashmycloudbill-site \
-            --query "Stacks[0].Outputs[?OutputKey=='DistributionId'].OutputValue" \
-            --output text)
-          FN_ARN="arn:aws:cloudfront::991105135552:function/SlashMyCloudBill-Router"
+          # ── CloudFront distribution ──────────────────────────────────────
+          # Check if distribution already exists
+          SMB_DIST_ID=$(aws cloudfront list-distributions \
+            --query "DistributionList.Items[?contains(Aliases.Items,'slashmycloudbill.com')].Id" \
+            --output text 2>/dev/null || echo "")
 
-          DIST_ETAG=$(aws cloudfront get-distribution-config --id "$SMB_DIST_ID" --query "ETag" --output text)
-          aws cloudfront get-distribution-config --id "$SMB_DIST_ID" \
-            --query "DistributionConfig" --output json > /tmp/smb-dist.json
+          if [ -z "$SMB_DIST_ID" ] || [ "$SMB_DIST_ID" = "None" ]; then
+            echo "Creating new CloudFront distribution..."
+            CALLER_REF="smb-$(date +%s)"
+            SMB_DIST_ID=$(aws cloudfront create-distribution --distribution-config "{
+              \"CallerReference\": \"${CALLER_REF}\",
+              \"Aliases\": {\"Quantity\": 1, \"Items\": [\"slashmycloudbill.com\"]},
+              \"DefaultRootObject\": \"index.html\",
+              \"Origins\": {\"Quantity\": 1, \"Items\": [{
+                \"Id\": \"S3Origin\",
+                \"DomainName\": \"slashmycloudbill.com.s3.amazonaws.com\",
+                \"S3OriginConfig\": {\"OriginAccessIdentity\": \"\"}
+              }]},
+              \"DefaultCacheBehavior\": {
+                \"TargetOriginId\": \"S3Origin\",
+                \"ViewerProtocolPolicy\": \"redirect-to-https\",
+                \"ForwardedValues\": {\"QueryString\": false, \"Cookies\": {\"Forward\": \"none\"}},
+                \"AllowedMethods\": {\"Quantity\": 2, \"Items\": [\"GET\",\"HEAD\"], \"CachedMethods\": {\"Quantity\": 2, \"Items\": [\"GET\",\"HEAD\"]}},
+                \"Compress\": true,
+                \"DefaultTTL\": 86400, \"MaxTTL\": 31536000, \"MinTTL\": 0,
+                \"FunctionAssociations\": {\"Quantity\": 1, \"Items\": [{\"FunctionARN\": \"${FN_ARN}\", \"EventType\": \"viewer-request\"}]}
+              },
+              \"CustomErrorResponses\": {\"Quantity\": 2, \"Items\": [
+                {\"ErrorCode\": 403, \"ResponseCode\": \"200\", \"ResponsePagePath\": \"/index.html\", \"ErrorCachingMinTTL\": 0},
+                {\"ErrorCode\": 404, \"ResponseCode\": \"200\", \"ResponsePagePath\": \"/index.html\", \"ErrorCachingMinTTL\": 0}
+              ]},
+              \"Comment\": \"slashmycloudbill.com\",
+              \"Enabled\": true,
+              \"HttpVersion\": \"http2\",
+              \"PriceClass\": \"PriceClass_100\",
+              \"ViewerCertificate\": {
+                \"ACMCertificateArn\": \"${SMB_CERT}\",
+                \"SSLSupportMethod\": \"sni-only\",
+                \"MinimumProtocolVersion\": \"TLSv1.2_2021\",
+                \"CloudFrontDefaultCertificate\": false
+              }
+            }" --query "Distribution.Id" --output text)
+            echo "✓ Distribution created: $SMB_DIST_ID"
+          else
+            echo "✓ Distribution already exists: $SMB_DIST_ID"
+          fi
 
-          python3 - <<PYEOF
-          import json
-          with open('/tmp/smb-dist.json') as f:
-              c = json.load(f)
-          dcb = c.get('DefaultCacheBehavior', {})
-          dcb['FunctionAssociations'] = {
-              'Quantity': 1,
-              'Items': [{'FunctionARN': '${FN_ARN}', 'EventType': 'viewer-request'}]
-          }
-          c['DefaultCacheBehavior'] = dcb
-          with open('/tmp/smb-dist-new.json', 'w') as f:
-              json.dump(c, f)
-          PYEOF
-
-          aws cloudfront update-distribution \
+          # ── Route 53 DNS ─────────────────────────────────────────────────
+          SMB_DIST_DOMAIN=$(aws cloudfront get-distribution \
             --id "$SMB_DIST_ID" \
-            --distribution-config file:///tmp/smb-dist-new.json \
-            --if-match "$DIST_ETAG" > /dev/null
-          echo "✓ CloudFront function attached to distribution $SMB_DIST_ID"
+            --query "Distribution.DomainName" --output text)
+
+          aws route53 change-resource-record-sets \
+            --hosted-zone-id "$SMB_HOSTED_ZONE" \
+            --change-batch "{\"Changes\": [
+              {\"Action\": \"UPSERT\", \"ResourceRecordSet\": {
+                \"Name\": \"slashmycloudbill.com\", \"Type\": \"A\",
+                \"AliasTarget\": {\"HostedZoneId\": \"Z2FDTNDATAQYW2\",
+                  \"DNSName\": \"${SMB_DIST_DOMAIN}\", \"EvaluateTargetHealth\": false}
+              }},
+              {\"Action\": \"UPSERT\", \"ResourceRecordSet\": {
+                \"Name\": \"slashmycloudbill.com\", \"Type\": \"AAAA\",
+                \"AliasTarget\": {\"HostedZoneId\": \"Z2FDTNDATAQYW2\",
+                  \"DNSName\": \"${SMB_DIST_DOMAIN}\", \"EvaluateTargetHealth\": false}
+              }}
+            ]}" > /dev/null
+          echo "✓ DNS updated → $SMB_DIST_DOMAIN"
+          echo "SMB_DIST_ID=$SMB_DIST_ID" >> $GITHUB_ENV
 
       - name: Deploy SlashMyBill files to slashmycloudbill.com bucket
         run: |
@@ -433,15 +476,11 @@ jobs:
 
       - name: Invalidate slashmycloudbill.com CloudFront cache
         run: |
-          SMB_DIST_ID=$(aws cloudformation describe-stacks \
-            --stack-name slashmycloudbill-site \
-            --query "Stacks[0].Outputs[?OutputKey=='DistributionId'].OutputValue" \
-            --output text 2>/dev/null || echo "")
           if [ -n "$SMB_DIST_ID" ] && [ "$SMB_DIST_ID" != "None" ]; then
             aws cloudfront create-invalidation --distribution-id "$SMB_DIST_ID" --paths "/*" > /dev/null
             echo "✓ slashmycloudbill.com cache invalidated (dist: $SMB_DIST_ID)"
           else
-            echo "⚠ slashmycloudbill.com distribution not found yet"
+            echo "⚠ slashmycloudbill.com distribution ID not set"
           fi
 
       - name: Invalidate CloudFront cache
