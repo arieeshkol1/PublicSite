@@ -157,6 +157,10 @@ async function api(method, path, body) {
         data = {};
     }
 
+    // Update token display from any response that includes token info
+    if (data.aiCredits) _updateTokenDisplay(data.aiCredits);
+    if (data.tokens) _updateTokenDisplay(data.tokens);
+
     if (!resp.ok) {
         if (resp.status === 401) {
             sessionStorage.removeItem('memberToken');
@@ -167,6 +171,26 @@ async function api(method, path, body) {
         throw { status: resp.status, message: data.message || 'Error' };
     }
     return data;
+}
+
+function _updateTokenDisplay(tokens) {
+    if (!tokens) return;
+    var remaining = tokens.remaining != null ? tokens.remaining : 0;
+    var total = tokens.total != null ? tokens.total : 100;
+    var el = document.getElementById('header-token-count');
+    var wrapper = document.getElementById('header-tokens');
+    if (el) el.textContent = remaining + '/' + total;
+    if (wrapper) {
+        var pct = total > 0 ? (remaining / total) : 0;
+        if (pct <= 0.2) {
+            wrapper.style.background = 'linear-gradient(135deg,#ef4444,#dc2626)';
+            wrapper.title = 'Low tokens! Click to top up.';
+        } else {
+            wrapper.style.background = 'linear-gradient(135deg,#f59e0b,#d97706)';
+            wrapper.title = 'Click to top up tokens';
+        }
+    }
+    sessionStorage.setItem('memberTokens', JSON.stringify(tokens));
 }
 
 // ============================================================
@@ -2433,22 +2457,9 @@ function renderDashboardWidgets(data) {
             '<div style="color:#f59e0b;font-size:1.3em;font-weight:700;">$' + (s.potentialSavings || 0).toLocaleString(undefined, {minimumFractionDigits:2}) + '</div></div>' +
         _kpiCard('Accounts', (s.accountsAnalyzed || 0) + ' / ' + (s.totalAccounts || 0), '#6366f1');
 
-    // Grid widgets
+    // Grid widgets — use customizable layout
     grid.innerHTML = '';
-    _addWidget(grid, 'dash-treemap', 'Cost by Service', 300, 'Show me my cost breakdown by service');
-    _addWidget(grid, 'dash-daily', 'Cost Trend <span id="dash-trend-toggle" style="font-size:0.7em;margin-left:8px;"><button class="btn btn-outline btn-sm" style="padding:1px 6px;font-size:0.8em;" onclick="_toggleTrendView(\'daily\')">Daily</button> <button class="btn btn-outline btn-sm" style="padding:1px 6px;font-size:0.8em;background:#6366f1;color:#fff;border-color:#6366f1;" onclick="_toggleTrendView(\'hourly\')">Hourly</button></span>', 250, 'Are there any cost anomalies?');
-    _addWidget(grid, 'dash-allocation', 'Cost Allocation by Business Unit <button class="btn btn-outline btn-sm" style="font-size:0.7em;margin-left:8px;padding:2px 6px;" onclick="showAllocationRulesModal();">Manage Rules</button>', 280, 'Break down my costs by business unit');
-    _addWidget(grid, 'dash-waste', 'Waste Detection', 250, 'What services do I not need? Show me all waste.');
-    _addWidget(grid, 'dash-monthly', 'Monthly Cost by Service', 320, 'Compare my costs over the last 3 months');
-
-    // Unit Economics widget
-    _addWidget(grid, 'dash-unit-economics', 'Unit Cost Trend <button class="btn btn-outline btn-sm" style="font-size:0.7em;margin-left:8px;padding:2px 6px;" onclick="showBusinessMetricsModal();">Add Metrics</button>', 280, 'How is my cost per unit trending?');
-
-    // Regional Cost widget
-    _addWidget(grid, 'dash-regional', 'Cost by Region', 300, 'Show me my cost breakdown by region');
-
-    // Commitments widget (Savings Plans + Reserved Instances)
-    _addWidget(grid, 'dash-commitments', 'Savings Plans &amp; Reserved Instances', 350, 'What Savings Plans and Reserved Instances do I have?');
+    _buildDashWidgets(grid);
 
     // Render ECharts
     setTimeout(function() {
@@ -2469,11 +2480,123 @@ function _kpiCard(label, value, color) {
         '<div style="color:' + color + ';font-size:1.3em;font-weight:700;">' + value + '</div></div>';
 }
 
-function _addWidget(grid, id, title, height, aiQuestion) {
+// Widget layout management
+var DASH_WIDGET_DEFS = [
+    {id:'dash-treemap', title:'Cost by Service', height:300, q:'Show me my cost breakdown by service'},
+    {id:'dash-daily', title:'Cost Trend', height:250, q:'Are there any cost anomalies?', extraTitle:' <span id="dash-trend-toggle" style="font-size:0.7em;margin-left:8px;"><button class="btn btn-outline btn-sm" style="padding:1px 6px;font-size:0.8em;" onclick="_toggleTrendView(\'daily\')">Daily</button> <button class="btn btn-outline btn-sm" style="padding:1px 6px;font-size:0.8em;background:#6366f1;color:#fff;border-color:#6366f1;" onclick="_toggleTrendView(\'hourly\')">Hourly</button></span>'},
+    {id:'dash-allocation', title:'Cost Allocation by Business Unit', height:280, q:'Break down my costs by business unit', extraTitle:' <button class="btn btn-outline btn-sm" style="font-size:0.7em;margin-left:8px;padding:2px 6px;" onclick="showAllocationRulesModal();">Manage Rules</button>'},
+    {id:'dash-waste', title:'Waste Detection', height:250, q:'What services do I not need? Show me all waste.'},
+    {id:'dash-monthly', title:'Monthly Cost by Service', height:320, q:'Compare my costs over the last 3 months'},
+    {id:'dash-unit-economics', title:'Unit Cost Trend', height:280, q:'How is my cost per unit trending?', extraTitle:' <button class="btn btn-outline btn-sm" style="font-size:0.7em;margin-left:8px;padding:2px 6px;" onclick="showBusinessMetricsModal();">Add Metrics</button>'},
+    {id:'dash-regional', title:'Cost by Region', height:300, q:'Show me my cost breakdown by region'},
+    {id:'dash-commitments', title:'Savings Plans & Reserved Instances', height:350, q:'What Savings Plans and Reserved Instances do I have?'},
+];
+
+function _getDashLayout() {
+    try {
+        var saved = localStorage.getItem('dashWidgetLayout');
+        if (saved) return JSON.parse(saved);
+    } catch(e) {}
+    return DASH_WIDGET_DEFS.map(function(w){return {id:w.id, visible:true};});
+}
+
+function _saveDashLayout(layout) {
+    try { localStorage.setItem('dashWidgetLayout', JSON.stringify(layout)); } catch(e) {}
+}
+
+function _buildDashWidgets(grid) {
+    var layout = _getDashLayout();
+    // Ensure all widgets exist in layout (new ones added at end)
+    var layoutIds = layout.map(function(l){return l.id;});
+    DASH_WIDGET_DEFS.forEach(function(def) {
+        if (layoutIds.indexOf(def.id) === -1) layout.push({id:def.id, visible:true});
+    });
+
+    grid.innerHTML = '';
+    var visibleCount = 0;
+    layout.forEach(function(item, idx) {
+        if (!item.visible) return;
+        var def = DASH_WIDGET_DEFS.find(function(d){return d.id===item.id;});
+        if (!def) return;
+        visibleCount++;
+        _addWidget(grid, def.id, def.title + (def.extraTitle||''), def.height, def.q, idx, layout.length);
+    });
+
+    // Add "+" button to add hidden widgets back
+    var hiddenWidgets = layout.filter(function(l){return !l.visible;});
+    if (hiddenWidgets.length > 0) {
+        var addBtn = document.createElement('div');
+        addBtn.style.cssText = 'background:#f0f4f8;border:2px dashed #d0d7de;border-radius:8px;padding:24px;text-align:center;cursor:pointer;color:#6b7280;';
+        addBtn.innerHTML = '<div style="font-size:1.5em;margin-bottom:4px;">+</div><div style="font-size:0.8em;">Add Widget (' + hiddenWidgets.length + ' hidden)</div>';
+        addBtn.onclick = function() { _showAddWidgetPicker(grid); };
+        grid.appendChild(addBtn);
+    }
+}
+
+function _showAddWidgetPicker(grid) {
+    var layout = _getDashLayout();
+    var hidden = layout.filter(function(l){return !l.visible;});
+    if (!hidden.length) return;
+    var html = '<div style="position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:800;display:flex;align-items:center;justify-content:center;" id="widget-picker-overlay" onclick="if(event.target===this)this.remove();">';
+    html += '<div style="background:#fff;border-radius:12px;padding:24px;max-width:400px;width:90%;">';
+    html += '<h3 style="margin:0 0 16px;font-size:1em;">Add Widget</h3>';
+    hidden.forEach(function(item) {
+        var def = DASH_WIDGET_DEFS.find(function(d){return d.id===item.id;});
+        if (!def) return;
+        html += '<button class="btn btn-outline btn-sm" style="display:block;width:100%;margin-bottom:8px;text-align:left;padding:10px 14px;" onclick="_restoreWidget(\'' + item.id + '\')">' + def.title + '</button>';
+    });
+    html += '<button class="btn btn-sm" style="margin-top:8px;" onclick="document.getElementById(\'widget-picker-overlay\').remove();">Cancel</button>';
+    html += '</div></div>';
+    document.body.insertAdjacentHTML('beforeend', html);
+}
+
+function _restoreWidget(widgetId) {
+    var layout = _getDashLayout();
+    layout.forEach(function(l){if(l.id===widgetId)l.visible=true;});
+    _saveDashLayout(layout);
+    var overlay = document.getElementById('widget-picker-overlay');
+    if (overlay) overlay.remove();
+    if (dashDataCache) renderDashboardWidgets(dashDataCache);
+}
+
+function _removeWidget(widgetId) {
+    var layout = _getDashLayout();
+    layout.forEach(function(l){if(l.id===widgetId)l.visible=false;});
+    _saveDashLayout(layout);
+    if (dashDataCache) renderDashboardWidgets(dashDataCache);
+}
+
+function _moveWidget(widgetId, direction) {
+    var layout = _getDashLayout();
+    var visibleLayout = layout.filter(function(l){return l.visible;});
+    var idx = -1;
+    visibleLayout.forEach(function(l,i){if(l.id===widgetId)idx=i;});
+    if (idx < 0) return;
+    var newIdx = idx + direction;
+    if (newIdx < 0 || newIdx >= visibleLayout.length) return;
+    // Swap in the visible list
+    var temp = visibleLayout[idx];
+    visibleLayout[idx] = visibleLayout[newIdx];
+    visibleLayout[newIdx] = temp;
+    // Rebuild full layout: visible items in new order, then hidden items
+    var hiddenLayout = layout.filter(function(l){return !l.visible;});
+    _saveDashLayout(visibleLayout.concat(hiddenLayout));
+    if (dashDataCache) renderDashboardWidgets(dashDataCache);
+}
+
+function _addWidget(grid, id, title, height, aiQuestion, idx, total) {
     var w = document.createElement('div');
     w.style.cssText = 'background:#f0f4f8;border:1px solid #d0d7de;border-radius:8px;padding:14px;';
-    var aiLink = aiQuestion ? ' <a href="#" style="font-size:0.7em;color:#6366f1;text-decoration:none;float:right;" onclick="event.preventDefault();_askAIFromDashboard(\'' + aiQuestion.replace(/'/g, "\\'") + '\');">Chat \u25b6</a>' : '';
-    w.innerHTML = '<div style="color:#1f2937;font-size:0.9em;font-weight:600;margin-bottom:8px;">' + title + aiLink + '</div>' +
+    w.setAttribute('data-widget-id', id);
+    var aiLink = aiQuestion ? ' <a href="#" style="font-size:0.7em;color:#6366f1;text-decoration:none;" onclick="event.preventDefault();_askAIFromDashboard(\'' + aiQuestion.replace(/'/g, "\\'") + '\');">Chat &#9654;</a>' : '';
+    var controls = '<span style="float:right;display:flex;gap:4px;align-items:center;">';
+    if (typeof idx === 'number') {
+        controls += '<button style="background:none;border:none;cursor:pointer;font-size:0.7em;color:#6b7280;padding:2px;" onclick="_moveWidget(\'' + id + '\',-1)" title="Move up">&#9650;</button>';
+        controls += '<button style="background:none;border:none;cursor:pointer;font-size:0.7em;color:#6b7280;padding:2px;" onclick="_moveWidget(\'' + id + '\',1)" title="Move down">&#9660;</button>';
+        controls += '<button style="background:none;border:none;cursor:pointer;font-size:0.8em;color:#ef4444;padding:2px;margin-left:4px;" onclick="_removeWidget(\'' + id + '\')" title="Hide widget">&times;</button>';
+    }
+    controls += aiLink + '</span>';
+    w.innerHTML = '<div style="color:#1f2937;font-size:0.9em;font-weight:600;margin-bottom:8px;">' + title + controls + '</div>' +
         '<div id="' + id + '" style="width:100%;height:' + height + 'px;"></div>';
     grid.appendChild(w);
 }
