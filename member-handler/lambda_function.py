@@ -239,7 +239,6 @@ def handle_register(event):
                 Password=password,
                 UserAttributes=[
                     {"Name": "email", "Value": email},
-                    {"Name": "custom:displayName", "Value": email.split("@")[0]},
                 ],
             )
             return create_response(200, {"message": "OTP sent successfully", "email": email})
