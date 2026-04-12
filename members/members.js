@@ -414,6 +414,24 @@ async function loadAccounts() {
         var data = await api('GET', '/members/accounts');
         allAccounts = data.accounts || [];
         renderAccounts(allAccounts);
+        // Update header with tier and token info
+        if (data.tier) {
+            var badge = $('header-tier-badge');
+            if (badge) {
+                var tierNames = {free:'Free',growth:'Growth',scale:'Scale'};
+                badge.textContent = tierNames[data.tier] || data.tier;
+                if (data.tier === 'growth') badge.style.background = '#dbeafe';
+                if (data.tier === 'scale') badge.style.background = '#ede9fe';
+            }
+            var upgradeBtn = $('header-upgrade-btn');
+            if (upgradeBtn && data.tier !== 'free') upgradeBtn.style.display = 'none';
+        }
+        if (data.tokens) {
+            var tokenEl = $('header-token-count');
+            if (tokenEl) tokenEl.textContent = data.tokens.remaining + '/' + data.tokens.total;
+            sessionStorage.setItem('memberTokens', JSON.stringify(data.tokens));
+            sessionStorage.setItem('memberTier', data.tier || 'free');
+        }
     } catch (err) {
         notify('Failed to load accounts.', 'error');
     } finally {
