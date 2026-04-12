@@ -35,6 +35,7 @@ permissions:
 env:
   AWS_REGION: us-east-1
   S3_BUCKET: www.eshkolai.com
+  SMB_BUCKET: slashmycloudbill.com
   CLOUDFRONT_ID: E12JIHGHK40OLE
   STORAGE_BUCKET: aws-bill-analyzer-storage-991105135552
   STACK_NAME: aws-bill-analyzer-viewmybill
@@ -256,6 +257,79 @@ jobs:
           echo "Syncing to eshkolai.com bucket..."
           aws s3 sync s3://${{ env.S3_BUCKET }} s3://eshkolai.com --delete
           echo "✓ eshkolai.com bucket synced"
+
+      - name: Deploy slashmycloudbill.com site stack
+        run: |
+          echo "Deploying slashmycloudbill.com infrastructure..."
+          aws cloudformation deploy \
+            --template-file infrastructure/slashmycloudbill-site-stack.yaml \
+            --stack-name slashmycloudbill-site \
+            --capabilities CAPABILITY_IAM \
+            --no-fail-on-empty-changeset \
+            --tags Project=SlashMyCloudBill || echo "⚠ slashmycloudbill site stack deploy failed"
+          echo "✓ slashmycloudbill.com stack deployed"
+
+      - name: Deploy SlashMyBill files to slashmycloudbill.com bucket
+        run: |
+          API_URL="${{ steps.api-url.outputs.api_endpoint }}"
+          echo "Deploying to slashmycloudbill.com bucket..."
+
+          # Inject API URL into slashMyBill JS
+          sed -i "s|https://YOUR_API_GATEWAY_URL|${API_URL}|g" slashMyBill/slashMyBill.js
+
+          # Shared assets (needed by both members and slashMyBill pages)
+          for f in SlashMyBill.png smallninja2.png styles.css; do
+            [ -f "$f" ] && aws s3 cp "$f" s3://${{ env.SMB_BUCKET }}/$f \
+              --cache-control "max-age=2592000"
+          done
+
+          # SlashMyBill landing page
+          aws s3 sync slashMyBill/ s3://${{ env.SMB_BUCKET }}/ \
+            --cache-control "no-cache, no-store, must-revalidate" \
+            --exclude "*.py" --exclude "*.md"
+
+          # Member Portal
+          aws s3 sync members/ s3://${{ env.SMB_BUCKET }}/members/ \
+            --cache-control "no-cache, no-store, must-revalidate" \
+            --exclude "*.py"
+
+          # Admin Panel
+          aws s3 sync admin/ s3://${{ env.SMB_BUCKET }}/admin/ \
+            --cache-control "no-cache, no-store, must-revalidate"
+
+          echo "✓ slashmycloudbill.com files deployed"
+
+      - name: Update CloudFront function for slashmycloudbill.com
+        run: |
+          # Update the routing function (now simpler — files at root of new bucket)
+          aws cloudfront create-function \
+            --name "SlashMyCloudBill-Router" \
+            --function-config 'Comment=Routes slashmycloudbill.com,Runtime=cloudfront-js-2.0' \
+            --function-code fileb://infrastructure/cf-function-slashmycloudbill.js > /dev/null 2>&1 || true
+
+          FN_ETAG=$(aws cloudfront describe-function --name "SlashMyCloudBill-Router" --query "ETag" --output text)
+          aws cloudfront update-function \
+            --name "SlashMyCloudBill-Router" \
+            --if-match "$FN_ETAG" \
+            --function-config 'Comment=Routes slashmycloudbill.com,Runtime=cloudfront-js-2.0' \
+            --function-code fileb://infrastructure/cf-function-slashmycloudbill.js > /dev/null
+
+          FN_ETAG2=$(aws cloudfront describe-function --name "SlashMyCloudBill-Router" --query "ETag" --output text)
+          aws cloudfront publish-function --name "SlashMyCloudBill-Router" --if-match "$FN_ETAG2" > /dev/null
+          echo "✓ CloudFront function updated"
+
+      - name: Invalidate slashmycloudbill.com CloudFront cache
+        run: |
+          SMB_DIST_ID=$(aws cloudformation describe-stacks \
+            --stack-name slashmycloudbill-site \
+            --query "Stacks[0].Outputs[?OutputKey=='DistributionId'].OutputValue" \
+            --output text 2>/dev/null || echo "")
+          if [ -n "$SMB_DIST_ID" ] && [ "$SMB_DIST_ID" != "None" ]; then
+            aws cloudfront create-invalidation --distribution-id "$SMB_DIST_ID" --paths "/*" > /dev/null
+            echo "✓ slashmycloudbill.com cache invalidated (dist: $SMB_DIST_ID)"
+          else
+            echo "⚠ slashmycloudbill.com distribution not found yet"
+          fi
 
       - name: Invalidate CloudFront cache
         run: |

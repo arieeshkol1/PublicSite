@@ -629,7 +629,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     _tagLead(email, 'consultation-booked', _pipelineSavings);
                 } catch (err) {
                     statusEl.className = 'vmb-consult-status error';
-                    statusEl.textContent = 'Failed to send. Please email us at info@eshkolai.com';
+                    statusEl.textContent = 'Failed to send. Please email us at info@slashmycloudbill.com';
                     submitBtn.disabled = false;
                     submitBtn.querySelector('span').textContent = 'Send Request';
                 }

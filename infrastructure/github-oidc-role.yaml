@@ -101,6 +101,10 @@ Resources:
               - arn:aws:s3:::aws-bill-analyzer-storage-991105135552/*
               - arn:aws:s3:::www.eshkolai.com
               - arn:aws:s3:::www.eshkolai.com/*
+              - arn:aws:s3:::eshkolai.com
+              - arn:aws:s3:::eshkolai.com/*
+              - arn:aws:s3:::slashmycloudbill.com
+              - arn:aws:s3:::slashmycloudbill.com/*
           
           - Sid: S3ListAllBuckets
             Effect: Allow
@@ -241,6 +245,7 @@ Resources:
               - cloudformation:GetTemplateSummary
             Resource:
               - !Sub 'arn:aws:cloudformation:us-east-1:${AWSAccountId}:stack/aws-bill-analyzer-*/*'
+              - !Sub 'arn:aws:cloudformation:us-east-1:${AWSAccountId}:stack/slashmycloudbill-*/*'
           
           # Bedrock Permissions
           - Sid: BedrockAccess
