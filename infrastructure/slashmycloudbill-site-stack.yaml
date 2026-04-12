@@ -60,17 +60,23 @@ Resources:
         DefaultCacheBehavior:
           TargetOriginId: S3Origin
           ViewerProtocolPolicy: redirect-to-https
-          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6  # CachingOptimized
-          AllowedMethods: [GET, HEAD, OPTIONS]
-          CachedMethods: [GET, HEAD]
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+          AllowedMethods:
+            - GET
+            - HEAD
+          CachedMethods:
+            - GET
+            - HEAD
           Compress: true
         CustomErrorResponses:
           - ErrorCode: 403
-            ResponseCode: 200
+            ResponseCode: '200'
             ResponsePagePath: /index.html
+            ErrorCachingMinTTL: 0
           - ErrorCode: 404
-            ResponseCode: 200
+            ResponseCode: '200'
             ResponsePagePath: /index.html
+            ErrorCachingMinTTL: 0
         ViewerCertificate:
           ACMCertificateArn: !Ref CertificateArn
           SSLSupportMethod: sni-only
