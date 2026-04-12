@@ -947,6 +947,29 @@ Resources:
                   - pricing:GetProducts
                   - pricing:DescribeServices
                 Resource: '*'
+        - PolicyName: CognitoMemberAuth
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - cognito-idp:AdminGetUser
+                  - cognito-idp:AdminCreateUser
+                  - cognito-idp:AdminSetUserPassword
+                  - cognito-idp:AdminDeleteUser
+                  - cognito-idp:AdminUpdateUserAttributes
+                  - cognito-idp:AdminInitiateAuth
+                  - cognito-idp:AdminRespondToAuthChallenge
+                  - cognito-idp:InitiateAuth
+                  - cognito-idp:RespondToAuthChallenge
+                  - cognito-idp:SignUp
+                  - cognito-idp:ConfirmSignUp
+                  - cognito-idp:ForgotPassword
+                  - cognito-idp:ConfirmForgotPassword
+                  - cognito-idp:ResendConfirmationCode
+                  - cognito-idp:GetUser
+                  - cognito-idp:ListUsers
+                Resource: 'arn:aws:cognito-idp:us-east-1:991105135552:userpool/us-east-1_FlR2CmFu0'
       Tags:
         - Key: Project
           Value: ViewMyBill
