@@ -412,6 +412,10 @@ document.addEventListener('DOMContentLoaded', () => {
       const uploadResult = await uploadFile(contactInfo, file);
       const analyzeResult = await analyzeFile(uploadResult.sessionId, contactInfo.email);
       showResults(analyzeResult.summary, analyzeResult.downloadUrl, analyzeResult.originalFilename);
+      // Trigger offer wall with actual savings from API
+      if (typeof updateOfferWallDirect === 'function') {
+        updateOfferWallDirect(analyzeResult.monthlySavingsMax || analyzeResult.monthlySavingsMin || 0);
+      }
       // Sync billing data to lead record
       try {
         fetch(`${API_GATEWAY_URL}/admin/leads/sync-billing`, {
@@ -467,13 +471,26 @@ document.addEventListener('DOMContentLoaded', () => {
     // Extract savings amount from AI summary text
     function extractSavings(summaryText) {
         if (!summaryText) return null;
-        // Match patterns like "$1,234", "$1.2K", "$12,345/month"
+        // Prioritize explicit savings patterns first (USD or $ format)
         var patterns = [
-            /\$([0-9,]+(?:\.[0-9]+)?)\s*(?:\/month|per month|monthly|\/mo)/i,
+            // "Saving up to USD 1,370.38/month" or "Savings up to USD X"
+            /saving[s]?\s+up\s+to\s+USD\s+([0-9,]+(?:\.[0-9]+)?)/i,
+            /saving[s]?\s+up\s+to\s+\$([0-9,]+(?:\.[0-9]+)?)/i,
+            // "USD 1,370.38/month" near savings context
+            /USD\s+([0-9,]+(?:\.[0-9]+)?)\s*\/month/i,
+            /\$([0-9,]+(?:\.[0-9]+)?)\s*\/month/i,
+            // "save USD X" or "save $X"
+            /save\s+USD\s+([0-9,]+(?:\.[0-9]+)?)/i,
             /save\s+\$([0-9,]+(?:\.[0-9]+)?)/i,
+            // "potential savings of USD/$ X"
+            /potential\s+savings?\s+of\s+USD\s+([0-9,]+(?:\.[0-9]+)?)/i,
+            /potential\s+savings?\s+of\s+\$([0-9,]+(?:\.[0-9]+)?)/i,
+            // "savings of USD/$ X"
+            /savings?\s+of\s+USD\s+([0-9,]+(?:\.[0-9]+)?)/i,
             /savings?\s+of\s+\$([0-9,]+(?:\.[0-9]+)?)/i,
+            // "USD X in savings" or "$ X in savings"
+            /USD\s+([0-9,]+(?:\.[0-9]+)?)\s+(?:in\s+)?(?:potential\s+)?savings/i,
             /\$([0-9,]+(?:\.[0-9]+)?)\s+(?:in\s+)?(?:potential\s+)?savings/i,
-            /\$([0-9,]+(?:\.[0-9]+)?)/,
         ];
         for (var i = 0; i < patterns.length; i++) {
             var m = summaryText.match(patterns[i]);
@@ -523,11 +540,14 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function updateOfferWall(savings) {
-        // Show savings banner
+        // Show savings banner with monthly + yearly in orange
         var banner = document.getElementById('vmb-savings-banner');
         var savingsVal = document.getElementById('vmb-savings-value');
         if (banner && savings && savings > 50) {
-            savingsVal.textContent = formatSavings(savings) + '/month';
+            var monthly = formatSavings(savings);
+            var yearly = formatSavings(savings * 12);
+            savingsVal.innerHTML = monthly + '<span class="smb-savings-per">/month</span>'
+                + '<span class="smb-savings-yearly">USD ' + yearly + '/year</span>';
             banner.style.display = 'block';
         }
 
@@ -535,18 +555,21 @@ document.addEventListener('DOMContentLoaded', () => {
         var priceEl = document.getElementById('vmb-service-price');
         var priceNote = document.getElementById('vmb-service-price-note');
         if (priceEl && savings) {
-            var price = calcServicePrice(savings);
-            priceEl.textContent = price;
+            var yearlySavings = savings * 12;
+            var fee = Math.round(yearlySavings * 0.25);
+            priceEl.textContent = '$' + fee.toLocaleString();
             if (priceNote) {
-                var pct = Math.round(savings * 0.20);
-                if (pct < 299) {
-                    priceNote.textContent = '20% of your ' + formatSavings(savings) + ' savings';
-                } else {
-                    priceNote.textContent = 'flat fee — capped at $299';
-                }
+                priceNote.textContent = '25% of your ' + formatSavings(yearlySavings) + '/year savings — only paid after we deliver results';
             }
         }
     }
+
+    // Expose for direct call from handleSubmit with API savings data
+    window.updateOfferWallDirect = function(savingsAmount) {
+        if (!savingsAmount || savingsAmount <= 0) return;
+        _pipelineSavings = savingsAmount;
+        updateOfferWall(savingsAmount);
+    };
 
     // Get the verified email from the OTP flow
     function getVerifiedEmail() {
@@ -587,6 +610,18 @@ document.addEventListener('DOMContentLoaded', () => {
                 _tagLead(getVerifiedEmail(), 'consultation-interest', _pipelineSavings);
             };
         }
+
+        // Wire up tier CTA buttons
+        document.querySelectorAll('.smb-tier-cta').forEach(function(btn) {
+            btn.onclick = function() {
+                var tier = btn.getAttribute('data-tier');
+                var email = getVerifiedEmail();
+                var url = '/members/?email=' + encodeURIComponent(email) + '&tier=' + tier + '&source=bill-check';
+                if (_pipelineSavings) url += '&savings=' + Math.round(_pipelineSavings);
+                _tagLead(email, 'tier-' + tier + '-signup', _pipelineSavings);
+                window.location.href = url;
+            };
+        });
 
         // Cancel consultation form
         var cancelBtn = document.getElementById('vmb-consult-cancel');

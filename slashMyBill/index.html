@@ -170,23 +170,67 @@
             <div class="smb-offer-wall">
                 <h3 class="smb-offer-title">What would you like to do next?</h3>
                 <div class="smb-offer-grid">
+
+                    <!-- Option A: 3-tier self-service -->
                     <div class="smb-offer-card smb-offer-featured">
                         <div class="smb-offer-badge">Most Popular</div>
                         <div class="smb-offer-icon-wrap"><i class="fas fa-rocket"></i></div>
                         <h4>Do It Yourself</h4>
-                        <p class="smb-offer-sub">Free Member Portal</p>
-                        <ul class="smb-offer-list">
-                            <li><i class="fas fa-check-circle"></i> Connect your AWS account securely</li>
-                            <li><i class="fas fa-check-circle"></i> AI-powered ongoing cost monitoring</li>
-                            <li><i class="fas fa-check-circle"></i> Real-time waste detection &amp; alerts</li>
-                            <li><i class="fas fa-check-circle"></i> One-click cleanup actions</li>
-                            <li><i class="fas fa-check-circle"></i> FinOps dashboard &amp; reports</li>
-                        </ul>
-                        <div class="smb-offer-price"><span class="smb-price-big">Free</span><span class="smb-price-note">No credit card required</span></div>
-                        <button id="vmb-join-member" class="smb-btn smb-btn-cta smb-btn-full">
-                            <i class="fas fa-user-plus"></i> Join as Member — Free
-                        </button>
+                        <p class="smb-offer-sub">Choose the plan that fits your scale</p>
+                        <div class="smb-tier-table">
+                            <div class="smb-tier smb-tier-free">
+                                <div class="smb-tier-header">
+                                    <span class="smb-tier-name">Tier 1 · Visibility</span>
+                                    <span class="smb-tier-price-tag">Free Forever</span>
+                                </div>
+                                <div class="smb-tier-limit">1 AWS Account</div>
+                                <ul class="smb-tier-features">
+                                    <li><i class="fas fa-check-circle"></i> BI dashboard &amp; waste detection</li>
+                                    <li><i class="fas fa-check-circle"></i> Zombie infrastructure alerts</li>
+                                    <li><i class="fas fa-check-circle"></i> Read-only — manual cleanup</li>
+                                </ul>
+                                <button id="vmb-join-member" class="smb-btn smb-btn-cta smb-btn-full">
+                                    <i class="fas fa-user-plus"></i> Start Free
+                                </button>
+                            </div>
+                            <div class="smb-tier smb-tier-growth">
+                                <div class="smb-tier-header">
+                                    <span class="smb-tier-name">Tier 2 · Growth</span>
+                                    <span class="smb-tier-price-tag">$30<span class="smb-tier-per">/mo</span> + 25% revshare</span>
+                                </div>
+                                <div class="smb-tier-limit">Up to 5 AWS Accounts</div>
+                                <ul class="smb-tier-features">
+                                    <li><i class="fas fa-check-circle"></i> Everything in Tier 1</li>
+                                    <li><i class="fas fa-check-circle"></i> 1-click automated cleanup</li>
+                                    <li><i class="fas fa-check-circle"></i> AI Agent + Actions tab</li>
+                                    <li><i class="fas fa-check-circle"></i> Office Hours auto-shutdown</li>
+                                    <li><i class="fas fa-info-circle smb-note-icon"></i> 25% of savings we generate — vs 35% at ProsperOps</li>
+                                </ul>
+                                <button class="smb-btn smb-btn-secondary smb-btn-full smb-tier-cta" data-tier="growth">
+                                    <i class="fas fa-bolt"></i> Get Growth
+                                </button>
+                            </div>
+                            <div class="smb-tier smb-tier-scale">
+                                <div class="smb-tier-header">
+                                    <span class="smb-tier-name">Tier 3 · Scale</span>
+                                    <span class="smb-tier-price-tag">$199<span class="smb-tier-per">/mo</span> + 15% revshare</span>
+                                </div>
+                                <div class="smb-tier-limit">Unlimited Accounts</div>
+                                <ul class="smb-tier-features">
+                                    <li><i class="fas fa-check-circle"></i> Everything in Tier 2</li>
+                                    <li><i class="fas fa-check-circle"></i> Virtual Tagging &amp; Unit Economics</li>
+                                    <li><i class="fas fa-check-circle"></i> Unlimited AI automation</li>
+                                    <li><i class="fas fa-check-circle"></i> No spend cap</li>
+                                    <li><i class="fas fa-info-circle smb-note-icon"></i> vs 2–3% of total bill at CloudZero</li>
+                                </ul>
+                                <button class="smb-btn smb-btn-secondary smb-btn-full smb-tier-cta" data-tier="scale">
+                                    <i class="fas fa-building"></i> Get Scale
+                                </button>
+                            </div>
+                        </div>
                     </div>
+
+                    <!-- Option B: Managed service -->
                     <div class="smb-offer-card">
                         <div class="smb-offer-icon-wrap smb-offer-icon-dark"><i class="fas fa-briefcase"></i></div>
                         <h4>Let Us Do It</h4>
@@ -194,15 +238,19 @@
                         <ul class="smb-offer-list">
                             <li><i class="fas fa-check-circle"></i> Expert review of your full environment</li>
                             <li><i class="fas fa-check-circle"></i> We implement all optimizations for you</li>
-                            <li><i class="fas fa-check-circle"></i> Guaranteed savings or money back</li>
+                            <li><i class="fas fa-check-circle"></i> Guaranteed savings or you pay nothing</li>
                             <li><i class="fas fa-check-circle"></i> Full audit report &amp; documentation</li>
                             <li><i class="fas fa-check-circle"></i> 30-day post-implementation support</li>
                         </ul>
-                        <div class="smb-offer-price"><span class="smb-price-big" id="vmb-service-price">$299</span><span class="smb-price-note" id="vmb-service-price-note">or 20% of savings — whichever is less</span></div>
+                        <div class="smb-offer-price">
+                            <span class="smb-price-big" id="vmb-service-price">25% of yearly savings</span>
+                            <span class="smb-price-note" id="vmb-service-price-note">Only paid after we deliver results — based on actual savings achieved</span>
+                        </div>
                         <button id="vmb-book-service" class="smb-btn smb-btn-secondary smb-btn-full">
                             <i class="fas fa-calendar-check"></i> Book a Free Consultation
                         </button>
                     </div>
+
                 </div>
             </div>
 

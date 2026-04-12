@@ -238,3 +238,27 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;ba
   .smb-footer-links{grid-template-columns:1fr 1fr}
   .smb-hero{padding:100px 0 60px}
 }
+
+/* SAVINGS BANNER - orange */
+.smb-savings-banner{max-width:600px;margin:0 auto 32px;background:linear-gradient(135deg,#e8714a,#d4603a);border-radius:16px;padding:28px 32px;text-align:center}
+.smb-savings-label{display:block;font-size:12px;color:rgba(255,255,255,.8);text-transform:uppercase;letter-spacing:.8px;margin-bottom:8px}
+.smb-savings-num{font-size:2.8rem;font-weight:800;color:#fff;line-height:1.1}
+.smb-savings-per{font-size:1.4rem;font-weight:600;margin-left:2px}
+.smb-savings-yearly{display:block;font-size:1rem;font-weight:600;color:rgba(255,255,255,.85);margin-top:6px}
+
+/* TIER TABLE */
+.smb-tier-table{display:flex;flex-direction:column;gap:12px;margin-top:16px}
+.smb-tier{background:#f8f9fb;border:1.5px solid #e5e7eb;border-radius:14px;padding:16px 18px;transition:all .2s}
+.smb-tier:hover{border-color:#e8714a;box-shadow:0 4px 16px rgba(232,113,74,.12)}
+.smb-tier-free{border-color:#10b981}
+.smb-tier-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;flex-wrap:wrap;gap:6px}
+.smb-tier-name{font-size:13px;font-weight:700;color:#1a1a2e}
+.smb-tier-price-tag{font-size:13px;font-weight:700;color:#e8714a}
+.smb-tier-per{font-size:11px;font-weight:500;color:#9ca3af}
+.smb-tier-limit{font-size:11px;color:#9ca3af;margin-bottom:10px;font-weight:500}
+.smb-tier-features{list-style:none;padding:0;margin-bottom:12px}
+.smb-tier-features li{display:flex;align-items:flex-start;gap:7px;font-size:12px;color:#374151;padding:3px 0;line-height:1.4}
+.smb-tier-features li i.fa-check-circle{color:#10b981;font-size:11px;flex-shrink:0;margin-top:2px}
+.smb-tier-features li i.smb-note-icon{color:#9ca3af;font-size:11px;flex-shrink:0;margin-top:2px}
+.smb-tier-features li:last-child{color:#9ca3af;font-style:italic}
+.smb-tier-cta{font-size:13px;padding:10px 16px}
