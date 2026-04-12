@@ -2430,6 +2430,9 @@ function renderDashboardWidgets(data) {
     // Regional Cost widget
     _addWidget(grid, 'dash-regional', 'Cost by Region', 300, 'Show me my cost breakdown by region');
 
+    // Commitments widget (Savings Plans + Reserved Instances)
+    _addWidget(grid, 'dash-commitments', 'Savings Plans &amp; Reserved Instances', 350, 'What Savings Plans and Reserved Instances do I have?');
+
     // Render ECharts
     setTimeout(function() {
         _renderTreemap(data.costByService || [], data.drillDown || {});
@@ -2440,6 +2443,7 @@ function renderDashboardWidgets(data) {
         _renderMonthly(data.monthlyTrend || {});
         _renderUnitEconomics(data.unitEconomics || null);
         _renderRegionalPie(data.costByRegion || []);
+        _renderCommitments(data.commitments || {});
     }, 100);
 }
 

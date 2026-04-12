@@ -1661,7 +1661,161 @@ def handle_dashboard_data(event):
              for r, c in merged_regional.items() if c > 0.01],
             key=lambda x: x['cost'], reverse=True
         ),
+        'commitments': _get_commitments_data(accounts, external_id),
     })
+
+
+def _get_commitments_data(accounts, external_id):
+    """Fetch Savings Plans and Reserved Instances across all connected accounts."""
+    sts_client = boto3.client('sts')
+    all_sp = []
+    all_ri_ec2 = []
+    all_ri_rds = []
+    sp_coverage = {}
+    ri_coverage = {}
+
+    for acct in accounts[:5]:
+        acct_id = acct['accountId']
+        try:
+            assume_resp = sts_client.assume_role(
+                RoleArn=f'arn:aws:iam::{acct_id}:role/SlashMyBill-{acct_id}',
+                RoleSessionName='SlashMyBillCommit', ExternalId=external_id,
+            )
+            creds = assume_resp['Credentials']
+
+            # Savings Plans
+            try:
+                sp_client = boto3.client('savingsplans',
+                    aws_access_key_id=creds['AccessKeyId'],
+                    aws_secret_access_key=creds['SecretAccessKey'],
+                    aws_session_token=creds['SessionToken'],
+                    region_name='us-east-1')
+                sp_resp = sp_client.describe_savings_plans(
+                    States=['active', 'queued', 'queued-deleted']
+                )
+                for sp in sp_resp.get('savingsPlans', []):
+                    all_sp.append({
+                        'id': sp.get('savingsPlanId', ''),
+                        'type': sp.get('savingsPlanType', ''),
+                        'paymentOption': sp.get('paymentOption', ''),
+                        'commitment': float(sp.get('commitment', '0')),
+                        'currency': sp.get('currency', 'USD'),
+                        'term': sp.get('termDurationInSeconds', 0) // (365 * 86400),
+                        'state': sp.get('state', ''),
+                        'start': sp.get('start', ''),
+                        'end': sp.get('end', ''),
+                        'account': acct_id,
+                    })
+            except Exception as e:
+                logger.warning(f"SP fetch failed for {acct_id}: {e}")
+
+            # EC2 Reserved Instances
+            try:
+                ec2 = boto3.client('ec2',
+                    aws_access_key_id=creds['AccessKeyId'],
+                    aws_secret_access_key=creds['SecretAccessKey'],
+                    aws_session_token=creds['SessionToken'],
+                    region_name='us-east-1')
+                ri_resp = ec2.describe_reserved_instances(
+                    Filters=[{'Name': 'state', 'Values': ['active']}]
+                )
+                for ri in ri_resp.get('ReservedInstances', []):
+                    all_ri_ec2.append({
+                        'id': ri.get('ReservedInstancesId', ''),
+                        'instanceType': ri.get('InstanceType', ''),
+                        'count': ri.get('InstanceCount', 0),
+                        'offeringClass': ri.get('OfferingClass', ''),
+                        'offeringType': ri.get('OfferingType', ''),
+                        'fixedPrice': float(ri.get('FixedPrice', 0)),
+                        'usagePrice': float(ri.get('UsagePrice', 0)),
+                        'duration': ri.get('Duration', 0) // (365 * 86400),
+                        'start': ri.get('Start', '').isoformat() if hasattr(ri.get('Start', ''), 'isoformat') else str(ri.get('Start', '')),
+                        'end': ri.get('End', '').isoformat() if hasattr(ri.get('End', ''), 'isoformat') else str(ri.get('End', '')),
+                        'state': ri.get('State', ''),
+                        'account': acct_id,
+                    })
+            except Exception as e:
+                logger.warning(f"EC2 RI fetch failed for {acct_id}: {e}")
+
+            # RDS Reserved Instances
+            try:
+                rds = boto3.client('rds',
+                    aws_access_key_id=creds['AccessKeyId'],
+                    aws_secret_access_key=creds['SecretAccessKey'],
+                    aws_session_token=creds['SessionToken'],
+                    region_name='us-east-1')
+                rds_ri_resp = rds.describe_reserved_db_instances()
+                for ri in rds_ri_resp.get('ReservedDBInstances', []):
+                    if ri.get('State') == 'active':
+                        all_ri_rds.append({
+                            'id': ri.get('ReservedDBInstanceId', ''),
+                            'dbInstanceClass': ri.get('DBInstanceClass', ''),
+                            'count': ri.get('DBInstanceCount', 0),
+                            'engine': ri.get('ProductDescription', ''),
+                            'offeringType': ri.get('OfferingType', ''),
+                            'fixedPrice': float(ri.get('FixedPrice', 0)),
+                            'duration': ri.get('Duration', 0) // (365 * 86400),
+                            'start': ri.get('StartTime', '').isoformat() if hasattr(ri.get('StartTime', ''), 'isoformat') else str(ri.get('StartTime', '')),
+                            'state': ri.get('State', ''),
+                            'account': acct_id,
+                        })
+            except Exception as e:
+                logger.warning(f"RDS RI fetch failed for {acct_id}: {e}")
+
+            # SP Coverage (last 30 days)
+            try:
+                ce = boto3.client('ce',
+                    aws_access_key_id=creds['AccessKeyId'],
+                    aws_secret_access_key=creds['SecretAccessKey'],
+                    aws_session_token=creds['SessionToken'])
+                end_date = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+                start_date = (datetime.now(timezone.utc) - timedelta(days=30)).strftime('%Y-%m-%d')
+
+                sp_cov = ce.get_savings_plans_coverage(
+                    TimePeriod={'Start': start_date, 'End': end_date},
+                    Granularity='MONTHLY',
+                )
+                for period in sp_cov.get('SavingsPlansCoverages', []):
+                    cov = period.get('Coverage', {})
+                    sp_coverage[acct_id] = {
+                        'coveragePct': float(cov.get('CoveragePercentage', '0')),
+                        'spendCovered': float(cov.get('SpendCoveredBySavingsPlans', '0')),
+                        'onDemandCost': float(cov.get('OnDemandCost', '0')),
+                        'totalCost': float(cov.get('TotalCost', '0')),
+                    }
+            except Exception:
+                pass
+
+            # RI Coverage (last 30 days)
+            try:
+                ri_cov = ce.get_reservation_coverage(
+                    TimePeriod={'Start': start_date, 'End': end_date},
+                    Granularity='MONTHLY',
+                )
+                for period in ri_cov.get('CoveragesByTime', []):
+                    total = period.get('Total', {}).get('CoverageHours', {})
+                    ri_coverage[acct_id] = {
+                        'coveragePct': float(total.get('CoverageHoursPercentage', '0')),
+                        'reservedHours': float(total.get('ReservedHours', '0')),
+                        'totalRunningHours': float(total.get('TotalRunningHours', '0')),
+                        'onDemandHours': float(total.get('OnDemandHours', '0')),
+                    }
+            except Exception:
+                pass
+
+        except Exception as e:
+            logger.warning(f"Commitments fetch failed for {acct_id}: {e}")
+
+    return {
+        'savingsPlans': all_sp,
+        'ec2ReservedInstances': all_ri_ec2,
+        'rdsReservedInstances': all_ri_rds,
+        'spCoverage': sp_coverage,
+        'riCoverage': ri_coverage,
+        'totalSP': len(all_sp),
+        'totalEC2RI': sum(r['count'] for r in all_ri_ec2),
+        'totalRDSRI': sum(r['count'] for r in all_ri_rds),
+    }
 
 
 def handle_get_dashboard(event):
