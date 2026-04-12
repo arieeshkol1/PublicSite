@@ -55,9 +55,69 @@ Parameters:
   JWTSecret:
     Type: String
     NoEcho: true
-    Description: Secret key for JWT signing
+    Description: Secret key for JWT signing (kept for admin panel; Cognito handles member auth)
 
 Resources:
+
+  # ============================================================
+  # Cognito User Pool — Member Authentication (Lite tier)
+  # ============================================================
+  MemberUserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: SlashMyBill-Members
+      UsernameAttributes:
+        - email
+      AutoVerifiedAttributes:
+        - email
+      EmailVerificationMessage: 'Your SlashMyBill verification code is {####}'
+      EmailVerificationSubject: 'Your SlashMyBill verification code'
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 8
+          RequireUppercase: false
+          RequireLowercase: false
+          RequireNumbers: false
+          RequireSymbols: false
+          TemporaryPasswordValidityDays: 7
+      Schema:
+        - Name: email
+          AttributeDataType: String
+          Required: true
+          Mutable: true
+        - Name: displayName
+          AttributeDataType: String
+          Required: false
+          Mutable: true
+      AccountRecoverySetting:
+        RecoveryMechanisms:
+          - Name: verified_email
+            Priority: 1
+      UserPoolAddOns:
+        AdvancedSecurityMode: 'OFF'
+      DeletionProtection: ACTIVE
+      Tags:
+        - Key: Project
+          Value: ViewMyBill
+
+  MemberUserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: SlashMyBill-MemberPortal
+      UserPoolId: !Ref MemberUserPool
+      GenerateSecret: false
+      ExplicitAuthFlows:
+        - ALLOW_USER_PASSWORD_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+        - ALLOW_USER_SRP_AUTH
+      AccessTokenValidity: 24
+      IdTokenValidity: 24
+      RefreshTokenValidity: 30
+      TokenValidityUnits:
+        AccessToken: hours
+        IdToken: hours
+        RefreshToken: days
+      PreventUserExistenceErrors: ENABLED
 
   # ============================================================
   # DynamoDB Table - Leads (Contact Information)
@@ -334,6 +394,30 @@ Resources:
                   - ses:SendRawEmail
                 Resource:
                   - !Sub 'arn:aws:ses:${AWS::Region}:${AWS::AccountId}:identity/*'
+        - PolicyName: CognitoMemberAuth
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - cognito-idp:AdminCreateUser
+                  - cognito-idp:AdminSetUserPassword
+                  - cognito-idp:AdminGetUser
+                  - cognito-idp:AdminDeleteUser
+                  - cognito-idp:AdminUpdateUserAttributes
+                  - cognito-idp:AdminInitiateAuth
+                  - cognito-idp:AdminRespondToAuthChallenge
+                  - cognito-idp:InitiateAuth
+                  - cognito-idp:RespondToAuthChallenge
+                  - cognito-idp:ForgotPassword
+                  - cognito-idp:ConfirmForgotPassword
+                  - cognito-idp:SignUp
+                  - cognito-idp:ConfirmSignUp
+                  - cognito-idp:ResendConfirmationCode
+                  - cognito-idp:GetUser
+                  - cognito-idp:ListUsers
+                Resource:
+                  - !GetAtt MemberUserPool.Arn
       Tags:
         - Key: Project
           Value: ViewMyBill
@@ -950,6 +1034,8 @@ Resources:
           BEDROCK_AGENT_ALIAS_ID: ''
           FEEDBACK_TABLE_NAME: !Ref AgentFeedbackTable
           BUSINESS_METRICS_TABLE: !Ref BusinessMetricsTable
+          COGNITO_USER_POOL_ID: !Ref MemberUserPool
+          COGNITO_CLIENT_ID: !GetAtt MemberUserPoolClient.ClientId
       Tags:
         - Key: Project
           Value: ViewMyBill
@@ -1255,6 +1341,18 @@ Outputs:
     Value: !GetAtt ViewMyBillApi.ApiEndpoint
     Export:
       Name: ViewMyBill-ApiEndpoint
+
+  CognitoUserPoolId:
+    Description: Cognito User Pool ID for member authentication
+    Value: !Ref MemberUserPool
+    Export:
+      Name: ViewMyBill-CognitoUserPoolId
+
+  CognitoClientId:
+    Description: Cognito App Client ID
+    Value: !GetAtt MemberUserPoolClient.ClientId
+    Export:
+      Name: ViewMyBill-CognitoClientId
 
   BillAnalyzerFunctionArn:
     Description: Bill Analyzer Lambda function ARN

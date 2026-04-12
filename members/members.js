@@ -271,16 +271,21 @@ regEmailForm.onsubmit = async function(e) {
     e.preventDefault();
     regEmailError.textContent = '';
     regEmailValue = regEmail.value.trim().toLowerCase();
+    var pw = regPassword.value;
+    var cpw = regConfirm.value;
     if (!regEmailValue) { regEmailError.textContent = 'Enter your email.'; return; }
+    if (pw.length < 8) { regEmailError.textContent = 'Password must be at least 8 characters.'; return; }
+    if (pw !== cpw) { regEmailError.textContent = 'Passwords do not match.'; return; }
 
     try {
         showLoading();
-        await api('POST', '/members/register', { action: 'send-otp', email: regEmailValue });
+        // Cognito sign_up: send email + password together, Cognito sends verification email
+        await api('POST', '/members/register', { action: 'send-otp', email: regEmailValue, password: pw });
         regEmailDisplay.textContent = regEmailValue;
         regStep1.hidden = true;
         regStep2.hidden = false;
     } catch (err) {
-        regEmailError.textContent = err.message || 'Failed to send OTP.';
+        regEmailError.textContent = err.message || 'Failed to create account.';
     } finally {
         hideLoading();
     }
@@ -294,12 +299,17 @@ regOtpForm.onsubmit = async function(e) {
 
     try {
         showLoading();
+        // Cognito confirm_sign_up: verify the code, then create profile
         var data = await api('POST', '/members/register', {
             action: 'verify-otp', email: regEmailValue, otp: code
         });
         otpToken = data.otpToken;
-        regStep2.hidden = true;
-        regStep3.hidden = false;
+        // Immediately complete registration (no separate password step needed)
+        await api('POST', '/members/register', {
+            action: 'create-account', otpToken: otpToken
+        });
+        notify('Registration successful! Please log in.', 'success');
+        showView('login');
     } catch (err) {
         regOtpError.textContent = err.message || 'Invalid code.';
     } finally {
@@ -307,27 +317,25 @@ regOtpForm.onsubmit = async function(e) {
     }
 };
 
-regPasswordForm.onsubmit = async function(e) {
-    e.preventDefault();
-    regPasswordError.textContent = '';
-    var pw = regPassword.value;
-    var cpw = regConfirm.value;
-    if (pw.length < 8) { regPasswordError.textContent = 'Password must be at least 8 characters.'; return; }
-    if (pw !== cpw) { regPasswordError.textContent = 'Passwords do not match.'; return; }
+// Resend OTP link
+var regResendOtp = $('reg-resend-otp');
+if (regResendOtp) {
+    regResendOtp.onclick = async function(e) {
+        e.preventDefault();
+        try {
+            await api('POST', '/members/register', { action: 'resend-otp', email: regEmailValue });
+            notify('Verification code resent.', 'success');
+        } catch (err) {
+            notify(err.message || 'Failed to resend code.', 'error');
+        }
+    };
+}
 
-    try {
-        showLoading();
-        await api('POST', '/members/register', {
-            action: 'create-account', otpToken: otpToken, password: pw, confirmPassword: cpw
-        });
-        notify('Registration successful! Please log in.', 'success');
-        showView('login');
-    } catch (err) {
-        regPasswordError.textContent = err.message || 'Registration failed.';
-    } finally {
-        hideLoading();
-    }
-};
+// Keep regPasswordForm stub for backward compat (no longer shown)
+var regPasswordForm = $('reg-password-form');
+if (regPasswordForm) {
+    regPasswordForm.onsubmit = function(e) { e.preventDefault(); };
+}
 
 // ============================================================
 // Password Reset

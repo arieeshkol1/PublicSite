@@ -6,7 +6,7 @@
     <title>Member Portal - SlashMyBill</title>
     <link rel="icon" type="image/png" href="../SlashMyBill.png">
     <link rel="stylesheet" href="../styles.css">
-    <link rel="stylesheet" href="members.css?v=39">
+    <link rel="stylesheet" href="members.css?v=40">
     <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
 </head>
 <body>
@@ -97,35 +97,13 @@
                 <p>Register for the Member Portal</p>
             </div>
 
-            <!-- Step 1: Email + Get OTP -->
+            <!-- Step 1: Email + Password -->
             <div id="reg-step-1">
                 <form id="reg-email-form" novalidate>
                     <div class="form-group">
                         <label for="reg-email">Email</label>
                         <input type="email" id="reg-email" placeholder="you@example.com" autocomplete="email" required>
                     </div>
-                    <div id="reg-email-error" class="login-error" role="alert"></div>
-                    <button type="submit" class="btn btn-primary btn-full">Get OTP</button>
-                </form>
-            </div>
-
-            <!-- Step 2: OTP Verification -->
-            <div id="reg-step-2" hidden>
-                <form id="reg-otp-form" novalidate>
-                    <p class="reg-step-info">We sent a 6-digit code to <strong id="reg-email-display"></strong></p>
-                    <div class="form-group">
-                        <label for="reg-otp">Verification Code</label>
-                        <input type="text" id="reg-otp" maxlength="6" inputmode="numeric" pattern="[0-9]{6}" placeholder="Enter 6-digit code" autocomplete="one-time-code" required>
-                    </div>
-                    <div id="reg-otp-error" class="login-error" role="alert"></div>
-                    <button type="submit" class="btn btn-primary btn-full">Verify Code</button>
-                </form>
-            </div>
-
-            <!-- Step 3: Password -->
-            <div id="reg-step-3" hidden>
-                <form id="reg-password-form" novalidate>
-                    <p class="reg-step-info">Set your password</p>
                     <div class="form-group">
                         <label for="reg-password">Password</label>
                         <input type="password" id="reg-password" placeholder="At least 8 characters" autocomplete="new-password" required>
@@ -134,9 +112,32 @@
                         <label for="reg-confirm">Confirm Password</label>
                         <input type="password" id="reg-confirm" placeholder="Confirm password" autocomplete="new-password" required>
                     </div>
-                    <div id="reg-password-error" class="login-error" role="alert"></div>
+                    <div id="reg-email-error" class="login-error" role="alert"></div>
                     <button type="submit" class="btn btn-primary btn-full">Create Account</button>
                 </form>
+            </div>
+
+            <!-- Step 2: OTP Verification -->
+            <div id="reg-step-2" hidden>
+                <form id="reg-otp-form" novalidate>
+                    <p class="reg-step-info">We sent a 6-digit verification code to <strong id="reg-email-display"></strong></p>
+                    <div class="form-group">
+                        <label for="reg-otp">Verification Code</label>
+                        <input type="text" id="reg-otp" maxlength="6" inputmode="numeric" pattern="[0-9]{6}" placeholder="Enter 6-digit code" autocomplete="one-time-code" required>
+                    </div>
+                    <div id="reg-otp-error" class="login-error" role="alert"></div>
+                    <button type="submit" class="btn btn-primary btn-full">Verify &amp; Complete</button>
+                    <div style="margin-top:10px;text-align:center;">
+                        <a href="#" id="reg-resend-otp" style="font-size:0.85em;color:#6366f1;">Resend code</a>
+                    </div>
+                </form>
+            </div>
+
+            <!-- Step 3: Success (hidden, auto-redirect) -->
+            <div id="reg-step-3" hidden>
+                <div id="reg-password-error" class="login-error" role="alert"></div>
+                <input type="hidden" id="reg-password-hidden">
+                <input type="hidden" id="reg-confirm-hidden">
             </div>
 
             <div class="login-link">
@@ -503,7 +504,7 @@
         <span id="notification-message"></span>
     </div>
 
-    <script src="members.js?v=39"></script>
+    <script src="members.js?v=40"></script>
     <script src="help.js?v=1"></script>
 </body>
 </html>
