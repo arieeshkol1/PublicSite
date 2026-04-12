@@ -168,57 +168,90 @@
             </div>
 
             <div class="smb-offer-wall">
-                <h3 class="smb-offer-title">What would you like to do next?</h3>
-                <div class="smb-offer-grid">
+                <h3 class="smb-offer-title">Choose Your Plan</h3>
 
-                    <!-- Option A: 3-tier self-service -->
+                <!-- Token costs legend -->
+                <div class="smb-token-legend">
+                    <span class="smb-token-cost"><span class="smb-coin">🪙2</span> AI Question</span>
+                    <span class="smb-token-cost"><span class="smb-coin">🪙10</span> Scan</span>
+                    <span class="smb-token-cost"><span class="smb-coin">🪙50</span> Cleanup Action</span>
+                </div>
+
+                <div class="smb-offer-grid smb-offer-grid-3">
+
+                    <!-- Tier 1: Free -->
+                    <div class="smb-offer-card">
+                        <div class="smb-offer-icon-wrap"><i class="fas fa-eye"></i></div>
+                        <h4>Free</h4>
+                        <p class="smb-offer-sub">Visibility &amp; Insights</p>
+                        <div class="smb-offer-price"><span class="smb-price-big">$0</span><span class="smb-price-note">forever</span></div>
+                        <div class="smb-token-badge">🪙 100 tokens/month</div>
+                        <ul class="smb-offer-list">
+                            <li><i class="fas fa-check-circle"></i> 1 AWS Account</li>
+                            <li><i class="fas fa-check-circle"></i> BI dashboard &amp; charts</li>
+                            <li><i class="fas fa-check-circle"></i> Cost by Region pie chart</li>
+                            <li><i class="fas fa-check-circle"></i> Waste detection alerts</li>
+                            <li><i class="fas fa-check-circle"></i> AI Chat <span class="smb-coin-sm">🪙2</span></li>
+                            <li><i class="fas fa-check-circle"></i> Scan for savings <span class="smb-coin-sm">🪙10</span></li>
+                        </ul>
+                        <button id="vmb-join-member" class="smb-btn smb-btn-cta smb-btn-full">
+                            <i class="fas fa-user-plus"></i> Start Free
+                        </button>
+                    </div>
+
+                    <!-- Tier 2: Growth -->
                     <div class="smb-offer-card smb-offer-featured">
                         <div class="smb-offer-badge">Most Popular</div>
                         <div class="smb-offer-icon-wrap"><i class="fas fa-rocket"></i></div>
-                        <h4>Do It Yourself</h4>
-                        <p class="smb-offer-sub">Choose the plan that fits your scale</p>
-                        <div class="smb-tier-table">
-                            <div class="smb-tier smb-tier-free">
-                                <div class="smb-tier-header">
-                                    <span class="smb-tier-name">Free · Visibility</span>
-                                    <span class="smb-tier-price-tag">Free Forever</span>
-                                </div>
-                                <div class="smb-tier-limit">1 AWS Account</div>
-                                <ul class="smb-tier-features">
-                                    <li><i class="fas fa-check-circle"></i> BI dashboard &amp; waste detection</li>
-                                    <li><i class="fas fa-check-circle"></i> Zombie infrastructure alerts</li>
-                                    <li><i class="fas fa-check-circle"></i> Read-only — manual cleanup</li>
-                                </ul>
-                                <button id="vmb-join-member" class="smb-btn smb-btn-cta smb-btn-full">
-                                    <i class="fas fa-user-plus"></i> Start Free
-                                </button>
-                            </div>
-                            <div class="smb-tier smb-tier-growth">
-                                <div class="smb-tier-header">
-                                    <span class="smb-tier-name">Growth · Automate</span>
-                                    <span class="smb-tier-price-tag">$50<span class="smb-tier-per">/mo</span> + 20% revshare</span>
-                                </div>
-                                <div class="smb-tier-limit">Up to 20 AWS Accounts</div>
-                                <ul class="smb-tier-features">
-                                    <li><i class="fas fa-check-circle"></i> Everything in Free tier</li>
-                                    <li><i class="fas fa-check-circle"></i> 1-click automated cleanup</li>
-                                    <li><i class="fas fa-check-circle"></i> AI Agent + Actions tab</li>
-                                    <li><i class="fas fa-check-circle"></i> Office Hours auto-shutdown</li>
-                                    <li><i class="fas fa-check-circle"></i> Virtual Tagging &amp; Unit Economics</li>
-                                    <li><i class="fas fa-info-circle smb-note-icon"></i> 20% of savings we generate — vs 35% at ProsperOps</li>
-                                </ul>
-                                <button class="smb-btn smb-btn-secondary smb-btn-full smb-tier-cta" data-tier="growth">
-                                    <i class="fas fa-bolt"></i> Get Growth
-                                </button>
-                            </div>
-                        </div>
+                        <h4>Growth</h4>
+                        <p class="smb-offer-sub">Automate &amp; Optimize</p>
+                        <div class="smb-offer-price"><span class="smb-price-big">$50</span><span class="smb-price-note">/month</span></div>
+                        <div class="smb-token-badge">🪙 300 tokens/month</div>
+                        <ul class="smb-offer-list">
+                            <li><i class="fas fa-check-circle"></i> Up to 20 AWS Accounts</li>
+                            <li><i class="fas fa-check-circle"></i> Everything in Free</li>
+                            <li><i class="fas fa-check-circle"></i> 1-click automated cleanup <span class="smb-coin-sm">🪙50</span></li>
+                            <li><i class="fas fa-check-circle"></i> AI Agent + Actions tab</li>
+                            <li><i class="fas fa-check-circle"></i> Office Hours auto-shutdown</li>
+                            <li><i class="fas fa-check-circle"></i> Virtual Tagging &amp; Unit Economics</li>
+                        </ul>
+                        <button class="smb-btn smb-btn-secondary smb-btn-full smb-tier-cta" data-tier="growth">
+                            <i class="fas fa-bolt"></i> Get Growth
+                        </button>
                     </div>
 
-                    <!-- Option B: Managed service -->
+                    <!-- Tier 3: Scale -->
                     <div class="smb-offer-card">
+                        <div class="smb-offer-icon-wrap smb-offer-icon-dark"><i class="fas fa-building"></i></div>
+                        <h4>Scale</h4>
+                        <p class="smb-offer-sub">Enterprise Power</p>
+                        <div class="smb-offer-price"><span class="smb-price-big">$200</span><span class="smb-price-note">/month</span></div>
+                        <div class="smb-token-badge">🪙 1,500 tokens/month</div>
+                        <ul class="smb-offer-list">
+                            <li><i class="fas fa-check-circle"></i> Up to 20 AWS Accounts</li>
+                            <li><i class="fas fa-check-circle"></i> Everything in Growth</li>
+                            <li><i class="fas fa-check-circle"></i> Priority AI processing</li>
+                            <li><i class="fas fa-check-circle"></i> Bulk token top-ups at discount</li>
+                            <li><i class="fas fa-check-circle"></i> Dedicated support</li>
+                        </ul>
+                        <button class="smb-btn smb-btn-secondary smb-btn-full smb-tier-cta" data-tier="scale">
+                            <i class="fas fa-building"></i> Get Scale
+                        </button>
+                    </div>
+
+                </div>
+
+                <p class="smb-topup-note">Need more tokens? <strong>Top up anytime</strong> by clicking the 🪙 coin icon in the portal header.</p>
+            </div>
+
+            <!-- Let Us Do It -->
+            <div class="smb-offer-wall" style="margin-top:40px;">
+                <h3 class="smb-offer-title">Or Let Us Handle Everything</h3>
+                <div class="smb-offer-grid">
+                    <div class="smb-offer-card" style="max-width:600px;margin:0 auto;">
                         <div class="smb-offer-icon-wrap smb-offer-icon-dark"><i class="fas fa-briefcase"></i></div>
-                        <h4>Let Us Do It</h4>
-                        <p class="smb-offer-sub">One-Time Bill Slashing Service</p>
+                        <h4>Managed Service</h4>
+                        <p class="smb-offer-sub">One-Time Bill Slashing — We Do It For You</p>
                         <ul class="smb-offer-list">
                             <li><i class="fas fa-check-circle"></i> Expert review of your full environment</li>
                             <li><i class="fas fa-check-circle"></i> We implement all optimizations for you</li>
@@ -228,13 +261,12 @@
                         </ul>
                         <div class="smb-offer-price">
                             <span class="smb-price-big" id="vmb-service-price">25% of yearly savings</span>
-                            <span class="smb-price-note" id="vmb-service-price-note">Only paid after we deliver results — based on actual savings achieved</span>
+                            <span class="smb-price-note" id="vmb-service-price-note">Only paid after we deliver results</span>
                         </div>
                         <button id="vmb-book-service" class="smb-btn smb-btn-secondary smb-btn-full">
                             <i class="fas fa-calendar-check"></i> Book a Free Consultation
                         </button>
                     </div>
-
                 </div>
             </div>
 

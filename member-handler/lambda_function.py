@@ -547,16 +547,30 @@ def handle_get_accounts(event):
     # Convert Decimal values for JSON serialization
     accounts = _decimal_to_native(accounts)
 
-    # Include tier info for frontend feature gating
+    # Include tier and token info for frontend
     tier = _get_member_tier(member_email)
     limit = _get_tier_limit(tier)
+    max_tokens = AI_CREDITS.get(tier, 100)
+    try:
+        m = dynamodb.Table(MEMBERS_TABLE_NAME).get_item(Key={'email': member_email}).get('Item', {})
+        current_month = datetime.now(timezone.utc).strftime('%Y-%m')
+        tokens_used = int(m.get('aiCreditsUsed', 0)) if m.get('aiCreditsMonth', '') == current_month else 0
+        bonus = int(m.get('bonusTokens', 0))
+    except Exception:
+        tokens_used = 0
+        bonus = 0
 
-    return create_response(200, {'accounts': accounts, 'tier': tier, 'tierLimit': limit})
+    return create_response(200, {
+        'accounts': accounts,
+        'tier': tier,
+        'tierLimit': limit,
+        'tokens': {'used': tokens_used, 'total': max_tokens + bonus, 'remaining': max(0, max_tokens + bonus - tokens_used), 'bonus': bonus},
+    })
 
 
 def _get_tier_limit(tier: str) -> int:
     """Return max AWS accounts allowed per tier."""
-    return {'free': 1, 'growth': 20}.get(tier, 1)
+    return TIER_ACCOUNT_LIMITS.get(tier, 1)
 
 
 TIER_FEATURES = {
@@ -564,46 +578,50 @@ TIER_FEATURES = {
     'growth': {'dashboard', 'accounts', 'waste_detection', 'actions', 'ai_agent', 'office_hours', 'virtual_tagging', 'unit_economics'},
 }
 
-AI_CREDITS = {'free': 100, 'growth': -1}  # -1 = unlimited
-SCAN_CREDIT_COST = 10  # Each scan costs 10 credits
-AI_QUERY_CREDIT_COST = 1  # Each AI question costs 1 credit
+AI_CREDITS = {'free': 100, 'growth': 300, 'scale': 1500}  # tokens per month
+SCAN_CREDIT_COST = 10  # Each scan costs 10 tokens
+AI_QUERY_CREDIT_COST = 2  # Each AI question costs 2 tokens
+ACTIVITY_CREDIT_COST = 50  # Each cleanup action costs 50 tokens
+
+TIER_ACCOUNT_LIMITS = {'free': 1, 'growth': 20, 'scale': 20}
 
 
 def _check_and_consume_credits(member_email: str, tier: str, cost: int) -> dict:
-    """Check if member has enough credits and consume them. Returns None if OK, or error response."""
-    max_credits = AI_CREDITS.get(tier, 100)
-    if max_credits < 0:  # unlimited
-        return None
+    """Check if member has enough tokens and consume them. Returns None if OK, or error response."""
+    max_tokens = AI_CREDITS.get(tier, 100)
 
     members_table = dynamodb.Table(MEMBERS_TABLE_NAME)
     current_month = datetime.now(timezone.utc).strftime('%Y-%m')
     try:
         member = members_table.get_item(Key={'email': member_email}).get('Item', {})
-        credits_used = int(member.get('aiCreditsUsed', 0))
-        credits_month = member.get('aiCreditsMonth', '')
+        tokens_used = int(member.get('aiCreditsUsed', 0))
+        tokens_month = member.get('aiCreditsMonth', '')
+        bonus_tokens = int(member.get('bonusTokens', 0))
 
-        # Monthly reset: if stored month differs from current, reset credits
-        if credits_month != current_month:
-            credits_used = 0
+        # Monthly reset: if stored month differs from current, reset used count
+        if tokens_month != current_month:
+            tokens_used = 0
             members_table.update_item(
                 Key={'email': member_email},
                 UpdateExpression='SET aiCreditsUsed = :zero, aiCreditsMonth = :month',
                 ExpressionAttributeValues={':zero': 0, ':month': current_month}
             )
 
-        credits_remaining = max(0, max_credits - credits_used)
+        tokens_remaining = max(0, (max_tokens + bonus_tokens) - tokens_used)
     except Exception:
-        credits_used = 0
-        credits_remaining = max_credits
+        tokens_used = 0
+        bonus_tokens = 0
+        tokens_remaining = max_tokens
 
-    if credits_remaining < cost:
-        return create_error_response(403, 'CreditsExhausted',
-            f'Not enough credits. This action costs {cost} credits but you have {credits_remaining} remaining. '
-            f'Upgrade to Growth ($50/mo) for unlimited usage.',
-            extra={'creditsUsed': credits_used, 'creditsTotal': max_credits,
-                   'creditsRemaining': credits_remaining, 'creditCost': cost, 'currentTier': tier})
+    if tokens_remaining < cost:
+        return create_error_response(403, 'TokensExhausted',
+            f'Not enough tokens. This costs {cost} tokens but you have {tokens_remaining} remaining. '
+            f'Top up tokens or upgrade your plan.',
+            extra={'tokensUsed': tokens_used, 'tokensTotal': max_tokens + bonus_tokens,
+                   'tokensRemaining': tokens_remaining, 'tokenCost': cost,
+                   'currentTier': tier, 'bonusTokens': bonus_tokens})
 
-    # Consume credits
+    # Consume tokens
     try:
         members_table.update_item(
             Key={'email': member_email},
@@ -2722,6 +2740,12 @@ def handle_actions_execute(event):
     if isinstance(auth, dict) and 'statusCode' in auth:
         return auth
     member_email = auth['sub']
+
+    # Token cost: each cleanup action costs 50 tokens
+    tier = _get_member_tier(member_email)
+    token_err = _check_and_consume_credits(member_email, tier, ACTIVITY_CREDIT_COST)
+    if token_err:
+        return token_err
 
     try:
         body = json.loads(event.get('body', '{}'))
