@@ -345,13 +345,61 @@ jobs:
       - name: Deploy slashmycloudbill.com site stack
         run: |
           echo "Deploying slashmycloudbill.com infrastructure..."
+
+          # Create/update the CloudFront function BEFORE the stack (stack references it)
+          aws cloudfront create-function \
+            --name "SlashMyCloudBill-Router" \
+            --function-config 'Comment=Routes slashmycloudbill.com,Runtime=cloudfront-js-2.0' \
+            --function-code fileb://infrastructure/cf-function-slashmycloudbill.js > /dev/null 2>&1 || true
+
+          FN_ETAG=$(aws cloudfront describe-function --name "SlashMyCloudBill-Router" --query "ETag" --output text)
+          aws cloudfront update-function \
+            --name "SlashMyCloudBill-Router" --if-match "$FN_ETAG" \
+            --function-config 'Comment=Routes slashmycloudbill.com,Runtime=cloudfront-js-2.0' \
+            --function-code fileb://infrastructure/cf-function-slashmycloudbill.js > /dev/null
+          FN_ETAG2=$(aws cloudfront describe-function --name "SlashMyCloudBill-Router" --query "ETag" --output text)
+          aws cloudfront publish-function --name "SlashMyCloudBill-Router" --if-match "$FN_ETAG2" > /dev/null
+          echo "✓ CloudFront function ready"
+
+          # Deploy the stack (S3 bucket + CloudFront distribution + Route53)
           aws cloudformation deploy \
             --template-file infrastructure/slashmycloudbill-site-stack.yaml \
             --stack-name slashmycloudbill-site \
             --capabilities CAPABILITY_IAM \
             --no-fail-on-empty-changeset \
-            --tags Project=SlashMyCloudBill || echo "⚠ slashmycloudbill site stack deploy failed"
+            --tags Project=SlashMyCloudBill
           echo "✓ slashmycloudbill.com stack deployed"
+
+          # Attach the CloudFront function to the new distribution
+          SMB_DIST_ID=$(aws cloudformation describe-stacks \
+            --stack-name slashmycloudbill-site \
+            --query "Stacks[0].Outputs[?OutputKey=='DistributionId'].OutputValue" \
+            --output text)
+          FN_ARN="arn:aws:cloudfront::991105135552:function/SlashMyCloudBill-Router"
+
+          DIST_ETAG=$(aws cloudfront get-distribution-config --id "$SMB_DIST_ID" --query "ETag" --output text)
+          aws cloudfront get-distribution-config --id "$SMB_DIST_ID" \
+            --query "DistributionConfig" --output json > /tmp/smb-dist.json
+
+          python3 - <<PYEOF
+          import json
+          with open('/tmp/smb-dist.json') as f:
+              c = json.load(f)
+          dcb = c.get('DefaultCacheBehavior', {})
+          dcb['FunctionAssociations'] = {
+              'Quantity': 1,
+              'Items': [{'FunctionARN': '${FN_ARN}', 'EventType': 'viewer-request'}]
+          }
+          c['DefaultCacheBehavior'] = dcb
+          with open('/tmp/smb-dist-new.json', 'w') as f:
+              json.dump(c, f)
+          PYEOF
+
+          aws cloudfront update-distribution \
+            --id "$SMB_DIST_ID" \
+            --distribution-config file:///tmp/smb-dist-new.json \
+            --if-match "$DIST_ETAG" > /dev/null
+          echo "✓ CloudFront function attached to distribution $SMB_DIST_ID"
 
       - name: Deploy SlashMyBill files to slashmycloudbill.com bucket
         run: |
@@ -382,25 +430,6 @@ jobs:
             --cache-control "no-cache, no-store, must-revalidate"
 
           echo "✓ slashmycloudbill.com files deployed"
-
-      - name: Update CloudFront function for slashmycloudbill.com
-        run: |
-          # Update the routing function (now simpler — files at root of new bucket)
-          aws cloudfront create-function \
-            --name "SlashMyCloudBill-Router" \
-            --function-config 'Comment=Routes slashmycloudbill.com,Runtime=cloudfront-js-2.0' \
-            --function-code fileb://infrastructure/cf-function-slashmycloudbill.js > /dev/null 2>&1 || true
-
-          FN_ETAG=$(aws cloudfront describe-function --name "SlashMyCloudBill-Router" --query "ETag" --output text)
-          aws cloudfront update-function \
-            --name "SlashMyCloudBill-Router" \
-            --if-match "$FN_ETAG" \
-            --function-config 'Comment=Routes slashmycloudbill.com,Runtime=cloudfront-js-2.0' \
-            --function-code fileb://infrastructure/cf-function-slashmycloudbill.js > /dev/null
-
-          FN_ETAG2=$(aws cloudfront describe-function --name "SlashMyCloudBill-Router" --query "ETag" --output text)
-          aws cloudfront publish-function --name "SlashMyCloudBill-Router" --if-match "$FN_ETAG2" > /dev/null
-          echo "✓ CloudFront function updated"
 
       - name: Invalidate slashmycloudbill.com CloudFront cache
         run: |
