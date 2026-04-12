@@ -576,9 +576,21 @@ def _check_and_consume_credits(member_email: str, tier: str, cost: int) -> dict:
         return None
 
     members_table = dynamodb.Table(MEMBERS_TABLE_NAME)
+    current_month = datetime.now(timezone.utc).strftime('%Y-%m')
     try:
         member = members_table.get_item(Key={'email': member_email}).get('Item', {})
         credits_used = int(member.get('aiCreditsUsed', 0))
+        credits_month = member.get('aiCreditsMonth', '')
+
+        # Monthly reset: if stored month differs from current, reset credits
+        if credits_month != current_month:
+            credits_used = 0
+            members_table.update_item(
+                Key={'email': member_email},
+                UpdateExpression='SET aiCreditsUsed = :zero, aiCreditsMonth = :month',
+                ExpressionAttributeValues={':zero': 0, ':month': current_month}
+            )
+
         credits_remaining = max(0, max_credits - credits_used)
     except Exception:
         credits_used = 0
@@ -595,8 +607,8 @@ def _check_and_consume_credits(member_email: str, tier: str, cost: int) -> dict:
     try:
         members_table.update_item(
             Key={'email': member_email},
-            UpdateExpression='SET aiCreditsUsed = if_not_exists(aiCreditsUsed, :zero) + :cost',
-            ExpressionAttributeValues={':zero': 0, ':cost': cost}
+            UpdateExpression='SET aiCreditsUsed = if_not_exists(aiCreditsUsed, :zero) + :cost, aiCreditsMonth = :month',
+            ExpressionAttributeValues={':zero': 0, ':cost': cost, ':month': current_month}
         )
     except Exception:
         pass
