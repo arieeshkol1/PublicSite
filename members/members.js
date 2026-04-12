@@ -193,6 +193,92 @@ function _updateTokenDisplay(tokens) {
     sessionStorage.setItem('memberTokens', JSON.stringify(tokens));
 }
 
+function _showUpgradeModal() {
+    var currentTier = sessionStorage.getItem('memberTier') || 'free';
+    var tokens = JSON.parse(sessionStorage.getItem('memberTokens') || '{}');
+    var remaining = tokens.remaining || 0;
+    var total = tokens.total || 100;
+
+    var tierNames = {free:'Free', growth:'Growth', scale:'Scale'};
+    var overlay = document.createElement('div');
+    overlay.id = 'upgrade-modal';
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:900;display:flex;align-items:center;justify-content:center;';
+    overlay.onclick = function(e) { if (e.target === overlay) overlay.remove(); };
+
+    var current = tierNames[currentTier] || 'Free';
+    var html = '<div style="background:#fff;border-radius:16px;padding:32px;max-width:700px;width:95%;max-height:90vh;overflow-y:auto;">';
+    html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">';
+    html += '<h2 style="margin:0;font-size:1.3em;">Manage Your Plan</h2>';
+    html += '<button onclick="document.getElementById(\'upgrade-modal\').remove();" style="background:none;border:none;font-size:1.4em;cursor:pointer;color:#6b7280;">&times;</button></div>';
+    html += '<p style="color:#6b7280;font-size:0.85em;margin-bottom:20px;">Current plan: <strong>' + current + '</strong> &middot; Tokens: <strong>' + remaining + '/' + total + '</strong></p>';
+
+    // Plan cards
+    html += '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:24px;">';
+
+    // Free
+    html += '<div style="border:2px solid ' + (currentTier === 'free' ? '#e8714a' : '#e5e7eb') + ';border-radius:12px;padding:16px;text-align:center;">';
+    html += '<div style="font-weight:700;font-size:1.1em;">Free</div>';
+    html += '<div style="font-size:2em;font-weight:800;margin:8px 0;">$0</div>';
+    html += '<div style="color:#6b7280;font-size:0.8em;">100 tokens/mo</div>';
+    html += '<div style="color:#6b7280;font-size:0.8em;">1 account</div>';
+    html += currentTier === 'free' ? '<div style="margin-top:12px;color:#10b981;font-weight:600;font-size:0.85em;">&#10003; Current Plan</div>' : '<button class="smb-upgrade-plan-btn" data-plan="free" style="margin-top:12px;background:#f3f4f6;color:#374151;border:1px solid #d1d5db;border-radius:8px;padding:8px 16px;font-size:0.8em;cursor:pointer;width:100%;">Downgrade</button>';
+    html += '</div>';
+
+    // Growth
+    html += '<div style="border:2px solid ' + (currentTier === 'growth' ? '#e8714a' : '#3b82f6') + ';border-radius:12px;padding:16px;text-align:center;position:relative;">';
+    html += '<div style="position:absolute;top:-10px;left:50%;transform:translateX(-50%);background:#3b82f6;color:#fff;font-size:0.65em;font-weight:700;padding:2px 10px;border-radius:100px;">POPULAR</div>';
+    html += '<div style="font-weight:700;font-size:1.1em;">Growth</div>';
+    html += '<div style="font-size:2em;font-weight:800;margin:8px 0;">$50</div>';
+    html += '<div style="color:#6b7280;font-size:0.8em;">300 tokens/mo</div>';
+    html += '<div style="color:#6b7280;font-size:0.8em;">20 accounts &middot; All features</div>';
+    html += currentTier === 'growth' ? '<div style="margin-top:12px;color:#10b981;font-weight:600;font-size:0.85em;">&#10003; Current Plan</div>' : '<button class="smb-upgrade-plan-btn" data-plan="growth" style="margin-top:12px;background:linear-gradient(135deg,#e8714a,#d4603a);color:#fff;border:none;border-radius:8px;padding:8px 16px;font-size:0.8em;font-weight:600;cursor:pointer;width:100%;">Upgrade to Growth</button>';
+    html += '</div>';
+
+    // Scale
+    html += '<div style="border:2px solid ' + (currentTier === 'scale' ? '#e8714a' : '#e5e7eb') + ';border-radius:12px;padding:16px;text-align:center;">';
+    html += '<div style="font-weight:700;font-size:1.1em;">Scale</div>';
+    html += '<div style="font-size:2em;font-weight:800;margin:8px 0;">$200</div>';
+    html += '<div style="color:#6b7280;font-size:0.8em;">1,500 tokens/mo</div>';
+    html += '<div style="color:#6b7280;font-size:0.8em;">20 accounts &middot; Priority</div>';
+    html += currentTier === 'scale' ? '<div style="margin-top:12px;color:#10b981;font-weight:600;font-size:0.85em;">&#10003; Current Plan</div>' : '<button class="smb-upgrade-plan-btn" data-plan="scale" style="margin-top:12px;background:#1a1a2e;color:#fff;border:none;border-radius:8px;padding:8px 16px;font-size:0.8em;font-weight:600;cursor:pointer;width:100%;">Upgrade to Scale</button>';
+    html += '</div>';
+    html += '</div>';
+
+    // Token top-up section
+    html += '<div style="border-top:1px solid #e5e7eb;padding-top:20px;">';
+    html += '<h3 style="font-size:1em;margin-bottom:12px;">&#x1FA99; Top Up Tokens</h3>';
+    html += '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;">';
+    html += '<button class="smb-topup-btn" data-tokens="50" data-price="5" style="border:1.5px solid #e5e7eb;border-radius:10px;padding:14px;text-align:center;background:#fff;cursor:pointer;"><div style="font-size:1.3em;font-weight:700;">&#x1FA99; 50</div><div style="color:#6b7280;font-size:0.8em;">$5</div></button>';
+    html += '<button class="smb-topup-btn" data-tokens="200" data-price="15" style="border:1.5px solid #3b82f6;border-radius:10px;padding:14px;text-align:center;background:#fff;cursor:pointer;"><div style="font-size:1.3em;font-weight:700;">&#x1FA99; 200</div><div style="color:#3b82f6;font-size:0.8em;font-weight:600;">$15 (25% off)</div></button>';
+    html += '<button class="smb-topup-btn" data-tokens="500" data-price="30" style="border:1.5px solid #e5e7eb;border-radius:10px;padding:14px;text-align:center;background:#fff;cursor:pointer;"><div style="font-size:1.3em;font-weight:700;">&#x1FA99; 500</div><div style="color:#10b981;font-size:0.8em;font-weight:600;">$30 (40% off)</div></button>';
+    html += '</div></div>';
+
+    // Mockup payment notice
+    html += '<div style="margin-top:20px;padding:12px 16px;background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;font-size:0.8em;color:#92400e;text-align:center;">';
+    html += '&#x1F6A7; Payment integration coming soon. Contact <a href="mailto:info@slashmycloudbill.com" style="color:#92400e;font-weight:600;">info@slashmycloudbill.com</a> to upgrade your plan.</div>';
+
+    html += '</div>';
+    overlay.innerHTML = html;
+    document.body.appendChild(overlay);
+
+    // Wire up plan buttons
+    overlay.querySelectorAll('.smb-upgrade-plan-btn').forEach(function(btn) {
+        btn.onclick = function() {
+            var plan = btn.getAttribute('data-plan');
+            alert('Plan upgrade to ' + plan.toUpperCase() + ' — Payment integration coming soon!\\n\\nContact info@slashmycloudbill.com to upgrade.');
+        };
+    });
+
+    // Wire up top-up buttons
+    overlay.querySelectorAll('.smb-topup-btn').forEach(function(btn) {
+        btn.onclick = function() {
+            var tokens = btn.getAttribute('data-tokens');
+            var price = btn.getAttribute('data-price');
+            alert('Top up ' + tokens + ' tokens for $' + price + ' — Payment integration coming soon!\\n\\nContact info@slashmycloudbill.com to purchase tokens.');
+        };
+    });
+}
+
 // ============================================================
 // View management
 // ============================================================
