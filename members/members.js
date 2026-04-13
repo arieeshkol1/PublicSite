@@ -2660,6 +2660,7 @@ function renderDashboardWidgets(data) {
         _renderUnitEconomics(data.unitEconomics || null);
         _renderRegionalPie(data.costByRegion || []);
         _renderCommitments(data.commitments || {});
+        _renderCostByTag(data.costByTag || {});
     }, 100);
 }
 
@@ -2679,6 +2680,7 @@ var DASH_WIDGET_DEFS = [
     {id:'dash-unit-economics', title:'Unit Cost Trend', height:280, q:'How is my cost per unit trending?', extraTitle:' <button class="btn btn-outline btn-sm" style="font-size:0.7em;margin-left:8px;padding:2px 6px;" onclick="showBusinessMetricsModal();">Add Metrics</button>'},
     {id:'dash-regional', title:'Cost by Region', height:300, q:'Show me my cost breakdown by region'},
     {id:'dash-commitments', title:'Savings Plans & Reserved Instances', height:350, q:'What Savings Plans and Reserved Instances do I have?'},
+    {id:'dash-cost-by-tag', title:'Cost by Tag', height:320, q:'Show me cost breakdown by tags'},
 ];
 
 function _getDashLayout() {
@@ -3532,6 +3534,98 @@ function _renderCommitments(commitments) {
     }
 
     container.innerHTML = html;
+}
+
+var _costByTagCurrentKey = null;
+
+function _renderCostByTag(costByTag) {
+    var container = $('dash-cost-by-tag');
+    if (!container) return;
+    if (!costByTag || !costByTag.tagKeys || costByTag.tagKeys.length === 0) {
+        container.innerHTML = '<div style="color:#9ca3af;text-align:center;padding:40px 0;">No cost allocation tags found.<br><span style="font-size:0.85em;">Activate cost allocation tags in AWS Billing &gt; Cost Allocation Tags</span></div>';
+        return;
+    }
+
+    var tagKeys = costByTag.tagKeys;
+    var data = costByTag.data || {};
+
+    // Pick default tag key: prefer Environment, CostCenter, Owner, or first available
+    if (!_costByTagCurrentKey || tagKeys.indexOf(_costByTagCurrentKey) === -1) {
+        var preferred = ['Environment', 'environment', 'CostCenter', 'costCenter', 'Owner', 'owner', 'Application', 'application'];
+        _costByTagCurrentKey = null;
+        for (var i = 0; i < preferred.length; i++) {
+            if (tagKeys.indexOf(preferred[i]) !== -1 && data[preferred[i]]) {
+                _costByTagCurrentKey = preferred[i];
+                break;
+            }
+        }
+        if (!_costByTagCurrentKey) _costByTagCurrentKey = tagKeys[0];
+    }
+
+    // Build tag key selector
+    var html = '<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">';
+    html += '<label style="font-size:12px;font-weight:600;color:#374151;">Tag Key:</label>';
+    html += '<select id="dash-tag-key-select" style="padding:4px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;background:#fff;" onchange="_costByTagCurrentKey=this.value;_renderCostByTagChart();">';
+    tagKeys.forEach(function(k) {
+        var hasData = data[k] && data[k].values && data[k].values.length > 0;
+        html += '<option value="' + k + '"' + (k === _costByTagCurrentKey ? ' selected' : '') + (hasData ? '' : ' disabled') + '>' + k + (hasData ? '' : ' (no data)') + '</option>';
+    });
+    html += '</select>';
+
+    var tagData = data[_costByTagCurrentKey];
+    if (tagData) {
+        html += '<span style="font-size:11px;color:#6b7280;margin-left:auto;">Coverage: <strong style="color:' + (tagData.coverage >= 80 ? '#10b981' : tagData.coverage >= 50 ? '#f59e0b' : '#ef4444') + ';">' + tagData.coverage + '%</strong></span>';
+    }
+    html += '</div>';
+
+    html += '<div id="dash-tag-chart" style="width:100%;height:240px;"></div>';
+    container.innerHTML = html;
+
+    // Store data for chart rendering
+    container._tagData = data;
+    _renderCostByTagChart();
+}
+
+function _renderCostByTagChart() {
+    var container = $('dash-cost-by-tag');
+    if (!container || !container._tagData) return;
+    var chartEl = document.getElementById('dash-tag-chart');
+    if (!chartEl) return;
+
+    var tagData = container._tagData[_costByTagCurrentKey];
+    if (!tagData || !tagData.values || tagData.values.length === 0) {
+        chartEl.innerHTML = '<div style="color:#9ca3af;text-align:center;padding:60px 0;">No cost data for this tag key</div>';
+        return;
+    }
+
+    var colors = ['#6366f1','#10b981','#f59e0b','#ef4444','#3b82f6','#8b5cf6','#ec4899','#14b8a6','#f97316','#06b6d4','#84cc16','#a855f7','#64748b','#d946ef','#0ea5e9'];
+    var values = tagData.values;
+
+    var chart = echarts.init(chartEl);
+    chart.setOption({
+        tooltip: {
+            trigger: 'item',
+            formatter: function(p) { return p.name + '<br/>$' + p.value.toFixed(2) + ' (' + p.data.pct + '%)'; }
+        },
+        series: [{
+            type: 'pie',
+            radius: ['30%', '65%'],
+            center: ['50%', '55%'],
+            data: values.map(function(v, i) {
+                return {
+                    value: v.cost,
+                    name: v.tag,
+                    pct: v.pct,
+                    itemStyle: { color: v.tag === '(untagged)' ? '#d1d5db' : colors[i % colors.length] }
+                };
+            }),
+            label: { show: true, fontSize: 10, formatter: '{b}: ${c}', overflow: 'truncate', width: 110 },
+            emphasis: { itemStyle: { shadowBlur: 10, shadowOffsetX: 0, shadowColor: 'rgba(0,0,0,0.3)' } },
+            animationType: 'scale',
+        }]
+    });
+    dashboardCharts.push(chart);
+    window.addEventListener('resize', function() { chart.resize(); });
 }
 
 function showBusinessMetricsModal() {
