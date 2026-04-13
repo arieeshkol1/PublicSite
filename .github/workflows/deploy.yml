@@ -212,6 +212,16 @@ jobs:
           aws s3 cp member-handler-lambda.zip s3://${{ env.STORAGE_BUCKET }}/lambda-packages/member-handler.zip
           echo "✓ Member Handler packaged"
 
+      - name: Package Paddle Webhook Lambda
+        run: |
+          echo "Packaging Paddle Webhook Lambda..."
+          mkdir -p .build-paddle-webhook
+          cp paddle-webhook-handler/lambda_function.py .build-paddle-webhook/
+          cd .build-paddle-webhook && zip -r ../paddle-webhook-lambda.zip . -q
+          cd ..
+          aws s3 cp paddle-webhook-lambda.zip s3://${{ env.STORAGE_BUCKET }}/lambda-packages/paddle-webhook.zip
+          echo "✓ Paddle Webhook packaged"
+
       - name: Package Agent Action Lambda
         run: |
           echo "Packaging Agent Action Lambda..."
@@ -269,6 +279,11 @@ jobs:
             --function-name SlashMyBill-AgentAction \
             --s3-bucket ${{ env.STORAGE_BUCKET }} \
             --s3-key lambda-packages/agent-action.zip > /dev/null || true
+          # Update Paddle webhook handler (skip if not yet created)
+          aws lambda update-function-code \
+            --function-name slashmybill-paddle-webhook \
+            --s3-bucket ${{ env.STORAGE_BUCKET }} \
+            --s3-key lambda-packages/paddle-webhook.zip > /dev/null 2>&1 || true
           echo "✓ Lambda functions updated"
 
       - name: Seed DynamoDB knowledge base
