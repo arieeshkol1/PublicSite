@@ -18,8 +18,13 @@ if (typeof Paddle !== 'undefined') {
         token: PADDLE_TOKEN,
         eventCallback: function(ev) {
             if (ev.name === 'checkout.completed') {
+                console.log('Paddle checkout.completed:', JSON.stringify(ev));
                 var items = (ev.data && ev.data.items) || [];
-                var priceId = items.length > 0 ? items[0].price_id : '';
+                var priceId = '';
+                if (items.length > 0) {
+                    // Paddle v2: price is nested as items[].price.id
+                    priceId = (items[0].price && items[0].price.id) || items[0].price_id || '';
+                }
                 // Determine what was purchased
                 if (priceId === PADDLE_PRICES.growth || priceId === PADDLE_PRICES.scale) {
                     var plan = priceId === PADDLE_PRICES.growth ? 'Growth' : 'Scale';
@@ -28,6 +33,11 @@ if (typeof Paddle !== 'undefined') {
                     sessionStorage.setItem('memberTier', plan.toLowerCase());
                     var badge = document.getElementById('header-tier-badge');
                     if (badge) { badge.textContent = plan; badge.style.background = '#dbeafe'; badge.style.color = '#1e40af'; }
+                    // Persist to backend
+                    var memberEmail = getMemberEmail();
+                    if (memberEmail) {
+                        api('POST', '/member/update-tier', {email: memberEmail, tier: plan.toLowerCase(), paddleSubscriptionId: (ev.data && ev.data.id) || ''}).catch(function(e) { console.warn('Tier sync failed:', e); });
+                    }
                 } else {
                     // Token top-up — update tokens immediately in UI
                     var tokenMap = {};
@@ -44,6 +54,13 @@ if (typeof Paddle !== 'undefined') {
                         var newRemaining = (storedTokens.remaining || 0) + addedTokens;
                         var updated = {used: storedTokens.used || 0, total: newTotal, remaining: newRemaining, bonus: newBonus};
                         _updateTokenDisplay(updated);
+                        // Persist to backend
+                        var memberEmail = getMemberEmail();
+                        if (memberEmail) {
+                            api('POST', '/member/add-tokens', {email: memberEmail, tokens: addedTokens, paddleTransactionId: (ev.data && ev.data.id) || ''}).then(function(resp) {
+                                if (resp && resp.tokens) _updateTokenDisplay(resp.tokens);
+                            }).catch(function(e) { console.warn('Token sync failed:', e); });
+                        }
                     }
                 }
                 // Close upgrade modal if open
