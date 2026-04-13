@@ -6303,16 +6303,20 @@ def handle_tag_apply(event):
                     results['tagged'] += len(batch) - len(failed)
                     results['failed'] += len(failed)
                     for arn, err in failed.items():
-                        results['errors'].append(f"{arn}: {err.get('ErrorMessage', 'Unknown error')}")
+                        err_msg = err.get('ErrorMessage', '') or err.get('ErrorCode', '') or str(err)
+                        logger.warning(f"Tag failed for {arn}: {err_msg} (full: {err})")
+                        results['errors'].append(f"{arn}: {err_msg}")
                 except Exception as e:
+                    logger.error(f"tag_resources exception for {acct_id}: {e}", exc_info=True)
                     results['failed'] += len(batch)
                     results['errors'].append(f"Batch failed for {acct_id}: {str(e)}")
 
         except Exception as e:
+            logger.error(f"Cannot access {acct_id} for tagging: {e}", exc_info=True)
             results['failed'] += len(acct_arns)
             results['errors'].append(f"Cannot access {acct_id}: {str(e)}")
 
-    logger.info(f"Tag apply by {member_email}: {results['tagged']} tagged, {results['failed']} failed")
+    logger.info(f"Tag apply by {member_email}: {results['tagged']} tagged, {results['failed']} failed, errors: {results['errors'][:5]}")
 
     return create_response(200, {
         'message': f"{results['tagged']} resources tagged successfully",
