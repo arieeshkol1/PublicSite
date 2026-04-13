@@ -800,6 +800,27 @@ Resources:
       RouteKey: 'GET /admin/feedback'
       Target: !Sub 'integrations/${AdminIntegration}'
 
+  AdminGetSubscribersRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'GET /admin/subscribers'
+      Target: !Sub 'integrations/${AdminIntegration}'
+
+  AdminUpdateSubscriberTierRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'PUT /admin/subscribers/tier'
+      Target: !Sub 'integrations/${AdminIntegration}'
+
+  AdminAddSubscriberTokensRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'POST /admin/subscribers/tokens'
+      Target: !Sub 'integrations/${AdminIntegration}'
+
   AdminHandlerInvokePermission:
     Type: AWS::Lambda::Permission
     Properties:

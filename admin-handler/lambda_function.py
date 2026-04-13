@@ -2,7 +2,8 @@
 Admin Handler Lambda - Authentication and admin API for the Slash My Bill tool.
 Routes: POST /admin/login, GET /admin/leads, GET /admin/tips,
         POST /admin/tips, PUT /admin/tips, DELETE /admin/tips,
-        GET /admin/feedback
+        GET /admin/feedback, GET /admin/subscribers,
+        PUT /admin/subscribers/tier, POST /admin/subscribers/tokens
 """
 
 import json
@@ -64,6 +65,9 @@ def lambda_handler(event, context):
         'PUT /admin/tips': handle_update_tip,
         'DELETE /admin/tips': handle_delete_tip,
         'GET /admin/feedback': handle_get_feedback,
+        'GET /admin/subscribers': handle_get_subscribers,
+        'PUT /admin/subscribers/tier': handle_update_subscriber_tier,
+        'POST /admin/subscribers/tokens': handle_add_subscriber_tokens,
     }
 
     handler = routes.get(route_key)
@@ -400,6 +404,128 @@ def handle_delete_tip(event):
             return create_error_response(404, 'NotFound', 'Tip not found')
         logger.error(f"DynamoDB error deleting tip: {e}")
         return create_error_response(500, 'ServerError', 'Failed to delete tip')
+
+
+def handle_get_subscribers(event):
+    """Return all subscribers from the Members table, sorted by createdAt descending."""
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+
+    try:
+        table = dynamodb.Table('MemberPortal-Members')
+        response = table.scan()
+        items = response.get('Items', [])
+
+        fields = [
+            'email', 'tier', 'bonusTokens', 'aiCreditsUsed', 'aiCreditsMonth',
+            'paddleSubscriptionId', 'paddleCustomerId', 'subscriptionStatus',
+            'createdAt', 'lastLoginAt', 'lastTopUpAt', 'updatedAt',
+        ]
+        subscribers = []
+        for item in items:
+            subscriber = {f: item.get(f) for f in fields if item.get(f) is not None}
+            subscribers.append(subscriber)
+
+        subscribers = _decimal_to_native(subscribers)
+        subscribers.sort(key=lambda x: x.get('createdAt', ''), reverse=True)
+        return create_response(200, {'subscribers': subscribers})
+    except ClientError as e:
+        logger.error(f"DynamoDB error scanning subscribers: {e}")
+        return create_error_response(500, 'ServerError', 'Failed to retrieve subscribers')
+
+
+def handle_update_subscriber_tier(event):
+    """Update a subscriber's tier in the Members table."""
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+
+    try:
+        body = json.loads(event.get('body', '{}'))
+    except (json.JSONDecodeError, TypeError):
+        return create_error_response(400, 'InvalidRequest', 'Invalid request body')
+
+    email = (body.get('email') or '').strip()
+    tier = (body.get('tier') or '').strip()
+
+    if not email:
+        return create_error_response(400, 'InvalidRequest', 'Field "email" is required')
+    if tier not in ('free', 'growth', 'scale'):
+        return create_error_response(400, 'InvalidRequest', 'Field "tier" must be one of: free, growth, scale')
+
+    now = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
+
+    try:
+        table = dynamodb.Table('MemberPortal-Members')
+        table.update_item(
+            Key={'email': email},
+            UpdateExpression='SET tier = :tier, updatedAt = :now',
+            ExpressionAttributeValues={
+                ':tier': tier,
+                ':now': now,
+            },
+            ConditionExpression='attribute_exists(email)',
+        )
+        logger.info(f"Admin updated tier for {email} to {tier}")
+        return create_response(200, {'message': 'Subscriber tier updated', 'email': email, 'tier': tier})
+    except ClientError as e:
+        if e.response['Error']['Code'] == 'ConditionalCheckFailedException':
+            return create_error_response(404, 'NotFound', 'Subscriber not found')
+        logger.error(f"DynamoDB error updating subscriber tier: {e}")
+        return create_error_response(500, 'ServerError', 'Failed to update subscriber tier')
+
+
+def handle_add_subscriber_tokens(event):
+    """Atomically add bonus tokens to a subscriber in the Members table."""
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+
+    try:
+        body = json.loads(event.get('body', '{}'))
+    except (json.JSONDecodeError, TypeError):
+        return create_error_response(400, 'InvalidRequest', 'Invalid request body')
+
+    email = (body.get('email') or '').strip()
+    tokens = body.get('tokens')
+    reason = (body.get('reason') or '').strip()
+
+    if not email:
+        return create_error_response(400, 'InvalidRequest', 'Field "email" is required')
+    if not isinstance(tokens, int) or tokens <= 0:
+        return create_error_response(400, 'InvalidRequest', 'Field "tokens" must be a positive integer')
+
+    now = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
+
+    try:
+        table = dynamodb.Table('MemberPortal-Members')
+        update_expr = 'SET bonusTokens = if_not_exists(bonusTokens, :zero) + :tokens, lastAdminTopUpAt = :now, updatedAt = :now'
+        expr_values = {
+            ':zero': 0,
+            ':tokens': tokens,
+            ':now': now,
+        }
+
+        if reason:
+            update_expr += ', lastAdminTopUpReason = :reason'
+            expr_values[':reason'] = reason
+
+        result = table.update_item(
+            Key={'email': email},
+            UpdateExpression=update_expr,
+            ExpressionAttributeValues=expr_values,
+            ConditionExpression='attribute_exists(email)',
+            ReturnValues='UPDATED_NEW',
+        )
+        new_bonus = _decimal_to_native(result['Attributes'].get('bonusTokens', 0))
+        logger.info(f"Admin added {tokens} bonus tokens to {email} (reason: {reason or 'none'})")
+        return create_response(200, {'message': 'Tokens added successfully', 'email': email, 'bonusTokens': new_bonus})
+    except ClientError as e:
+        if e.response['Error']['Code'] == 'ConditionalCheckFailedException':
+            return create_error_response(404, 'NotFound', 'Subscriber not found')
+        logger.error(f"DynamoDB error adding tokens: {e}")
+        return create_error_response(500, 'ServerError', 'Failed to add tokens')
 
 
 # ============================================================

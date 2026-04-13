@@ -46,6 +46,7 @@
             <button class="tab-btn active" data-tab="leads">Leads</button>
             <button class="tab-btn" data-tab="tips">Tips</button>
             <button class="tab-btn" data-tab="feedback">Feedback</button>
+            <button class="tab-btn" data-tab="subscribers">Subscribers</button>
         </nav>
 
         <!-- Leads Tab -->
@@ -133,6 +134,83 @@
                 </table>
                 <div id="feedback-empty" class="empty-state" hidden>
                     <p>No agent feedback has been recorded yet.</p>
+                </div>
+            </div>
+        </div>
+        <!-- Subscribers Tab -->
+        <div id="subscribers-tab" class="tab-content" hidden>
+            <div id="subs-stats" style="display:flex;gap:16px;margin-bottom:12px;flex-wrap:wrap;"></div>
+            <div class="tab-toolbar">
+                <input type="text" id="subs-search" class="search-input" placeholder="Search by email...">
+            </div>
+            <div class="table-wrapper">
+                <table id="subs-table" class="data-table">
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th class="sortable" data-col="email">Email <span class="sort-icon">⇅</span></th>
+                            <th class="sortable" data-col="tier">Tier <span class="sort-icon">⇅</span></th>
+                            <th class="sortable" data-col="bonusTokens">Bonus Tokens <span class="sort-icon">⇅</span></th>
+                            <th>Used / Total</th>
+                            <th class="sortable" data-col="subscriptionStatus">Status <span class="sort-icon">⇅</span></th>
+                            <th>Paddle Sub ID</th>
+                            <th class="sortable" data-col="lastLoginAt">Last Login <span class="sort-icon">⇅</span></th>
+                            <th class="sortable" data-col="createdAt">Created <span class="sort-icon">⇅</span></th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="subs-tbody"></tbody>
+                </table>
+                <div id="subs-empty" class="empty-state" hidden>
+                    <p>No subscribers found.</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Subscriber Edit Modal -->
+        <div id="sub-modal" class="modal-overlay" hidden>
+            <div class="modal-card modal-card-lg">
+                <div class="modal-header">
+                    <h2 id="sub-modal-title">Manage Subscriber</h2>
+                    <button id="sub-modal-close" class="modal-close">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <div class="form-group">
+                        <label>Email</label>
+                        <input type="text" id="sub-email" disabled>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="sub-tier">Active Plan</label>
+                            <select id="sub-tier">
+                                <option value="free">Free</option>
+                                <option value="growth">Growth ($50/mo)</option>
+                                <option value="scale">Scale ($200/mo)</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Current Bonus Tokens</label>
+                            <input type="text" id="sub-current-bonus" disabled>
+                        </div>
+                    </div>
+                    <hr style="border:none;border-top:1px solid #30363d;margin:16px 0;">
+                    <h3 style="font-size:1em;color:#c9d1d9;margin-bottom:12px;">🪙 Add Bonus Tokens</h3>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="sub-add-tokens">Tokens to Add</label>
+                            <input type="number" id="sub-add-tokens" min="1" placeholder="e.g. 100">
+                        </div>
+                        <div class="form-group">
+                            <label for="sub-token-reason">Reason (optional)</label>
+                            <input type="text" id="sub-token-reason" placeholder="e.g. Goodwill, promo, support">
+                        </div>
+                    </div>
+                    <div id="sub-form-error" class="form-error" role="alert" aria-live="polite"></div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" id="sub-cancel-btn" class="btn btn-outline">Cancel</button>
+                    <button type="button" id="sub-save-tier-btn" class="btn btn-primary">Save Tier</button>
+                    <button type="button" id="sub-add-tokens-btn" class="btn btn-primary" style="background:#f59e0b;border-color:#f59e0b;">Add Tokens</button>
                 </div>
             </div>
         </div>

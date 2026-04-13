@@ -27,7 +27,7 @@ function fmtD(ts){if(!ts)return'';try{var d=new Date(ts);return isNaN(d)?ts:d.to
 function fmtM(v){if(v==null||v==='')return'-';var n=Number(v);return isNaN(n)?String(v):'$'+n.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});}
 function esc(s){var d=document.createElement('div');d.textContent=s;return d.innerHTML;}
 function ea(s){return String(s||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/'/g,'&#39;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
-function switchTab(n){document.querySelectorAll('.tab-btn').forEach(function(b){b.classList.toggle('active',b.dataset.tab===n);});leadsPanel.hidden=n!=='leads';tipsPanel.hidden=n!=='tips';feedbackPanel.hidden=n!=='feedback';if(n==='feedback'&&!allFeedback.length)loadFeedback();}
+function switchTab(n){document.querySelectorAll('.tab-btn').forEach(function(b){b.classList.toggle('active',b.dataset.tab===n);});leadsPanel.hidden=n!=='leads';tipsPanel.hidden=n!=='tips';feedbackPanel.hidden=n!=='feedback';var subsPanel=$('subscribers-tab');if(subsPanel)subsPanel.hidden=n!=='subscribers';if(n==='feedback'&&!allFeedback.length)loadFeedback();if(n==='subscribers'&&!allSubs.length)loadSubscribers();}
 
 async function api(method,path,body){var o={method:method,headers:{'Content-Type':'application/json'}};if(body)o.body=JSON.stringify(body);var r=await fetch(API+path,o);var d=await r.json();if(!r.ok)throw{status:r.status,message:d.message||'Error'};return d;}
 
@@ -122,3 +122,134 @@ $('tips-table').querySelector('thead').onclick=function(e){var th=e.target.close
 
 function load(){loadLeads();loadTips();}
 if(sessionStorage.getItem('ok')==='1')load();
+
+
+// ============================================================
+// Subscribers Tab
+// ============================================================
+var allSubs=[];var fSubs=[];var sp=1;var ssc='createdAt';var ssa=false;
+var subsTbody=$('subs-tbody');var subsEmpty=$('subs-empty');var subsSearch=$('subs-search');
+var subModal=$('sub-modal');var editingSub=null;
+
+var AI_CREDITS_MAP={free:100,growth:300,scale:1500};
+
+async function loadSubscribers(){
+    try{showL();var d=await api('GET','/admin/subscribers');allSubs=d.subscribers||[];sp=1;renderSubsStats();applySubs();}
+    catch(e){notify('Failed to load subscribers.','error');}
+    finally{hideL();}
+}
+
+function renderSubsStats(){
+    var el=$('subs-stats');if(!el)return;
+    var total=allSubs.length;
+    var free=allSubs.filter(function(s){return(s.tier||'free')==='free';}).length;
+    var growth=allSubs.filter(function(s){return s.tier==='growth';}).length;
+    var scale=allSubs.filter(function(s){return s.tier==='scale';}).length;
+    var totalBonus=allSubs.reduce(function(a,s){return a+(s.bonusTokens||0);},0);
+    el.innerHTML='<div style="background:#161b22;border:1px solid #30363d;border-radius:8px;padding:12px 16px;flex:1;min-width:100px;"><div style="color:#8b949e;font-size:0.8em;">Total</div><div style="color:#e2e8f0;font-size:1.4em;font-weight:700;">'+total+'</div></div>'
+        +'<div style="background:#161b22;border:1px solid #30363d;border-radius:8px;padding:12px 16px;flex:1;min-width:100px;"><div style="color:#8b949e;font-size:0.8em;">Free</div><div style="color:#9ca3af;font-size:1.4em;font-weight:700;">'+free+'</div></div>'
+        +'<div style="background:#161b22;border:1px solid #30363d;border-radius:8px;padding:12px 16px;flex:1;min-width:100px;"><div style="color:#8b949e;font-size:0.8em;">Growth</div><div style="color:#3b82f6;font-size:1.4em;font-weight:700;">'+growth+'</div></div>'
+        +'<div style="background:#161b22;border:1px solid #30363d;border-radius:8px;padding:12px 16px;flex:1;min-width:100px;"><div style="color:#8b949e;font-size:0.8em;">Scale</div><div style="color:#8b5cf6;font-size:1.4em;font-weight:700;">'+scale+'</div></div>'
+        +'<div style="background:#161b22;border:1px solid #30363d;border-radius:8px;padding:12px 16px;flex:1;min-width:100px;"><div style="color:#8b949e;font-size:0.8em;">Bonus Tokens Given</div><div style="color:#f59e0b;font-size:1.4em;font-weight:700;">'+totalBonus+'</div></div>';
+}
+
+function applySubs(){
+    var q=(subsSearch&&subsSearch.value||'').toLowerCase().trim();
+    fSubs=q?allSubs.filter(function(s){return(s.email||'').toLowerCase().includes(q);}):allSubs.slice();
+    fSubs=sortArr(fSubs,ssc,ssa);updSort('subs-table',ssc,ssa);renderSubs();
+}
+
+function renderSubs(){
+    var p=pg(fSubs,sp);subsTbody.innerHTML='';
+    if(!fSubs.length){subsEmpty.hidden=false;return;}
+    subsEmpty.hidden=true;
+    var off=(sp-1)*PS;
+    p.forEach(function(s,idx){
+        var r=document.createElement('tr');
+        var tier=s.tier||'free';
+        var tierBadge='<span class="badge badge-'+tier+'">'+tier.charAt(0).toUpperCase()+tier.slice(1)+'</span>';
+        var bonus=s.bonusTokens||0;
+        var maxTk=AI_CREDITS_MAP[tier]||100;
+        var used=s.aiCreditsUsed||0;
+        var curMonth=new Date().toISOString().slice(0,7);
+        if((s.aiCreditsMonth||'')!==curMonth)used=0;
+        var totalTk=maxTk+bonus;
+        var remaining=Math.max(0,totalTk-used);
+        var status=s.subscriptionStatus||'-';
+        var statusColor=status==='active'?'#10b981':status==='canceled'?'#ef4444':'#8b949e';
+        r.innerHTML='<td style="color:#999;font-size:12px">'+(off+idx+1)+'</td>'
+            +'<td>'+esc(s.email||'')+'</td>'
+            +'<td>'+tierBadge+'</td>'
+            +'<td style="color:#f59e0b;font-weight:600;">'+bonus+'</td>'
+            +'<td>'+used+' / '+totalTk+' <span style="color:#6b7280;font-size:11px;">('+remaining+' left)</span></td>'
+            +'<td><span style="color:'+statusColor+';font-weight:600;">'+esc(status)+'</span></td>'
+            +'<td style="font-size:11px;color:#6b7280;">'+esc(s.paddleSubscriptionId||'-')+'</td>'
+            +'<td>'+fmtD(s.lastLoginAt)+'</td>'
+            +'<td>'+fmtD(s.createdAt)+'</td>'
+            +'<td class="actions-cell"><button class="btn-icon btn-icon-edit" data-a="es" data-e="'+ea(s.email)+'">&#9998;</button></td>';
+        subsTbody.appendChild(r);
+    });
+    pgNav('subs-pagination',fSubs.length,sp,function(x){sp=x;renderSubs();});
+}
+
+function showSubModal(email){
+    var s=allSubs.find(function(x){return x.email===email;});
+    if(!s)return;
+    editingSub=s;
+    $('sub-email').value=s.email;
+    $('sub-tier').value=s.tier||'free';
+    $('sub-current-bonus').value=s.bonusTokens||0;
+    $('sub-add-tokens').value='';
+    $('sub-token-reason').value='';
+    $('sub-form-error').textContent='';
+    subModal.hidden=false;
+}
+
+function hideSubModal(){subModal.hidden=true;editingSub=null;}
+
+async function saveSubTier(){
+    if(!editingSub)return;
+    var tier=$('sub-tier').value;
+    $('sub-form-error').textContent='';
+    try{
+        showL();
+        await api('PUT','/admin/subscribers/tier',{email:editingSub.email,tier:tier});
+        notify('Tier updated to '+tier+' for '+editingSub.email,'success');
+        hideSubModal();await loadSubscribers();
+    }catch(e){$('sub-form-error').textContent=e.message||'Failed.';}
+    finally{hideL();}
+}
+
+async function addSubTokens(){
+    if(!editingSub)return;
+    var tokens=parseInt($('sub-add-tokens').value,10);
+    var reason=$('sub-token-reason').value.trim();
+    $('sub-form-error').textContent='';
+    if(!tokens||tokens<=0){$('sub-form-error').textContent='Enter a positive number of tokens.';return;}
+    try{
+        showL();
+        var d=await api('POST','/admin/subscribers/tokens',{email:editingSub.email,tokens:tokens,reason:reason});
+        notify(tokens+' tokens added to '+editingSub.email+' (new bonus: '+d.bonusTokens+')','success');
+        hideSubModal();await loadSubscribers();
+    }catch(e){$('sub-form-error').textContent=e.message||'Failed.';}
+    finally{hideL();}
+}
+
+// Wire up subscribers events
+if(subsSearch)subsSearch.addEventListener('input',function(){sp=1;applySubs();});
+if($('sub-modal-close'))$('sub-modal-close').onclick=hideSubModal;
+if($('sub-cancel-btn'))$('sub-cancel-btn').onclick=hideSubModal;
+if($('sub-save-tier-btn'))$('sub-save-tier-btn').onclick=saveSubTier;
+if($('sub-add-tokens-btn'))$('sub-add-tokens-btn').onclick=addSubTokens;
+
+// Sortable headers for subs table
+document.querySelectorAll('#subs-table th.sortable').forEach(function(h){
+    h.style.cursor='pointer';
+    h.onclick=function(){var c=h.dataset.col;if(ssc===c)ssa=!ssa;else{ssc=c;ssa=true;}sp=1;applySubs();};
+});
+
+// Delegate click for subscriber edit buttons
+document.addEventListener('click',function(e){
+    var btn=e.target.closest('[data-a="es"]');
+    if(btn){showSubModal(btn.dataset.e);}
+});
