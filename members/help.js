@@ -23,8 +23,8 @@ var HELP_CONTENT = {
           <p>The platform has four main areas:</p>
           <ul>
             <li><strong>Observe</strong> — FinOps dashboard with interactive charts and regional cost breakdown</li>
-            <li><strong>Chat</strong> — Ask natural language questions about your AWS costs (100 free credits)</li>
-            <li><strong>Act</strong> — Scan for waste and clean up idle resources (10 credits per scan)</li>
+            <li><strong>Chat</strong> — Ask natural language questions about your AWS costs (🪙 2 tokens per question)</li>
+            <li><strong>Act</strong> — Scan for waste and clean up idle resources (🪙 10 per scan, 🪙 50 per action)</li>
             <li><strong>Configure</strong> — Connect and manage your AWS accounts</li>
           </ul>
           <p><strong>Platform URL:</strong> <a href="https://slashmycloudbill.com/members/" target="_blank">slashmycloudbill.com/members</a></p>
@@ -38,42 +38,62 @@ var HELP_CONTENT = {
           <h4>Free Plan</h4>
           <ul>
             <li><strong>1 AWS Account</strong></li>
-            <li>BI dashboard with all charts (cost by service, daily trend, waste detection, rightsizing, regional breakdown)</li>
-            <li>100 credits included — AI questions cost 1 credit, scans cost 10 credits</li>
-            <li>Read-only — manual cleanup based on recommendations</li>
+            <li>BI dashboard with all charts (cost by service, daily trend, waste detection, rightsizing, regional breakdown, Savings Plans &amp; RIs)</li>
+            <li>🪙 100 tokens/month — AI questions cost 2 tokens, scans cost 10 tokens, cleanup actions cost 50 tokens</li>
+            <li>Tokens reset monthly</li>
             <li>Free forever, no credit card required</li>
           </ul>
-          <h4>Growth Plan — $50/month + 20% revshare</h4>
+          <h4>Growth Plan — $50/month</h4>
           <ul>
             <li><strong>Up to 20 AWS Accounts</strong></li>
             <li>Everything in Free, plus:</li>
-            <li>Unlimited AI questions and scans (no credit limits)</li>
+            <li>🪙 300 tokens/month</li>
             <li>1-click automated cleanup (Actions tab)</li>
             <li>AI Agent with full execution capabilities</li>
             <li>Office Hours auto-shutdown for dev environments</li>
             <li>Virtual Tagging &amp; Unit Economics</li>
-            <li>20% revshare on savings we generate — vs 35% at ProsperOps</li>
           </ul>
-          <div class="help-tip">💡 Your current plan and remaining credits are shown in the header bar next to your email.</div>
-          <p>To upgrade, click the <strong>Upgrade</strong> button in the header.</p>
+          <h4>Scale Plan — $200/month</h4>
+          <ul>
+            <li><strong>Up to 20 AWS Accounts</strong></li>
+            <li>Everything in Growth, plus:</li>
+            <li>🪙 1,500 tokens/month</li>
+            <li>Priority AI processing</li>
+            <li>Bulk token top-ups at discount</li>
+            <li>Dedicated support</li>
+          </ul>
+          <h4>Token Top-Ups</h4>
+          <p>Need more tokens? Purchase one-time top-ups anytime:</p>
+          <ul>
+            <li>🪙 50 tokens — $5</li>
+            <li>🪙 200 tokens — $15 (25% off)</li>
+            <li>🪙 500 tokens — $30 (40% off)</li>
+          </ul>
+          <p>Top-up tokens are added to your bonus balance and don't expire at month end.</p>
+          <div class="help-tip">💡 Your current plan and remaining tokens are shown in the header bar. Click the 🪙 coin icon or the <strong>Upgrade</strong> button to manage your plan or buy tokens.</div>
+          <h4>Payments</h4>
+          <p>All payments are processed securely by <strong>Paddle.com</strong> (our Merchant of Record). Paddle handles tax, invoicing, and compliance.</p>
+          <p>Legal: <a href="/terms-and-conditions/" target="_blank">Terms</a> · <a href="/privacy/" target="_blank">Privacy</a> · <a href="/refund/" target="_blank">Refund Policy</a></p>
         `
       },
       {
         id: 'credits',
-        heading: 'How Credits Work',
-        icon: '🎫',
+        heading: 'How Tokens Work',
+        icon: '🪙',
         content: `
-          <p>Free plan members get <strong>100 credits</strong> to use across the platform:</p>
+          <p>Tokens are the currency for using platform features. Each plan includes a monthly token allowance that resets at the start of each billing cycle:</p>
           <table class="help-table">
-            <tr><th>Action</th><th>Credit Cost</th></tr>
-            <tr><td>AI Chat question</td><td>1 credit</td></tr>
-            <tr><td>Scan for Savings (Act tab)</td><td>10 credits</td></tr>
-            <tr><td>Dashboard refresh</td><td>Free (no credits)</td></tr>
-            <tr><td>Account management</td><td>Free (no credits)</td></tr>
+            <tr><th>Action</th><th>Token Cost</th></tr>
+            <tr><td>AI Chat question</td><td>🪙 2 tokens</td></tr>
+            <tr><td>Scan for Savings (Act tab)</td><td>🪙 10 tokens</td></tr>
+            <tr><td>Cleanup Action (delete/stop resource)</td><td>🪙 50 tokens</td></tr>
+            <tr><td>Dashboard refresh</td><td>Free</td></tr>
+            <tr><td>Account management</td><td>Free</td></tr>
           </table>
-          <p>Your remaining credits are displayed at the bottom of the Chat panel and in the header.</p>
-          <p>When credits run out, upgrade to Growth for unlimited usage.</p>
-          <div class="help-note">⚠ Credits do not reset monthly on the Free plan. Upgrade to Growth for unlimited access.</div>
+          <p><strong>Token display:</strong> The header shows your remaining tokens as 🪙 XX/YY. It turns red when you're below 20%.</p>
+          <p><strong>Bonus tokens:</strong> Purchased top-ups are added as bonus tokens that don't reset monthly — they persist until used.</p>
+          <p><strong>Top up:</strong> Click the 🪙 coin icon in the header to open the upgrade modal and purchase additional tokens via Paddle checkout.</p>
+          <div class="help-note">⚠ Monthly tokens reset at the start of each billing cycle. Bonus tokens from top-ups carry over.</div>
         `
       },
       {
@@ -214,7 +234,17 @@ var HELP_CONTENT = {
             <tr><td>Rightsizing</td><td>Over-provisioned instances</td><td>Shows Compute Optimizer recommendations</td></tr>
             <tr><td>Monthly Trend</td><td>Cost by service month-over-month</td><td>Stacked bar — each color is a service</td></tr>
             <tr><td>Unit Cost Trend</td><td>Cost per business unit</td><td>Requires business metrics to be configured</td></tr>
+            <tr><td>Cost by Region</td><td>Donut chart of spend by AWS region</td><td>Hover for cost and percentage breakdown</td></tr>
+            <tr><td>Savings Plans &amp; RIs</td><td>Active commitments, coverage gauges</td><td>Shows SP/EC2 RI/RDS RI counts, coverage %, and details</td></tr>
           </table>
+          <h4>Widget Customization</h4>
+          <p>You can customize your dashboard layout:</p>
+          <ul>
+            <li><strong>▲▼ Move</strong> — Reorder widgets up or down</li>
+            <li><strong>✕ Hide</strong> — Remove a widget from view</li>
+            <li><strong>+ Add</strong> — Restore hidden widgets</li>
+          </ul>
+          <p>Your layout is saved in localStorage and persists across sessions.</p>
         `
       },
       {
@@ -275,7 +305,7 @@ var HELP_CONTENT = {
         heading: 'Asking Questions',
         icon: '💬',
         content: `
-          <p>Type your question in the Ask box and press Enter or click Ask. Each question costs <strong>1 credit</strong> (Free plan) or is unlimited (Growth plan).</p>
+          <p>Type your question in the Ask box and press Enter or click Ask. Each question costs <strong>🪙 2 tokens</strong>.</p>
           <p><strong>Example questions:</strong></p>
           <ul>
             <li>"How efficient is my account?"</li>
@@ -287,7 +317,7 @@ var HELP_CONTENT = {
             <li>"How do I set up AWS Budgets with cost alerts?"</li>
             <li>"Which of my instances can use Spot pricing?"</li>
           </ul>
-          <p>Your remaining credits are shown at the bottom of the chat panel.</p>
+          <p>Your remaining tokens are shown in the header bar (🪙 icon).</p>
           <div class="help-tip">💡 For multi-account questions, select multiple accounts using the account dropdown. The AI will provide per-account breakdowns.</div>
         `
       },
@@ -328,7 +358,7 @@ var HELP_CONTENT = {
         heading: 'Running a Scan',
         icon: '🔍',
         content: `
-          <p>Each scan costs <strong>10 credits</strong> (Free plan) or is unlimited (Growth plan).</p>
+          <p>Each scan costs <strong>10 tokens</strong> (🪙). Cleanup actions cost <strong>50 tokens</strong> each.</p>
           <ol>
             <li>Select accounts using the dropdown</li>
             <li>Click <strong>🔍 Scan for Waste</strong></li>
@@ -336,7 +366,7 @@ var HELP_CONTENT = {
             <li>Review the 7 category cards</li>
           </ol>
           <p>Each category always shows — either a ✓ clean card or a ⚠ findings card with savings amount.</p>
-          <div class="help-tip">💡 On the Free plan, use scans wisely — each one costs 10 of your 100 credits. Growth plan members get unlimited scans.</div>
+          <div class="help-tip">💡 Token costs: scans = 🪙10, cleanup actions = 🪙50. Your balance updates in the header after each action.</div>
         `
       },
       {
@@ -455,7 +485,7 @@ function initHelp() {
     </div>
     <div id="help-body" style="flex:1;padding:16px 20px;overflow-y:auto;"></div>
     <div style="padding:12px 20px;border-top:1px solid #e5e7eb;background:#f9fafb;flex-shrink:0;font-size:0.78em;color:#6b7280;text-align:center;">
-      SlashMyBill Help v2.0 · <a href="mailto:info@slashmycloudbill.com" style="color:#6366f1;">info@slashmycloudbill.com</a>
+      SlashMyBill Help v3.0 · <a href="mailto:info@slashmycloudbill.com" style="color:#6366f1;">info@slashmycloudbill.com</a>
     </div>
   `;
 
