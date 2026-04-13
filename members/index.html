@@ -170,13 +170,18 @@
                 <button class="member-tab" data-tab="accounts-tab">Configure</button>
             </div>
             <div id="act-tab" class="member-tab-content" hidden>
-                <div style="display:flex;gap:0;min-height:500px;">
+                <!-- Top bar with account selector (same style as Observe/Chat) -->
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+                    <h2 style="margin:0;">Act</h2>
+                    <div style="display:flex;align-items:center;gap:8px;">
+                        <label style="color:#6b7280;font-size:0.85em;">Accounts:</label>
+                        <div id="act-account-select" style="display:inline-block;"></div>
+                    </div>
+                </div>
+
+                <div style="display:flex;gap:0;min-height:460px;">
                     <!-- Left Navigation Pane -->
-                    <div id="act-nav" style="width:180px;flex-shrink:0;border-right:1px solid #e5e7eb;padding:16px 0;">
-                        <div style="padding:0 12px 12px;display:flex;align-items:center;gap:6px;">
-                            <label style="font-size:0.8em;color:#6b7280;">Accounts:</label>
-                            <div id="act-account-select" style="display:inline-block;"></div>
-                        </div>
+                    <div id="act-nav" style="width:180px;flex-shrink:0;border-right:1px solid #e5e7eb;padding:12px 0 16px;">
                         <button class="act-nav-btn active" data-section="waste" onclick="_switchActSection('waste')">
                             <span style="font-size:1.2em;">🗑️</span> Waste Cleanup
                         </button>
