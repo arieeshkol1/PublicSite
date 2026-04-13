@@ -24,18 +24,12 @@ if (typeof Paddle !== 'undefined') {
                 if (priceId === PADDLE_PRICES.growth || priceId === PADDLE_PRICES.scale) {
                     var plan = priceId === PADDLE_PRICES.growth ? 'Growth' : 'Scale';
                     notify('Welcome to ' + plan + '! Your plan is being activated...', 'success', 6000);
-                    // Sync with backend
-                    var email = getMemberEmail();
-                    if (email) {
-                        api('POST', '/member/update-tier', {
-                            email: email,
-                            tier: plan.toLowerCase(),
-                            paddleSubscriptionId: ev.data.subscription_id || '',
-                            paddleCustomerId: ev.data.customer_id || ''
-                        }).catch(function(){});
-                    }
+                    // Update tier in session immediately
+                    sessionStorage.setItem('memberTier', plan.toLowerCase());
+                    var badge = document.getElementById('header-tier-badge');
+                    if (badge) { badge.textContent = plan; badge.style.background = '#dbeafe'; badge.style.color = '#1e40af'; }
                 } else {
-                    // Token top-up
+                    // Token top-up — update tokens immediately in UI
                     var tokenMap = {};
                     tokenMap[PADDLE_PRICES.topup5] = 50;
                     tokenMap[PADDLE_PRICES.topup15] = 200;
@@ -43,19 +37,20 @@ if (typeof Paddle !== 'undefined') {
                     var addedTokens = tokenMap[priceId] || 0;
                     if (addedTokens > 0) {
                         notify(addedTokens + ' tokens added to your account!', 'success', 5000);
-                        var email = getMemberEmail();
-                        if (email) {
-                            api('POST', '/member/add-tokens', {
-                                email: email,
-                                tokens: addedTokens,
-                                paddleTransactionId: ev.data.transaction_id || ''
-                            }).catch(function(){});
-                        }
+                        // Optimistically update token display
+                        var storedTokens = JSON.parse(sessionStorage.getItem('memberTokens') || '{}');
+                        var newBonus = (storedTokens.bonus || 0) + addedTokens;
+                        var newTotal = (storedTokens.total || 100) + addedTokens;
+                        var newRemaining = (storedTokens.remaining || 0) + addedTokens;
+                        var updated = {used: storedTokens.used || 0, total: newTotal, remaining: newRemaining, bonus: newBonus};
+                        _updateTokenDisplay(updated);
                     }
                 }
                 // Close upgrade modal if open
                 var modal = document.getElementById('upgrade-modal');
                 if (modal) modal.remove();
+                // Reload accounts data to sync with backend after a short delay
+                setTimeout(function() { if (typeof loadAccounts === 'function') loadAccounts(); }, 2000);
             }
         }
     });
@@ -340,7 +335,9 @@ function _showUpgradeModal() {
             if (!priceId) return;
             if (typeof Paddle !== 'undefined') {
                 Paddle.Checkout.open({
-                    items: [{priceId: priceId, quantity: 1}]
+                    items: [{priceId: priceId, quantity: 1}],
+                    settings: {displayMode: 'overlay', theme: 'light', locale: 'en'},
+                    customData: JSON.stringify({memberEmail: email, tier: plan})
                 });
             } else {
                 notify('Payment system loading... please try again in a moment.', 'error', 4000);
@@ -356,7 +353,9 @@ function _showUpgradeModal() {
             if (!priceId) return;
             if (typeof Paddle !== 'undefined') {
                 Paddle.Checkout.open({
-                    items: [{priceId: priceId, quantity: 1}]
+                    items: [{priceId: priceId, quantity: 1}],
+                    settings: {displayMode: 'overlay', theme: 'light', locale: 'en'},
+                    customData: JSON.stringify({memberEmail: email, type: 'topup', tokens: btn.getAttribute('data-tokens')})
                 });
             } else {
                 notify('Payment system loading... please try again in a moment.', 'error', 4000);

@@ -1276,6 +1276,20 @@ Resources:
       RouteKey: 'POST /members/actions/browse-bucket'
       Target: !Sub 'integrations/${MemberIntegration}'
 
+  MemberAddTokensRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'POST /member/add-tokens'
+      Target: !Sub 'integrations/${MemberIntegration}'
+
+  MemberUpdateTierRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'POST /member/update-tier'
+      Target: !Sub 'integrations/${MemberIntegration}'
+
   MemberHandlerInvokePermission:
     Type: AWS::Lambda::Permission
     Properties:

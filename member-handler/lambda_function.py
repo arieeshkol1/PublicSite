@@ -101,6 +101,8 @@ def lambda_handler(event, context):
         'GET /members/actions/last-scan': handle_get_last_scan,
         'POST /members/actions/execute': handle_actions_execute,
         'POST /members/actions/browse-bucket': handle_browse_bucket,
+        'POST /member/add-tokens': handle_add_tokens,
+        'POST /member/update-tier': handle_update_tier,
     }
 
     handler = routes.get(route_key)
@@ -5981,3 +5983,106 @@ def create_error_response(status_code, error_type, message, extra=None):
         'headers': cors_headers(),
         'body': json.dumps(body),
     }
+
+
+# ============================================================
+# Paddle Payment Handlers
+# ============================================================
+
+def handle_add_tokens(event):
+    """Add bonus tokens to a member's account (called from frontend after Paddle checkout)."""
+    try:
+        body = json.loads(event.get('body', '{}'))
+        email = body.get('email', '').lower().strip()
+        tokens = int(body.get('tokens', 0))
+        transaction_id = body.get('paddleTransactionId', '')
+
+        if not email or tokens <= 0:
+            return create_error_response(400, 'BadRequest', 'email and tokens required')
+
+        # Validate token amounts (only allow known top-up values)
+        if tokens not in (50, 200, 500):
+            return create_error_response(400, 'BadRequest', 'Invalid token amount')
+
+        members_table = dynamodb.Table(MEMBERS_TABLE_NAME)
+        now = datetime.now(timezone.utc).isoformat()
+
+        members_table.update_item(
+            Key={'email': email},
+            UpdateExpression='SET bonusTokens = if_not_exists(bonusTokens, :zero) + :tokens, '
+                             'lastTopUpAt = :ts, lastTopUpTransactionId = :txn',
+            ExpressionAttributeValues={
+                ':tokens': tokens,
+                ':zero': 0,
+                ':ts': now,
+                ':txn': transaction_id,
+            },
+        )
+
+        # Fetch updated token info
+        member = members_table.get_item(Key={'email': email}).get('Item', {})
+        tier = member.get('tier', 'free')
+        max_tokens = AI_CREDITS.get(tier, 100)
+        current_month = datetime.now(timezone.utc).strftime('%Y-%m')
+        tokens_used = int(member.get('aiCreditsUsed', 0)) if member.get('aiCreditsMonth', '') == current_month else 0
+        bonus = int(member.get('bonusTokens', 0))
+
+        return create_response(200, {
+            'message': f'{tokens} tokens added',
+            'tokens': {
+                'used': tokens_used,
+                'total': max_tokens + bonus,
+                'remaining': max(0, max_tokens + bonus - tokens_used),
+                'bonus': bonus,
+            },
+        })
+
+    except Exception as e:
+        logger.error(f'handle_add_tokens error: {e}', exc_info=True)
+        return create_error_response(500, 'InternalError', 'Failed to add tokens')
+
+
+def handle_update_tier(event):
+    """Update a member's tier (called from frontend after Paddle subscription checkout)."""
+    try:
+        body = json.loads(event.get('body', '{}'))
+        email = body.get('email', '').lower().strip()
+        tier = body.get('tier', '').lower().strip()
+        paddle_sub_id = body.get('paddleSubscriptionId', '')
+        paddle_customer_id = body.get('paddleCustomerId', '')
+
+        if not email or tier not in ('free', 'growth', 'scale'):
+            return create_error_response(400, 'BadRequest', 'email and valid tier required')
+
+        members_table = dynamodb.Table(MEMBERS_TABLE_NAME)
+        now = datetime.now(timezone.utc).isoformat()
+
+        update_expr = 'SET tier = :tier, updatedAt = :ts'
+        expr_values = {':tier': tier, ':ts': now}
+
+        if paddle_sub_id:
+            update_expr += ', paddleSubscriptionId = :psid'
+            expr_values[':psid'] = paddle_sub_id
+        if paddle_customer_id:
+            update_expr += ', paddleCustomerId = :pcid'
+            expr_values[':pcid'] = paddle_customer_id
+
+        members_table.update_item(
+            Key={'email': email},
+            UpdateExpression=update_expr,
+            ExpressionAttributeValues=expr_values,
+        )
+
+        limit = _get_tier_limit(tier)
+        max_tokens = AI_CREDITS.get(tier, 100)
+
+        return create_response(200, {
+            'message': f'Tier updated to {tier}',
+            'tier': tier,
+            'tierLimit': limit,
+            'maxTokens': max_tokens,
+        })
+
+    except Exception as e:
+        logger.error(f'handle_update_tier error: {e}', exc_info=True)
+        return create_error_response(500, 'InternalError', 'Failed to update tier')
