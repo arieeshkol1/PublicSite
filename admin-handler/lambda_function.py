@@ -410,7 +410,7 @@ def cors_headers():
     """Return CORS headers for admin API responses."""
     return {
         'Content-Type': 'application/json',
-        'Access-Control-Allow-Origin': 'https://www.eshkolai.com',
+        'Access-Control-Allow-Origin': 'https://slashmycloudbill.com',
         'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Filename',
         'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
     }

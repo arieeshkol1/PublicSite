@@ -16,7 +16,7 @@ dynamodb = boto3.resource('dynamodb')
 ses_client = boto3.client('ses')
 
 OTP_TABLE_NAME = os.environ.get('OTP_TABLE_NAME', 'ViewMyBill-OTP')
-SES_SENDER_EMAIL = os.environ.get('SES_SENDER_EMAIL', 'noreply@eshkolai.com')
+SES_SENDER_EMAIL = os.environ.get('SES_SENDER_EMAIL', 'noreply@slashmycloudbill.com')
 OTP_TTL_SECONDS = 300  # 5 minutes
 RATE_LIMIT_SECONDS = 60
 EMAIL_REGEX = re.compile(r'^[^\s@]+@[^\s@]+\.[^\s@]+$')
@@ -145,7 +145,7 @@ def build_email_body(otp_code):
 <html><head><meta charset="UTF-8"></head>
 <body style="font-family:Arial,sans-serif;max-width:480px;margin:0 auto;padding:20px;background:#ffffff;">
   <div style="text-align:center;padding:20px 0;border-bottom:2px solid #0066ff;">
-    <img src="https://www.eshkolai.com/SlashMyBill.png" alt="SlashMyBill" style="height:48px;margin-bottom:8px;" />
+    <img src="https://slashmycloudbill.com/SlashMyBill.png" alt="SlashMyBill" style="height:48px;margin-bottom:8px;" />
     <h2 style="color:#0a0e27;margin:0;">SlashMyBill</h2>
     <p style="color:#666;margin:4px 0 0;">AI-Powered AWS Bill Analysis</p>
   </div>
@@ -161,7 +161,7 @@ def build_email_body(otp_code):
     </p>
   </div>
   <div style="text-align:center;padding-top:16px;border-top:1px solid #eee;">
-    <p style="color:#999;font-size:11px;">eshkolai.com &bull; Cloud and AI Services</p>
+    <p style="color:#999;font-size:11px;">slashmycloudbill.com &bull; Cloud and AI Services</p>
   </div>
 </body></html>"""
 

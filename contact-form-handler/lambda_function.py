@@ -48,7 +48,7 @@ def lambda_handler(event, context):
         
         # Get recipient email from environment variable
         recipient_email = os.environ.get('RECIPIENT_EMAIL', 'ariel.eshkol@gmail.com')
-        sender_email = os.environ.get('SENDER_EMAIL', 'noreply@eshkolai.com')
+        sender_email = os.environ.get('SENDER_EMAIL', 'noreply@slashmycloudbill.com')
         
         # Prepare email content
         timestamp = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')
@@ -73,7 +73,7 @@ Message:
 {message}
 
 ---
-This email was sent from the contact form at www.eshkolai.com
+This email was sent from the contact form at slashmycloudbill.com
 """
         
         email_body_html = f"""
@@ -119,7 +119,7 @@ This email was sent from the contact form at www.eshkolai.com
                 <div class="message-box">{message}</div>
             </div>
             <div class="footer">
-                This email was sent from the contact form at <a href="https://www.eshkolai.com">www.eshkolai.com</a>
+                This email was sent from the contact form at <a href="https://slashmycloudbill.com">slashmycloudbill.com</a>
             </div>
         </div>
     </div>
