@@ -340,14 +340,7 @@ function _showUpgradeModal() {
             if (!priceId) return;
             if (typeof Paddle !== 'undefined') {
                 Paddle.Checkout.open({
-                    items: [{priceId: priceId, quantity: 1}],
-                    settings: {
-                        displayMode: 'overlay',
-                        theme: 'light',
-                        locale: 'en',
-                        successUrl: 'https://slashmycloudbill.com/members/?payment=success'
-                    },
-                    customData: JSON.stringify({memberEmail: email, tier: plan})
+                    items: [{priceId: priceId, quantity: 1}]
                 });
             } else {
                 notify('Payment system loading... please try again in a moment.', 'error', 4000);
@@ -363,14 +356,7 @@ function _showUpgradeModal() {
             if (!priceId) return;
             if (typeof Paddle !== 'undefined') {
                 Paddle.Checkout.open({
-                    items: [{priceId: priceId, quantity: 1}],
-                    settings: {
-                        displayMode: 'overlay',
-                        theme: 'light',
-                        locale: 'en',
-                        successUrl: 'https://slashmycloudbill.com/members/?payment=success'
-                    },
-                    customData: JSON.stringify({memberEmail: email, type: 'topup', tokens: btn.getAttribute('data-tokens')})
+                    items: [{priceId: priceId, quantity: 1}]
                 });
             } else {
                 notify('Payment system loading... please try again in a moment.', 'error', 4000);
