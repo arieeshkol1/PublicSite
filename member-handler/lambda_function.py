@@ -1107,6 +1107,17 @@ def handle_generate_template(event):
                                             'tag:GetTagValues',
                                             'tag:TagResources',
                                             'tag:UntagResources',
+                                            # Per-service tagging permissions
+                                            'ec2:CreateTags',
+                                            'ec2:DeleteTags',
+                                            'rds:AddTagsToResource',
+                                            'rds:RemoveTagsFromResource',
+                                            's3:PutBucketTagging',
+                                            's3:GetBucketTagging',
+                                            'lambda:TagResource',
+                                            'lambda:UntagResource',
+                                            'elasticloadbalancing:AddTags',
+                                            'elasticloadbalancing:RemoveTags',
                                         ],
                                         'Resource': '*'
                                     }
