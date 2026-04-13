@@ -170,45 +170,79 @@
                 <button class="member-tab" data-tab="accounts-tab">Configure</button>
             </div>
             <div id="act-tab" class="member-tab-content" hidden>
-                <div class="tab-toolbar">
-                    <h2>Act <span style="font-size:0.65em;color:#6b7280;font-weight:400;">Level 1 — Resource Hygiene</span></h2>
-                    <div style="display:flex;gap:8px;align-items:center;">
-                        <div id="act-account-select" style="display:inline-block;"></div>
-                        <button id="act-scan-btn" class="btn btn-primary btn-sm">&#128269; Scan for Waste</button>
-                        <button id="act-tag-btn" class="btn btn-outline btn-sm" style="background:#6366f1;color:#fff;border-color:#6366f1;">&#127991; Tag Resources</button>
+                <div style="display:flex;gap:0;min-height:500px;">
+                    <!-- Left Navigation Pane -->
+                    <div id="act-nav" style="width:180px;flex-shrink:0;border-right:1px solid #e5e7eb;padding:16px 0;">
+                        <div style="padding:0 12px 12px;display:flex;align-items:center;gap:6px;">
+                            <label style="font-size:0.8em;color:#6b7280;">Accounts:</label>
+                            <div id="act-account-select" style="display:inline-block;"></div>
+                        </div>
+                        <button class="act-nav-btn active" data-section="waste" onclick="_switchActSection('waste')">
+                            <span style="font-size:1.2em;">🗑️</span> Waste Cleanup
+                        </button>
+                        <button class="act-nav-btn" data-section="tagging" onclick="_switchActSection('tagging')">
+                            <span style="font-size:1.2em;">🏷️</span> Tag Resources
+                        </button>
                     </div>
-                </div>
-                <div id="act-scan-status" style="padding:0 0 12px;color:#6b7280;font-size:0.85em;min-height:20px;"></div>
-                <div id="act-total-savings" style="display:none;background:linear-gradient(135deg,#064e3b,#065f46);border-radius:10px;padding:14px 20px;margin-bottom:16px;display:flex;align-items:center;gap:12px;">
-                    <span style="font-size:1.8em;">&#128176;</span>
-                    <div><div style="color:#6ee7b7;font-size:0.8em;text-transform:uppercase;letter-spacing:0.05em;">Total Potential Monthly Savings</div><div id="act-total-savings-amount" style="color:#fff;font-size:1.6em;font-weight:700;"></div></div>
-                </div>
-                <div id="act-cards-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:16px;padding-bottom:32px;"></div>
-                <div id="act-empty" style="text-align:center;padding:60px 20px;color:#6b7280;">
-                    <div style="font-size:2.5em;margin-bottom:12px;">&#129529;</div>
-                    <div style="font-size:1em;margin-bottom:6px;color:#c9d1d9;">Click "Scan for Waste" to identify idle resources</div>
-                    <div style="font-size:0.85em;">Scans for unassociated Elastic IPs, unattached EBS volumes,<br>idle Load Balancers, and S3 buckets without lifecycle rules.</div>
-                </div>
 
-                <!-- Tag Scan Results Panel -->
-                <div id="act-tag-panel" style="display:none;">
-                    <div id="act-tag-stats" style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px;"></div>
-                    <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">
-                        <input type="text" id="act-tag-search" placeholder="Filter by name, type, or ARN..." style="flex:1;padding:6px 10px;border:1px solid #30363d;border-radius:6px;background:#0d1117;color:#c9d1d9;font-size:0.85em;">
-                        <button id="act-tag-select-all" class="btn btn-outline btn-sm" style="font-size:0.8em;">Select All</button>
-                        <button id="act-tag-apply-btn" class="btn btn-primary btn-sm" style="background:#6366f1;border-color:#6366f1;font-size:0.8em;" disabled>Apply Tags (0)</button>
+                    <!-- Right Content Area -->
+                    <div style="flex:1;padding:20px 24px;overflow-y:auto;">
+
+                        <!-- Waste Section -->
+                        <div id="act-section-waste">
+                            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+                                <h2 style="margin:0;color:#1f2937;">Waste Cleanup</h2>
+                                <button id="act-scan-btn" class="btn btn-primary btn-sm">🔍 Scan for Waste</button>
+                            </div>
+                            <div id="act-scan-status" style="padding:0 0 12px;color:#6b7280;font-size:0.9em;min-height:20px;"></div>
+                            <div id="act-total-savings" style="display:none;background:linear-gradient(135deg,#064e3b,#065f46);border-radius:10px;padding:14px 20px;margin-bottom:16px;display:flex;align-items:center;gap:12px;">
+                                <span style="font-size:1.8em;">💰</span>
+                                <div><div style="color:#6ee7b7;font-size:0.85em;text-transform:uppercase;letter-spacing:0.05em;">Total Potential Monthly Savings</div><div id="act-total-savings-amount" style="color:#fff;font-size:1.6em;font-weight:700;"></div></div>
+                            </div>
+                            <div id="act-cards-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:16px;padding-bottom:32px;"></div>
+                            <div id="act-empty" style="text-align:center;padding:60px 20px;color:#6b7280;">
+                                <div style="font-size:2.5em;margin-bottom:12px;">🧹</div>
+                                <div style="font-size:1em;margin-bottom:6px;color:#1f2937;">Click "Scan for Waste" to identify idle resources</div>
+                                <div style="font-size:0.9em;color:#6b7280;">Scans for unassociated Elastic IPs, unattached EBS volumes,<br>idle Load Balancers, and S3 buckets without lifecycle rules.</div>
+                            </div>
+                        </div>
+
+                        <!-- Tagging Section -->
+                        <div id="act-section-tagging" style="display:none;">
+                            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+                                <h2 style="margin:0;color:#1f2937;">Tag Resources</h2>
+                                <button id="act-tag-btn" class="btn btn-primary btn-sm" style="background:#6366f1;border-color:#6366f1;">🏷️ Scan for Untagged</button>
+                            </div>
+                            <div id="act-tag-scan-status" style="padding:0 0 12px;color:#6b7280;font-size:0.9em;min-height:20px;"></div>
+
+                            <div id="act-tag-panel" style="display:none;">
+                                <div id="act-tag-stats" style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px;"></div>
+                                <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">
+                                    <input type="text" id="act-tag-search" placeholder="Filter by name, type, or ARN..." style="flex:1;padding:8px 12px;border:1px solid #d1d5db;border-radius:6px;background:#fff;color:#1f2937;font-size:0.9em;">
+                                    <button id="act-tag-select-all" class="btn btn-outline btn-sm">Select All</button>
+                                    <button id="act-tag-apply-btn" class="btn btn-primary btn-sm" style="background:#6366f1;border-color:#6366f1;" disabled>Apply Tags (0)</button>
+                                </div>
+                                <div id="act-tag-list" style="max-height:450px;overflow-y:auto;"></div>
+                            </div>
+
+                            <div id="act-tag-empty" style="text-align:center;padding:60px 20px;color:#6b7280;">
+                                <div style="font-size:2.5em;margin-bottom:12px;">🏷️</div>
+                                <div style="font-size:1em;margin-bottom:6px;color:#1f2937;">Click "Scan for Untagged" to find resources missing tags</div>
+                                <div style="font-size:0.9em;color:#6b7280;">Checks EC2, EBS, RDS, Lambda, S3, and Load Balancers<br>for missing Environment, Owner, CostCenter, and Application tags.</div>
+                            </div>
+                        </div>
+
                     </div>
-                    <div id="act-tag-list" style="max-height:400px;overflow-y:auto;"></div>
                 </div>
 
                 <!-- Bulk Tag Apply Modal -->
                 <div id="act-tag-modal" class="modal-overlay" hidden>
                     <div class="modal-card modal-card-sm" style="max-width:520px;">
-                        <h3 style="margin-top:0;color:#e6edf3;">🏷️ Apply Tags to <span id="act-tag-count">0</span> Resources</h3>
-                        <p style="color:#8b949e;font-size:0.85em;">Add one or more tags. These will be applied to all selected resources.</p>
+                        <h3 style="margin-top:0;color:#1f2937;">🏷️ Apply Tags to <span id="act-tag-count">0</span> Resources</h3>
+                        <p style="color:#6b7280;font-size:0.9em;">Add one or more tags. These will be applied to all selected resources.</p>
                         <div id="act-tag-inputs" style="margin-bottom:16px;"></div>
-                        <button id="act-tag-add-row" class="btn btn-outline btn-sm" style="margin-bottom:16px;font-size:0.8em;">+ Add Another Tag</button>
-                        <div id="act-tag-apply-status" style="font-size:0.85em;margin-bottom:12px;"></div>
+                        <button id="act-tag-add-row" class="btn btn-outline btn-sm" style="margin-bottom:16px;">+ Add Another Tag</button>
+                        <div id="act-tag-apply-status" style="font-size:0.9em;margin-bottom:12px;"></div>
                         <div style="display:flex;gap:8px;justify-content:flex-end;">
                             <button onclick="document.getElementById('act-tag-modal').hidden=true;" class="btn btn-outline">Cancel</button>
                             <button id="act-tag-confirm-btn" class="btn btn-primary" style="background:#6366f1;border-color:#6366f1;">🏷️ Apply Tags</button>
