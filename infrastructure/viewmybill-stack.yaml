@@ -9,7 +9,7 @@ Parameters:
 
   BedrockModelId:
     Type: String
-    Default: 'amazon.nova-2-lite-v1:0'
+    Default: 'amazon.nova-lite-v1:0'
     Description: Bedrock model ID for bill analysis
 
   LambdaCodeBucket:
@@ -903,7 +903,6 @@ Resources:
                 Resource:
                   - !Sub 'arn:aws:bedrock:us-east-1::foundation-model/${BedrockModelId}'
                   - 'arn:aws:bedrock:us-east-1::foundation-model/amazon.nova-lite-v1:0'
-                  - 'arn:aws:bedrock:us-east-1::foundation-model/amazon.nova-2-lite-v1:0'
                   - !Sub 'arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:agent/*'
                   - !Sub 'arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:agent-alias/*'
         - PolicyName: DynamoDBTipsAccess
