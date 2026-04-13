@@ -4816,12 +4816,40 @@ function _showTagApplyModal() {
     var countEl = document.getElementById('act-tag-count');
     var inputs = document.getElementById('act-tag-inputs');
     var statusEl = document.getElementById('act-tag-apply-status');
+    var confirmBtn = document.getElementById('act-tag-confirm-btn');
     if (!modal) return;
     if (countEl) countEl.textContent = _tagSelectedArns.size;
     if (statusEl) statusEl.textContent = '';
+    if (confirmBtn) { confirmBtn.disabled = false; confirmBtn.textContent = '🏷️ Apply Tags'; confirmBtn.style.background = '#6366f1'; confirmBtn.style.borderColor = '#6366f1';
+        confirmBtn.onclick = async function() { await _applyTags(); };
+    }
     if (inputs) inputs.innerHTML = '';
-    _addTagInputRow();
+
+    // Collect all missing tags from selected resources and pre-populate rows
+    var missingSet = {};
+    _tagScanResults.forEach(function(r) {
+        if (_tagSelectedArns.has(r.arn)) {
+            (r.missingTags || []).forEach(function(t) { missingSet[t] = true; });
+        }
+    });
+    var missingKeys = Object.keys(missingSet);
+    if (missingKeys.length > 0) {
+        missingKeys.forEach(function(key) { _addTagInputRowWithKey(key); });
+    } else {
+        _addTagInputRow();
+    }
     modal.hidden = false;
+}
+
+function _addTagInputRowWithKey(key) {
+    var inputs = document.getElementById('act-tag-inputs');
+    if (!inputs) return;
+    var row = document.createElement('div');
+    row.style.cssText = 'display:flex;gap:8px;margin-bottom:8px;';
+    row.innerHTML = '<input type="text" value="' + (key || '') + '" style="flex:1;padding:8px 12px;border:1px solid #d1d5db;border-radius:6px;background:#f9fafb;color:#1f2937;font-size:0.9em;font-weight:600;" class="tag-key-input" readonly>'
+        + '<input type="text" placeholder="Enter value for ' + (key || 'tag') + '" style="flex:1;padding:8px 12px;border:1px solid #6366f1;border-radius:6px;background:#fff;color:#1f2937;font-size:0.9em;" class="tag-val-input" autofocus>'
+        + '<button onclick="this.parentElement.remove();" style="background:none;border:none;color:#ef4444;cursor:pointer;font-size:1.2em;">✕</button>';
+    inputs.appendChild(row);
 }
 
 function _addTagInputRow() {
@@ -4851,8 +4879,18 @@ async function _applyTags() {
         if (k && v) tags[k] = v;
     }
     if (Object.keys(tags).length === 0) {
-        if (statusEl) { statusEl.style.color = '#ef4444'; statusEl.textContent = 'Enter at least one tag key and value'; }
+        if (statusEl) { statusEl.style.color = '#ef4444'; statusEl.textContent = 'Fill in values for all required tags before applying'; }
         return;
+    }
+    // Warn about skipped empty tags
+    var skipped = [];
+    for (var j = 0; j < keys.length; j++) {
+        var sk = (keys[j].value || '').trim();
+        var sv = (vals[j].value || '').trim();
+        if (sk && !sv) skipped.push(sk);
+    }
+    if (skipped.length > 0 && Object.keys(tags).length > 0) {
+        if (statusEl) { statusEl.style.color = '#f59e0b'; statusEl.textContent = 'Note: skipping empty tags: ' + skipped.join(', '); }
     }
 
     var arns = Array.from(_tagSelectedArns);
