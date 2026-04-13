@@ -16,15 +16,6 @@ var PADDLE_PRICES = {
 if (typeof Paddle !== 'undefined') {
     Paddle.Initialize({
         token: PADDLE_TOKEN,
-        checkout: {
-            settings: {
-                displayMode: 'overlay',
-                theme: 'light',
-                locale: 'en',
-                successUrl: 'https://slashmycloudbill.com/members/?payment=success',
-                allowLogout: false
-            }
-        },
         eventCallback: function(ev) {
             if (ev.name === 'checkout.completed') {
                 var items = (ev.data && ev.data.items) || [];
@@ -350,7 +341,12 @@ function _showUpgradeModal() {
             if (typeof Paddle !== 'undefined') {
                 Paddle.Checkout.open({
                     items: [{priceId: priceId, quantity: 1}],
-                    customer: {email: email},
+                    settings: {
+                        displayMode: 'overlay',
+                        theme: 'light',
+                        locale: 'en',
+                        successUrl: 'https://slashmycloudbill.com/members/?payment=success'
+                    },
                     customData: {memberEmail: email, tier: plan}
                 });
             } else {
@@ -368,7 +364,12 @@ function _showUpgradeModal() {
             if (typeof Paddle !== 'undefined') {
                 Paddle.Checkout.open({
                     items: [{priceId: priceId, quantity: 1}],
-                    customer: {email: email},
+                    settings: {
+                        displayMode: 'overlay',
+                        theme: 'light',
+                        locale: 'en',
+                        successUrl: 'https://slashmycloudbill.com/members/?payment=success'
+                    },
                     customData: {memberEmail: email, type: 'topup', tokens: btn.getAttribute('data-tokens')}
                 });
             } else {
