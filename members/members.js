@@ -3868,7 +3868,7 @@ function _syncActSelection() {
     if (ids.length > 0) _sharedSelectedAccounts = ids;
 }
 
-(function _switchActSection(section) {
+function _switchActSection(section) {
     document.querySelectorAll('.act-nav-btn').forEach(function(b) {
         b.classList.toggle('active', b.dataset.section === section);
     });
@@ -3887,7 +3887,8 @@ function initActTab() {
         var accountIds = getActSelectedAccountIds();
         await _actRunScan(accountIds);
     };
-})();
+}
+initActTab();
 
 async function _actRunScan(accountIds) {
     var status = $('act-scan-status');
