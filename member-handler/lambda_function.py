@@ -1072,6 +1072,11 @@ def handle_generate_template(event):
                                             'iam:DeleteRolePolicy',
                                             'iam:DetachRolePolicy',
                                             'iam:DeleteRole',
+                                            'iam:CreateRole',
+                                            'iam:PutRolePolicy',
+                                            'iam:AttachRolePolicy',
+                                            'iam:TagRole',
+                                            'iam:PassRole',
                                             # Level 1 cleanup actions
                                             'ec2:ReleaseAddress',
                                             'ec2:DeleteVolume',
