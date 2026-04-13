@@ -408,10 +408,6 @@ def handle_delete_tip(event):
 
 def handle_get_subscribers(event):
     """Return all subscribers from the Members table, sorted by createdAt descending."""
-    auth = validate_token(event)
-    if isinstance(auth, dict) and 'statusCode' in auth:
-        return auth
-
     try:
         table = dynamodb.Table('MemberPortal-Members')
         response = table.scan()
@@ -437,10 +433,6 @@ def handle_get_subscribers(event):
 
 def handle_update_subscriber_tier(event):
     """Update a subscriber's tier in the Members table."""
-    auth = validate_token(event)
-    if isinstance(auth, dict) and 'statusCode' in auth:
-        return auth
-
     try:
         body = json.loads(event.get('body', '{}'))
     except (json.JSONDecodeError, TypeError):
@@ -478,10 +470,6 @@ def handle_update_subscriber_tier(event):
 
 def handle_add_subscriber_tokens(event):
     """Atomically add bonus tokens to a subscriber in the Members table."""
-    auth = validate_token(event)
-    if isinstance(auth, dict) and 'statusCode' in auth:
-        return auth
-
     try:
         body = json.loads(event.get('body', '{}'))
     except (json.JSONDecodeError, TypeError):
