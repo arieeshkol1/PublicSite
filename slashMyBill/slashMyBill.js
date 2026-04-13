@@ -1,6 +1,7 @@
 /* Slash My Bill - Client-side logic for AWS bill analysis */
 
 const API_GATEWAY_URL = 'https://l2fd4h481h.execute-api.us-east-1.amazonaws.com';
+const CONTACT_FORM_URL = 'https://l2fd4h481h.execute-api.us-east-1.amazonaws.com/contact';
 
 const MAX_FILE_SIZE = 10485760; // 10 MB
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -543,11 +544,15 @@ document.addEventListener('DOMContentLoaded', () => {
         // Show savings banner with monthly + yearly in orange
         var banner = document.getElementById('vmb-savings-banner');
         var savingsVal = document.getElementById('vmb-savings-value');
+        var yearlyTag = document.getElementById('vmb-savings-yearly-tag');
         if (banner && savings && savings > 50) {
             var monthly = formatSavings(savings);
             var yearly = formatSavings(savings * 12);
-            savingsVal.innerHTML = monthly + '<span class="smb-savings-per">/month</span>'
-                + '<span class="smb-savings-yearly">USD ' + yearly + '/year</span>';
+            savingsVal.innerHTML = monthly + '<span class="smb-savings-per">/month</span>';
+            if (yearlyTag) {
+                yearlyTag.textContent = 'That\u2019s up to ' + formatSavings(savings * 12) + ' per year';
+                yearlyTag.style.display = 'block';
+            }
             banner.style.display = 'block';
         }
 
@@ -561,6 +566,14 @@ document.addEventListener('DOMContentLoaded', () => {
             if (priceNote) {
                 priceNote.textContent = '25% of your ' + formatSavings(yearlySavings) + '/year savings — only paid after we deliver results';
             }
+        }
+
+        // Show max yearly savings in managed card
+        var managedYearly = document.getElementById('vmb-managed-yearly-savings');
+        var managedYearlyVal = document.getElementById('vmb-managed-yearly-value');
+        if (managedYearly && managedYearlyVal && savings && savings > 50) {
+            managedYearlyVal.textContent = formatSavings(savings * 12) + '/year';
+            managedYearly.style.display = 'block';
         }
     }
 
@@ -640,34 +653,43 @@ document.addEventListener('DOMContentLoaded', () => {
                 var statusEl = document.getElementById('vmb-consult-status');
                 var submitBtn = consultForm.querySelector('[type=submit]');
                 var email = getVerifiedEmail();
+                var nameEl = document.getElementById('vmb-name');
+                var phoneEl = document.getElementById('vmb-phone');
+                var companyEl = document.getElementById('vmb-company');
                 var method = (consultForm.querySelector('[name=contact_method]:checked') || {}).value || 'email';
                 var notes = (document.getElementById('vmb-consult-notes') || {}).value || '';
 
+                var savingsInfo = _pipelineSavings ? ' | Potential savings: $' + Math.round(_pipelineSavings) + '/mo' : '';
+                var messageBody = 'Consultation Request\n'
+                    + 'Preferred contact: ' + method + '\n'
+                    + savingsInfo + '\n\n'
+                    + (notes || 'No additional notes');
+
                 submitBtn.disabled = true;
-                submitBtn.querySelector('span').textContent = 'Sending...';
+                submitBtn.textContent = 'Sending...';
 
                 try {
-                    // Send to the contact form / leads endpoint
-                    await fetch(API_GATEWAY_URL + '/send-otp', {
+                    var res = await fetch(CONTACT_FORM_URL, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
+                            name: nameEl ? nameEl.value.trim() : 'Unknown',
                             email: email,
-                            type: 'consultation-request',
-                            contactMethod: method,
-                            notes: notes,
-                            savings: _pipelineSavings,
+                            phone: phoneEl ? phoneEl.value.trim() : 'Not provided',
+                            company: companyEl ? companyEl.value.trim() : 'Not provided',
+                            message: messageBody
                         })
                     });
-                    statusEl.className = 'vmb-consult-status success';
-                    statusEl.textContent = '✓ Request sent! We\'ll be in touch within 24 hours.';
-                    submitBtn.querySelector('span').textContent = 'Sent!';
+                    if (!res.ok) throw new Error('Failed');
+                    statusEl.className = 'smb-consult-status smb-consult-success';
+                    statusEl.textContent = '\u2713 Request sent! We\u2019ll be in touch within 24 hours.';
+                    submitBtn.textContent = 'Sent!';
                     _tagLead(email, 'consultation-booked', _pipelineSavings);
                 } catch (err) {
-                    statusEl.className = 'vmb-consult-status error';
+                    statusEl.className = 'smb-consult-status smb-consult-error';
                     statusEl.textContent = 'Failed to send. Please email us at info@slashmycloudbill.com';
                     submitBtn.disabled = false;
-                    submitBtn.querySelector('span').textContent = 'Send Request';
+                    submitBtn.textContent = 'Send Request';
                 }
             };
         }

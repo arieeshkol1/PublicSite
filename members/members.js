@@ -3333,6 +3333,104 @@ function _renderRegionalPie(costByRegion) {
     window.addEventListener('resize',function(){chart.resize();});
 }
 
+function _renderCommitments(commitments) {
+    var container = $('dash-commitments');
+    if (!container) return;
+    if (!commitments || (!commitments.savingsPlans && !commitments.ec2ReservedInstances && !commitments.rdsReservedInstances)) {
+        container.innerHTML = '<div style="color:#9ca3af;text-align:center;padding:40px 0;">No Data to share</div>';
+        return;
+    }
+    var sp = commitments.savingsPlans || [];
+    var ec2ri = commitments.ec2ReservedInstances || [];
+    var rdsri = commitments.rdsReservedInstances || [];
+    var spCov = commitments.spCoverage || {};
+    var riCov = commitments.riCoverage || {};
+    var html = '';
+
+    // Summary bar
+    html += '<div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:16px;">';
+    html += '<div style="flex:1;min-width:120px;background:#f0f2f5;border-radius:10px;padding:12px;text-align:center;">'
+        + '<div style="font-size:22px;font-weight:800;color:#6366f1;">' + sp.length + '</div>'
+        + '<div style="font-size:11px;color:#9ca3af;">Savings Plans</div></div>';
+    html += '<div style="flex:1;min-width:120px;background:#f0f2f5;border-radius:10px;padding:12px;text-align:center;">'
+        + '<div style="font-size:22px;font-weight:800;color:#3b82f6;">' + (commitments.totalEC2RI || 0) + '</div>'
+        + '<div style="font-size:11px;color:#9ca3af;">EC2 RIs</div></div>';
+    html += '<div style="flex:1;min-width:120px;background:#f0f2f5;border-radius:10px;padding:12px;text-align:center;">'
+        + '<div style="font-size:22px;font-weight:800;color:#10b981;">' + (commitments.totalRDSRI || 0) + '</div>'
+        + '<div style="font-size:11px;color:#9ca3af;">RDS RIs</div></div>';
+    html += '</div>';
+
+    // SP Coverage gauge
+    var spCovKeys = Object.keys(spCov);
+    if (spCovKeys.length > 0) {
+        var avgSpCov = spCovKeys.reduce(function(s,k){return s + spCov[k].coveragePct;}, 0) / spCovKeys.length;
+        var covColor = avgSpCov >= 70 ? '#10b981' : avgSpCov >= 40 ? '#f59e0b' : '#ef4444';
+        html += '<div style="margin-bottom:12px;"><div style="font-size:12px;font-weight:600;color:#374151;margin-bottom:4px;">SP Coverage</div>'
+            + '<div style="background:#e5e7eb;border-radius:6px;height:10px;overflow:hidden;">'
+            + '<div style="width:' + Math.min(avgSpCov, 100) + '%;height:100%;background:' + covColor + ';border-radius:6px;transition:width .5s;"></div></div>'
+            + '<div style="font-size:11px;color:#9ca3af;margin-top:2px;">' + avgSpCov.toFixed(1) + '% covered</div></div>';
+    }
+
+    // RI Coverage gauge
+    var riCovKeys = Object.keys(riCov);
+    if (riCovKeys.length > 0) {
+        var avgRiCov = riCovKeys.reduce(function(s,k){return s + riCov[k].coveragePct;}, 0) / riCovKeys.length;
+        var riColor = avgRiCov >= 70 ? '#10b981' : avgRiCov >= 40 ? '#f59e0b' : '#ef4444';
+        html += '<div style="margin-bottom:12px;"><div style="font-size:12px;font-weight:600;color:#374151;margin-bottom:4px;">RI Coverage</div>'
+            + '<div style="background:#e5e7eb;border-radius:6px;height:10px;overflow:hidden;">'
+            + '<div style="width:' + Math.min(avgRiCov, 100) + '%;height:100%;background:' + riColor + ';border-radius:6px;transition:width .5s;"></div></div>'
+            + '<div style="font-size:11px;color:#9ca3af;margin-top:2px;">' + avgRiCov.toFixed(1) + '% covered</div></div>';
+    }
+
+    // Savings Plans list
+    if (sp.length > 0) {
+        html += '<div style="font-size:12px;font-weight:600;color:#374151;margin:12px 0 6px;">Active Savings Plans</div>';
+        html += '<div style="max-height:180px;overflow-y:auto;">';
+        sp.forEach(function(s) {
+            var endDate = s.end ? new Date(s.end).toLocaleDateString() : 'N/A';
+            html += '<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 8px;border-bottom:1px solid #f3f4f6;font-size:12px;">'
+                + '<div><span style="font-weight:600;color:#1f2937;">' + esc(s.type) + '</span>'
+                + ' <span style="color:#9ca3af;">' + esc(s.paymentOption) + ' \u00b7 ' + s.term + 'yr</span></div>'
+                + '<div style="text-align:right;"><span style="font-weight:700;color:#6366f1;">$' + s.commitment.toFixed(2) + '/hr</span>'
+                + '<div style="font-size:10px;color:#9ca3af;">Ends ' + endDate + '</div></div></div>';
+        });
+        html += '</div>';
+    }
+
+    // EC2 RIs
+    if (ec2ri.length > 0) {
+        html += '<div style="font-size:12px;font-weight:600;color:#374151;margin:12px 0 6px;">EC2 Reserved Instances</div>';
+        html += '<div style="max-height:140px;overflow-y:auto;">';
+        ec2ri.forEach(function(r) {
+            html += '<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 8px;border-bottom:1px solid #f3f4f6;font-size:12px;">'
+                + '<div><span style="font-weight:600;color:#1f2937;">' + esc(r.instanceType) + '</span>'
+                + ' <span style="color:#9ca3af;">\u00d7' + r.count + ' \u00b7 ' + esc(r.offeringClass) + '</span></div>'
+                + '<div style="font-size:10px;color:#9ca3af;">' + esc(r.offeringType) + '</div></div>';
+        });
+        html += '</div>';
+    }
+
+    // RDS RIs
+    if (rdsri.length > 0) {
+        html += '<div style="font-size:12px;font-weight:600;color:#374151;margin:12px 0 6px;">RDS Reserved Instances</div>';
+        html += '<div style="max-height:140px;overflow-y:auto;">';
+        rdsri.forEach(function(r) {
+            html += '<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 8px;border-bottom:1px solid #f3f4f6;font-size:12px;">'
+                + '<div><span style="font-weight:600;color:#1f2937;">' + esc(r.dbInstanceClass) + '</span>'
+                + ' <span style="color:#9ca3af;">\u00d7' + r.count + ' \u00b7 ' + esc(r.engine) + '</span></div>'
+                + '<div style="font-size:10px;color:#9ca3af;">' + esc(r.offeringType) + '</div></div>';
+        });
+        html += '</div>';
+    }
+
+    // No EC2/RDS fallback
+    if (ec2ri.length === 0 && rdsri.length === 0 && sp.length === 0) {
+        html = '<div style="color:#9ca3af;text-align:center;padding:40px 0;">No Data to share</div>';
+    }
+
+    container.innerHTML = html;
+}
+
 function showBusinessMetricsModal() {
     var discovered = (dashDataCache && dashDataCache.discoveredMetrics) || [];
     var modal = document.createElement('div');
