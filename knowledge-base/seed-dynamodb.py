@@ -50,6 +50,7 @@ def seed_table(tips, table):
                 "actionLabel": tip.get("actionLabel", "Coming Soon"),
                 "level": tip.get("level", 2),
                 "serviceKey": tip.get("serviceKey", tip["service"]),
+                "implementedInAct": tip.get("implementedInAct", False),
             }
             if "automatedCheck" in tip and tip["automatedCheck"]:
                 item["automatedCheck"] = tip["automatedCheck"]

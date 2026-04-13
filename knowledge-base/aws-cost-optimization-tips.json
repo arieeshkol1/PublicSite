@@ -23,7 +23,8 @@
       "actionType": "advisory",
       "actionLabel": "View Rightsizing",
       "level": 2,
-      "serviceKey": "Amazon EC2"
+      "serviceKey": "Amazon EC2",
+      "implementedInAct": true
     },
     {
       "id": "ec2-002",
@@ -38,7 +39,8 @@
       "actionType": "advisory",
       "actionLabel": "Analyze Savings Plans",
       "level": 2,
-      "serviceKey": "Amazon EC2"
+      "serviceKey": "Amazon EC2",
+      "implementedInAct": false
     },
     {
       "id": "ec2-003",
@@ -53,7 +55,8 @@
       "actionType": "deep-link",
       "actionLabel": "View Spot Savings",
       "level": 2,
-      "serviceKey": "Amazon EC2"
+      "serviceKey": "Amazon EC2",
+      "implementedInAct": true
     },
     {
       "id": "ec2-004",
@@ -68,7 +71,8 @@
       "actionType": "advisory",
       "actionLabel": "Schedule Instances",
       "level": 2,
-      "serviceKey": "Amazon EC2"
+      "serviceKey": "Amazon EC2",
+      "implementedInAct": false
     },
     {
       "id": "ec2-005",
@@ -83,7 +87,8 @@
       "actionType": "advisory",
       "actionLabel": "Setup Auto Scaling",
       "level": 3,
-      "serviceKey": "Amazon EC2"
+      "serviceKey": "Amazon EC2",
+      "implementedInAct": false
     },
     {
       "id": "ec2-006",
@@ -98,7 +103,8 @@
       "actionType": "advisory",
       "actionLabel": "View Graviton Opts",
       "level": 2,
-      "serviceKey": "Amazon EC2"
+      "serviceKey": "Amazon EC2",
+      "implementedInAct": true
     },
     {
       "id": "s3-001",
@@ -113,7 +119,8 @@
       "actionType": "modify",
       "actionLabel": "Enable IT",
       "level": 2,
-      "serviceKey": "Amazon Simple Storage Service"
+      "serviceKey": "Amazon Simple Storage Service",
+      "implementedInAct": false
     },
     {
       "id": "s3-002",
@@ -128,7 +135,8 @@
       "actionType": "modify",
       "actionLabel": "Apply Lifecycle",
       "level": 1,
-      "serviceKey": "Amazon Simple Storage Service"
+      "serviceKey": "Amazon Simple Storage Service",
+      "implementedInAct": true
     },
     {
       "id": "s3-003",
@@ -143,7 +151,8 @@
       "actionType": "modify",
       "actionLabel": "Fix Multipart",
       "level": 1,
-      "serviceKey": "Amazon Simple Storage Service"
+      "serviceKey": "Amazon Simple Storage Service",
+      "implementedInAct": true
     },
     {
       "id": "s3-004",
@@ -158,7 +167,8 @@
       "actionType": "advisory",
       "actionLabel": "Manage Versions",
       "level": 2,
-      "serviceKey": "Amazon Simple Storage Service"
+      "serviceKey": "Amazon Simple Storage Service",
+      "implementedInAct": false
     },
     {
       "id": "rds-001",
@@ -173,7 +183,8 @@
       "actionType": "advisory",
       "actionLabel": "View Rightsizing",
       "level": 2,
-      "serviceKey": "Amazon Relational Database Service"
+      "serviceKey": "Amazon Relational Database Service",
+      "implementedInAct": true
     },
     {
       "id": "rds-002",
@@ -188,7 +199,8 @@
       "actionType": "advisory",
       "actionLabel": "Analyze RDS RIs",
       "level": 2,
-      "serviceKey": "Amazon Relational Database Service"
+      "serviceKey": "Amazon Relational Database Service",
+      "implementedInAct": false
     },
     {
       "id": "rds-003",
@@ -203,7 +215,8 @@
       "actionType": "advisory",
       "actionLabel": "Evaluate Serverless",
       "level": 2,
-      "serviceKey": "Amazon Relational Database Service"
+      "serviceKey": "Amazon Relational Database Service",
+      "implementedInAct": false
     },
     {
       "id": "rds-004",
@@ -218,7 +231,8 @@
       "actionType": "advisory",
       "actionLabel": "Optimize Storage",
       "level": 2,
-      "serviceKey": "Amazon Relational Database Service"
+      "serviceKey": "Amazon Relational Database Service",
+      "implementedInAct": false
     },
     {
       "id": "lambda-001",
@@ -233,7 +247,8 @@
       "actionType": "advisory",
       "actionLabel": "Tune Memory",
       "level": 2,
-      "serviceKey": "AWS Lambda"
+      "serviceKey": "AWS Lambda",
+      "implementedInAct": false
     },
     {
       "id": "lambda-002",
@@ -248,7 +263,8 @@
       "actionType": "advisory",
       "actionLabel": "Enable ARM64",
       "level": 2,
-      "serviceKey": "AWS Lambda"
+      "serviceKey": "AWS Lambda",
+      "implementedInAct": false
     },
     {
       "id": "lambda-003",
@@ -263,7 +279,8 @@
       "actionType": "advisory",
       "actionLabel": "Review Concurrency",
       "level": 2,
-      "serviceKey": "AWS Lambda"
+      "serviceKey": "AWS Lambda",
+      "implementedInAct": false
     },
     {
       "id": "nat-001",
@@ -278,7 +295,8 @@
       "actionType": "advisory",
       "actionLabel": "Add VPC Endpoints",
       "level": 2,
-      "serviceKey": "Amazon Virtual Private Cloud"
+      "serviceKey": "Amazon Virtual Private Cloud",
+      "implementedInAct": false
     },
     {
       "id": "nat-002",
@@ -293,7 +311,8 @@
       "actionType": "advisory",
       "actionLabel": "Consolidate NATs",
       "level": 2,
-      "serviceKey": "Amazon Virtual Private Cloud"
+      "serviceKey": "Amazon Virtual Private Cloud",
+      "implementedInAct": false
     },
     {
       "id": "cloudfront-001",
@@ -308,7 +327,8 @@
       "actionType": "advisory",
       "actionLabel": "Improve Cache Ratio",
       "level": 2,
-      "serviceKey": "Amazon CloudFront"
+      "serviceKey": "Amazon CloudFront",
+      "implementedInAct": false
     },
     {
       "id": "cloudfront-002",
@@ -323,7 +343,8 @@
       "actionType": "advisory",
       "actionLabel": "Buy CF Bundle",
       "level": 2,
-      "serviceKey": "Amazon CloudFront"
+      "serviceKey": "Amazon CloudFront",
+      "implementedInAct": false
     },
     {
       "id": "ebs-001",
@@ -338,7 +359,8 @@
       "actionType": "advisory",
       "actionLabel": "Migrate gp2→gp3",
       "level": 2,
-      "serviceKey": "EC2 - Other"
+      "serviceKey": "EC2 - Other",
+      "implementedInAct": false
     },
     {
       "id": "ebs-002",
@@ -353,7 +375,8 @@
       "actionType": "delete",
       "actionLabel": "Delete Snapshots",
       "level": 1,
-      "serviceKey": "EC2 - Other"
+      "serviceKey": "EC2 - Other",
+      "implementedInAct": true
     },
     {
       "id": "ebs-003",
@@ -368,7 +391,8 @@
       "actionType": "advisory",
       "actionLabel": "Archive Snapshots",
       "level": 1,
-      "serviceKey": "EC2 - Other"
+      "serviceKey": "EC2 - Other",
+      "implementedInAct": true
     },
     {
       "id": "data-transfer-001",
@@ -383,7 +407,8 @@
       "actionType": "advisory",
       "actionLabel": "Reduce Cross-Region",
       "level": 2,
-      "serviceKey": "EC2 - Other"
+      "serviceKey": "EC2 - Other",
+      "implementedInAct": false
     },
     {
       "id": "data-transfer-002",
@@ -398,7 +423,8 @@
       "actionType": "advisory",
       "actionLabel": "Use CloudFront",
       "level": 2,
-      "serviceKey": "EC2 - Other"
+      "serviceKey": "EC2 - Other",
+      "implementedInAct": false
     },
     {
       "id": "general-001",
@@ -413,7 +439,8 @@
       "actionType": "advisory",
       "actionLabel": "Enable Cost Explorer",
       "level": 2,
-      "serviceKey": "General"
+      "serviceKey": "General",
+      "implementedInAct": false
     },
     {
       "id": "general-002",
@@ -428,7 +455,8 @@
       "actionType": "advisory",
       "actionLabel": "Create Budgets",
       "level": 2,
-      "serviceKey": "General"
+      "serviceKey": "General",
+      "implementedInAct": true
     },
     {
       "id": "general-003",
@@ -443,7 +471,8 @@
       "actionType": "advisory",
       "actionLabel": "Enable Anomaly Det.",
       "level": 2,
-      "serviceKey": "General"
+      "serviceKey": "General",
+      "implementedInAct": false
     },
     {
       "id": "general-004",
@@ -458,7 +487,8 @@
       "actionType": "advisory",
       "actionLabel": "Audit Resources",
       "level": 1,
-      "serviceKey": "General"
+      "serviceKey": "General",
+      "implementedInAct": true
     },
     {
       "id": "general-005",
@@ -473,7 +503,8 @@
       "actionType": "advisory",
       "actionLabel": "Tag Resources",
       "level": 2,
-      "serviceKey": "General"
+      "serviceKey": "General",
+      "implementedInAct": false
     },
     {
       "id": "general-006",
@@ -488,7 +519,8 @@
       "actionType": "deep-link",
       "actionLabel": "Buy Compute SP",
       "level": 3,
-      "serviceKey": "General"
+      "serviceKey": "General",
+      "implementedInAct": false
     },
     {
       "id": "general-007",
@@ -503,7 +535,8 @@
       "actionType": "deep-link",
       "actionLabel": "Buy EC2 Instance SP",
       "level": 3,
-      "serviceKey": "General"
+      "serviceKey": "General",
+      "implementedInAct": false
     },
     {
       "id": "general-008",
@@ -518,7 +551,8 @@
       "actionType": "deep-link",
       "actionLabel": "Buy Database SP",
       "level": 3,
-      "serviceKey": "General"
+      "serviceKey": "General",
+      "implementedInAct": false
     },
     {
       "id": "general-009",
@@ -533,7 +567,8 @@
       "actionType": "deep-link",
       "actionLabel": "Buy Standard RIs",
       "level": 3,
-      "serviceKey": "General"
+      "serviceKey": "General",
+      "implementedInAct": false
     },
     {
       "id": "general-010",
@@ -548,7 +583,8 @@
       "actionType": "deep-link",
       "actionLabel": "Buy Convertible RIs",
       "level": 3,
-      "serviceKey": "General"
+      "serviceKey": "General",
+      "implementedInAct": false
     },
     {
       "id": "elb-001",
@@ -563,7 +599,8 @@
       "actionType": "delete",
       "actionLabel": "Delete Idle LBs",
       "level": 1,
-      "serviceKey": "Amazon Elastic Load Balancing"
+      "serviceKey": "Amazon Elastic Load Balancing",
+      "implementedInAct": true
     },
     {
       "id": "elb-002",
@@ -578,7 +615,8 @@
       "actionType": "advisory",
       "actionLabel": "Right-size LB Type",
       "level": 2,
-      "serviceKey": "Amazon Elastic Load Balancing"
+      "serviceKey": "Amazon Elastic Load Balancing",
+      "implementedInAct": false
     },
     {
       "id": "kms-001",
@@ -593,7 +631,8 @@
       "actionType": "advisory",
       "actionLabel": "Audit KMS Keys",
       "level": 1,
-      "serviceKey": "AWS Key Management Service"
+      "serviceKey": "AWS Key Management Service",
+      "implementedInAct": true
     },
     {
       "id": "kms-002",
@@ -608,7 +647,8 @@
       "actionType": "advisory",
       "actionLabel": "Enable Key Caching",
       "level": 2,
-      "serviceKey": "AWS Key Management Service"
+      "serviceKey": "AWS Key Management Service",
+      "implementedInAct": false
     },
     {
       "id": "vpc-001",
@@ -623,7 +663,8 @@
       "actionType": "delete",
       "actionLabel": "Release EIPs",
       "level": 1,
-      "serviceKey": "Amazon Virtual Private Cloud"
+      "serviceKey": "Amazon Virtual Private Cloud",
+      "implementedInAct": true
     },
     {
       "id": "ec2-007",
@@ -638,7 +679,8 @@
       "actionType": "advisory",
       "actionLabel": "Compare Regions",
       "level": 3,
-      "serviceKey": "Amazon EC2"
+      "serviceKey": "Amazon EC2",
+      "implementedInAct": false
     },
     {
       "id": "ec2-008",
@@ -653,7 +695,8 @@
       "actionType": "advisory",
       "actionLabel": "Tune ASG Policies",
       "level": 3,
-      "serviceKey": "Amazon EC2"
+      "serviceKey": "Amazon EC2",
+      "implementedInAct": false
     },
     {
       "id": "ec2-009",
@@ -668,7 +711,8 @@
       "actionType": "deep-link",
       "actionLabel": "Configure Spot Fleet",
       "level": 2,
-      "serviceKey": "Amazon EC2"
+      "serviceKey": "Amazon EC2",
+      "implementedInAct": true
     },
     {
       "id": "ebs-004",
@@ -683,7 +727,8 @@
       "actionType": "delete",
       "actionLabel": "Delete Volumes",
       "level": 1,
-      "serviceKey": "EC2 - Other"
+      "serviceKey": "EC2 - Other",
+      "implementedInAct": true
     },
     {
       "id": "ebs-005",
@@ -698,7 +743,8 @@
       "actionType": "advisory",
       "actionLabel": "Setup DLM Policy",
       "level": 2,
-      "serviceKey": "EC2 - Other"
+      "serviceKey": "EC2 - Other",
+      "implementedInAct": false
     },
     {
       "id": "s3-005",
@@ -713,7 +759,8 @@
       "actionType": "advisory",
       "actionLabel": "Enable Storage Lens",
       "level": 2,
-      "serviceKey": "Amazon Simple Storage Service"
+      "serviceKey": "Amazon Simple Storage Service",
+      "implementedInAct": false
     },
     {
       "id": "general-011",
@@ -728,7 +775,8 @@
       "actionType": "advisory",
       "actionLabel": "Automate Tagging",
       "level": 2,
-      "serviceKey": "General"
+      "serviceKey": "General",
+      "implementedInAct": false
     },
     {
       "id": "general-012",
@@ -743,7 +791,8 @@
       "actionType": "advisory",
       "actionLabel": "Use Opt. Hub",
       "level": 2,
-      "serviceKey": "General"
+      "serviceKey": "General",
+      "implementedInAct": false
     },
     {
       "id": "general-013",
@@ -758,7 +807,8 @@
       "actionType": "advisory",
       "actionLabel": "Setup Chargeback",
       "level": 3,
-      "serviceKey": "General"
+      "serviceKey": "General",
+      "implementedInAct": false
     },
     {
       "id": "general-014",
@@ -773,7 +823,8 @@
       "actionType": "deep-link",
       "actionLabel": "Sell on RI Mktplace",
       "level": 3,
-      "serviceKey": "General"
+      "serviceKey": "General",
+      "implementedInAct": true
     },
     {
       "id": "elb-003",
@@ -788,7 +839,8 @@
       "actionType": "advisory",
       "actionLabel": "Add CloudFront",
       "level": 2,
-      "serviceKey": "Amazon Elastic Load Balancing"
+      "serviceKey": "Amazon Elastic Load Balancing",
+      "implementedInAct": false
     },
     {
       "id": "elasticache-001",
@@ -803,7 +855,8 @@
       "actionType": "advisory",
       "actionLabel": "Right-size Nodes",
       "level": 2,
-      "serviceKey": "Amazon ElastiCache"
+      "serviceKey": "Amazon ElastiCache",
+      "implementedInAct": false
     },
     {
       "id": "elasticache-002",
@@ -818,7 +871,8 @@
       "actionType": "advisory",
       "actionLabel": "Buy Reserved Nodes",
       "level": 2,
-      "serviceKey": "Amazon ElastiCache"
+      "serviceKey": "Amazon ElastiCache",
+      "implementedInAct": false
     },
     {
       "id": "dynamodb-001",
@@ -833,7 +887,8 @@
       "actionType": "advisory",
       "actionLabel": "Switch Capacity Mode",
       "level": 2,
-      "serviceKey": "Amazon DynamoDB"
+      "serviceKey": "Amazon DynamoDB",
+      "implementedInAct": false
     },
     {
       "id": "dynamodb-002",
@@ -848,7 +903,8 @@
       "actionType": "advisory",
       "actionLabel": "Buy Reserved Cap.",
       "level": 2,
-      "serviceKey": "Amazon DynamoDB"
+      "serviceKey": "Amazon DynamoDB",
+      "implementedInAct": false
     },
     {
       "id": "ec2-010",
@@ -863,7 +919,8 @@
       "actionType": "advisory",
       "actionLabel": "Match Instance Type",
       "level": 2,
-      "serviceKey": "Amazon EC2"
+      "serviceKey": "Amazon EC2",
+      "implementedInAct": false
     },
     {
       "id": "ec2-011",
@@ -878,7 +935,8 @@
       "actionType": "advisory",
       "actionLabel": "Setup Scheduler",
       "level": 2,
-      "serviceKey": "Amazon EC2"
+      "serviceKey": "Amazon EC2",
+      "implementedInAct": false
     },
     {
       "id": "ec2-012",
@@ -893,7 +951,8 @@
       "actionType": "advisory",
       "actionLabel": "Enable Hibernation",
       "level": 3,
-      "serviceKey": "Amazon EC2"
+      "serviceKey": "Amazon EC2",
+      "implementedInAct": false
     },
     {
       "id": "data-transfer-003",
@@ -908,7 +967,8 @@
       "actionType": "advisory",
       "actionLabel": "Use AZ Affinity",
       "level": 2,
-      "serviceKey": "EC2 - Other"
+      "serviceKey": "EC2 - Other",
+      "implementedInAct": false
     },
     {
       "id": "data-transfer-004",
@@ -923,7 +983,8 @@
       "actionType": "advisory",
       "actionLabel": "Compress Transfers",
       "level": 2,
-      "serviceKey": "EC2 - Other"
+      "serviceKey": "EC2 - Other",
+      "implementedInAct": false
     },
     {
       "id": "rds-005",
@@ -938,7 +999,8 @@
       "actionType": "advisory",
       "actionLabel": "Add Read Replica",
       "level": 2,
-      "serviceKey": "Amazon Relational Database Service"
+      "serviceKey": "Amazon Relational Database Service",
+      "implementedInAct": false
     },
     {
       "id": "rds-006",
@@ -953,7 +1015,8 @@
       "actionType": "advisory",
       "actionLabel": "Plan DB Migration",
       "level": 2,
-      "serviceKey": "Amazon Relational Database Service"
+      "serviceKey": "Amazon Relational Database Service",
+      "implementedInAct": true
     },
     {
       "id": "general-015",
@@ -968,7 +1031,8 @@
       "actionType": "advisory",
       "actionLabel": "Migrate Serverless",
       "level": 3,
-      "serviceKey": "General"
+      "serviceKey": "General",
+      "implementedInAct": false
     },
     {
       "id": "general-016",
@@ -983,7 +1047,8 @@
       "actionType": "advisory",
       "actionLabel": "Evaluate Lightsail",
       "level": 3,
-      "serviceKey": "General"
+      "serviceKey": "General",
+      "implementedInAct": false
     },
     {
       "id": "general-017",
@@ -998,7 +1063,8 @@
       "actionType": "advisory",
       "actionLabel": "Create Billing Alarm",
       "level": 2,
-      "serviceKey": "General"
+      "serviceKey": "General",
+      "implementedInAct": false
     },
     {
       "id": "general-018",
@@ -1013,7 +1079,8 @@
       "actionType": "advisory",
       "actionLabel": "Contact AWS",
       "level": 2,
-      "serviceKey": "General"
+      "serviceKey": "General",
+      "implementedInAct": false
     },
     {
       "id": "efs-001",
@@ -1028,7 +1095,8 @@
       "actionType": "advisory",
       "actionLabel": "Optimize EFS",
       "level": 2,
-      "serviceKey": "Amazon Elastic File System"
+      "serviceKey": "Amazon Elastic File System",
+      "implementedInAct": false
     },
     {
       "id": "ecs-001",
@@ -1043,7 +1111,8 @@
       "actionType": "advisory",
       "actionLabel": "Right-size Tasks",
       "level": 2,
-      "serviceKey": "Amazon Elastic Container Service"
+      "serviceKey": "Amazon Elastic Container Service",
+      "implementedInAct": false
     },
     {
       "id": "ecs-002",
@@ -1058,7 +1127,8 @@
       "actionType": "advisory",
       "actionLabel": "Enable Auto Scaling",
       "level": 2,
-      "serviceKey": "Amazon Elastic Container Service"
+      "serviceKey": "Amazon Elastic Container Service",
+      "implementedInAct": false
     },
     {
       "id": "eks-001",
@@ -1073,7 +1143,8 @@
       "actionType": "advisory",
       "actionLabel": "Right-size EKS",
       "level": 3,
-      "serviceKey": "Amazon Elastic Kubernetes Service"
+      "serviceKey": "Amazon Elastic Kubernetes Service",
+      "implementedInAct": false
     },
     {
       "id": "eks-002",
@@ -1088,7 +1159,8 @@
       "actionType": "advisory",
       "actionLabel": "Enable Karpenter",
       "level": 3,
-      "serviceKey": "Amazon Elastic Kubernetes Service"
+      "serviceKey": "Amazon Elastic Kubernetes Service",
+      "implementedInAct": false
     }
   ]
 }
