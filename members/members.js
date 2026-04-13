@@ -1,6 +1,75 @@
 /* Member Portal v1 - SlashMyBill */
 var API = 'https://l2fd4h481h.execute-api.us-east-1.amazonaws.com';
 
+// ============================================================
+// Paddle Payment Integration
+// ============================================================
+var PADDLE_TOKEN = 'live_fe95f6bba28cac28ba97f8d0076';
+var PADDLE_PRICES = {
+    growth: 'pri_01kp2zns5ph1vpmh71f98wqzcq',
+    scale:  'pri_01kp2zs05ft013aezpprne5wvd',
+    topup5:  'pri_01kp2zv7h558s5289qvaw59whr',
+    topup15: 'pri_01kp2zyxwhppmx3ddqax5qmbcn',
+    topup30: 'pri_01kp30738d2d23fqpfyy2nj7aj'
+};
+// Initialize Paddle
+if (typeof Paddle !== 'undefined') {
+    Paddle.Initialize({
+        token: PADDLE_TOKEN,
+        checkout: {
+            settings: {
+                displayMode: 'overlay',
+                theme: 'light',
+                locale: 'en',
+                successUrl: 'https://slashmycloudbill.com/members/?payment=success',
+                allowLogout: false
+            }
+        },
+        eventCallback: function(ev) {
+            if (ev.name === 'checkout.completed') {
+                var items = (ev.data && ev.data.items) || [];
+                var priceId = items.length > 0 ? items[0].price_id : '';
+                // Determine what was purchased
+                if (priceId === PADDLE_PRICES.growth || priceId === PADDLE_PRICES.scale) {
+                    var plan = priceId === PADDLE_PRICES.growth ? 'Growth' : 'Scale';
+                    notify('Welcome to ' + plan + '! Your plan is being activated...', 'success', 6000);
+                    // Sync with backend
+                    var email = getMemberEmail();
+                    if (email) {
+                        api('POST', '/member/update-tier', {
+                            email: email,
+                            tier: plan.toLowerCase(),
+                            paddleSubscriptionId: ev.data.subscription_id || '',
+                            paddleCustomerId: ev.data.customer_id || ''
+                        }).catch(function(){});
+                    }
+                } else {
+                    // Token top-up
+                    var tokenMap = {};
+                    tokenMap[PADDLE_PRICES.topup5] = 50;
+                    tokenMap[PADDLE_PRICES.topup15] = 200;
+                    tokenMap[PADDLE_PRICES.topup30] = 500;
+                    var addedTokens = tokenMap[priceId] || 0;
+                    if (addedTokens > 0) {
+                        notify(addedTokens + ' tokens added to your account!', 'success', 5000);
+                        var email = getMemberEmail();
+                        if (email) {
+                            api('POST', '/member/add-tokens', {
+                                email: email,
+                                tokens: addedTokens,
+                                paddleTransactionId: ev.data.transaction_id || ''
+                            }).catch(function(){});
+                        }
+                    }
+                }
+                // Close upgrade modal if open
+                var modal = document.getElementById('upgrade-modal');
+                if (modal) modal.remove();
+            }
+        }
+    });
+}
+
 var $ = function(id) { return document.getElementById(id); };
 
 // Views
@@ -198,6 +267,7 @@ function _showUpgradeModal() {
     var tokens = JSON.parse(sessionStorage.getItem('memberTokens') || '{}');
     var remaining = tokens.remaining || 0;
     var total = tokens.total || 100;
+    var email = getMemberEmail() || '';
 
     var tierNames = {free:'Free', growth:'Growth', scale:'Scale'};
     var overlay = document.createElement('div');
@@ -248,36 +318,66 @@ function _showUpgradeModal() {
     html += '<div style="border-top:1px solid #e5e7eb;padding-top:20px;">';
     html += '<h3 style="font-size:1em;margin-bottom:12px;">&#x1FA99; Top Up Tokens</h3>';
     html += '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;">';
-    html += '<button class="smb-topup-btn" data-tokens="50" data-price="5" style="border:1.5px solid #e5e7eb;border-radius:10px;padding:14px;text-align:center;background:#fff;cursor:pointer;"><div style="font-size:1.3em;font-weight:700;">&#x1FA99; 50</div><div style="color:#6b7280;font-size:0.8em;">$5</div></button>';
-    html += '<button class="smb-topup-btn" data-tokens="200" data-price="15" style="border:1.5px solid #3b82f6;border-radius:10px;padding:14px;text-align:center;background:#fff;cursor:pointer;"><div style="font-size:1.3em;font-weight:700;">&#x1FA99; 200</div><div style="color:#3b82f6;font-size:0.8em;font-weight:600;">$15 (25% off)</div></button>';
-    html += '<button class="smb-topup-btn" data-tokens="500" data-price="30" style="border:1.5px solid #e5e7eb;border-radius:10px;padding:14px;text-align:center;background:#fff;cursor:pointer;"><div style="font-size:1.3em;font-weight:700;">&#x1FA99; 500</div><div style="color:#10b981;font-size:0.8em;font-weight:600;">$30 (40% off)</div></button>';
+    html += '<button class="smb-topup-btn" data-tokens="50" data-price="5" data-paddle="topup5" style="border:1.5px solid #e5e7eb;border-radius:10px;padding:14px;text-align:center;background:#fff;cursor:pointer;"><div style="font-size:1.3em;font-weight:700;">&#x1FA99; 50</div><div style="color:#6b7280;font-size:0.8em;">$5</div></button>';
+    html += '<button class="smb-topup-btn" data-tokens="200" data-price="15" data-paddle="topup15" style="border:1.5px solid #3b82f6;border-radius:10px;padding:14px;text-align:center;background:#fff;cursor:pointer;"><div style="font-size:1.3em;font-weight:700;">&#x1FA99; 200</div><div style="color:#3b82f6;font-size:0.8em;font-weight:600;">$15 (25% off)</div></button>';
+    html += '<button class="smb-topup-btn" data-tokens="500" data-price="30" data-paddle="topup30" style="border:1.5px solid #10b981;border-radius:10px;padding:14px;text-align:center;background:#fff;cursor:pointer;"><div style="font-size:1.3em;font-weight:700;">&#x1FA99; 500</div><div style="color:#10b981;font-size:0.8em;font-weight:600;">$30 (40% off)</div></button>';
     html += '</div></div>';
 
-    // Mockup payment notice
-    html += '<div style="margin-top:20px;padding:12px 16px;background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;font-size:0.8em;color:#92400e;text-align:center;">';
-    html += '&#x1F6A7; Payment integration coming soon. Contact <a href="mailto:info@slashmycloudbill.com" style="color:#92400e;font-weight:600;">info@slashmycloudbill.com</a> to upgrade your plan.</div>';
+    // Legal links
+    html += '<div style="margin-top:20px;padding-top:16px;border-top:1px solid #f3f4f6;text-align:center;font-size:0.75em;color:#9ca3af;">';
+    html += 'Payments processed by <a href="https://paddle.com" target="_blank" style="color:#9ca3af;text-decoration:underline;">Paddle</a> &middot; ';
+    html += '<a href="/terms-and-conditions/" target="_blank" style="color:#9ca3af;text-decoration:underline;">Terms</a> &middot; ';
+    html += '<a href="/privacy/" target="_blank" style="color:#9ca3af;text-decoration:underline;">Privacy</a> &middot; ';
+    html += '<a href="/refund/" target="_blank" style="color:#9ca3af;text-decoration:underline;">Refund Policy</a></div>';
 
     html += '</div>';
     overlay.innerHTML = html;
     document.body.appendChild(overlay);
 
-    // Wire up plan buttons
+    // Wire up plan buttons — open Paddle checkout
     overlay.querySelectorAll('.smb-upgrade-plan-btn').forEach(function(btn) {
         btn.onclick = function() {
             var plan = btn.getAttribute('data-plan');
-            alert('Plan upgrade to ' + plan.toUpperCase() + ' — Payment integration coming soon!\\n\\nContact info@slashmycloudbill.com to upgrade.');
+            if (plan === 'free') {
+                // Downgrade — just notify, backend handles via webhook on cancel
+                if (confirm('Downgrade to Free? Your paid features will remain active until the end of your billing period.')) {
+                    notify('To downgrade, cancel your subscription from the Paddle receipt email or contact info@slashmycloudbill.com', 'info', 8000);
+                }
+                return;
+            }
+            var priceId = PADDLE_PRICES[plan];
+            if (!priceId) return;
+            if (typeof Paddle !== 'undefined') {
+                Paddle.Checkout.open({
+                    items: [{priceId: priceId, quantity: 1}],
+                    customer: {email: email},
+                    customData: {memberEmail: email, tier: plan}
+                });
+            } else {
+                notify('Payment system loading... please try again in a moment.', 'error', 4000);
+            }
         };
     });
 
-    // Wire up top-up buttons
+    // Wire up top-up buttons — open Paddle checkout
     overlay.querySelectorAll('.smb-topup-btn').forEach(function(btn) {
         btn.onclick = function() {
-            var tokens = btn.getAttribute('data-tokens');
-            var price = btn.getAttribute('data-price');
-            alert('Top up ' + tokens + ' tokens for $' + price + ' — Payment integration coming soon!\\n\\nContact info@slashmycloudbill.com to purchase tokens.');
+            var paddleKey = btn.getAttribute('data-paddle');
+            var priceId = PADDLE_PRICES[paddleKey];
+            if (!priceId) return;
+            if (typeof Paddle !== 'undefined') {
+                Paddle.Checkout.open({
+                    items: [{priceId: priceId, quantity: 1}],
+                    customer: {email: email},
+                    customData: {memberEmail: email, type: 'topup', tokens: btn.getAttribute('data-tokens')}
+                });
+            } else {
+                notify('Payment system loading... please try again in a moment.', 'error', 4000);
+            }
         };
     });
 }
+
 
 // ============================================================
 // View management

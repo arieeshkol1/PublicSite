@@ -475,6 +475,14 @@ jobs:
           aws s3 sync admin/ s3://${{ env.SMB_BUCKET }}/admin/ \
             --cache-control "no-cache, no-store, must-revalidate"
 
+          # Legal Pages
+          aws s3 sync terms-and-conditions/ s3://${{ env.SMB_BUCKET }}/terms-and-conditions/ \
+            --cache-control "no-cache, no-store, must-revalidate"
+          aws s3 sync privacy/ s3://${{ env.SMB_BUCKET }}/privacy/ \
+            --cache-control "no-cache, no-store, must-revalidate"
+          aws s3 sync refund/ s3://${{ env.SMB_BUCKET }}/refund/ \
+            --cache-control "no-cache, no-store, must-revalidate"
+
           echo "✓ slashmycloudbill.com files deployed"
 
       - name: Invalidate slashmycloudbill.com CloudFront cache

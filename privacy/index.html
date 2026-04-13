@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Privacy Policy — SlashMyCloudBill</title>
+    <link rel="icon" type="image/png" href="/SlashMyBill.png">
+    <link rel="stylesheet" href="/slashMyBill.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        .legal-page{padding:120px 0 80px;background:#f0f2f5;min-height:100vh}
+        .legal-card{max-width:800px;margin:0 auto;background:#fff;border-radius:20px;padding:48px;box-shadow:0 4px 24px rgba(0,0,0,.06)}
+        .legal-card h1{font-size:2rem;font-weight:800;color:#1a1a2e;margin-bottom:8px}
+        .legal-card .legal-updated{font-size:13px;color:#9ca3af;margin-bottom:32px}
+        .legal-card h2{font-size:1.2rem;font-weight:700;color:#1a1a2e;margin:28px 0 10px}
+        .legal-card p,.legal-card li{font-size:14px;color:#374151;line-height:1.8}
+        .legal-card ul{padding-left:20px;margin-bottom:16px}
+        .legal-card a{color:#e8714a;text-decoration:none}
+        .legal-card a:hover{text-decoration:underline}
+        .legal-card table{width:100%;border-collapse:collapse;margin:12px 0 20px;font-size:13px}
+        .legal-card th,.legal-card td{text-align:left;padding:8px 12px;border-bottom:1px solid #e5e7eb}
+        .legal-card th{font-weight:600;color:#1a1a2e;background:#f9fafb}
+    </style>
+</head>
+<body>
+    <nav class="smb-nav">
+        <div class="smb-container smb-nav-inner">
+            <a href="/" class="smb-logo">SlashMyCloudBill</a>
+            <ul class="smb-nav-links">
+                <li><a href="/slashMyBill/">Analyze My Bill</a></li>
+                <li><a href="/members/">Member Portal</a></li>
+            </ul>
+        </div>
+    </nav>
+
+    <section class="legal-page">
+        <div class="smb-container">
+            <div class="legal-card">
+                <h1>Privacy Policy</h1>
+                <p class="legal-updated">Last updated: April 13, 2026</p>
+
+                <h2>1. Who We Are</h2>
+                <p>SlashMyCloudBill is operated by Eshkol AI Cloud and AI Services. This Privacy Policy explains how we collect, use, and protect your personal information when you use our platform at slashmycloudbill.com.</p>
+
+                <h2>2. Information We Collect</h2>
+                <table>
+                    <tr><th>Data Type</th><th>Purpose</th><th>Retention</th></tr>
+                    <tr><td>Name, email, phone, company</td><td>Account creation, communication, billing</td><td>Until account deletion</td></tr>
+                    <tr><td>AWS invoice PDFs</td><td>AI-powered cost analysis</td><td>Deleted within 24 hours</td></tr>
+                    <tr><td>AWS Cost Explorer data</td><td>Dashboard, AI insights, waste detection</td><td>Cached for session only</td></tr>
+                    <tr><td>Payment information</td><td>Subscription and top-up billing</td><td>Handled by Paddle (MoR)</td></tr>
+                    <tr><td>Usage data (tokens, actions)</td><td>Service delivery, billing</td><td>Until account deletion</td></tr>
+                </table>
+
+                <h2>3. How We Use Your Information</h2>
+                <ul>
+                    <li>To provide and improve the SlashMyCloudBill service</li>
+                    <li>To process payments through Paddle.com (our Merchant of Record)</li>
+                    <li>To send service-related communications (analysis results, account alerts)</li>
+                    <li>To provide customer support</li>
+                    <li>To detect and prevent fraud or abuse</li>
+                </ul>
+                <p>We do not sell your personal information to third parties. We do not use your AWS billing data for any purpose other than providing you with analysis and recommendations.</p>
+
+                <h2>4. Payment Processing</h2>
+                <p>All payments are processed by Paddle.com Market Limited, which acts as our Merchant of Record. Paddle collects and processes payment information directly. We do not store credit card numbers or bank details. See <a href="https://www.paddle.com/legal/privacy" target="_blank" rel="noopener">Paddle's Privacy Policy</a> for details on how they handle payment data.</p>
+
+                <h2>5. AWS Account Access</h2>
+                <p>When you connect an AWS account, we access it via a read-only IAM role that you create in your own AWS account. This role is scoped to Cost Explorer and billing APIs only. We use an External ID for additional security. You can revoke access at any time by deleting the CloudFormation stack or IAM role.</p>
+
+                <h2>6. Data Security</h2>
+                <ul>
+                    <li>All data is encrypted in transit (TLS/HTTPS) and at rest (AES-256)</li>
+                    <li>AWS bills are stored temporarily in encrypted S3 buckets and auto-deleted within 24 hours</li>
+                    <li>Authentication is handled via Amazon Cognito with email verification</li>
+                    <li>IAM roles use External IDs to prevent confused deputy attacks</li>
+                </ul>
+
+                <h2>7. Cookies and Analytics</h2>
+                <p>We use Google Analytics (gtag.js) to understand how visitors use our site. This collects anonymized usage data such as pages visited and session duration. No personal billing data is sent to Google Analytics.</p>
+
+                <h2>8. Data Sharing</h2>
+                <p>We share data only with:</p>
+                <ul>
+                    <li><strong>Paddle.com</strong> — payment processing (Merchant of Record)</li>
+                    <li><strong>Amazon Web Services</strong> — infrastructure hosting, AI analysis (Amazon Bedrock)</li>
+                    <li><strong>Google Analytics</strong> — anonymized site usage analytics</li>
+                </ul>
+                <p>We do not share your AWS billing data with any third party.</p>
+
+                <h2>9. Your Rights</h2>
+                <p>You have the right to:</p>
+                <ul>
+                    <li>Access the personal data we hold about you</li>
+                    <li>Request correction of inaccurate data</li>
+                    <li>Request deletion of your account and associated data</li>
+                    <li>Export your data</li>
+                    <li>Withdraw consent for marketing communications</li>
+                </ul>
+                <p>To exercise any of these rights, contact us at <a href="mailto:info@slashmycloudbill.com">info@slashmycloudbill.com</a>.</p>
+
+                <h2>10. Data Retention</h2>
+                <p>We retain account data for as long as your account is active. Uploaded AWS bills are deleted within 24 hours. When you delete your account, all associated data is removed within 30 days.</p>
+
+                <h2>11. Changes to This Policy</h2>
+                <p>We may update this Privacy Policy from time to time. We will notify registered users of material changes via email.</p>
+
+                <h2>12. Contact</h2>
+                <p>For privacy-related questions, contact us at <a href="mailto:info@slashmycloudbill.com">info@slashmycloudbill.com</a>.</p>
+            </div>
+        </div>
+    </section>
+
+    <footer class="smb-footer">
+        <div class="smb-container smb-footer-inner">
+            <div class="smb-footer-brand">
+                <span class="smb-logo">SlashMyCloudBill</span>
+            </div>
+            <div class="smb-footer-links">
+                <div>
+                    <a href="/terms-and-conditions/">Terms & Conditions</a>
+                    <a href="/privacy/">Privacy Policy</a>
+                    <a href="/refund/">Refund Policy</a>
+                </div>
+            </div>
+        </div>
+        <div class="smb-footer-bottom">
+            <div class="smb-container">
+                <p>&copy; 2026 SlashMyCloudBill. All rights reserved.</p>
+            </div>
+        </div>
+    </footer>
+</body>
+</html>
