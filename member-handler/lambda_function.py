@@ -103,6 +103,8 @@ def lambda_handler(event, context):
         'POST /members/actions/browse-bucket': handle_browse_bucket,
         'POST /member/add-tokens': handle_add_tokens,
         'POST /member/update-tier': handle_update_tier,
+        'POST /members/tags/scan': handle_tag_scan,
+        'POST /members/tags/apply': handle_tag_apply,
     }
 
     handler = routes.get(route_key)
@@ -1094,6 +1096,12 @@ def handle_generate_template(event):
                                             'ec2:DeleteSnapshot',
                                             'rds:DeleteDBInstance',
                                             'rds:DescribeDBInstances',
+                                            # Resource tagging (bulk tag management)
+                                            'tag:GetResources',
+                                            'tag:GetTagKeys',
+                                            'tag:GetTagValues',
+                                            'tag:TagResources',
+                                            'tag:UntagResources',
                                         ],
                                         'Resource': '*'
                                     }
@@ -6089,6 +6097,224 @@ def create_error_response(status_code, error_type, message, extra=None):
         'headers': cors_headers(),
         'body': json.dumps(body),
     }
+
+
+# ============================================================
+# Tag Management Handlers
+# ============================================================
+
+def handle_tag_scan(event):
+    """Scan resources for missing tags using Resource Groups Tagging API."""
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+    member_email = auth['sub']
+
+    try:
+        body = json.loads(event.get('body', '{}'))
+    except (json.JSONDecodeError, TypeError):
+        body = {}
+
+    account_ids = body.get('accountIds', [])
+    required_tags = body.get('requiredTags', ['Environment', 'Owner', 'CostCenter', 'Application'])
+
+    # Consume tokens
+    tier = _get_member_tier(member_email)
+    credit_check = _check_and_consume_credits(member_email, tier, SCAN_CREDIT_COST)
+    if credit_check:
+        return credit_check
+
+    external_id = hashlib.sha256(member_email.encode('utf-8')).hexdigest()
+    sts_client = boto3.client('sts')
+
+    accounts_table = dynamodb.Table(ACCOUNTS_TABLE_NAME)
+    try:
+        result = accounts_table.query(
+            KeyConditionExpression=boto3.dynamodb.conditions.Key('memberEmail').eq(member_email)
+        )
+        accounts = [a for a in result.get('Items', []) if a.get('connectionStatus') == 'connected']
+    except ClientError:
+        accounts = []
+
+    if account_ids:
+        accounts = [a for a in accounts if a['accountId'] in account_ids]
+
+    all_resources = []
+    all_tag_keys = set()
+    summary = {'total': 0, 'fullyTagged': 0, 'partiallyTagged': 0, 'untagged': 0}
+
+    for acct in accounts[:5]:
+        acct_id = acct['accountId']
+        try:
+            assume_resp = sts_client.assume_role(
+                RoleArn=f'arn:aws:iam::{acct_id}:role/SlashMyBill-{acct_id}',
+                RoleSessionName='SlashMyBillTagScan', ExternalId=external_id,
+            )
+            creds = assume_resp['Credentials']
+            tagging = boto3.client('resourcegroupstaggingapi',
+                aws_access_key_id=creds['AccessKeyId'],
+                aws_secret_access_key=creds['SecretAccessKey'],
+                aws_session_token=creds['SessionToken'],
+                region_name='us-east-1')
+
+            # Get all tag keys in use
+            try:
+                tk_resp = tagging.get_tag_keys()
+                for k in tk_resp.get('TagKeys', []):
+                    if not k.startswith('aws:'):
+                        all_tag_keys.add(k)
+            except Exception:
+                pass
+
+            # Scan resources — focus on costly resource types
+            resource_types = [
+                'ec2:instance', 'ec2:volume', 'rds:db', 'lambda:function',
+                's3', 'elasticloadbalancing:loadbalancer',
+                'elasticloadbalancing:loadbalancer/app',
+                'elasticloadbalancing:loadbalancer/net',
+            ]
+
+            paginator = tagging.get_paginator('get_resources')
+            for rt in resource_types:
+                try:
+                    for page in paginator.paginate(ResourceTypeFilters=[rt], ResourcesPerPage=100):
+                        for res in page.get('ResourceTagMappingList', []):
+                            arn = res.get('ResourceARN', '')
+                            tags = {t['Key']: t['Value'] for t in res.get('Tags', []) if not t['Key'].startswith('aws:')}
+                            missing = [k for k in required_tags if k not in tags]
+
+                            summary['total'] += 1
+                            if not missing:
+                                summary['fullyTagged'] += 1
+                            elif len(missing) < len(required_tags):
+                                summary['partiallyTagged'] += 1
+                            else:
+                                summary['untagged'] += 1
+
+                            # Only return resources with missing tags (limit to 200)
+                            if missing and len(all_resources) < 200:
+                                # Extract friendly name
+                                parts = arn.split(':')
+                                res_type = rt.split(':')[0].upper() if ':' in rt else rt.upper()
+                                res_id = arn.split('/')[-1] if '/' in arn else arn.split(':')[-1]
+                                name = tags.get('Name', res_id)
+
+                                all_resources.append({
+                                    'arn': arn,
+                                    'resourceType': res_type,
+                                    'resourceId': res_id,
+                                    'name': name,
+                                    'account': acct_id,
+                                    'existingTags': tags,
+                                    'missingTags': missing,
+                                })
+                except Exception as e:
+                    logger.warning(f"Tag scan for {rt} in {acct_id}: {e}")
+
+        except Exception as e:
+            logger.warning(f"Tag scan failed for {acct_id}: {e}")
+
+    coverage = round(summary['fullyTagged'] / summary['total'] * 100, 1) if summary['total'] > 0 else 0
+
+    return create_response(200, {
+        'resources': all_resources,
+        'summary': summary,
+        'coverage': coverage,
+        'requiredTags': required_tags,
+        'discoveredTagKeys': sorted(list(all_tag_keys)),
+    })
+
+
+def handle_tag_apply(event):
+    """Apply tags to selected resources in bulk."""
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+    member_email = auth['sub']
+
+    try:
+        body = json.loads(event.get('body', '{}'))
+    except (json.JSONDecodeError, TypeError):
+        return create_error_response(400, 'InvalidRequest', 'Invalid request body')
+
+    arns = body.get('arns', [])
+    tags = body.get('tags', {})  # {key: value}
+
+    if not arns or not tags:
+        return create_error_response(400, 'InvalidRequest', 'arns and tags are required')
+    if len(arns) > 100:
+        return create_error_response(400, 'InvalidRequest', 'Maximum 100 resources per batch')
+    if len(tags) > 10:
+        return create_error_response(400, 'InvalidRequest', 'Maximum 10 tags per batch')
+
+    # Validate tag keys/values
+    for k, v in tags.items():
+        if not k or len(k) > 128 or len(str(v)) > 256:
+            return create_error_response(400, 'InvalidRequest', f'Invalid tag key/value: {k}')
+        if k.startswith('aws:'):
+            return create_error_response(400, 'InvalidRequest', 'Cannot set aws: prefixed tags')
+
+    # Consume tokens
+    tier = _get_member_tier(member_email)
+    credit_check = _check_and_consume_credits(member_email, tier, ACTIVITY_CREDIT_COST)
+    if credit_check:
+        return credit_check
+
+    external_id = hashlib.sha256(member_email.encode('utf-8')).hexdigest()
+    sts_client = boto3.client('sts')
+
+    # Group ARNs by account
+    arns_by_account = {}
+    for arn in arns:
+        parts = arn.split(':')
+        if len(parts) >= 5:
+            acct_id = parts[4]
+            arns_by_account.setdefault(acct_id, []).append(arn)
+
+    results = {'tagged': 0, 'failed': 0, 'errors': []}
+
+    for acct_id, acct_arns in arns_by_account.items():
+        try:
+            assume_resp = sts_client.assume_role(
+                RoleArn=f'arn:aws:iam::{acct_id}:role/SlashMyBill-{acct_id}',
+                RoleSessionName='SlashMyBillTagApply', ExternalId=external_id,
+            )
+            creds = assume_resp['Credentials']
+            tagging = boto3.client('resourcegroupstaggingapi',
+                aws_access_key_id=creds['AccessKeyId'],
+                aws_secret_access_key=creds['SecretAccessKey'],
+                aws_session_token=creds['SessionToken'],
+                region_name='us-east-1')
+
+            # Tag in batches of 20 (API limit)
+            for i in range(0, len(acct_arns), 20):
+                batch = acct_arns[i:i+20]
+                try:
+                    resp = tagging.tag_resources(
+                        ResourceARNList=batch,
+                        Tags=tags,
+                    )
+                    failed = resp.get('FailedResourcesMap', {})
+                    results['tagged'] += len(batch) - len(failed)
+                    results['failed'] += len(failed)
+                    for arn, err in failed.items():
+                        results['errors'].append(f"{arn}: {err.get('ErrorMessage', 'Unknown error')}")
+                except Exception as e:
+                    results['failed'] += len(batch)
+                    results['errors'].append(f"Batch failed for {acct_id}: {str(e)}")
+
+        except Exception as e:
+            results['failed'] += len(acct_arns)
+            results['errors'].append(f"Cannot access {acct_id}: {str(e)}")
+
+    logger.info(f"Tag apply by {member_email}: {results['tagged']} tagged, {results['failed']} failed")
+
+    return create_response(200, {
+        'message': f"{results['tagged']} resources tagged successfully",
+        'tagged': results['tagged'],
+        'failed': results['failed'],
+        'errors': results['errors'][:10],
+    })
 
 
 # ============================================================

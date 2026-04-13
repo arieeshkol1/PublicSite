@@ -1304,6 +1304,20 @@ Resources:
       RouteKey: 'POST /member/add-tokens'
       Target: !Sub 'integrations/${MemberIntegration}'
 
+  MemberTagScanRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'POST /members/tags/scan'
+      Target: !Sub 'integrations/${MemberIntegration}'
+
+  MemberTagApplyRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'POST /members/tags/apply'
+      Target: !Sub 'integrations/${MemberIntegration}'
+
   MemberUpdateTierRoute:
     Type: AWS::ApiGatewayV2::Route
     Properties:

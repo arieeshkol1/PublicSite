@@ -4652,3 +4652,215 @@ async function _runScanFromChat() {
         loginCard.insertBefore(banner, loginCard.firstChild);
     }
 })();
+
+
+// ============================================================
+// Tag Manager (Act Tab)
+// ============================================================
+var _tagScanResults = [];
+var _tagSelectedArns = new Set();
+
+(function initTagManager() {
+    var tagBtn = document.getElementById('act-tag-btn');
+    if (!tagBtn) return;
+
+    tagBtn.onclick = async function() {
+        _syncActSelection();
+        var accountIds = getActSelectedAccountIds();
+        await _runTagScan(accountIds);
+    };
+
+    var searchInput = document.getElementById('act-tag-search');
+    if (searchInput) searchInput.oninput = function() { _renderTagList(); };
+
+    var selectAllBtn = document.getElementById('act-tag-select-all');
+    if (selectAllBtn) selectAllBtn.onclick = function() {
+        var visible = _getVisibleTagResources();
+        var allSelected = visible.every(function(r) { return _tagSelectedArns.has(r.arn); });
+        visible.forEach(function(r) {
+            if (allSelected) _tagSelectedArns.delete(r.arn);
+            else _tagSelectedArns.add(r.arn);
+        });
+        _renderTagList();
+        _updateTagApplyBtn();
+    };
+
+    var applyBtn = document.getElementById('act-tag-apply-btn');
+    if (applyBtn) applyBtn.onclick = function() { _showTagApplyModal(); };
+
+    var addRowBtn = document.getElementById('act-tag-add-row');
+    if (addRowBtn) addRowBtn.onclick = function() { _addTagInputRow(); };
+
+    var confirmBtn = document.getElementById('act-tag-confirm-btn');
+    if (confirmBtn) confirmBtn.onclick = async function() { await _applyTags(); };
+})();
+
+async function _runTagScan(accountIds) {
+    var panel = document.getElementById('act-tag-panel');
+    var cardsGrid = document.getElementById('act-cards-grid');
+    var empty = document.getElementById('act-empty');
+    var status = document.getElementById('act-scan-status');
+    var totalSavings = document.getElementById('act-total-savings');
+
+    // Hide waste cards, show tag panel
+    if (cardsGrid) cardsGrid.style.display = 'none';
+    if (empty) empty.style.display = 'none';
+    if (totalSavings) totalSavings.style.display = 'none';
+    if (panel) panel.style.display = 'block';
+    if (status) status.textContent = 'Scanning for untagged resources...';
+
+    try {
+        var data = await api('POST', '/members/tags/scan', {
+            accountIds: accountIds,
+            requiredTags: ['Environment', 'Owner', 'CostCenter', 'Application']
+        });
+        _tagScanResults = data.resources || [];
+        _tagSelectedArns = new Set();
+        if (status) status.textContent = 'Tag scan complete — ' + _tagScanResults.length + ' resources need tagging';
+        _renderTagStats(data);
+        _renderTagList();
+    } catch (e) {
+        if (status) status.textContent = 'Tag scan failed: ' + (e.message || 'Unknown error');
+        notify('Tag scan failed: ' + (e.message || ''), 'error');
+    }
+}
+
+function _renderTagStats(data) {
+    var el = document.getElementById('act-tag-stats');
+    if (!el) return;
+    var s = data.summary || {};
+    var cov = data.coverage || 0;
+    var covColor = cov >= 80 ? '#10b981' : cov >= 50 ? '#f59e0b' : '#ef4444';
+    el.innerHTML = '<div style="background:#161b22;border:1px solid #30363d;border-radius:8px;padding:10px 14px;flex:1;min-width:100px;">'
+        + '<div style="color:#8b949e;font-size:0.75em;">Tag Coverage</div>'
+        + '<div style="color:' + covColor + ';font-size:1.3em;font-weight:700;">' + cov + '%</div></div>'
+        + '<div style="background:#161b22;border:1px solid #30363d;border-radius:8px;padding:10px 14px;flex:1;min-width:100px;">'
+        + '<div style="color:#8b949e;font-size:0.75em;">Total Resources</div>'
+        + '<div style="color:#c9d1d9;font-size:1.3em;font-weight:700;">' + (s.total || 0) + '</div></div>'
+        + '<div style="background:#161b22;border:1px solid #30363d;border-radius:8px;padding:10px 14px;flex:1;min-width:100px;">'
+        + '<div style="color:#8b949e;font-size:0.75em;">Fully Tagged</div>'
+        + '<div style="color:#10b981;font-size:1.3em;font-weight:700;">' + (s.fullyTagged || 0) + '</div></div>'
+        + '<div style="background:#161b22;border:1px solid #30363d;border-radius:8px;padding:10px 14px;flex:1;min-width:100px;">'
+        + '<div style="color:#8b949e;font-size:0.75em;">Need Tagging</div>'
+        + '<div style="color:#ef4444;font-size:1.3em;font-weight:700;">' + ((s.partiallyTagged || 0) + (s.untagged || 0)) + '</div></div>';
+}
+
+function _getVisibleTagResources() {
+    var q = (document.getElementById('act-tag-search') || {}).value || '';
+    q = q.toLowerCase().trim();
+    if (!q) return _tagScanResults;
+    return _tagScanResults.filter(function(r) {
+        return (r.name || '').toLowerCase().indexOf(q) !== -1
+            || (r.resourceType || '').toLowerCase().indexOf(q) !== -1
+            || (r.arn || '').toLowerCase().indexOf(q) !== -1;
+    });
+}
+
+function _renderTagList() {
+    var list = document.getElementById('act-tag-list');
+    if (!list) return;
+    var visible = _getVisibleTagResources();
+    if (visible.length === 0) {
+        list.innerHTML = '<div style="text-align:center;padding:40px;color:#6b7280;">No untagged resources found</div>';
+        return;
+    }
+    var html = '<table style="width:100%;border-collapse:collapse;font-size:0.82em;">';
+    html += '<tr style="border-bottom:1px solid #30363d;"><th style="padding:6px 8px;text-align:left;color:#8b949e;width:30px;"></th><th style="padding:6px 8px;text-align:left;color:#8b949e;">Resource</th><th style="padding:6px 8px;text-align:left;color:#8b949e;">Type</th><th style="padding:6px 8px;text-align:left;color:#8b949e;">Account</th><th style="padding:6px 8px;text-align:left;color:#8b949e;">Missing Tags</th></tr>';
+    visible.forEach(function(r) {
+        var checked = _tagSelectedArns.has(r.arn) ? ' checked' : '';
+        var missingHtml = (r.missingTags || []).map(function(t) {
+            return '<span style="background:#7f1d1d;color:#fca5a5;padding:1px 6px;border-radius:3px;font-size:0.85em;margin-right:3px;">' + t + '</span>';
+        }).join('');
+        html += '<tr style="border-bottom:1px solid #21262d;">'
+            + '<td style="padding:6px 8px;"><input type="checkbox" class="tag-chk" data-arn="' + r.arn + '"' + checked + '></td>'
+            + '<td style="padding:6px 8px;color:#c9d1d9;" title="' + r.arn + '">' + (r.name || r.resourceId) + '</td>'
+            + '<td style="padding:6px 8px;color:#8b949e;">' + (r.resourceType || '') + '</td>'
+            + '<td style="padding:6px 8px;color:#8b949e;font-size:0.9em;">' + (r.account || '').slice(-4) + '</td>'
+            + '<td style="padding:6px 8px;">' + missingHtml + '</td></tr>';
+    });
+    html += '</table>';
+    list.innerHTML = html;
+
+    // Wire checkboxes
+    list.querySelectorAll('.tag-chk').forEach(function(chk) {
+        chk.onchange = function() {
+            if (chk.checked) _tagSelectedArns.add(chk.dataset.arn);
+            else _tagSelectedArns.delete(chk.dataset.arn);
+            _updateTagApplyBtn();
+        };
+    });
+    _updateTagApplyBtn();
+}
+
+function _updateTagApplyBtn() {
+    var btn = document.getElementById('act-tag-apply-btn');
+    if (!btn) return;
+    var count = _tagSelectedArns.size;
+    btn.textContent = 'Apply Tags (' + count + ')';
+    btn.disabled = count === 0;
+}
+
+function _showTagApplyModal() {
+    var modal = document.getElementById('act-tag-modal');
+    var countEl = document.getElementById('act-tag-count');
+    var inputs = document.getElementById('act-tag-inputs');
+    var statusEl = document.getElementById('act-tag-apply-status');
+    if (!modal) return;
+    if (countEl) countEl.textContent = _tagSelectedArns.size;
+    if (statusEl) statusEl.textContent = '';
+    if (inputs) inputs.innerHTML = '';
+    _addTagInputRow();
+    modal.hidden = false;
+}
+
+function _addTagInputRow() {
+    var inputs = document.getElementById('act-tag-inputs');
+    if (!inputs) return;
+    var row = document.createElement('div');
+    row.style.cssText = 'display:flex;gap:8px;margin-bottom:8px;';
+    row.innerHTML = '<input type="text" placeholder="Tag Key (e.g. Environment)" style="flex:1;padding:6px 10px;border:1px solid #30363d;border-radius:6px;background:#0d1117;color:#c9d1d9;font-size:0.85em;" class="tag-key-input">'
+        + '<input type="text" placeholder="Tag Value (e.g. production)" style="flex:1;padding:6px 10px;border:1px solid #30363d;border-radius:6px;background:#0d1117;color:#c9d1d9;font-size:0.85em;" class="tag-val-input">'
+        + '<button onclick="this.parentElement.remove();" style="background:none;border:none;color:#ef4444;cursor:pointer;font-size:1.2em;">✕</button>';
+    inputs.appendChild(row);
+}
+
+async function _applyTags() {
+    var inputs = document.getElementById('act-tag-inputs');
+    var statusEl = document.getElementById('act-tag-apply-status');
+    var confirmBtn = document.getElementById('act-tag-confirm-btn');
+    if (!inputs) return;
+
+    // Collect tags
+    var tags = {};
+    var keys = inputs.querySelectorAll('.tag-key-input');
+    var vals = inputs.querySelectorAll('.tag-val-input');
+    for (var i = 0; i < keys.length; i++) {
+        var k = (keys[i].value || '').trim();
+        var v = (vals[i].value || '').trim();
+        if (k && v) tags[k] = v;
+    }
+    if (Object.keys(tags).length === 0) {
+        if (statusEl) { statusEl.style.color = '#ef4444'; statusEl.textContent = 'Enter at least one tag key and value'; }
+        return;
+    }
+
+    var arns = Array.from(_tagSelectedArns);
+    if (confirmBtn) { confirmBtn.disabled = true; confirmBtn.textContent = 'Applying...'; }
+    if (statusEl) { statusEl.style.color = '#8b949e'; statusEl.textContent = 'Applying tags to ' + arns.length + ' resources...'; }
+
+    try {
+        var data = await api('POST', '/members/tags/apply', { arns: arns, tags: tags });
+        if (statusEl) { statusEl.style.color = '#10b981'; statusEl.textContent = data.message || 'Tags applied!'; }
+        notify(data.message || 'Tags applied!', 'success');
+        if (confirmBtn) confirmBtn.textContent = 'Done!';
+        // Refresh scan after a delay
+        setTimeout(function() {
+            document.getElementById('act-tag-modal').hidden = true;
+            var accountIds = getActSelectedAccountIds();
+            _runTagScan(accountIds);
+        }, 1500);
+    } catch (e) {
+        if (statusEl) { statusEl.style.color = '#ef4444'; statusEl.textContent = 'Failed: ' + (e.message || 'Unknown error'); }
+        if (confirmBtn) { confirmBtn.disabled = false; confirmBtn.textContent = '🏷️ Apply Tags'; }
+    }
+}
