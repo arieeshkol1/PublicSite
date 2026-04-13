@@ -4863,13 +4863,16 @@ async function _applyTags() {
         var data = await api('POST', '/members/tags/apply', { arns: arns, tags: tags });
         if (statusEl) { statusEl.style.color = '#10b981'; statusEl.textContent = data.message || 'Tags applied!'; }
         notify(data.message || 'Tags applied!', 'success');
-        if (confirmBtn) { confirmBtn.disabled = false; confirmBtn.textContent = '✓ Done!'; }
-        // Refresh scan after a delay
-        setTimeout(function() {
-            document.getElementById('act-tag-modal').hidden = true;
-            var accountIds = getActSelectedAccountIds();
-            _runTagScan(accountIds);
-        }, 1500);
+        if (confirmBtn) { confirmBtn.disabled = false; confirmBtn.textContent = '✓ Done — Close'; confirmBtn.style.background = '#10b981'; confirmBtn.style.borderColor = '#10b981'; confirmBtn.style.opacity = '1';
+            confirmBtn.onclick = function() {
+                document.getElementById('act-tag-modal').hidden = true;
+                confirmBtn.style.background = '#6366f1'; confirmBtn.style.borderColor = '#6366f1';
+                confirmBtn.textContent = '🏷️ Apply Tags';
+                confirmBtn.onclick = async function() { await _applyTags(); };
+                _syncActSelection();
+                _runTagScan(getActSelectedAccountIds());
+            };
+        }
     } catch (e) {
         var errMsg = e.message || 'Unknown error';
         if (errMsg.indexOf('AccessDenied') !== -1 || errMsg.indexOf('not authorized') !== -1) {
