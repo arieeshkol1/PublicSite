@@ -4863,7 +4863,7 @@ async function _applyTags() {
         var data = await api('POST', '/members/tags/apply', { arns: arns, tags: tags });
         if (statusEl) { statusEl.style.color = '#10b981'; statusEl.textContent = data.message || 'Tags applied!'; }
         notify(data.message || 'Tags applied!', 'success');
-        if (confirmBtn) confirmBtn.textContent = 'Done!';
+        if (confirmBtn) { confirmBtn.disabled = false; confirmBtn.textContent = '✓ Done!'; }
         // Refresh scan after a delay
         setTimeout(function() {
             document.getElementById('act-tag-modal').hidden = true;
@@ -4871,7 +4871,11 @@ async function _applyTags() {
             _runTagScan(accountIds);
         }, 1500);
     } catch (e) {
-        if (statusEl) { statusEl.style.color = '#ef4444'; statusEl.textContent = 'Failed: ' + (e.message || 'Unknown error'); }
+        var errMsg = e.message || 'Unknown error';
+        if (errMsg.indexOf('AccessDenied') !== -1 || errMsg.indexOf('not authorized') !== -1) {
+            errMsg = 'Permission denied. Please update the CloudFormation template in your AWS account (Configure tab → Download Template → Update Stack).';
+        }
+        if (statusEl) { statusEl.style.color = '#ef4444'; statusEl.textContent = errMsg; }
         if (confirmBtn) { confirmBtn.disabled = false; confirmBtn.textContent = '🏷️ Apply Tags'; }
     }
 }
