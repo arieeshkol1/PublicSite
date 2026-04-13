@@ -317,36 +317,33 @@ jobs:
           done
           echo "✓ Website deployed"
 
-      - name: Deploy Admin frontend
+      - name: Deploy redirect pages to eshkolai (slashMyBill/members/admin → slashmycloudbill.com)
         run: |
-          aws s3 cp admin/index.html s3://${{ env.S3_BUCKET }}/admin/index.html \
-            --cache-control "no-cache, no-store, must-revalidate" --content-type "text/html"
-          aws s3 cp admin/admin.css s3://${{ env.S3_BUCKET }}/admin/admin.css \
-            --cache-control "no-cache, no-store, must-revalidate" --content-type "text/css"
-          aws s3 cp admin/admin.js s3://${{ env.S3_BUCKET }}/admin/admin.js \
-            --cache-control "no-cache, no-store, must-revalidate" --content-type "application/javascript"
-          echo "✓ Admin frontend deployed"
+          # Create redirect HTML pages
+          for path_target in "slashMyBill/:https://slashmycloudbill.com/" "members/:https://slashmycloudbill.com/members/" "admin/:https://slashmycloudbill.com/admin/"; do
+            IFS=':' read -r path target <<< "$path_target"
+            target="${path_target#*:}"
+            path="${path_target%%:*}"
+            echo "<!DOCTYPE html><html><head><meta http-equiv=\"refresh\" content=\"0;url=${target}\"><title>Redirecting...</title></head><body><p>Moved to <a href=\"${target}\">${target}</a></p></body></html>" > /tmp/redirect.html
+            aws s3 cp /tmp/redirect.html "s3://${{ env.S3_BUCKET }}/${path}index.html" \
+              --cache-control "no-cache" --content-type "text/html"
+            aws s3 cp /tmp/redirect.html "s3://eshkolai.com/${path}index.html" \
+              --cache-control "no-cache" --content-type "text/html"
+          done
+          # Remove old slashMyBill/members/admin JS/CSS from eshkolai buckets (keep only redirect)
+          for prefix in slashMyBill/ members/ admin/; do
+            aws s3 rm "s3://${{ env.S3_BUCKET }}/${prefix}" --recursive --exclude "index.html" || true
+            aws s3 rm "s3://eshkolai.com/${prefix}" --recursive --exclude "index.html" || true
+          done
+          echo "✓ Redirect pages deployed, old files removed"
 
-      - name: Deploy Member Portal frontend
+      - name: Sync eshkolai.com bucket (main site only)
         run: |
-          API_URL="${{ steps.api-url.outputs.api_endpoint }}"
-          echo "Injecting API URL: $API_URL"
-          sed -i "s|https://YOUR_API_GATEWAY_URL|${API_URL}|g" members/members.js
-          aws s3 cp members/index.html s3://${{ env.S3_BUCKET }}/members/index.html \
-            --cache-control "no-cache, no-store, must-revalidate" --content-type "text/html"
-          aws s3 cp members/members.css s3://${{ env.S3_BUCKET }}/members/members.css \
-            --cache-control "no-cache, no-store, must-revalidate" --content-type "text/css"
-          aws s3 cp members/members.js s3://${{ env.S3_BUCKET }}/members/members.js \
-            --cache-control "no-cache, no-store, must-revalidate" --content-type "application/javascript"
-          aws s3 cp members/help.js s3://${{ env.S3_BUCKET }}/members/help.js \
-            --cache-control "no-cache, no-store, must-revalidate" --content-type "application/javascript"
-          echo "✓ Member Portal frontend deployed"
-
-      - name: Sync to eshkolai.com bucket
-        run: |
-          echo "Syncing to eshkolai.com bucket..."
-          aws s3 sync s3://${{ env.S3_BUCKET }} s3://eshkolai.com --delete
-          echo "✓ eshkolai.com bucket synced"
+          echo "Syncing main site to eshkolai.com..."
+          # Only sync root-level files (HTML, CSS, JS, images) — not slashMyBill/members/admin
+          aws s3 sync s3://${{ env.S3_BUCKET }} s3://eshkolai.com \
+            --exclude "slashMyBill/*" --exclude "members/*" --exclude "admin/*"
+          echo "✓ eshkolai.com synced"
 
       - name: Deploy slashmycloudbill.com site stack
         run: |
