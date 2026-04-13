@@ -587,7 +587,7 @@ SCAN_CREDIT_COST = 10  # Each scan costs 10 tokens
 AI_QUERY_CREDIT_COST = 2  # Each AI question costs 2 tokens
 ACTIVITY_CREDIT_COST = 50  # Each cleanup action costs 50 tokens
 
-TIER_ACCOUNT_LIMITS = {'free': 1, 'growth': 20, 'scale': 20}
+TIER_ACCOUNT_LIMITS = {'free': 1, 'growth': 5, 'scale': 20}
 
 
 def _check_and_consume_credits(member_email: str, tier: str, cost: int) -> dict:
@@ -698,7 +698,7 @@ def handle_add_account(event):
         if current_count >= limit:
             if tier == 'free':
                 return create_error_response(403, 'TierLimitReached',
-                    f'Your Free plan allows 1 AWS account. Upgrade to Growth ($50/mo) to connect up to 20 accounts.',
+                    f'Your Free plan allows 1 AWS account. Upgrade to Growth ($50/mo) to connect up to 5 accounts.',
                     extra={'currentTier': tier, 'limit': limit, 'currentCount': current_count}
                 )
             else:

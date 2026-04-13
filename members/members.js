@@ -303,7 +303,7 @@ function _showUpgradeModal() {
     html += '<div style="font-weight:700;font-size:1.1em;">Growth</div>';
     html += '<div style="font-size:2em;font-weight:800;margin:8px 0;">$50</div>';
     html += '<div style="color:#6b7280;font-size:0.8em;">300 tokens/mo</div>';
-    html += '<div style="color:#6b7280;font-size:0.8em;">20 accounts &middot; All features</div>';
+    html += '<div style="color:#6b7280;font-size:0.8em;">5 accounts &middot; All features</div>';
     html += currentTier === 'growth' ? '<div style="margin-top:12px;color:#10b981;font-weight:600;font-size:0.85em;">&#10003; Current Plan</div>' : '<button class="smb-upgrade-plan-btn" data-plan="growth" style="margin-top:12px;background:linear-gradient(135deg,#e8714a,#d4603a);color:#fff;border:none;border-radius:8px;padding:8px 16px;font-size:0.8em;font-weight:600;cursor:pointer;width:100%;">Upgrade to Growth</button>';
     html += '</div>';
 

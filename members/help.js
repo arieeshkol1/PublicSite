@@ -45,7 +45,7 @@ var HELP_CONTENT = {
           </ul>
           <h4>Growth Plan — $50/month</h4>
           <ul>
-            <li><strong>Up to 20 AWS Accounts</strong></li>
+            <li><strong>Up to 5 AWS Accounts</strong></li>
             <li>Everything in Free, plus:</li>
             <li>🪙 300 tokens/month</li>
             <li>1-click automated cleanup (Actions tab)</li>
