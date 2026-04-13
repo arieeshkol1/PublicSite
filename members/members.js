@@ -347,7 +347,7 @@ function _showUpgradeModal() {
                         locale: 'en',
                         successUrl: 'https://slashmycloudbill.com/members/?payment=success'
                     },
-                    customData: {memberEmail: email, tier: plan}
+                    customData: JSON.stringify({memberEmail: email, tier: plan})
                 });
             } else {
                 notify('Payment system loading... please try again in a moment.', 'error', 4000);
@@ -370,7 +370,7 @@ function _showUpgradeModal() {
                         locale: 'en',
                         successUrl: 'https://slashmycloudbill.com/members/?payment=success'
                     },
-                    customData: {memberEmail: email, type: 'topup', tokens: btn.getAttribute('data-tokens')}
+                    customData: JSON.stringify({memberEmail: email, type: 'topup', tokens: btn.getAttribute('data-tokens')})
                 });
             } else {
                 notify('Payment system loading... please try again in a moment.', 'error', 4000);
