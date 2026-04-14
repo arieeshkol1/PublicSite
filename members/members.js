@@ -2722,7 +2722,7 @@ function _kpiCard(label, value, color) {
 // Widget layout management
 var DASH_WIDGET_DEFS = [
     {id:'dash-treemap', title:'Cost by Service', height:300, q:'Show me my cost breakdown by service'},
-    {id:'dash-daily', title:'Cost Trend', height:250, q:'Are there any cost anomalies?', extraTitle:' <span id="dash-trend-toggle" style="font-size:0.7em;margin-left:8px;"><button class="btn btn-outline btn-sm" style="padding:1px 6px;font-size:0.8em;" onclick="_toggleTrendView(\'daily\')">Daily</button> <button class="btn btn-outline btn-sm" style="padding:1px 6px;font-size:0.8em;background:#6366f1;color:#fff;border-color:#6366f1;" onclick="_toggleTrendView(\'hourly\')">Hourly</button></span>'},
+    {id:'dash-daily', title:'Cost Trend', height:250, q:'Are there any cost anomalies?', extraTitle:' <span id="dash-trend-toggle" style="font-size:0.7em;margin-left:8px;"><button class="btn btn-outline btn-sm" style="padding:1px 6px;font-size:0.8em;background:#6366f1;color:#fff;border-color:#6366f1;" onclick="_toggleTrendView(\'daily\')">Daily</button> <button class="btn btn-outline btn-sm" style="padding:1px 6px;font-size:0.8em;" onclick="_toggleTrendView(\'hourly\')">Hourly</button></span>'},
     {id:'dash-waste', title:'Waste Detection', height:250, q:'What services do I not need? Show me all waste.'},
     {id:'dash-monthly', title:'Monthly Cost by Service', height:320, q:'Compare my costs over the last 3 months'},
     {id:'dash-unit-economics', title:'Unit Cost Trend', height:280, q:'How is my cost per unit trending?', extraTitle:' <button class="btn btn-outline btn-sm" style="font-size:0.7em;margin-left:8px;padding:2px 6px;" onclick="showBusinessMetricsModal();">Add Metrics</button>'},
@@ -3126,9 +3126,9 @@ function _renderHourlyTrend(hourly) {
     var el = $('dash-daily'); if (!el || !window.echarts) return;
     if (!hourly.length) { el.innerHTML = '<div style="color:#6b7280;font-size:0.85em;padding:20px;">No hourly usage data detected in the last 24 hours.</div>'; return; }
     var chart = echarts.init(el, null);
-    // Detect anomalies: > 3x the average hourly cost
     var costs = hourly.map(function(h) { return h.cost; });
     var avg = costs.reduce(function(a,b){return a+b;},0) / costs.length;
+    var maxCost = Math.max.apply(null, costs);
     chart.setOption({
         tooltip: { trigger: 'axis', formatter: function(ps) {
             var h = ps[0]; var cost = h.value;
@@ -3136,12 +3136,27 @@ function _renderHourlyTrend(hourly) {
             if (cost > avg * 3) tip += ' \u26a0\ufe0f SPIKE (' + Math.round((cost/avg-1)*100) + '% above avg)';
             return tip;
         }},
-        xAxis: { type: 'category', data: hourly.map(function(h) { return h.hour.substring(11, 16) || h.hour.substring(5); }), axisLabel: { color: '#6b7280', fontSize: 8, rotate: 45 } },
+        xAxis: { type: 'category', data: hourly.map(function(h) { return h.hour.substring(11, 16) || h.hour.substring(5); }), axisLabel: { color: '#6b7280', fontSize: 8, rotate: 45 }, boundaryGap: false },
         yAxis: { type: 'value', axisLabel: { color: '#6b7280', formatter: '${value}' }, splitLine: { lineStyle: { color: '#e5e7eb' } } },
-        series: [{ type: 'bar', data: hourly.map(function(h) {
-            return { value: h.cost, itemStyle: { color: h.cost > avg * 3 ? '#ef4444' : '#6366f1' } };
-        }) }],
-        grid: { left: 50, right: 10, bottom: 40, top: 10 },
+        series: [{
+            type: 'line',
+            smooth: true,
+            areaStyle: { color: { type: 'linear', x: 0, y: 0, x2: 0, y2: 1, colorStops: [{offset: 0, color: 'rgba(99,102,241,0.3)'}, {offset: 1, color: 'rgba(99,102,241,0.02)'}] } },
+            lineStyle: { color: '#6366f1', width: 2 },
+            itemStyle: { color: '#6366f1' },
+            symbol: 'circle',
+            symbolSize: function(value) { return value > avg * 2.5 ? 10 : value === maxCost ? 8 : 3; },
+            data: hourly.map(function(h) {
+                var isPeak = h.cost > avg * 2.5 || h.cost === maxCost;
+                return {
+                    value: h.cost,
+                    itemStyle: isPeak ? { color: '#ef4444', borderColor: '#ef4444', borderWidth: 2 } : {},
+                    label: isPeak ? { show: true, formatter: '${c}', fontSize: 9, color: '#ef4444', position: 'top' } : { show: false }
+                };
+            }),
+            markLine: { silent: true, data: [{ type: 'average', label: { formatter: 'avg: ${c}', fontSize: 9 }, lineStyle: { color: '#f59e0b', type: 'dashed' } }] }
+        }],
+        grid: { left: 50, right: 10, bottom: 40, top: 20 },
     });
     window.addEventListener('resize', function() { chart.resize(); });
 }
