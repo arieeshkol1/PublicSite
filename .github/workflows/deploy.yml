@@ -286,6 +286,40 @@ jobs:
             --s3-key lambda-packages/paddle-webhook.zip > /dev/null 2>&1 || true
           echo "✓ Lambda functions updated"
 
+      - name: Ensure API Gateway routes exist
+        run: |
+          API_ID="l2fd4h481h"
+          MEMBER_INT=$(aws apigatewayv2 get-integrations --api-id $API_ID --query "Items[?contains(IntegrationUri, 'member-api')].IntegrationId" --output text)
+          ADMIN_INT=$(aws apigatewayv2 get-integrations --api-id $API_ID --query "Items[?contains(IntegrationUri, 'admin-api')].IntegrationId" --output text)
+
+          # Member routes
+          MEMBER_ROUTES=(
+            "POST /member/add-tokens"
+            "POST /member/update-tier"
+            "POST /members/tags/scan"
+            "POST /members/tags/apply"
+            "POST /members/schedules/analyze"
+            "GET /members/schedules"
+            "PUT /members/schedules/status"
+          )
+          for ROUTE in "${MEMBER_ROUTES[@]}"; do
+            aws apigatewayv2 create-route --api-id $API_ID --route-key "$ROUTE" --target "integrations/$MEMBER_INT" 2>/dev/null || true
+          done
+
+          # Admin routes
+          ADMIN_ROUTES=(
+            "GET /admin/subscribers"
+            "PUT /admin/subscribers/tier"
+            "POST /admin/subscribers/tokens"
+          )
+          for ROUTE in "${ADMIN_ROUTES[@]}"; do
+            aws apigatewayv2 create-route --api-id $API_ID --route-key "$ROUTE" --target "integrations/$ADMIN_INT" 2>/dev/null || true
+          done
+
+          # Deploy API
+          aws apigatewayv2 create-deployment --api-id $API_ID > /dev/null
+          echo "✓ API Gateway routes ensured"
+
       - name: Seed DynamoDB knowledge base
         run: |
           pip install boto3 --quiet
