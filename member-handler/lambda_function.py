@@ -6189,50 +6189,45 @@ def handle_tag_scan(event):
             except Exception:
                 pass
 
-            # Scan resources — focus on costly resource types
-            resource_types = [
-                'ec2:instance', 'ec2:volume', 'rds:db', 'lambda:function',
-                's3', 'elasticloadbalancing:loadbalancer',
-                'elasticloadbalancing:loadbalancer/app',
-                'elasticloadbalancing:loadbalancer/net',
-            ]
-
+            # Scan ALL taggable resources (no type filter = all resource types)
+            # This catches everything on the bill: EC2, RDS, Lambda, S3, ELB, NAT, EBS,
+            # ElastiCache, DynamoDB, ECS, EKS, CloudFront, SageMaker, Redshift, etc.
             paginator = tagging.get_paginator('get_resources')
-            for rt in resource_types:
-                try:
-                    for page in paginator.paginate(ResourceTypeFilters=[rt], ResourcesPerPage=100):
-                        for res in page.get('ResourceTagMappingList', []):
-                            arn = res.get('ResourceARN', '')
-                            tags = {t['Key']: t['Value'] for t in res.get('Tags', []) if not t['Key'].startswith('aws:')}
-                            missing = [k for k in required_tags if k not in tags]
+            try:
+                for page in paginator.paginate(ResourcesPerPage=100):
+                    for res in page.get('ResourceTagMappingList', []):
+                        arn = res.get('ResourceARN', '')
+                        tags = {t['Key']: t['Value'] for t in res.get('Tags', []) if not t['Key'].startswith('aws:')}
+                        missing = [k for k in required_tags if k not in tags]
 
-                            summary['total'] += 1
-                            if not missing:
-                                summary['fullyTagged'] += 1
-                            elif len(missing) < len(required_tags):
-                                summary['partiallyTagged'] += 1
-                            else:
-                                summary['untagged'] += 1
+                        summary['total'] += 1
+                        if not missing:
+                            summary['fullyTagged'] += 1
+                        elif len(missing) < len(required_tags):
+                            summary['partiallyTagged'] += 1
+                        else:
+                            summary['untagged'] += 1
 
-                            # Return all resources (limit to 300)
-                            if len(all_resources) < 300:
-                                # Extract friendly name
-                                parts = arn.split(':')
-                                res_type = rt.split(':')[0].upper() if ':' in rt else rt.upper()
-                                res_id = arn.split('/')[-1] if '/' in arn else arn.split(':')[-1]
-                                name = tags.get('Name', res_id)
+                        # Return all resources (limit to 500)
+                        if len(all_resources) < 500:
+                            # Extract resource type and ID from ARN
+                            arn_parts = arn.split(':')
+                            service = arn_parts[2] if len(arn_parts) > 2 else 'unknown'
+                            res_type = service.upper()
+                            res_id = arn.split('/')[-1] if '/' in arn else arn.split(':')[-1]
+                            name = tags.get('Name', res_id)
 
-                                all_resources.append({
-                                    'arn': arn,
-                                    'resourceType': res_type,
-                                    'resourceId': res_id,
-                                    'name': name,
-                                    'account': acct_id,
-                                    'existingTags': tags,
-                                    'missingTags': missing,
-                                })
-                except Exception as e:
-                    logger.warning(f"Tag scan for {rt} in {acct_id}: {e}")
+                            all_resources.append({
+                                'arn': arn,
+                                'resourceType': res_type,
+                                'resourceId': res_id,
+                                'name': name,
+                                'account': acct_id,
+                                'existingTags': tags,
+                                'missingTags': missing,
+                            })
+            except Exception as e:
+                logger.warning(f"Tag scan in {acct_id}: {e}")
 
         except Exception as e:
             logger.warning(f"Tag scan failed for {acct_id}: {e}")
