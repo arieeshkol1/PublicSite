@@ -5189,28 +5189,25 @@ function _showBudgetWizard() {
     var emailInput = document.getElementById('plan-budget-alert-email');
     if (!wizard) return;
 
-    // Populate account dropdown
+    // Populate account dropdown from allAccounts
     if (select) {
         select.innerHTML = '';
-        var accounts = document.querySelectorAll('.act-acct-chk');
-        if (accounts.length === 0) {
-            // Fallback: use the shared account list
-            var memberEmail = getMemberEmail();
-            select.innerHTML = '<option value="">Select account</option>';
-        }
-        accounts.forEach(function(chk) {
-            var opt = document.createElement('option');
-            opt.value = chk.value || chk.dataset.id || '';
-            opt.textContent = (chk.dataset.name || chk.value || '') + ' (' + opt.value + ')';
-            select.appendChild(opt);
-        });
-        // If no checkboxes found, try getting from sessionStorage
-        if (select.options.length === 0) {
+        var connected = (typeof allAccounts !== 'undefined' ? allAccounts : []).filter(function(a) { return a.connectionStatus === 'connected'; });
+        if (connected.length === 0) {
             select.innerHTML = '<option value="">No accounts connected</option>';
+        } else {
+            connected.forEach(function(a) {
+                var opt = document.createElement('option');
+                opt.value = a.accountId;
+                opt.textContent = (a.accountName || 'Account') + ' (' + a.accountId + ')';
+                select.appendChild(opt);
+            });
         }
     }
     if (emailInput) emailInput.value = getMemberEmail() || '';
     document.getElementById('plan-budget-wizard-error').textContent = '';
+    document.getElementById('plan-budget-name').value = '';
+    document.getElementById('plan-budget-amount').value = '';
     wizard.hidden = false;
 }
 
