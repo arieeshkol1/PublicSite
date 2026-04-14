@@ -105,6 +105,9 @@ def lambda_handler(event, context):
         'POST /member/update-tier': handle_update_tier,
         'POST /members/tags/scan': handle_tag_scan,
         'POST /members/tags/apply': handle_tag_apply,
+        'POST /members/schedules/analyze': handle_schedule_analyze,
+        'GET /members/schedules': handle_get_schedules,
+        'PUT /members/schedules/status': handle_update_schedule_status,
     }
 
     handler = routes.get(route_key)
@@ -6335,6 +6338,369 @@ def handle_tag_apply(event):
         'failed': results['failed'],
         'errors': results['errors'][:10],
     })
+
+
+# ============================================================
+# Scheduler — Recommendation Engine
+# ============================================================
+
+def handle_schedule_analyze(event):
+    """Analyze environment and generate scheduling recommendations."""
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+    member_email = auth['sub']
+
+    tier = _get_member_tier(member_email)
+    credit_check = _check_and_consume_credits(member_email, tier, SCAN_CREDIT_COST)
+    if credit_check:
+        return credit_check
+
+    external_id = hashlib.sha256(member_email.encode('utf-8')).hexdigest()
+    sts_client = boto3.client('sts')
+
+    accounts_table = dynamodb.Table(ACCOUNTS_TABLE_NAME)
+    try:
+        result = accounts_table.query(
+            KeyConditionExpression=boto3.dynamodb.conditions.Key('memberEmail').eq(member_email)
+        )
+        accounts = [a for a in result.get('Items', []) if a.get('connectionStatus') == 'connected']
+    except ClientError:
+        accounts = []
+
+    recommendations = []
+
+    for acct in accounts[:5]:
+        acct_id = acct['accountId']
+        acct_name = acct.get('accountName', f'Account {acct_id[-4:]}')
+        try:
+            assume_resp = sts_client.assume_role(
+                RoleArn=f'arn:aws:iam::{acct_id}:role/SlashMyBill-{acct_id}',
+                RoleSessionName='SlashMyBillScheduler', ExternalId=external_id,
+            )
+            creds = assume_resp['Credentials']
+
+            ec2 = boto3.client('ec2',
+                aws_access_key_id=creds['AccessKeyId'],
+                aws_secret_access_key=creds['SecretAccessKey'],
+                aws_session_token=creds['SessionToken'],
+                region_name='us-east-1')
+
+            # 1. Office Hours — find non-prod instances running 24/7
+            try:
+                instances = ec2.describe_instances(Filters=[{'Name': 'instance-state-name', 'Values': ['running']}])
+                nonprod = []
+                for res in instances.get('Reservations', []):
+                    for inst in res.get('Instances', []):
+                        tags = {t['Key']: t['Value'] for t in inst.get('Tags', [])}
+                        env = (tags.get('Environment', '') or tags.get('Env', '') or tags.get('environment', '')).lower()
+                        if any(e in env for e in ['dev', 'test', 'staging', 'qa', 'sandbox']):
+                            itype = inst.get('InstanceType', '')
+                            nonprod.append({'id': inst['InstanceId'], 'name': tags.get('Name', inst['InstanceId']), 'type': itype, 'env': env})
+                if nonprod:
+                    # Estimate savings: ~65% of on-demand for 16hrs/day off
+                    est_monthly = len(nonprod) * 50  # rough $50/instance/mo savings
+                    recommendations.append({
+                        'id': f'office-hours-{acct_id}',
+                        'type': 'office-hours',
+                        'priority': 'high',
+                        'title': f'Schedule {len(nonprod)} non-prod instances to stop outside business hours',
+                        'reason': f'{len(nonprod)} instances tagged as dev/test/staging are running 24/7 in {acct_name}',
+                        'estimatedSavings': est_monthly,
+                        'difficulty': 'easy',
+                        'accountId': acct_id,
+                        'accountName': acct_name,
+                        'resources': nonprod[:10],
+                        'guide': {
+                            'steps': [
+                                'Go to AWS Instance Scheduler in the AWS Solutions Library',
+                                'Deploy the CloudFormation template in your account',
+                                'Create a schedule: Mon-Fri 8am-6pm in your timezone',
+                                'Tag your instances with Schedule=office-hours',
+                                'The scheduler will auto-stop instances at 6pm and start at 8am',
+                            ],
+                            'consoleUrl': f'https://console.aws.amazon.com/ec2/home?region=us-east-1#Instances:instanceState=running',
+                            'solutionUrl': 'https://aws.amazon.com/solutions/implementations/instance-scheduler-on-aws/',
+                            'cliCommand': None,
+                        },
+                    })
+            except Exception as e:
+                logger.warning(f"Office hours check failed for {acct_id}: {e}")
+
+            # 2. gp2 → gp3 migration
+            try:
+                vols = ec2.describe_volumes(Filters=[{'Name': 'volume-type', 'Values': ['gp2']}])
+                gp2_vols = vols.get('Volumes', [])
+                if gp2_vols:
+                    total_gb = sum(v.get('Size', 0) for v in gp2_vols)
+                    savings = round(total_gb * 0.02, 2)  # $0.02/GB/mo savings
+                    recommendations.append({
+                        'id': f'gp2-migration-{acct_id}',
+                        'type': 'gp2-migration',
+                        'priority': 'medium',
+                        'title': f'Migrate {len(gp2_vols)} gp2 volumes to gp3',
+                        'reason': f'{len(gp2_vols)} EBS volumes ({total_gb} GB) still using gp2 in {acct_name}. gp3 is 20% cheaper with better performance.',
+                        'estimatedSavings': savings,
+                        'difficulty': 'easy',
+                        'accountId': acct_id,
+                        'accountName': acct_name,
+                        'resources': [{'id': v['VolumeId'], 'size': v['Size'], 'state': v['State']} for v in gp2_vols[:10]],
+                        'guide': {
+                            'steps': [
+                                'Go to EC2 → Volumes in the AWS Console',
+                                'Select a gp2 volume → Actions → Modify Volume',
+                                'Change Volume Type to gp3 → Modify',
+                                'No downtime required — modification happens live',
+                                'Repeat for each gp2 volume, or use the CLI command below',
+                            ],
+                            'consoleUrl': f'https://console.aws.amazon.com/ec2/home?region=us-east-1#Volumes:volumeType=gp2',
+                            'cliCommand': 'aws ec2 modify-volume --volume-id VOL_ID --volume-type gp3',
+                        },
+                    })
+            except Exception as e:
+                logger.warning(f"gp2 check failed for {acct_id}: {e}")
+
+            # 3. Old snapshots cleanup
+            try:
+                snaps = ec2.describe_snapshots(OwnerIds=[acct_id])
+                cutoff = datetime.now(timezone.utc) - timedelta(days=180)
+                old_snaps = [s for s in snaps.get('Snapshots', []) if s.get('StartTime') and s['StartTime'].replace(tzinfo=None) < cutoff.replace(tzinfo=None)]
+                if len(old_snaps) > 3:
+                    total_gb = sum(s.get('VolumeSize', 0) for s in old_snaps)
+                    savings = round(total_gb * 0.05, 2)
+                    recommendations.append({
+                        'id': f'snapshot-cleanup-{acct_id}',
+                        'type': 'snapshot-cleanup',
+                        'priority': 'medium',
+                        'title': f'Clean up {len(old_snaps)} snapshots older than 6 months',
+                        'reason': f'{len(old_snaps)} EBS snapshots ({total_gb} GB) are over 180 days old in {acct_name}',
+                        'estimatedSavings': savings,
+                        'difficulty': 'easy',
+                        'accountId': acct_id,
+                        'accountName': acct_name,
+                        'resources': [{'id': s['SnapshotId'], 'size': s.get('VolumeSize', 0), 'age': (datetime.now(timezone.utc) - s['StartTime'].replace(tzinfo=timezone.utc)).days} for s in old_snaps[:10]],
+                        'guide': {
+                            'steps': [
+                                'Go to EC2 → Snapshots in the AWS Console',
+                                'Sort by Start Time to find oldest snapshots',
+                                'Verify the snapshot is not needed (check if source volume exists)',
+                                'Select snapshot → Actions → Delete Snapshot',
+                                'Or set up a Data Lifecycle Manager policy for automatic cleanup',
+                            ],
+                            'consoleUrl': f'https://console.aws.amazon.com/ec2/home?region=us-east-1#Snapshots:',
+                            'cliCommand': 'aws ec2 delete-snapshot --snapshot-id SNAP_ID',
+                        },
+                    })
+            except Exception as e:
+                logger.warning(f"Snapshot check failed for {acct_id}: {e}")
+
+            # 4. Budget setup recommendation
+            try:
+                budgets_client = boto3.client('budgets',
+                    aws_access_key_id=creds['AccessKeyId'],
+                    aws_secret_access_key=creds['SecretAccessKey'],
+                    aws_session_token=creds['SessionToken'])
+                budgets_resp = budgets_client.describe_budgets(AccountId=acct_id)
+                if not budgets_resp.get('Budgets'):
+                    recommendations.append({
+                        'id': f'budget-setup-{acct_id}',
+                        'type': 'budget-setup',
+                        'priority': 'medium',
+                        'title': 'Set up AWS Budgets with cost alerts',
+                        'reason': f'No budgets configured in {acct_name}. Budgets alert you before costs exceed thresholds.',
+                        'estimatedSavings': 0,
+                        'difficulty': 'easy',
+                        'accountId': acct_id,
+                        'accountName': acct_name,
+                        'resources': [],
+                        'guide': {
+                            'steps': [
+                                'Go to AWS Budgets in the Billing Console',
+                                'Click "Create budget" → "Cost budget"',
+                                'Set monthly budget amount (e.g., your average monthly spend + 10%)',
+                                'Add alert thresholds at 50%, 75%, and 100%',
+                                'Enter email addresses for notifications',
+                                'Click "Create budget"',
+                            ],
+                            'consoleUrl': 'https://console.aws.amazon.com/billing/home#/budgets/create',
+                            'cliCommand': None,
+                        },
+                    })
+            except Exception as e:
+                logger.warning(f"Budget check failed for {acct_id}: {e}")
+
+            # 5. Tag compliance recommendation
+            try:
+                tagging = boto3.client('resourcegroupstaggingapi',
+                    aws_access_key_id=creds['AccessKeyId'],
+                    aws_secret_access_key=creds['SecretAccessKey'],
+                    aws_session_token=creds['SessionToken'],
+                    region_name='us-east-1')
+                tag_resp = tagging.get_resources(ResourcesPerPage=100)
+                total = len(tag_resp.get('ResourceTagMappingList', []))
+                required = ['Environment', 'Owner', 'CostCenter', 'Application']
+                untagged = 0
+                for res in tag_resp.get('ResourceTagMappingList', []):
+                    tags = {t['Key'] for t in res.get('Tags', [])}
+                    if not all(r in tags for r in required):
+                        untagged += 1
+                coverage = round((1 - untagged / total) * 100, 1) if total > 0 else 100
+                if coverage < 80:
+                    recommendations.append({
+                        'id': f'tag-compliance-{acct_id}',
+                        'type': 'tag-compliance',
+                        'priority': 'medium',
+                        'title': f'Improve tag coverage from {coverage}% to 80%+',
+                        'reason': f'{untagged} of {total} resources missing required tags in {acct_name}',
+                        'estimatedSavings': 0,
+                        'difficulty': 'easy',
+                        'accountId': acct_id,
+                        'accountName': acct_name,
+                        'resources': [],
+                        'guide': {
+                            'steps': [
+                                'Go to the Act → Tag Resources section in SlashMyBill',
+                                'Click "Scan for Untagged" to see all resources missing tags',
+                                'Select resources and apply tags in bulk',
+                                'Or use AWS Tag Editor in the AWS Console for bulk tagging',
+                                'Enable AWS Config rule "required-tags" to enforce going forward',
+                            ],
+                            'consoleUrl': 'https://console.aws.amazon.com/resource-groups/tag-editor',
+                            'cliCommand': None,
+                        },
+                    })
+            except Exception as e:
+                logger.warning(f"Tag compliance check failed for {acct_id}: {e}")
+
+        except Exception as e:
+            logger.warning(f"Scheduler analysis failed for {acct_id}: {e}")
+
+    # Sort by priority then savings
+    priority_order = {'high': 0, 'medium': 1, 'low': 2}
+    recommendations.sort(key=lambda r: (priority_order.get(r['priority'], 2), -r.get('estimatedSavings', 0)))
+
+    # Load existing statuses
+    members_table = dynamodb.Table(MEMBERS_TABLE_NAME)
+    try:
+        member = members_table.get_item(Key={'email': member_email}).get('Item', {})
+        sched_data = member.get('schedulerData', {})
+        completed = {c['id'] for c in sched_data.get('completed', [])}
+        dismissed = set(sched_data.get('dismissed', []))
+    except Exception:
+        completed = set()
+        dismissed = set()
+
+    # Mark statuses
+    for rec in recommendations:
+        if rec['id'] in completed:
+            rec['status'] = 'completed'
+        elif rec['id'] in dismissed:
+            rec['status'] = 'dismissed'
+        else:
+            rec['status'] = 'pending'
+
+    # Save recommendations
+    now = datetime.now(timezone.utc).isoformat()
+    try:
+        members_table.update_item(
+            Key={'email': member_email},
+            UpdateExpression='SET schedulerData.recommendations = :recs, schedulerData.lastAnalyzedAt = :ts',
+            ExpressionAttributeValues={':recs': recommendations, ':ts': now},
+        )
+    except ClientError:
+        # schedulerData might not exist yet
+        members_table.update_item(
+            Key={'email': member_email},
+            UpdateExpression='SET schedulerData = :sd',
+            ExpressionAttributeValues={':sd': {'recommendations': recommendations, 'lastAnalyzedAt': now, 'completed': [], 'dismissed': []}},
+        )
+
+    total_savings = sum(r.get('estimatedSavings', 0) for r in recommendations if r['status'] == 'pending')
+    completed_count = len([r for r in recommendations if r['status'] == 'completed'])
+
+    return create_response(200, {
+        'recommendations': _decimal_to_native(recommendations),
+        'totalSavings': round(total_savings, 2),
+        'completedCount': completed_count,
+        'totalCount': len(recommendations),
+        'analyzedAt': now,
+    })
+
+
+def handle_get_schedules(event):
+    """Get saved scheduler recommendations and statuses."""
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+    member_email = auth['sub']
+
+    members_table = dynamodb.Table(MEMBERS_TABLE_NAME)
+    try:
+        member = members_table.get_item(Key={'email': member_email}).get('Item', {})
+        sched_data = _decimal_to_native(member.get('schedulerData', {}))
+        return create_response(200, {
+            'recommendations': sched_data.get('recommendations', []),
+            'completed': sched_data.get('completed', []),
+            'dismissed': sched_data.get('dismissed', []),
+            'lastAnalyzedAt': sched_data.get('lastAnalyzedAt', ''),
+        })
+    except Exception as e:
+        logger.error(f"Get schedules error: {e}")
+        return create_response(200, {'recommendations': [], 'completed': [], 'dismissed': [], 'lastAnalyzedAt': ''})
+
+
+def handle_update_schedule_status(event):
+    """Update a recommendation's status (completed/dismissed/pending)."""
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+    member_email = auth['sub']
+
+    try:
+        body = json.loads(event.get('body', '{}'))
+    except (json.JSONDecodeError, TypeError):
+        return create_error_response(400, 'InvalidRequest', 'Invalid request body')
+
+    rec_id = body.get('id', '')
+    new_status = body.get('status', '')  # completed, dismissed, pending
+
+    if not rec_id or new_status not in ('completed', 'dismissed', 'pending'):
+        return create_error_response(400, 'InvalidRequest', 'id and status (completed/dismissed/pending) required')
+
+    members_table = dynamodb.Table(MEMBERS_TABLE_NAME)
+    now = datetime.now(timezone.utc).isoformat()
+
+    try:
+        member = members_table.get_item(Key={'email': member_email}).get('Item', {})
+        sched_data = member.get('schedulerData', {})
+        completed = sched_data.get('completed', [])
+        dismissed = sched_data.get('dismissed', [])
+        recommendations = sched_data.get('recommendations', [])
+
+        # Remove from completed/dismissed first
+        completed = [c for c in completed if c.get('id') != rec_id]
+        dismissed = [d for d in dismissed if d != rec_id]
+
+        if new_status == 'completed':
+            completed.append({'id': rec_id, 'completedAt': now})
+        elif new_status == 'dismissed':
+            dismissed.append(rec_id)
+
+        # Update status in recommendations
+        for rec in recommendations:
+            if rec.get('id') == rec_id:
+                rec['status'] = new_status
+
+        members_table.update_item(
+            Key={'email': member_email},
+            UpdateExpression='SET schedulerData.completed = :c, schedulerData.dismissed = :d, schedulerData.recommendations = :r',
+            ExpressionAttributeValues={':c': completed, ':d': dismissed, ':r': recommendations},
+        )
+
+        return create_response(200, {'message': f'Recommendation {rec_id} marked as {new_status}'})
+    except Exception as e:
+        logger.error(f"Update schedule status error: {e}")
+        return create_error_response(500, 'ServerError', 'Failed to update status')
 
 
 # ============================================================

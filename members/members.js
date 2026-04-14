@@ -3874,8 +3874,10 @@ function _switchActSection(section) {
     });
     var waste = document.getElementById('act-section-waste');
     var tagging = document.getElementById('act-section-tagging');
+    var scheduler = document.getElementById('act-section-scheduler');
     if (waste) waste.style.display = section === 'waste' ? 'block' : 'none';
     if (tagging) tagging.style.display = section === 'tagging' ? 'block' : 'none';
+    if (scheduler) scheduler.style.display = section === 'scheduler' ? 'block' : 'none';
 }
 
 function initActTab() {
@@ -4918,5 +4920,176 @@ async function _applyTags() {
         }
         if (statusEl) { statusEl.style.color = '#ef4444'; statusEl.textContent = errMsg; }
         if (confirmBtn) { confirmBtn.disabled = false; confirmBtn.textContent = '🏷️ Apply Tags'; }
+    }
+}
+
+
+// ============================================================
+// Scheduler — Recommendation Engine UI
+// ============================================================
+var _schedRecommendations = [];
+
+(function initScheduler() {
+    var analyzeBtn = document.getElementById('act-sched-analyze-btn');
+    if (analyzeBtn) {
+        analyzeBtn.onclick = async function() {
+            _syncActSelection();
+            await _runSchedulerAnalysis();
+        };
+    }
+})();
+
+async function _runSchedulerAnalysis() {
+    var statusEl = document.getElementById('act-sched-status');
+    var emptyEl = document.getElementById('act-sched-empty');
+    var listEl = document.getElementById('act-sched-list');
+    if (statusEl) statusEl.textContent = 'Analyzing your environment...';
+    if (emptyEl) emptyEl.style.display = 'none';
+
+    try {
+        var data = await api('POST', '/members/schedules/analyze', {});
+        _schedRecommendations = data.recommendations || [];
+        if (statusEl) statusEl.textContent = _schedRecommendations.length + ' recommendations found — $' + (data.totalSavings || 0).toFixed(0) + '/mo potential savings';
+        _renderSchedulerProgress(data);
+        _renderSchedulerList();
+    } catch (e) {
+        if (statusEl) statusEl.textContent = 'Analysis failed: ' + (e.message || 'Unknown error');
+        notify('Scheduler analysis failed', 'error');
+    }
+}
+
+async function _loadSchedulerData() {
+    try {
+        var data = await api('GET', '/members/schedules', {});
+        _schedRecommendations = data.recommendations || [];
+        if (_schedRecommendations.length > 0) {
+            document.getElementById('act-sched-empty').style.display = 'none';
+            _renderSchedulerProgress({completedCount: data.completed ? data.completed.length : 0, totalCount: _schedRecommendations.length});
+            _renderSchedulerList();
+        }
+    } catch (e) { /* silent */ }
+}
+
+function _renderSchedulerProgress(data) {
+    var el = document.getElementById('act-sched-progress');
+    if (!el) return;
+    var completed = data.completedCount || 0;
+    var total = data.totalCount || _schedRecommendations.length;
+    if (total === 0) { el.style.display = 'none'; return; }
+    var pct = Math.round(completed / total * 100);
+    var color = pct >= 80 ? '#10b981' : pct >= 50 ? '#f59e0b' : '#6366f1';
+    el.style.display = 'block';
+    el.innerHTML = '<div style="display:flex;align-items:center;gap:12px;">'
+        + '<div style="flex:1;background:#e5e7eb;border-radius:6px;height:8px;overflow:hidden;">'
+        + '<div style="width:' + pct + '%;height:100%;background:' + color + ';border-radius:6px;transition:width .5s;"></div></div>'
+        + '<span style="font-size:0.85em;color:#374151;font-weight:600;">' + completed + '/' + total + ' implemented</span></div>';
+}
+
+function _renderSchedulerList() {
+    var listEl = document.getElementById('act-sched-list');
+    if (!listEl) return;
+    if (_schedRecommendations.length === 0) {
+        document.getElementById('act-sched-empty').style.display = 'block';
+        listEl.innerHTML = '';
+        return;
+    }
+
+    var pending = _schedRecommendations.filter(function(r) { return r.status === 'pending'; });
+    var completed = _schedRecommendations.filter(function(r) { return r.status === 'completed'; });
+    var dismissed = _schedRecommendations.filter(function(r) { return r.status === 'dismissed'; });
+
+    var html = '';
+
+    // Pending recommendations
+    if (pending.length > 0) {
+        var highPri = pending.filter(function(r) { return r.priority === 'high'; });
+        var medPri = pending.filter(function(r) { return r.priority !== 'high'; });
+
+        if (highPri.length > 0) {
+            html += '<div style="font-size:0.85em;font-weight:600;color:#dc2626;text-transform:uppercase;letter-spacing:0.05em;margin:16px 0 8px;">💰 High Savings</div>';
+            highPri.forEach(function(r) { html += _renderRecCard(r); });
+        }
+        if (medPri.length > 0) {
+            html += '<div style="font-size:0.85em;font-weight:600;color:#6366f1;text-transform:uppercase;letter-spacing:0.05em;margin:16px 0 8px;">🔧 Optimization</div>';
+            medPri.forEach(function(r) { html += _renderRecCard(r); });
+        }
+    }
+
+    // Completed
+    if (completed.length > 0) {
+        html += '<div style="font-size:0.85em;font-weight:600;color:#10b981;text-transform:uppercase;letter-spacing:0.05em;margin:20px 0 8px;">✅ Completed (' + completed.length + ')</div>';
+        completed.forEach(function(r) {
+            html += '<div style="padding:8px 12px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;margin-bottom:6px;display:flex;align-items:center;justify-content:space-between;">'
+                + '<span style="color:#166534;font-size:0.9em;">✓ ' + r.title + '</span>'
+                + '<button onclick="_updateRecStatus(\'' + r.id + '\',\'pending\')" style="background:none;border:none;color:#6b7280;cursor:pointer;font-size:0.8em;">Undo</button></div>';
+        });
+    }
+
+    // Dismissed (collapsed)
+    if (dismissed.length > 0) {
+        html += '<details style="margin-top:16px;"><summary style="font-size:0.85em;color:#9ca3af;cursor:pointer;">Show dismissed (' + dismissed.length + ')</summary>';
+        dismissed.forEach(function(r) {
+            html += '<div style="padding:6px 12px;color:#9ca3af;font-size:0.85em;display:flex;justify-content:space-between;">'
+                + '<span>' + r.title + '</span>'
+                + '<button onclick="_updateRecStatus(\'' + r.id + '\',\'pending\')" style="background:none;border:none;color:#6366f1;cursor:pointer;font-size:0.8em;">Restore</button></div>';
+        });
+        html += '</details>';
+    }
+
+    listEl.innerHTML = html;
+}
+
+function _renderRecCard(rec) {
+    var savingsHtml = rec.estimatedSavings > 0 ? '<span style="color:#10b981;font-weight:700;">~$' + rec.estimatedSavings + '/mo</span>' : '';
+    var diffBadge = '<span style="background:' + (rec.difficulty === 'easy' ? '#d1fae5;color:#065f46' : rec.difficulty === 'medium' ? '#fef3c7;color:#92400e' : '#fee2e2;color:#991b1b') + ';font-size:0.75em;padding:2px 6px;border-radius:4px;">' + rec.difficulty + '</span>';
+    var guide = rec.guide || {};
+    var stepsHtml = '';
+    if (guide.steps) {
+        stepsHtml = '<ol style="padding-left:18px;margin:8px 0;font-size:0.88em;color:#374151;line-height:1.7;">';
+        guide.steps.forEach(function(s) { stepsHtml += '<li>' + s + '</li>'; });
+        stepsHtml += '</ol>';
+    }
+    var linksHtml = '';
+    if (guide.consoleUrl) linksHtml += '<a href="' + guide.consoleUrl + '" target="_blank" rel="noopener" style="color:#6366f1;font-size:0.85em;text-decoration:none;margin-right:12px;">Open AWS Console ↗</a>';
+    if (guide.solutionUrl) linksHtml += '<a href="' + guide.solutionUrl + '" target="_blank" rel="noopener" style="color:#6366f1;font-size:0.85em;text-decoration:none;margin-right:12px;">AWS Solution ↗</a>';
+    var cliHtml = '';
+    if (guide.cliCommand) cliHtml = '<div style="margin:8px 0;"><code style="background:#f3f4f6;padding:4px 8px;border-radius:4px;font-size:0.82em;color:#1f2937;display:inline-block;">' + guide.cliCommand + '</code> <button onclick="navigator.clipboard.writeText(\'' + guide.cliCommand.replace(/'/g, "\\'") + '\');notify(\'Copied!\',\'success\');" style="background:none;border:none;color:#6366f1;cursor:pointer;font-size:0.8em;">📋 Copy</button></div>';
+
+    var resourcesHtml = '';
+    if (rec.resources && rec.resources.length > 0) {
+        resourcesHtml = '<div style="margin:6px 0;font-size:0.82em;color:#6b7280;">';
+        rec.resources.slice(0, 5).forEach(function(r) {
+            resourcesHtml += '<span style="background:#f3f4f6;padding:2px 6px;border-radius:3px;margin-right:4px;margin-bottom:2px;display:inline-block;">' + (r.name || r.id) + '</span>';
+        });
+        if (rec.resources.length > 5) resourcesHtml += '<span style="color:#9ca3af;">+' + (rec.resources.length - 5) + ' more</span>';
+        resourcesHtml += '</div>';
+    }
+
+    return '<div style="border:1px solid #e5e7eb;border-radius:10px;padding:16px;margin-bottom:12px;background:#fff;">'
+        + '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px;">'
+        + '<div style="font-weight:600;color:#1f2937;font-size:0.95em;">' + rec.title + '</div>'
+        + '<div style="display:flex;gap:6px;align-items:center;">' + savingsHtml + ' ' + diffBadge + '</div></div>'
+        + '<div style="color:#6b7280;font-size:0.88em;margin-bottom:8px;">' + rec.reason + '</div>'
+        + (rec.accountName ? '<div style="font-size:0.8em;color:#9ca3af;margin-bottom:6px;">Account: ' + rec.accountName + '</div>' : '')
+        + resourcesHtml
+        + '<details style="margin-top:8px;"><summary style="color:#6366f1;font-size:0.88em;cursor:pointer;font-weight:500;">▶ How to implement</summary>'
+        + '<div style="padding:8px 0;">' + stepsHtml + linksHtml + cliHtml + '</div></details>'
+        + '<div style="display:flex;gap:8px;margin-top:10px;padding-top:10px;border-top:1px solid #f3f4f6;">'
+        + '<button onclick="_updateRecStatus(\'' + rec.id + '\',\'completed\')" class="btn btn-primary btn-sm" style="font-size:0.8em;background:#10b981;border-color:#10b981;">✓ Mark as Done</button>'
+        + '<button onclick="_updateRecStatus(\'' + rec.id + '\',\'dismissed\')" class="btn btn-outline btn-sm" style="font-size:0.8em;">Dismiss</button>'
+        + '</div></div>';
+}
+
+async function _updateRecStatus(recId, status) {
+    try {
+        await api('PUT', '/members/schedules/status', {id: recId, status: status});
+        // Update local state
+        _schedRecommendations.forEach(function(r) { if (r.id === recId) r.status = status; });
+        var completed = _schedRecommendations.filter(function(r) { return r.status === 'completed'; }).length;
+        _renderSchedulerProgress({completedCount: completed, totalCount: _schedRecommendations.length});
+        _renderSchedulerList();
+        notify(status === 'completed' ? 'Marked as done!' : status === 'dismissed' ? 'Dismissed' : 'Restored', 'success');
+    } catch (e) {
+        notify('Failed to update: ' + (e.message || ''), 'error');
     }
 }

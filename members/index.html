@@ -188,6 +188,9 @@
                         <button class="act-nav-btn" data-section="tagging" onclick="_switchActSection('tagging')">
                             <span style="font-size:1.2em;">🏷️</span> Tag Resources
                         </button>
+                        <button class="act-nav-btn" data-section="scheduler" onclick="_switchActSection('scheduler')">
+                            <span style="font-size:1.2em;">⏰</span> Scheduler
+                        </button>
                     </div>
 
                     <!-- Right Content Area -->
@@ -234,6 +237,23 @@
                                 <div style="font-size:2.5em;margin-bottom:12px;">🏷️</div>
                                 <div style="font-size:1em;margin-bottom:6px;color:#1f2937;">Click "Scan for Untagged" to find resources missing tags</div>
                                 <div style="font-size:0.9em;color:#6b7280;">Checks EC2, EBS, RDS, Lambda, S3, and Load Balancers<br>for missing Environment, Owner, CostCenter, and Application tags.</div>
+                            </div>
+                        </div>
+
+                        <!-- Scheduler Section -->
+                        <div id="act-section-scheduler" style="display:none;">
+                            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+                                <h2 style="margin:0;color:#1f2937;">Scheduler</h2>
+                                <button id="act-sched-analyze-btn" class="btn btn-primary btn-sm">🔍 Analyze Environment</button>
+                            </div>
+                            <p style="color:#6b7280;font-size:0.9em;margin-bottom:16px;">Personalized recommendations based on your AWS environment. You implement — we guide.</p>
+                            <div id="act-sched-status" style="padding:0 0 8px;color:#6b7280;font-size:0.9em;min-height:20px;"></div>
+                            <div id="act-sched-progress" style="margin-bottom:16px;display:none;"></div>
+                            <div id="act-sched-list"></div>
+                            <div id="act-sched-empty" style="text-align:center;padding:60px 20px;color:#6b7280;">
+                                <div style="font-size:2.5em;margin-bottom:12px;">⏰</div>
+                                <div style="font-size:1em;margin-bottom:6px;color:#1f2937;">Click "Analyze Environment" to get recommendations</div>
+                                <div style="font-size:0.9em;color:#6b7280;">We'll scan your accounts for scheduling opportunities:<br>office hours, volume migrations, snapshot cleanup, budgets, and more.</div>
                             </div>
                         </div>
 

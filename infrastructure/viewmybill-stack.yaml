@@ -1318,6 +1318,27 @@ Resources:
       RouteKey: 'POST /members/tags/apply'
       Target: !Sub 'integrations/${MemberIntegration}'
 
+  MemberScheduleAnalyzeRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'POST /members/schedules/analyze'
+      Target: !Sub 'integrations/${MemberIntegration}'
+
+  MemberGetSchedulesRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'GET /members/schedules'
+      Target: !Sub 'integrations/${MemberIntegration}'
+
+  MemberUpdateScheduleStatusRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'PUT /members/schedules/status'
+      Target: !Sub 'integrations/${MemberIntegration}'
+
   MemberUpdateTierRoute:
     Type: AWS::ApiGatewayV2::Route
     Properties:
