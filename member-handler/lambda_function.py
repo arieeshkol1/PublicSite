@@ -1855,108 +1855,104 @@ def _get_commitments_data(accounts, external_id):
 
 
 def _get_cost_by_tag(accounts, external_id):
-    """Query Cost Explorer grouped by tag keys to show cost allocation by tags."""
+    """Get tag distribution across resources using Resource Groups Tagging API.
+    
+    Uses the same tags that Plan > Tag Resources uses, not CE cost allocation tags.
+    This works for linked accounts without management account access.
+    """
     sts_client = boto3.client('sts')
-    end_date = datetime.now(timezone.utc).strftime('%Y-%m-%d')
-    start_date = (datetime.now(timezone.utc) - timedelta(days=30)).strftime('%Y-%m-%d')
-
-    # Collect available tag keys and cost-by-tag data across accounts
+    required_tags = ['Environment', 'Owner', 'CostCenter', 'Application']
     all_tag_keys = set()
-    tag_costs = {}  # {tag_key: {tag_value: cost}}
+    tag_distribution = {}  # {tag_key: {tag_value: count}}
+    total_resources = 0
+    tagged_resources = 0
 
     for acct in accounts[:5]:
         acct_id = acct['accountId']
         try:
             assume_resp = sts_client.assume_role(
                 RoleArn=f'arn:aws:iam::{acct_id}:role/SlashMyBill-{acct_id}',
-                RoleSessionName='SlashMyBillTags', ExternalId=external_id,
+                RoleSessionName='SlashMyBillTagDist', ExternalId=external_id,
             )
             creds = assume_resp['Credentials']
-            ce = boto3.client('ce',
+            tagging = boto3.client('resourcegroupstaggingapi',
                 aws_access_key_id=creds['AccessKeyId'],
                 aws_secret_access_key=creds['SecretAccessKey'],
-                aws_session_token=creds['SessionToken'])
+                aws_session_token=creds['SessionToken'],
+                region_name='us-east-1')
 
-            # Get available tag keys
+            # Get all tag keys
             try:
-                tags_resp = ce.get_tags(
-                    TimePeriod={'Start': start_date, 'End': end_date},
-                )
-                for tag in tags_resp.get('Tags', []):
-                    if tag and not tag.startswith('aws:'):
-                        all_tag_keys.add(tag)
+                tk_resp = tagging.get_tag_keys()
+                for k in tk_resp.get('TagKeys', []):
+                    if not k.startswith('aws:'):
+                        all_tag_keys.add(k)
+            except Exception:
+                pass
+
+            # Scan resources and count tag values
+            paginator = tagging.get_paginator('get_resources')
+            try:
+                for page in paginator.paginate(ResourcesPerPage=100):
+                    for res in page.get('ResourceTagMappingList', []):
+                        total_resources += 1
+                        tags = {t['Key']: t['Value'] for t in res.get('Tags', []) if not t['Key'].startswith('aws:')}
+                        has_required = any(k in tags for k in required_tags)
+                        if has_required:
+                            tagged_resources += 1
+
+                        for key, value in tags.items():
+                            if key in required_tags or key in all_tag_keys:
+                                if key not in tag_distribution:
+                                    tag_distribution[key] = {}
+                                tag_distribution[key][value] = tag_distribution[key].get(value, 0) + 1
             except Exception as e:
-                logger.warning(f"get_tags failed for {acct_id}: {e}")
-
-            # Query cost by the most common FinOps tag keys
-            priority_keys = ['Environment', 'environment', 'Env', 'env',
-                             'CostCenter', 'costCenter', 'cost-center',
-                             'Owner', 'owner', 'Team', 'team',
-                             'Application', 'application', 'app', 'App',
-                             'Project', 'project', 'Department', 'department']
-
-            # Use discovered keys that match priority, or first 5 discovered
-            query_keys = [k for k in priority_keys if k in all_tag_keys]
-            remaining = [k for k in all_tag_keys if k not in query_keys]
-            query_keys = query_keys[:5]
-            if len(query_keys) < 5:
-                query_keys.extend(remaining[:5 - len(query_keys)])
-
-            for tag_key in query_keys[:5]:
-                try:
-                    resp = ce.get_cost_and_usage(
-                        TimePeriod={'Start': start_date, 'End': end_date},
-                        Granularity='MONTHLY',
-                        Metrics=['UnblendedCost'],
-                        GroupBy=[{'Type': 'TAG', 'Key': tag_key}],
-                    )
-                    if tag_key not in tag_costs:
-                        tag_costs[tag_key] = {}
-                    for period in resp.get('ResultsByTime', []):
-                        for group in period.get('Groups', []):
-                            raw_key = group['Keys'][0]
-                            # CE returns "tagKey$tagValue" format
-                            tag_val = raw_key.split('$', 1)[1] if '$' in raw_key else raw_key
-                            if not tag_val:
-                                tag_val = '(untagged)'
-                            cost = float(group['Metrics']['UnblendedCost']['Amount'])
-                            if cost > 0.01:
-                                tag_costs[tag_key][tag_val] = tag_costs[tag_key].get(tag_val, 0) + cost
-                except Exception as e:
-                    logger.warning(f"Cost by tag '{tag_key}' failed for {acct_id}: {e}")
+                logger.warning(f"Tag distribution scan failed for {acct_id}: {e}")
 
         except Exception as e:
-            logger.warning(f"Tag data failed for {acct_id}: {e}")
+            logger.warning(f"Tag distribution failed for {acct_id}: {e}")
 
-    # Build response
+    if not tag_distribution and not all_tag_keys:
+        return {}
+
+    # Build response — prioritize required tags
     result = {}
-    for tag_key, values in tag_costs.items():
+    priority_keys = [k for k in required_tags if k in tag_distribution]
+    other_keys = [k for k in tag_distribution if k not in required_tags]
+    ordered_keys = priority_keys + sorted(other_keys)
+
+    for tag_key in ordered_keys[:8]:
+        values = tag_distribution.get(tag_key, {})
         if not values:
             continue
         total = sum(values.values())
-        untagged = values.pop('(untagged)', 0)
-        tagged_total = total - untagged
-        coverage = round(tagged_total / total * 100, 1) if total > 0 else 0
+        untagged_count = max(0, total_resources - total)
 
         sorted_vals = sorted(
-            [{'tag': v, 'cost': round(c, 2), 'pct': round(c / total * 100, 1) if total > 0 else 0}
+            [{'tag': v, 'cost': c, 'pct': round(c / (total + untagged_count) * 100, 1) if (total + untagged_count) > 0 else 0}
              for v, c in values.items()],
             key=lambda x: x['cost'], reverse=True
         )
-        if untagged > 0.01:
-            sorted_vals.append({'tag': '(untagged)', 'cost': round(untagged, 2),
-                                'pct': round(untagged / total * 100, 1) if total > 0 else 0})
+        if untagged_count > 0:
+            sorted_vals.append({'tag': '(untagged)', 'cost': untagged_count,
+                                'pct': round(untagged_count / (total + untagged_count) * 100, 1)})
 
+        coverage = round(total / (total + untagged_count) * 100, 1) if (total + untagged_count) > 0 else 0
         result[tag_key] = {
             'values': sorted_vals[:15],
-            'total': round(total, 2),
+            'total': total + untagged_count,
             'coverage': coverage,
         }
 
+    overall_coverage = round(tagged_resources / total_resources * 100, 1) if total_resources > 0 else 0
+
     return {
-        'tagKeys': sorted(list(all_tag_keys)),
+        'tagKeys': sorted(list(all_tag_keys | set(required_tags))),
         'data': result,
-    } if all_tag_keys else {}
+        'totalResources': total_resources,
+        'taggedResources': tagged_resources,
+        'overallCoverage': overall_coverage,
+    }
 
 
 def handle_get_dashboard(event):

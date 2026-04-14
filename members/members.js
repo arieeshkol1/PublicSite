@@ -2728,7 +2728,7 @@ var DASH_WIDGET_DEFS = [
     {id:'dash-unit-economics', title:'Unit Cost Trend', height:280, q:'How is my cost per unit trending?', extraTitle:' <button class="btn btn-outline btn-sm" style="font-size:0.7em;margin-left:8px;padding:2px 6px;" onclick="showBusinessMetricsModal();">Add Metrics</button>'},
     {id:'dash-regional', title:'Cost by Region', height:300, q:'Show me my cost breakdown by region'},
     {id:'dash-commitments', title:'Savings Plans & Reserved Instances', height:350, q:'What Savings Plans and Reserved Instances do I have?'},
-    {id:'dash-cost-by-tag', title:'Cost by Tag', height:320, q:'Show me cost breakdown by tags'},
+    {id:'dash-cost-by-tag', title:'Tag Distribution', height:320, q:'Show me tag coverage across my resources'},
 ];
 
 function _getDashLayout() {
@@ -3175,6 +3175,10 @@ function _renderWaste(waste) {
     } else {
         html += '<div style="color:#10b981;font-size:0.85em;">No waste detected ✓</div>';
     }
+    // Add "Clean Up" navigation button if waste exists
+    if (waste.items && waste.items.length > 0) {
+        html += '<div style="text-align:right;margin-top:8px;"><button onclick="_goToTab(\'act-tab\',\'waste\');" style="background:none;border:none;color:#6366f1;cursor:pointer;font-size:0.85em;font-weight:600;">Clean Up \u25b6</button></div>';
+    }
     el.innerHTML = html;
 }
 
@@ -3590,7 +3594,13 @@ function _renderCostByTag(costByTag) {
     var container = $('dash-cost-by-tag');
     if (!container) return;
     if (!costByTag || !costByTag.tagKeys || costByTag.tagKeys.length === 0) {
-        container.innerHTML = '<div style="color:#9ca3af;text-align:center;padding:40px 0;">No cost allocation tags found.<br><span style="font-size:0.85em;">Activate cost allocation tags in AWS Billing &gt; Cost Allocation Tags</span></div>';
+        container.innerHTML = '<div style="color:#9ca3af;text-align:center;padding:20px 0;">'
+            + '<div style="margin-bottom:8px;">No cost allocation tags activated yet.</div>'
+            + '<div style="font-size:0.85em;color:#6b7280;">Resource tags exist but need to be activated as <strong>cost allocation tags</strong><br>in the management (payer) account under AWS Billing &gt; Cost Allocation Tags.</div>'
+            + '<div style="margin-top:12px;display:flex;gap:12px;justify-content:center;">'
+            + '<button onclick="_goToTab(\'plan-tab\',\'plan-tagging\');" style="background:#6366f1;color:#fff;border:none;border-radius:6px;padding:6px 14px;cursor:pointer;font-size:0.85em;">Manage Tags \u25b6</button>'
+            + '<a href="https://console.aws.amazon.com/billing/home#/tags" target="_blank" style="background:#f59e0b;color:#fff;border:none;border-radius:6px;padding:6px 14px;cursor:pointer;font-size:0.85em;text-decoration:none;">Activate in AWS \u2197</a>'
+            + '</div></div>';
         return;
     }
 
@@ -3642,7 +3652,7 @@ function _renderCostByTagChart() {
 
     var tagData = container._tagData[_costByTagCurrentKey];
     if (!tagData || !tagData.values || tagData.values.length === 0) {
-        chartEl.innerHTML = '<div style="color:#9ca3af;text-align:center;padding:60px 0;">No cost data for this tag key</div>';
+        chartEl.innerHTML = '<div style="color:#9ca3af;text-align:center;padding:60px 0;">No data for this tag key</div>';
         return;
     }
 
@@ -3653,7 +3663,7 @@ function _renderCostByTagChart() {
     chart.setOption({
         tooltip: {
             trigger: 'item',
-            formatter: function(p) { return p.name + '<br/>$' + p.value.toFixed(2) + ' (' + p.data.pct + '%)'; }
+            formatter: function(p) { return p.name + '<br/>' + p.value + ' resources (' + p.data.pct + '%)'; }
         },
         series: [{
             type: 'pie',
@@ -3667,7 +3677,7 @@ function _renderCostByTagChart() {
                     itemStyle: { color: v.tag === '(untagged)' ? '#d1d5db' : colors[i % colors.length] }
                 };
             }),
-            label: { show: true, fontSize: 10, formatter: '{b}: ${c}', overflow: 'truncate', width: 110 },
+            label: { show: true, fontSize: 10, formatter: '{b}: {c}', overflow: 'truncate', width: 110 },
             emphasis: { itemStyle: { shadowBlur: 10, shadowOffsetX: 0, shadowColor: 'rgba(0,0,0,0.3)' } },
             animationType: 'scale',
         }]
