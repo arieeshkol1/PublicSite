@@ -5346,17 +5346,25 @@ function _showSchedWizard() {
 function _updateSchedWizard() {
     var type = (document.getElementById('sched-type') || {}).value || '';
     var officeConfig = document.getElementById('sched-office-hours-config');
-    if (officeConfig) officeConfig.style.display = type === 'office-hours' ? 'block' : 'none';
+    var isStopStart = type.indexOf('stop') !== -1 || type.indexOf('scale') !== -1 || type.indexOf('pause') !== -1 || type.indexOf('teardown') !== -1 || type.indexOf('autostop') !== -1;
+    if (officeConfig) officeConfig.style.display = isStopStart ? 'block' : 'none';
 
     // Auto-fill name based on type
     var nameInput = document.getElementById('sched-name');
     if (nameInput && !nameInput.value) {
         var names = {
-            'office-hours': 'Stop non-prod instances outside business hours',
+            'ec2-stop-start': 'Stop dev EC2 instances after hours',
+            'rds-stop-start': 'Stop dev RDS databases after hours',
+            'asg-scale-zero': 'Scale dev ASGs to zero after hours',
+            'eks-scale-zero': 'Scale dev EKS nodes to zero after hours',
+            'sagemaker-stop': 'Stop idle SageMaker notebooks',
+            'redshift-pause': 'Pause dev Redshift clusters',
+            'workspaces-autostop': 'Enable WorkSpaces auto-stop',
+            'elb-teardown': 'Teardown dev load balancers after hours',
             'waste-scan': 'Weekly waste scan',
-            'snapshot-cleanup': 'Monthly snapshot cleanup review',
+            'snapshot-cleanup': 'Monthly snapshot cleanup',
             'gp2-migration': 'gp2 to gp3 volume migration',
-            'commitment-review': 'Quarterly SP/RI commitment review'
+            'commitment-review': 'Quarterly SP/RI review'
         };
         nameInput.value = names[type] || '';
     }
