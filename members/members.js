@@ -388,6 +388,8 @@ function _showUpgradeModal() {
 
 function showView(name) {
     loginView.hidden = name !== 'login';
+    var planTab = document.getElementById('plan-tab');
+    if (planTab) planTab.hidden = name !== 'plan';
     registerView.hidden = name !== 'register';
     if (resetView) resetView.hidden = name !== 'reset';
     dashboardView.hidden = name !== 'dashboard';
@@ -1222,6 +1224,11 @@ function activateMemberTab(tabId) {
         _syncAccountSelection('dash'); // save current selection
         populateActAccounts();
         _applySharedSelection('act-acct-cb'); // apply shared selection to Act tab
+    }
+    if (tabId === 'plan-tab') {
+        _syncAccountSelection('dash');
+        populateActAccounts(); // reuse Act account population for Plan tab
+        _applySharedSelection('act-acct-cb');
     }
 }
 
@@ -3868,6 +3875,16 @@ function _syncActSelection() {
     if (ids.length > 0) _sharedSelectedAccounts = ids;
 }
 
+function _switchPlanSection(section) {
+    document.querySelectorAll('#plan-tab .act-nav-btn').forEach(function(b) {
+        b.classList.toggle('active', b.dataset.section === section);
+    });
+    ['plan-budget', 'plan-tagging'].forEach(function(s) {
+        var el = document.getElementById('plan-section-' + s);
+        if (el) el.style.display = s === section ? 'block' : 'none';
+    });
+}
+
 function _switchActSection(section) {
     document.querySelectorAll('.act-nav-btn').forEach(function(b) {
         b.classList.toggle('active', b.dataset.section === section);
@@ -4676,7 +4693,7 @@ var _tagScanResults = [];
 var _tagSelectedArns = new Set();
 
 (function initTagManager() {
-    var tagBtn = document.getElementById('act-tag-btn');
+    var tagBtn = document.getElementById('plan-tag-btn') || document.getElementById('act-tag-btn');
     if (!tagBtn) return;
 
     tagBtn.onclick = async function() {
@@ -5101,18 +5118,18 @@ async function _updateRecStatus(recId, status) {
 // Budget Management UI
 // ============================================================
 (function initBudget() {
-    var loadBtn = document.getElementById('act-budget-load-btn');
-    var createBtn = document.getElementById('act-budget-create-btn');
+    var loadBtn = document.getElementById('plan-budget-load-btn');
+    var createBtn = document.getElementById('plan-budget-create-btn');
     if (loadBtn) loadBtn.onclick = function() { _loadBudgets(); };
     if (createBtn) createBtn.onclick = function() { _showBudgetWizard(); };
-    var submitBtn = document.getElementById('budget-wizard-submit');
+    var submitBtn = document.getElementById('plan-budget-wizard-submit');
     if (submitBtn) submitBtn.onclick = async function() { await _createBudget(); };
 })();
 
 async function _loadBudgets() {
-    var statusEl = document.getElementById('act-budget-status');
-    var listEl = document.getElementById('act-budget-list');
-    var emptyEl = document.getElementById('act-budget-empty');
+    var statusEl = document.getElementById('plan-budget-status');
+    var listEl = document.getElementById('plan-budget-list');
+    var emptyEl = document.getElementById('plan-budget-empty');
     if (statusEl) statusEl.textContent = 'Loading budgets...';
     if (emptyEl) emptyEl.style.display = 'none';
 
@@ -5148,9 +5165,9 @@ async function _loadBudgets() {
 }
 
 function _showBudgetWizard() {
-    var wizard = document.getElementById('act-budget-wizard');
-    var select = document.getElementById('budget-account-select');
-    var emailInput = document.getElementById('budget-alert-email');
+    var wizard = document.getElementById('plan-budget-wizard');
+    var select = document.getElementById('plan-budget-account-select');
+    var emailInput = document.getElementById('plan-budget-alert-email');
     if (!wizard) return;
 
     // Populate account dropdown
@@ -5174,23 +5191,23 @@ function _showBudgetWizard() {
         }
     }
     if (emailInput) emailInput.value = getMemberEmail() || '';
-    document.getElementById('budget-wizard-error').textContent = '';
+    document.getElementById('plan-budget-wizard-error').textContent = '';
     wizard.hidden = false;
 }
 
 async function _createBudget() {
-    var errEl = document.getElementById('budget-wizard-error');
-    var submitBtn = document.getElementById('budget-wizard-submit');
-    var acctId = (document.getElementById('budget-account-select') || {}).value || '';
-    var name = (document.getElementById('budget-name') || {}).value || '';
-    var amount = parseFloat((document.getElementById('budget-amount') || {}).value || 0);
-    var email = (document.getElementById('budget-alert-email') || {}).value || '';
+    var errEl = document.getElementById('plan-budget-wizard-error');
+    var submitBtn = document.getElementById('plan-budget-wizard-submit');
+    var acctId = (document.getElementById('plan-budget-account-select') || {}).value || '';
+    var name = (document.getElementById('plan-budget-name') || {}).value || '';
+    var amount = parseFloat((document.getElementById('plan-budget-amount') || {}).value || 0);
+    var email = (document.getElementById('plan-budget-alert-email') || {}).value || '';
 
     var thresholds = [];
-    if (document.getElementById('budget-alert-50') && document.getElementById('budget-alert-50').checked) thresholds.push(50);
-    if (document.getElementById('budget-alert-75') && document.getElementById('budget-alert-75').checked) thresholds.push(75);
-    if (document.getElementById('budget-alert-100') && document.getElementById('budget-alert-100').checked) thresholds.push(100);
-    if (document.getElementById('budget-alert-120') && document.getElementById('budget-alert-120').checked) thresholds.push(120);
+    if (document.getElementById('plan-alert-50') && document.getElementById('plan-alert-50').checked) thresholds.push(50);
+    if (document.getElementById('plan-alert-75') && document.getElementById('plan-alert-75').checked) thresholds.push(75);
+    if (document.getElementById('plan-alert-100') && document.getElementById('plan-alert-100').checked) thresholds.push(100);
+    if (document.getElementById('plan-alert-120') && document.getElementById('plan-alert-120').checked) thresholds.push(120);
 
     if (!acctId) { errEl.textContent = 'Select an account'; return; }
     if (!name) { errEl.textContent = 'Enter a budget name'; return; }
@@ -5204,7 +5221,7 @@ async function _createBudget() {
             accountId: acctId, name: name, amount: amount, alertEmail: email, thresholds: thresholds
         });
         notify(data.message || 'Budget created!', 'success');
-        document.getElementById('act-budget-wizard').hidden = true;
+        document.getElementById('plan-budget-wizard').hidden = true;
         _loadBudgets();
     } catch (e) {
         errEl.textContent = e.message || 'Failed to create budget';

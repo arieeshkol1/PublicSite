@@ -164,11 +164,140 @@
 
         <div class="dashboard-content">
             <div class="member-tabs">
+                <button class="member-tab" data-tab="plan-tab">Plan</button>
                 <button class="member-tab active" data-tab="dash-tab">Observe</button>
                 <button class="member-tab" data-tab="ai-tab">Chat</button>
                 <button class="member-tab" data-tab="act-tab">Act</button>
                 <button class="member-tab" data-tab="accounts-tab">Configure</button>
             </div>
+
+            <!-- Plan Tab -->
+            <div id="plan-tab" class="member-tab-content" hidden>
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+                    <h2 style="margin:0;">Plan</h2>
+                    <div style="display:flex;align-items:center;gap:8px;">
+                        <label style="color:#6b7280;font-size:0.85em;">Accounts:</label>
+                        <div id="plan-account-select" style="display:inline-block;"></div>
+                    </div>
+                </div>
+
+                <div style="display:flex;gap:0;min-height:460px;">
+                    <div style="width:180px;flex-shrink:0;border-right:1px solid #e5e7eb;padding:12px 0;">
+                        <button class="act-nav-btn active" data-section="plan-budget" onclick="_switchPlanSection('plan-budget')">
+                            <span style="font-size:1.2em;">💰</span> Budget
+                        </button>
+                        <button class="act-nav-btn" data-section="plan-tagging" onclick="_switchPlanSection('plan-tagging')">
+                            <span style="font-size:1.2em;">🏷️</span> Tag Resources
+                        </button>
+                    </div>
+
+                    <div style="flex:1;padding:20px 24px;overflow-y:auto;">
+
+                        <!-- Budget Sub-Section -->
+                        <div id="plan-section-plan-budget">
+                            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+                                <h2 style="margin:0;color:#1f2937;">Budget & Alerts</h2>
+                                <div style="display:flex;gap:8px;">
+                                    <button id="plan-budget-load-btn" class="btn btn-outline btn-sm">🔄 Load Budgets</button>
+                                    <button id="plan-budget-create-btn" class="btn btn-primary btn-sm" style="background:#f59e0b;border-color:#f59e0b;">+ Create Budget</button>
+                                </div>
+                            </div>
+                            <p style="color:#6b7280;font-size:0.9em;margin-bottom:16px;">Create and manage AWS Budgets with cost alerts across your connected accounts.</p>
+                            <div id="plan-budget-status" style="padding:0 0 8px;color:#6b7280;font-size:0.9em;min-height:20px;"></div>
+                            <div id="plan-budget-list"></div>
+                            <div id="plan-budget-empty" style="text-align:center;padding:60px 20px;color:#6b7280;">
+                                <div style="font-size:2.5em;margin-bottom:12px;">💰</div>
+                                <div style="font-size:1em;margin-bottom:6px;color:#1f2937;">No budgets found</div>
+                                <div style="font-size:0.9em;color:#6b7280;">Click "Create Budget" to set up cost alerts,<br>or "Load Budgets" to view existing ones from your AWS accounts.</div>
+                            </div>
+                        </div>
+
+                        <!-- Tag Resources Sub-Section (moved from Act) -->
+                        <div id="plan-section-plan-tagging" style="display:none;">
+                            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+                                <h2 style="margin:0;color:#1f2937;">Tag Resources</h2>
+                                <button id="plan-tag-btn" class="btn btn-primary btn-sm" style="background:#6366f1;border-color:#6366f1;">🏷️ Scan for Untagged</button>
+                            </div>
+                            <div id="plan-tag-scan-status" style="padding:0 0 12px;color:#6b7280;font-size:0.9em;min-height:20px;"></div>
+
+                            <div id="plan-tag-panel" style="display:none;">
+                                <div id="plan-tag-stats" style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px;"></div>
+                                <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">
+                                    <input type="text" id="plan-tag-search" placeholder="Filter by name, type, or ARN..." style="flex:1;padding:8px 12px;border:1px solid #d1d5db;border-radius:6px;background:#fff;color:#1f2937;font-size:0.9em;">
+                                    <button id="plan-tag-select-all" class="btn btn-outline btn-sm">Select All</button>
+                                    <button id="plan-tag-apply-btn" class="btn btn-primary btn-sm" style="background:#6366f1;border-color:#6366f1;" disabled>Apply Tags (0)</button>
+                                </div>
+                                <div id="plan-tag-list" style="max-height:450px;overflow-y:auto;"></div>
+                            </div>
+
+                            <div id="plan-tag-empty" style="text-align:center;padding:60px 20px;color:#6b7280;">
+                                <div style="font-size:2.5em;margin-bottom:12px;">🏷️</div>
+                                <div style="font-size:1em;margin-bottom:6px;color:#1f2937;">Click "Scan for Untagged" to find resources missing tags</div>
+                                <div style="font-size:0.9em;color:#6b7280;">Checks EC2, EBS, RDS, Lambda, S3, and Load Balancers<br>for missing Environment, Owner, CostCenter, and Application tags.</div>
+                            </div>
+                        </div>
+
+                    </div>
+                </div>
+
+                <!-- Budget Create Wizard (reused from Act) -->
+                <div id="plan-budget-wizard" class="modal-overlay" hidden>
+                    <div class="modal-card" style="max-width:560px;">
+                        <div class="modal-header">
+                            <h2>Create AWS Budget</h2>
+                            <button onclick="document.getElementById('plan-budget-wizard').hidden=true;" class="modal-close">&times;</button>
+                        </div>
+                        <div class="modal-body">
+                            <div class="form-group">
+                                <label>Account</label>
+                                <select id="plan-budget-account-select" style="width:100%;padding:8px;border:1px solid #d1d5db;border-radius:6px;font-size:0.9em;"></select>
+                            </div>
+                            <div class="form-group">
+                                <label>Budget Name</label>
+                                <input type="text" id="plan-budget-name" placeholder="e.g. Monthly Total Budget" style="width:100%;padding:8px;border:1px solid #d1d5db;border-radius:6px;font-size:0.9em;">
+                            </div>
+                            <div class="form-group">
+                                <label>Monthly Budget Amount (USD)</label>
+                                <input type="number" id="plan-budget-amount" placeholder="e.g. 1000" min="1" style="width:100%;padding:8px;border:1px solid #d1d5db;border-radius:6px;font-size:0.9em;">
+                            </div>
+                            <div class="form-group">
+                                <label>Alert Thresholds</label>
+                                <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                                    <label style="font-size:0.85em;color:#374151;display:flex;align-items:center;gap:4px;"><input type="checkbox" id="plan-alert-50" checked> 50%</label>
+                                    <label style="font-size:0.85em;color:#374151;display:flex;align-items:center;gap:4px;"><input type="checkbox" id="plan-alert-75" checked> 75%</label>
+                                    <label style="font-size:0.85em;color:#374151;display:flex;align-items:center;gap:4px;"><input type="checkbox" id="plan-alert-100" checked> 100%</label>
+                                    <label style="font-size:0.85em;color:#374151;display:flex;align-items:center;gap:4px;"><input type="checkbox" id="plan-alert-120"> 120%</label>
+                                </div>
+                            </div>
+                            <div class="form-group">
+                                <label>Alert Email</label>
+                                <input type="email" id="plan-budget-alert-email" placeholder="alerts@company.com" style="width:100%;padding:8px;border:1px solid #d1d5db;border-radius:6px;font-size:0.9em;">
+                            </div>
+                            <div id="plan-budget-wizard-error" style="color:#ef4444;font-size:0.85em;min-height:20px;"></div>
+                        </div>
+                        <div class="modal-footer">
+                            <button onclick="document.getElementById('plan-budget-wizard').hidden=true;" class="btn btn-outline">Cancel</button>
+                            <button id="plan-budget-wizard-submit" class="btn btn-primary" style="background:#f59e0b;border-color:#f59e0b;">Create Budget</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Tag Apply Modal (reused) -->
+                <div id="plan-tag-modal" class="modal-overlay" hidden>
+                    <div class="modal-card modal-card-sm" style="max-width:520px;">
+                        <h3 style="margin-top:0;color:#1f2937;">🏷️ Apply Tags to <span id="plan-tag-count">0</span> Resources</h3>
+                        <p style="color:#6b7280;font-size:0.9em;">Add one or more tags. These will be applied to all selected resources.</p>
+                        <div id="plan-tag-inputs" style="margin-bottom:16px;"></div>
+                        <button id="plan-tag-add-row" class="btn btn-outline btn-sm" style="margin-bottom:16px;">+ Add Another Tag</button>
+                        <div id="plan-tag-apply-status" style="font-size:0.9em;margin-bottom:12px;"></div>
+                        <div style="display:flex;gap:8px;justify-content:flex-end;">
+                            <button onclick="document.getElementById('plan-tag-modal').hidden=true;" class="btn btn-outline">Cancel</button>
+                            <button id="plan-tag-confirm-btn" class="btn btn-primary" style="background:#6366f1;border-color:#6366f1;">🏷️ Apply Tags</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             <div id="act-tab" class="member-tab-content" hidden>
                 <!-- Top bar with account selector (same style as Observe/Chat) -->
                 <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
@@ -185,14 +314,8 @@
                         <button class="act-nav-btn active" data-section="waste" onclick="_switchActSection('waste')">
                             <span style="font-size:1.2em;">🗑️</span> Waste Cleanup
                         </button>
-                        <button class="act-nav-btn" data-section="tagging" onclick="_switchActSection('tagging')">
-                            <span style="font-size:1.2em;">🏷️</span> Tag Resources
-                        </button>
                         <button class="act-nav-btn" data-section="scheduler" onclick="_switchActSection('scheduler')">
                             <span style="font-size:1.2em;">⏰</span> Scheduler
-                        </button>
-                        <button class="act-nav-btn" data-section="budget" onclick="_switchActSection('budget')">
-                            <span style="font-size:1.2em;">💰</span> Budget
                         </button>
                     </div>
 
