@@ -346,13 +346,59 @@
                                     </div>
                                     <div class="form-group">
                                         <label>Frequency</label>
-                                        <select id="sched-frequency" style="width:100%;padding:8px;border:1px solid #d1d5db;border-radius:6px;font-size:0.9em;">
+                                        <select id="sched-frequency" style="width:100%;padding:8px;border:1px solid #d1d5db;border-radius:6px;font-size:0.9em;" onchange="_updateSchedGranularity()">
                                             <option value="daily">Daily</option>
                                             <option value="weekdays">Weekdays (Mon-Fri)</option>
                                             <option value="weekly" selected>Weekly</option>
                                             <option value="monthly">Monthly</option>
                                             <option value="quarterly">Quarterly</option>
                                         </select>
+                                    </div>
+                                    <!-- Granularity: day/time selection -->
+                                    <div id="sched-granularity">
+                                        <div id="sched-days-of-week" style="display:none;">
+                                            <label style="font-size:0.9em;font-weight:500;color:#374151;margin-bottom:6px;display:block;">Days of Week</label>
+                                            <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;">
+                                                <label style="font-size:0.85em;display:flex;align-items:center;gap:3px;"><input type="checkbox" class="sched-dow" value="mon" checked> Mon</label>
+                                                <label style="font-size:0.85em;display:flex;align-items:center;gap:3px;"><input type="checkbox" class="sched-dow" value="tue" checked> Tue</label>
+                                                <label style="font-size:0.85em;display:flex;align-items:center;gap:3px;"><input type="checkbox" class="sched-dow" value="wed" checked> Wed</label>
+                                                <label style="font-size:0.85em;display:flex;align-items:center;gap:3px;"><input type="checkbox" class="sched-dow" value="thu" checked> Thu</label>
+                                                <label style="font-size:0.85em;display:flex;align-items:center;gap:3px;"><input type="checkbox" class="sched-dow" value="fri" checked> Fri</label>
+                                                <label style="font-size:0.85em;display:flex;align-items:center;gap:3px;"><input type="checkbox" class="sched-dow" value="sat"> Sat</label>
+                                                <label style="font-size:0.85em;display:flex;align-items:center;gap:3px;"><input type="checkbox" class="sched-dow" value="sun"> Sun</label>
+                                            </div>
+                                        </div>
+                                        <div id="sched-day-of-month" style="display:none;">
+                                            <div class="form-group">
+                                                <label>Day of Month</label>
+                                                <select id="sched-dom" style="width:100%;padding:8px;border:1px solid #d1d5db;border-radius:6px;font-size:0.9em;">
+                                                    <option value="1">1st</option>
+                                                    <option value="5">5th</option>
+                                                    <option value="10">10th</option>
+                                                    <option value="15">15th</option>
+                                                    <option value="20">20th</option>
+                                                    <option value="last">Last day</option>
+                                                </select>
+                                            </div>
+                                        </div>
+                                        <div class="form-group">
+                                            <label>Time of Day</label>
+                                            <input type="time" id="sched-time-of-day" value="09:00" style="width:100%;padding:8px;border:1px solid #d1d5db;border-radius:6px;font-size:0.9em;">
+                                        </div>
+                                        <div class="form-group">
+                                            <label>Timezone</label>
+                                            <select id="sched-tz" style="width:100%;padding:8px;border:1px solid #d1d5db;border-radius:6px;font-size:0.9em;">
+                                                <option value="UTC">UTC</option>
+                                                <option value="US/Eastern">US Eastern</option>
+                                                <option value="US/Pacific">US Pacific</option>
+                                                <option value="Europe/London">Europe/London</option>
+                                                <option value="Europe/Berlin">Europe/Berlin</option>
+                                                <option value="Asia/Jerusalem" selected>Asia/Jerusalem</option>
+                                                <option value="Asia/Tokyo">Asia/Tokyo</option>
+                                                <option value="Asia/Singapore">Asia/Singapore</option>
+                                                <option value="Australia/Sydney">Australia/Sydney</option>
+                                            </select>
+                                        </div>
                                     </div>
                                     <div id="sched-office-hours-config" style="display:none;">
                                         <div class="form-row" style="display:flex;gap:12px;">

@@ -5250,6 +5250,26 @@ function _updateSchedWizard() {
         };
         nameInput.value = names[type] || '';
     }
+    _updateSchedGranularity();
+}
+
+function _updateSchedGranularity() {
+    var freq = (document.getElementById('sched-frequency') || {}).value || '';
+    var dowEl = document.getElementById('sched-days-of-week');
+    var domEl = document.getElementById('sched-day-of-month');
+
+    // Show days of week for daily/weekdays/weekly
+    if (dowEl) dowEl.style.display = (freq === 'daily' || freq === 'weekly') ? 'block' : 'none';
+    // Show day of month for monthly/quarterly
+    if (domEl) domEl.style.display = (freq === 'monthly' || freq === 'quarterly') ? 'block' : 'none';
+
+    // Pre-check weekdays for 'weekdays' frequency
+    if (freq === 'weekdays') {
+        document.querySelectorAll('.sched-dow').forEach(function(chk) {
+            chk.checked = ['mon','tue','wed','thu','fri'].indexOf(chk.value) !== -1;
+        });
+        if (dowEl) dowEl.style.display = 'block';
+    }
 }
 
 async function _createSchedule() {
@@ -5269,6 +5289,14 @@ async function _createSchedule() {
         config.timezone = (document.getElementById('sched-timezone') || {}).value || 'UTC';
         config.tagFilter = (document.getElementById('sched-tag-filter') || {}).value || '';
     }
+
+    // Granularity: days of week, day of month, time, timezone
+    var daysOfWeek = [];
+    document.querySelectorAll('.sched-dow:checked').forEach(function(chk) { daysOfWeek.push(chk.value); });
+    config.daysOfWeek = daysOfWeek;
+    config.dayOfMonth = (document.getElementById('sched-dom') || {}).value || '';
+    config.timeOfDay = (document.getElementById('sched-time-of-day') || {}).value || '09:00';
+    config.timezone = config.timezone || (document.getElementById('sched-tz') || {}).value || 'UTC';
 
     submitBtn.disabled = true; submitBtn.textContent = 'Creating...';
     errEl.textContent = '';
