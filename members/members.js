@@ -5580,6 +5580,22 @@ function _showSchedWizard() {
     document.getElementById('sched-name').value = '';
     document.getElementById('sched-notes').value = '';
     document.getElementById('sched-wizard-error').textContent = '';
+    // Populate account dropdown
+    var acctSelect = document.getElementById('sched-account');
+    if (acctSelect) {
+        acctSelect.innerHTML = '';
+        var connected = (typeof allAccounts !== 'undefined' ? allAccounts : []).filter(function(a) { return a.connectionStatus === 'connected'; });
+        if (connected.length === 0) {
+            acctSelect.innerHTML = '<option value="">No accounts connected</option>';
+        } else {
+            connected.forEach(function(a) {
+                var opt = document.createElement('option');
+                opt.value = a.accountId;
+                opt.textContent = (a.accountName || 'Account') + ' (' + a.accountId + ')';
+                acctSelect.appendChild(opt);
+            });
+        }
+    }
     _updateSchedWizard();
     wizard.hidden = false;
 }
@@ -5641,22 +5657,41 @@ async function _createSchedule() {
 
     if (!name) { errEl.textContent = 'Enter a schedule name'; return; }
 
+    var accountId = (document.getElementById('sched-account') || {}).value || '';
+    if (!accountId) { errEl.textContent = 'Please select an account'; return; }
+
     var config = {};
+    config.accountId = accountId;
+    config.timezone = (document.getElementById('sched-tz') || {}).value || 'UTC';
+
+    // Map day checkboxes to day names the backend expects (Mon, Tue, etc.)
+    var dayMap = {mon: 'Mon', tue: 'Tue', wed: 'Wed', thu: 'Thu', fri: 'Fri', sat: 'Sat', sun: 'Sun'};
+    var daysOfWeek = [];
+    document.querySelectorAll('.sched-dow:checked').forEach(function(chk) { daysOfWeek.push(dayMap[chk.value] || chk.value); });
+
     var isStopStart = type.indexOf('stop') !== -1 || type.indexOf('scale') !== -1 || type.indexOf('pause') !== -1 || type.indexOf('teardown') !== -1 || type.indexOf('autostop') !== -1;
     if (isStopStart) {
-        config.startTime = (document.getElementById('sched-start-time') || {}).value || '08:00';
         config.stopTime = (document.getElementById('sched-stop-time') || {}).value || '18:00';
+        config.startTime = (document.getElementById('sched-start-time') || {}).value || '08:00';
+        config.stopDays = daysOfWeek;
+        config.startDays = daysOfWeek;
         config.tagFilter = (document.getElementById('sched-tag-filter') || {}).value || '';
-        config.selectedResources = Array.from(_schedSelectedResources);
+        if (config.tagFilter) {
+            var parts = config.tagFilter.split('=');
+            config.tagFilter = {Key: parts[0] || '', Value: parts[1] || ''};
+        } else {
+            config.tagFilter = null;
+        }
+        config.resources = Array.from(_schedSelectedResources);
+    } else {
+        // Review type
+        config.scanTime = (document.getElementById('sched-time-of-day') || {}).value || '06:00';
+        config.scanDay = daysOfWeek;
     }
 
-    // Granularity: days of week, day of month, time, timezone
-    var daysOfWeek = [];
-    document.querySelectorAll('.sched-dow:checked').forEach(function(chk) { daysOfWeek.push(chk.value); });
     config.daysOfWeek = daysOfWeek;
     config.dayOfMonth = (document.getElementById('sched-dom') || {}).value || '';
     config.timeOfDay = (document.getElementById('sched-time-of-day') || {}).value || '09:00';
-    config.timezone = config.timezone || (document.getElementById('sched-tz') || {}).value || 'UTC';
 
     submitBtn.disabled = true; submitBtn.textContent = 'Creating...';
     errEl.textContent = '';
