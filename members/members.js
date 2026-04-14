@@ -2662,7 +2662,6 @@ function renderDashboardWidgets(data) {
     setTimeout(function() {
         _renderTreemap(data.costByService || [], data.drillDown || {});
         _renderDailyTrend(data.dailyTrend || [], data.hourlyTrend || []);
-        _renderAllocationTreemap(data.costAllocation || null);
         _renderWaste(data.waste || {});
         _renderMonthly(data.monthlyTrend || {});
         _renderUnitEconomics(data.unitEconomics || null);
@@ -2682,7 +2681,6 @@ function _kpiCard(label, value, color) {
 var DASH_WIDGET_DEFS = [
     {id:'dash-treemap', title:'Cost by Service', height:300, q:'Show me my cost breakdown by service'},
     {id:'dash-daily', title:'Cost Trend', height:250, q:'Are there any cost anomalies?', extraTitle:' <span id="dash-trend-toggle" style="font-size:0.7em;margin-left:8px;"><button class="btn btn-outline btn-sm" style="padding:1px 6px;font-size:0.8em;" onclick="_toggleTrendView(\'daily\')">Daily</button> <button class="btn btn-outline btn-sm" style="padding:1px 6px;font-size:0.8em;background:#6366f1;color:#fff;border-color:#6366f1;" onclick="_toggleTrendView(\'hourly\')">Hourly</button></span>'},
-    {id:'dash-allocation', title:'Cost Allocation by Business Unit', height:280, q:'Break down my costs by business unit', extraTitle:' <button class="btn btn-outline btn-sm" style="font-size:0.7em;margin-left:8px;padding:2px 6px;" onclick="showAllocationRulesModal();">Manage Rules</button>'},
     {id:'dash-waste', title:'Waste Detection', height:250, q:'What services do I not need? Show me all waste.'},
     {id:'dash-monthly', title:'Monthly Cost by Service', height:320, q:'Compare my costs over the last 3 months'},
     {id:'dash-unit-economics', title:'Unit Cost Trend', height:280, q:'How is my cost per unit trending?', extraTitle:' <button class="btn btn-outline btn-sm" style="font-size:0.7em;margin-left:8px;padding:2px 6px;" onclick="showBusinessMetricsModal();">Add Metrics</button>'},
