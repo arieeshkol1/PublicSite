@@ -6214,8 +6214,8 @@ def handle_tag_scan(event):
                             else:
                                 summary['untagged'] += 1
 
-                            # Only return resources with missing tags (limit to 200)
-                            if missing and len(all_resources) < 200:
+                            # Return all resources (limit to 300)
+                            if len(all_resources) < 300:
                                 # Extract friendly name
                                 parts = arn.split(':')
                                 res_type = rt.split(':')[0].upper() if ':' in rt else rt.upper()

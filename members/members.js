@@ -4712,7 +4712,7 @@ var _tagScanResults = [];
 var _tagSelectedArns = new Set();
 
 (function initTagManager() {
-    var tagBtn = document.getElementById('plan-tag-btn') || document.getElementById('act-tag-btn');
+    var tagBtn = document.getElementById('plan-tag-btn');
     if (!tagBtn) return;
 
     tagBtn.onclick = async function() {
@@ -4722,10 +4722,10 @@ var _tagSelectedArns = new Set();
         await _runTagScan(accountIds);
     };
 
-    var searchInput = document.getElementById('act-tag-search');
+    var searchInput = document.getElementById('plan-tag-search');
     if (searchInput) searchInput.oninput = function() { _renderTagList(); };
 
-    var selectAllBtn = document.getElementById('act-tag-select-all');
+    var selectAllBtn = document.getElementById('plan-tag-select-all');
     if (selectAllBtn) selectAllBtn.onclick = function() {
         var visible = _getVisibleTagResources();
         var allSelected = visible.every(function(r) { return _tagSelectedArns.has(r.arn); });
@@ -4737,27 +4737,27 @@ var _tagSelectedArns = new Set();
         _updateTagApplyBtn();
     };
 
-    var applyBtn = document.getElementById('act-tag-apply-btn');
+    var applyBtn = document.getElementById('plan-tag-apply-btn');
     if (applyBtn) applyBtn.onclick = function() { _showTagApplyModal(); };
 
-    var addRowBtn = document.getElementById('act-tag-add-row');
+    var addRowBtn = document.getElementById('plan-tag-add-row');
     if (addRowBtn) addRowBtn.onclick = function() { _addTagInputRow(); };
 
-    var confirmBtn = document.getElementById('act-tag-confirm-btn');
+    var confirmBtn = document.getElementById('plan-tag-confirm-btn');
     if (confirmBtn) confirmBtn.onclick = async function() { await _applyTags(); };
 })();
 
 async function _runTagScan(accountIds) {
-    var panel = document.getElementById('act-tag-panel');
+    var panel = document.getElementById('plan-tag-panel');
     var cardsGrid = document.getElementById('act-cards-grid');
     var empty = document.getElementById('act-empty');
     var status = document.getElementById('act-scan-status');
     var totalSavings = document.getElementById('act-total-savings');
 
     if (panel) panel.style.display = 'block';
-    var tagEmpty = document.getElementById('act-tag-empty');
+    var tagEmpty = document.getElementById('plan-tag-empty');
     if (tagEmpty) tagEmpty.style.display = 'none';
-    var tagStatus = document.getElementById('act-tag-scan-status');
+    var tagStatus = document.getElementById('plan-tag-scan-status');
     if (tagStatus) tagStatus.textContent = 'Scanning for untagged resources...';
 
     try {
@@ -4777,7 +4777,7 @@ async function _runTagScan(accountIds) {
 }
 
 function _renderTagStats(data) {
-    var el = document.getElementById('act-tag-stats');
+    var el = document.getElementById('plan-tag-stats');
     if (!el) return;
     var s = data.summary || {};
     var cov = data.coverage || 0;
@@ -4797,7 +4797,7 @@ function _renderTagStats(data) {
 }
 
 function _getVisibleTagResources() {
-    var q = (document.getElementById('act-tag-search') || {}).value || '';
+    var q = (document.getElementById('plan-tag-search') || {}).value || '';
     q = q.toLowerCase().trim();
     if (!q) return _tagScanResults;
     return _tagScanResults.filter(function(r) {
@@ -4808,7 +4808,7 @@ function _getVisibleTagResources() {
 }
 
 function _renderTagList() {
-    var list = document.getElementById('act-tag-list');
+    var list = document.getElementById('plan-tag-list');
     if (!list) return;
     var visible = _getVisibleTagResources();
     if (visible.length === 0) {
@@ -4822,12 +4822,14 @@ function _renderTagList() {
         var missingHtml = (r.missingTags || []).map(function(t) {
             return '<span style="background:#7f1d1d;color:#fca5a5;padding:1px 6px;border-radius:3px;font-size:0.85em;margin-right:3px;">' + t + '</span>';
         }).join('');
-        html += '<tr style="border-bottom:1px solid #e5e7eb;">'
+        var rowBg = (r.missingTags && r.missingTags.length > 0) ? '' : 'background:#f0fdf4;';
+        var statusBadge = (r.missingTags && r.missingTags.length > 0) ? '' : '<span style="color:#10b981;font-weight:600;font-size:0.85em;">✓ Tagged</span>';
+        html += '<tr style="border-bottom:1px solid #e5e7eb;' + rowBg + '">'
             + '<td style="padding:8px 10px;"><input type="checkbox" class="tag-chk" data-arn="' + r.arn + '"' + checked + '></td>'
             + '<td style="padding:8px 10px;color:#1f2937;font-weight:500;" title="' + r.arn + '">' + (r.name || r.resourceId) + '</td>'
             + '<td style="padding:8px 10px;color:#6b7280;">' + (r.resourceType || '') + '</td>'
             + '<td style="padding:8px 10px;color:#6b7280;">' + (r.account || '').slice(-4) + '</td>'
-            + '<td style="padding:8px 10px;">' + missingHtml + '</td></tr>';
+            + '<td style="padding:8px 10px;">' + (missingHtml || statusBadge) + '</td></tr>';
     });
     html += '</table>';
     list.innerHTML = html;
@@ -4844,7 +4846,7 @@ function _renderTagList() {
 }
 
 function _updateTagApplyBtn() {
-    var btn = document.getElementById('act-tag-apply-btn');
+    var btn = document.getElementById('plan-tag-apply-btn');
     if (!btn) return;
     var count = _tagSelectedArns.size;
     btn.textContent = 'Apply Tags (' + count + ')';
@@ -4852,11 +4854,11 @@ function _updateTagApplyBtn() {
 }
 
 function _showTagApplyModal() {
-    var modal = document.getElementById('act-tag-modal');
-    var countEl = document.getElementById('act-tag-count');
-    var inputs = document.getElementById('act-tag-inputs');
-    var statusEl = document.getElementById('act-tag-apply-status');
-    var confirmBtn = document.getElementById('act-tag-confirm-btn');
+    var modal = document.getElementById('plan-tag-modal');
+    var countEl = document.getElementById('plan-tag-count');
+    var inputs = document.getElementById('plan-tag-inputs');
+    var statusEl = document.getElementById('plan-tag-apply-status');
+    var confirmBtn = document.getElementById('plan-tag-confirm-btn');
     if (!modal) return;
     if (countEl) countEl.textContent = _tagSelectedArns.size;
     if (statusEl) statusEl.textContent = '';
@@ -4882,7 +4884,7 @@ function _showTagApplyModal() {
 }
 
 function _addTagInputRowWithKey(key) {
-    var inputs = document.getElementById('act-tag-inputs');
+    var inputs = document.getElementById('plan-tag-inputs');
     if (!inputs) return;
     var row = document.createElement('div');
     row.style.cssText = 'display:flex;gap:8px;margin-bottom:8px;';
@@ -4893,7 +4895,7 @@ function _addTagInputRowWithKey(key) {
 }
 
 function _addTagInputRow() {
-    var inputs = document.getElementById('act-tag-inputs');
+    var inputs = document.getElementById('plan-tag-inputs');
     if (!inputs) return;
     var row = document.createElement('div');
     row.style.cssText = 'display:flex;gap:8px;margin-bottom:8px;';
@@ -4904,9 +4906,9 @@ function _addTagInputRow() {
 }
 
 async function _applyTags() {
-    var inputs = document.getElementById('act-tag-inputs');
-    var statusEl = document.getElementById('act-tag-apply-status');
-    var confirmBtn = document.getElementById('act-tag-confirm-btn');
+    var inputs = document.getElementById('plan-tag-inputs');
+    var statusEl = document.getElementById('plan-tag-apply-status');
+    var confirmBtn = document.getElementById('plan-tag-confirm-btn');
     if (!inputs) return;
 
     // Collect tags
@@ -4943,7 +4945,7 @@ async function _applyTags() {
         notify(data.message || 'Tags applied!', 'success');
         if (confirmBtn) { confirmBtn.disabled = false; confirmBtn.textContent = '✓ Done — Close'; confirmBtn.style.background = '#10b981'; confirmBtn.style.borderColor = '#10b981'; confirmBtn.style.opacity = '1';
             confirmBtn.onclick = function() {
-                document.getElementById('act-tag-modal').hidden = true;
+                document.getElementById('plan-tag-modal').hidden = true;
                 confirmBtn.style.background = '#6366f1'; confirmBtn.style.borderColor = '#6366f1';
                 confirmBtn.textContent = '🏷️ Apply Tags';
                 confirmBtn.onclick = async function() { await _applyTags(); };
