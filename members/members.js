@@ -5174,7 +5174,12 @@ async function _loadBudgets() {
                 + '</div>'
                 + '<div style="background:#e5e7eb;border-radius:4px;height:8px;overflow:hidden;">'
                 + '<div style="width:' + Math.min(pct, 100) + '%;height:100%;background:' + barColor + ';border-radius:4px;"></div></div>'
-                + '<div style="font-size:0.8em;color:#6b7280;margin-top:4px;">' + pct + '% used</div></div>';
+                + '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px;">'
+                + '<span style="font-size:0.8em;color:#6b7280;">' + pct + '% used</span>'
+                + '<div style="display:flex;gap:6px;">'
+                + '<button onclick="_editBudget(\'' + b.accountId + '\',\'' + b.name.replace(/'/g, "\\'") + '\',' + b.limit + ')" style="background:none;border:none;color:#6366f1;cursor:pointer;font-size:0.85em;">✏️ Edit</button>'
+                + '<button onclick="_deleteBudget(\'' + b.accountId + '\',\'' + b.name.replace(/'/g, "\\'") + '\')" style="background:none;border:none;color:#ef4444;cursor:pointer;font-size:0.85em;">🗑️ Delete</button>'
+                + '</div></div></div>';
         });
         if (listEl) listEl.innerHTML = html;
     } catch (e) {
@@ -5364,5 +5369,41 @@ async function _createSchedule() {
         errEl.textContent = e.message || 'Failed to create schedule';
     } finally {
         submitBtn.disabled = false; submitBtn.textContent = 'Create Schedule';
+    }
+}
+
+
+// ============================================================
+// Budget Edit & Delete
+// ============================================================
+async function _editBudget(accountId, budgetName, currentAmount) {
+    var newAmount = prompt('Update budget "' + budgetName + '"\n\nCurrent amount: $' + currentAmount + '\nEnter new monthly amount (USD):', currentAmount);
+    if (!newAmount || isNaN(parseFloat(newAmount)) || parseFloat(newAmount) <= 0) return;
+
+    try {
+        var data = await api('PUT', '/members/budgets/update', {
+            accountId: accountId,
+            name: budgetName,
+            amount: parseFloat(newAmount)
+        });
+        notify(data.message || 'Budget updated!', 'success');
+        _loadBudgets();
+    } catch (e) {
+        notify('Failed to update: ' + (e.message || ''), 'error');
+    }
+}
+
+async function _deleteBudget(accountId, budgetName) {
+    if (!confirm('Delete budget "' + budgetName + '"?\n\nThis will remove the budget and all its alerts from your AWS account. This cannot be undone.')) return;
+
+    try {
+        var data = await api('DELETE', '/members/budgets/delete', {
+            accountId: accountId,
+            name: budgetName
+        });
+        notify(data.message || 'Budget deleted!', 'success');
+        _loadBudgets();
+    } catch (e) {
+        notify('Failed to delete: ' + (e.message || ''), 'error');
     }
 }

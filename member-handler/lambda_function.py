@@ -111,6 +111,8 @@ def lambda_handler(event, context):
         'POST /members/schedules/create': handle_create_schedule,
         'POST /members/budgets/list': handle_list_budgets,
         'POST /members/budgets/create': handle_create_budget,
+        'PUT /members/budgets/update': handle_update_budget,
+        'DELETE /members/budgets/delete': handle_delete_budget,
     }
 
     handler = routes.get(route_key)
@@ -6789,6 +6791,98 @@ def handle_create_budget(event):
     except Exception as e:
         logger.error(f"Budget creation failed: {e}")
         return create_error_response(500, 'ServerError', f'Failed to create budget: {str(e)}')
+
+
+def handle_update_budget(event):
+    """Update an existing AWS Budget (amount and/or name)."""
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+    member_email = auth['sub']
+
+    try:
+        body = json.loads(event.get('body', '{}'))
+    except (json.JSONDecodeError, TypeError):
+        return create_error_response(400, 'InvalidRequest', 'Invalid request body')
+
+    acct_id = body.get('accountId', '').strip()
+    budget_name = body.get('name', '').strip()
+    new_amount = body.get('amount', 0)
+
+    if not acct_id or not budget_name or not new_amount or new_amount <= 0:
+        return create_error_response(400, 'InvalidRequest', 'accountId, name, and amount are required')
+
+    external_id = hashlib.sha256(member_email.encode('utf-8')).hexdigest()
+    sts_client = boto3.client('sts')
+
+    try:
+        assume_resp = sts_client.assume_role(
+            RoleArn=f'arn:aws:iam::{acct_id}:role/SlashMyBill-{acct_id}',
+            RoleSessionName='SlashMyBillBudgetUpdate', ExternalId=external_id,
+        )
+        creds = assume_resp['Credentials']
+        budgets_client = boto3.client('budgets',
+            aws_access_key_id=creds['AccessKeyId'],
+            aws_secret_access_key=creds['SecretAccessKey'],
+            aws_session_token=creds['SessionToken'])
+
+        # Get existing budget first
+        existing = budgets_client.describe_budget(AccountId=acct_id, BudgetName=budget_name)
+        budget = existing['Budget']
+
+        # Update the limit
+        budget['BudgetLimit'] = {'Amount': str(new_amount), 'Unit': 'USD'}
+
+        budgets_client.update_budget(AccountId=acct_id, NewBudget=budget)
+
+        logger.info(f"Budget '{budget_name}' updated in {acct_id} by {member_email}")
+        return create_response(200, {'message': f'Budget "{budget_name}" updated to ${new_amount}'})
+
+    except Exception as e:
+        logger.error(f"Budget update failed: {e}")
+        return create_error_response(500, 'ServerError', f'Failed to update budget: {str(e)}')
+
+
+def handle_delete_budget(event):
+    """Delete an AWS Budget from a connected account."""
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+    member_email = auth['sub']
+
+    try:
+        body = json.loads(event.get('body', '{}'))
+    except (json.JSONDecodeError, TypeError):
+        return create_error_response(400, 'InvalidRequest', 'Invalid request body')
+
+    acct_id = body.get('accountId', '').strip()
+    budget_name = body.get('name', '').strip()
+
+    if not acct_id or not budget_name:
+        return create_error_response(400, 'InvalidRequest', 'accountId and name are required')
+
+    external_id = hashlib.sha256(member_email.encode('utf-8')).hexdigest()
+    sts_client = boto3.client('sts')
+
+    try:
+        assume_resp = sts_client.assume_role(
+            RoleArn=f'arn:aws:iam::{acct_id}:role/SlashMyBill-{acct_id}',
+            RoleSessionName='SlashMyBillBudgetDelete', ExternalId=external_id,
+        )
+        creds = assume_resp['Credentials']
+        budgets_client = boto3.client('budgets',
+            aws_access_key_id=creds['AccessKeyId'],
+            aws_secret_access_key=creds['SecretAccessKey'],
+            aws_session_token=creds['SessionToken'])
+
+        budgets_client.delete_budget(AccountId=acct_id, BudgetName=budget_name)
+
+        logger.info(f"Budget '{budget_name}' deleted from {acct_id} by {member_email}")
+        return create_response(200, {'message': f'Budget "{budget_name}" deleted'})
+
+    except Exception as e:
+        logger.error(f"Budget delete failed: {e}")
+        return create_error_response(500, 'ServerError', f'Failed to delete budget: {str(e)}')
 
 
 # ============================================================
