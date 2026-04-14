@@ -2669,7 +2669,6 @@ function renderDashboardWidgets(data) {
         _renderMonthly(data.monthlyTrend || {});
         _renderUnitEconomics(data.unitEconomics || null);
         _renderRegionalPie(data.costByRegion || []);
-        _renderCommitments(data.commitments || {});
         _renderCostByTag(data.costByTag || {});
     }, 100);
 }
@@ -2727,7 +2726,6 @@ var DASH_WIDGET_DEFS = [
     {id:'dash-monthly', title:'Monthly Cost by Service', height:320, q:'Compare my costs over the last 3 months'},
     {id:'dash-unit-economics', title:'Unit Cost Trend', height:280, q:'How is my cost per unit trending?', extraTitle:' <button class="btn btn-outline btn-sm" style="font-size:0.7em;margin-left:8px;padding:2px 6px;" onclick="showBusinessMetricsModal();">Add Metrics</button>'},
     {id:'dash-regional', title:'Cost by Region', height:300, q:'Show me my cost breakdown by region'},
-    {id:'dash-commitments', title:'Savings Plans & Reserved Instances', height:350, q:'What Savings Plans and Reserved Instances do I have?'},
     {id:'dash-cost-by-tag', title:'Tag Distribution', height:320, q:'Show me tag coverage across my resources'},
 ];
 
