@@ -1227,7 +1227,8 @@ function activateMemberTab(tabId) {
     }
     if (tabId === 'plan-tab') {
         _syncAccountSelection('dash');
-        populateActAccounts(); // reuse Act account population for Plan tab
+        populateActAccounts();
+        _populatePlanAccounts();
         _applySharedSelection('act-acct-cb');
     }
 }
@@ -3873,6 +3874,24 @@ function _syncActSelection() {
     // Save Act selection into shared state
     var ids = getActSelectedAccountIds();
     if (ids.length > 0) _sharedSelectedAccounts = ids;
+}
+
+function _populatePlanAccounts() {
+    var src = document.getElementById('act-account-select');
+    var dst = document.getElementById('plan-account-select');
+    if (!src || !dst) return;
+    // Clone the act account selector into plan
+    dst.innerHTML = src.innerHTML;
+    // Re-wire the toggle button click in the cloned version
+    var wrapper = dst.querySelector('div');
+    if (wrapper) {
+        var btn = wrapper.querySelector('button');
+        var panel = wrapper.querySelectorAll('div')[0];
+        if (btn && panel) {
+            btn.onclick = function(e) { e.stopPropagation(); panel.style.display = panel.style.display === 'none' ? 'block' : 'none'; };
+            document.addEventListener('click', function(e) { if (!wrapper.contains(e.target)) panel.style.display = 'none'; });
+        }
+    }
 }
 
 function _switchPlanSection(section) {
