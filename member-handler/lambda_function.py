@@ -6547,7 +6547,7 @@ def handle_schedule_analyze(event):
 
 
 def handle_get_schedules(event):
-    """Get saved scheduler recommendations and statuses."""
+    """Get saved scheduler recommendations, statuses, and user-created schedules."""
     auth = validate_token(event)
     if isinstance(auth, dict) and 'statusCode' in auth:
         return auth
@@ -6557,15 +6557,17 @@ def handle_get_schedules(event):
     try:
         member = members_table.get_item(Key={'email': member_email}).get('Item', {})
         sched_data = _decimal_to_native(member.get('schedulerData', {}))
+        user_schedules = _decimal_to_native(member.get('userSchedules', []))
         return create_response(200, {
             'recommendations': sched_data.get('recommendations', []),
             'completed': sched_data.get('completed', []),
             'dismissed': sched_data.get('dismissed', []),
             'lastAnalyzedAt': sched_data.get('lastAnalyzedAt', ''),
+            'userSchedules': user_schedules,
         })
     except Exception as e:
         logger.error(f"Get schedules error: {e}")
-        return create_response(200, {'recommendations': [], 'completed': [], 'dismissed': [], 'lastAnalyzedAt': ''})
+        return create_response(200, {'recommendations': [], 'completed': [], 'dismissed': [], 'lastAnalyzedAt': '', 'userSchedules': []})
 
 
 def handle_update_schedule_status(event):

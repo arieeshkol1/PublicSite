@@ -1224,6 +1224,7 @@ function activateMemberTab(tabId) {
         _syncAccountSelection('dash'); // save current selection
         populateActAccounts();
         _applySharedSelection('act-acct-cb'); // apply shared selection to Act tab
+        _loadSchedulerData(); // load user schedules + recommendations
     }
     if (tabId === 'plan-tab') {
         _syncAccountSelection('dash');
@@ -5065,10 +5066,38 @@ async function _loadSchedulerData() {
     try {
         var data = await api('GET', '/members/schedules', {});
         _schedRecommendations = data.recommendations || [];
+        var userSchedules = data.userSchedules || [];
+
+        // Merge user schedules into the display list
+        userSchedules.forEach(function(s) {
+            s.status = s.status || 'active';
+            s.title = s.name || s.type;
+            s.reason = 'User-created schedule';
+            s.priority = 'medium';
+            s.estimatedSavings = 0;
+            s.difficulty = 'easy';
+            s.guide = {steps: ['This is a user-managed schedule. Implement it in your AWS account using the AWS Instance Scheduler or EventBridge.']};
+            if (s.config) {
+                var parts = [];
+                if (s.config.startTime && s.config.stopTime) parts.push('Hours: ' + s.config.startTime + ' - ' + s.config.stopTime);
+                if (s.config.timezone) parts.push('TZ: ' + s.config.timezone);
+                if (s.config.tagFilter) parts.push('Tag: ' + s.config.tagFilter);
+                if (s.config.selectedResources && s.config.selectedResources.length > 0) parts.push(s.config.selectedResources.length + ' resources');
+                if (parts.length > 0) s.reason = parts.join(' · ');
+            }
+            s.frequency = s.frequency || 'weekdays';
+        });
+
+        // Add user schedules to the list (before recommendations)
+        _schedRecommendations = userSchedules.concat(_schedRecommendations);
+
+        var emptyEl = document.getElementById('act-sched-empty');
         if (_schedRecommendations.length > 0) {
-            document.getElementById('act-sched-empty').style.display = 'none';
+            if (emptyEl) emptyEl.style.display = 'none';
             _renderSchedulerProgress({completedCount: data.completed ? data.completed.length : 0, totalCount: _schedRecommendations.length});
             _renderSchedulerList();
+        } else {
+            if (emptyEl) emptyEl.style.display = 'block';
         }
     } catch (e) { /* silent */ }
 }
