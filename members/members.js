@@ -5126,16 +5126,25 @@ function _renderSchedulerList() {
         return;
     }
 
-    var pending = _schedRecommendations.filter(function(r) { return r.status === 'pending'; });
+    var pending = _schedRecommendations.filter(function(r) { return r.status === 'pending' || r.status === 'active'; });
     var completed = _schedRecommendations.filter(function(r) { return r.status === 'completed'; });
     var dismissed = _schedRecommendations.filter(function(r) { return r.status === 'dismissed'; });
 
     var html = '';
 
-    // Pending recommendations
-    if (pending.length > 0) {
-        var highPri = pending.filter(function(r) { return r.priority === 'high'; });
-        var medPri = pending.filter(function(r) { return r.priority !== 'high'; });
+    // User-created schedules (active)
+    var userScheds = pending.filter(function(r) { return r.createdAt && r.id && r.id.indexOf('sched-') === 0; });
+    var aiRecs = pending.filter(function(r) { return !r.createdAt || !r.id || r.id.indexOf('sched-') !== 0; });
+
+    if (userScheds.length > 0) {
+        html += '<div style="font-size:0.85em;font-weight:600;color:#6366f1;text-transform:uppercase;letter-spacing:0.05em;margin:8px 0 8px;">⏰ Your Schedules (' + userScheds.length + ')</div>';
+        userScheds.forEach(function(r) { html += _renderRecCard(r); });
+    }
+
+    // AI recommendations
+    if (aiRecs.length > 0) {
+        var highPri = aiRecs.filter(function(r) { return r.priority === 'high'; });
+        var medPri = aiRecs.filter(function(r) { return r.priority !== 'high'; });
 
         if (highPri.length > 0) {
             html += '<div style="font-size:0.85em;font-weight:600;color:#dc2626;text-transform:uppercase;letter-spacing:0.05em;margin:16px 0 8px;">💰 High Savings</div>';
