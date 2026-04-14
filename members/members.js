@@ -3980,6 +3980,8 @@ function _switchActSection(section) {
     if (tagging) tagging.style.display = section === 'tagging' ? 'block' : 'none';
     if (scheduler) scheduler.style.display = section === 'scheduler' ? 'block' : 'none';
     if (budget) budget.style.display = section === 'budget' ? 'block' : 'none';
+    // Auto-load scheduler data when switching to scheduler section
+    if (section === 'scheduler') _loadSchedulerData();
 }
 
 function initActTab() {
@@ -5463,7 +5465,6 @@ async function _createSchedule() {
             type: type, name: name, frequency: frequency, config: config, notes: notes
         });
         notify(data.message || 'Schedule created!', 'success');
-        document.getElementById('act-sched-wizard').hidden = false;
         // Add to local list and re-render
         if (data.schedule) {
             data.schedule.status = 'active';
@@ -5477,6 +5478,8 @@ async function _createSchedule() {
             _renderSchedulerList();
         }
         document.getElementById('act-sched-wizard').hidden = true;
+        // Reload from backend to get the full updated list
+        await _loadSchedulerData();
     } catch (e) {
         errEl.textContent = e.message || 'Failed to create schedule';
     } finally {
