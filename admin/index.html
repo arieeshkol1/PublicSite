@@ -47,6 +47,7 @@
             <button class="tab-btn" data-tab="tips">Tips</button>
             <button class="tab-btn" data-tab="feedback">Feedback</button>
             <button class="tab-btn" data-tab="subscribers">Subscribers</button>
+            <button class="tab-btn" data-tab="schedules">Schedules</button>
         </nav>
 
         <!-- Leads Tab -->
@@ -157,6 +158,7 @@
                             <th>Paddle Sub ID</th>
                             <th class="sortable" data-col="lastLoginAt">Last Login <span class="sort-icon">⇅</span></th>
                             <th class="sortable" data-col="createdAt">Created <span class="sort-icon">⇅</span></th>
+                            <th>Schedules</th>
                             <th>Actions</th>
                         </tr>
                     </thead>
@@ -164,6 +166,34 @@
                 </table>
                 <div id="subs-empty" class="empty-state" hidden>
                     <p>No subscribers found.</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Schedules Tab -->
+        <div id="schedules-tab" class="tab-content" hidden>
+            <div id="sched-stats" style="display:flex;gap:16px;margin-bottom:12px;flex-wrap:wrap;"></div>
+            <div class="tab-toolbar">
+                <input type="text" id="sched-search" class="search-input" placeholder="Search by member email, schedule type, status, or account ID...">
+            </div>
+            <div class="table-wrapper">
+                <table id="sched-table" class="data-table">
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th class="sortable" data-col="memberEmail">Member <span class="sort-icon">⇅</span></th>
+                            <th class="sortable" data-col="name">Schedule Name <span class="sort-icon">⇅</span></th>
+                            <th class="sortable" data-col="type">Type <span class="sort-icon">⇅</span></th>
+                            <th>Account</th>
+                            <th class="sortable" data-col="status">Status <span class="sort-icon">⇅</span></th>
+                            <th class="sortable" data-col="lastRun">Last Run <span class="sort-icon">⇅</span></th>
+                            <th>Last Result</th>
+                        </tr>
+                    </thead>
+                    <tbody id="sched-tbody"></tbody>
+                </table>
+                <div id="sched-empty" class="empty-state" hidden>
+                    <p>No schedules found across any members.</p>
                 </div>
             </div>
         </div>

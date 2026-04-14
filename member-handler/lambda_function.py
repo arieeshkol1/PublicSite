@@ -38,6 +38,9 @@ BEDROCK_AGENT_ALIAS_ID = os.environ.get('BEDROCK_AGENT_ALIAS_ID', '')
 FEEDBACK_TABLE_NAME = os.environ.get('FEEDBACK_TABLE_NAME', 'MemberPortal-AgentFeedback')
 COGNITO_USER_POOL_ID = os.environ.get('COGNITO_USER_POOL_ID', '')
 COGNITO_CLIENT_ID = os.environ.get('COGNITO_CLIENT_ID', '')
+SCHEDULER_EXECUTOR_ARN = os.environ.get('SCHEDULER_EXECUTOR_ARN', 'arn:aws:lambda:us-east-1:991105135552:function:slashmybill-scheduler-executor')
+SCHEDULER_ROLE_ARN = os.environ.get('SCHEDULER_ROLE_ARN', 'arn:aws:iam::991105135552:role/SlashMyBill-EventBridge-Scheduler-Role')
+
 
 # AWS clients
 dynamodb = boto3.resource('dynamodb')
@@ -109,6 +112,9 @@ def lambda_handler(event, context):
         'GET /members/schedules': handle_get_schedules,
         'PUT /members/schedules/status': handle_update_schedule_status,
         'POST /members/schedules/create': handle_create_schedule,
+        'PUT /members/schedules/pause': handle_pause_schedule,
+        'PUT /members/schedules/resume': handle_resume_schedule,
+        'DELETE /members/schedules/delete': handle_delete_schedule,
         'POST /members/budgets/list': handle_list_budgets,
         'POST /members/budgets/create': handle_create_budget,
         'PUT /members/budgets/update': handle_update_budget,
@@ -1127,6 +1133,18 @@ def handle_generate_template(event):
                                             'lambda:UntagResource',
                                             'elasticloadbalancing:AddTags',
                                             'elasticloadbalancing:RemoveTags',
+                                            # Scheduler write actions (stop/start/scale)
+                                            'ec2:StartInstances',
+                                            'rds:StopDBInstance',
+                                            'rds:StartDBInstance',
+                                            'eks:UpdateNodegroupConfig',
+                                            'eks:DescribeNodegroup',
+                                            'sagemaker:StopNotebookInstance',
+                                            'sagemaker:StartNotebookInstance',
+                                            'redshift:PauseCluster',
+                                            'redshift:ResumeCluster',
+                                            'workspaces:ModifyWorkspaceProperties',
+                                            'ec2:ModifyVolume',
                                         ],
                                         'Resource': '*'
                                     }
@@ -6565,7 +6583,7 @@ def handle_schedule_analyze(event):
 
 
 def handle_get_schedules(event):
-    """Get saved scheduler recommendations, statuses, and user-created schedules."""
+    """Get saved scheduler recommendations, statuses, and user-created schedules with execution data."""
     auth = validate_token(event)
     if isinstance(auth, dict) and 'statusCode' in auth:
         return auth
@@ -6576,6 +6594,50 @@ def handle_get_schedules(event):
         member = members_table.get_item(Key={'email': member_email}).get('Item', {})
         sched_data = _decimal_to_native(member.get('schedulerData', {}))
         user_schedules = _decimal_to_native(member.get('userSchedules', []))
+
+        # Enhance each schedule with execution data and next execution info
+        for sched in user_schedules:
+            # Truncate execution history to last 10, most recent first
+            history = sched.get('executionHistory', [])
+            if history:
+                # Sort by timestamp descending
+                history.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
+                sched['executionHistory'] = history[:10]
+
+            # Include schedule status (already stored)
+            if 'status' not in sched:
+                sched['status'] = 'active'
+
+            # Compute approximate next execution from stored config
+            config = sched.get('config', {})
+            tz = config.get('timezone', 'UTC')
+            sched_type = sched.get('type', '')
+
+            stop_start_types = {
+                'ec2-stop-start', 'rds-stop-start', 'asg-scale-zero', 'eks-scale-zero',
+                'sagemaker-stop', 'redshift-pause', 'workspaces-autostop', 'elb-teardown',
+            }
+            if sched_type in stop_start_types:
+                stop_time = config.get('stopTime', '')
+                start_time = config.get('startTime', '')
+                stop_days = config.get('stopDays', [])
+                start_days = config.get('startDays', [])
+                sched['nextExecution'] = {
+                    'stopTime': stop_time,
+                    'startTime': start_time,
+                    'stopDays': stop_days,
+                    'startDays': start_days,
+                    'timezone': tz,
+                }
+            else:
+                scan_time = config.get('scanTime', config.get('stopTime', ''))
+                scan_day = config.get('scanDay', config.get('stopDays', []))
+                sched['nextExecution'] = {
+                    'scanTime': scan_time,
+                    'scanDay': scan_day,
+                    'timezone': tz,
+                }
+
         return create_response(200, {
             'recommendations': sched_data.get('recommendations', []),
             'completed': sched_data.get('completed', []),
@@ -6902,12 +6964,51 @@ def handle_delete_budget(event):
         return create_error_response(500, 'ServerError', f'Failed to delete budget: {str(e)}')
 
 
+
+# ============================================================
+# EventBridge Cron Utility
+# ============================================================
+
+def _build_eb_cron_expression(days, time_str, timezone_str):
+    """Build an EventBridge Scheduler cron expression from days, time, and timezone.
+
+    Args:
+        days: list of day abbreviations e.g. ['Mon', 'Tue', 'Wed', 'Thu', 'Fri']
+        time_str: time string in HH:MM format e.g. '19:00'
+        timezone_str: IANA timezone string e.g. 'America/New_York'
+
+    Returns:
+        str: EventBridge cron expression e.g. 'cron(0 19 ? * MON-FRI *)'
+    """
+    day_map = {
+        'Mon': 'MON', 'Tue': 'TUE', 'Wed': 'WED', 'Thu': 'THU',
+        'Fri': 'FRI', 'Sat': 'SAT', 'Sun': 'SUN',
+    }
+
+    parts = time_str.split(':')
+    hour = int(parts[0])
+    minute = int(parts[1])
+
+    mapped_days = [day_map.get(d, d.upper()[:3]) for d in days]
+
+    all_days = {'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'}
+    weekdays = {'MON', 'TUE', 'WED', 'THU', 'FRI'}
+
+    if set(mapped_days) == all_days or len(mapped_days) == 7:
+        day_expr = '*'
+    elif set(mapped_days) == weekdays:
+        day_expr = 'MON-FRI'
+    else:
+        day_expr = ','.join(mapped_days)
+
+    return f'cron({minute} {hour} ? * {day_expr} *)'
+
 # ============================================================
 # Schedule Creation
 # ============================================================
 
 def handle_create_schedule(event):
-    """Save a user-created schedule to their member record."""
+    """Create a real EventBridge Scheduler-backed schedule for the member."""
     auth = validate_token(event)
     if isinstance(auth, dict) and 'statusCode' in auth:
         return auth
@@ -6927,31 +7028,338 @@ def handle_create_schedule(event):
     if not sched_type or not name:
         return create_error_response(400, 'InvalidRequest', 'type and name are required')
 
+    account_id = config.get('accountId', '').strip()
+    if not re.fullmatch(r'\d{12}', account_id):
+        return create_error_response(400, 'InvalidAccountId', 'Account ID must be exactly 12 digits')
+
+    # Verify account ownership
+    accounts_table = dynamodb.Table(ACCOUNTS_TABLE_NAME)
+    try:
+        acct = accounts_table.get_item(Key={'memberEmail': member_email, 'accountId': account_id}).get('Item')
+        if not acct:
+            return create_error_response(403, 'Forbidden', 'Account not connected to your profile')
+    except ClientError as e:
+        logger.error(f"Account ownership check failed: {e}")
+        return create_error_response(500, 'ServerError', 'Failed to verify account ownership')
+
     import uuid
+    schedule_id = f'sched-{uuid.uuid4().hex[:8]}'
+
+    STOP_START_TYPES = {
+        'ec2-stop-start', 'rds-stop-start', 'asg-scale-zero', 'eks-scale-zero',
+        'sagemaker-stop', 'redshift-pause', 'workspaces-autostop', 'elb-teardown',
+    }
+    REVIEW_TYPES = {
+        'waste-scan', 'snapshot-cleanup', 'gp2-migration', 'commitment-review',
+    }
+
+    resources = config.get('resources', [])
+    tag_filter = config.get('tagFilter', None)
+    tz = config.get('timezone', 'UTC')
+
+    scheduler_client = boto3.client('scheduler')
+    eb_schedule_names = []
+    eb_schedule_arns = []
+
+    def _create_eb_schedule(eb_name, cron_expr, action, tz_str):
+        """Create a single EventBridge Scheduler schedule. Returns the ARN."""
+        payload = json.dumps({
+            'scheduleId': schedule_id,
+            'scheduleType': sched_type,
+            'action': action,
+            'accountId': account_id,
+            'memberEmail': member_email,
+            'resources': resources,
+            'tagFilter': tag_filter,
+        })
+        resp = scheduler_client.create_schedule(
+            Name=eb_name,
+            ScheduleExpression=cron_expr,
+            ScheduleExpressionTimezone=tz_str,
+            FlexibleTimeWindow={'Mode': 'OFF'},
+            Target={
+                'Arn': SCHEDULER_EXECUTOR_ARN,
+                'RoleArn': SCHEDULER_ROLE_ARN,
+                'Input': payload,
+            },
+            State='ENABLED',
+        )
+        return resp.get('ScheduleArn', '')
+
+    def _delete_eb_schedules(names):
+        """Best-effort delete of EventBridge schedules for rollback."""
+        for n in names:
+            try:
+                scheduler_client.delete_schedule(Name=n)
+            except Exception:
+                logger.warning(f"Rollback: failed to delete EB schedule {n}")
+
+    try:
+        if sched_type in STOP_START_TYPES:
+            stop_days = config.get('stopDays', [])
+            stop_time = config.get('stopTime', '19:00')
+            start_days = config.get('startDays', [])
+            start_time = config.get('startTime', '07:00')
+
+            stop_cron = _build_eb_cron_expression(stop_days, stop_time, tz)
+            start_cron = _build_eb_cron_expression(start_days, start_time, tz)
+
+            stop_name = f'smb-{schedule_id}-stop'
+            start_name = f'smb-{schedule_id}-start'
+
+            # Create stop schedule
+            try:
+                stop_arn = _create_eb_schedule(stop_name, stop_cron, 'stop', tz)
+                eb_schedule_names.append(stop_name)
+                eb_schedule_arns.append(stop_arn)
+            except Exception as e:
+                logger.error(f"Failed to create stop schedule: {e}")
+                return create_error_response(500, 'SchedulerError', 'Failed to create stop schedule')
+
+            # Create start schedule — rollback stop if this fails
+            try:
+                start_arn = _create_eb_schedule(start_name, start_cron, 'start', tz)
+                eb_schedule_names.append(start_name)
+                eb_schedule_arns.append(start_arn)
+            except Exception as e:
+                logger.error(f"Failed to create start schedule, rolling back stop: {e}")
+                _delete_eb_schedules([stop_name])
+                return create_error_response(500, 'SchedulerError', 'Failed to create start schedule')
+
+        elif sched_type in REVIEW_TYPES:
+            scan_time = config.get('scanTime', config.get('stopTime', '06:00'))
+            scan_day = config.get('scanDay', config.get('stopDays', ['Mon']))
+            if isinstance(scan_day, str):
+                scan_day = [scan_day]
+
+            scan_cron = _build_eb_cron_expression(scan_day, scan_time, tz)
+            scan_name = f'smb-{schedule_id}-scan'
+
+            try:
+                scan_arn = _create_eb_schedule(scan_name, scan_cron, 'scan', tz)
+                eb_schedule_names.append(scan_name)
+                eb_schedule_arns.append(scan_arn)
+            except Exception as e:
+                logger.error(f"Failed to create scan schedule: {e}")
+                return create_error_response(500, 'SchedulerError', 'Failed to create scan schedule')
+        else:
+            return create_error_response(400, 'InvalidRequest', f'Unknown schedule type: {sched_type}')
+
+    except ClientError as e:
+        logger.error(f"EventBridge Scheduler error: {e}")
+        _delete_eb_schedules(eb_schedule_names)
+        return create_error_response(500, 'SchedulerError', 'Failed to create EventBridge schedule')
+
+    # Build schedule record
     schedule = {
-        'id': f'sched-{uuid.uuid4().hex[:8]}',
+        'id': schedule_id,
         'type': sched_type,
         'name': name,
         'frequency': frequency,
         'config': config,
         'notes': notes,
         'status': 'active',
+        'ebScheduleNames': eb_schedule_names,
+        'ebScheduleArns': eb_schedule_arns,
+        'executionHistory': [],
         'createdAt': datetime.now(timezone.utc).isoformat(),
     }
 
+    # Save to DynamoDB — rollback EB schedules if this fails
     members_table = dynamodb.Table(MEMBERS_TABLE_NAME)
     try:
-        # Append to schedules array
         members_table.update_item(
             Key={'email': member_email},
             UpdateExpression='SET userSchedules = list_append(if_not_exists(userSchedules, :empty), :sched)',
             ExpressionAttributeValues={':sched': [schedule], ':empty': []},
         )
-        logger.info(f"Schedule '{name}' created by {member_email}")
+        logger.info(f"Schedule '{name}' ({schedule_id}) created by {member_email} with EB schedules: {eb_schedule_names}")
         return create_response(201, {'message': f'Schedule "{name}" created', 'schedule': schedule})
     except Exception as e:
-        logger.error(f"Schedule creation failed: {e}")
-        return create_error_response(500, 'ServerError', 'Failed to create schedule')
+        logger.error(f"DynamoDB write failed, rolling back EB schedules: {e}")
+        _delete_eb_schedules(eb_schedule_names)
+        return create_error_response(500, 'ServerError', 'Failed to save schedule')
+
+
+
+# ============================================================
+# Schedule Lifecycle Management
+# ============================================================
+
+def _find_member_schedule(members_table, member_email, schedule_id):
+    """Find a schedule in the member's userSchedules array. Returns (index, schedule) or (None, None)."""
+    try:
+        member = members_table.get_item(Key={'email': member_email}).get('Item', {})
+        user_schedules = member.get('userSchedules', [])
+        for idx, sched in enumerate(user_schedules):
+            if sched.get('id') == schedule_id:
+                return idx, sched
+        return None, None
+    except Exception as e:
+        logger.error(f"Error finding schedule {schedule_id}: {e}")
+        return None, None
+
+
+def handle_pause_schedule(event):
+    """Pause an active schedule by disabling its EventBridge Scheduler schedules."""
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+    member_email = auth['sub']
+
+    try:
+        body = json.loads(event.get('body', '{}'))
+    except (json.JSONDecodeError, TypeError):
+        return create_error_response(400, 'InvalidRequest', 'Invalid request body')
+
+    schedule_id = body.get('scheduleId', '').strip()
+    if not schedule_id:
+        return create_error_response(400, 'InvalidRequest', 'scheduleId is required')
+
+    members_table = dynamodb.Table(MEMBERS_TABLE_NAME)
+    idx, schedule = _find_member_schedule(members_table, member_email, schedule_id)
+
+    if idx is None:
+        return create_error_response(404, 'ScheduleNotFound', 'Schedule not found')
+
+    eb_names = schedule.get('ebScheduleNames', [])
+    scheduler_client = boto3.client('scheduler')
+
+    for eb_name in eb_names:
+        try:
+            # Get existing schedule to preserve its config
+            existing = scheduler_client.get_schedule(Name=eb_name)
+            scheduler_client.update_schedule(
+                Name=eb_name,
+                ScheduleExpression=existing['ScheduleExpression'],
+                ScheduleExpressionTimezone=existing.get('ScheduleExpressionTimezone', 'UTC'),
+                FlexibleTimeWindow=existing.get('FlexibleTimeWindow', {'Mode': 'OFF'}),
+                Target=existing['Target'],
+                State='DISABLED',
+            )
+        except scheduler_client.exceptions.ResourceNotFoundException:
+            logger.warning(f"EB schedule {eb_name} not found, cleaning up orphaned record")
+        except Exception as e:
+            logger.error(f"Failed to disable EB schedule {eb_name}: {e}")
+            return create_error_response(500, 'SchedulerError', f'Failed to pause schedule: {str(e)}')
+
+    # Update status in DynamoDB
+    try:
+        members_table.update_item(
+            Key={'email': member_email},
+            UpdateExpression=f'SET userSchedules[{idx}].#st = :status',
+            ExpressionAttributeNames={'#st': 'status'},
+            ExpressionAttributeValues={':status': 'paused'},
+        )
+        logger.info(f"Schedule {schedule_id} paused by {member_email}")
+        return create_response(200, {'message': f'Schedule paused', 'scheduleId': schedule_id, 'status': 'paused'})
+    except Exception as e:
+        logger.error(f"Failed to update schedule status in DynamoDB: {e}")
+        return create_error_response(500, 'ServerError', 'Failed to update schedule status')
+
+
+def handle_resume_schedule(event):
+    """Resume a paused schedule by enabling its EventBridge Scheduler schedules."""
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+    member_email = auth['sub']
+
+    try:
+        body = json.loads(event.get('body', '{}'))
+    except (json.JSONDecodeError, TypeError):
+        return create_error_response(400, 'InvalidRequest', 'Invalid request body')
+
+    schedule_id = body.get('scheduleId', '').strip()
+    if not schedule_id:
+        return create_error_response(400, 'InvalidRequest', 'scheduleId is required')
+
+    members_table = dynamodb.Table(MEMBERS_TABLE_NAME)
+    idx, schedule = _find_member_schedule(members_table, member_email, schedule_id)
+
+    if idx is None:
+        return create_error_response(404, 'ScheduleNotFound', 'Schedule not found')
+
+    eb_names = schedule.get('ebScheduleNames', [])
+    scheduler_client = boto3.client('scheduler')
+
+    for eb_name in eb_names:
+        try:
+            existing = scheduler_client.get_schedule(Name=eb_name)
+            scheduler_client.update_schedule(
+                Name=eb_name,
+                ScheduleExpression=existing['ScheduleExpression'],
+                ScheduleExpressionTimezone=existing.get('ScheduleExpressionTimezone', 'UTC'),
+                FlexibleTimeWindow=existing.get('FlexibleTimeWindow', {'Mode': 'OFF'}),
+                Target=existing['Target'],
+                State='ENABLED',
+            )
+        except scheduler_client.exceptions.ResourceNotFoundException:
+            logger.warning(f"EB schedule {eb_name} not found, cleaning up orphaned record")
+        except Exception as e:
+            logger.error(f"Failed to enable EB schedule {eb_name}: {e}")
+            return create_error_response(500, 'SchedulerError', f'Failed to resume schedule: {str(e)}')
+
+    # Update status in DynamoDB
+    try:
+        members_table.update_item(
+            Key={'email': member_email},
+            UpdateExpression=f'SET userSchedules[{idx}].#st = :status',
+            ExpressionAttributeNames={'#st': 'status'},
+            ExpressionAttributeValues={':status': 'active'},
+        )
+        logger.info(f"Schedule {schedule_id} resumed by {member_email}")
+        return create_response(200, {'message': f'Schedule resumed', 'scheduleId': schedule_id, 'status': 'active'})
+    except Exception as e:
+        logger.error(f"Failed to update schedule status in DynamoDB: {e}")
+        return create_error_response(500, 'ServerError', 'Failed to update schedule status')
+
+
+def handle_delete_schedule(event):
+    """Delete a schedule and its EventBridge Scheduler schedules."""
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+    member_email = auth['sub']
+
+    try:
+        body = json.loads(event.get('body', '{}'))
+    except (json.JSONDecodeError, TypeError):
+        return create_error_response(400, 'InvalidRequest', 'Invalid request body')
+
+    schedule_id = body.get('scheduleId', '').strip()
+    if not schedule_id:
+        return create_error_response(400, 'InvalidRequest', 'scheduleId is required')
+
+    members_table = dynamodb.Table(MEMBERS_TABLE_NAME)
+    idx, schedule = _find_member_schedule(members_table, member_email, schedule_id)
+
+    if idx is None:
+        return create_error_response(404, 'ScheduleNotFound', 'Schedule not found')
+
+    eb_names = schedule.get('ebScheduleNames', [])
+    scheduler_client = boto3.client('scheduler')
+
+    # Delete all EB schedules
+    for eb_name in eb_names:
+        try:
+            scheduler_client.delete_schedule(Name=eb_name)
+        except scheduler_client.exceptions.ResourceNotFoundException:
+            logger.warning(f"EB schedule {eb_name} already deleted")
+        except Exception as e:
+            logger.error(f"Failed to delete EB schedule {eb_name}: {e}")
+
+    # Remove schedule from DynamoDB userSchedules array
+    try:
+        members_table.update_item(
+            Key={'email': member_email},
+            UpdateExpression=f'REMOVE userSchedules[{idx}]',
+        )
+        logger.info(f"Schedule {schedule_id} deleted by {member_email}")
+        return create_response(200, {'message': f'Schedule deleted', 'scheduleId': schedule_id})
+    except Exception as e:
+        logger.error(f"Failed to remove schedule from DynamoDB: {e}")
+        return create_error_response(500, 'ServerError', 'Failed to delete schedule')
 
 
 # ============================================================

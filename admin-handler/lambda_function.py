@@ -68,6 +68,7 @@ def lambda_handler(event, context):
         'GET /admin/subscribers': handle_get_subscribers,
         'PUT /admin/subscribers/tier': handle_update_subscriber_tier,
         'POST /admin/subscribers/tokens': handle_add_subscriber_tokens,
+        'GET /admin/schedules': handle_get_schedules,
     }
 
     handler = routes.get(route_key)
@@ -421,6 +422,13 @@ def handle_get_subscribers(event):
         subscribers = []
         for item in items:
             subscriber = {f: item.get(f) for f in fields if item.get(f) is not None}
+            # Include active schedule count
+            user_schedules = item.get('userSchedules', [])
+            if user_schedules:
+                active_count = sum(1 for s in user_schedules if s.get('status', 'active') == 'active')
+                subscriber['scheduleCount'] = active_count
+            else:
+                subscriber['scheduleCount'] = 0
             subscribers.append(subscriber)
 
         subscribers = _decimal_to_native(subscribers)
@@ -514,6 +522,75 @@ def handle_add_subscriber_tokens(event):
             return create_error_response(404, 'NotFound', 'Subscriber not found')
         logger.error(f"DynamoDB error adding tokens: {e}")
         return create_error_response(500, 'ServerError', 'Failed to add tokens')
+
+
+def handle_get_schedules(event):
+    """Return all schedules across all members with aggregated stats."""
+    try:
+        from datetime import datetime, timedelta, timezone
+        table = dynamodb.Table('MemberPortal-Members')
+        response = table.scan()
+        items = response.get('Items', [])
+
+        schedules = []
+        total = 0
+        active = 0
+        paused = 0
+        executions_24h = 0
+        failures_24h = 0
+        now = datetime.now(timezone.utc)
+        cutoff = now - timedelta(hours=24)
+        cutoff_iso = cutoff.isoformat()
+
+        for item in items:
+            user_schedules = item.get('userSchedules', [])
+            if not user_schedules:
+                continue
+            email = item.get('email', '')
+            for sched in user_schedules:
+                total += 1
+                status = sched.get('status', 'active')
+                if status == 'active':
+                    active += 1
+                elif status == 'paused':
+                    paused += 1
+
+                last_exec = None
+                history = sched.get('executionHistory', [])
+                if history:
+                    last_exec = history[-1] if isinstance(history, list) else None
+                    for ex in history:
+                        ts = ex.get('timestamp', '')
+                        if ts >= cutoff_iso:
+                            executions_24h += 1
+                            if ex.get('status') == 'failure':
+                                failures_24h += 1
+
+                schedules.append({
+                    'memberEmail': email,
+                    'scheduleId': sched.get('id', ''),
+                    'name': sched.get('name', ''),
+                    'type': sched.get('type', ''),
+                    'status': status,
+                    'accountId': sched.get('config', {}).get('accountId', ''),
+                    'createdAt': sched.get('createdAt', ''),
+                    'lastExecution': _decimal_to_native(last_exec) if last_exec else None,
+                })
+
+        schedules = _decimal_to_native(schedules)
+        return create_response(200, {
+            'schedules': schedules,
+            'stats': {
+                'totalSchedules': total,
+                'activeSchedules': active,
+                'pausedSchedules': paused,
+                'executionsLast24h': executions_24h,
+                'failuresLast24h': failures_24h,
+            }
+        })
+    except ClientError as e:
+        logger.error(f"DynamoDB error scanning schedules: {e}")
+        return create_error_response(500, 'ServerError', 'Failed to retrieve schedules')
 
 
 # ============================================================

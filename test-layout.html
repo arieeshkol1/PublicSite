@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Layout Test v2 - Fixed Bottom</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: Arial, sans-serif; background: #1a1a2e; color: #c9d1d9; }
+.header { background: #0d1117; padding: 10px 20px; height: 50px; display: flex; align-items: center; border-bottom: 1px solid #30363d; }
+.tabs { display: flex; background: #161b22; }
+.tab { padding: 10px 24px; color: #58a6ff; background: #0d1117; border: 1px solid #30363d; border-bottom: none; }
+.chat {
+    padding: 20px; padding-bottom: 100px; background: #0d1117;
+    overflow-y: auto; height: calc(100vh - 150px);
+    font-family: Consolas, monospace; font-size: 14px;
+}
+.msg { background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 12px; margin-bottom: 16px; white-space: pre-wrap; line-height: 1.6; }
+.input-area {
+    position: fixed; bottom: 0; left: 0; right: 0; z-index: 100;
+    padding: 12px 20px; border-top: 1px solid #30363d; background: #161b22;
+}
+.input-row { display: flex; align-items: center; gap: 8px; }
+.input-box { flex: 1; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; padding: 10px; color: #c9d1d9; font-family: Consolas, monospace; outline: none; }
+.btn { padding: 8px 16px; border: none; border-radius: 6px; cursor: pointer; background: #238636; color: #fff; }
+.hint { font-size: 11px; color: #484f58; margin-top: 6px; text-align: center; }
+</style>
+</head>
+<body>
+<div class="header"><h1 style="font-size:16px;color:#c9d1d9;">Member Portal</h1></div>
+<div class="tabs"><div class="tab">AI Agent</div></div>
+<div class="chat" id="chat"></div>
+<div class="input-area">
+    <div class="input-row">
+        <span>🥷</span>
+        <input type="text" class="input-box" placeholder="Ask about your AWS account..." id="q">
+        <button class="btn" onclick="addMsg()">Ask</button>
+    </div>
+    <div class="hint">This input bar is position:fixed at the bottom.</div>
+</div>
+<script>
+var chat = document.getElementById('chat');
+// Pre-fill with content
+for (var i = 0; i < 3; i++) addMsg();
+function addMsg() {
+    var d = document.createElement('div'); d.className = 'msg';
+    var t = '1. Amazon Registrar: $15.00\n2. EC2 - Other: $13.01\n3. VPC: $12.60\n4. KMS: $0.93\n\nDrill down:\n[List EBS] [List VPC] [List KMS]\n\nDid this help? 👍 👎\n\nShow as table:\n[📋 Cost by Service] [📋 Daily Trend] [📋 VPC] [📋 EC2-Other] [📋 Efficiency]\n\nMore lines...\n';
+    for (var j = 0; j < 10; j++) t += 'Line ' + j + '\n';
+    d.textContent = t; chat.appendChild(d); chat.scrollTop = chat.scrollHeight;
+}
+</script>
+</body>
+</html>

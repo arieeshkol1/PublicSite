@@ -5070,24 +5070,41 @@ async function _loadSchedulerData() {
         _schedRecommendations = data.recommendations || [];
         var userSchedules = data.userSchedules || [];
 
-        // Merge user schedules into the display list
+        // Merge user schedules into the display list, preserving backend fields
         userSchedules.forEach(function(s) {
             s.status = s.status || 'active';
             s.title = s.name || s.type;
-            s.reason = 'User-created schedule';
-            s.priority = 'medium';
-            s.estimatedSavings = 0;
-            s.difficulty = 'easy';
-            s.guide = {steps: ['This is a user-managed schedule. Implement it in your AWS account using the AWS Instance Scheduler or EventBridge.']};
-            if (s.config) {
-                var parts = [];
-                if (s.config.startTime && s.config.stopTime) parts.push('Hours: ' + s.config.startTime + ' - ' + s.config.stopTime);
-                if (s.config.timezone) parts.push('TZ: ' + s.config.timezone);
-                if (s.config.tagFilter) parts.push('Tag: ' + s.config.tagFilter);
-                if (s.config.selectedResources && s.config.selectedResources.length > 0) parts.push(s.config.selectedResources.length + ' resources');
-                if (parts.length > 0) s.reason = parts.join(' · ');
-            }
+            s.priority = s.priority || 'medium';
+            s.estimatedSavings = s.estimatedSavings || 0;
+            s.difficulty = s.difficulty || 'easy';
             s.frequency = s.frequency || 'weekdays';
+            // Preserve EB-backed schedule fields from backend
+            // ebScheduleNames, ebScheduleArns, executionHistory, nextExecution, status
+            // are kept as-is from the backend response
+            if (s.ebScheduleNames && s.ebScheduleNames.length > 0) {
+                // Real EB-backed schedule — build reason from config
+                var parts = [];
+                if (s.config) {
+                    if (s.config.startTime && s.config.stopTime) parts.push('Stop ' + s.config.stopTime + ' → Start ' + s.config.startTime);
+                    if (s.config.timezone) parts.push(s.config.timezone);
+                    if (s.config.tagFilter) parts.push('Tag: ' + (s.config.tagFilter.Key || '') + '=' + (s.config.tagFilter.Value || ''));
+                    var res = s.config.resources || s.config.selectedResources || [];
+                    if (res.length > 0) parts.push(res.length + ' resource' + (res.length > 1 ? 's' : ''));
+                }
+                s.reason = parts.length > 0 ? parts.join(' · ') : 'Automated schedule';
+            } else {
+                // Legacy user schedule without EB backing
+                s.reason = 'User-created schedule';
+                s.guide = s.guide || {steps: ['This is a user-managed schedule. Implement it in your AWS account using the AWS Instance Scheduler or EventBridge.']};
+                if (s.config) {
+                    var parts = [];
+                    if (s.config.startTime && s.config.stopTime) parts.push('Hours: ' + s.config.startTime + ' - ' + s.config.stopTime);
+                    if (s.config.timezone) parts.push('TZ: ' + s.config.timezone);
+                    if (s.config.tagFilter) parts.push('Tag: ' + s.config.tagFilter);
+                    if (s.config.selectedResources && s.config.selectedResources.length > 0) parts.push(s.config.selectedResources.length + ' resources');
+                    if (parts.length > 0) s.reason = parts.join(' · ');
+                }
+            }
         });
 
         // Add user schedules to the list (before recommendations)
@@ -5128,7 +5145,7 @@ function _renderSchedulerList() {
         return;
     }
 
-    var pending = _schedRecommendations.filter(function(r) { return r.status === 'pending' || r.status === 'active'; });
+    var pending = _schedRecommendations.filter(function(r) { return r.status === 'pending' || r.status === 'active' || r.status === 'paused'; });
     var completed = _schedRecommendations.filter(function(r) { return r.status === 'completed'; });
     var dismissed = _schedRecommendations.filter(function(r) { return r.status === 'dismissed'; });
 
@@ -5140,7 +5157,13 @@ function _renderSchedulerList() {
 
     if (userScheds.length > 0) {
         html += '<div style="font-size:0.85em;font-weight:600;color:#6366f1;text-transform:uppercase;letter-spacing:0.05em;margin:8px 0 8px;">⏰ Your Schedules (' + userScheds.length + ')</div>';
-        userScheds.forEach(function(r) { html += _renderRecCard(r); });
+        userScheds.forEach(function(r) {
+            if (r.ebScheduleNames && r.ebScheduleNames.length > 0) {
+                html += _renderRealScheduleCard(r);
+            } else {
+                html += _renderRecCard(r);
+            }
+        });
     }
 
     // AI recommendations
@@ -5221,6 +5244,184 @@ function _renderRecCard(rec) {
         + '<button onclick="_updateRecStatus(\'' + rec.id + '\',\'completed\')" class="btn btn-primary btn-sm" style="font-size:0.8em;background:#10b981;border-color:#10b981;">✓ Mark as Done</button>'
         + '<button onclick="_updateRecStatus(\'' + rec.id + '\',\'dismissed\')" class="btn btn-outline btn-sm" style="font-size:0.8em;">Dismiss</button>'
         + '</div></div>';
+}
+
+
+function _renderRealScheduleCard(sched) {
+    var isActive = sched.status === 'active';
+    var isPaused = sched.status === 'paused';
+    var statusBadge = isActive
+        ? '<span style="background:#d1fae5;color:#065f46;font-size:0.75em;padding:2px 8px;border-radius:10px;font-weight:600;">\u25cf Active</span>'
+        : '<span style="background:#e5e7eb;color:#6b7280;font-size:0.75em;padding:2px 8px;border-radius:10px;font-weight:600;">\u23f8 Paused</span>';
+
+    // Type icon mapping
+    var typeIcons = {
+        'ec2-stop-start': '\ud83d\udda5\ufe0f', 'rds-stop-start': '\ud83d\uddc4\ufe0f',
+        'asg-scale-zero': '\ud83d\udcca', 'eks-scale-zero': '\u2638\ufe0f',
+        'sagemaker-stop': '\ud83e\udde0', 'redshift-pause': '\ud83d\udce6',
+        'workspaces-autostop': '\ud83d\udda5\ufe0f', 'elb-teardown': '\u2696\ufe0f',
+        'waste-scan': '\ud83d\udd0d', 'snapshot-cleanup': '\ud83d\udcf8',
+        'gp2-migration': '\ud83d\udcbe', 'commitment-review': '\ud83d\udcca'
+    };
+    var icon = typeIcons[sched.type] || '\u23f0';
+
+    // Resource info
+    var resourceInfo = '';
+    if (sched.config) {
+        var res = sched.config.resources || sched.config.selectedResources || [];
+        if (sched.config.tagFilter) {
+            resourceInfo = 'Tag: ' + (sched.config.tagFilter.Key || '') + '=' + (sched.config.tagFilter.Value || '');
+        } else if (res.length > 0) {
+            resourceInfo = res.length + ' resource' + (res.length > 1 ? 's' : '');
+        }
+    }
+
+    // Next execution
+    var nextExecHtml = '';
+    if (sched.nextExecution && isActive) {
+        try {
+            var d = new Date(sched.nextExecution);
+            var tz = (sched.config && sched.config.timezone) || 'UTC';
+            var formatted = d.toLocaleString('en-US', {timeZone: tz, weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short'});
+            nextExecHtml = '<div style="font-size:0.82em;color:#6b7280;margin-top:4px;">Next run: ' + formatted + '</div>';
+        } catch(e) {
+            nextExecHtml = '<div style="font-size:0.82em;color:#6b7280;margin-top:4px;">Next run: ' + sched.nextExecution + '</div>';
+        }
+    } else if (isPaused) {
+        nextExecHtml = '<div style="font-size:0.82em;color:#9ca3af;margin-top:4px;">Schedule paused</div>';
+    }
+
+    // Action buttons
+    var buttonsHtml = '';
+    if (isActive) {
+        buttonsHtml = '<button onclick="_pauseSchedule(\'' + sched.id + '\')" class="btn btn-outline btn-sm" style="font-size:0.8em;">\u23f8 Pause</button>'
+            + '<button onclick="_deleteSchedule(\'' + sched.id + '\')" class="btn btn-outline btn-sm" style="font-size:0.8em;color:#ef4444;border-color:#ef4444;">\ud83d\uddd1 Delete</button>';
+    } else if (isPaused) {
+        buttonsHtml = '<button onclick="_resumeSchedule(\'' + sched.id + '\')" class="btn btn-primary btn-sm" style="font-size:0.8em;background:#10b981;border-color:#10b981;">\u25b6 Resume</button>'
+            + '<button onclick="_deleteSchedule(\'' + sched.id + '\')" class="btn btn-outline btn-sm" style="font-size:0.8em;color:#ef4444;border-color:#ef4444;">\ud83d\uddd1 Delete</button>';
+    }
+
+    // Execution history
+    var historyHtml = _renderExecutionHistory(sched);
+
+    return '<div id="sched-card-' + sched.id + '" style="border:1px solid #e5e7eb;border-radius:10px;padding:16px;margin-bottom:12px;background:#fff;">'
+        + '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px;">'
+        + '<div style="display:flex;align-items:center;gap:8px;">'
+        + '<span style="font-size:1.1em;">' + icon + '</span>'
+        + '<div style="font-weight:600;color:#1f2937;font-size:0.95em;">' + (sched.title || sched.name || sched.type) + '</div>'
+        + '</div>'
+        + '<div style="display:flex;gap:6px;align-items:center;">' + statusBadge + '</div></div>'
+        + '<div style="color:#6b7280;font-size:0.85em;margin-bottom:4px;">' + (sched.type || '') + (resourceInfo ? ' \u00b7 ' + resourceInfo : '') + '</div>'
+        + '<div style="color:#6b7280;font-size:0.85em;">' + (sched.reason || '') + '</div>'
+        + nextExecHtml
+        + historyHtml
+        + '<div style="display:flex;gap:8px;margin-top:10px;padding-top:10px;border-top:1px solid #f3f4f6;">'
+        + buttonsHtml
+        + '</div></div>';
+}
+
+function _renderExecutionHistory(sched) {
+    var history = sched.executionHistory || [];
+    var count = history.length;
+
+    if (count === 0) {
+        return '<details style="margin-top:8px;">'
+            + '<summary style="color:#6366f1;font-size:0.85em;cursor:pointer;font-weight:500;">\u25b6 Execution History (0 runs)</summary>'
+            + '<div style="padding:12px 0;color:#9ca3af;font-size:0.85em;text-align:center;">No executions yet \u2014 schedule will run at the next scheduled time</div>'
+            + '</details>';
+    }
+
+    var tz = (sched.config && sched.config.timezone) || 'UTC';
+    var rowsHtml = '';
+    // Show most recent first (up to 10)
+    var items = history.slice(0, 10);
+    items.forEach(function(exec) {
+        var statusIcon = exec.status === 'success' ? '\u2705' : exec.status === 'partial' ? '\u26a0\ufe0f' : '\u274c';
+        var statusColor = exec.status === 'success' ? '#10b981' : exec.status === 'partial' ? '#f59e0b' : '#ef4444';
+
+        var ts = '';
+        try {
+            var d = new Date(exec.timestamp);
+            ts = d.toLocaleString('en-US', {timeZone: tz, month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short'});
+        } catch(e) {
+            ts = exec.timestamp || '';
+        }
+
+        var countsHtml = (exec.successCount || 0) + '/' + (exec.resourceCount || 0) + ' succeeded';
+        if (exec.failureCount > 0) {
+            countsHtml += ' <span style="color:#ef4444;">' + exec.failureCount + ' failed</span>';
+        }
+
+        rowsHtml += '<div style="padding:6px 0;border-bottom:1px solid #f3f4f6;font-size:0.85em;">'
+            + '<div style="display:flex;align-items:center;gap:8px;">'
+            + '<span>' + statusIcon + '</span>'
+            + '<span style="color:#374151;min-width:140px;">' + ts + '</span>'
+            + '<span style="color:#6b7280;min-width:50px;">' + (exec.action || '') + '</span>'
+            + '<span style="color:' + statusColor + ';">' + countsHtml + '</span>'
+            + '</div>';
+
+        // Show failure details if any
+        if (exec.failureCount > 0 && exec.details) {
+            var failedDetails = exec.details.filter(function(d) { return !d.success; });
+            if (failedDetails.length > 0) {
+                rowsHtml += '<details style="margin-left:28px;margin-top:4px;">'
+                    + '<summary style="color:#ef4444;font-size:0.85em;cursor:pointer;">Show failure details</summary>'
+                    + '<div style="padding:4px 0;">';
+                failedDetails.forEach(function(d) {
+                    rowsHtml += '<div style="color:#6b7280;font-size:0.85em;padding:2px 0;">'
+                        + '\u2514 ' + (d.resourceId || 'unknown') + ': <span style="color:#ef4444;">' + (d.error || 'Unknown error') + '</span></div>';
+                });
+                rowsHtml += '</div></details>';
+            }
+        }
+
+        rowsHtml += '</div>';
+    });
+
+    return '<details style="margin-top:8px;">'
+        + '<summary style="color:#6366f1;font-size:0.85em;cursor:pointer;font-weight:500;">\u25b6 Execution History (' + count + ' run' + (count !== 1 ? 's' : '') + ')</summary>'
+        + '<div style="padding:4px 0;max-height:300px;overflow-y:auto;">' + rowsHtml + '</div>'
+        + '</details>';
+}
+
+async function _pauseSchedule(scheduleId) {
+    try {
+        notify('Pausing schedule...', 'info');
+        await api('PUT', '/members/schedules/pause', {scheduleId: scheduleId});
+        // Update local state
+        _schedRecommendations.forEach(function(r) { if (r.id === scheduleId) r.status = 'paused'; });
+        _renderSchedulerList();
+        notify('Schedule paused', 'success');
+    } catch (e) {
+        notify('Failed to pause: ' + (e.message || ''), 'error');
+    }
+}
+
+async function _resumeSchedule(scheduleId) {
+    try {
+        notify('Resuming schedule...', 'info');
+        await api('PUT', '/members/schedules/resume', {scheduleId: scheduleId});
+        // Update local state
+        _schedRecommendations.forEach(function(r) { if (r.id === scheduleId) r.status = 'active'; });
+        _renderSchedulerList();
+        notify('Schedule resumed', 'success');
+    } catch (e) {
+        notify('Failed to resume: ' + (e.message || ''), 'error');
+    }
+}
+
+async function _deleteSchedule(scheduleId) {
+    if (!confirm('Delete this schedule? This will remove the EventBridge schedule and cannot be undone.')) return;
+    try {
+        notify('Deleting schedule...', 'info');
+        await api('DELETE', '/members/schedules/delete', {scheduleId: scheduleId});
+        // Remove from local state
+        _schedRecommendations = _schedRecommendations.filter(function(r) { return r.id !== scheduleId; });
+        _renderSchedulerList();
+        notify('Schedule deleted', 'success');
+    } catch (e) {
+        notify('Failed to delete: ' + (e.message || ''), 'error');
+    }
 }
 
 async function _updateRecStatus(recId, status) {

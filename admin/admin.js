@@ -27,7 +27,7 @@ function fmtD(ts){if(!ts)return'';try{var d=new Date(ts);return isNaN(d)?ts:d.to
 function fmtM(v){if(v==null||v==='')return'-';var n=Number(v);return isNaN(n)?String(v):'$'+n.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});}
 function esc(s){var d=document.createElement('div');d.textContent=s;return d.innerHTML;}
 function ea(s){return String(s||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/'/g,'&#39;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
-function switchTab(n){document.querySelectorAll('.tab-btn').forEach(function(b){b.classList.toggle('active',b.dataset.tab===n);});leadsPanel.hidden=n!=='leads';tipsPanel.hidden=n!=='tips';feedbackPanel.hidden=n!=='feedback';var subsPanel=$('subscribers-tab');if(subsPanel)subsPanel.hidden=n!=='subscribers';if(n==='feedback'&&!allFeedback.length)loadFeedback();if(n==='subscribers'&&!allSubs.length)loadSubscribers();}
+function switchTab(n){document.querySelectorAll('.tab-btn').forEach(function(b){b.classList.toggle('active',b.dataset.tab===n);});leadsPanel.hidden=n!=='leads';tipsPanel.hidden=n!=='tips';feedbackPanel.hidden=n!=='feedback';var subsPanel=$('subscribers-tab');if(subsPanel)subsPanel.hidden=n!=='subscribers';var schedPanel=$('schedules-tab');if(schedPanel)schedPanel.hidden=n!=='schedules';if(n==='feedback'&&!allFeedback.length)loadFeedback();if(n==='subscribers'&&!allSubs.length)loadSubscribers();if(n==='schedules'&&!allScheds.length)loadSchedules();}
 
 async function api(method,path,body){var o={method:method,headers:{'Content-Type':'application/json'}};if(body)o.body=JSON.stringify(body);var r=await fetch(API+path,o);var d=await r.json();if(!r.ok)throw{status:r.status,message:d.message||'Error'};return d;}
 
@@ -49,7 +49,7 @@ async function saveLead(){if(!editingLead)return;leadFormError.textContent='';va
 var fTips=[];
 async function loadTips(){try{showL();var d=await api('GET','/admin/tips');allTips=d.tips||[];tp=1;applyTips();}catch(e){notify('Failed to load tips.','error');}finally{hideL();}}
 function applyTips(){var q=(tipsSearch.value||'').toLowerCase().trim();fTips=q?allTips.filter(function(t){return(t.service||'').toLowerCase().includes(q)||(t.title||'').toLowerCase().includes(q)||(t.category||'').toLowerCase().includes(q);}):allTips.slice();fTips=sortArr(fTips,tsc,tsa);updSort('tips-table',tsc,tsa);renderTips();}
-function renderTips(){var p=pg(fTips,tp);tipsTbody.innerHTML='';if(!fTips.length){tipsEmpty.hidden=false;return;}tipsEmpty.hidden=true;var tOff=(tp-1)*PS;p.forEach(function(t,idx){var r=document.createElement('tr');var sb=t.automatedCheck?'<span class="script-badge" data-a="vs" data-s="'+ea(t.service)+'" data-i="'+ea(t.tipId)+'">&#9881; Check</span>':'-';var pc=t.positiveCount||0;var scoreHtml=pc>0?'<span style="color:#10b981;font-weight:700">+'+pc+'</span>':pc<0?'<span style="color:#ef4444;font-weight:700">'+pc+'</span>':'<span style="color:#8b949e">0</span>';if(t.confidenceTag==='high-confidence')scoreHtml+=' <span style="background:#10b981;color:#fff;font-size:10px;padding:1px 5px;border-radius:3px;">✓</span>';var actHtml=t.implementedInAct?'<span style="background:#6366f1;color:#fff;font-size:10px;padding:2px 6px;border-radius:4px;">✓ Act</span>':'<span style="color:#d1d5db;font-size:10px;">—</span>';r.innerHTML='<td style="color:#999;font-size:12px">'+(tOff+idx+1)+'</td><td>'+esc(t.service||'')+'</td><td>'+esc(t.tipId||'')+'</td><td>'+esc(t.category||'')+'</td><td>'+esc(t.title||'')+'</td><td title="'+ea(t.description)+'">'+esc(t.description||'')+'</td><td>'+esc(t.estimatedSavings||'')+'</td><td><span class="badge badge-'+(t.difficulty||'').toLowerCase()+'">'+esc(t.difficulty||'')+'</span></td><td style="text-align:center">'+scoreHtml+'</td><td>'+sb+'</td><td class="actions-cell"><button class="btn-icon btn-icon-edit" data-a="et" data-s="'+ea(t.service)+'" data-i="'+ea(t.tipId)+'">&#9998;</button> <button class="btn-icon btn-icon-delete" data-a="dt" data-s="'+ea(t.service)+'" data-i="'+ea(t.tipId)+'">&#128465;</button></td>';tipsTbody.appendChild(r);});pgNav('tips-pagination',fTips.length,tp,function(x){tp=x;renderTips();});}
+function renderTips(){var p=pg(fTips,tp);tipsTbody.innerHTML='';if(!fTips.length){tipsEmpty.hidden=false;return;}tipsEmpty.hidden=true;var tOff=(tp-1)*PS;p.forEach(function(t,idx){var r=document.createElement('tr');var sb=t.automatedCheck?'<span class="script-badge" data-a="vs" data-s="'+ea(t.service)+'" data-i="'+ea(t.tipId)+'">&#9881; Check</span>':'-';var pc=t.positiveCount||0;var scoreHtml=pc>0?'<span style="color:#10b981;font-weight:700">+'+pc+'</span>':pc<0?'<span style="color:#ef4444;font-weight:700">'+pc+'</span>':'<span style="color:#8b949e">0</span>';if(t.confidenceTag==='high-confidence')scoreHtml+=' <span style="background:#10b981;color:#fff;font-size:10px;padding:1px 5px;border-radius:3px;">✓</span>';var actHtml=t.implementedInAct?'<span style="background:#6366f1;color:#fff;font-size:10px;padding:2px 6px;border-radius:4px;">✓ Act</span>':'<span style="color:#d1d5db;font-size:10px;">—</span>';var schedHtml=t.implementedInScheduler?'<span style="background:#f59e0b;color:#fff;font-size:10px;padding:2px 6px;border-radius:4px;margin-left:4px;">⏰ Sched</span>':'';r.innerHTML='<td style="color:#999;font-size:12px">'+(tOff+idx+1)+'</td><td>'+esc(t.service||'')+'</td><td>'+esc(t.tipId||'')+'</td><td>'+esc(t.category||'')+'</td><td>'+esc(t.title||'')+'</td><td title="'+ea(t.description)+'">'+esc(t.description||'')+'</td><td>'+esc(t.estimatedSavings||'')+'</td><td><span class="badge badge-'+(t.difficulty||'').toLowerCase()+'">'+esc(t.difficulty||'')+'</span></td><td style="text-align:center">'+scoreHtml+'</td><td>'+actHtml+schedHtml+'</td><td>'+sb+'</td><td class="actions-cell"><button class="btn-icon btn-icon-edit" data-a="et" data-s="'+ea(t.service)+'" data-i="'+ea(t.tipId)+'">&#9998;</button> <button class="btn-icon btn-icon-delete" data-a="dt" data-s="'+ea(t.service)+'" data-i="'+ea(t.tipId)+'">&#128465;</button></td>';tipsTbody.appendChild(r);});pgNav('tips-pagination',fTips.length,tp,function(x){tp=x;renderTips();});}
 function showTipForm(t){tipFormError.textContent='';if(t){editingTip=t;tipModalTitle.textContent='Edit Tip';tipSubmitBtn.textContent='Update Tip';TF.forEach(function(f){var e=$('tip-'+f);if(e)e.value=t[f]||'';});$('tip-service').disabled=true;$('tip-tipId').disabled=true;}else{editingTip=null;tipModalTitle.textContent='Add Tip';tipSubmitBtn.textContent='Save Tip';TF.forEach(function(f){var e=$('tip-'+f);if(e)e.value='';});$('tip-service').disabled=false;$('tip-tipId').disabled=false;}tipModal.hidden=false;}
 function hideTipForm(){tipModal.hidden=true;editingTip=null;}
 async function saveTip(){tipFormError.textContent='';var d={};for(var i=0;i<TR.length;i++){var f=TR[i],v=$('tip-'+f).value.trim();if(!v){tipFormError.textContent='All required fields must be filled.';return;}d[f]=v;}var ac=$('tip-automatedCheck');if(ac&&ac.value.trim())d.automatedCheck=ac.value.trim();try{showL();if(editingTip){await api('PUT','/admin/tips',d);notify('Tip updated.','success');}else{await api('POST','/admin/tips',d);notify('Tip created.','success');}hideTipForm();await loadTips();}catch(e){tipFormError.textContent=e.message||'Failed.';}finally{hideL();}}
@@ -186,6 +186,7 @@ function renderSubs(){
             +'<td style="font-size:11px;color:#6b7280;">'+esc(s.paddleSubscriptionId||'-')+'</td>'
             +'<td>'+fmtD(s.lastLoginAt)+'</td>'
             +'<td>'+fmtD(s.createdAt)+'</td>'
+            +'<td style="text-align:center;"><span style="color:#f59e0b;font-weight:600;">'+(s.scheduleCount||0)+'</span></td>'
             +'<td class="actions-cell"><button class="btn-icon btn-icon-edit" data-a="es" data-e="'+ea(s.email)+'">&#9998;</button></td>';
         subsTbody.appendChild(r);
     });
@@ -252,4 +253,73 @@ document.querySelectorAll('#subs-table th.sortable').forEach(function(h){
 document.addEventListener('click',function(e){
     var btn=e.target.closest('[data-a="es"]');
     if(btn){showSubModal(btn.dataset.e);}
+});
+
+
+// ============================================================
+// Schedules Tab
+// ============================================================
+var allScheds=[];var fScheds=[];var schp=1;var schsc='memberEmail';var schsa=true;var schedStats=null;
+var schedTbody=$('sched-tbody');var schedEmpty=$('sched-empty');var schedSearch=$('sched-search');
+
+async function loadSchedules(){
+    try{showL();var d=await api('GET','/admin/schedules');allScheds=d.schedules||[];schedStats=d.stats||{};schp=1;renderSchedStats();applyScheds();}
+    catch(e){notify('Failed to load schedules.','error');}
+    finally{hideL();}
+}
+
+function renderSchedStats(){
+    var el=$('sched-stats');if(!el||!schedStats)return;
+    var st=schedStats;
+    var failRate=st.executionsLast24h>0?Math.round(st.failuresLast24h/st.executionsLast24h*100):0;
+    el.innerHTML='<div style="background:#161b22;border:1px solid #30363d;border-radius:8px;padding:12px 16px;flex:1;min-width:100px;"><div style="color:#8b949e;font-size:0.8em;">Total Schedules</div><div style="color:#e2e8f0;font-size:1.4em;font-weight:700;">'+st.totalSchedules+'</div></div>'
+        +'<div style="background:#161b22;border:1px solid #30363d;border-radius:8px;padding:12px 16px;flex:1;min-width:100px;"><div style="color:#8b949e;font-size:0.8em;">Active</div><div style="color:#10b981;font-size:1.4em;font-weight:700;">'+st.activeSchedules+'</div></div>'
+        +'<div style="background:#161b22;border:1px solid #30363d;border-radius:8px;padding:12px 16px;flex:1;min-width:100px;"><div style="color:#8b949e;font-size:0.8em;">Paused</div><div style="color:#9ca3af;font-size:1.4em;font-weight:700;">'+st.pausedSchedules+'</div></div>'
+        +'<div style="background:#161b22;border:1px solid #30363d;border-radius:8px;padding:12px 16px;flex:1;min-width:100px;"><div style="color:#8b949e;font-size:0.8em;">Executions (24h)</div><div style="color:#3b82f6;font-size:1.4em;font-weight:700;">'+st.executionsLast24h+'</div></div>'
+        +'<div style="background:#161b22;border:1px solid #30363d;border-radius:8px;padding:12px 16px;flex:1;min-width:100px;"><div style="color:#8b949e;font-size:0.8em;">Failure Rate (24h)</div><div style="color:'+(failRate>0?'#ef4444':'#10b981')+';font-size:1.4em;font-weight:700;">'+failRate+'%</div></div>';
+}
+
+function applyScheds(){
+    var q=(schedSearch&&schedSearch.value||'').toLowerCase().trim();
+    fScheds=q?allScheds.filter(function(s){return(s.memberEmail||'').toLowerCase().includes(q)||(s.type||'').toLowerCase().includes(q)||(s.status||'').toLowerCase().includes(q)||(s.accountId||'').toLowerCase().includes(q)||(s.name||'').toLowerCase().includes(q);}):allScheds.slice();
+    fScheds=sortArr(fScheds,schsc,schsa);updSort('sched-table',schsc,schsa);renderScheds();
+}
+
+function renderScheds(){
+    var p=pg(fScheds,schp);schedTbody.innerHTML='';
+    if(!fScheds.length){schedEmpty.hidden=false;return;}
+    schedEmpty.hidden=true;
+    var off=(schp-1)*PS;
+    p.forEach(function(s,idx){
+        var r=document.createElement('tr');
+        var statusColor=s.status==='active'?'#10b981':s.status==='paused'?'#9ca3af':'#8b949e';
+        var lastRun=s.lastExecution?fmtD(s.lastExecution.timestamp):'-';
+        var lastResult='-';
+        if(s.lastExecution){
+            var le=s.lastExecution;
+            if(le.status==='success')lastResult='<span style="color:#10b981;">✅ '+le.successCount+'/'+le.resourceCount+'</span>';
+            else if(le.status==='partial')lastResult='<span style="color:#f59e0b;">⚠️ '+le.successCount+'/'+le.resourceCount+'</span>';
+            else if(le.status==='failure')lastResult='<span style="color:#ef4444;">❌ '+le.failureCount+'/'+le.resourceCount+'</span>';
+            else lastResult=esc(le.status||'-');
+        }
+        r.innerHTML='<td style="color:#999;font-size:12px">'+(off+idx+1)+'</td>'
+            +'<td>'+esc(s.memberEmail||'')+'</td>'
+            +'<td>'+esc(s.name||'')+'</td>'
+            +'<td>'+esc(s.type||'')+'</td>'
+            +'<td style="font-size:11px;color:#6b7280;">'+esc(s.accountId||'-')+'</td>'
+            +'<td><span style="color:'+statusColor+';font-weight:600;">'+esc(s.status||'-')+'</span></td>'
+            +'<td>'+lastRun+'</td>'
+            +'<td>'+lastResult+'</td>';
+        schedTbody.appendChild(r);
+    });
+    pgNav('sched-pagination',fScheds.length,schp,function(x){schp=x;renderScheds();});
+}
+
+// Wire up schedules events
+if(schedSearch)schedSearch.addEventListener('input',function(){schp=1;applyScheds();});
+
+// Sortable headers for sched table
+document.querySelectorAll('#sched-table th.sortable').forEach(function(h){
+    h.style.cursor='pointer';
+    h.onclick=function(){var c=h.dataset.col;if(schsc===c)schsa=!schsa;else{schsc=c;schsa=true;}schp=1;applyScheds();};
 });

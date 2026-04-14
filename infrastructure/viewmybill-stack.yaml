@@ -680,6 +680,15 @@ Resources:
                   - dynamodb:Scan
                 Resource:
                   - !GetAtt AgentFeedbackTable.Arn
+        - PolicyName: DynamoDBMembersReadAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:Scan
+                Resource:
+                  - !GetAtt MembersTable.Arn
       Tags:
         - Key: Project
           Value: ViewMyBill
@@ -990,6 +999,22 @@ Resources:
                   - cognito-idp:GetUser
                   - cognito-idp:ListUsers
                 Resource: 'arn:aws:cognito-idp:us-east-1:991105135552:userpool/us-east-1_FlR2CmFu0'
+        - PolicyName: EventBridgeSchedulerAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - scheduler:CreateSchedule
+                  - scheduler:DeleteSchedule
+                  - scheduler:UpdateSchedule
+                  - scheduler:GetSchedule
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - iam:PassRole
+                Resource:
+                  - !GetAtt EventBridgeSchedulerRole.Arn
       Tags:
         - Key: Project
           Value: ViewMyBill
@@ -1353,6 +1378,98 @@ Resources:
       Action: lambda:InvokeFunction
       Principal: apigateway.amazonaws.com
       SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ViewMyBillApi}/*'
+
+  # ============================================================
+  # IAM Role - Scheduler Executor Lambda
+  # ============================================================
+  SchedulerExecutorRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: slashmybill-scheduler-executor-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: STSAssumeRole
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sts:AssumeRole
+                Resource:
+                  - 'arn:aws:iam::*:role/SlashMyBill-*'
+        - PolicyName: DynamoDBMembersReadWrite
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:Query
+                Resource:
+                  - !GetAtt MembersTable.Arn
+      Tags:
+        - Key: Project
+          Value: ViewMyBill
+
+  # ============================================================
+  # Lambda Function - Scheduler Executor
+  # ============================================================
+  SchedulerExecutorFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: slashmybill-scheduler-executor
+      Runtime: python3.12
+      Handler: lambda_function.lambda_handler
+      MemorySize: 512
+      Timeout: 300
+      Role: !GetAtt SchedulerExecutorRole.Arn
+      Code:
+        S3Bucket: !Ref LambdaCodeBucket
+        S3Key: 'lambda-packages/scheduler-executor.zip'
+      Environment:
+        Variables:
+          MEMBERS_TABLE_NAME: !Ref MembersTable
+      Tags:
+        - Key: Project
+          Value: ViewMyBill
+
+  # ============================================================
+  # IAM Role - EventBridge Scheduler Execution Role
+  # ============================================================
+  EventBridgeSchedulerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: SlashMyBill-EventBridge-Scheduler-Role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: scheduler.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: InvokeSchedulerExecutor
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource:
+                  - !GetAtt SchedulerExecutorFunction.Arn
+      Tags:
+        - Key: Project
+          Value: ViewMyBill
 
   # ============================================================
   # S3 Lifecycle Rule for reports/ prefix

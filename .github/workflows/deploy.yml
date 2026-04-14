@@ -25,6 +25,7 @@ on:
       - 'member-handler/**'
       - 'members/**'
       - 'agent-action/**'
+      - 'scheduler-executor/**'
       - 'knowledge-base/**'
   workflow_dispatch:
 
@@ -232,6 +233,16 @@ jobs:
           aws s3 cp agent-action-lambda.zip s3://${{ env.STORAGE_BUCKET }}/lambda-packages/agent-action.zip
           echo "✓ Agent Action packaged"
 
+      - name: Package Scheduler Executor Lambda
+        run: |
+          echo "Packaging Scheduler Executor Lambda..."
+          mkdir -p .build-scheduler-executor
+          cp scheduler-executor/lambda_function.py .build-scheduler-executor/
+          cd .build-scheduler-executor && zip -r ../scheduler-executor-lambda.zip . -q
+          cd ..
+          aws s3 cp scheduler-executor-lambda.zip s3://${{ env.STORAGE_BUCKET }}/lambda-packages/scheduler-executor.zip
+          echo "✓ Scheduler Executor packaged"
+
       - name: Deploy SlashMyBill CloudFormation stack
         continue-on-error: true
         run: |
@@ -284,6 +295,11 @@ jobs:
             --function-name slashmybill-paddle-webhook \
             --s3-bucket ${{ env.STORAGE_BUCKET }} \
             --s3-key lambda-packages/paddle-webhook.zip > /dev/null 2>&1 || true
+          # Update Scheduler Executor (skip if not yet created)
+          aws lambda update-function-code \
+            --function-name slashmybill-scheduler-executor \
+            --s3-bucket ${{ env.STORAGE_BUCKET }} \
+            --s3-key lambda-packages/scheduler-executor.zip > /dev/null 2>&1 || true
           echo "✓ Lambda functions updated"
 
       - name: Ensure API Gateway routes exist
@@ -302,6 +318,9 @@ jobs:
             "GET /members/schedules"
             "PUT /members/schedules/status"
             "POST /members/schedules/create"
+            "DELETE /members/schedules/delete"
+            "PUT /members/schedules/pause"
+            "PUT /members/schedules/resume"
             "POST /members/budgets/list"
             "POST /members/budgets/create"
             "PUT /members/budgets/update"
@@ -316,6 +335,7 @@ jobs:
             "GET /admin/subscribers"
             "PUT /admin/subscribers/tier"
             "POST /admin/subscribers/tokens"
+            "GET /admin/schedules"
           )
           for ROUTE in "${ADMIN_ROUTES[@]}"; do
             aws apigatewayv2 create-route --api-id $API_ID --route-key "$ROUTE" --target "integrations/$ADMIN_INT" 2>/dev/null || true
