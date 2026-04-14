@@ -108,6 +108,9 @@ def lambda_handler(event, context):
         'POST /members/schedules/analyze': handle_schedule_analyze,
         'GET /members/schedules': handle_get_schedules,
         'PUT /members/schedules/status': handle_update_schedule_status,
+        'POST /members/schedules/create': handle_create_schedule,
+        'POST /members/budgets/list': handle_list_budgets,
+        'POST /members/budgets/create': handle_create_budget,
     }
 
     handler = routes.get(route_key)
@@ -1050,6 +1053,9 @@ def handle_generate_template(event):
                                             'budgets:ViewBudget',
                                             'budgets:DescribeBudgets',
                                             'budgets:DescribeBudgetActionsForAccount',
+                                            'budgets:CreateBudget',
+                                            'budgets:ModifyBudget',
+                                            'budgets:DeleteBudget',
                                             # Cost Optimization Hub
                                             'cost-optimization-hub:ListRecommendations',
                                             'cost-optimization-hub:GetRecommendation',
@@ -6494,84 +6500,6 @@ def handle_schedule_analyze(event):
             except Exception as e:
                 logger.warning(f"Snapshot check failed for {acct_id}: {e}")
 
-            # 4. Budget setup recommendation
-            try:
-                budgets_client = boto3.client('budgets',
-                    aws_access_key_id=creds['AccessKeyId'],
-                    aws_secret_access_key=creds['SecretAccessKey'],
-                    aws_session_token=creds['SessionToken'])
-                budgets_resp = budgets_client.describe_budgets(AccountId=acct_id)
-                if not budgets_resp.get('Budgets'):
-                    recommendations.append({
-                        'id': f'budget-setup-{acct_id}',
-                        'type': 'budget-setup',
-                        'priority': 'medium',
-                        'title': 'Set up AWS Budgets with cost alerts',
-                        'reason': f'No budgets configured in {acct_name}. Budgets alert you before costs exceed thresholds.',
-                        'estimatedSavings': 0,
-                        'difficulty': 'easy',
-                        'accountId': acct_id,
-                        'accountName': acct_name,
-                        'resources': [],
-                        'guide': {
-                            'steps': [
-                                'Go to AWS Budgets in the Billing Console',
-                                'Click "Create budget" → "Cost budget"',
-                                'Set monthly budget amount (e.g., your average monthly spend + 10%)',
-                                'Add alert thresholds at 50%, 75%, and 100%',
-                                'Enter email addresses for notifications',
-                                'Click "Create budget"',
-                            ],
-                            'consoleUrl': 'https://console.aws.amazon.com/billing/home#/budgets/create',
-                            'cliCommand': None,
-                        },
-                    })
-            except Exception as e:
-                logger.warning(f"Budget check failed for {acct_id}: {e}")
-
-            # 5. Tag compliance recommendation
-            try:
-                tagging = boto3.client('resourcegroupstaggingapi',
-                    aws_access_key_id=creds['AccessKeyId'],
-                    aws_secret_access_key=creds['SecretAccessKey'],
-                    aws_session_token=creds['SessionToken'],
-                    region_name='us-east-1')
-                tag_resp = tagging.get_resources(ResourcesPerPage=100)
-                total = len(tag_resp.get('ResourceTagMappingList', []))
-                required = ['Environment', 'Owner', 'CostCenter', 'Application']
-                untagged = 0
-                for res in tag_resp.get('ResourceTagMappingList', []):
-                    tags = {t['Key'] for t in res.get('Tags', [])}
-                    if not all(r in tags for r in required):
-                        untagged += 1
-                coverage = round((1 - untagged / total) * 100, 1) if total > 0 else 100
-                if coverage < 80:
-                    recommendations.append({
-                        'id': f'tag-compliance-{acct_id}',
-                        'type': 'tag-compliance',
-                        'priority': 'medium',
-                        'title': f'Improve tag coverage from {coverage}% to 80%+',
-                        'reason': f'{untagged} of {total} resources missing required tags in {acct_name}',
-                        'estimatedSavings': 0,
-                        'difficulty': 'easy',
-                        'accountId': acct_id,
-                        'accountName': acct_name,
-                        'resources': [],
-                        'guide': {
-                            'steps': [
-                                'Go to the Act → Tag Resources section in SlashMyBill',
-                                'Click "Scan for Untagged" to see all resources missing tags',
-                                'Select resources and apply tags in bulk',
-                                'Or use AWS Tag Editor in the AWS Console for bulk tagging',
-                                'Enable AWS Config rule "required-tags" to enforce going forward',
-                            ],
-                            'consoleUrl': 'https://console.aws.amazon.com/resource-groups/tag-editor',
-                            'cliCommand': None,
-                        },
-                    })
-            except Exception as e:
-                logger.warning(f"Tag compliance check failed for {acct_id}: {e}")
-
         except Exception as e:
             logger.warning(f"Scheduler analysis failed for {acct_id}: {e}")
 
@@ -6701,6 +6629,217 @@ def handle_update_schedule_status(event):
     except Exception as e:
         logger.error(f"Update schedule status error: {e}")
         return create_error_response(500, 'ServerError', 'Failed to update status')
+
+
+# ============================================================
+# Budget Management
+# ============================================================
+
+def handle_list_budgets(event):
+    """List existing AWS Budgets from connected accounts."""
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+    member_email = auth['sub']
+
+    try:
+        body = json.loads(event.get('body', '{}'))
+    except (json.JSONDecodeError, TypeError):
+        body = {}
+
+    account_ids = body.get('accountIds', [])
+    external_id = hashlib.sha256(member_email.encode('utf-8')).hexdigest()
+    sts_client = boto3.client('sts')
+
+    accounts_table = dynamodb.Table(ACCOUNTS_TABLE_NAME)
+    try:
+        result = accounts_table.query(
+            KeyConditionExpression=boto3.dynamodb.conditions.Key('memberEmail').eq(member_email)
+        )
+        accounts = [a for a in result.get('Items', []) if a.get('connectionStatus') == 'connected']
+    except ClientError:
+        accounts = []
+
+    if account_ids:
+        accounts = [a for a in accounts if a['accountId'] in account_ids]
+
+    all_budgets = []
+    for acct in accounts[:5]:
+        acct_id = acct['accountId']
+        acct_name = acct.get('accountName', f'Account {acct_id[-4:]}')
+        try:
+            assume_resp = sts_client.assume_role(
+                RoleArn=f'arn:aws:iam::{acct_id}:role/SlashMyBill-{acct_id}',
+                RoleSessionName='SlashMyBillBudgets', ExternalId=external_id,
+            )
+            creds = assume_resp['Credentials']
+            budgets_client = boto3.client('budgets',
+                aws_access_key_id=creds['AccessKeyId'],
+                aws_secret_access_key=creds['SecretAccessKey'],
+                aws_session_token=creds['SessionToken'])
+
+            resp = budgets_client.describe_budgets(AccountId=acct_id)
+            for b in resp.get('Budgets', []):
+                limit = b.get('BudgetLimit', {})
+                spent = b.get('CalculatedSpend', {}).get('ActualSpend', {})
+                forecast = b.get('CalculatedSpend', {}).get('ForecastedSpend', {})
+                all_budgets.append({
+                    'accountId': acct_id,
+                    'accountName': acct_name,
+                    'name': b.get('BudgetName', ''),
+                    'type': b.get('BudgetType', ''),
+                    'limit': float(limit.get('Amount', 0)),
+                    'unit': limit.get('Unit', 'USD'),
+                    'timeUnit': b.get('TimeUnit', ''),
+                    'actualSpend': float(spent.get('Amount', 0)),
+                    'forecastedSpend': float(forecast.get('Amount', 0)) if forecast else 0,
+                })
+        except Exception as e:
+            logger.warning(f"Budget list failed for {acct_id}: {e}")
+
+    return create_response(200, {'budgets': all_budgets})
+
+
+def handle_create_budget(event):
+    """Create an AWS Budget with alerts in a connected account."""
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+    member_email = auth['sub']
+
+    try:
+        body = json.loads(event.get('body', '{}'))
+    except (json.JSONDecodeError, TypeError):
+        return create_error_response(400, 'InvalidRequest', 'Invalid request body')
+
+    acct_id = body.get('accountId', '').strip()
+    budget_name = body.get('name', '').strip()
+    amount = body.get('amount', 0)
+    alert_email = body.get('alertEmail', '').strip()
+    thresholds = body.get('thresholds', [50, 75, 100])
+
+    if not acct_id or not budget_name or not amount or amount <= 0:
+        return create_error_response(400, 'InvalidRequest', 'accountId, name, and amount are required')
+
+    # Consume tokens
+    tier = _get_member_tier(member_email)
+    credit_check = _check_and_consume_credits(member_email, tier, SCAN_CREDIT_COST)
+    if credit_check:
+        return credit_check
+
+    external_id = hashlib.sha256(member_email.encode('utf-8')).hexdigest()
+    sts_client = boto3.client('sts')
+
+    try:
+        assume_resp = sts_client.assume_role(
+            RoleArn=f'arn:aws:iam::{acct_id}:role/SlashMyBill-{acct_id}',
+            RoleSessionName='SlashMyBillBudgetCreate', ExternalId=external_id,
+        )
+        creds = assume_resp['Credentials']
+        budgets_client = boto3.client('budgets',
+            aws_access_key_id=creds['AccessKeyId'],
+            aws_secret_access_key=creds['SecretAccessKey'],
+            aws_session_token=creds['SessionToken'])
+
+        # Build notifications
+        notifications = []
+        for pct in thresholds:
+            notif = {
+                'Notification': {
+                    'NotificationType': 'ACTUAL',
+                    'ComparisonOperator': 'GREATER_THAN',
+                    'Threshold': float(pct),
+                    'ThresholdType': 'PERCENTAGE',
+                },
+                'Subscribers': [],
+            }
+            if alert_email:
+                notif['Subscribers'].append({'SubscriptionType': 'EMAIL', 'Address': alert_email})
+            if notif['Subscribers']:
+                notifications.append(notif)
+
+        budgets_client.create_budget(
+            AccountId=acct_id,
+            Budget={
+                'BudgetName': budget_name,
+                'BudgetType': 'COST',
+                'BudgetLimit': {'Amount': str(amount), 'Unit': 'USD'},
+                'TimeUnit': 'MONTHLY',
+                'CostTypes': {
+                    'IncludeTax': True,
+                    'IncludeSubscription': True,
+                    'UseBlended': False,
+                    'IncludeRefund': False,
+                    'IncludeCredit': False,
+                    'IncludeUpfront': True,
+                    'IncludeRecurring': True,
+                    'IncludeOtherSubscription': True,
+                    'IncludeSupport': True,
+                    'IncludeDiscount': True,
+                    'UseAmortized': False,
+                },
+            },
+            NotificationsWithSubscribers=notifications,
+        )
+
+        logger.info(f"Budget '{budget_name}' created in {acct_id} by {member_email}")
+        return create_response(201, {'message': f'Budget "{budget_name}" created with {len(thresholds)} alerts'})
+
+    except Exception as e:
+        logger.error(f"Budget creation failed: {e}")
+        return create_error_response(500, 'ServerError', f'Failed to create budget: {str(e)}')
+
+
+# ============================================================
+# Schedule Creation
+# ============================================================
+
+def handle_create_schedule(event):
+    """Save a user-created schedule to their member record."""
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+    member_email = auth['sub']
+
+    try:
+        body = json.loads(event.get('body', '{}'))
+    except (json.JSONDecodeError, TypeError):
+        return create_error_response(400, 'InvalidRequest', 'Invalid request body')
+
+    sched_type = body.get('type', '').strip()
+    name = body.get('name', '').strip()
+    frequency = body.get('frequency', 'weekly')
+    config = body.get('config', {})
+    notes = body.get('notes', '')
+
+    if not sched_type or not name:
+        return create_error_response(400, 'InvalidRequest', 'type and name are required')
+
+    import uuid
+    schedule = {
+        'id': f'sched-{uuid.uuid4().hex[:8]}',
+        'type': sched_type,
+        'name': name,
+        'frequency': frequency,
+        'config': config,
+        'notes': notes,
+        'status': 'active',
+        'createdAt': datetime.now(timezone.utc).isoformat(),
+    }
+
+    members_table = dynamodb.Table(MEMBERS_TABLE_NAME)
+    try:
+        # Append to schedules array
+        members_table.update_item(
+            Key={'email': member_email},
+            UpdateExpression='SET userSchedules = list_append(if_not_exists(userSchedules, :empty), :sched)',
+            ExpressionAttributeValues={':sched': [schedule], ':empty': []},
+        )
+        logger.info(f"Schedule '{name}' created by {member_email}")
+        return create_response(201, {'message': f'Schedule "{name}" created', 'schedule': schedule})
+    except Exception as e:
+        logger.error(f"Schedule creation failed: {e}")
+        return create_error_response(500, 'ServerError', 'Failed to create schedule')
 
 
 # ============================================================

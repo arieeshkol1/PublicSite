@@ -3875,9 +3875,11 @@ function _switchActSection(section) {
     var waste = document.getElementById('act-section-waste');
     var tagging = document.getElementById('act-section-tagging');
     var scheduler = document.getElementById('act-section-scheduler');
+    var budget = document.getElementById('act-section-budget');
     if (waste) waste.style.display = section === 'waste' ? 'block' : 'none';
     if (tagging) tagging.style.display = section === 'tagging' ? 'block' : 'none';
     if (scheduler) scheduler.style.display = section === 'scheduler' ? 'block' : 'none';
+    if (budget) budget.style.display = section === 'budget' ? 'block' : 'none';
 }
 
 function initActTab() {
@@ -5091,5 +5093,208 @@ async function _updateRecStatus(recId, status) {
         notify(status === 'completed' ? 'Marked as done!' : status === 'dismissed' ? 'Dismissed' : 'Restored', 'success');
     } catch (e) {
         notify('Failed to update: ' + (e.message || ''), 'error');
+    }
+}
+
+
+// ============================================================
+// Budget Management UI
+// ============================================================
+(function initBudget() {
+    var loadBtn = document.getElementById('act-budget-load-btn');
+    var createBtn = document.getElementById('act-budget-create-btn');
+    if (loadBtn) loadBtn.onclick = function() { _loadBudgets(); };
+    if (createBtn) createBtn.onclick = function() { _showBudgetWizard(); };
+    var submitBtn = document.getElementById('budget-wizard-submit');
+    if (submitBtn) submitBtn.onclick = async function() { await _createBudget(); };
+})();
+
+async function _loadBudgets() {
+    var statusEl = document.getElementById('act-budget-status');
+    var listEl = document.getElementById('act-budget-list');
+    var emptyEl = document.getElementById('act-budget-empty');
+    if (statusEl) statusEl.textContent = 'Loading budgets...';
+    if (emptyEl) emptyEl.style.display = 'none';
+
+    try {
+        _syncActSelection();
+        var data = await api('POST', '/members/budgets/list', {accountIds: getActSelectedAccountIds()});
+        var budgets = data.budgets || [];
+        if (statusEl) statusEl.textContent = budgets.length + ' budget(s) found';
+        if (budgets.length === 0) { if (emptyEl) emptyEl.style.display = 'block'; if (listEl) listEl.innerHTML = ''; return; }
+
+        var html = '';
+        budgets.forEach(function(b) {
+            var pct = b.limit > 0 ? Math.round(b.actualSpend / b.limit * 100) : 0;
+            var barColor = pct >= 100 ? '#ef4444' : pct >= 75 ? '#f59e0b' : '#10b981';
+            html += '<div style="border:1px solid #e5e7eb;border-radius:10px;padding:16px;margin-bottom:12px;background:#fff;">'
+                + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">'
+                + '<div style="font-weight:600;color:#1f2937;">' + b.name + '</div>'
+                + '<span style="font-size:0.8em;color:#6b7280;">' + b.accountName + '</span></div>'
+                + '<div style="display:flex;gap:16px;font-size:0.88em;margin-bottom:8px;">'
+                + '<span style="color:#374151;">Limit: <strong>$' + b.limit.toLocaleString() + '</strong>/' + b.timeUnit.toLowerCase() + '</span>'
+                + '<span style="color:#374151;">Spent: <strong>$' + b.actualSpend.toFixed(2) + '</strong></span>'
+                + (b.forecastedSpend > 0 ? '<span style="color:#6b7280;">Forecast: $' + b.forecastedSpend.toFixed(2) + '</span>' : '')
+                + '</div>'
+                + '<div style="background:#e5e7eb;border-radius:4px;height:8px;overflow:hidden;">'
+                + '<div style="width:' + Math.min(pct, 100) + '%;height:100%;background:' + barColor + ';border-radius:4px;"></div></div>'
+                + '<div style="font-size:0.8em;color:#6b7280;margin-top:4px;">' + pct + '% used</div></div>';
+        });
+        if (listEl) listEl.innerHTML = html;
+    } catch (e) {
+        if (statusEl) statusEl.textContent = 'Failed: ' + (e.message || '');
+        notify('Failed to load budgets', 'error');
+    }
+}
+
+function _showBudgetWizard() {
+    var wizard = document.getElementById('act-budget-wizard');
+    var select = document.getElementById('budget-account-select');
+    var emailInput = document.getElementById('budget-alert-email');
+    if (!wizard) return;
+
+    // Populate account dropdown
+    if (select) {
+        select.innerHTML = '';
+        var accounts = document.querySelectorAll('.act-acct-chk');
+        if (accounts.length === 0) {
+            // Fallback: use the shared account list
+            var memberEmail = getMemberEmail();
+            select.innerHTML = '<option value="">Select account</option>';
+        }
+        accounts.forEach(function(chk) {
+            var opt = document.createElement('option');
+            opt.value = chk.value || chk.dataset.id || '';
+            opt.textContent = (chk.dataset.name || chk.value || '') + ' (' + opt.value + ')';
+            select.appendChild(opt);
+        });
+        // If no checkboxes found, try getting from sessionStorage
+        if (select.options.length === 0) {
+            select.innerHTML = '<option value="">No accounts connected</option>';
+        }
+    }
+    if (emailInput) emailInput.value = getMemberEmail() || '';
+    document.getElementById('budget-wizard-error').textContent = '';
+    wizard.hidden = false;
+}
+
+async function _createBudget() {
+    var errEl = document.getElementById('budget-wizard-error');
+    var submitBtn = document.getElementById('budget-wizard-submit');
+    var acctId = (document.getElementById('budget-account-select') || {}).value || '';
+    var name = (document.getElementById('budget-name') || {}).value || '';
+    var amount = parseFloat((document.getElementById('budget-amount') || {}).value || 0);
+    var email = (document.getElementById('budget-alert-email') || {}).value || '';
+
+    var thresholds = [];
+    if (document.getElementById('budget-alert-50') && document.getElementById('budget-alert-50').checked) thresholds.push(50);
+    if (document.getElementById('budget-alert-75') && document.getElementById('budget-alert-75').checked) thresholds.push(75);
+    if (document.getElementById('budget-alert-100') && document.getElementById('budget-alert-100').checked) thresholds.push(100);
+    if (document.getElementById('budget-alert-120') && document.getElementById('budget-alert-120').checked) thresholds.push(120);
+
+    if (!acctId) { errEl.textContent = 'Select an account'; return; }
+    if (!name) { errEl.textContent = 'Enter a budget name'; return; }
+    if (!amount || amount <= 0) { errEl.textContent = 'Enter a valid amount'; return; }
+
+    submitBtn.disabled = true; submitBtn.textContent = 'Creating...';
+    errEl.textContent = '';
+
+    try {
+        var data = await api('POST', '/members/budgets/create', {
+            accountId: acctId, name: name, amount: amount, alertEmail: email, thresholds: thresholds
+        });
+        notify(data.message || 'Budget created!', 'success');
+        document.getElementById('act-budget-wizard').hidden = true;
+        _loadBudgets();
+    } catch (e) {
+        errEl.textContent = e.message || 'Failed to create budget';
+    } finally {
+        submitBtn.disabled = false; submitBtn.textContent = 'Create Budget';
+    }
+}
+
+// ============================================================
+// Schedule Creation Wizard UI
+// ============================================================
+(function initSchedWizard() {
+    var createBtn = document.getElementById('act-sched-create-btn');
+    if (createBtn) createBtn.onclick = function() { _showSchedWizard(); };
+    var submitBtn = document.getElementById('sched-wizard-submit');
+    if (submitBtn) submitBtn.onclick = async function() { await _createSchedule(); };
+})();
+
+function _showSchedWizard() {
+    var wizard = document.getElementById('act-sched-wizard');
+    if (!wizard) return;
+    document.getElementById('sched-name').value = '';
+    document.getElementById('sched-notes').value = '';
+    document.getElementById('sched-wizard-error').textContent = '';
+    _updateSchedWizard();
+    wizard.hidden = false;
+}
+
+function _updateSchedWizard() {
+    var type = (document.getElementById('sched-type') || {}).value || '';
+    var officeConfig = document.getElementById('sched-office-hours-config');
+    if (officeConfig) officeConfig.style.display = type === 'office-hours' ? 'block' : 'none';
+
+    // Auto-fill name based on type
+    var nameInput = document.getElementById('sched-name');
+    if (nameInput && !nameInput.value) {
+        var names = {
+            'office-hours': 'Stop non-prod instances outside business hours',
+            'waste-scan': 'Weekly waste scan',
+            'snapshot-cleanup': 'Monthly snapshot cleanup review',
+            'gp2-migration': 'gp2 to gp3 volume migration',
+            'commitment-review': 'Quarterly SP/RI commitment review'
+        };
+        nameInput.value = names[type] || '';
+    }
+}
+
+async function _createSchedule() {
+    var errEl = document.getElementById('sched-wizard-error');
+    var submitBtn = document.getElementById('sched-wizard-submit');
+    var type = (document.getElementById('sched-type') || {}).value || '';
+    var name = (document.getElementById('sched-name') || {}).value || '';
+    var frequency = (document.getElementById('sched-frequency') || {}).value || 'weekly';
+    var notes = (document.getElementById('sched-notes') || {}).value || '';
+
+    if (!name) { errEl.textContent = 'Enter a schedule name'; return; }
+
+    var config = {};
+    if (type === 'office-hours') {
+        config.startTime = (document.getElementById('sched-start-time') || {}).value || '08:00';
+        config.stopTime = (document.getElementById('sched-stop-time') || {}).value || '18:00';
+        config.timezone = (document.getElementById('sched-timezone') || {}).value || 'UTC';
+        config.tagFilter = (document.getElementById('sched-tag-filter') || {}).value || '';
+    }
+
+    submitBtn.disabled = true; submitBtn.textContent = 'Creating...';
+    errEl.textContent = '';
+
+    try {
+        var data = await api('POST', '/members/schedules/create', {
+            type: type, name: name, frequency: frequency, config: config, notes: notes
+        });
+        notify(data.message || 'Schedule created!', 'success');
+        document.getElementById('act-sched-wizard').hidden = false;
+        // Add to local list and re-render
+        if (data.schedule) {
+            data.schedule.status = 'active';
+            data.schedule.title = name;
+            data.schedule.reason = 'User-created schedule';
+            data.schedule.estimatedSavings = 0;
+            data.schedule.difficulty = 'easy';
+            data.schedule.priority = 'medium';
+            data.schedule.guide = {steps: ['This is a user-managed schedule. Implement it in your AWS account.']};
+            _schedRecommendations.push(data.schedule);
+            _renderSchedulerList();
+        }
+        document.getElementById('act-sched-wizard').hidden = true;
+    } catch (e) {
+        errEl.textContent = e.message || 'Failed to create schedule';
+    } finally {
+        submitBtn.disabled = false; submitBtn.textContent = 'Create Schedule';
     }
 }
