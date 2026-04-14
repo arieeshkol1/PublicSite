@@ -6775,9 +6775,10 @@ def handle_create_budget(event):
                 },
             }
 
-        # Add tag filter if specified
+        # Add tag filter if specified (AWS Budgets uses TagKeyValue dimension)
         if tag_key and tag_values:
-            budget_def['CostFilters'] = {tag_key: tag_values if isinstance(tag_values, list) else [tag_values]}
+            tag_filter_values = [f'{tag_key}${v}' for v in (tag_values if isinstance(tag_values, list) else [tag_values])]
+            budget_def['CostFilters'] = {'TagKeyValue': tag_filter_values}
 
         budgets_client.create_budget(
             AccountId=acct_id,
