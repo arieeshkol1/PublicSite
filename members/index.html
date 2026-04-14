@@ -459,9 +459,19 @@
                                             </div>
                                         </div>
                                         <div class="form-group" style="margin-bottom:10px;">
-                                            <label style="font-size:0.85em;">Target tag filter</label>
+                                            <label style="font-size:0.85em;">Target resources <button id="sched-load-resources-btn" type="button" style="background:none;border:none;color:#6366f1;cursor:pointer;font-size:0.8em;margin-left:4px;" onclick="_loadSchedResources()">🔄 Load</button></label>
+                                            <div id="sched-resource-filter" style="margin-bottom:6px;">
+                                                <input type="text" id="sched-resource-search" placeholder="Filter by name, ID, or tag..." style="width:100%;padding:5px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:0.8em;" oninput="_filterSchedResources()">
+                                            </div>
+                                            <div id="sched-resource-list" style="max-height:120px;overflow-y:auto;border:1px solid #e5e7eb;border-radius:6px;background:#f9fafb;">
+                                                <div style="padding:8px;color:#9ca3af;font-size:0.8em;text-align:center;">Click "Load" to fetch resources from your accounts</div>
+                                            </div>
+                                            <div id="sched-selected-count" style="font-size:0.75em;color:#6b7280;margin-top:3px;">0 resources selected</div>
+                                        </div>
+                                        <div class="form-group" style="margin-bottom:10px;">
+                                            <label style="font-size:0.85em;">Or target by tag filter</label>
                                             <input type="text" id="sched-tag-filter" placeholder="Environment=dev,staging,qa" style="width:100%;padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:0.85em;">
-                                            <div style="font-size:0.75em;color:#6b7280;margin-top:2px;">Resources with this tag will be affected</div>
+                                            <div style="font-size:0.75em;color:#6b7280;margin-top:2px;">Select specific resources above OR use a tag filter</div>
                                         </div>
                                     </div>
                                     <div class="form-group" style="margin-bottom:8px;">

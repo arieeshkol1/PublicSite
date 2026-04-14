@@ -5401,11 +5401,12 @@ async function _createSchedule() {
     if (!name) { errEl.textContent = 'Enter a schedule name'; return; }
 
     var config = {};
-    if (type === 'office-hours') {
+    var isStopStart = type.indexOf('stop') !== -1 || type.indexOf('scale') !== -1 || type.indexOf('pause') !== -1 || type.indexOf('teardown') !== -1 || type.indexOf('autostop') !== -1;
+    if (isStopStart) {
         config.startTime = (document.getElementById('sched-start-time') || {}).value || '08:00';
         config.stopTime = (document.getElementById('sched-stop-time') || {}).value || '18:00';
-        config.timezone = (document.getElementById('sched-timezone') || {}).value || 'UTC';
         config.tagFilter = (document.getElementById('sched-tag-filter') || {}).value || '';
+        config.selectedResources = Array.from(_schedSelectedResources);
     }
 
     // Granularity: days of week, day of month, time, timezone
@@ -5479,4 +5480,101 @@ async function _deleteBudget(accountId, budgetName) {
     } catch (e) {
         notify('Failed to delete: ' + (e.message || ''), 'error');
     }
+}
+
+
+// ============================================================
+// Scheduler Resource Picker
+// ============================================================
+var _schedResources = [];
+var _schedSelectedResources = new Set();
+
+async function _loadSchedResources() {
+    var listEl = document.getElementById('sched-resource-list');
+    var btn = document.getElementById('sched-load-resources-btn');
+    if (!listEl) return;
+    if (btn) btn.textContent = '⏳ Loading...';
+    listEl.innerHTML = '<div style="padding:8px;color:#6b7280;font-size:0.8em;text-align:center;">Loading resources...</div>';
+
+    try {
+        var type = (document.getElementById('sched-type') || {}).value || '';
+        var data = await api('POST', '/members/tags/scan', {requiredTags: []});
+        var resources = data.resources || [];
+
+        // Filter by selected schedule type
+        var typeMap = {
+            'ec2-stop-start': 'EC2',
+            'rds-stop-start': 'RDS',
+            'asg-scale-zero': 'AUTOSCALING',
+            'eks-scale-zero': 'EKS',
+            'sagemaker-stop': 'SAGEMAKER',
+            'redshift-pause': 'REDSHIFT',
+            'workspaces-autostop': 'WORKSPACES',
+            'elb-teardown': 'ELASTICLOADBALANCING'
+        };
+        var filterType = typeMap[type] || '';
+        if (filterType) {
+            resources = resources.filter(function(r) {
+                return (r.resourceType || '').toUpperCase().indexOf(filterType) !== -1;
+            });
+        }
+
+        _schedResources = resources;
+        _schedSelectedResources = new Set();
+        _renderSchedResources();
+    } catch (e) {
+        listEl.innerHTML = '<div style="padding:8px;color:#ef4444;font-size:0.8em;text-align:center;">Failed to load: ' + (e.message || '') + '</div>';
+    } finally {
+        if (btn) btn.textContent = '🔄 Load';
+    }
+}
+
+function _filterSchedResources() {
+    _renderSchedResources();
+}
+
+function _renderSchedResources() {
+    var listEl = document.getElementById('sched-resource-list');
+    var countEl = document.getElementById('sched-selected-count');
+    if (!listEl) return;
+
+    var q = ((document.getElementById('sched-resource-search') || {}).value || '').toLowerCase();
+    var filtered = _schedResources;
+    if (q) {
+        filtered = _schedResources.filter(function(r) {
+            var searchStr = ((r.name || '') + ' ' + (r.resourceId || '') + ' ' + (r.resourceType || '') + ' ' + JSON.stringify(r.existingTags || {})).toLowerCase();
+            return searchStr.indexOf(q) !== -1;
+        });
+    }
+
+    if (filtered.length === 0) {
+        listEl.innerHTML = '<div style="padding:8px;color:#9ca3af;font-size:0.8em;text-align:center;">No matching resources found</div>';
+        return;
+    }
+
+    var html = '';
+    filtered.slice(0, 50).forEach(function(r) {
+        var checked = _schedSelectedResources.has(r.arn) ? ' checked' : '';
+        var tags = r.existingTags || {};
+        var tagStr = Object.keys(tags).slice(0, 3).map(function(k) { return k + '=' + tags[k]; }).join(', ');
+        html += '<label style="display:flex;align-items:center;gap:6px;padding:4px 8px;border-bottom:1px solid #f3f4f6;cursor:pointer;font-size:0.8em;" onmouseenter="this.style.background=\'#f0f4f8\'" onmouseleave="this.style.background=\'\'">'
+            + '<input type="checkbox" class="sched-res-chk" data-arn="' + r.arn + '"' + checked + ' style="flex-shrink:0;">'
+            + '<span style="color:#1f2937;font-weight:500;min-width:100px;">' + (r.name || r.resourceId) + '</span>'
+            + '<span style="color:#9ca3af;font-size:0.9em;">' + (r.resourceType || '') + '</span>'
+            + (tagStr ? '<span style="color:#6b7280;font-size:0.85em;margin-left:auto;">' + tagStr + '</span>' : '')
+            + '</label>';
+    });
+    if (filtered.length > 50) html += '<div style="padding:4px 8px;color:#9ca3af;font-size:0.75em;">+' + (filtered.length - 50) + ' more (use filter to narrow)</div>';
+
+    listEl.innerHTML = html;
+
+    // Wire checkboxes
+    listEl.querySelectorAll('.sched-res-chk').forEach(function(chk) {
+        chk.onchange = function() {
+            if (chk.checked) _schedSelectedResources.add(chk.dataset.arn);
+            else _schedSelectedResources.delete(chk.dataset.arn);
+            if (countEl) countEl.textContent = _schedSelectedResources.size + ' resources selected';
+        };
+    });
+    if (countEl) countEl.textContent = _schedSelectedResources.size + ' resources selected';
 }
