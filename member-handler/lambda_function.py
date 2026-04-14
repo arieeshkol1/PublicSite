@@ -1053,9 +1053,7 @@ def handle_generate_template(event):
                                             'budgets:ViewBudget',
                                             'budgets:DescribeBudgets',
                                             'budgets:DescribeBudgetActionsForAccount',
-                                            'budgets:CreateBudget',
-                                            'budgets:ModifyBudget',
-                                            'budgets:DeleteBudget',
+                                            'budgets:*',
                                             # Cost Optimization Hub
                                             'cost-optimization-hub:ListRecommendations',
                                             'cost-optimization-hub:GetRecommendation',
@@ -6717,6 +6715,8 @@ def handle_create_budget(event):
     amount = body.get('amount', 0)
     alert_email = body.get('alertEmail', '').strip()
     thresholds = body.get('thresholds', [50, 75, 100])
+    tag_key = body.get('tagKey', '').strip()
+    tag_values = body.get('tagValues', [])
 
     if not acct_id or not budget_name or not amount or amount <= 0:
         return create_error_response(400, 'InvalidRequest', 'accountId, name, and amount are required')
@@ -6758,9 +6758,7 @@ def handle_create_budget(event):
             if notif['Subscribers']:
                 notifications.append(notif)
 
-        budgets_client.create_budget(
-            AccountId=acct_id,
-            Budget={
+        budget_def = {
                 'BudgetName': budget_name,
                 'BudgetType': 'COST',
                 'BudgetLimit': {'Amount': str(amount), 'Unit': 'USD'},
@@ -6778,7 +6776,15 @@ def handle_create_budget(event):
                     'IncludeDiscount': True,
                     'UseAmortized': False,
                 },
-            },
+            }
+
+        # Add tag filter if specified
+        if tag_key and tag_values:
+            budget_def['CostFilters'] = {tag_key: tag_values if isinstance(tag_values, list) else [tag_values]}
+
+        budgets_client.create_budget(
+            AccountId=acct_id,
+            Budget=budget_def,
             NotificationsWithSubscribers=notifications,
         )
 

@@ -5233,9 +5233,16 @@ async function _createBudget() {
     errEl.textContent = '';
 
     try {
-        var data = await api('POST', '/members/budgets/create', {
+        var tagKey = (document.getElementById('plan-budget-tag-key') || {}).value || '';
+        var tagValue = (document.getElementById('plan-budget-tag-value') || {}).value || '';
+        var payload = {
             accountId: acctId, name: name, amount: amount, alertEmail: email, thresholds: thresholds
-        });
+        };
+        if (tagKey && tagValue) {
+            payload.tagKey = tagKey;
+            payload.tagValues = tagValue.split(',').map(function(v) { return v.trim(); });
+        }
+        var data = await api('POST', '/members/budgets/create', payload);
         notify(data.message || 'Budget created!', 'success');
         document.getElementById('plan-budget-wizard').hidden = true;
         _loadBudgets();

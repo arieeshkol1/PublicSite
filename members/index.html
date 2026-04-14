@@ -261,6 +261,14 @@
                                 <input type="number" id="plan-budget-amount" placeholder="e.g. 1000" min="1" style="width:100%;padding:8px;border:1px solid #d1d5db;border-radius:6px;font-size:0.9em;">
                             </div>
                             <div class="form-group">
+                                <label>Filter by Tag (optional)</label>
+                                <div style="display:flex;gap:8px;">
+                                    <input type="text" id="plan-budget-tag-key" placeholder="Tag key (e.g. Environment)" style="flex:1;padding:8px;border:1px solid #d1d5db;border-radius:6px;font-size:0.9em;">
+                                    <input type="text" id="plan-budget-tag-value" placeholder="Tag value (e.g. production)" style="flex:1;padding:8px;border:1px solid #d1d5db;border-radius:6px;font-size:0.9em;">
+                                </div>
+                                <div style="font-size:0.8em;color:#6b7280;margin-top:4px;">Leave empty for a general budget covering all resources</div>
+                            </div>
+                            <div class="form-group">
                                 <label>Alert Thresholds</label>
                                 <div style="display:flex;gap:8px;flex-wrap:wrap;">
                                     <label style="font-size:0.85em;color:#374151;display:flex;align-items:center;gap:4px;"><input type="checkbox" id="plan-alert-50" checked> 50%</label>
