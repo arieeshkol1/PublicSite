@@ -6025,22 +6025,22 @@ async function _loadSchedResources() {
         var data = await api('POST', '/members/tags/scan', {requiredTags: []});
         var resources = data.resources || [];
 
-        // Filter by selected schedule type
-        var typeMap = {
-            'ec2-stop-start': 'EC2',
-            'rds-stop-start': 'RDS',
-            'asg-scale-zero': 'AUTOSCALING',
-            'eks-scale-zero': 'EKS',
-            'sagemaker-stop': 'SAGEMAKER',
-            'redshift-pause': 'REDSHIFT',
-            'workspaces-autostop': 'WORKSPACES',
-            'elb-teardown': 'ELASTICLOADBALANCING'
+        // Filter by selected schedule type using ARN patterns for precision
+        // The backend returns resourceType as the uppercase service from the ARN (e.g., 'EC2', 'RDS')
+        // But EC2 ARNs include instances, volumes, snapshots, VPCs, etc. — we need to filter by ARN pattern
+        var arnFilterMap = {
+            'ec2-stop-start': function(r) { return r.arn && r.arn.indexOf(':instance/') !== -1; },
+            'rds-stop-start': function(r) { return r.arn && (r.arn.indexOf(':db:') !== -1 || r.arn.indexOf(':db/') !== -1); },
+            'asg-scale-zero': function(r) { return r.arn && r.arn.indexOf(':autoScalingGroup:') !== -1; },
+            'eks-scale-zero': function(r) { return r.arn && r.arn.indexOf(':nodegroup/') !== -1; },
+            'sagemaker-stop': function(r) { return r.arn && r.arn.indexOf(':notebook-instance/') !== -1; },
+            'redshift-pause': function(r) { return r.arn && r.arn.indexOf(':cluster:') !== -1 && r.arn.indexOf('redshift') !== -1; },
+            'workspaces-autostop': function(r) { return r.arn && r.arn.indexOf('workspaces') !== -1 && r.arn.indexOf(':workspace/') !== -1; },
+            'elb-teardown': function(r) { return r.arn && (r.arn.indexOf(':loadbalancer/') !== -1); }
         };
-        var filterType = typeMap[type] || '';
-        if (filterType) {
-            resources = resources.filter(function(r) {
-                return (r.resourceType || '').toUpperCase().indexOf(filterType) !== -1;
-            });
+        var filterFn = arnFilterMap[type];
+        if (filterFn) {
+            resources = resources.filter(filterFn);
         }
 
         _schedResources = resources;
