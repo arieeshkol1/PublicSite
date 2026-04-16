@@ -5313,7 +5313,7 @@ async function _runSchedulerAnalysis() {
 
 async function _loadSchedulerData() {
     try {
-        var data = await api('GET', '/members/schedules', {});
+        var data = await api('GET', '/members/schedules');
         _schedRecommendations = data.recommendations || [];
         var userSchedules = data.userSchedules || [];
 
@@ -5365,7 +5365,7 @@ async function _loadSchedulerData() {
         } else {
             if (emptyEl) emptyEl.style.display = 'block';
         }
-    } catch (e) { /* silent */ }
+    } catch (e) { console.error('_loadSchedulerData failed:', e); }
 }
 
 function _renderSchedulerProgress(data) {
