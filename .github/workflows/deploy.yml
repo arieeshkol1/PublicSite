@@ -26,6 +26,8 @@ on:
       - 'members/**'
       - 'agent-action/**'
       - 'scheduler-executor/**'
+      - '_gen_ug.py'
+      - '_gen_hld.py'
       - 'knowledge-base/**'
   workflow_dispatch:
 
@@ -351,6 +353,22 @@ jobs:
           pip install boto3 --quiet
           python knowledge-base/seed-dynamodb.py
           echo "✓ DynamoDB seeded"
+
+      - name: Generate documentation (User Guide + HLD)
+        run: |
+          pip install python-docx --quiet
+          python _gen_ug.py
+          python _gen_hld.py
+          echo "✓ Documentation generated"
+
+      - name: Upload documentation to S3
+        run: |
+          for f in SlashMyBill-UserGuide-*.docx SlashMyBill-HLD-*.docx; do
+            [ -f "$f" ] && aws s3 cp "$f" s3://${{ env.SMB_BUCKET }}/docs/$f \
+              --cache-control "no-cache, no-store, must-revalidate" \
+              --content-type "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+          done
+          echo "✓ Documentation uploaded to s3://${{ env.SMB_BUCKET }}/docs/"
 
       - name: Get API Gateway URL
         id: api-url
