@@ -72,7 +72,7 @@ run2.font.color.rgb = RGBColor(99, 102, 241)
 
 meta = doc.add_paragraph()
 meta.alignment = WD_ALIGN_PARAGRAPH.CENTER
-meta.add_run(f'Version 10  |  {datetime.date.today().strftime("%B %Y")}  |  AWS FinOps Platform').font.size = Pt(10)
+meta.add_run(f'Version 11  |  {datetime.date.today().strftime("%B %Y")}  |  AWS FinOps Platform').font.size = Pt(10)
 
 doc.add_paragraph()
 
@@ -105,6 +105,7 @@ add_table(doc,
         ['Email', 'Amazon SES', 'OTP verification emails'],
         ['CDN', 'CloudFront + Route 53', 'HTTPS delivery, DNS'],
         ['CI/CD', 'GitHub Actions + OIDC', 'Automated deployment on push to main'],
+        ['Scheduler Executor', 'Python 3.12 Lambda (512MB, 300s)', 'EventBridge Scheduler-triggered cross-account stop/start/scale actions'],
     ],
     [2.0, 2.5, 3.5]
 )
@@ -117,7 +118,11 @@ doc.add_paragraph(
     'EC2 write (stop/snapshot delete), RDS write (delete with snapshot), stack self-management\n'
     '  • Trust policy: Platform account (991105135552) with ExternalId = SHA-256(member_email)\n\n'
     'The ExternalId prevents confused deputy attacks. The role is versioned — users must redeploy '
-    'the latest template to enable write actions (Level 1 cleanup).'
+    'the latest template to enable write actions (Level 1 cleanup).\n\n'
+    'The inline policy also includes write permissions for scheduled actions: ec2:StartInstances, '
+    'rds:StopDBInstance/StartDBInstance, eks:UpdateNodegroupConfig, sagemaker:StopNotebookInstance/'
+    'StartNotebookInstance, redshift:PauseCluster/ResumeCluster, workspaces:ModifyWorkspaceProperties, '
+    'ec2:ModifyVolume.'
 )
 
 # ── 3. DynamoDB Data Model ────────────────────────────────────────────────────
@@ -126,7 +131,7 @@ add_table(doc,
     ['Table', 'PK', 'SK', 'Purpose'],
     [
         ['ViewMyBill-Leads', 'email', 'timestamp', 'Contact form leads'],
-        ['ViewMyBill-CostOptimizationTips', 'service', 'tipId', 'RAG knowledge base (72 tips)'],
+        ['ViewMyBill-CostOptimizationTips', 'service', 'tipId', 'RAG knowledge base (80 tips, includes implementedInScheduler field)'],
         ['ViewMyBill-OTP', 'email', '—', 'OTP codes (TTL 5 min)'],
         ['MemberPortal-Members', 'email', '—', 'Member accounts, allocation rules, last scan cache'],
         ['MemberPortal-Accounts', 'memberEmail', 'accountId', 'Connected AWS accounts + hourly status'],
@@ -138,7 +143,7 @@ add_table(doc,
 )
 
 doc.add_paragraph()
-add_heading(doc, '3.1 Tips Table Schema (72 tips)', 2)
+add_heading(doc, '3.1 Tips Table Schema (80 tips)', 2)
 doc.add_paragraph(
     'Each tip in ViewMyBill-CostOptimizationTips contains:\n'
     '  • service: AWS service name (EC2, S3, RDS, Lambda, etc.)\n'
@@ -147,6 +152,7 @@ doc.add_paragraph(
     '  • title / description / estimatedSavings / difficulty\n'
     '  • automatedCheck: Machine-readable check specification (API calls + data fields)\n'
     '  • checkImplemented: bool — whether the scan engine has a check function for this tip\n'
+    '  • implementedInScheduler: bool — whether the tip is actionable via Act → Scheduler\n'
     '  • actionType: delete | modify | advisory | deep-link | pending\n'
     '  • actionLabel: Button label in the Act tab\n'
     '  • level: 1 (hygiene) | 2 (optimization) | 3 (architecture)\n'
@@ -180,6 +186,12 @@ add_table(doc,
         ['GET', '/members/actions/last-scan', 'Retrieve cached last scan for Chat widget'],
         ['POST', '/members/actions/execute', 'Execute cleanup action (EIP/EBS/LB/S3/EC2/RDS/Snapshot)'],
         ['POST', '/members/actions/browse-bucket', 'Browse S3 bucket contents with size/age data'],
+        ['POST', '/members/schedules/create', 'Create EventBridge Scheduler-backed schedule'],
+        ['PUT', '/members/schedules/pause', 'Pause schedule (disable EventBridge)'],
+        ['PUT', '/members/schedules/resume', 'Resume schedule (enable EventBridge)'],
+        ['DELETE', '/members/schedules/delete', 'Delete schedule + EventBridge schedules'],
+        ['GET', '/members/schedules', 'Get schedules with execution history'],
+        ['GET', '/admin/schedules', 'Admin: all schedules across members'],
     ],
     [0.8, 2.8, 4.4]
 )
@@ -243,7 +255,12 @@ doc.add_paragraph(
     '  • JIT check before every delete (re-verify resource state)\n'
     '  • ASG detection for EC2 (detach before stop)\n'
     '  • RDS always creates final snapshot before deletion\n'
-    '  • IAM permission warning with redeploy guide for write actions'
+    '  • IAM permission warning with redeploy guide for write actions\n\n'
+    'Scheduler Sub-Tab:\n'
+    '  Automated stop/start scheduling for EC2, RDS, ASG, EKS, SageMaker, Redshift, WorkSpaces, ELB. '
+    'EventBridge Scheduler in the platform account triggers the executor Lambda at configured times. '
+    'Schedule cards show Active/Paused status, next execution time, and execution history with '
+    '✅ success / ⚠️ partial / ❌ failure per run. Pause/Resume/Delete controls on each card.'
 )
 
 add_heading(doc, '5.4 Configure Tab', 2)
@@ -257,6 +274,19 @@ doc.add_paragraph(
     'test connection, edit, delete.\n\n'
     'Hourly Granularity: Detected automatically during test connection via CloudWatch HOURLY query. '
     'Cannot be enabled via API — requires manual AWS Console action in Cost Explorer Settings.'
+)
+
+add_heading(doc, '5.5 Plan Tab', 2)
+doc.add_paragraph(
+    'The Plan tab provides budget management and tag-based resource organization:\n\n'
+    '  Budget Management:\n'
+    '  • View existing AWS Budgets with spend vs limit progress bars\n'
+    '  • Create new budgets with monthly/quarterly/annual periods\n'
+    '  • Set alert thresholds (e.g., 80%, 100%) with email notifications\n\n'
+    '  Tag Resources:\n'
+    '  • Discover untagged resources across connected accounts\n'
+    '  • Apply tags in bulk to improve cost allocation visibility\n'
+    '  • Tag compliance dashboard showing coverage percentage by service'
 )
 
 # ── 6. AI Engine ──────────────────────────────────────────────────────────────
@@ -323,6 +353,22 @@ doc.add_paragraph(
     'commercial DB engines'
 )
 
+add_heading(doc, '7.1 EventBridge Scheduler Execution Role', 2)
+doc.add_paragraph(
+    'The Automated Scheduler uses a dedicated IAM execution role for EventBridge Scheduler:\n\n'
+    '  Role Name: SlashMyBill-EventBridge-Scheduler-Role\n'
+    '  Trust Policy: scheduler.amazonaws.com\n'
+    '  Permissions:\n'
+    '    • lambda:InvokeFunction on arn:aws:lambda:us-east-1:991105135552:function:slashmybill-scheduler-executor\n\n'
+    'When a schedule fires, EventBridge Scheduler assumes this role to invoke the executor Lambda. '
+    'The executor Lambda then uses its own IAM role to call sts:AssumeRole on the customer\'s '
+    'cross-account role (SlashMyBill-{AccountID}) with the member\'s ExternalId.\n\n'
+    'This two-hop model ensures:\n'
+    '  • EventBridge only has permission to invoke the executor Lambda (not cross-account access)\n'
+    '  • The executor validates the schedule payload before assuming any cross-account role\n'
+    '  • Each cross-account action is scoped to the specific member\'s ExternalId'
+)
+
 # ── 8. Virtual Tagging ────────────────────────────────────────────────────────
 add_heading(doc, '8. Virtual Tagging & Cost Allocation', 1)
 doc.add_paragraph(
@@ -380,6 +426,7 @@ add_table(doc,
         ['aws-bill-analyzer-admin-api', '128 MB', '30s', 'Admin CRUD'],
         ['aws-bill-analyzer-member-api', '256 MB', '120s', 'Member portal + AI agent + scan engine'],
         ['SlashMyBill-AgentAction', '256 MB', '120s', 'Bedrock Agent actions'],
+        ['slashmybill-scheduler-executor', '512 MB', '300s', 'EventBridge-triggered cross-account scheduler'],
     ],
     [3.0, 1.0, 1.0, 3.0]
 )
@@ -389,10 +436,10 @@ doc.add_paragraph(
     'Trigger: Push to main branch (or manual dispatch)\n'
     'Platform: GitHub Actions with AWS OIDC authentication\n\n'
     'Steps:\n'
-    '  1. Package 6 Lambda functions with dependencies → S3\n'
+    '  1. Package 7 Lambda functions with dependencies → S3 (includes scheduler-executor)\n'
     '  2. Deploy CloudFormation stack (CAPABILITY_NAMED_IAM)\n'
     '  3. Update Lambda function code from S3\n'
-    '  4. Seed DynamoDB knowledge base (72 tips with new schema fields)\n'
+    '  4. Seed DynamoDB knowledge base (80 tips with new schema fields)\n'
     '  5. Deploy website files to S3 (www.eshkolai.com)\n'
     '  6. Inject API Gateway URL into frontend JS\n'
     '  7. Sync to eshkolai.com bucket\n'
@@ -410,10 +457,11 @@ add_table(doc,
         ['Level 2', 'Rightsizing cards, Spot candidates, gp2→gp3, tagging gaps', 'Planned'],
         ['Level 3', 'NAT→VPC Endpoints, Graviton migration, RI purchase recommendations', 'Planned'],
         ['ScanResults', 'MemberPortal-ScanResults DynamoDB table (7-day TTL)', 'Planned'],
-        ['Scheduled Scans', 'EventBridge-triggered daily scan with email digest', 'Planned'],
+        ['Scheduled Scans', 'EventBridge-triggered daily scan with email digest', 'Complete'],
+        ['Automated Scheduler', 'EventBridge Scheduler for stop/start/scale across 12 service types', 'Complete'],
     ],
     [1.5, 4.0, 1.5]
 )
 
-doc.save('SlashMyBill-HLD-v10.docx')
-print('HLD saved: SlashMyBill-HLD-v10.docx')
+doc.save('SlashMyBill-HLD-v11.docx')
+print('HLD saved: SlashMyBill-HLD-v11.docx')

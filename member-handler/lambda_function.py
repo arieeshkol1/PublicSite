@@ -119,6 +119,7 @@ def lambda_handler(event, context):
         'POST /members/budgets/create': handle_create_budget,
         'PUT /members/budgets/update': handle_update_budget,
         'DELETE /members/budgets/delete': handle_delete_budget,
+        'GET /members/live-metrics': handle_live_metrics,
     }
 
     handler = routes.get(route_key)
@@ -7360,6 +7361,714 @@ def handle_delete_schedule(event):
     except Exception as e:
         logger.error(f"Failed to remove schedule from DynamoDB: {e}")
         return create_error_response(500, 'ServerError', 'Failed to delete schedule')
+
+
+
+# ============================================================
+# Live Business Metrics — Discovery Service
+# ============================================================
+
+def _get_monthly_periods(months=6):
+    """Return list of (start_date, end_date, month_label) for the last N months."""
+    now = datetime.now(timezone.utc)
+    periods = []
+    for i in range(months):
+        month = now.month - i
+        year = now.year
+        while month <= 0:
+            month += 12
+            year -= 1
+        start = datetime(year, month, 1, tzinfo=timezone.utc)
+        next_month = month + 1
+        next_year = year
+        if next_month > 12:
+            next_month = 1
+            next_year += 1
+        end = datetime(next_year, next_month, 1, tzinfo=timezone.utc)
+        label = start.strftime('%Y-%m')
+        periods.append((start, end, label))
+    periods.reverse()  # oldest first
+    return periods
+
+
+def _discover_cognito_metrics(session, account_id):
+    """Discover user counts from Cognito User Pools."""
+    cognito_client_x = session.client('cognito-idp')
+    metrics = []
+    pools = []
+    try:
+        paginator = cognito_client_x.get_paginator('list_user_pools')
+        for page in paginator.paginate(MaxResults=60):
+            pools.extend(page.get('UserPools', []))
+    except Exception as e:
+        logger.warning(f"Cognito ListUserPools failed for {account_id}: {e}")
+        raise
+
+    now = datetime.now(timezone.utc)
+    current_month = now.strftime('%Y-%m')
+
+    for pool in pools:
+        pool_id = pool['Id']
+        pool_name = pool.get('Name', pool_id)
+        try:
+            desc = cognito_client_x.describe_user_pool(UserPoolId=pool_id)
+            user_count = desc['UserPool'].get('EstimatedNumberOfUsers', 0)
+            if user_count and user_count > 0:
+                metrics.append({
+                    'metricName': f'Cognito:{pool_name} users',
+                    'volume': user_count,
+                    'source': 'aws-cognito',
+                    'month': current_month,
+                    'description': f'Total users in Cognito pool {pool_name}',
+                    'accountId': account_id,
+                })
+        except Exception as e:
+            logger.warning(f"Cognito DescribeUserPool failed for {pool_id}: {e}")
+    return metrics
+
+
+def _discover_dynamodb_metrics(session, account_id):
+    """Discover item counts from DynamoDB tables (up to 20)."""
+    ddb_client = session.client('dynamodb')
+    metrics = []
+    tables = []
+    try:
+        resp = ddb_client.list_tables(Limit=20)
+        tables = resp.get('TableNames', [])
+    except Exception as e:
+        logger.warning(f"DynamoDB ListTables failed for {account_id}: {e}")
+        raise
+
+    now = datetime.now(timezone.utc)
+    current_month = now.strftime('%Y-%m')
+
+    for table_name in tables[:20]:
+        try:
+            desc = ddb_client.describe_table(TableName=table_name)
+            item_count = desc['Table'].get('ItemCount', 0)
+            if item_count > 0:
+                metrics.append({
+                    'metricName': f'DynamoDB:{table_name} items',
+                    'volume': item_count,
+                    'source': 'aws-dynamodb',
+                    'month': current_month,
+                    'description': f'Item count in DynamoDB table {table_name}',
+                    'accountId': account_id,
+                })
+        except Exception as e:
+            logger.warning(f"DynamoDB DescribeTable failed for {table_name}: {e}")
+    return metrics
+
+
+def _discover_apigateway_metrics(session, account_id):
+    """Discover API request counts per API for last 6 months via CloudWatch."""
+    apigw_client = session.client('apigateway')
+    apigwv2_client = session.client('apigatewayv2')
+    cw_client = session.client('cloudwatch')
+    metrics = []
+    periods = _get_monthly_periods(6)
+
+    # REST APIs
+    try:
+        rest_apis = apigw_client.get_rest_apis(limit=100).get('items', [])
+    except Exception:
+        rest_apis = []
+
+    for api in rest_apis:
+        api_name = api.get('name', api['id'])
+        for start, end, label in periods:
+            try:
+                result = cw_client.get_metric_statistics(
+                    Namespace='AWS/ApiGateway',
+                    MetricName='Count',
+                    Dimensions=[{'Name': 'ApiName', 'Value': api_name}],
+                    StartTime=start,
+                    EndTime=end,
+                    Period=int((end - start).total_seconds()),
+                    Statistics=['Sum'],
+                )
+                datapoints = result.get('Datapoints', [])
+                volume = int(sum(dp.get('Sum', 0) for dp in datapoints))
+                metrics.append({
+                    'metricName': f'APIGW:{api_name} requests',
+                    'volume': volume,
+                    'source': 'aws-apigateway',
+                    'month': label,
+                    'description': f'REST API request count for {api_name}',
+                    'accountId': account_id,
+                })
+            except Exception as e:
+                logger.warning(f"CloudWatch APIGW metric failed for {api_name}/{label}: {e}")
+
+    # HTTP APIs (v2)
+    try:
+        http_apis = apigwv2_client.get_apis().get('Items', [])
+    except Exception:
+        http_apis = []
+
+    for api in http_apis:
+        api_name = api.get('Name', api['ApiId'])
+        for start, end, label in periods:
+            try:
+                result = cw_client.get_metric_statistics(
+                    Namespace='AWS/ApiGateway',
+                    MetricName='Count',
+                    Dimensions=[{'Name': 'ApiId', 'Value': api['ApiId']}],
+                    StartTime=start,
+                    EndTime=end,
+                    Period=int((end - start).total_seconds()),
+                    Statistics=['Sum'],
+                )
+                datapoints = result.get('Datapoints', [])
+                volume = int(sum(dp.get('Sum', 0) for dp in datapoints))
+                metrics.append({
+                    'metricName': f'APIGW:{api_name} requests',
+                    'volume': volume,
+                    'source': 'aws-apigateway',
+                    'month': label,
+                    'description': f'HTTP API request count for {api_name}',
+                    'accountId': account_id,
+                })
+            except Exception as e:
+                logger.warning(f"CloudWatch APIGW v2 metric failed for {api_name}/{label}: {e}")
+
+    return metrics
+
+
+def _discover_route53_metrics(session, account_id):
+    """Discover DNS query counts per hosted zone for last 6 months."""
+    r53_client = session.client('route53')
+    cw_client = session.client('cloudwatch')
+    metrics = []
+    periods = _get_monthly_periods(6)
+
+    try:
+        zones = r53_client.list_hosted_zones().get('HostedZones', [])
+    except Exception as e:
+        logger.warning(f"Route53 ListHostedZones failed for {account_id}: {e}")
+        raise
+
+    for zone in zones:
+        zone_id = zone['Id'].split('/')[-1]
+        zone_name = zone.get('Name', zone_id).rstrip('.')
+        for start, end, label in periods:
+            try:
+                result = cw_client.get_metric_statistics(
+                    Namespace='AWS/Route53',
+                    MetricName='DNSQueries',
+                    Dimensions=[{'Name': 'HostedZoneId', 'Value': zone_id}],
+                    StartTime=start,
+                    EndTime=end,
+                    Period=int((end - start).total_seconds()),
+                    Statistics=['Sum'],
+                )
+                datapoints = result.get('Datapoints', [])
+                volume = int(sum(dp.get('Sum', 0) for dp in datapoints))
+                metrics.append({
+                    'metricName': f'Route53:{zone_name} queries',
+                    'volume': volume,
+                    'source': 'aws-route53',
+                    'month': label,
+                    'description': f'DNS queries for hosted zone {zone_name}',
+                    'accountId': account_id,
+                })
+            except Exception as e:
+                logger.warning(f"CloudWatch Route53 metric failed for {zone_name}/{label}: {e}")
+
+    return metrics
+
+
+def _discover_cloudwatch_custom_metrics(session, account_id):
+    """Discover custom namespace metrics (up to 10 namespaces, 5 metrics each)."""
+    cw_client = session.client('cloudwatch')
+    metrics = []
+    periods = _get_monthly_periods(6)
+
+    try:
+        all_metrics = cw_client.list_metrics().get('Metrics', [])
+    except Exception as e:
+        logger.warning(f"CloudWatch ListMetrics failed for {account_id}: {e}")
+        raise
+
+    # Group by namespace, filter out AWS-managed
+    ns_metrics = {}
+    for m in all_metrics:
+        ns = m.get('Namespace', '')
+        if ns.startswith('AWS/'):
+            continue
+        if ns not in ns_metrics:
+            ns_metrics[ns] = []
+        if len(ns_metrics[ns]) < 5:
+            ns_metrics[ns].append(m)
+        if len(ns_metrics) >= 10:
+            break
+
+    for namespace, metric_list in list(ns_metrics.items())[:10]:
+        for metric_def in metric_list[:5]:
+            metric_name = metric_def.get('MetricName', 'Unknown')
+            dimensions = metric_def.get('Dimensions', [])
+            for start, end, label in periods:
+                try:
+                    result = cw_client.get_metric_statistics(
+                        Namespace=namespace,
+                        MetricName=metric_name,
+                        Dimensions=dimensions,
+                        StartTime=start,
+                        EndTime=end,
+                        Period=int((end - start).total_seconds()),
+                        Statistics=['Sum'],
+                    )
+                    datapoints = result.get('Datapoints', [])
+                    volume = sum(dp.get('Sum', 0) for dp in datapoints)
+                    metrics.append({
+                        'metricName': f'CW:{namespace}/{metric_name}',
+                        'volume': volume,
+                        'source': 'aws-cloudwatch-custom',
+                        'month': label,
+                        'description': f'Custom metric {namespace}/{metric_name}',
+                        'accountId': account_id,
+                    })
+                except Exception as e:
+                    logger.warning(f"CloudWatch custom metric failed for {namespace}/{metric_name}/{label}: {e}")
+
+    return metrics
+
+
+def _discover_lambda_metrics(session, account_id):
+    """Discover Lambda invocation counts per month for last 6 months."""
+    cw_client = session.client('cloudwatch')
+    metrics = []
+    periods = _get_monthly_periods(6)
+
+    for start, end, label in periods:
+        try:
+            result = cw_client.get_metric_statistics(
+                Namespace='AWS/Lambda',
+                MetricName='Invocations',
+                StartTime=start,
+                EndTime=end,
+                Period=int((end - start).total_seconds()),
+                Statistics=['Sum'],
+            )
+            datapoints = result.get('Datapoints', [])
+            volume = int(sum(dp.get('Sum', 0) for dp in datapoints))
+            metrics.append({
+                'metricName': 'Lambda:Total invocations',
+                'volume': volume,
+                'source': 'aws-lambda',
+                'month': label,
+                'description': 'Total Lambda invocations across all functions',
+                'accountId': account_id,
+            })
+        except Exception as e:
+            logger.warning(f"CloudWatch Lambda metric failed for {label}: {e}")
+
+    return metrics
+
+
+def _discover_s3_metrics(session, account_id):
+    """Discover S3 object counts per bucket via CloudWatch."""
+    cw_client = session.client('cloudwatch')
+    s3_client = session.client('s3')
+    metrics = []
+    periods = _get_monthly_periods(6)
+
+    try:
+        buckets = s3_client.list_buckets().get('Buckets', [])
+    except Exception:
+        buckets = []
+
+    for bucket in buckets:
+        bucket_name = bucket['Name']
+        for start, end, label in periods:
+            try:
+                result = cw_client.get_metric_statistics(
+                    Namespace='AWS/S3',
+                    MetricName='NumberOfObjects',
+                    Dimensions=[
+                        {'Name': 'BucketName', 'Value': bucket_name},
+                        {'Name': 'StorageType', 'Value': 'AllStorageTypes'},
+                    ],
+                    StartTime=start,
+                    EndTime=end,
+                    Period=int((end - start).total_seconds()),
+                    Statistics=['Average'],
+                )
+                datapoints = result.get('Datapoints', [])
+                volume = int(sum(dp.get('Average', 0) for dp in datapoints))
+                metrics.append({
+                    'metricName': f'S3:{bucket_name} objects',
+                    'volume': volume,
+                    'source': 'aws-s3',
+                    'month': label,
+                    'description': f'Object count in S3 bucket {bucket_name}',
+                    'accountId': account_id,
+                })
+            except Exception as e:
+                logger.warning(f"CloudWatch S3 metric failed for {bucket_name}/{label}: {e}")
+
+    return metrics
+
+
+def discover_all_metrics(session, account_id):
+    """Discover operational metrics from all AWS sources in a customer account."""
+    all_metrics = []
+    warnings = []
+
+    sources = [
+        ('aws-cognito', _discover_cognito_metrics),
+        ('aws-dynamodb', _discover_dynamodb_metrics),
+        ('aws-apigateway', _discover_apigateway_metrics),
+        ('aws-route53', _discover_route53_metrics),
+        ('aws-cloudwatch-custom', _discover_cloudwatch_custom_metrics),
+        ('aws-lambda', _discover_lambda_metrics),
+        ('aws-s3', _discover_s3_metrics),
+    ]
+
+    for source_name, discover_fn in sources:
+        try:
+            metrics = discover_fn(session, account_id)
+            all_metrics.extend(metrics)
+        except Exception as e:
+            logger.warning(f"Metric discovery failed for {source_name} in {account_id}: {e}")
+            warnings.append(f"{source_name} discovery failed for account {account_id}: {str(e)}")
+
+    return all_metrics, warnings
+
+
+# ============================================================
+# Live Business Metrics — Unit Economics Engine
+# ============================================================
+
+_SOURCE_TO_SERVICE = {
+    'aws-cognito': 'Amazon Cognito',
+    'aws-dynamodb': 'Amazon DynamoDB',
+    'aws-apigateway': 'Amazon API Gateway',
+    'aws-route53': 'Amazon Route 53',
+    'aws-lambda': 'AWS Lambda',
+    'aws-s3': 'Amazon Simple Storage Service',
+    'aws-cloudwatch-custom': 'total',
+    'manual': 'total',
+}
+
+
+def fetch_live_cost_data(session, cost_dimension='total', months=6):
+    """Fetch monthly cost data from Cost Explorer for unit economics.
+
+    Returns dict: {month_label: {service_name: cost, 'total': total_cost}}
+    """
+    ce_client = session.client('ce')
+    periods = _get_monthly_periods(months)
+    if not periods:
+        return {}
+
+    start_str = periods[0][0].strftime('%Y-%m-%d')
+    end_str = periods[-1][1].strftime('%Y-%m-%d')
+
+    cost_data = {}
+
+    try:
+        # Fetch grouped by SERVICE
+        kwargs = {
+            'TimePeriod': {'Start': start_str, 'End': end_str},
+            'Granularity': 'MONTHLY',
+            'Metrics': ['UnblendedCost'],
+            'GroupBy': [{'Type': 'DIMENSION', 'Key': 'SERVICE'}],
+        }
+
+        # If tag-based dimension, add filter
+        if cost_dimension.startswith('tag:'):
+            tag_parts = cost_dimension[4:].split('=', 1)
+            if len(tag_parts) == 2:
+                kwargs['Filter'] = {
+                    'Tags': {'Key': tag_parts[0], 'Values': [tag_parts[1]]}
+                }
+
+        result = ce_client.get_cost_and_usage(**kwargs)
+
+        for period_result in result.get('ResultsByTime', []):
+            month_label = period_result['TimePeriod']['Start'][:7]  # YYYY-MM
+            month_costs = {}
+            total = 0.0
+            for group in period_result.get('Groups', []):
+                service_name = group['Keys'][0]
+                amount = float(group['Metrics']['UnblendedCost']['Amount'])
+                month_costs[service_name] = round(amount, 2)
+                total += amount
+            month_costs['total'] = round(total, 2)
+            cost_data[month_label] = month_costs
+
+    except Exception as e:
+        logger.warning(f"Cost Explorer fetch failed: {e}")
+
+    return cost_data
+
+
+def compute_unit_economics(metrics, cost_data, cost_dimension='total'):
+    """Compute cost-per-unit for each metric and month.
+
+    Returns list of {month, metricName, volume, cost, costPerUnit}.
+    """
+    results = []
+
+    for metric in metrics:
+        month = metric.get('month')
+        metric_name = metric.get('metricName', '')
+        volume = metric.get('volume', 0)
+        source = metric.get('source', '')
+
+        # Determine which cost to use
+        if cost_dimension == 'total':
+            service_key = 'total'
+        elif cost_dimension in ('auto', 'default'):
+            service_key = _SOURCE_TO_SERVICE.get(source, 'total')
+        else:
+            service_key = cost_dimension
+
+        month_costs = cost_data.get(month, {})
+        cost = month_costs.get(service_key, 0.0)
+        if cost == 0.0 and service_key != 'total':
+            cost = month_costs.get('total', 0.0) if service_key == 'total' else 0.0
+
+        if volume and volume > 0:
+            cost_per_unit = round(cost / volume, 6)
+        else:
+            cost_per_unit = None
+
+        results.append({
+            'month': month,
+            'metricName': metric_name,
+            'volume': volume,
+            'cost': round(cost, 2),
+            'costPerUnit': cost_per_unit,
+        })
+
+    return results
+
+
+# ============================================================
+# Live Business Metrics — Handler & Persistence
+# ============================================================
+
+def _persist_discovered_metrics(member_email, metrics_list):
+    """Persist auto-discovered metrics to DynamoDB (upsert, preserve manual)."""
+    table = dynamodb.Table(BUSINESS_METRICS_TABLE)
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    for metric in metrics_list:
+        month = metric.get('month', '')
+        metric_name = metric.get('metricName', '')
+        source = metric.get('source', '')
+        volume = metric.get('volume', 0)
+        account_id = metric.get('accountId', '')
+        description = metric.get('description', '')
+
+        # Composite SK: YYYY-MM#metricName
+        sk = f"{month}#{metric_name}"
+
+        try:
+            # Only overwrite if not manual
+            table.update_item(
+                Key={'memberEmail': member_email, 'metricMonth': sk},
+                UpdateExpression='SET metricName = :mn, metricVolume = :mv, #src = :s, accountId = :aid, description = :d, updatedAt = :u',
+                ConditionExpression='attribute_not_exists(#src) OR #src <> :manual',
+                ExpressionAttributeNames={'#src': 'source'},
+                ExpressionAttributeValues={
+                    ':mn': metric_name,
+                    ':mv': Decimal(str(volume)),
+                    ':s': source,
+                    ':aid': account_id,
+                    ':d': description,
+                    ':u': now_iso,
+                    ':manual': 'manual',
+                },
+            )
+        except ClientError as e:
+            if e.response['Error']['Code'] == 'ConditionalCheckFailedException':
+                logger.info(f"Skipped manual metric: {sk}")
+            else:
+                logger.warning(f"Failed to persist metric {sk}: {e}")
+
+
+def _load_manual_metrics(member_email):
+    """Load manually-entered metrics from DynamoDB."""
+    table = dynamodb.Table(BUSINESS_METRICS_TABLE)
+    manual_metrics = []
+    try:
+        result = table.query(
+            KeyConditionExpression=boto3.dynamodb.conditions.Key('memberEmail').eq(member_email),
+        )
+        for item in result.get('Items', []):
+            source = item.get('source', '')
+            # Manual metrics have source='manual' or no source (legacy)
+            if source == 'manual' or source == '' or source is None:
+                manual_metrics.append({
+                    'metricName': item.get('metricName', ''),
+                    'volume': float(item.get('metricVolume', 0)),
+                    'source': 'manual',
+                    'month': item.get('metricMonth', '').split('#')[0],
+                    'description': item.get('description', ''),
+                    'accountId': '',
+                })
+    except ClientError as e:
+        logger.warning(f"Failed to load manual metrics: {e}")
+    return manual_metrics
+
+
+def _build_available_metrics(auto_metrics, manual_metrics):
+    """Build the availableMetrics list for the API response."""
+    seen = set()
+    available = []
+
+    for m in auto_metrics:
+        name = m.get('metricName', '')
+        source = m.get('source', '')
+        key = (name, source)
+        if key not in seen:
+            seen.add(key)
+            available.append({'name': name, 'source': source, 'group': 'Auto-Discovered'})
+
+    for m in manual_metrics:
+        name = m.get('metricName', '')
+        key = (name, 'manual')
+        if key not in seen:
+            seen.add(key)
+            available.append({'name': name, 'source': 'manual', 'group': 'Manual'})
+
+    return available
+
+
+def _build_available_cost_dimensions(cost_data):
+    """Build the availableCostDimensions list from cost data."""
+    dims = [{'value': 'total', 'label': 'Total Account Cost'}]
+    seen_services = set()
+    for month_costs in cost_data.values():
+        for svc in month_costs:
+            if svc != 'total' and svc not in seen_services:
+                seen_services.add(svc)
+                dims.append({'value': svc, 'label': svc})
+    return dims
+
+
+def _group_metrics_by_name(metrics_list):
+    """Group flat metric list into {metricName, source, months: [{month, volume}]}."""
+    grouped = {}
+    for m in metrics_list:
+        name = m.get('metricName', '')
+        source = m.get('source', '')
+        key = name
+        if key not in grouped:
+            grouped[key] = {'metricName': name, 'source': source, 'months': []}
+        grouped[key]['months'].append({
+            'month': m.get('month', ''),
+            'volume': m.get('volume', 0),
+        })
+    # Sort months within each group
+    for g in grouped.values():
+        g['months'].sort(key=lambda x: x['month'])
+    return list(grouped.values())
+
+
+def handle_live_metrics(event):
+    """GET /members/live-metrics - Discover metrics, compute unit economics."""
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+    member_email = auth['sub']
+
+    # Parse query params
+    qs = event.get('queryStringParameters') or {}
+    cost_dimension = qs.get('costDimension', 'total')
+
+    # Get connected accounts
+    accounts_table = dynamodb.Table(ACCOUNTS_TABLE_NAME)
+    try:
+        result = accounts_table.query(
+            KeyConditionExpression=boto3.dynamodb.conditions.Key('memberEmail').eq(member_email)
+        )
+        accounts = [a for a in result.get('Items', []) if a.get('connectionStatus') == 'connected']
+    except ClientError:
+        accounts = []
+
+    if not accounts:
+        return create_response(200, {
+            'metrics': [],
+            'unitEconomics': [],
+            'availableMetrics': [],
+            'availableCostDimensions': [],
+            'warnings': [],
+        })
+
+    # Discover metrics from each account (max 5)
+    all_metrics = []
+    all_warnings = []
+    cost_data = {}
+
+    sts_client = boto3.client('sts')
+
+    for acct in accounts[:5]:
+        account_id = acct['accountId']
+        role_arn = f'arn:aws:iam::{account_id}:role/SlashMyBill-{account_id}'
+        external_id = hashlib.sha256(member_email.encode('utf-8')).hexdigest()
+
+        try:
+            assume_response = sts_client.assume_role(
+                RoleArn=role_arn,
+                RoleSessionName='SlashMyBillLiveMetrics',
+                ExternalId=external_id,
+            )
+            creds = assume_response['Credentials']
+            session = boto3.Session(
+                aws_access_key_id=creds['AccessKeyId'],
+                aws_secret_access_key=creds['SecretAccessKey'],
+                aws_session_token=creds['SessionToken'],
+            )
+
+            # Discover metrics
+            metrics, warnings = discover_all_metrics(session, account_id)
+            all_metrics.extend(metrics)
+            all_warnings.extend(warnings)
+
+            # Fetch cost data (merge across accounts)
+            acct_costs = fetch_live_cost_data(session, cost_dimension)
+            for month, costs in acct_costs.items():
+                if month not in cost_data:
+                    cost_data[month] = {}
+                for svc, amt in costs.items():
+                    cost_data[month][svc] = cost_data[month].get(svc, 0) + amt
+
+        except Exception as e:
+            logger.warning(f"Failed to access account {account_id}: {e}")
+            all_warnings.append(f"Failed to access account {account_id}: {str(e)}")
+
+    # Persist discovered metrics to DynamoDB
+    try:
+        _persist_discovered_metrics(member_email, all_metrics)
+    except Exception as e:
+        logger.warning(f"Failed to persist discovered metrics: {e}")
+
+    # Also load manual metrics from DynamoDB
+    manual_metrics = _load_manual_metrics(member_email)
+
+    # Compute unit economics
+    unit_economics = compute_unit_economics(all_metrics, cost_data, cost_dimension)
+
+    # Build available metrics list
+    available_metrics = _build_available_metrics(all_metrics, manual_metrics)
+
+    # Build available cost dimensions
+    available_dims = _build_available_cost_dimensions(cost_data)
+
+    # Group metrics by name for the response
+    grouped_metrics = _group_metrics_by_name(all_metrics)
+
+    return create_response(200, {
+        'metrics': grouped_metrics,
+        'unitEconomics': unit_economics,
+        'availableMetrics': available_metrics,
+        'availableCostDimensions': available_dims,
+        'warnings': all_warnings,
+    })
 
 
 # ============================================================

@@ -81,7 +81,7 @@ run2.font.color.rgb = RGBColor(99, 102, 241)
 
 meta = doc.add_paragraph()
 meta.alignment = WD_ALIGN_PARAGRAPH.CENTER
-meta.add_run(f'Version 1.0  |  {datetime.date.today().strftime("%B %Y")}  |  AWS FinOps Platform').font.size = Pt(10)
+meta.add_run(f'Version 2.0  |  {datetime.date.today().strftime("%B %Y")}  |  AWS FinOps Platform').font.size = Pt(10)
 doc.add_paragraph()
 
 # ── Introduction ──────────────────────────────────────────────────────────────
@@ -99,7 +99,7 @@ add_table(doc,
     [
         ['Observe', 'FinOps dashboard with 7 interactive charts — cost by service, trends, waste, rightsizing'],
         ['Chat', 'Ask natural language questions about your AWS costs and get AI-powered answers'],
-        ['Act', 'Scan for idle/wasted resources and clean them up with one click'],
+        ['Act', 'Scan for idle resources, clean up with one click, and create automated stop/start schedules'],
         ['Configure', 'Connect and manage your AWS accounts'],
     ],
     [2.0, 6.0]
@@ -327,6 +327,38 @@ doc.add_paragraph(
     'Click "How to update →" in the banner for step-by-step guidance.'
 )
 
+add_heading(doc, '5.6 Scheduler — Automated Stop/Start', 2)
+doc.add_paragraph(
+    'The Scheduler lets you create automated stop/start schedules for your AWS resources. '
+    'Instead of manually stopping dev instances every evening, SlashMyBill does it for you.\n\n'
+    'How to create a schedule:\n'
+    '  1. Go to Act → Scheduler sub-tab\n'
+    '  2. Click "+ New Schedule"\n'
+    '  3. Select the target account\n'
+    '  4. Choose a schedule type:\n'
+    '     Stop/Start types: EC2 Stop/Start, RDS Stop/Start, ASG Scale to 0, EKS Scale to 0, '
+    'SageMaker Stop, Redshift Pause, WorkSpaces Auto-Stop, ELB Teardown\n'
+    '     Review types: Waste Scan, Snapshot Cleanup, gp2→gp3 Migration, SP/RI Review\n'
+    '  5. Set a name, frequency (weekdays/daily/weekly/monthly/quarterly), days, stop/start times, and timezone\n'
+    '  6. Select specific resources from the list or use a tag filter (e.g., Environment=dev)\n'
+    '  7. Click "Create Schedule"\n\n'
+    'What happens behind the scenes:\n'
+    '  • SlashMyBill creates real EventBridge Scheduler rules in the platform account\n'
+    '  • At the scheduled time, the executor Lambda assumes your cross-account role and performs the action\n'
+    '  • For stop/start types, two schedules are created — one for stop and one for start\n\n'
+    'Schedule cards show:\n'
+    '  • Active/Paused status badge\n'
+    '  • Next execution time in your configured timezone\n'
+    '  • Execution history: ✅ success, ⚠️ partial (some resources failed), ❌ failure\n'
+    '  • Per-resource details for partial/failed runs\n\n'
+    'Controls on each card:\n'
+    '  • Pause — disables the EventBridge schedule without deleting it\n'
+    '  • Resume — re-enables a paused schedule\n'
+    '  • Delete — removes the schedule and its EventBridge rules permanently'
+)
+tip_box(doc, 'For stop/start types, two schedules are created — one for stop and one for start. Both use the same days and timezone.')
+note_box(doc, 'The cross-account IAM role must include write permissions for the scheduled action type. Redeploy the latest CloudFormation template if needed.')
+
 # ── Configure Tab ─────────────────────────────────────────────────────────────
 add_heading(doc, '6. Configure Tab — Account Management', 1)
 
@@ -410,6 +442,8 @@ add_table(doc,
         ['AI gives generic answers', 'Question too broad or data not fetched', 'Be specific: include service name, time period, account'],
         ['No findings in Act tab', 'Accounts are clean or scan not run yet', 'Click "Scan for Waste" to run a fresh scan'],
         ['OTP email not received', 'Email in spam or rate limit hit', 'Check spam; wait 60 seconds before requesting a new code'],
+        ['Schedule creation fails', 'Account not connected or missing permissions', 'Verify account is connected and redeploy latest CF template'],
+        ['Schedule shows ❌ failure', 'Cross-account role missing write permissions', 'Redeploy the latest CloudFormation template for the target account'],
     ],
     [2.0, 2.5, 3.5]
 )
@@ -439,6 +473,10 @@ faqs = [
     ('Does SlashMyBill support AWS Organizations?',
      'Yes. Connect your management (payer) account for organization-wide cost visibility. '
      'For linked accounts, hourly granularity must be enabled from the management account.'),
+    ('Can SlashMyBill automatically stop my EC2 instances at night?',
+     'Yes. Go to Act → Scheduler and create a stop/start schedule. SlashMyBill uses EventBridge '
+     'Scheduler to automatically stop your instances at the configured time and start them again '
+     'in the morning. You can pause or delete schedules at any time.'),
 ]
 
 for q, a in faqs:
@@ -449,5 +487,5 @@ for q, a in faqs:
     doc.add_paragraph('A: ' + a)
     doc.add_paragraph()
 
-doc.save('SlashMyBill-UserGuide-v1.docx')
-print('User Guide saved: SlashMyBill-UserGuide-v1.docx')
+doc.save('SlashMyBill-UserGuide-v2.docx')
+print('User Guide saved: SlashMyBill-UserGuide-v2.docx')

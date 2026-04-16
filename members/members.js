@@ -2668,7 +2668,7 @@ function renderDashboardWidgets(data) {
         _renderDailyTrend(data.dailyTrend || [], data.hourlyTrend || []);
         _renderWaste(data.waste || {});
         _renderMonthly(data.monthlyTrend || {});
-        _renderUnitEconomics(data.unitEconomics || null);
+        _renderLiveMetrics($("dash-unit-economics"));
         _renderRegionalPie(data.costByRegion || []);
         _renderCostByTag(data.costByTag || {});
     }, 100);
@@ -2725,7 +2725,7 @@ var DASH_WIDGET_DEFS = [
     {id:'dash-daily', title:'Cost Trend', height:250, q:'Are there any cost anomalies?', extraTitle:' <span id="dash-trend-toggle" style="font-size:0.7em;margin-left:8px;"><button class="btn btn-outline btn-sm" style="padding:1px 6px;font-size:0.8em;background:#6366f1;color:#fff;border-color:#6366f1;" onclick="_toggleTrendView(\'daily\')">Daily</button> <button class="btn btn-outline btn-sm" style="padding:1px 6px;font-size:0.8em;" onclick="_toggleTrendView(\'hourly\')">Hourly</button></span>'},
     {id:'dash-waste', title:'Waste Detection', height:250, q:'What services do I not need? Show me all waste.'},
     {id:'dash-monthly', title:'Monthly Cost by Service', height:320, q:'Compare my costs over the last 3 months'},
-    {id:'dash-unit-economics', title:'Unit Cost Trend', height:280, q:'How is my cost per unit trending?', extraTitle:' <button class="btn btn-outline btn-sm" style="font-size:0.7em;margin-left:8px;padding:2px 6px;" onclick="showBusinessMetricsModal();">Add Metrics</button>'},
+    {id:'dash-unit-economics', title:'Live Business Metrics', height:380, q:'How are my live business metrics trending?'},
     {id:'dash-regional', title:'Cost by Region', height:300, q:'Show me my cost breakdown by region'},
     {id:'dash-cost-by-tag', title:'Tag Distribution', height:320, q:'Show me tag coverage across my resources'},
 ];
@@ -3442,7 +3442,7 @@ function _renderAllocationTreemap(allocation) {
 // ============================================================
 // Unit Economics
 // ============================================================
-function _renderUnitEconomics(ue) {
+function _renderUnitEconomicsLegacy(ue) {
     var el = $('dash-unit-economics');
     if (!el) return;
     if (!ue || !ue.trend || !ue.trend.length) {
@@ -3471,6 +3471,253 @@ function _renderUnitEconomics(ue) {
         grid: { left: 60, right: 60, bottom: 25, top: 40 },
     });
     window.addEventListener('resize', function() { chart.resize(); });
+}
+
+
+// ============================================================
+// Live Business Metrics Widget
+// ============================================================
+var _liveMetricsData = null;
+var _liveMetricsChart = null;
+var _selectedMetric = '';
+var _selectedCostDim = 'total';
+
+async function _fetchLiveMetrics(costDimension) {
+    try {
+        var data = await api('GET', '/members/live-metrics?costDimension=' + encodeURIComponent(costDimension || 'total'));
+        _liveMetricsData = data;
+        return data;
+    } catch (e) {
+        console.error('Failed to fetch live metrics:', e);
+        return null;
+    }
+}
+
+function _renderLiveMetrics(container) {
+    if (!container) return;
+    container.innerHTML = '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px;">'
+        + '<div style="display:flex;align-items:center;gap:8px;">'
+        + '<select id="live-metric-select" style="padding:4px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:0.85em;max-width:250px;" onchange="_onMetricChange()"></select>'
+        + '<select id="live-cost-dim-select" style="padding:4px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:0.85em;max-width:200px;" onchange="_onCostDimChange()"></select>'
+        + '</div>'
+        + '<button onclick="_refreshLiveMetrics()" class="btn btn-outline btn-sm" style="font-size:0.8em;">&#x1f504; Refresh</button>'
+        + '</div>'
+        + '<div id="live-metrics-warnings" style="display:none;"></div>'
+        + '<div id="live-metrics-chart" style="width:100%;height:300px;"></div>'
+        + '<div id="live-metrics-empty" style="display:none;text-align:center;padding:40px 20px;color:#6b7280;">'
+        + '<div style="font-size:2em;margin-bottom:8px;">&#x1f4ca;</div>'
+        + '<div>No business metrics discovered. Connect an AWS account to get started.</div>'
+        + '</div>';
+
+    _refreshLiveMetrics();
+}
+
+async function _refreshLiveMetrics() {
+    var chartEl = document.getElementById('live-metrics-chart');
+    var emptyEl = document.getElementById('live-metrics-empty');
+    if (chartEl) chartEl.innerHTML = '<div style="text-align:center;padding:40px;color:#6b7280;">Loading live metrics...</div>';
+    if (emptyEl) emptyEl.style.display = 'none';
+
+    var data = await _fetchLiveMetrics(_selectedCostDim);
+    if (!data || !data.availableMetrics || data.availableMetrics.length === 0) {
+        if (chartEl) chartEl.style.display = 'none';
+        if (emptyEl) emptyEl.style.display = 'block';
+        return;
+    }
+    if (chartEl) chartEl.style.display = 'block';
+
+    // Show warnings
+    _showLiveMetricsWarnings(data.warnings || []);
+
+    // Populate selectors
+    _buildMetricSelector(data.availableMetrics);
+    _buildCostDimensionSelector(data.availableCostDimensions || []);
+
+    // Render chart
+    _updateLiveMetricsChart(data);
+}
+
+function _showLiveMetricsWarnings(warnings) {
+    var el = document.getElementById('live-metrics-warnings');
+    if (!el) return;
+    if (!warnings || warnings.length === 0) { el.style.display = 'none'; return; }
+    el.style.display = 'block';
+    el.innerHTML = '<div style="background:#fef3c7;border:1px solid #f59e0b;border-radius:8px;padding:8px 12px;margin-bottom:8px;font-size:0.85em;color:#92400e;">'
+        + '\u26a0\ufe0f ' + warnings.join(' | ')
+        + ' <button onclick="this.parentElement.parentElement.style.display=\'none\'" style="float:right;background:none;border:none;cursor:pointer;color:#92400e;">\u2715</button>'
+        + '</div>';
+}
+
+function _buildMetricSelector(availableMetrics) {
+    var select = document.getElementById('live-metric-select');
+    if (!select) return;
+    select.innerHTML = '';
+
+    var autoGroup = document.createElement('optgroup');
+    autoGroup.label = '\ud83d\udd0d Auto-Discovered';
+    var manualGroup = document.createElement('optgroup');
+    manualGroup.label = '\u270f\ufe0f Manual';
+    var hasAuto = false, hasManual = false;
+
+    availableMetrics.forEach(function(m) {
+        var opt = document.createElement('option');
+        opt.value = m.name;
+        opt.textContent = m.name + (m.source !== 'manual' ? ' \ud83e\udd16' : ' \u270f\ufe0f');
+        if (m.group === 'Auto-Discovered') {
+            autoGroup.appendChild(opt);
+            hasAuto = true;
+        } else {
+            manualGroup.appendChild(opt);
+            hasManual = true;
+        }
+    });
+
+    if (hasAuto) select.appendChild(autoGroup);
+    if (hasManual) select.appendChild(manualGroup);
+
+    // Default to first auto-discovered or first available
+    if (!_selectedMetric && availableMetrics.length > 0) {
+        var autoMetric = availableMetrics.find(function(m) { return m.group === 'Auto-Discovered'; });
+        _selectedMetric = autoMetric ? autoMetric.name : availableMetrics[0].name;
+    }
+    select.value = _selectedMetric;
+}
+
+function _buildCostDimensionSelector(dims) {
+    var select = document.getElementById('live-cost-dim-select');
+    if (!select) return;
+    select.innerHTML = '';
+
+    dims.forEach(function(d) {
+        var opt = document.createElement('option');
+        opt.value = d.value;
+        opt.textContent = d.label;
+        select.appendChild(opt);
+    });
+
+    select.value = _selectedCostDim;
+}
+
+function _onMetricChange() {
+    var select = document.getElementById('live-metric-select');
+    if (select) _selectedMetric = select.value;
+
+    // Auto-set cost dimension based on metric source
+    if (_liveMetricsData && _liveMetricsData.availableMetrics) {
+        var metric = _liveMetricsData.availableMetrics.find(function(m) { return m.name === _selectedMetric; });
+        if (metric) {
+            var sourceMap = {
+                'aws-cognito': 'Amazon Cognito',
+                'aws-dynamodb': 'Amazon DynamoDB',
+                'aws-apigateway': 'Amazon API Gateway',
+                'aws-route53': 'Amazon Route 53',
+                'aws-lambda': 'AWS Lambda',
+                'aws-s3': 'Amazon Simple Storage Service'
+            };
+            var defaultDim = sourceMap[metric.source] || 'total';
+            var dimSelect = document.getElementById('live-cost-dim-select');
+            if (dimSelect) {
+                // Check if the dimension exists in the dropdown
+                var exists = Array.from(dimSelect.options).some(function(o) { return o.value === defaultDim; });
+                if (exists) {
+                    _selectedCostDim = defaultDim;
+                    dimSelect.value = defaultDim;
+                }
+            }
+        }
+    }
+
+    _updateLiveMetricsChart(_liveMetricsData);
+}
+
+async function _onCostDimChange() {
+    var select = document.getElementById('live-cost-dim-select');
+    if (select) _selectedCostDim = select.value;
+    // Re-fetch with new cost dimension
+    var data = await _fetchLiveMetrics(_selectedCostDim);
+    if (data) _updateLiveMetricsChart(data);
+}
+
+function _updateLiveMetricsChart(data) {
+    if (!data) return;
+    var chartEl = document.getElementById('live-metrics-chart');
+    if (!chartEl) return;
+
+    // Find selected metric data
+    var metricData = (data.unitEconomics || []).filter(function(e) { return e.metricName === _selectedMetric; });
+    if (metricData.length === 0) {
+        chartEl.innerHTML = '<div style="text-align:center;padding:40px;color:#9ca3af;">No data for selected metric</div>';
+        return;
+    }
+
+    // Sort by month
+    metricData.sort(function(a, b) { return a.month.localeCompare(b.month); });
+
+    var months = metricData.map(function(e) { return e.month; });
+    var volumes = metricData.map(function(e) { return e.volume || 0; });
+    var costs = metricData.map(function(e) { return e.costPerUnit; });
+    var hasCostData = costs.some(function(c) { return c !== null && c !== undefined; });
+
+    // Initialize or reuse chart
+    if (_liveMetricsChart) _liveMetricsChart.dispose();
+    _liveMetricsChart = echarts.init(chartEl);
+
+    var series = [
+        {
+            name: 'Volume',
+            type: 'bar',
+            data: volumes,
+            itemStyle: { color: '#6366f1', borderRadius: [4, 4, 0, 0] },
+            barMaxWidth: 40,
+        }
+    ];
+
+    var yAxis = [
+        { type: 'value', name: 'Volume', nameTextStyle: { color: '#6b7280', fontSize: 11 }, axisLabel: { color: '#6b7280', fontSize: 11 } }
+    ];
+
+    if (hasCostData) {
+        series.push({
+            name: 'Cost/Unit',
+            type: 'line',
+            yAxisIndex: 1,
+            data: costs,
+            lineStyle: { color: '#f59e0b', width: 2 },
+            itemStyle: { color: '#f59e0b' },
+            symbol: 'circle',
+            symbolSize: 6,
+        });
+        yAxis.push({
+            type: 'value',
+            name: '$/Unit',
+            nameTextStyle: { color: '#f59e0b', fontSize: 11 },
+            axisLabel: { color: '#f59e0b', fontSize: 11, formatter: function(v) { return '$' + (v < 0.01 ? v.toFixed(4) : v.toFixed(2)); } },
+            splitLine: { show: false },
+        });
+    }
+
+    _liveMetricsChart.setOption({
+        tooltip: {
+            trigger: 'axis',
+            axisPointer: { type: 'cross' },
+            formatter: function(params) {
+                var html = '<strong>' + params[0].axisValue + '</strong><br>';
+                params.forEach(function(p) {
+                    if (p.seriesName === 'Volume') {
+                        html += p.marker + ' Volume: <strong>' + (p.value || 0).toLocaleString() + '</strong><br>';
+                    } else if (p.seriesName === 'Cost/Unit' && p.value != null) {
+                        html += p.marker + ' Cost/Unit: <strong>$' + p.value.toFixed(6) + '</strong><br>';
+                    }
+                });
+                return html;
+            }
+        },
+        legend: { data: hasCostData ? ['Volume', 'Cost/Unit'] : ['Volume'], top: 0, textStyle: { fontSize: 11 } },
+        grid: { left: 60, right: hasCostData ? 70 : 20, top: 30, bottom: 30 },
+        xAxis: { type: 'category', data: months, axisLabel: { color: '#6b7280', fontSize: 11 } },
+        yAxis: yAxis,
+        series: series,
+    });
 }
 
 function _renderRegionalPie(costByRegion) {

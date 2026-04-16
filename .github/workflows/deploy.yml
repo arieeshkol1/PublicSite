@@ -325,6 +325,7 @@ jobs:
             "POST /members/budgets/create"
             "PUT /members/budgets/update"
             "DELETE /members/budgets/delete"
+            "GET /members/live-metrics"
           )
           for ROUTE in "${MEMBER_ROUTES[@]}"; do
             aws apigatewayv2 create-route --api-id $API_ID --route-key "$ROUTE" --target "integrations/$MEMBER_INT" 2>/dev/null || true

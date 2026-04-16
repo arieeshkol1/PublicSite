@@ -25,6 +25,8 @@ SlashMyBill is an AI-powered AWS FinOps platform that helps organizations analyz
 | Storage | DynamoDB (6 tables) + S3 | Members, accounts, tips, OTP, leads, bills |
 | Email | Amazon SES | OTP verification emails |
 | CDN | CloudFront + Route 53 | HTTPS delivery, DNS |
+| Scheduler Executor | Python 3.12 Lambda (slashmybill-scheduler-executor, 512 MB / 300s) | Cross-account stop/start/scale execution for automated schedules |
+| EventBridge Scheduler | Amazon EventBridge Scheduler | Recurring schedule triggers for automated resource management |
 | CI/CD | GitHub Actions + OIDC | Automated deployment on push to main |
 
 ### 2.2 Cross-Account Access Model
@@ -33,6 +35,7 @@ Members deploy a CloudFormation template in their AWS account that creates:
 - IAM Role: `SlashMyBill-{AccountID}` with `ReadOnlyAccess` managed policy
 - Inline policy: Cost Explorer, Budgets, Pricing, Trusted Advisor, stack self-management
 - Trust policy: Platform account (991105135552) with ExternalId = SHA-256(member_email)
+- Write permissions (for Scheduler): `ec2:StartInstances`, `rds:StopDBInstance`, `rds:StartDBInstance`, `eks:UpdateNodegroupConfig`, `eks:DescribeNodegroup`, `sagemaker:StopNotebookInstance`, `sagemaker:StartNotebookInstance`, `redshift:PauseCluster`, `redshift:ResumeCluster`, `workspaces:ModifyWorkspaceProperties`, `ec2:ModifyVolume`
 
 ---
 
@@ -177,7 +180,21 @@ The `_gather_account_data()` function collects data from the customer's AWS acco
 - Reports buckets needing Intelligent-Tiering (paying Standard rates unnecessarily)
 - Recommends S3-IA for 30-90 day data, Glacier for 90+ day data
 
-### 5.5 Knowledge Base (RAG)
+### 5.8 Automated Scheduler
+
+SlashMyBill's Automated Scheduler lets members create recurring schedules to stop, start, and scale AWS resources automatically.
+
+- **EventBridge Scheduler** in the platform account (991105135552) triggers a dedicated **Scheduler Executor Lambda** (`slashmybill-scheduler-executor`) at the configured times.
+- The executor assumes the cross-account role (`SlashMyBill-{accountId}`) into the customer's account and performs the actual stop/start/scale actions.
+- **12 schedule types**: EC2 stop/start, RDS stop/start, ASG scale-to-zero, EKS scale-to-zero, SageMaker stop, Redshift pause, WorkSpaces auto-stop, ELB teardown, plus 4 review types (waste scan, snapshot cleanup, gp2→gp3 migration, SP/RI review).
+- **Schedule pair pattern**: Stop/start types create two EventBridge schedules (e.g., `smb-{id}-stop` and `smb-{id}-start`). Review types create a single schedule.
+- **Lifecycle management**: Create, pause (disables without deleting), resume, and delete — all backed by real EventBridge Scheduler schedules.
+- **Execution history tracking**: Each run records success/partial/failure with per-resource details. The frontend shows the last 10 runs per schedule.
+- **Frontend**: Real schedule cards with Active/Paused status, next execution time, Pause/Resume/Delete buttons, and expandable execution history.
+- **Admin visibility**: Admin panel Schedules tab shows all schedules across all members with stats and failure drill-down.
+- **API endpoints**: `PUT /members/schedules/pause`, `PUT /members/schedules/resume`, `DELETE /members/schedules/delete`, `GET /admin/schedules`.
+
+### 5.9 Knowledge Base (RAG)
 - DynamoDB table: ViewMyBill-CostOptimizationTips (32+ tips by service)
 - Queried by service keyword matching from the question
 - AI-generated tips auto-saved back to the knowledge base
@@ -246,7 +263,7 @@ AI Answer (text) → Drill-down buttons → "Show as Table" buttons
 
 **Stack Name:** aws-bill-analyzer-viewmybill
 
-### 8.1 Lambda Functions (6)
+### 8.1 Lambda Functions (7)
 | Function | Memory | Timeout | Purpose |
 |----------|--------|---------|---------|
 | aws-bill-analyzer-viewmybill | 1024 MB | 900s | Bill PDF analysis |
@@ -255,6 +272,7 @@ AI Answer (text) → Drill-down buttons → "Show as Table" buttons
 | aws-bill-analyzer-admin-api | 128 MB | 30s | Admin CRUD |
 | aws-bill-analyzer-member-api | 256 MB | 120s | Member portal + AI agent |
 | SlashMyBill-AgentAction | 256 MB | 120s | Bedrock Agent actions |
+| slashmybill-scheduler-executor | 512 MB | 300s | Cross-account scheduled actions (stop/start/scale) |
 
 ### 8.2 DynamoDB Tables (6)
 | Table | Partition Key | Sort Key | Purpose |
@@ -270,6 +288,8 @@ AI Answer (text) → Drill-down buttons → "Show as Table" buttons
 - SES Email Identity (eshkolai.com, DKIM verified)
 - IAM Roles (per Lambda, with least-privilege policies)
 - Lambda Permissions (API Gateway + Bedrock invoke)
+- SlashMyBill-EventBridge-Scheduler-Role (trusted by `scheduler.amazonaws.com`, invokes Scheduler Executor Lambda)
+- slashmybill-scheduler-executor-role (STS AssumeRole to customer accounts, DynamoDB write for execution history)
 
 ---
 
@@ -279,7 +299,7 @@ AI Answer (text) → Drill-down buttons → "Show as Table" buttons
 **Platform:** GitHub Actions with AWS OIDC authentication
 
 ### Pipeline Steps:
-1. Package 6 Lambda functions with dependencies → S3
+1. Package 7 Lambda functions with dependencies → S3 (includes scheduler-executor packaging step)
 2. Deploy CloudFormation stack (IAM capabilities)
 3. Update Lambda function code from S3
 4. Seed DynamoDB knowledge base

@@ -24,7 +24,7 @@ var HELP_CONTENT = {
           <ul>
             <li><strong>Observe</strong> — FinOps dashboard with interactive charts and regional cost breakdown</li>
             <li><strong>Chat</strong> — Ask natural language questions about your AWS costs (🪙 2 tokens per question)</li>
-            <li><strong>Act</strong> — Scan for waste and clean up idle resources (🪙 10 per scan, 🪙 50 per action)</li>
+            <li><strong>Act</strong> — Scan for waste, clean up idle resources, and automate stop/start schedules (🪙 10 per scan, 🪙 50 per action)</li>
             <li><strong>Configure</strong> — Connect and manage your AWS accounts</li>
           </ul>
           <p><strong>Platform URL:</strong> <a href="https://slashmycloudbill.com/members/" target="_blank">slashmycloudbill.com/members</a></p>
@@ -50,7 +50,7 @@ var HELP_CONTENT = {
             <li>🪙 300 tokens/month</li>
             <li>1-click automated cleanup (Actions tab)</li>
             <li>AI Agent with full execution capabilities</li>
-            <li>Office Hours auto-shutdown for dev environments</li>
+            <li>Automated Scheduler — stop/start EC2, RDS, ASG, EKS, SageMaker, Redshift, WorkSpaces on your schedule</li>
             <li>Virtual Tagging &amp; Unit Economics</li>
           </ul>
           <h4>Scale Plan — $200/month</h4>
@@ -436,6 +436,54 @@ var HELP_CONTENT = {
             <li>Review the new IAM permissions and confirm</li>
           </ol>
           <p>Click <strong>"How to update →"</strong> in the banner for step-by-step guidance.</p>
+        `
+      },
+      {
+        id: 'scheduler',
+        heading: 'Scheduler — Automated Stop/Start',
+        icon: '\u23f0',
+        content: `
+          <p><strong>What it does:</strong> Automatically stops, starts, and scales your AWS resources on a schedule you define. No more paying for dev/test environments running 24/7.</p>
+          <h4>Creating a Schedule</h4>
+          <ol>
+            <li>Go to <strong>Act \u2192 Scheduler</strong></li>
+            <li>Click <strong>"+ New Schedule"</strong></li>
+            <li>Select the AWS account</li>
+            <li>Choose a schedule type (EC2, RDS, ASG, EKS, SageMaker, Redshift, WorkSpaces, ELB, or a review type)</li>
+            <li>Set the days, times, and timezone</li>
+            <li>Click <strong>Create</strong></li>
+          </ol>
+          <h4>Schedule Types</h4>
+          <p><strong>Stop/Start types</strong> create two EventBridge rules \u2014 one for the stop action and one for the start action. <strong>Review types</strong> (waste scan, snapshot cleanup, gp2\u2192gp3 migration, SP/RI review) create a single rule.</p>
+          <table class="help-table">
+            <tr><th>Type</th><th>Actions</th></tr>
+            <tr><td>EC2</td><td>Stop / Start instances</td></tr>
+            <tr><td>RDS</td><td>Stop / Start DB instances</td></tr>
+            <tr><td>ASG</td><td>Scale to zero / Restore</td></tr>
+            <tr><td>EKS</td><td>Scale nodegroups to zero / Restore</td></tr>
+            <tr><td>SageMaker</td><td>Stop / Start notebook instances</td></tr>
+            <tr><td>Redshift</td><td>Pause / Resume clusters</td></tr>
+            <tr><td>WorkSpaces</td><td>Set to AUTO_STOP mode</td></tr>
+            <tr><td>ELB</td><td>Tear down load balancers</td></tr>
+            <tr><td>Waste Scan</td><td>Automated waste detection</td></tr>
+            <tr><td>Snapshot Cleanup</td><td>Remove old snapshots</td></tr>
+            <tr><td>gp2\u2192gp3 Migration</td><td>Upgrade EBS volumes</td></tr>
+            <tr><td>SP/RI Review</td><td>Savings Plans & RI analysis</td></tr>
+          </table>
+          <h4>Managing Schedules</h4>
+          <ul>
+            <li><strong>Pause</strong> \u2014 Disables the schedule without deleting it. You can resume anytime.</li>
+            <li><strong>Resume</strong> \u2014 Re-enables a paused schedule.</li>
+            <li><strong>Delete</strong> \u2014 Permanently removes the schedule and its EventBridge rules.</li>
+          </ul>
+          <h4>Execution History</h4>
+          <p>Expand any schedule card to see the last 10 runs with per-resource success/failure details.</p>
+          <ul>
+            <li>\u2705 <strong>Success</strong> \u2014 All resources processed</li>
+            <li>\u26a0\ufe0f <strong>Partial</strong> \u2014 Some resources failed (expand for details)</li>
+            <li>\u274c <strong>Failure</strong> \u2014 All resources failed</li>
+          </ul>
+          <div class="help-note">\u26a0 Scheduler write actions require an updated CloudFormation template with write permissions. Go to <strong>Configure</strong> and re-download the CF template if prompted.</div>
         `
       }
     ]
