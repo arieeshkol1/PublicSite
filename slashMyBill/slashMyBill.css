@@ -155,6 +155,15 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;ba
 .smb-error-inner h3{font-size:22px;font-weight:700;color:#1a1a2e;margin-bottom:10px}
 .smb-error-inner p{color:#6b7280;font-size:14px;line-height:1.7;margin-bottom:24px}
 
+/* PLATFORM FEATURES */
+.smb-features{background:#fff;padding:100px 0}
+.smb-features-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:24px}
+.smb-feature-card{background:#f8f9fb;border:1.5px solid #e5e7eb;border-radius:20px;padding:32px 28px;transition:all .2s}
+.smb-feature-card:hover{border-color:#e8714a;box-shadow:0 8px 32px rgba(232,113,74,.1);transform:translateY(-4px)}
+.smb-feature-icon{width:52px;height:52px;background:linear-gradient(135deg,#fef3ee,#fde8dd);border-radius:14px;display:flex;align-items:center;justify-content:center;font-size:22px;color:#e8714a;margin-bottom:20px}
+.smb-feature-card h4{font-size:17px;font-weight:700;color:#1a1a2e;margin-bottom:10px}
+.smb-feature-card p{font-size:14px;color:#6b7280;line-height:1.7}
+
 /* HOW IT WORKS */
 .smb-how-it-works{background:#fff;padding:100px 0}
 .smb-steps{display:flex;flex-direction:column;gap:64px}
@@ -171,7 +180,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;ba
 
 /* WHY US */
 .smb-why-us{background:#f0f2f5;padding:100px 0}
-.smb-why-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:24px}
+.smb-why-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:24px}
 .smb-why-card{background:#fff;border-radius:20px;padding:32px 28px;box-shadow:0 2px 12px rgba(0,0,0,.04);transition:all .2s}
 .smb-why-card:hover{box-shadow:0 8px 32px rgba(0,0,0,.1);transform:translateY(-4px)}
 .smb-why-icon{width:52px;height:52px;background:#f0f2f5;border-radius:14px;display:flex;align-items:center;justify-content:center;font-size:22px;color:#6b7280;margin-bottom:20px}
@@ -219,6 +228,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;ba
 /* RESPONSIVE */
 @media(max-width:900px){
   .smb-why-grid{grid-template-columns:1fr 1fr}
+  .smb-features-grid{grid-template-columns:1fr 1fr}
   .smb-security-grid{grid-template-columns:1fr 1fr}
   .smb-step{flex-direction:column;gap:32px}
   .smb-step-reverse{flex-direction:column}
@@ -232,6 +242,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;ba
   .smb-form-grid{grid-template-columns:1fr}
   .smb-offer-grid{grid-template-columns:1fr}
   .smb-why-grid{grid-template-columns:1fr}
+  .smb-features-grid{grid-template-columns:1fr}
   .smb-security-grid{grid-template-columns:1fr 1fr}
   .smb-stats{padding:20px 16px;gap:0}
   .smb-stat{padding:0 16px}

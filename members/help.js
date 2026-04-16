@@ -234,6 +234,9 @@ var HELP_CONTENT = {
             <tr><td>Rightsizing</td><td>Over-provisioned instances</td><td>Shows Compute Optimizer recommendations</td></tr>
             <tr><td>Monthly Trend</td><td>Cost by service month-over-month</td><td>Stacked bar — each color is a service</td></tr>
             <tr><td>Unit Cost Trend</td><td>Cost per business unit</td><td>Requires business metrics to be configured</td></tr>
+            <tr><td>Live Business Metrics</td><td>Auto-discovered operational KPIs (Cognito users, DynamoDB items, API GW requests, Lambda invocations, S3 objects, Route 53 queries) with cost-per-unit economics</td><td>Dual-axis chart: purple volume bars + amber cost line. Use metric selector to switch between Auto-Discovered and Manual groups</td></tr>
+            <tr><td>Tag Distribution</td><td>Resource count by tag value (donut chart)</td><td>Click "Manage Tags ▶" to go to Plan → Tag Resources</td></tr>
+            <tr><td>Budget KPI</td><td>Spend vs budget limit progress bar</td><td>Click to go to Plan → Budget</td></tr>
             <tr><td>Cost by Region</td><td>Donut chart of spend by AWS region</td><td>Hover for cost and percentage breakdown</td></tr>
             <tr><td>Savings Plans &amp; RIs</td><td>Active commitments, coverage gauges</td><td>Shows SP/EC2 RI/RDS RI counts, coverage %, and details</td></tr>
           </table>
@@ -484,6 +487,63 @@ var HELP_CONTENT = {
             <li>\u274c <strong>Failure</strong> \u2014 All resources failed</li>
           </ul>
           <div class="help-note">\u26a0 Scheduler write actions require an updated CloudFormation template with write permissions. Go to <strong>Configure</strong> and re-download the CF template if prompted.</div>
+        `
+      }
+    ]
+  },
+
+  // ── Plan Tab ───────────────────────────────────────────────────────────────
+  'plan-tab': {
+    title: 'Plan — Budget & Tag Management',
+    sections: [
+      {
+        id: 'budget-management',
+        heading: 'Budget Management',
+        icon: '💰',
+        content: `
+          <p>Create and manage AWS Budgets directly from SlashMyBill. Budgets are created in your actual AWS account via the Budgets API.</p>
+          <h4>Creating a Budget</h4>
+          <ol>
+            <li>Go to <strong>Plan → Budget</strong></li>
+            <li>Click <strong>"+ Create Budget"</strong></li>
+            <li>Enter a monthly budget amount</li>
+            <li>Configure alert thresholds (default: 50%, 75%, 100%, 120%)</li>
+            <li>Add email addresses for notifications</li>
+            <li>Optionally add tag-based filtering (e.g., <code>Environment=production</code>)</li>
+            <li>Click <strong>Create</strong></li>
+          </ol>
+          <h4>Managing Budgets</h4>
+          <ul>
+            <li><strong>Edit</strong> — Change budget amount or alert thresholds</li>
+            <li><strong>Delete</strong> — Remove the budget from your AWS account</li>
+            <li><strong>View</strong> — See spend vs limit progress bars for all budgets</li>
+          </ul>
+          <div class="help-tip">💡 Budget alerts come directly from AWS, not SlashMyBill — they work even when you're not logged in.</div>
+          <div class="help-note">⚠ For tag-based budgets, use TagKeyValue format. The Plan tab handles this formatting automatically.</div>
+        `
+      },
+      {
+        id: 'tag-resources',
+        heading: 'Tag Resources',
+        icon: '🏷',
+        content: `
+          <p>Scan all resources across connected accounts for tag coverage and bulk-apply tags for cost allocation.</p>
+          <h4>How It Works</h4>
+          <ol>
+            <li>Go to <strong>Plan → Tag Resources</strong></li>
+            <li>Review the resource list — untagged resources show red badges, tagged resources show green ✓</li>
+            <li>Select resources using checkboxes</li>
+            <li>Enter tag key-value pairs (pre-populated keys: <code>Environment</code>, <code>Owner</code>, <code>CostCenter</code>, <code>Application</code>)</li>
+            <li>Click <strong>"Apply Tags"</strong> to tag all selected resources</li>
+          </ol>
+          <h4>Features</h4>
+          <ul>
+            <li>Uses the AWS Resource Groups Tagging API</li>
+            <li>Sticky table headers for scrolling through large resource lists</li>
+            <li>Filter by account, service, or tag status</li>
+            <li>Bulk apply tags to multiple resources at once</li>
+          </ul>
+          <div class="help-tip">💡 Good tagging enables accurate cost allocation in the Observe tab's Cost Allocation widget and tag-based budgets.</div>
         `
       }
     ]

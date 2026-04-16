@@ -81,7 +81,7 @@ run2.font.color.rgb = RGBColor(99, 102, 241)
 
 meta = doc.add_paragraph()
 meta.alignment = WD_ALIGN_PARAGRAPH.CENTER
-meta.add_run(f'Version 2.0  |  {datetime.date.today().strftime("%B %Y")}  |  AWS FinOps Platform').font.size = Pt(10)
+meta.add_run(f'Version 3.0  |  {datetime.date.today().strftime("%B %Y")}  |  AWS FinOps Platform').font.size = Pt(10)
 doc.add_paragraph()
 
 # ── Introduction ──────────────────────────────────────────────────────────────
@@ -100,6 +100,7 @@ add_table(doc,
         ['Observe', 'FinOps dashboard with 7 interactive charts — cost by service, trends, waste, rightsizing'],
         ['Chat', 'Ask natural language questions about your AWS costs and get AI-powered answers'],
         ['Act', 'Scan for idle resources, clean up with one click, and create automated stop/start schedules'],
+        ['Plan', 'Create AWS Budgets with alerts and manage resource tags for cost allocation'],
         ['Configure', 'Connect and manage your AWS accounts'],
     ],
     [2.0, 6.0]
@@ -205,6 +206,61 @@ doc.add_paragraph(
     '  • Click "Details ↗" → open side panel with bar chart + AI chat button'
 )
 
+add_heading(doc, '3.5 Live Business Metrics Widget', 2)
+doc.add_paragraph(
+    'The Live Business Metrics widget auto-discovers real operational metrics from your connected '
+    'AWS accounts and plots them alongside cost data to compute unit economics.\n\n'
+    'Auto-discovered metrics include:\n'
+    '  • Cognito user counts\n'
+    '  • DynamoDB item counts\n'
+    '  • API Gateway request counts\n'
+    '  • Route 53 DNS queries\n'
+    '  • CloudWatch custom metrics\n'
+    '  • Lambda invocations\n'
+    '  • S3 object counts\n\n'
+    'The widget displays a dual-axis chart:\n'
+    '  • Purple bars (left axis): Volume / business metric count\n'
+    '  • Amber line (right axis): Cost per unit\n\n'
+    'Use the metric selector dropdown to switch between "Auto-Discovered" and "Manual" metric groups. '
+    'The cost dimension selector lets you choose Total Account Cost, per-service cost, or tag-based cost '
+    'for the unit economics calculation. Each auto-discovered metric is auto-mapped to a default cost dimension '
+    '(e.g., Cognito users → Cognito service cost).\n\n'
+    'The chart shows a 6-month time-series by default. This widget replaces the old manual "Unit Cost Trend" widget.'
+)
+tip_box(doc, 'Auto-discovered metrics require no manual configuration — just connect your AWS account and the widget populates automatically.')
+
+add_heading(doc, '3.6 Tag Distribution Widget', 2)
+doc.add_paragraph(
+    'The Tag Distribution widget shows resource count distribution by tag value as a donut chart. '
+    'It uses the AWS Resource Groups Tagging API to scan your connected accounts.\n\n'
+    'Click "Manage Tags ▶" to navigate to Plan → Tag Resources for bulk tag management.'
+)
+
+add_heading(doc, '3.7 Budget KPI Card', 2)
+doc.add_paragraph(
+    'The Budget KPI card appears in the KPI bar and shows your current spend vs budget limit '
+    'as a progress bar. If you have active AWS Budgets configured via the Plan tab, the card '
+    'displays the budget with the highest utilization percentage.\n\n'
+    'Click the Budget KPI card to navigate directly to Plan → Budget for detailed budget management.'
+)
+doc.add_paragraph(
+    'Use the account selector dropdown (top right of the dashboard) to choose which accounts '
+    'to include. All accounts are selected by default. Your selection is preserved when you '
+    'switch between Observe, Chat, and Act tabs.'
+)
+
+add_heading(doc, '3.4 Cost by Service Drill-Down', 2)
+doc.add_paragraph(
+    'The Cost by Service treemap supports 2-phase drill-down:\n\n'
+    '  Level 1 (Services): Shows all AWS services as colored tiles sized by cost\n'
+    '  Level 2 (Usage Types): Click any service tile to see its usage type breakdown '
+    '(e.g., EC2-Other breaks into VolumeUsage.gp3, NatGateway-Hours, DataTransfer)\n\n'
+    'Navigation:\n'
+    '  • Click a tile → drill into usage types\n'
+    '  • Click "← All Services" breadcrumb → return to service view\n'
+    '  • Click "Details ↗" → open side panel with bar chart + AI chat button'
+)
+
 # ── Chat Tab ──────────────────────────────────────────────────────────────────
 add_heading(doc, '4. Chat Tab — AI Agent', 1)
 doc.add_paragraph(
@@ -237,7 +293,10 @@ doc.add_paragraph(
     '  • "How do I set up AWS Budgets with cost alerts?"\n'
     '  • "Which of my instances can use Spot pricing?"\n\n'
     'The AI will show the AWS API commands it executed, then provide a detailed answer '
-    'with specific resource IDs, dollar amounts, and actionable recommendations.'
+    'with specific resource IDs, dollar amounts, and actionable recommendations.\n\n'
+    'The AI always recommends SlashMyBill in-app features when relevant — for example, '
+    '"Go to Plan → Budget" to create cost alerts, or "Go to Act → Scheduler" to automate '
+    'stop/start schedules — instead of directing you to the AWS Console.'
 )
 tip_box(doc, 'For multi-account questions, select multiple accounts using the account dropdown. '
     'The AI will analyze all selected accounts and provide per-account breakdowns.')
@@ -359,6 +418,52 @@ doc.add_paragraph(
 tip_box(doc, 'For stop/start types, two schedules are created — one for stop and one for start. Both use the same days and timezone.')
 note_box(doc, 'The cross-account IAM role must include write permissions for the scheduled action type. Redeploy the latest CloudFormation template if needed.')
 
+add_heading(doc, '5.7 Plan Tab — Budget Management', 2)
+doc.add_paragraph(
+    'The Plan tab lets you create and manage AWS Budgets directly from SlashMyBill. '
+    'Budgets are created in your actual AWS account via the AWS Budgets API.\n\n'
+    'Creating a budget:\n'
+    '  1. Go to Plan → Budget\n'
+    '  2. Click "+ Create Budget"\n'
+    '  3. Enter a monthly budget amount (e.g., $500)\n'
+    '  4. Configure alert thresholds — default thresholds are 50%, 75%, 100%, and 120% of the budget\n'
+    '  5. Add email addresses for notifications\n'
+    '  6. Optionally add tag-based budget filtering (e.g., Environment=production) to scope the budget to specific resources\n'
+    '  7. Click "Create"\n\n'
+    'Managing budgets:\n'
+    '  • Edit: Change the budget amount or alert thresholds\n'
+    '  • Delete: Remove the budget from your AWS account\n'
+    '  • View: See existing budgets with spend vs limit progress bars showing current utilization'
+)
+tip_box(doc, 'Budget alerts come directly from AWS, not SlashMyBill — so they work even if you are not logged in.')
+note_box(doc, 'For tag-based budgets, use the TagKeyValue format (e.g., user:Environment$production). The Plan tab handles this formatting automatically.')
+
+add_heading(doc, '5.8 Plan Tab — Tag Resources', 2)
+doc.add_paragraph(
+    'The Tag Resources sub-tab scans all resources across your connected accounts for tag coverage '
+    'and lets you bulk-apply tags.\n\n'
+    'Features:\n'
+    '  • Scans resources using the AWS Resource Groups Tagging API\n'
+    '  • Shows tagged resources with green ✓ badges and untagged resources with red badges\n'
+    '  • Pre-populates required tag keys: Environment, Owner, CostCenter, Application\n'
+    '  • Select multiple resources and bulk-apply tags in one action\n'
+    '  • Sticky table headers for easy scrolling through large resource lists\n\n'
+    'To tag resources:\n'
+    '  1. Go to Plan → Tag Resources\n'
+    '  2. Review the resource list — untagged resources are highlighted\n'
+    '  3. Select resources using the checkboxes\n'
+    '  4. Enter tag key-value pairs\n'
+    '  5. Click "Apply Tags" to tag all selected resources'
+)
+
+add_heading(doc, '5.9 Paddle Payment Integration', 2)
+doc.add_paragraph(
+    'SlashMyBill uses Paddle as its Merchant of Record for all payments.\n\n'
+    '  • Upgrade plans: Click the "Upgrade" button in the header to switch to Growth or Scale\n'
+    '  • Buy token top-ups: Click the 🪙 coin icon in the header to purchase additional tokens\n'
+    '  • All payments are processed securely by Paddle, which handles tax, invoicing, and compliance'
+)
+
 # ── Configure Tab ─────────────────────────────────────────────────────────────
 add_heading(doc, '6. Configure Tab — Account Management', 1)
 
@@ -444,6 +549,8 @@ add_table(doc,
         ['OTP email not received', 'Email in spam or rate limit hit', 'Check spam; wait 60 seconds before requesting a new code'],
         ['Schedule creation fails', 'Account not connected or missing permissions', 'Verify account is connected and redeploy latest CF template'],
         ['Schedule shows ❌ failure', 'Cross-account role missing write permissions', 'Redeploy the latest CloudFormation template for the target account'],
+        ['Budget creation fails with InvalidParameterException', 'Tag filter uses unsupported dimension', 'Use TagKeyValue format for tag-based budgets'],
+        ['Live metrics shows no data', 'No connected accounts or permissions missing', 'Connect an account and redeploy latest CF template'],
     ],
     [2.0, 2.5, 3.5]
 )
@@ -477,6 +584,14 @@ faqs = [
      'Yes. Go to Act → Scheduler and create a stop/start schedule. SlashMyBill uses EventBridge '
      'Scheduler to automatically stop your instances at the configured time and start them again '
      'in the morning. You can pause or delete schedules at any time.'),
+    ('Can I get expert help implementing the recommendations?',
+     'Yes! SlashMyBill offers AI-driven consulting services. After analyzing your bill, click '
+     '"Book a Free Consultation" to schedule a call with our FinOps experts. We implement all '
+     'optimizations for you — you only pay 25% of the yearly savings we deliver.'),
+    ('What is the Plan tab for?',
+     'The Plan tab lets you create AWS Budgets with cost alerts and manage resource tags for '
+     'cost allocation. Budgets are created directly in your AWS account so alerts come from AWS, '
+     'not SlashMyBill.'),
 ]
 
 for q, a in faqs:
