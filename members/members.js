@@ -5909,6 +5909,39 @@ function _showSchedWizard() {
     document.getElementById('sched-name').value = '';
     document.getElementById('sched-notes').value = '';
     document.getElementById('sched-wizard-error').textContent = '';
+    // Reset edit mode — this is a NEW schedule
+    var submitBtn = document.getElementById('sched-wizard-submit');
+    if (submitBtn) { submitBtn._editingScheduleId = null; submitBtn.textContent = 'Create Schedule'; }
+    // Reset type to first option
+    var typeEl = document.getElementById('sched-type');
+    if (typeEl) typeEl.selectedIndex = 0;
+    // Reset frequency
+    var freqEl = document.getElementById('sched-frequency');
+    if (freqEl) freqEl.value = 'weekdays';
+    // Reset days checkboxes to weekdays
+    document.querySelectorAll('.sched-dow').forEach(function(chk) {
+        chk.checked = ['mon','tue','wed','thu','fri'].indexOf(chk.value) !== -1;
+    });
+    // Reset times
+    var stopEl = document.getElementById('sched-stop-time');
+    var startEl = document.getElementById('sched-start-time');
+    var todEl = document.getElementById('sched-time-of-day');
+    if (stopEl) stopEl.value = '18:00';
+    if (startEl) startEl.value = '08:00';
+    if (todEl) todEl.value = '18:00';
+    // Reset timezone
+    var tzEl = document.getElementById('sched-tz');
+    if (tzEl) tzEl.value = 'Asia/Jerusalem';
+    // Reset tag filter
+    var tagEl = document.getElementById('sched-tag-filter');
+    if (tagEl) tagEl.value = '';
+    // Reset resource picker
+    _schedResources = [];
+    _schedSelectedResources = new Set();
+    var listEl = document.getElementById('sched-resource-list');
+    if (listEl) listEl.innerHTML = '<div style="padding:8px;color:#9ca3af;font-size:0.8em;text-align:center;">Click "Load" to fetch resources from your accounts</div>';
+    var countEl = document.getElementById('sched-selected-count');
+    if (countEl) countEl.textContent = '0 resources selected';
     // Populate account dropdown
     var acctSelect = document.getElementById('sched-account');
     if (acctSelect) {
