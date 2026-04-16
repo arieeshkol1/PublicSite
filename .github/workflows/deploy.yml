@@ -323,6 +323,7 @@ jobs:
             "DELETE /members/schedules/delete"
             "PUT /members/schedules/pause"
             "PUT /members/schedules/resume"
+            "PUT /members/schedules/edit"
             "POST /members/budgets/list"
             "POST /members/budgets/create"
             "PUT /members/budgets/update"

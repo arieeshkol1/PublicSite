@@ -115,6 +115,7 @@ def lambda_handler(event, context):
         'PUT /members/schedules/pause': handle_pause_schedule,
         'PUT /members/schedules/resume': handle_resume_schedule,
         'DELETE /members/schedules/delete': handle_delete_schedule,
+        'PUT /members/schedules/edit': handle_edit_schedule,
         'POST /members/budgets/list': handle_list_budgets,
         'POST /members/budgets/create': handle_create_budget,
         'PUT /members/budgets/update': handle_update_budget,
@@ -8069,6 +8070,159 @@ def handle_live_metrics(event):
         'availableCostDimensions': available_dims,
         'warnings': all_warnings,
     })
+
+
+
+def handle_edit_schedule(event):
+    """Edit an existing schedule — delete old EB schedules, create new ones with updated config."""
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+    member_email = auth['sub']
+
+    try:
+        body = json.loads(event.get('body', '{}'))
+    except (json.JSONDecodeError, TypeError):
+        return create_error_response(400, 'InvalidRequest', 'Invalid request body')
+
+    schedule_id = body.get('scheduleId', '').strip()
+    if not schedule_id:
+        return create_error_response(400, 'InvalidRequest', 'scheduleId is required')
+
+    # Find existing schedule
+    members_table = dynamodb.Table(MEMBERS_TABLE_NAME)
+    idx, old_schedule = _find_member_schedule(members_table, member_email, schedule_id)
+    if idx is None:
+        return create_error_response(404, 'ScheduleNotFound', 'Schedule not found')
+
+    # Delete old EventBridge schedules
+    old_eb_names = old_schedule.get('ebScheduleNames', [])
+    scheduler_client = boto3.client('scheduler')
+    for eb_name in old_eb_names:
+        try:
+            scheduler_client.delete_schedule(Name=eb_name)
+        except Exception:
+            pass  # Already deleted or doesn't exist
+
+    # Build new schedule from body (same logic as create)
+    sched_type = body.get('type', old_schedule.get('type', '')).strip()
+    name = body.get('name', old_schedule.get('name', '')).strip()
+    frequency = body.get('frequency', old_schedule.get('frequency', 'weekly'))
+    config = body.get('config', old_schedule.get('config', {}))
+    notes = body.get('notes', old_schedule.get('notes', ''))
+
+    if not sched_type or not name:
+        return create_error_response(400, 'InvalidRequest', 'type and name are required')
+
+    account_id = config.get('accountId', '').strip()
+    if not re.fullmatch(r'\d{12}', account_id):
+        return create_error_response(400, 'InvalidAccountId', 'Account ID must be exactly 12 digits')
+
+    STOP_START_TYPES = {
+        'ec2-stop-start', 'rds-stop-start', 'asg-scale-zero', 'eks-scale-zero',
+        'sagemaker-stop', 'redshift-pause', 'workspaces-autostop', 'elb-teardown',
+    }
+    REVIEW_TYPES = {'waste-scan', 'snapshot-cleanup', 'gp2-migration', 'commitment-review'}
+
+    resources = config.get('resources', [])
+    tag_filter = config.get('tagFilter', None)
+    tz = config.get('timezone', 'UTC')
+
+    eb_schedule_names = []
+    eb_schedule_arns = []
+
+    def _create_eb(eb_name, cron_expr, action, tz_str):
+        payload = json.dumps({
+            'scheduleId': schedule_id,
+            'scheduleType': sched_type,
+            'action': action,
+            'accountId': account_id,
+            'memberEmail': member_email,
+            'resources': resources,
+            'tagFilter': tag_filter,
+        })
+        resp = scheduler_client.create_schedule(
+            Name=eb_name,
+            ScheduleExpression=cron_expr,
+            ScheduleExpressionTimezone=tz_str,
+            FlexibleTimeWindow={'Mode': 'OFF'},
+            Target={
+                'Arn': SCHEDULER_EXECUTOR_ARN,
+                'RoleArn': SCHEDULER_ROLE_ARN,
+                'Input': payload,
+            },
+            State='ENABLED',
+        )
+        return resp.get('ScheduleArn', '')
+
+    try:
+        if sched_type in STOP_START_TYPES:
+            stop_days = config.get('stopDays', [])
+            stop_time = config.get('stopTime', '19:00')
+            start_days = config.get('startDays', [])
+            start_time = config.get('startTime', '07:00')
+
+            stop_cron = _build_eb_cron_expression(stop_days, stop_time, tz)
+            start_cron = _build_eb_cron_expression(start_days, start_time, tz)
+
+            stop_name = f'smb-{schedule_id}-stop'
+            start_name = f'smb-{schedule_id}-start'
+
+            stop_arn = _create_eb(stop_name, stop_cron, 'stop', tz)
+            eb_schedule_names.append(stop_name)
+            eb_schedule_arns.append(stop_arn)
+
+            start_arn = _create_eb(start_name, start_cron, 'start', tz)
+            eb_schedule_names.append(start_name)
+            eb_schedule_arns.append(start_arn)
+
+        elif sched_type in REVIEW_TYPES:
+            scan_time = config.get('scanTime', config.get('stopTime', '06:00'))
+            scan_day = config.get('scanDay', config.get('stopDays', ['Mon']))
+            if isinstance(scan_day, str):
+                scan_day = [scan_day]
+            scan_cron = _build_eb_cron_expression(scan_day, scan_time, tz)
+            scan_name = f'smb-{schedule_id}-scan'
+            scan_arn = _create_eb(scan_name, scan_cron, 'scan', tz)
+            eb_schedule_names.append(scan_name)
+            eb_schedule_arns.append(scan_arn)
+        else:
+            return create_error_response(400, 'InvalidRequest', f'Unknown schedule type: {sched_type}')
+    except Exception as e:
+        logger.error(f"Failed to create updated EB schedules: {e}")
+        return create_error_response(500, 'SchedulerError', f'Failed to update schedule: {str(e)}')
+
+    # Update the schedule record in DynamoDB
+    try:
+        members_table.update_item(
+            Key={'email': member_email},
+            UpdateExpression=(
+                f'SET userSchedules[{idx}].#n = :name, '
+                f'userSchedules[{idx}].#t = :type, '
+                f'userSchedules[{idx}].frequency = :freq, '
+                f'userSchedules[{idx}].config = :config, '
+                f'userSchedules[{idx}].notes = :notes, '
+                f'userSchedules[{idx}].ebScheduleNames = :ebNames, '
+                f'userSchedules[{idx}].ebScheduleArns = :ebArns, '
+                f'userSchedules[{idx}].updatedAt = :ts'
+            ),
+            ExpressionAttributeNames={'#n': 'name', '#t': 'type'},
+            ExpressionAttributeValues={
+                ':name': name,
+                ':type': sched_type,
+                ':freq': frequency,
+                ':config': config,
+                ':notes': notes,
+                ':ebNames': eb_schedule_names,
+                ':ebArns': eb_schedule_arns,
+                ':ts': datetime.now(timezone.utc).isoformat(),
+            },
+        )
+        logger.info(f"Schedule {schedule_id} edited by {member_email}")
+        return create_response(200, {'message': f'Schedule "{name}" updated', 'scheduleId': schedule_id})
+    except Exception as e:
+        logger.error(f"Failed to update schedule in DynamoDB: {e}")
+        return create_error_response(500, 'ServerError', 'Failed to save updated schedule')
 
 
 # ============================================================

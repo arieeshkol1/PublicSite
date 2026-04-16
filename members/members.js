@@ -5541,10 +5541,12 @@ function _renderRealScheduleCard(sched) {
     // Action buttons
     var buttonsHtml = '';
     if (isActive) {
-        buttonsHtml = '<button onclick="_pauseSchedule(\'' + sched.id + '\')" class="btn btn-outline btn-sm" style="font-size:0.8em;">\u23f8 Pause</button>'
+        buttonsHtml = '<button onclick="_editSchedule(\'' + sched.id + '\')" class="btn btn-outline btn-sm" style="font-size:0.8em;">\u270f\ufe0f Edit</button>'
+            + '<button onclick="_pauseSchedule(\'' + sched.id + '\')" class="btn btn-outline btn-sm" style="font-size:0.8em;">\u23f8 Pause</button>'
             + '<button onclick="_deleteSchedule(\'' + sched.id + '\')" class="btn btn-outline btn-sm" style="font-size:0.8em;color:#ef4444;border-color:#ef4444;">\ud83d\uddd1 Delete</button>';
     } else if (isPaused) {
-        buttonsHtml = '<button onclick="_resumeSchedule(\'' + sched.id + '\')" class="btn btn-primary btn-sm" style="font-size:0.8em;background:#10b981;border-color:#10b981;">\u25b6 Resume</button>'
+        buttonsHtml = '<button onclick="_editSchedule(\'' + sched.id + '\')" class="btn btn-outline btn-sm" style="font-size:0.8em;">\u270f\ufe0f Edit</button>'
+            + '<button onclick="_resumeSchedule(\'' + sched.id + '\')" class="btn btn-primary btn-sm" style="font-size:0.8em;background:#10b981;border-color:#10b981;">\u25b6 Resume</button>'
             + '<button onclick="_deleteSchedule(\'' + sched.id + '\')" class="btn btn-outline btn-sm" style="font-size:0.8em;color:#ef4444;border-color:#ef4444;">\ud83d\uddd1 Delete</button>';
     }
 
@@ -5670,6 +5672,86 @@ async function _deleteSchedule(scheduleId) {
         notify('Failed to delete: ' + (e.message || ''), 'error');
     }
 }
+async function _editSchedule(scheduleId) {
+    // Find the schedule in local state
+    var sched = _schedRecommendations.find(function(r) { return r.id === scheduleId; });
+    if (!sched) { notify('Schedule not found', 'error'); return; }
+
+    // Open the wizard pre-filled with existing values
+    var wizard = document.getElementById('act-sched-wizard');
+    if (!wizard) return;
+
+    // Pre-fill type
+    var typeEl = document.getElementById('sched-type');
+    if (typeEl) typeEl.value = sched.type || 'ec2-stop-start';
+
+    // Pre-fill name
+    var nameEl = document.getElementById('sched-name');
+    if (nameEl) nameEl.value = sched.name || '';
+
+    // Pre-fill frequency
+    var freqEl = document.getElementById('sched-frequency');
+    if (freqEl) freqEl.value = sched.frequency || 'weekdays';
+
+    // Pre-fill timezone
+    var tzEl = document.getElementById('sched-tz');
+    if (tzEl && sched.config && sched.config.timezone) tzEl.value = sched.config.timezone;
+
+    // Pre-fill account
+    var acctEl = document.getElementById('sched-account');
+    if (acctEl && sched.config && sched.config.accountId) {
+        // Populate accounts first
+        var connected = (typeof allAccounts !== 'undefined' ? allAccounts : []).filter(function(a) { return a.connectionStatus === 'connected'; });
+        acctEl.innerHTML = '';
+        connected.forEach(function(a) {
+            var opt = document.createElement('option');
+            opt.value = a.accountId;
+            opt.textContent = (a.accountName || 'Account') + ' (' + a.accountId + ')';
+            acctEl.appendChild(opt);
+        });
+        acctEl.value = sched.config.accountId;
+    }
+
+    // Pre-fill notes
+    var notesEl = document.getElementById('sched-notes');
+    if (notesEl) notesEl.value = sched.notes || '';
+
+    // Pre-fill stop/start times
+    if (sched.config) {
+        var stopTimeEl = document.getElementById('sched-stop-time');
+        var startTimeEl = document.getElementById('sched-start-time');
+        var timeOfDayEl = document.getElementById('sched-time-of-day');
+        if (stopTimeEl && sched.config.stopTime) stopTimeEl.value = sched.config.stopTime;
+        if (startTimeEl && sched.config.startTime) startTimeEl.value = sched.config.startTime;
+        if (timeOfDayEl && sched.config.stopTime) timeOfDayEl.value = sched.config.stopTime;
+
+        // Pre-fill days
+        if (sched.config.stopDays) {
+            var dayMap = {Mon: 'mon', Tue: 'tue', Wed: 'wed', Thu: 'thu', Fri: 'fri', Sat: 'sat', Sun: 'sun'};
+            var selectedDays = sched.config.stopDays.map(function(d) { return dayMap[d] || d.toLowerCase(); });
+            document.querySelectorAll('.sched-dow').forEach(function(chk) {
+                chk.checked = selectedDays.indexOf(chk.value) !== -1;
+            });
+        }
+    }
+
+    // Update wizard UI
+    _updateSchedWizard();
+    _updateSchedGranularity();
+
+    // Change submit button to "Update Schedule" and store the editing schedule ID
+    var submitBtn = document.getElementById('sched-wizard-submit');
+    if (submitBtn) {
+        submitBtn.textContent = 'Update Schedule';
+        submitBtn._editingScheduleId = scheduleId;
+    }
+
+    var errEl = document.getElementById('sched-wizard-error');
+    if (errEl) errEl.textContent = '';
+
+    wizard.hidden = false;
+}
+
 
 async function _updateRecStatus(recId, status) {
     try {
@@ -5944,9 +6026,17 @@ async function _createSchedule() {
     errEl.textContent = '';
 
     try {
-        var data = await api('POST', '/members/schedules/create', {
-            type: type, name: name, frequency: frequency, config: config, notes: notes
-        });
+        var editId = submitBtn._editingScheduleId || null;
+        var data;
+        if (editId) {
+            data = await api('PUT', '/members/schedules/edit', {
+                scheduleId: editId, type: type, name: name, frequency: frequency, config: config, notes: notes
+            });
+        } else {
+            data = await api('POST', '/members/schedules/create', {
+                type: type, name: name, frequency: frequency, config: config, notes: notes
+            });
+        }
         notify(data.message || 'Schedule created!', 'success');
         // Add to local list and re-render
         if (data.schedule) {
@@ -5961,6 +6051,7 @@ async function _createSchedule() {
             _renderSchedulerList();
         }
         document.getElementById('act-sched-wizard').hidden = true;
+        if (submitBtn) { submitBtn._editingScheduleId = null; submitBtn.textContent = 'Create Schedule'; }
         // Reload from backend to get the full updated list
         await _loadSchedulerData();
     } catch (e) {
