@@ -202,7 +202,7 @@ def resolve_resources_by_tag(session, tag_filter, schedule_type):
 # ===================================================================
 
 def execute_ec2_stop(session, resources):
-    """Stop EC2 instances. Checks state before acting (idempotent)."""
+    """Stop EC2 instances. Checks state and instance lifecycle before acting (idempotent)."""
     ec2 = session.client('ec2')
     results = []
     instance_ids = [_extract_resource_id(r) for r in resources]
@@ -210,11 +210,34 @@ def execute_ec2_stop(session, resources):
     for iid in instance_ids:
         try:
             desc = ec2.describe_instances(InstanceIds=[iid])
-            state = desc['Reservations'][0]['Instances'][0]['State']['Name']
+            instance = desc['Reservations'][0]['Instances'][0]
+            state = instance['State']['Name']
+            lifecycle = instance.get('InstanceLifecycle', '')  # 'spot' or '' (on-demand)
+
             if state in ('stopped', 'stopping'):
                 logger.info(f"EC2 {iid} already {state}, skipping stop")
                 results.append({'resource_id': iid, 'success': True, 'error': None})
                 continue
+
+            # Spot Instances with one-time requests cannot be stopped — only persistent Spot can
+            if lifecycle == 'spot':
+                # Check if it's a persistent Spot request (can be stopped) or one-time (cannot)
+                spot_req_id = instance.get('SpotInstanceRequestId', '')
+                can_stop = False
+                if spot_req_id:
+                    try:
+                        spot_resp = ec2.describe_spot_instance_requests(SpotInstanceRequestIds=[spot_req_id])
+                        spot_type = spot_resp['SpotInstanceRequests'][0].get('Type', 'one-time')
+                        can_stop = (spot_type == 'persistent')
+                    except Exception:
+                        pass
+
+                if not can_stop:
+                    msg = f'Spot Instance {iid} has a one-time request — cannot be stopped (only terminated). Skipping.'
+                    logger.warning(msg)
+                    results.append({'resource_id': iid, 'success': False, 'error': msg})
+                    continue
+
             ec2.stop_instances(InstanceIds=[iid])
             logger.info(f"EC2 {iid} stop initiated")
             results.append({'resource_id': iid, 'success': True, 'error': None})
