@@ -6249,7 +6249,18 @@ def handle_tag_scan(event):
         body = {}
 
     account_ids = body.get('accountIds', [])
-    required_tags = body.get('requiredTags', ['Environment', 'Owner', 'CostCenter', 'Application'])
+    # Always load tag policy from DynamoDB (ignore frontend requiredTags if policy exists)
+    required_tags = None
+    try:
+        members_table_tp = dynamodb.Table(MEMBERS_TABLE_NAME)
+        tp_resp = members_table_tp.get_item(Key={'email': member_email}, ProjectionExpression='tagPolicy')
+        tp = tp_resp.get('Item', {}).get('tagPolicy', {})
+        if tp and tp.get('requiredKeys'):
+            required_tags = tp['requiredKeys']
+    except Exception:
+        pass
+    if not required_tags:
+        required_tags = body.get('requiredTags', ['Environment', 'Owner', 'CostCenter', 'Application'])
 
     # Consume tokens
     tier = _get_member_tier(member_email)

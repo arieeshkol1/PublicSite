@@ -5672,7 +5672,10 @@ async function _runTagScan(accountIds) {
     if (tagStatus) tagStatus.textContent = 'Scanning for untagged resources...';
 
     try {
-        // Use tag policy required keys (loaded from Configure > Tag Policy)
+        // Ensure tag policy is loaded before scanning
+        if (!_tagPolicyCache) {
+            try { await _loadTagPolicy(); } catch(e) {}
+        }
         var policyKeys = (_tagPolicyCache && _tagPolicyCache.requiredKeys) ? _tagPolicyCache.requiredKeys : ['Environment', 'Owner', 'CostCenter', 'Application'];
         var data = await api('POST', '/members/tags/scan', {
             accountIds: accountIds,
