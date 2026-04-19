@@ -8554,7 +8554,7 @@ def _check_ce_preferences(ce_client):
                 return {
                     'id': 'ce_preferences',
                     'name': 'CE Preferences (Right-Sizing)',
-                    'group': 'slashmybill',
+                    'group': 'aws_console',
                     'status': 'pass',
                     'description': 'Rightsizing recommendations are available',
                     'guidance': 'EC2 rightsizing recommendations help identify over-provisioned instances.',
@@ -8566,12 +8566,12 @@ def _check_ce_preferences(ce_client):
                 return {
                     'id': 'ce_preferences',
                     'name': 'CE Preferences (Right-Sizing)',
-                    'group': 'slashmybill',
-                    'status': 'warning',
+                    'group': 'aws_console',
+                    'status': 'info',
                     'description': 'Rightsizing recommendations may not be enabled',
                     'guidance': 'Click Enable to turn on rightsizing recommendations, or verify in the AWS Billing console under Preferences.',
-                    'fixAction': 'enable_rightsizing',
-                    'fixLabel': 'Enable',
+                    'fixAction': None,
+                    'fixLabel': None,
                     'details': {'rightsizing': 'unknown'}
                 }
         except Exception as e:
@@ -8582,8 +8582,8 @@ def _check_ce_preferences(ce_client):
                 'status': 'warning',
                 'description': 'Could not verify rightsizing preferences',
                 'guidance': 'Click Enable to turn on rightsizing recommendations, or verify in the AWS Billing console under Preferences.',
-                'fixAction': 'enable_rightsizing',
-                'fixLabel': 'Enable',
+                'fixAction': None,
+                'fixLabel': None,
                 'details': {}
             }
     except Exception as e:
@@ -9242,7 +9242,7 @@ def handle_healthcheck_fix(event):
                 updated_item = {
                     'id': 'ce_preferences',
                     'name': 'CE Preferences (Right-Sizing)',
-                    'group': 'slashmybill',
+                    'group': 'aws_console',
                     'status': 'pass',
                     'description': 'Cost Explorer preferences updated successfully',
                 }
@@ -9267,7 +9267,7 @@ def handle_healthcheck_fix(event):
                     updated_item = {
                         'id': 'ce_preferences',
                         'name': 'CE Preferences (Right-Sizing)',
-                        'group': 'slashmybill',
+                        'group': 'aws_console',
                         'status': 'pass',
                         'description': 'Rightsizing preferences enabled (verify in Cost Explorer)',
                     }
