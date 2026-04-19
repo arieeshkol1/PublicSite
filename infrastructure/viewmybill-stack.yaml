@@ -1371,6 +1371,20 @@ Resources:
       RouteKey: 'POST /member/update-tier'
       Target: !Sub 'integrations/${MemberIntegration}'
 
+  MemberHealthcheckScanRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'POST /members/healthcheck/scan'
+      Target: !Sub 'integrations/${MemberIntegration}'
+
+  MemberHealthcheckFixRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'POST /members/healthcheck/fix'
+      Target: !Sub 'integrations/${MemberIntegration}'
+
   MemberHandlerInvokePermission:
     Type: AWS::Lambda::Permission
     Properties:

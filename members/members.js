@@ -2658,6 +2658,9 @@ function renderDashboardWidgets(data) {
     // Budget KPI — show budget status if budgets exist (loaded async)
     _loadBudgetKPI(kpiBar);
 
+    // FinOps Score KPI — show from cached healthcheck results
+    _loadFinOpsScoreKPI(kpiBar, data);
+
     // Grid widgets — use customizable layout
     grid.innerHTML = '';
     _buildDashWidgets(grid);
@@ -4231,6 +4234,413 @@ function _switchActSection(section) {
     if (section === 'scheduler') _loadSchedulerData();
 }
 
+// ============================================================
+// FinOps Settings Healthcheck — Configure Tab
+// ============================================================
+
+function _switchConfigSection(section) {
+    document.querySelectorAll('#config-nav .act-nav-btn').forEach(function(b) {
+        b.classList.toggle('active', b.dataset.section === section);
+    });
+    var accounts = document.getElementById('config-section-accounts');
+    var finops = document.getElementById('config-section-finops-settings');
+    if (accounts) accounts.style.display = section === 'accounts' ? 'block' : 'none';
+    if (finops) finops.style.display = section === 'finops-settings' ? 'block' : 'none';
+    if (section === 'finops-settings') _populateFinOpsAccountSelector();
+}
+
+function switchToFinOpsSettings() {
+    // Navigate to Configure tab -> FinOps Settings section
+    document.querySelectorAll('.member-tab').forEach(function(t) {
+        t.classList.toggle('active', t.dataset.tab === 'accounts-tab');
+    });
+    document.querySelectorAll('.member-tab-content').forEach(function(c) {
+        c.hidden = c.id !== 'accounts-tab';
+    });
+    _switchConfigSection('finops-settings');
+}
+
+function _populateFinOpsAccountSelector() {
+    var select = document.getElementById('finops-account-select');
+    if (!select) return;
+    var currentVal = select.value;
+    select.innerHTML = '<option value="">Select an account...</option>';
+    var connected = (typeof allAccounts !== 'undefined' ? allAccounts : []).filter(function(a) { return a.connectionStatus === 'connected'; });
+    connected.forEach(function(a) {
+        var opt = document.createElement('option');
+        opt.value = a.accountId;
+        opt.textContent = (a.accountName || 'Account') + ' (' + a.accountId + ')';
+        select.appendChild(opt);
+    });
+    if (currentVal) select.value = currentVal;
+}
+
+function _onFinOpsAccountChange() {
+    var select = document.getElementById('finops-account-select');
+    if (!select || !select.value) return;
+    // Clear previous results
+    var checklist = document.getElementById('finops-checklist');
+    var scoreBar = document.getElementById('finops-score-bar');
+    var typeBadge = document.getElementById('finops-account-type');
+    var errorBanner = document.getElementById('finops-error-banner');
+    var permBanner = document.getElementById('finops-permission-banner');
+    if (checklist) checklist.innerHTML = '';
+    if (scoreBar) scoreBar.style.display = 'none';
+    if (typeBadge) typeBadge.style.display = 'none';
+    if (errorBanner) errorBanner.style.display = 'none';
+    if (permBanner) permBanner.style.display = 'none';
+}
+
+async function _scanFinOpsSettings() {
+    var select = document.getElementById('finops-account-select');
+    if (!select || !select.value) {
+        alert('Please select an account first.');
+        return;
+    }
+    var accountId = select.value;
+    var scanBtn = document.getElementById('finops-scan-btn');
+    var checklist = document.getElementById('finops-checklist');
+    var scoreBar = document.getElementById('finops-score-bar');
+    var typeBadge = document.getElementById('finops-account-type');
+    var emptyState = document.getElementById('finops-empty');
+    var errorBanner = document.getElementById('finops-error-banner');
+    var permBanner = document.getElementById('finops-permission-banner');
+
+    if (scanBtn) { scanBtn.disabled = true; scanBtn.textContent = 'Scanning...'; }
+    if (checklist) checklist.innerHTML = '<div style="text-align:center;padding:40px;color:#6b7280;"><div class="spinner" style="margin:0 auto 12px;"></div>Scanning FinOps settings for account ' + esc(accountId) + '...</div>';
+    if (emptyState) emptyState.style.display = 'none';
+    if (errorBanner) errorBanner.style.display = 'none';
+    if (permBanner) permBanner.style.display = 'none';
+
+    try {
+        var data = await api('POST', '/members/healthcheck/scan', { accountId: accountId });
+        _renderFinOpsChecklist(data);
+        _renderFinOpsScore(data.settingsScore);
+        // Show account type badge
+        if (typeBadge) {
+            typeBadge.style.display = 'block';
+            var badge = data.accountType === 'management'
+                ? '<span style="background:#fef3c7;color:#92400e;padding:4px 12px;border-radius:100px;font-size:0.85em;font-weight:600;">👑 Management Account</span>'
+                : '<span style="background:#dbeafe;color:#1e40af;padding:4px 12px;border-radius:100px;font-size:0.85em;font-weight:600;">🔗 Linked Account</span>';
+            typeBadge.innerHTML = badge;
+            if (data.accountTypeNote) {
+                typeBadge.innerHTML += ' <span style="color:#6b7280;font-size:0.8em;margin-left:8px;">' + esc(data.accountTypeNote) + '</span>';
+            }
+        }
+    } catch (err) {
+        if (checklist) checklist.innerHTML = '';
+        if (errorBanner) {
+            errorBanner.style.display = 'block';
+            var errText = document.getElementById('finops-error-text');
+            if (errText) errText.textContent = '❌ Scan failed: ' + (err.message || 'Unknown error');
+        }
+        if (scoreBar) scoreBar.style.display = 'none';
+        if (typeBadge) typeBadge.style.display = 'none';
+    } finally {
+        if (scanBtn) { scanBtn.disabled = false; scanBtn.textContent = '🔍 Scan Settings'; }
+    }
+}
+
+function _renderFinOpsChecklist(data) {
+    var container = document.getElementById('finops-checklist');
+    if (!container) return;
+    container.innerHTML = '';
+    var items = data.checklistItems || [];
+    if (!items.length) {
+        container.innerHTML = '<div style="color:#6b7280;text-align:center;padding:20px;">No checklist items returned.</div>';
+        return;
+    }
+    items.forEach(function(item) {
+        var statusIcon = '⚙️';
+        var statusColor = '#6b7280';
+        if (item.status === 'pass') { statusIcon = '✅'; statusColor = '#22c55e'; }
+        else if (item.status === 'warning') { statusIcon = '⚠️'; statusColor = '#f59e0b'; }
+        else if (item.status === 'fail') { statusIcon = '❌'; statusColor = '#ef4444'; }
+        else if (item.status === 'error') { statusIcon = '⚙️'; statusColor = '#6b7280'; }
+
+        var card = document.createElement('div');
+        card.className = 'finops-checklist-item';
+        card.id = 'finops-item-' + item.id;
+        card.style.cssText = 'background:#161b22;border:1px solid #30363d;border-radius:8px;padding:14px 16px;margin-bottom:10px;display:flex;align-items:flex-start;gap:12px;';
+
+        var iconDiv = '<div style="font-size:1.3em;flex-shrink:0;margin-top:2px;">' + statusIcon + '</div>';
+
+        var contentHtml = '<div style="flex:1;">';
+        contentHtml += '<div style="font-weight:600;color:#e6edf3;margin-bottom:4px;">' + esc(item.name) + '</div>';
+        contentHtml += '<div style="color:#8b949e;font-size:0.88em;margin-bottom:4px;">' + esc(item.description) + '</div>';
+        if (item.guidance) {
+            contentHtml += '<div style="color:#6b7280;font-size:0.82em;font-style:italic;margin-bottom:6px;">' + esc(item.guidance) + '</div>';
+        }
+
+        // Deep links for budget and tag coverage items
+        if (item.id === 'budgets' && !item.fixAction) {
+            contentHtml += '<a href="#" onclick="_switchToPlanBudget();return false;" style="color:#6366f1;font-size:0.85em;text-decoration:underline;">Go to Plan → Budget</a> ';
+        }
+        if (item.id === 'tag_coverage' && !item.fixAction) {
+            contentHtml += '<a href="#" onclick="_switchToPlanTagging();return false;" style="color:#6366f1;font-size:0.85em;text-decoration:underline;">Go to Plan → Tag Resources</a> ';
+        }
+
+        contentHtml += '</div>';
+
+        // Fix button
+        var actionHtml = '';
+        if (item.fixAction && item.status !== 'pass') {
+            var btnLabel = esc(item.fixLabel || 'Fix');
+            actionHtml = '<div style="flex-shrink:0;"><button class="btn btn-primary btn-sm finops-fix-btn" data-item-id="' + ea(item.id) + '" data-fix-action="' + ea(item.fixAction) + '" onclick="_fixFinOpsSetting('' + ea(data.accountId) + '','' + ea(item.fixAction) + '')" style="font-size:0.82em;white-space:nowrap;">' + btnLabel + '</button></div>';
+        }
+
+        card.innerHTML = iconDiv + contentHtml + actionHtml;
+        container.appendChild(card);
+    });
+
+    // Store current data for score recalculation
+    container.dataset.accountId = data.accountId || '';
+    container.dataset.scanData = JSON.stringify(data);
+}
+
+function _renderFinOpsScore(score) {
+    var bar = document.getElementById('finops-score-bar');
+    if (!bar || !score) return;
+    bar.style.display = 'block';
+    var passed = score.passed || 0;
+    var total = score.total || 1;
+    var pct = Math.round((passed / total) * 100);
+    var color = pct >= 80 ? '#22c55e' : pct >= 50 ? '#f59e0b' : '#ef4444';
+    var bgColor = pct >= 80 ? 'rgba(34,197,94,0.15)' : pct >= 50 ? 'rgba(245,158,11,0.15)' : 'rgba(239,68,68,0.15)';
+
+    bar.innerHTML =
+        '<div style="background:#161b22;border:1px solid #30363d;border-radius:8px;padding:14px 16px;">' +
+            '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">' +
+                '<span style="color:#e6edf3;font-weight:600;">FinOps Score</span>' +
+                '<span style="color:' + color + ';font-weight:700;font-size:1.2em;">' + passed + '/' + total + '</span>' +
+            '</div>' +
+            '<div style="background:#21262d;border-radius:4px;height:8px;overflow:hidden;">' +
+                '<div style="background:' + color + ';height:100%;width:' + pct + '%;border-radius:4px;transition:width 0.5s;"></div>' +
+            '</div>' +
+            '<div style="color:#8b949e;font-size:0.8em;margin-top:6px;">' + passed + '/' + total + ' FinOps settings configured (' + pct + '%)</div>' +
+        '</div>';
+}
+
+async function _fixFinOpsSetting(accountId, fixAction, params) {
+    var container = document.getElementById('finops-checklist');
+    if (!container) return;
+
+    // Find the fix button and show loading
+    var btns = container.querySelectorAll('.finops-fix-btn[data-fix-action="' + fixAction + '"]');
+    btns.forEach(function(b) { b.disabled = true; b.textContent = 'Fixing...'; });
+
+    var errorBanner = document.getElementById('finops-error-banner');
+    var permBanner = document.getElementById('finops-permission-banner');
+
+    try {
+        var body = { accountId: accountId, fixAction: fixAction };
+        if (params) body.params = params;
+        var result = await api('POST', '/members/healthcheck/fix', body);
+
+        if (result.success && result.updatedItem) {
+            // Update the individual checklist item in the UI
+            var itemEl = document.getElementById('finops-item-' + result.updatedItem.id);
+            if (itemEl) {
+                // Re-render just this item by triggering a rescan of the stored data
+                var scanDataStr = container.dataset.scanData;
+                if (scanDataStr) {
+                    var scanData = JSON.parse(scanDataStr);
+                    // Update the item in the stored data
+                    var items = scanData.checklistItems || [];
+                    for (var i = 0; i < items.length; i++) {
+                        if (items[i].id === result.updatedItem.id) {
+                            items[i] = Object.assign(items[i], result.updatedItem);
+                            break;
+                        }
+                    }
+                    // Recalculate score
+                    var passed = 0;
+                    items.forEach(function(it) { if (it.status === 'pass') passed++; });
+                    scanData.settingsScore = { passed: passed, total: items.length };
+                    container.dataset.scanData = JSON.stringify(scanData);
+                    _renderFinOpsChecklist(scanData);
+                    _renderFinOpsScore(scanData.settingsScore);
+                }
+            }
+        }
+    } catch (err) {
+        // Check for permission error (403)
+        if (err.status === 403) {
+            if (permBanner) permBanner.style.display = 'block';
+        }
+        // Show inline error on the item
+        btns.forEach(function(b) {
+            b.disabled = false;
+            b.textContent = b.dataset.fixAction ? (b.getAttribute('data-fix-label') || 'Retry') : 'Retry';
+        });
+        if (errorBanner) {
+            errorBanner.style.display = 'block';
+            var errText = document.getElementById('finops-error-text');
+            if (errText) errText.textContent = '❌ Fix failed: ' + (err.message || 'Unknown error');
+        }
+    }
+}
+
+function _switchToPlanBudget() {
+    document.querySelectorAll('.member-tab').forEach(function(t) {
+        t.classList.toggle('active', t.dataset.tab === 'plan-tab');
+    });
+    document.querySelectorAll('.member-tab-content').forEach(function(c) {
+        c.hidden = c.id !== 'plan-tab';
+    });
+    _switchPlanSection('plan-budget');
+}
+
+function _switchToPlanTagging() {
+    document.querySelectorAll('.member-tab').forEach(function(t) {
+        t.classList.toggle('active', t.dataset.tab === 'plan-tab');
+    });
+    document.querySelectorAll('.member-tab-content').forEach(function(c) {
+        c.hidden = c.id !== 'plan-tab';
+    });
+    _switchPlanSection('plan-tagging');
+}
+
+function _openSetupWizardForAccount() {
+    var select = document.getElementById('finops-account-select');
+    if (select && select.value) {
+        // Trigger the setup wizard for the selected account
+        var setupBtns = document.querySelectorAll('.btn-icon-test[data-a="setup"][data-id="' + select.value + '"]');
+        if (setupBtns.length > 0) setupBtns[0].click();
+    }
+}
+
+function _loadFinOpsScoreKPI(kpiBar, data) {
+    if (!kpiBar) return;
+    var hcResults = (data && data.healthcheckResults) || {};
+    var accountIds = Object.keys(hcResults);
+    var kpiDiv = document.createElement('div');
+    kpiDiv.id = 'dash-kpi-finops-score';
+    kpiDiv.style.cssText = 'background:#161b22;border:1px solid #30363d;border-radius:8px;padding:12px 16px;flex:1;min-width:130px;cursor:pointer;';
+    kpiDiv.onclick = function() { switchToFinOpsSettings(); };
+
+    if (accountIds.length === 0) {
+        kpiDiv.innerHTML =
+            '<div style="color:#8b949e;font-size:0.75em;">FinOps Score</div>' +
+            '<div style="color:#6b7280;font-size:1em;font-weight:600;">Not scanned</div>' +
+            '<div style="color:#6366f1;font-size:0.75em;margin-top:2px;cursor:pointer;" onclick="event.stopPropagation();switchToFinOpsSettings();">Scan →</div>';
+    } else {
+        // Aggregate scores across all accounts
+        var totalPassed = 0, totalItems = 0;
+        accountIds.forEach(function(aid) {
+            var r = hcResults[aid];
+            if (r && r.settingsScore) {
+                totalPassed += (r.settingsScore.passed || 0);
+                totalItems += (r.settingsScore.total || 0);
+            }
+        });
+        var pct = totalItems > 0 ? Math.round((totalPassed / totalItems) * 100) : 0;
+        var color = pct >= 80 ? '#22c55e' : pct >= 50 ? '#f59e0b' : '#ef4444';
+        kpiDiv.innerHTML =
+            '<div style="color:#8b949e;font-size:0.75em;">FinOps Score</div>' +
+            '<div style="color:' + color + ';font-size:1.3em;font-weight:700;">' + totalPassed + '/' + totalItems + '</div>';
+    }
+    kpiBar.appendChild(kpiDiv);
+}
+
+function _injectFinOpsActCard(grid) {
+    if (!grid) return;
+    // Check if we have cached healthcheck results from dashboard data
+    var hcResults = (dashDataCache && dashDataCache.healthcheckResults) || {};
+    var accountIds = Object.keys(hcResults);
+
+    var card = document.createElement('div');
+    card.style.cssText = 'background:#161b22;border:1px solid #30363d;border-radius:10px;padding:16px;';
+
+    if (accountIds.length === 0) {
+        card.innerHTML =
+            '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">' +
+                '<span style="font-weight:600;color:#e6edf3;">⚙️ FinOps Settings</span>' +
+            '</div>' +
+            '<div style="color:#8b949e;font-size:0.88em;margin-bottom:12px;">Run a FinOps Settings scan in Configure → FinOps Settings</div>' +
+            '<button onclick="switchToFinOpsSettings()" class="btn btn-outline btn-sm" style="font-size:0.82em;">Open Settings →</button>';
+        grid.appendChild(card);
+        return;
+    }
+
+    // Check for failing items across all accounts
+    var failingItems = [];
+    var totalPassed = 0, totalItems = 0;
+    var isRecent = false;
+    accountIds.forEach(function(aid) {
+        var r = hcResults[aid];
+        if (!r) return;
+        // Check if scan is within 24 hours
+        if (r.scanTimestamp) {
+            var scanTime = new Date(r.scanTimestamp).getTime();
+            if (Date.now() - scanTime < 24 * 60 * 60 * 1000) isRecent = true;
+        }
+        if (r.settingsScore) {
+            totalPassed += (r.settingsScore.passed || 0);
+            totalItems += (r.settingsScore.total || 0);
+        }
+        (r.checklistItems || []).forEach(function(item) {
+            if (item.status === 'fail' || item.status === 'error') {
+                failingItems.push(item);
+            }
+        });
+    });
+
+    if (!isRecent && accountIds.length > 0) {
+        card.innerHTML =
+            '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">' +
+                '<span style="font-weight:600;color:#e6edf3;">⚙️ FinOps Settings</span>' +
+            '</div>' +
+            '<div style="color:#8b949e;font-size:0.88em;margin-bottom:12px;">Last scan is older than 24 hours. Run a new scan in Configure → FinOps Settings.</div>' +
+            '<button onclick="switchToFinOpsSettings()" class="btn btn-outline btn-sm" style="font-size:0.82em;">Scan Settings →</button>';
+        grid.appendChild(card);
+        return;
+    }
+
+    if (failingItems.length === 0) {
+        card.innerHTML =
+            '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">' +
+                '<span style="font-weight:600;color:#e6edf3;">⚙️ FinOps Settings</span>' +
+                '<span style="background:#064e3b;color:#6ee7b7;padding:2px 8px;border-radius:100px;font-size:0.75em;font-weight:600;">All Good ✅</span>' +
+            '</div>' +
+            '<div style="color:#8b949e;font-size:0.88em;">All FinOps settings are configured. Score: ' + totalPassed + '/' + totalItems + '</div>';
+        grid.appendChild(card);
+        return;
+    }
+
+    // Show failing items
+    var pct = totalItems > 0 ? Math.round((totalPassed / totalItems) * 100) : 0;
+    var color = pct >= 80 ? '#22c55e' : pct >= 50 ? '#f59e0b' : '#ef4444';
+    var badgeColor = failingItems.length > 0 ? '#dc2626' : '#22c55e';
+
+    var itemsHtml = '<ul style="list-style:none;padding:0;margin:8px 0;">';
+    failingItems.slice(0, 3).forEach(function(item) {
+        var icon = item.status === 'fail' ? '❌' : '⚙️';
+        itemsHtml += '<li style="color:#c9d1d9;font-size:0.85em;padding:2px 0;">' + icon + ' ' + esc(item.name) + '</li>';
+    });
+    if (failingItems.length > 3) {
+        itemsHtml += '<li style="color:#6b7280;font-size:0.8em;padding:2px 0;">...and ' + (failingItems.length - 3) + ' more</li>';
+    }
+    itemsHtml += '</ul>';
+
+    card.innerHTML =
+        '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">' +
+            '<span style="font-weight:600;color:#e6edf3;">⚙️ FinOps Settings</span>' +
+            '<span style="background:' + badgeColor + ';color:#fff;padding:2px 8px;border-radius:100px;font-size:0.75em;font-weight:600;">' + failingItems.length + ' issue' + (failingItems.length !== 1 ? 's' : '') + '</span>' +
+        '</div>' +
+        '<div style="color:#8b949e;font-size:0.88em;">Score: <span style="color:' + color + ';font-weight:600;">' + totalPassed + '/' + totalItems + '</span> configured</div>' +
+        itemsHtml +
+        '<button onclick="switchToFinOpsSettings()" class="btn btn-primary btn-sm" style="font-size:0.82em;margin-top:4px;">Fix in Settings →</button>';
+
+    grid.appendChild(card);
+}
+
+
+
+
+
+
+
 function initActTab() {
     var scanBtn = $('act-scan-btn');
     if (!scanBtn) return;
@@ -4307,6 +4717,9 @@ async function _actRunScan(accountIds) {
                 if (grid) grid.appendChild(_actBuildCleanCard(cat));
             }
         });
+
+        // FinOps Settings card — check for cached healthcheck results
+        _injectFinOpsActCard(grid);
 
     } catch (err) {
         if (status) status.textContent = '❌ Scan failed: ' + (err.message || 'Unknown error');

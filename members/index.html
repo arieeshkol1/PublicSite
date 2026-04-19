@@ -525,30 +525,99 @@
                 </div>
             </div>
             <div id="accounts-tab" class="member-tab-content" hidden>
-            <div class="tab-toolbar">
-                <h2>AWS Accounts</h2>
-                <button id="add-account-btn" class="btn btn-primary btn-sm">+ Add Account</button>
-            </div>
-            <div class="table-wrapper">
-                <table id="accounts-table" class="data-table">
-                    <thead>
-                        <tr>
-                            <th>#</th>
-                            <th>Account ID</th>
-                            <th>Name</th>
-                            <th>Role Name</th>
-                            <th>Status</th>
-                            <th>Added</th>
-                            <th>Last Tested</th>
-                            <th>Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody id="accounts-tbody"></tbody>
-                </table>
-                <div id="accounts-empty" class="empty-state" hidden>
-                    <p>No AWS accounts connected yet. Click "Add Account" to get started.</p>
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+                    <h2 style="margin:0;">Configure</h2>
                 </div>
-            </div>
+
+                <div style="display:flex;gap:0;min-height:460px;">
+                    <!-- Left Navigation Pane -->
+                    <div id="config-nav" style="width:180px;flex-shrink:0;border-right:1px solid #e5e7eb;padding:12px 0;">
+                        <button class="act-nav-btn active" data-section="accounts" onclick="_switchConfigSection('accounts')">
+                            <span style="font-size:1.2em;">🔧</span> AWS Accounts
+                        </button>
+                        <button class="act-nav-btn" data-section="finops-settings" onclick="_switchConfigSection('finops-settings')">
+                            <span style="font-size:1.2em;">⚙️</span> FinOps Settings
+                        </button>
+                    </div>
+
+                    <!-- Right Content Area -->
+                    <div style="flex:1;padding:20px 24px;overflow-y:auto;">
+
+                        <!-- AWS Accounts Sub-Section -->
+                        <div id="config-section-accounts">
+                            <div class="tab-toolbar">
+                                <h2>AWS Accounts</h2>
+                                <button id="add-account-btn" class="btn btn-primary btn-sm">+ Add Account</button>
+                            </div>
+                            <div class="table-wrapper">
+                                <table id="accounts-table" class="data-table">
+                                    <thead>
+                                        <tr>
+                                            <th>#</th>
+                                            <th>Account ID</th>
+                                            <th>Name</th>
+                                            <th>Role Name</th>
+                                            <th>Status</th>
+                                            <th>Added</th>
+                                            <th>Last Tested</th>
+                                            <th>Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="accounts-tbody"></tbody>
+                                </table>
+                                <div id="accounts-empty" class="empty-state" hidden>
+                                    <p>No AWS accounts connected yet. Click "Add Account" to get started.</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- FinOps Settings Sub-Section -->
+                        <div id="config-section-finops-settings" style="display:none;">
+                            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+                                <h2 style="margin:0;color:#1f2937;">FinOps Settings</h2>
+                                <div style="display:flex;align-items:center;gap:8px;">
+                                    <label style="color:#6b7280;font-size:0.85em;">Account:</label>
+                                    <select id="finops-account-select" style="padding:6px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:0.9em;background:#fff;color:#1f2937;" onchange="_onFinOpsAccountChange()">
+                                        <option value="">Select an account...</option>
+                                    </select>
+                                </div>
+                            </div>
+
+                            <!-- Error banner -->
+                            <div id="finops-error-banner" style="display:none;background:#7f1d1d;border:1px solid #ef4444;border-radius:8px;padding:12px 16px;margin-bottom:16px;color:#fca5a5;font-size:0.9em;">
+                                <span id="finops-error-text"></span>
+                                <button onclick="_scanFinOpsSettings()" class="btn btn-outline btn-sm" style="margin-left:12px;color:#fca5a5;border-color:#fca5a5;">Retry</button>
+                            </div>
+
+                            <!-- Permission update banner -->
+                            <div id="finops-permission-banner" style="display:none;background:#78350f;border:1px solid #f59e0b;border-radius:8px;padding:12px 16px;margin-bottom:16px;color:#fde68a;font-size:0.85em;">
+                                ⚠️ Some fix actions require updated permissions. <a href="#" onclick="_openSetupWizardForAccount();return false;" style="color:#fbbf24;text-decoration:underline;">Update your CloudFormation stack</a> to enable one-click fixes.
+                            </div>
+
+                            <!-- Score display -->
+                            <div id="finops-score-bar" style="display:none;margin-bottom:16px;"></div>
+
+                            <!-- Account type badge -->
+                            <div id="finops-account-type" style="display:none;margin-bottom:16px;font-size:0.9em;"></div>
+
+                            <!-- Checklist items container -->
+                            <div id="finops-checklist" style="margin-bottom:16px;"></div>
+
+                            <!-- Scan button -->
+                            <div style="text-align:center;padding:20px 0;">
+                                <button id="finops-scan-btn" onclick="_scanFinOpsSettings()" class="btn btn-primary btn-sm" style="font-size:0.95em;">🔍 Scan Settings</button>
+                            </div>
+
+                            <!-- Empty state -->
+                            <div id="finops-empty" style="text-align:center;padding:40px 20px;color:#6b7280;">
+                                <div style="font-size:2.5em;margin-bottom:12px;">⚙️</div>
+                                <div style="font-size:1em;margin-bottom:6px;color:#1f2937;">FinOps Settings Healthcheck</div>
+                                <div style="font-size:0.9em;color:#6b7280;">Select an account and click "Scan Settings" to audit your<br>AWS billing and cost management best practices.</div>
+                            </div>
+                        </div>
+
+                    </div>
+                </div>
             </div>
             <div id="ai-tab" class="member-tab-content" hidden>
                 <div class="lab-container">

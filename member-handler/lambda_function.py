@@ -121,6 +121,8 @@ def lambda_handler(event, context):
         'PUT /members/budgets/update': handle_update_budget,
         'DELETE /members/budgets/delete': handle_delete_budget,
         'GET /members/live-metrics': handle_live_metrics,
+        'POST /members/healthcheck/scan': handle_healthcheck_scan,
+        'POST /members/healthcheck/fix': handle_healthcheck_fix,
     }
 
     handler = routes.get(route_key)
@@ -1147,6 +1149,18 @@ def handle_generate_template(event):
                                             'redshift:ResumeCluster',
                                             'workspaces:ModifyWorkspaceProperties',
                                             'ec2:ModifyVolume',
+                                            # FinOps Settings Healthcheck - read permissions
+                                            'ce:GetAnomalyMonitors',
+                                            'ce:GetAnomalySubscriptions',
+                                            'ce:ListCostAllocationTagBackfillHistory',
+                                            'compute-optimizer:GetEnrollmentStatus',
+                                            'organizations:DescribeOrganization',
+                                            # FinOps Settings Healthcheck - write permissions (fix actions)
+                                            'ce:UpdateCostAllocationTagsStatus',
+                                            'ce:CreateAnomalyMonitor',
+                                            'ce:CreateAnomalySubscription',
+                                            'ce:StartCostAllocationTagBackfill',
+                                            'compute-optimizer:UpdateEnrollmentStatus',
                                         ],
                                         'Resource': '*'
                                     }
@@ -1718,7 +1732,22 @@ def handle_dashboard_data(event):
         ),
         'commitments': _get_commitments_data(accounts, external_id),
         'costByTag': _get_cost_by_tag(accounts, external_id),
+        'healthcheckResults': _get_healthcheck_results(member_email),
     })
+
+
+def _get_healthcheck_results(member_email):
+    """Fetch cached healthcheck results from the member's DynamoDB record."""
+    try:
+        members_table = dynamodb.Table(MEMBERS_TABLE_NAME)
+        resp = members_table.get_item(
+            Key={'email': member_email},
+            ProjectionExpression='healthcheckResults'
+        )
+        return resp.get('Item', {}).get('healthcheckResults', {})
+    except Exception as e:
+        logger.warning(f"Failed to fetch healthcheck results: {e}")
+        return {}
 
 
 def _get_commitments_data(accounts, external_id):
@@ -4086,6 +4115,19 @@ def _invoke_direct_model(question, account_id, member_email, interaction_id):
     if credentials:
         account_data, executed_actions = _gather_account_data(question, credentials)
 
+    # Step 2.5: Include healthcheck results in AI context
+    try:
+        members_table = dynamodb.Table(MEMBERS_TABLE_NAME)
+        hc_resp = members_table.get_item(
+            Key={'email': member_email},
+            ProjectionExpression='healthcheckResults'
+        )
+        hc_results = hc_resp.get('Item', {}).get('healthcheckResults', {})
+        if account_ids[0] in hc_results:
+            account_data['healthcheck_results'] = hc_results[account_ids[0]]
+    except Exception:
+        pass
+
     # Step 3: Ask Bedrock to analyze
     answer = _ask_bedrock_analyze(question, tips_context, account_data, account_id)
 
@@ -4178,6 +4220,22 @@ def _invoke_multi_account(question, account_ids, member_email, interaction_id):
             per_acct['total_spend'] = round(acct_total, 2)
 
             aggregate['per_account_data'][acct_id] = per_acct
+
+    # Include healthcheck results in AI context
+    try:
+        members_table = dynamodb.Table(MEMBERS_TABLE_NAME)
+        hc_resp = members_table.get_item(
+            Key={'email': member_email},
+            ProjectionExpression='healthcheckResults'
+        )
+        hc_results = hc_resp.get('Item', {}).get('healthcheckResults', {})
+        if hc_results:
+            aggregate['healthcheck_results'] = {}
+            for aid in account_ids:
+                if aid in hc_results:
+                    aggregate['healthcheck_results'][aid] = hc_results[aid]
+    except Exception:
+        pass
 
     answer = _ask_bedrock_multi_account(question, tips_context, aggregate, all_account_data, account_ids)
     _maybe_save_tip(question, answer, tips_context)
@@ -4275,9 +4333,16 @@ SLASHMYBILL PLATFORM FEATURES (ALWAYS recommend these instead of AWS Console):
 - Plan → Tag Resources: Scan and bulk-tag all resources from SlashMyBill
 - Act → Waste Cleanup: Scan and clean up idle resources (EBS, EIPs, ELBs, EC2, RDS, snapshots)
 - Act → Scheduler: Create stop/start schedules for EC2, RDS, ASG, EKS, SageMaker, Redshift, WorkSpaces
+- Configure → FinOps Settings: Check and fix AWS billing best practices (cost allocation tags, anomaly detection, rightsizing, hourly granularity)
 - Observe → Dashboard: View cost trends, waste detection, rightsizing, cost by region, tag distribution
 - When recommending actions, ALWAYS say "Go to Plan → Budget" or "Go to Act → Waste Cleanup" instead of "Go to AWS Console"
 - NEVER tell users to open the AWS Management Console — everything can be done from SlashMyBill
+
+FINOPS SETTINGS AWARENESS:
+- If healthcheck_results data is present and cost allocation tags are NOT activated, recommend "Go to Configure → FinOps Settings to activate cost allocation tags"
+- If healthcheck_results data is present and no anomaly monitors exist, recommend "Go to Configure → FinOps Settings to set up Cost Anomaly Detection"
+- If healthcheck_results data is present and Compute Optimizer is not enrolled, recommend "Go to Configure → FinOps Settings to enroll in Compute Optimizer"
+- NEVER recommend opening the AWS Billing Console for settings that can be fixed via Configure → FinOps Settings
 
 CRITICAL RULE: Read the user's question carefully. If it is a SPECIFIC question (e.g. "list Lambda transactions", "show EC2 usage", "compare costs for Jan Feb March"), answer THAT question DIRECTLY and completely using the data provided. Do NOT default to a generic cost summary. The specific answer must come FIRST.
 
@@ -5917,9 +5982,16 @@ SLASHMYBILL PLATFORM FEATURES (ALWAYS recommend these instead of AWS Console):
 - Plan → Tag Resources: Scan and bulk-tag all resources from SlashMyBill
 - Act → Waste Cleanup: Scan and clean up idle resources (EBS, EIPs, ELBs, EC2, RDS, snapshots)
 - Act → Scheduler: Create stop/start schedules for EC2, RDS, ASG, EKS, SageMaker, Redshift
+- Configure → FinOps Settings: Check and fix AWS billing best practices (cost allocation tags, anomaly detection, rightsizing, hourly granularity)
 - Observe → Dashboard: View cost trends, waste detection, rightsizing, cost by region
 - ALWAYS say "Go to Plan → Budget" or "Go to Act → Waste Cleanup" instead of "Go to AWS Console"
 - NEVER tell users to open the AWS Management Console
+
+FINOPS SETTINGS AWARENESS:
+- If healthcheck_results data is present and cost allocation tags are NOT activated, recommend "Go to Configure → FinOps Settings to activate cost allocation tags"
+- If healthcheck_results data is present and no anomaly monitors exist, recommend "Go to Configure → FinOps Settings to set up Cost Anomaly Detection"
+- If healthcheck_results data is present and Compute Optimizer is not enrolled, recommend "Go to Configure → FinOps Settings to enroll in Compute Optimizer"
+- NEVER recommend opening the AWS Billing Console for settings that can be fixed via Configure → FinOps Settings
 
 RESPONSE FOCUS:
 - If the user asks a specific question (e.g. "find unattached EBS volumes", "show my NAT Gateways"), answer ONLY that question with full detail. Do NOT include a full cost breakdown or "Minor costs" section.
@@ -8223,6 +8295,930 @@ def handle_edit_schedule(event):
     except Exception as e:
         logger.error(f"Failed to update schedule in DynamoDB: {e}")
         return create_error_response(500, 'ServerError', 'Failed to save updated schedule')
+
+
+
+# ============================================================
+# FinOps Settings Healthcheck - Account Type Detection
+# ============================================================
+
+
+def _detect_account_type(org_client, account_id):
+    """Detect if account is management or linked.
+    Returns ('management', None) or ('linked', note_string).
+    """
+    try:
+        resp = org_client.describe_organization()
+        master_id = resp['Organization']['MasterAccountId']
+        if master_id == account_id:
+            return ('management', None)
+        return ('linked', None)
+    except ClientError as e:
+        code = e.response['Error']['Code']
+        if code == 'AccessDeniedException':
+            return ('linked', 'Organization data unavailable')
+        if code == 'AWSOrganizationsNotInUseException':
+            return ('linked', 'Not part of an AWS Organization')
+        return ('linked', str(e))
+
+
+# ============================================================
+# FinOps Settings Healthcheck - Individual Check Functions
+# ============================================================
+
+
+def _check_cost_allocation_tags(ce_client):
+    """Check user-defined cost allocation tags. Returns checklist item dict."""
+    try:
+        resp = ce_client.list_cost_allocation_tags(
+            Type='UserDefined',
+            MaxResults=100
+        )
+        tags = resp.get('CostAllocationTags', [])
+        if not tags:
+            return {
+                'id': 'cost_allocation_tags',
+                'name': 'Cost Allocation Tags (User-Defined)',
+                'status': 'fail',
+                'description': 'No user-defined cost allocation tags found',
+                'guidance': 'Create and activate tags like Environment, Owner, CostCenter, Application to categorize costs in billing reports.',
+                'fixAction': 'activate_user_tags',
+                'fixLabel': 'Activate',
+                'details': {'tags': []}
+            }
+        active = [t for t in tags if t.get('Status') == 'Active']
+        inactive = [t for t in tags if t.get('Status') != 'Active']
+        tag_details = [{'tagKey': t['TagKey'], 'status': t.get('Status', 'Unknown')} for t in tags]
+        if len(inactive) == 0:
+            return {
+                'id': 'cost_allocation_tags',
+                'name': 'Cost Allocation Tags (User-Defined)',
+                'status': 'pass',
+                'description': f'All {len(active)} user-defined tags are active',
+                'guidance': 'Recommended tags: Environment, Owner, CostCenter, Application',
+                'fixAction': 'activate_user_tags',
+                'fixLabel': 'Activate',
+                'details': {'tags': tag_details}
+            }
+        return {
+            'id': 'cost_allocation_tags',
+            'name': 'Cost Allocation Tags (User-Defined)',
+            'status': 'warning',
+            'description': f'{len(active)} active, {len(inactive)} inactive user-defined tags',
+            'guidance': 'Activate all user-defined tags to ensure complete cost categorization.',
+            'fixAction': 'activate_user_tags',
+            'fixLabel': 'Activate',
+            'details': {'tags': tag_details}
+        }
+    except ClientError as e:
+        return {
+            'id': 'cost_allocation_tags',
+            'name': 'Cost Allocation Tags (User-Defined)',
+            'status': 'error',
+            'description': f'Error checking tags: {str(e)}',
+            'guidance': 'Ensure the cross-account role has ce:ListCostAllocationTags permission.',
+            'fixAction': None,
+            'fixLabel': None,
+            'details': {}
+        }
+
+
+def _check_aws_generated_tags(ce_client):
+    """Check aws:createdBy tag status. Returns checklist item dict."""
+    try:
+        resp = ce_client.list_cost_allocation_tags(
+            Type='AWSGenerated',
+            MaxResults=100
+        )
+        tags = resp.get('CostAllocationTags', [])
+        created_by = next((t for t in tags if t['TagKey'] == 'aws:createdBy'), None)
+        if created_by and created_by.get('Status') == 'Active':
+            return {
+                'id': 'aws_generated_tags',
+                'name': 'AWS-Generated Tags',
+                'status': 'pass',
+                'description': 'aws:createdBy tag is active',
+                'guidance': 'The aws:createdBy tag tracks which IAM entity created each resource.',
+                'fixAction': 'activate_aws_tags',
+                'fixLabel': 'Activate',
+                'details': {'aws_created_by': 'Active'}
+            }
+        return {
+            'id': 'aws_generated_tags',
+            'name': 'AWS-Generated Tags',
+            'status': 'fail',
+            'description': 'aws:createdBy tag is not active',
+            'guidance': 'Activate the aws:createdBy tag to track resource accountability in cost reports.',
+            'fixAction': 'activate_aws_tags',
+            'fixLabel': 'Activate',
+            'details': {'aws_created_by': created_by.get('Status', 'Not found') if created_by else 'Not found'}
+        }
+    except ClientError as e:
+        return {
+            'id': 'aws_generated_tags',
+            'name': 'AWS-Generated Tags',
+            'status': 'error',
+            'description': f'Error checking AWS-generated tags: {str(e)}',
+            'guidance': 'Ensure the cross-account role has ce:ListCostAllocationTags permission.',
+            'fixAction': None,
+            'fixLabel': None,
+            'details': {}
+        }
+
+
+def _check_anomaly_detection(ce_client):
+    """Check for existing anomaly monitors. Returns checklist item dict."""
+    try:
+        resp = ce_client.get_anomaly_monitors(MaxResults=1)
+        total = resp.get('TotalCount', 0)
+        if total > 0:
+            monitors = resp.get('AnomalyMonitors', [])
+            monitor_names = [m.get('MonitorName', 'Unknown') for m in monitors]
+            return {
+                'id': 'anomaly_detection',
+                'name': 'Cost Anomaly Detection',
+                'status': 'pass',
+                'description': f'{total} anomaly monitor(s) configured',
+                'guidance': 'Cost Anomaly Detection alerts you to unexpected spending patterns.',
+                'fixAction': 'create_anomaly_monitor',
+                'fixLabel': 'Setup',
+                'details': {'monitorCount': total, 'monitorNames': monitor_names}
+            }
+        return {
+            'id': 'anomaly_detection',
+            'name': 'Cost Anomaly Detection',
+            'status': 'fail',
+            'description': 'No anomaly monitors configured',
+            'guidance': 'Set up Cost Anomaly Detection to receive alerts on unexpected spending.',
+            'fixAction': 'create_anomaly_monitor',
+            'fixLabel': 'Setup',
+            'details': {'monitorCount': 0}
+        }
+    except ClientError as e:
+        return {
+            'id': 'anomaly_detection',
+            'name': 'Cost Anomaly Detection',
+            'status': 'error',
+            'description': f'Error checking anomaly monitors: {str(e)}',
+            'guidance': 'Ensure the cross-account role has ce:GetAnomalyMonitors permission.',
+            'fixAction': None,
+            'fixLabel': None,
+            'details': {}
+        }
+
+
+def _check_hourly_granularity(ce_client):
+    """Probe HOURLY granularity availability. Returns checklist item dict."""
+    try:
+        end_dt = datetime.now(timezone.utc)
+        start_dt = end_dt - timedelta(days=2)
+        resp = ce_client.get_cost_and_usage(
+            TimePeriod={
+                'Start': start_dt.strftime('%Y-%m-%d'),
+                'End': end_dt.strftime('%Y-%m-%d')
+            },
+            Granularity='HOURLY',
+            Metrics=['UnblendedCost']
+        )
+        results = resp.get('ResultsByTime', [])
+        if results:
+            return {
+                'id': 'hourly_granularity',
+                'name': 'Hourly Granularity',
+                'status': 'pass',
+                'description': 'Hourly cost granularity is enabled',
+                'guidance': 'Hourly data provides real-time cost visibility for faster anomaly detection.',
+                'fixAction': None,
+                'fixLabel': None,
+                'details': {'dataPoints': len(results)}
+            }
+        return {
+            'id': 'hourly_granularity',
+            'name': 'Hourly Granularity',
+            'status': 'fail',
+            'description': 'Hourly cost granularity is not enabled',
+            'guidance': 'Hourly granularity must be enabled manually in the AWS Billing console. Go to Cost Explorer preferences and enable hourly granularity.',
+            'fixAction': None,
+            'fixLabel': None,
+            'details': {}
+        }
+    except ClientError as e:
+        return {
+            'id': 'hourly_granularity',
+            'name': 'Hourly Granularity',
+            'status': 'fail',
+            'description': 'Hourly cost granularity is not available',
+            'guidance': 'Hourly granularity must be enabled manually in the AWS Billing console.',
+            'fixAction': None,
+            'fixLabel': None,
+            'details': {'error': str(e)}
+        }
+
+
+def _check_ce_preferences(ce_client):
+    """Check rightsizing recommendations preference. Returns checklist item dict."""
+    try:
+        resp = ce_client.get_preferences()
+        prefs = resp.get('Preferences', resp)
+        rightsizing = prefs.get('RightsizingRecommendations', prefs.get('MemberAccountDiscountVisibility', ''))
+        if rightsizing in ('ENABLED', 'Other'):
+            return {
+                'id': 'ce_preferences',
+                'name': 'CE Preferences (Right-Sizing)',
+                'status': 'pass',
+                'description': 'Rightsizing recommendations are enabled',
+                'guidance': 'EC2 rightsizing recommendations help identify over-provisioned instances.',
+                'fixAction': 'enable_rightsizing',
+                'fixLabel': 'Enable',
+                'details': {'rightsizing': rightsizing}
+            }
+        return {
+            'id': 'ce_preferences',
+            'name': 'CE Preferences (Right-Sizing)',
+            'status': 'fail',
+            'description': 'Rightsizing recommendations are not enabled',
+            'guidance': 'Enable rightsizing recommendations to receive EC2 optimization suggestions.',
+            'fixAction': 'enable_rightsizing',
+            'fixLabel': 'Enable',
+            'details': {'rightsizing': rightsizing}
+        }
+    except ClientError as e:
+        return {
+            'id': 'ce_preferences',
+            'name': 'CE Preferences (Right-Sizing)',
+            'status': 'error',
+            'description': f'Error checking CE preferences: {str(e)}',
+            'guidance': 'Ensure the cross-account role has ce:GetPreferences permission.',
+            'fixAction': None,
+            'fixLabel': None,
+            'details': {}
+        }
+
+
+def _check_cur_reports(cur_client):
+    """Check for CUR report definitions. Returns checklist item dict."""
+    try:
+        resp = cur_client.describe_report_definitions()
+        reports = resp.get('ReportDefinitions', [])
+        if reports:
+            report_details = [{'name': r.get('ReportName', 'Unknown'), 's3Bucket': r.get('S3Bucket', 'Unknown')} for r in reports]
+            return {
+                'id': 'cur_reports',
+                'name': 'Cost and Usage Report',
+                'status': 'pass',
+                'description': f'{len(reports)} CUR report(s) configured',
+                'guidance': 'CUR reports provide the most detailed billing data for analysis.',
+                'fixAction': None,
+                'fixLabel': None,
+                'details': {'reports': report_details}
+            }
+        return {
+            'id': 'cur_reports',
+            'name': 'Cost and Usage Report',
+            'status': 'fail',
+            'description': 'No Cost and Usage Reports configured',
+            'guidance': 'Set up a CUR report in the AWS Billing console. CUR requires an S3 bucket and cannot be created via API alone.',
+            'fixAction': None,
+            'fixLabel': None,
+            'details': {'reports': []}
+        }
+    except ClientError as e:
+        return {
+            'id': 'cur_reports',
+            'name': 'Cost and Usage Report',
+            'status': 'error',
+            'description': f'Error checking CUR reports: {str(e)}',
+            'guidance': 'Ensure the cross-account role has cur:DescribeReportDefinitions permission.',
+            'fixAction': None,
+            'fixLabel': None,
+            'details': {}
+        }
+
+
+def _check_tag_backfill(ce_client):
+    """Check tag backfill history. Returns checklist item dict."""
+    try:
+        resp = ce_client.list_cost_allocation_tag_backfill_history(MaxResults=10)
+        history = resp.get('BackfillRequests', [])
+        if not history:
+            return {
+                'id': 'tag_backfill',
+                'name': 'Tag Backfill',
+                'status': 'fail',
+                'description': 'No tag backfill has been run',
+                'guidance': 'Run a tag backfill to apply newly activated cost allocation tags to historical billing data (up to 12 months).',
+                'fixAction': 'start_tag_backfill',
+                'fixLabel': 'Start Backfill',
+                'details': {'history': []}
+            }
+        completed = [h for h in history if h.get('BackfillStatus') == 'SUCCEEDED']
+        in_progress = [h for h in history if h.get('BackfillStatus') == 'PROCESSING']
+        if completed:
+            return {
+                'id': 'tag_backfill',
+                'name': 'Tag Backfill',
+                'status': 'pass',
+                'description': f'{len(completed)} completed backfill(s)',
+                'guidance': 'Tag backfill ensures historical cost data reflects your current tag configuration.',
+                'fixAction': 'start_tag_backfill',
+                'fixLabel': 'Start Backfill',
+                'details': {'history': [{'status': h.get('BackfillStatus'), 'requestedAt': str(h.get('RequestedAt', ''))} for h in history]}
+            }
+        if in_progress:
+            return {
+                'id': 'tag_backfill',
+                'name': 'Tag Backfill',
+                'status': 'warning',
+                'description': 'Tag backfill is in progress',
+                'guidance': 'A backfill is currently running. This may take several hours to complete.',
+                'fixAction': 'start_tag_backfill',
+                'fixLabel': 'Start Backfill',
+                'details': {'history': [{'status': h.get('BackfillStatus'), 'requestedAt': str(h.get('RequestedAt', ''))} for h in history]}
+            }
+        return {
+            'id': 'tag_backfill',
+            'name': 'Tag Backfill',
+            'status': 'fail',
+            'description': 'No completed tag backfill found',
+            'guidance': 'Run a tag backfill to apply cost allocation tags to historical data.',
+            'fixAction': 'start_tag_backfill',
+            'fixLabel': 'Start Backfill',
+            'details': {'history': [{'status': h.get('BackfillStatus'), 'requestedAt': str(h.get('RequestedAt', ''))} for h in history]}
+        }
+    except ClientError as e:
+        return {
+            'id': 'tag_backfill',
+            'name': 'Tag Backfill',
+            'status': 'error',
+            'description': f'Error checking tag backfill: {str(e)}',
+            'guidance': 'Ensure the cross-account role has ce:ListCostAllocationTagBackfillHistory permission.',
+            'fixAction': None,
+            'fixLabel': None,
+            'details': {}
+        }
+
+
+def _check_linked_billing_access(org_client):
+    """Check if linked accounts have billing access. Returns checklist item dict."""
+    return {
+        'id': 'linked_billing_access',
+        'name': 'Linked Account Billing Access',
+        'status': 'warning',
+        'description': 'Cannot verify programmatically - check in AWS Organizations console',
+        'guidance': 'Enable IAM user and role access to billing in the AWS Organizations console. Go to AWS Organizations > Settings > IAM user and role access to billing information.',
+        'fixAction': None,
+        'fixLabel': None,
+        'details': {'note': 'This setting must be checked and configured manually in the AWS Organizations console.'}
+    }
+
+
+def _check_budgets_healthcheck(budgets_client, account_id):
+    """Check for existing budgets. Returns checklist item dict."""
+    try:
+        resp = budgets_client.describe_budgets(AccountId=account_id)
+        budgets = resp.get('Budgets', [])
+        if budgets:
+            budget_names = [b.get('BudgetName', 'Unknown') for b in budgets]
+            return {
+                'id': 'budgets',
+                'name': 'Budgets',
+                'status': 'pass',
+                'description': f'{len(budgets)} budget(s) configured',
+                'guidance': 'AWS Budgets help you track spending and set alerts at custom thresholds.',
+                'fixAction': None,
+                'fixLabel': None,
+                'details': {'budgetCount': len(budgets), 'budgetNames': budget_names}
+            }
+        return {
+            'id': 'budgets',
+            'name': 'Budgets',
+            'status': 'fail',
+            'description': 'No budgets configured',
+            'guidance': 'Create at least one monthly budget with alerts at 50%, 75%, and 100% thresholds. Go to Plan > Budget in SlashMyBill to create one.',
+            'fixAction': None,
+            'fixLabel': None,
+            'details': {'budgetCount': 0}
+        }
+    except ClientError as e:
+        return {
+            'id': 'budgets',
+            'name': 'Budgets',
+            'status': 'error',
+            'description': f'Error checking budgets: {str(e)}',
+            'guidance': 'Ensure the cross-account role has budgets:DescribeBudgets permission.',
+            'fixAction': None,
+            'fixLabel': None,
+            'details': {}
+        }
+
+
+def _check_tag_coverage(tagging_client):
+    """Check resource tag coverage percentage. Returns checklist item dict."""
+    try:
+        resp = tagging_client.get_resources(ResourcesPerPage=200)
+        resources = resp.get('ResourceTagMappingList', [])
+        total = len(resources)
+        if total == 0:
+            return {
+                'id': 'tag_coverage',
+                'name': 'Resource Tag Coverage',
+                'status': 'warning',
+                'description': 'No resources found to check tag coverage',
+                'guidance': 'Tag your resources with meaningful tags to improve cost attribution. Go to Plan > Tag Resources in SlashMyBill.',
+                'fixAction': None,
+                'fixLabel': None,
+                'details': {'total': 0, 'tagged': 0, 'coverage': 0}
+            }
+        tagged = sum(1 for r in resources if any(t.get('Key', '').startswith('aws:') is False and t.get('Key', '') != '' for t in r.get('Tags', [])))
+        tagged = sum(1 for r in resources if any(not t.get('Key', '').startswith('aws:') for t in r.get('Tags', [])))
+        coverage = (tagged / total) * 100 if total > 0 else 0
+        if coverage > 80:
+            status = 'pass'
+            desc = f'{coverage:.0f}% of resources are tagged ({tagged}/{total})'
+        elif coverage >= 50:
+            status = 'warning'
+            desc = f'{coverage:.0f}% of resources are tagged ({tagged}/{total}) - aim for >80%'
+        else:
+            status = 'fail'
+            desc = f'Only {coverage:.0f}% of resources are tagged ({tagged}/{total})'
+        return {
+            'id': 'tag_coverage',
+            'name': 'Resource Tag Coverage',
+            'status': status,
+            'description': desc,
+            'guidance': 'Tag all resources with Environment, Owner, and CostCenter tags. Go to Plan > Tag Resources in SlashMyBill.',
+            'fixAction': None,
+            'fixLabel': None,
+            'details': {'total': total, 'tagged': tagged, 'coverage': round(coverage, 1)}
+        }
+    except ClientError as e:
+        return {
+            'id': 'tag_coverage',
+            'name': 'Resource Tag Coverage',
+            'status': 'error',
+            'description': f'Error checking tag coverage: {str(e)}',
+            'guidance': 'Ensure the cross-account role has tag:GetResources permission.',
+            'fixAction': None,
+            'fixLabel': None,
+            'details': {}
+        }
+
+
+def _check_compute_optimizer(co_client):
+    """Check Compute Optimizer enrollment. Returns checklist item dict."""
+    try:
+        resp = co_client.get_enrollment_status()
+        status_val = resp.get('Status', resp.get('status', ''))
+        if status_val == 'Active':
+            return {
+                'id': 'compute_optimizer',
+                'name': 'Compute Optimizer',
+                'status': 'pass',
+                'description': 'Compute Optimizer is enrolled and active',
+                'guidance': 'Compute Optimizer analyzes resource utilization and provides rightsizing recommendations.',
+                'fixAction': 'enroll_compute_optimizer',
+                'fixLabel': 'Enroll',
+                'details': {'enrollmentStatus': status_val}
+            }
+        return {
+            'id': 'compute_optimizer',
+            'name': 'Compute Optimizer',
+            'status': 'fail',
+            'description': f'Compute Optimizer is not enrolled (status: {status_val})',
+            'guidance': 'Enroll in Compute Optimizer to receive rightsizing recommendations for EC2, EBS, Lambda, and more.',
+            'fixAction': 'enroll_compute_optimizer',
+            'fixLabel': 'Enroll',
+            'details': {'enrollmentStatus': status_val}
+        }
+    except ClientError as e:
+        return {
+            'id': 'compute_optimizer',
+            'name': 'Compute Optimizer',
+            'status': 'error',
+            'description': f'Error checking Compute Optimizer: {str(e)}',
+            'guidance': 'Ensure the cross-account role has compute-optimizer:GetEnrollmentStatus permission.',
+            'fixAction': None,
+            'fixLabel': None,
+            'details': {}
+        }
+
+
+def _check_tag_activation_status(ce_client):
+    """Read-only check of cost allocation tag status for linked accounts. Returns checklist item dict."""
+    try:
+        resp = ce_client.list_cost_allocation_tags(
+            Type='UserDefined',
+            MaxResults=100
+        )
+        tags = resp.get('CostAllocationTags', [])
+        if not tags:
+            return {
+                'id': 'tag_activation_status',
+                'name': 'Tag Activation Status',
+                'status': 'warning',
+                'description': 'No cost allocation tags found',
+                'guidance': 'Ask your management account admin to create and activate cost allocation tags.',
+                'fixAction': None,
+                'fixLabel': None,
+                'details': {'tags': []}
+            }
+        active = [t for t in tags if t.get('Status') == 'Active']
+        tag_details = [{'tagKey': t['TagKey'], 'status': t.get('Status', 'Unknown')} for t in tags]
+        return {
+            'id': 'tag_activation_status',
+            'name': 'Tag Activation Status',
+            'status': 'pass' if len(active) == len(tags) else 'warning',
+            'description': f'{len(active)}/{len(tags)} cost allocation tags active',
+            'guidance': 'Cost allocation tags are managed by the payer account. Contact your management account admin to activate missing tags.',
+            'fixAction': None,
+            'fixLabel': None,
+            'details': {'tags': tag_details}
+        }
+    except ClientError as e:
+        code = e.response['Error']['Code']
+        if code == 'AccessDeniedException':
+            return {
+                'id': 'tag_activation_status',
+                'name': 'Tag Activation Status',
+                'status': 'warning',
+                'description': 'Managed by payer account',
+                'guidance': 'Ask your management account admin to activate cost allocation tags. Linked accounts cannot view or modify tag activation status.',
+                'fixAction': None,
+                'fixLabel': None,
+                'details': {'note': 'AccessDenied - tag activation is managed by the payer account'}
+            }
+        return {
+            'id': 'tag_activation_status',
+            'name': 'Tag Activation Status',
+            'status': 'error',
+            'description': f'Error checking tag activation: {str(e)}',
+            'guidance': 'Ensure the cross-account role has ce:ListCostAllocationTags permission.',
+            'fixAction': None,
+            'fixLabel': None,
+            'details': {}
+        }
+
+
+# ============================================================
+# FinOps Settings Healthcheck - Scan Handler
+# ============================================================
+
+
+def handle_healthcheck_scan(event):
+    """Scan all FinOps settings for a connected AWS account."""
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+    member_email = auth['sub']
+
+    try:
+        body = json.loads(event.get('body', '{}'))
+    except (json.JSONDecodeError, TypeError):
+        return create_error_response(400, 'InvalidRequest', 'Invalid request body')
+
+    account_id = body.get('accountId', '').strip()
+    if not account_id or not re.match(r'^\d{12}$', account_id):
+        return create_error_response(400, 'InvalidRequest', 'accountId must be a 12-digit AWS account ID')
+
+    # Verify account ownership
+    ownership = _verify_account_ownership(member_email, [account_id])
+    if ownership is not True:
+        return ownership
+
+    # Assume cross-account role
+    try:
+        creds = _assume_role_for_account(member_email, account_id)
+    except ClientError as e:
+        code = e.response['Error']['Code']
+        if code == 'AccessDeniedException':
+            return create_error_response(403, 'AccessDenied', 'Cannot access account - please re-establish the connection by updating the CloudFormation stack')
+        if code == 'ExpiredTokenException':
+            try:
+                creds = _assume_role_for_account(member_email, account_id)
+            except Exception:
+                return create_error_response(403, 'AccessDenied', 'Session expired - please re-establish the connection')
+        else:
+            return create_error_response(403, 'AccessDenied', f'Cross-account role not found - please deploy the CloudFormation template')
+    except Exception as e:
+        return create_error_response(403, 'AccessDenied', 'Cross-account role not found - please deploy the CloudFormation template')
+
+    # Create service clients
+    ce = _make_client_from_creds('ce', creds)
+    budgets = _make_client_from_creds('budgets', creds)
+    cur = _make_client_from_creds('cur', creds)
+    org = _make_client_from_creds('organizations', creds)
+    tagging = _make_client_from_creds('resourcegroupstaggingapi', creds)
+    co = _make_client_from_creds('compute-optimizer', creds)
+
+    # Detect account type
+    account_type, type_note = _detect_account_type(org, account_id)
+    account_type_badge = '\U0001f451 Management Account' if account_type == 'management' else '\U0001f517 Linked Account'
+
+    # Run checks based on account type
+    checklist_items = []
+
+    if account_type == 'management':
+        checks = [
+            lambda: _check_cost_allocation_tags(ce),
+            lambda: _check_aws_generated_tags(ce),
+            lambda: _check_anomaly_detection(ce),
+            lambda: _check_hourly_granularity(ce),
+            lambda: _check_ce_preferences(ce),
+            lambda: _check_cur_reports(cur),
+            lambda: _check_tag_backfill(ce),
+            lambda: _check_linked_billing_access(org),
+            lambda: _check_budgets_healthcheck(budgets, account_id),
+        ]
+    else:
+        checks = [
+            lambda: _check_tag_coverage(tagging),
+            lambda: _check_budgets_healthcheck(budgets, account_id),
+            lambda: _check_anomaly_detection(ce),
+            lambda: _check_compute_optimizer(co),
+            lambda: _check_hourly_granularity(ce),
+            lambda: _check_tag_activation_status(ce),
+        ]
+
+    for check_fn in checks:
+        try:
+            item = check_fn()
+            checklist_items.append(item)
+        except Exception as e:
+            checklist_items.append({
+                'id': 'unknown',
+                'name': 'Check Failed',
+                'status': 'error',
+                'description': f'Unexpected error: {str(e)}',
+                'guidance': 'Please try scanning again.',
+                'fixAction': None,
+                'fixLabel': None,
+                'details': {}
+            })
+
+    # Compute score
+    passed = sum(1 for item in checklist_items if item['status'] == 'pass')
+    total = len(checklist_items)
+    settings_score = {'passed': passed, 'total': total}
+
+    scan_timestamp = datetime.now(timezone.utc).isoformat()
+
+    result = {
+        'accountId': account_id,
+        'accountType': account_type,
+        'accountTypeBadge': account_type_badge,
+        'scanTimestamp': scan_timestamp,
+        'settingsScore': settings_score,
+        'checklistItems': checklist_items,
+    }
+    if type_note:
+        result['accountTypeNote'] = type_note
+
+    # Store in DynamoDB
+    try:
+        members_table = dynamodb.Table(MEMBERS_TABLE_NAME)
+        members_table.update_item(
+            Key={'email': member_email},
+            UpdateExpression='SET healthcheckResults.#aid = :result',
+            ExpressionAttributeNames={'#aid': account_id},
+            ExpressionAttributeValues={':result': result},
+        )
+    except ClientError:
+        # If healthcheckResults map doesn't exist yet, create it
+        try:
+            members_table = dynamodb.Table(MEMBERS_TABLE_NAME)
+            members_table.update_item(
+                Key={'email': member_email},
+                UpdateExpression='SET healthcheckResults = :results',
+                ExpressionAttributeValues={':results': {account_id: result}},
+                ConditionExpression='attribute_not_exists(healthcheckResults)',
+            )
+        except ClientError:
+            try:
+                members_table.update_item(
+                    Key={'email': member_email},
+                    UpdateExpression='SET healthcheckResults.#aid = :result',
+                    ExpressionAttributeNames={'#aid': account_id},
+                    ExpressionAttributeValues={':result': result},
+                )
+            except Exception as e:
+                logger.error(f'Failed to store healthcheck results: {e}')
+
+    return create_response(200, result)
+
+
+# ============================================================
+# FinOps Settings Healthcheck - Fix Handler
+# ============================================================
+
+# Fix action to account type mapping
+_FIX_ACTION_ACCOUNT_TYPES = {
+    'activate_user_tags': ['management'],
+    'activate_aws_tags': ['management'],
+    'create_anomaly_monitor': ['management', 'linked'],
+    'enable_rightsizing': ['management'],
+    'start_tag_backfill': ['management'],
+    'enroll_compute_optimizer': ['linked'],
+}
+
+
+def handle_healthcheck_fix(event):
+    """Execute a single FinOps settings fix action."""
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+    member_email = auth['sub']
+
+    try:
+        body = json.loads(event.get('body', '{}'))
+    except (json.JSONDecodeError, TypeError):
+        return create_error_response(400, 'InvalidRequest', 'Invalid request body')
+
+    account_id = body.get('accountId', '').strip()
+    fix_action = body.get('fixAction', '').strip()
+    params = body.get('params', {})
+
+    if not account_id or not re.match(r'^\d{12}$', account_id):
+        return create_error_response(400, 'InvalidRequest', 'accountId must be a 12-digit AWS account ID')
+
+    if fix_action not in _FIX_ACTION_ACCOUNT_TYPES:
+        return create_error_response(400, 'InvalidRequest', f'Unknown fix action: {fix_action}')
+
+    # Verify account ownership
+    ownership = _verify_account_ownership(member_email, [account_id])
+    if ownership is not True:
+        return ownership
+
+    # Assume cross-account role
+    try:
+        creds = _assume_role_for_account(member_email, account_id)
+    except Exception as e:
+        return create_error_response(403, 'AccessDenied', 'Cross-account role not found - please deploy the CloudFormation template')
+
+    # Detect account type (try cached result first)
+    account_type = None
+    try:
+        members_table = dynamodb.Table(MEMBERS_TABLE_NAME)
+        member_resp = members_table.get_item(Key={'email': member_email}, ProjectionExpression='healthcheckResults')
+        cached = member_resp.get('Item', {}).get('healthcheckResults', {}).get(account_id, {})
+        account_type = cached.get('accountType')
+    except Exception:
+        pass
+
+    if not account_type:
+        org = _make_client_from_creds('organizations', creds)
+        account_type, _ = _detect_account_type(org, account_id)
+
+    # Validate fix action for account type
+    allowed_types = _FIX_ACTION_ACCOUNT_TYPES.get(fix_action, [])
+    if account_type not in allowed_types:
+        return create_error_response(400, 'InvalidRequest', f"Fix action '{fix_action}' is not available for {account_type} accounts")
+
+    # Execute fix
+    try:
+        if fix_action == 'activate_user_tags':
+            ce = _make_client_from_creds('ce', creds)
+            # Get inactive tags
+            resp = ce.list_cost_allocation_tags(Type='UserDefined', MaxResults=100)
+            tags = resp.get('CostAllocationTags', [])
+            inactive_keys = [t['TagKey'] for t in tags if t.get('Status') != 'Active']
+            tag_keys = params.get('tagKeys', inactive_keys)
+            if not tag_keys:
+                return create_error_response(400, 'InvalidRequest', 'No inactive tags to activate')
+            ce.update_cost_allocation_tags_status(
+                CostAllocationTagsStatus=[{'TagKey': k, 'Status': 'Active'} for k in tag_keys]
+            )
+            updated_item = {
+                'id': 'cost_allocation_tags',
+                'name': 'Cost Allocation Tags (User-Defined)',
+                'status': 'pass',
+                'description': f'All tags activated successfully ({len(tag_keys)} tags)',
+            }
+
+        elif fix_action == 'activate_aws_tags':
+            ce = _make_client_from_creds('ce', creds)
+            ce.update_cost_allocation_tags_status(
+                CostAllocationTagsStatus=[{'TagKey': 'aws:createdBy', 'Status': 'Active'}]
+            )
+            updated_item = {
+                'id': 'aws_generated_tags',
+                'name': 'AWS-Generated Tags',
+                'status': 'pass',
+                'description': 'aws:createdBy tag activated successfully',
+            }
+
+        elif fix_action == 'create_anomaly_monitor':
+            ce = _make_client_from_creds('ce', creds)
+            monitor_resp = ce.create_anomaly_monitor(
+                AnomalyMonitor={
+                    'MonitorName': 'SlashMyBill-ServiceMonitor',
+                    'MonitorType': 'DIMENSIONAL',
+                    'MonitorDimension': 'SERVICE',
+                }
+            )
+            monitor_arn = monitor_resp['MonitorArn']
+            email = params.get('email', member_email)
+            ce.create_anomaly_subscription(
+                AnomalySubscription={
+                    'SubscriptionName': 'SlashMyBill-AnomalyAlerts',
+                    'MonitorArnList': [monitor_arn],
+                    'Subscribers': [{'Address': email, 'Type': 'EMAIL'}],
+                    'Frequency': 'DAILY',
+                    'ThresholdExpression': {
+                        'Dimensions': {
+                            'Key': 'ANOMALY_TOTAL_IMPACT_PERCENTAGE',
+                            'Values': ['10'],
+                            'MatchOptions': ['GREATER_THAN_OR_EQUAL'],
+                        }
+                    },
+                }
+            )
+            updated_item = {
+                'id': 'anomaly_detection',
+                'name': 'Cost Anomaly Detection',
+                'status': 'pass',
+                'description': 'Anomaly monitor and subscription created successfully',
+            }
+
+        elif fix_action == 'enable_rightsizing':
+            ce = _make_client_from_creds('ce', creds)
+            ce.update_preferences(
+                RightsizingRecommendations='ENABLED'
+            )
+            updated_item = {
+                'id': 'ce_preferences',
+                'name': 'CE Preferences (Right-Sizing)',
+                'status': 'pass',
+                'description': 'Rightsizing recommendations enabled successfully',
+            }
+
+        elif fix_action == 'start_tag_backfill':
+            ce = _make_client_from_creds('ce', creds)
+            backfill_from = (datetime.now(timezone.utc) - timedelta(days=365)).strftime('%Y-%m-%d')
+            ce.start_cost_allocation_tag_backfill(
+                BackfillFrom=backfill_from
+            )
+            updated_item = {
+                'id': 'tag_backfill',
+                'name': 'Tag Backfill',
+                'status': 'warning',
+                'description': 'Tag backfill started - this may take several hours to complete',
+            }
+
+        elif fix_action == 'enroll_compute_optimizer':
+            co = _make_client_from_creds('compute-optimizer', creds)
+            co.update_enrollment_status(Status='Active')
+            updated_item = {
+                'id': 'compute_optimizer',
+                'name': 'Compute Optimizer',
+                'status': 'pass',
+                'description': 'Compute Optimizer enrolled successfully',
+            }
+
+        else:
+            return create_error_response(400, 'InvalidRequest', f'Unknown fix action: {fix_action}')
+
+    except ClientError as e:
+        error_code = e.response['Error']['Code']
+        error_msg = e.response['Error']['Message']
+        if error_code == 'AccessDeniedException':
+            return create_error_response(403, 'PermissionDenied', f'Permission denied - update your CloudFormation stack to enable this action')
+        if error_code in ('ThrottlingException', 'RequestThrottled'):
+            return create_error_response(429, 'Throttled', 'AWS rate limit exceeded - please try again in a few seconds')
+        return create_error_response(500, 'AWSError', f'AWS API error: {error_msg}')
+    except Exception as e:
+        return create_error_response(500, 'ServerError', f'Fix action failed: {str(e)}')
+
+    # Update DynamoDB healthcheck results
+    try:
+        members_table = dynamodb.Table(MEMBERS_TABLE_NAME)
+        # Get current results to find and update the specific item
+        member_resp = members_table.get_item(Key={'email': member_email}, ProjectionExpression='healthcheckResults')
+        cached = member_resp.get('Item', {}).get('healthcheckResults', {}).get(account_id, {})
+        if cached and 'checklistItems' in cached:
+            items = cached['checklistItems']
+            for i, item in enumerate(items):
+                if item.get('id') == updated_item['id']:
+                    items[i]['status'] = updated_item['status']
+                    items[i]['description'] = updated_item['description']
+                    break
+            # Recalculate score
+            passed = sum(1 for item in items if item['status'] == 'pass')
+            cached['settingsScore'] = {'passed': passed, 'total': len(items)}
+            cached['checklistItems'] = items
+            members_table.update_item(
+                Key={'email': member_email},
+                UpdateExpression='SET healthcheckResults.#aid = :result',
+                ExpressionAttributeNames={'#aid': account_id},
+                ExpressionAttributeValues={':result': cached},
+            )
+    except Exception as e:
+        logger.error(f'Failed to update healthcheck results after fix: {e}')
+
+    return create_response(200, {
+        'success': True,
+        'fixAction': fix_action,
+        'updatedItem': updated_item,
+    })
 
 
 # ============================================================
