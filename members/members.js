@@ -1258,6 +1258,8 @@ function activateMemberTab(tabId) {
         populateActAccounts();
         _populatePlanAccounts();
         _applySharedSelection('act-acct-cb');
+        // Pre-load tag policy for tag scan
+        if (!_tagPolicyCache) _loadTagPolicy();
     }
 }
 
@@ -5569,7 +5571,13 @@ async function _runScanFromChat() {
         var accountIds = getSelectedAccountIds();
         var data = await api('POST', '/members/actions/scan', { accountIds: accountIds });
         _lastScanData = data;
+        _findingsWidgetOpen = true;
         _renderFindingsWidget(data);
+        // Auto-expand findings after refresh
+        var list = $('ai-findings-list');
+        var chev = $('ai-findings-chevron');
+        if (list) list.style.display = 'block';
+        if (chev) chev.textContent = '▼';
     } catch (err) {
         if (status) status.textContent = 'Scan failed: ' + (err.message || 'error');
     }
@@ -5664,9 +5672,11 @@ async function _runTagScan(accountIds) {
     if (tagStatus) tagStatus.textContent = 'Scanning for untagged resources...';
 
     try {
+        // Use tag policy required keys (loaded from Configure > Tag Policy)
+        var policyKeys = (_tagPolicyCache && _tagPolicyCache.requiredKeys) ? _tagPolicyCache.requiredKeys : ['Environment', 'Owner', 'CostCenter', 'Application'];
         var data = await api('POST', '/members/tags/scan', {
             accountIds: accountIds,
-            requiredTags: ['Environment', 'Owner', 'CostCenter', 'Application']
+            requiredTags: policyKeys
         });
         _tagScanResults = data.resources || [];
         _tagSelectedArns = new Set();
