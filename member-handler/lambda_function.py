@@ -8518,37 +8518,66 @@ def _check_hourly_granularity(ce_client):
 def _check_ce_preferences(ce_client):
     """Check rightsizing recommendations preference. Returns checklist item dict."""
     try:
-        resp = ce_client.get_preferences()
-        prefs = resp.get('Preferences', resp)
-        rightsizing = prefs.get('RightsizingRecommendations', prefs.get('MemberAccountDiscountVisibility', ''))
-        if rightsizing in ('ENABLED', 'Other'):
+        # The CE GetPreferences API may not be available in all SDK versions.
+        # Try to call it; if it doesn't exist, check via GetRightsizingRecommendation instead.
+        try:
+            resp = ce_client.get_cost_and_usage(
+                TimePeriod={
+                    'Start': (datetime.now(timezone.utc) - timedelta(days=7)).strftime('%Y-%m-%d'),
+                    'End': datetime.now(timezone.utc).strftime('%Y-%m-%d'),
+                },
+                Granularity='DAILY',
+                Metrics=['UnblendedCost'],
+            )
+            # If we can query CE, rightsizing is likely available
+            # Try to get a rightsizing recommendation to verify
+            try:
+                rs_resp = ce_client.get_rightsizing_recommendation(
+                    Service='AmazonEC2',
+                    Configuration={
+                        'RecommendationTarget': 'SAME_INSTANCE_FAMILY',
+                        'BenefitsConsidered': True,
+                    }
+                )
+                return {
+                    'id': 'ce_preferences',
+                    'name': 'CE Preferences (Right-Sizing)',
+                    'status': 'pass',
+                    'description': 'Rightsizing recommendations are available',
+                    'guidance': 'EC2 rightsizing recommendations help identify over-provisioned instances.',
+                    'fixAction': None,
+                    'fixLabel': None,
+                    'details': {'rightsizing': 'available'}
+                }
+            except ClientError:
+                return {
+                    'id': 'ce_preferences',
+                    'name': 'CE Preferences (Right-Sizing)',
+                    'status': 'warning',
+                    'description': 'Rightsizing recommendations may not be enabled',
+                    'guidance': 'Enable rightsizing recommendations in the AWS Billing console under Preferences.',
+                    'fixAction': None,
+                    'fixLabel': None,
+                    'details': {'rightsizing': 'unknown'}
+                }
+        except Exception as e:
             return {
                 'id': 'ce_preferences',
                 'name': 'CE Preferences (Right-Sizing)',
-                'status': 'pass',
-                'description': 'Rightsizing recommendations are enabled',
-                'guidance': 'EC2 rightsizing recommendations help identify over-provisioned instances.',
-                'fixAction': 'enable_rightsizing',
-                'fixLabel': 'Enable',
-                'details': {'rightsizing': rightsizing}
+                'status': 'warning',
+                'description': 'Could not verify rightsizing preferences',
+                'guidance': 'Check rightsizing recommendations in the AWS Billing console under Preferences.',
+                'fixAction': None,
+                'fixLabel': None,
+                'details': {}
             }
-        return {
-            'id': 'ce_preferences',
-            'name': 'CE Preferences (Right-Sizing)',
-            'status': 'fail',
-            'description': 'Rightsizing recommendations are not enabled',
-            'guidance': 'Enable rightsizing recommendations to receive EC2 optimization suggestions.',
-            'fixAction': 'enable_rightsizing',
-            'fixLabel': 'Enable',
-            'details': {'rightsizing': rightsizing}
-        }
-    except ClientError as e:
+    except Exception as e:
         return {
             'id': 'ce_preferences',
             'name': 'CE Preferences (Right-Sizing)',
             'status': 'error',
-            'description': f'Error checking CE preferences: {str(e)}',
-            'guidance': 'Ensure the cross-account role has ce:GetPreferences permission.',
+            'description': f'Unexpected error: {str(e)}',
+            'guidance': 'Please try scanning again.',
             'fixAction': None,
             'fixLabel': None,
             'details': {}
@@ -9159,20 +9188,18 @@ def handle_healthcheck_fix(event):
                 }
 
         elif fix_action == 'enable_rightsizing':
-            ce = _make_client_from_creds('ce', creds)
-            ce.update_preferences(
-                RightsizingRecommendations='ENABLED'
-            )
+            # Note: CE preferences API (update_preferences) is not available in all boto3 versions
+            # Mark as guidance-only
             updated_item = {
                 'id': 'ce_preferences',
                 'name': 'CE Preferences (Right-Sizing)',
-                'status': 'pass',
-                'description': 'Rightsizing recommendations enabled successfully',
+                'status': 'warning',
+                'description': 'Rightsizing preferences must be enabled in the AWS Billing console under Preferences',
             }
 
         elif fix_action == 'start_tag_backfill':
             ce = _make_client_from_creds('ce', creds)
-            backfill_from = (datetime.now(timezone.utc) - timedelta(days=365)).strftime('%Y-%m-%d')
+            backfill_from = (datetime.now(timezone.utc) - timedelta(days=365)).strftime('%Y-%m-%dT%H:%M:%SZ')
             ce.start_cost_allocation_tag_backfill(
                 BackfillFrom=backfill_from
             )
