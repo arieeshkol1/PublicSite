@@ -9111,36 +9111,52 @@ def handle_healthcheck_fix(event):
 
         elif fix_action == 'create_anomaly_monitor':
             ce = _make_client_from_creds('ce', creds)
-            monitor_resp = ce.create_anomaly_monitor(
-                AnomalyMonitor={
-                    'MonitorName': 'SlashMyBill-ServiceMonitor',
-                    'MonitorType': 'DIMENSIONAL',
-                    'MonitorDimension': 'SERVICE',
-                }
+            # Check if a dimensional monitor already exists (AWS limits 1 per dimension type)
+            existing = ce.get_anomaly_monitors(MaxResults=10)
+            existing_monitors = existing.get('AnomalyMonitors', [])
+            has_service_monitor = any(
+                m.get('MonitorType') == 'DIMENSIONAL' and m.get('MonitorDimension') == 'SERVICE'
+                for m in existing_monitors
             )
-            monitor_arn = monitor_resp['MonitorArn']
-            email = params.get('email', member_email)
-            ce.create_anomaly_subscription(
-                AnomalySubscription={
-                    'SubscriptionName': 'SlashMyBill-AnomalyAlerts',
-                    'MonitorArnList': [monitor_arn],
-                    'Subscribers': [{'Address': email, 'Type': 'EMAIL'}],
-                    'Frequency': 'DAILY',
-                    'ThresholdExpression': {
-                        'Dimensions': {
-                            'Key': 'ANOMALY_TOTAL_IMPACT_PERCENTAGE',
-                            'Values': ['10'],
-                            'MatchOptions': ['GREATER_THAN_OR_EQUAL'],
-                        }
-                    },
+            if has_service_monitor:
+                # Already exists — just mark as pass
+                updated_item = {
+                    'id': 'anomaly_detection',
+                    'name': 'Cost Anomaly Detection',
+                    'status': 'pass',
+                    'description': f'Anomaly monitor already exists ({len(existing_monitors)} monitor(s))',
                 }
-            )
-            updated_item = {
-                'id': 'anomaly_detection',
-                'name': 'Cost Anomaly Detection',
-                'status': 'pass',
-                'description': 'Anomaly monitor and subscription created successfully',
-            }
+            else:
+                monitor_resp = ce.create_anomaly_monitor(
+                    AnomalyMonitor={
+                        'MonitorName': 'SlashMyBill-ServiceMonitor',
+                        'MonitorType': 'DIMENSIONAL',
+                        'MonitorDimension': 'SERVICE',
+                    }
+                )
+                monitor_arn = monitor_resp['MonitorArn']
+                email = params.get('email', member_email)
+                ce.create_anomaly_subscription(
+                    AnomalySubscription={
+                        'SubscriptionName': 'SlashMyBill-AnomalyAlerts',
+                        'MonitorArnList': [monitor_arn],
+                        'Subscribers': [{'Address': email, 'Type': 'EMAIL'}],
+                        'Frequency': 'DAILY',
+                        'ThresholdExpression': {
+                            'Dimensions': {
+                                'Key': 'ANOMALY_TOTAL_IMPACT_PERCENTAGE',
+                                'Values': ['10'],
+                                'MatchOptions': ['GREATER_THAN_OR_EQUAL'],
+                            }
+                        },
+                    }
+                )
+                updated_item = {
+                    'id': 'anomaly_detection',
+                    'name': 'Cost Anomaly Detection',
+                    'status': 'pass',
+                    'description': 'Anomaly monitor and subscription created successfully',
+                }
 
         elif fix_action == 'enable_rightsizing':
             ce = _make_client_from_creds('ce', creds)
