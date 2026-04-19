@@ -8435,10 +8435,10 @@ def _check_aws_generated_tags(ce_client):
 def _check_anomaly_detection(ce_client):
     """Check for existing anomaly monitors. Returns checklist item dict."""
     try:
-        resp = ce_client.get_anomaly_monitors(MaxResults=1)
-        total = resp.get('TotalCount', 0)
+        resp = ce_client.get_anomaly_monitors(MaxResults=10)
+        monitors = resp.get('AnomalyMonitors', [])
+        total = len(monitors)
         if total > 0:
-            monitors = resp.get('AnomalyMonitors', [])
             monitor_names = [m.get('MonitorName', 'Unknown') for m in monitors]
             return {
                 'id': 'anomaly_detection',
@@ -8447,8 +8447,8 @@ def _check_anomaly_detection(ce_client):
                 'status': 'pass',
                 'description': f'{total} anomaly monitor(s) configured',
                 'guidance': 'Cost Anomaly Detection alerts you to unexpected spending patterns.',
-                'fixAction': 'create_anomaly_monitor',
-                'fixLabel': 'Setup',
+                'fixAction': None,
+                'fixLabel': None,
                 'details': {'monitorCount': total, 'monitorNames': monitor_names}
             }
         return {
