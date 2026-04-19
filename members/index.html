@@ -538,6 +538,9 @@
                         <button class="act-nav-btn" data-section="finops-settings" onclick="_switchConfigSection('finops-settings')">
                             <span style="font-size:1.2em;">⚙️</span> FinOps Settings
                         </button>
+                        <button class="act-nav-btn" data-section="tag-policy" onclick="_switchConfigSection('tag-policy')">
+                            <span style="font-size:1.2em;">🏷️</span> Tag Policy
+                        </button>
                     </div>
 
                     <!-- Right Content Area -->
@@ -605,15 +608,6 @@
 
                             <!-- Scan button -->
 
-                    <!-- Tag Policy Section -->
-                    <div id="tag-policy-section" style="margin-top:24px;padding-top:16px;border-top:1px solid #30363d;">
-                        <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">
-                            <span style="font-size:1.1em;">🏷️</span>
-                            <span style="color:#e6edf3;font-weight:700;font-size:0.95em;">Tag Policy</span>
-                        </div>
-                        <div id="tag-policy-content" style="color:#8b949e;font-size:0.88em;">Loading tag policy...</div>
-                    </div>
-
                             <div style="text-align:center;padding:20px 0;">
                                 <button id="finops-scan-btn" onclick="_scanFinOpsSettings()" class="btn btn-primary btn-sm" style="font-size:0.95em;">🔍 Scan Settings</button>
                             </div>
@@ -625,6 +619,23 @@
                                 <div style="font-size:0.9em;color:#6b7280;">Select an account and click "Scan Settings" to audit your<br>AWS billing and cost management best practices.</div>
                             </div>
                         </div>
+
+                        <!-- Tag Policy Sub-Section -->
+                        <div id="config-section-tag-policy" style="display:none;">
+                            <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px;">
+                                <h2 style="margin:0;color:#1f2937;">🏷️ Tag Policy</h2>
+                            </div>
+                            <div style="color:#8b949e;font-size:0.88em;margin-bottom:16px;">
+                                Define your organization's required tag keys. These are used in Plan → Tag Resources, FinOps Settings tag coverage checks, and AI recommendations.
+                            </div>
+                            <div id="tag-policy-content">
+                                <div style="text-align:center;padding:30px;color:#6b7280;">
+                                    <div class="spinner" style="margin:0 auto 12px;"></div>
+                                    Loading tag policy...
+                                </div>
+                            </div>
+                        </div>
+
 
                     </div>
                 </div>
@@ -903,7 +914,7 @@
         <span id="notification-message"></span>
     </div>
 
-    <script src="members.js?v=47"></script>
+    <script src="members.js?v=48"></script>
     <script src="help.js?v=1"></script>
 </body>
 </html>

@@ -4272,14 +4272,16 @@ function _switchConfigSection(section) {
     });
     var accounts = document.getElementById('config-section-accounts');
     var finops = document.getElementById('config-section-finops-settings');
+    var tagPolicy = document.getElementById('config-section-tag-policy');
     if (accounts) accounts.style.display = section === 'accounts' ? 'block' : 'none';
     if (finops) finops.style.display = section === 'finops-settings' ? 'block' : 'none';
+    if (tagPolicy) tagPolicy.style.display = section === 'tag-policy' ? 'block' : 'none';
     if (section === 'finops-settings') _populateFinOpsAccountSelector();
+    if (section === 'tag-policy') _loadTagPolicy();
 }
 
 function switchToFinOpsSettings() {
     // Navigate to Configure tab -> FinOps Settings section
-    _loadTagPolicy();
     document.querySelectorAll('.member-tab').forEach(function(t) {
         t.classList.toggle('active', t.dataset.tab === 'accounts-tab');
     });
@@ -4612,10 +4614,11 @@ async function _loadTagPolicy() {
     try {
         var data = await api('GET', '/members/tag-policy');
         _tagPolicyCache = data.tagPolicy || {requiredKeys: ['Environment','Owner','CostCenter','Application'], allowedValues: {}, coverageThreshold: 80};
-        _renderTagPolicy();
     } catch(e) {
-        console.error('Failed to load tag policy:', e);
+        console.warn('Tag policy API not available, using defaults:', e);
+        _tagPolicyCache = {requiredKeys: ['Environment','Owner','CostCenter','Application'], allowedValues: {}, coverageThreshold: 80};
     }
+    _renderTagPolicy();
 }
 
 function _renderTagPolicy() {
