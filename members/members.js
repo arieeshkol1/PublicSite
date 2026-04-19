@@ -1628,6 +1628,29 @@ function getSelectedAccountIds() {
     return ids;
 }
 
+
+function _addNavLinks(html) {
+    // Map of navigation patterns to onclick handlers
+    var navMap = [
+        { pattern: /Go to Act \u2192 Waste Cleanup/gi, label: 'Go to Act \u2192 Waste Cleanup', onclick: "_goToTab('act-tab','waste')" },
+        { pattern: /Go to Act \u2192 Scheduler/gi, label: 'Go to Act \u2192 Scheduler', onclick: "_goToTab('act-tab','scheduler')" },
+        { pattern: /Go to Plan \u2192 Budget/gi, label: 'Go to Plan \u2192 Budget', onclick: "_goToTab('plan-tab','plan-budget')" },
+        { pattern: /Go to Plan \u2192 Tag Resources/gi, label: 'Go to Plan \u2192 Tag Resources', onclick: "_goToTab('plan-tab','plan-tagging')" },
+        { pattern: /Go to Configure \u2192 FinOps Settings/gi, label: 'Go to Configure \u2192 FinOps Settings', onclick: "switchToFinOpsSettings()" },
+        { pattern: /Go to Observe \u2192 Dashboard/gi, label: 'Go to Observe \u2192 Dashboard', onclick: "activateMemberTab('dash-tab')" },
+        { pattern: /Act \u2192 Waste Cleanup/gi, label: 'Act \u2192 Waste Cleanup', onclick: "_goToTab('act-tab','waste')" },
+        { pattern: /Act \u2192 Scheduler/gi, label: 'Act \u2192 Scheduler', onclick: "_goToTab('act-tab','scheduler')" },
+        { pattern: /Plan \u2192 Budget/gi, label: 'Plan \u2192 Budget', onclick: "_goToTab('plan-tab','plan-budget')" },
+        { pattern: /Plan \u2192 Tag Resources/gi, label: 'Plan \u2192 Tag Resources', onclick: "_goToTab('plan-tab','plan-tagging')" },
+        { pattern: /Configure \u2192 FinOps Settings/gi, label: 'Configure \u2192 FinOps Settings', onclick: "switchToFinOpsSettings()" },
+    ];
+    // Apply longest patterns first to avoid partial matches
+    navMap.forEach(function(nav) {
+        html = html.replace(nav.pattern, '<a href="#" onclick="' + nav.onclick + ';return false;" style="color:#6366f1;text-decoration:underline;cursor:pointer;font-weight:600;">' + nav.label + ' \u25b6</a>');
+    });
+    return html;
+}
+
 function addAIMessage(type, content, topServices) {
     if (!aiChat) return;
     var welcome = aiChat.querySelector('.lab-welcome');
@@ -1647,6 +1670,8 @@ function addAIMessage(type, content, topServices) {
             .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
             .replace(/\n- /g, '\n• ')
             .replace(/\n/g, '<br>');
+        // Convert navigation references to clickable hyperlinks
+        formatted = _addNavLinks(formatted);
         var questionText = aiQuestionInput && aiQuestionInput.dataset.lastQuestion ? aiQuestionInput.dataset.lastQuestion : '';
 
         // Generate drill-down follow-up suggestions based on the QUESTION context, not just answer content
