@@ -8964,7 +8964,7 @@ def handle_get_tag_policy(event):
     auth = validate_token(event)
     if isinstance(auth, dict) and 'statusCode' in auth:
         return auth
-    member_email = auth
+    member_email = auth['sub']
 
     try:
         members_table = dynamodb.Table(MEMBERS_TABLE_NAME)
@@ -8986,7 +8986,7 @@ def handle_save_tag_policy(event):
     auth = validate_token(event)
     if isinstance(auth, dict) and 'statusCode' in auth:
         return auth
-    member_email = auth
+    member_email = auth['sub']
 
     try:
         body = json.loads(event.get('body', '{}'))
