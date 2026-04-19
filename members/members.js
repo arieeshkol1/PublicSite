@@ -4509,8 +4509,8 @@ async function _fixFinOpsSetting(accountId, fixAction, params) {
                         }
                     }
                     // Recalculate score — only count slashmybill group
-                    var hasGroups = items.some(function(it) { return !!it.group; });
-                    var scoreable = hasGroups ? items.filter(function(it) { return it.group === 'slashmybill'; }) : items;
+                    var scoreable = items.filter(function(it) { return it.group === 'slashmybill'; });
+                    if (scoreable.length === 0) scoreable = items; // fallback for old data
                     var passed = scoreable.filter(function(it) { return it.status === 'pass'; }).length;
                     scanData.settingsScore = { passed: passed, total: scoreable.length };
                     container.dataset.scanData = JSON.stringify(scanData);
@@ -4581,17 +4581,11 @@ function _loadFinOpsScoreKPI(kpiBar, data) {
             '<div style="color:#6b7280;font-size:1em;font-weight:600;">Not scanned</div>' +
             '<div style="color:#6366f1;font-size:0.75em;margin-top:2px;cursor:pointer;" onclick="event.stopPropagation();switchToFinOpsSettings();">Scan →</div>';
     } else {
-        // Aggregate scores across all accounts — only count slashmybill group
+        // Aggregate scores across all accounts
         var totalPassed = 0, totalItems = 0;
         accountIds.forEach(function(aid) {
             var r = hcResults[aid];
-            if (!r) return;
-            var hasGroups = r.checklistItems && r.checklistItems.some(function(i) { return !!i.group; });
-            if (hasGroups) {
-                var scoreable = r.checklistItems.filter(function(i) { return i.group === 'slashmybill'; });
-                totalPassed += scoreable.filter(function(i) { return i.status === 'pass'; }).length;
-                totalItems += scoreable.length;
-            } else if (r.settingsScore) {
+            if (r && r.settingsScore) {
                 totalPassed += (r.settingsScore.passed || 0);
                 totalItems += (r.settingsScore.total || 0);
             }
@@ -4625,7 +4619,7 @@ function _injectFinOpsActCard(grid) {
         return;
     }
 
-    // Check for failing items across all accounts — only count slashmybill group
+    // Check for failing items across all accounts
     var failingItems = [];
     var totalPassed = 0, totalItems = 0;
     var isRecent = false;
@@ -4637,19 +4631,14 @@ function _injectFinOpsActCard(grid) {
             var scanTime = new Date(r.scanTimestamp).getTime();
             if (Date.now() - scanTime < 24 * 60 * 60 * 1000) isRecent = true;
         }
-        // Recalculate score from slashmybill group items (only if group fields exist)
-        var hasGroups = r.checklistItems && r.checklistItems.some(function(i) { return !!i.group; });
-        if (hasGroups) {
-            var scoreable = r.checklistItems.filter(function(i) { return i.group === 'slashmybill'; });
-            totalPassed += scoreable.filter(function(i) { return i.status === 'pass'; }).length;
-            totalItems += scoreable.length;
-        } else if (r.settingsScore) {
+        // Use settingsScore from API (backend calculates slashmybill group only)
+        if (r.settingsScore) {
             totalPassed += (r.settingsScore.passed || 0);
             totalItems += (r.settingsScore.total || 0);
         }
-        // Only show slashmybill group items as failing (skip aws_console items)
+        // Only show slashmybill group items as failing
         (r.checklistItems || []).forEach(function(item) {
-            if (item.group === 'slashmybill' && (item.status === 'fail' || item.status === 'error')) {
+            if ((!item.group || item.group === 'slashmybill') && (item.status === 'fail' || item.status === 'error')) {
                 failingItems.push(item);
             }
         });

@@ -8518,9 +8518,9 @@ def _check_hourly_granularity(ce_client):
             'id': 'hourly_granularity',
             'name': 'Hourly Granularity',
             'group': 'aws_console',
-            'status': 'info',
+            'status': 'fail',
             'description': 'Hourly cost granularity is not available',
-            'guidance': 'Hourly granularity must be enabled manually in the AWS Billing console. This is informational and does not affect your score.',
+            'guidance': 'Enable in AWS Cost Explorer → Settings → Hourly and Resource Level Data. Does not affect your score.',
             'fixAction': None,
             'fixLabel': None,
             'details': {'error': str(e)}
@@ -8567,7 +8567,7 @@ def _check_ce_preferences(ce_client):
                     'id': 'ce_preferences',
                     'name': 'CE Preferences (Right-Sizing)',
                     'group': 'aws_console',
-                    'status': 'info',
+                    'status': 'warning',
                     'description': 'Rightsizing recommendations may not be enabled',
                     'guidance': 'Click Enable to turn on rightsizing recommendations, or verify in the AWS Billing console under Preferences.',
                     'fixAction': None,
@@ -8773,7 +8773,7 @@ def _check_budgets_healthcheck(budgets_client, account_id):
 def _check_tag_coverage(tagging_client):
     """Check resource tag coverage percentage. Returns checklist item dict."""
     try:
-        resp = tagging_client.get_resources(ResourcesPerPage=200)
+        resp = tagging_client.get_resources(ResourcesPerPage=100)
         resources = resp.get('ResourceTagMappingList', [])
         total = len(resources)
         if total == 0:
@@ -8880,9 +8880,9 @@ def _check_tag_activation_status(ce_client):
                 'id': 'tag_activation_status',
                 'name': 'Tag Activation Status',
                 'group': 'aws_console',
-                'status': 'info',
+                'status': 'warning',
                 'description': 'No cost allocation tags found',
-                'guidance': 'Ask your management account admin to create and activate cost allocation tags. This is informational and does not affect your score.',
+                'guidance': 'Ask your management account admin to activate cost allocation tags. Does not affect your score.',
                 'fixAction': None,
                 'fixLabel': None,
                 'details': {'tags': []}
@@ -8893,9 +8893,9 @@ def _check_tag_activation_status(ce_client):
             'id': 'tag_activation_status',
             'name': 'Tag Activation Status',
             'group': 'aws_console',
-            'status': 'pass' if len(active) == len(tags) else 'info',
+            'status': 'pass' if len(active) == len(tags) else 'warning',
             'description': f'{len(active)}/{len(tags)} cost allocation tags active',
-            'guidance': 'Cost allocation tags are managed by the payer account. Contact your management account admin to activate missing tags. This is informational and does not affect your score.',
+            'guidance': 'Cost allocation tags are managed by the payer account. Contact your management account admin to activate missing tags. Does not affect your score.',
             'fixAction': None,
             'fixLabel': None,
             'details': {'tags': tag_details}
@@ -8907,9 +8907,9 @@ def _check_tag_activation_status(ce_client):
                 'id': 'tag_activation_status',
                 'name': 'Tag Activation Status',
                 'group': 'aws_console',
-                'status': 'info',
+                'status': 'warning',
                 'description': 'Managed by payer account',
-                'guidance': 'Ask your management account admin to activate cost allocation tags. Linked accounts cannot view or modify tag activation status. This is informational and does not affect your score.',
+                'guidance': 'Ask your management account admin to activate cost allocation tags. Does not affect your score.',
                 'fixAction': None,
                 'fixLabel': None,
                 'details': {'note': 'AccessDenied - tag activation is managed by the payer account'}
