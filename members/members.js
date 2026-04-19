@@ -4386,7 +4386,7 @@ function _renderFinOpsChecklist(data) {
         var actionHtml = '';
         if (item.fixAction && item.status !== 'pass') {
             var btnLabel = esc(item.fixLabel || 'Fix');
-            actionHtml = '<div style="flex-shrink:0;"><button class="btn btn-primary btn-sm finops-fix-btn" data-item-id="' + ea(item.id) + '" data-fix-action="' + ea(item.fixAction) + '" onclick="_fixFinOpsSetting('' + ea(data.accountId) + '','' + ea(item.fixAction) + '')" style="font-size:0.82em;white-space:nowrap;">' + btnLabel + '</button></div>';
+            actionHtml = '<div style="flex-shrink:0;"><button class="btn btn-primary btn-sm finops-fix-btn" data-item-id="' + ea(item.id) + '" data-fix-action="' + ea(item.fixAction) + '" onclick="_fixFinOpsSetting(\'' + ea(data.accountId) + '\',\'' + ea(item.fixAction) + '\')" style="font-size:0.82em;white-space:nowrap;">' + btnLabel + '</button></div>';
         }
 
         card.innerHTML = iconDiv + contentHtml + actionHtml;
