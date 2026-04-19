@@ -1201,6 +1201,31 @@ document.querySelectorAll('.member-tab').forEach(function(tab) {
     };
 });
 
+// Smart tab default: restore last tab from sessionStorage, or detect first-time user
+(function _initDefaultTab() {
+    var savedTab = null;
+    try { savedTab = sessionStorage.getItem('smb_active_tab'); } catch(e) {}
+    if (savedTab) {
+        // Returning user with a saved tab — restore it
+        activateMemberTab(savedTab);
+    } else {
+        // No saved tab — check if user has connected accounts
+        // If no accounts, show Configure tab (first-time user)
+        // Otherwise show Observe tab (default for returning users)
+        api('GET', '/members/accounts').then(function(data) {
+            var accounts = (data && data.accounts) || [];
+            var hasConnected = accounts.some(function(a) { return a.connectionStatus === 'connected'; });
+            if (!hasConnected) {
+                activateMemberTab('accounts-tab');
+            } else {
+                activateMemberTab('dash-tab');
+            }
+        }).catch(function() {
+            activateMemberTab('dash-tab');
+        });
+    }
+})();
+
 function activateMemberTab(tabId) {
     document.querySelectorAll('.member-tab').forEach(function(t) {
         t.classList.toggle('active', t.dataset.tab === tabId);
@@ -1208,6 +1233,8 @@ function activateMemberTab(tabId) {
     document.querySelectorAll('.member-tab-content').forEach(function(c) {
         c.hidden = c.id !== tabId;
     });
+    // Persist active tab for refresh
+    try { sessionStorage.setItem('smb_active_tab', tabId); } catch(e) {}
     if (tabId === 'ai-tab') {
         _syncAccountSelection('dash'); // save dash selection before switching
         populateAIAccounts();
@@ -4351,53 +4378,79 @@ function _renderFinOpsChecklist(data) {
         container.innerHTML = '<div style="color:#6b7280;text-align:center;padding:20px;">No checklist items returned.</div>';
         return;
     }
-    items.forEach(function(item) {
-        var statusIcon = '⚙️';
-        var statusColor = '#6b7280';
-        if (item.status === 'pass') { statusIcon = '✅'; statusColor = '#22c55e'; }
-        else if (item.status === 'warning') { statusIcon = '⚠️'; statusColor = '#f59e0b'; }
-        else if (item.status === 'fail') { statusIcon = '❌'; statusColor = '#ef4444'; }
-        else if (item.status === 'info') { statusIcon = 'ℹ️'; statusColor = '#3b82f6'; }
-        else if (item.status === 'error') { statusIcon = '⚙️'; statusColor = '#6b7280'; }
 
-        var card = document.createElement('div');
-        card.className = 'finops-checklist-item';
-        card.id = 'finops-item-' + item.id;
-        card.style.cssText = 'background:#161b22;border:1px solid #30363d;border-radius:8px;padding:14px 16px;margin-bottom:10px;display:flex;align-items:flex-start;gap:12px;';
+    // Split items into two groups
+    var slashmybillItems = items.filter(function(i) { return i.group === 'slashmybill'; });
+    var consoleItems = items.filter(function(i) { return i.group === 'aws_console'; });
+    // Items without a group go to slashmybill (backward compat)
+    var ungrouped = items.filter(function(i) { return !i.group; });
+    slashmybillItems = slashmybillItems.concat(ungrouped);
 
-        var iconDiv = '<div style="font-size:1.3em;flex-shrink:0;margin-top:2px;">' + statusIcon + '</div>';
+    // Render SlashMyBill group
+    if (slashmybillItems.length > 0) {
+        var hdr1 = document.createElement('div');
+        hdr1.style.cssText = 'color:#6366f1;font-weight:700;font-size:0.95em;margin-bottom:8px;margin-top:4px;display:flex;align-items:center;gap:6px;';
+        hdr1.innerHTML = '\u26a1 Configurable via SlashMyBill <span style="color:#8b949e;font-weight:400;font-size:0.85em;">(scored)</span>';
+        container.appendChild(hdr1);
+        slashmybillItems.forEach(function(item) { _renderFinOpsItem(container, item, data); });
+    }
 
-        var contentHtml = '<div style="flex:1;">';
-        contentHtml += '<div style="font-weight:600;color:#e6edf3;margin-bottom:4px;">' + esc(item.name) + '</div>';
-        contentHtml += '<div style="color:#8b949e;font-size:0.88em;margin-bottom:4px;">' + esc(item.description) + '</div>';
-        if (item.guidance) {
-            contentHtml += '<div style="color:#6b7280;font-size:0.82em;font-style:italic;margin-bottom:6px;">' + esc(item.guidance) + '</div>';
-        }
-
-        // Deep links for budget and tag coverage items
-        if (item.id === 'budgets' && !item.fixAction) {
-            contentHtml += '<a href="#" onclick="_switchToPlanBudget();return false;" style="color:#6366f1;font-size:0.85em;text-decoration:underline;">Go to Plan → Budget</a> ';
-        }
-        if (item.id === 'tag_coverage' && !item.fixAction) {
-            contentHtml += '<a href="#" onclick="_switchToPlanTagging();return false;" style="color:#6366f1;font-size:0.85em;text-decoration:underline;">Go to Plan → Tag Resources</a> ';
-        }
-
-        contentHtml += '</div>';
-
-        // Fix button
-        var actionHtml = '';
-        if (item.fixAction && item.status !== 'pass') {
-            var btnLabel = esc(item.fixLabel || 'Fix');
-            actionHtml = '<div style="flex-shrink:0;"><button class="btn btn-primary btn-sm finops-fix-btn" data-item-id="' + ea(item.id) + '" data-fix-action="' + ea(item.fixAction) + '" onclick="_fixFinOpsSetting(\'' + ea(data.accountId) + '\',\'' + ea(item.fixAction) + '\')" style="font-size:0.82em;white-space:nowrap;">' + btnLabel + '</button></div>';
-        }
-
-        card.innerHTML = iconDiv + contentHtml + actionHtml;
-        container.appendChild(card);
-    });
+    // Render AWS Console group
+    if (consoleItems.length > 0) {
+        var hdr2 = document.createElement('div');
+        hdr2.style.cssText = 'color:#f59e0b;font-weight:700;font-size:0.95em;margin-bottom:8px;margin-top:18px;display:flex;align-items:center;gap:6px;';
+        hdr2.innerHTML = '\u2601\ufe0f Requires AWS Console <span style="color:#8b949e;font-weight:400;font-size:0.85em;">(informational \u2014 not scored)</span>';
+        container.appendChild(hdr2);
+        consoleItems.forEach(function(item) { _renderFinOpsItem(container, item, data); });
+    }
 
     // Store current data for score recalculation
     container.dataset.accountId = data.accountId || '';
     container.dataset.scanData = JSON.stringify(data);
+}
+
+function _renderFinOpsItem(container, item, data) {
+    var statusIcon = '\u2699\ufe0f';
+    var statusColor = '#6b7280';
+    if (item.status === 'pass') { statusIcon = '\u2705'; statusColor = '#22c55e'; }
+    else if (item.status === 'warning') { statusIcon = '\u26a0\ufe0f'; statusColor = '#f59e0b'; }
+    else if (item.status === 'fail') { statusIcon = '\u274c'; statusColor = '#ef4444'; }
+    else if (item.status === 'info') { statusIcon = '\u2139\ufe0f'; statusColor = '#3b82f6'; }
+    else if (item.status === 'error') { statusIcon = '\u2699\ufe0f'; statusColor = '#6b7280'; }
+
+    var card = document.createElement('div');
+    card.className = 'finops-checklist-item';
+    card.id = 'finops-item-' + item.id;
+    card.style.cssText = 'background:#161b22;border:1px solid #30363d;border-radius:8px;padding:14px 16px;margin-bottom:10px;display:flex;align-items:flex-start;gap:12px;';
+
+    var iconDiv = '<div style="font-size:1.3em;flex-shrink:0;margin-top:2px;">' + statusIcon + '</div>';
+
+    var contentHtml = '<div style="flex:1;">';
+    contentHtml += '<div style="font-weight:600;color:#e6edf3;margin-bottom:4px;">' + esc(item.name) + '</div>';
+    contentHtml += '<div style="color:#8b949e;font-size:0.88em;margin-bottom:4px;">' + esc(item.description) + '</div>';
+    if (item.guidance) {
+        contentHtml += '<div style="color:#6b7280;font-size:0.82em;font-style:italic;margin-bottom:6px;">' + esc(item.guidance) + '</div>';
+    }
+
+    // Deep links for budget and tag coverage items
+    if (item.id === 'budgets' && !item.fixAction) {
+        contentHtml += '<a href="#" onclick="_switchToPlanBudget();return false;" style="color:#6366f1;font-size:0.85em;text-decoration:underline;">Go to Plan \u2192 Budget</a> ';
+    }
+    if (item.id === 'tag_coverage' && !item.fixAction) {
+        contentHtml += '<a href="#" onclick="_switchToPlanTagging();return false;" style="color:#6366f1;font-size:0.85em;text-decoration:underline;">Go to Plan \u2192 Tag Resources</a> ';
+    }
+
+    contentHtml += '</div>';
+
+    // Fix button
+    var actionHtml = '';
+    if (item.fixAction && item.status !== 'pass') {
+        var btnLabel = esc(item.fixLabel || 'Fix');
+        actionHtml = '<div style="flex-shrink:0;"><button class="btn btn-primary btn-sm finops-fix-btn" data-item-id="' + ea(item.id) + '" data-fix-action="' + ea(item.fixAction) + '" onclick="_fixFinOpsSetting(\'' + ea(data.accountId) + '\',\'' + ea(item.fixAction) + '\')" style="font-size:0.82em;white-space:nowrap;">' + btnLabel + '</button></div>';
+    }
+
+    card.innerHTML = iconDiv + contentHtml + actionHtml;
+    container.appendChild(card);
 }
 
 function _renderFinOpsScore(score) {

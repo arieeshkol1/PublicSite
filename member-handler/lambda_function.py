@@ -8339,6 +8339,7 @@ def _check_cost_allocation_tags(ce_client):
             return {
                 'id': 'cost_allocation_tags',
                 'name': 'Cost Allocation Tags (User-Defined)',
+                'group': 'slashmybill',
                 'status': 'fail',
                 'description': 'No user-defined cost allocation tags found',
                 'guidance': 'Create and activate tags like Environment, Owner, CostCenter, Application to categorize costs in billing reports.',
@@ -8353,6 +8354,7 @@ def _check_cost_allocation_tags(ce_client):
             return {
                 'id': 'cost_allocation_tags',
                 'name': 'Cost Allocation Tags (User-Defined)',
+                'group': 'slashmybill',
                 'status': 'pass',
                 'description': f'All {len(active)} user-defined tags are active',
                 'guidance': 'Recommended tags: Environment, Owner, CostCenter, Application',
@@ -8374,6 +8376,7 @@ def _check_cost_allocation_tags(ce_client):
         return {
             'id': 'cost_allocation_tags',
             'name': 'Cost Allocation Tags (User-Defined)',
+            'group': 'slashmybill',
             'status': 'error',
             'description': f'Error checking tags: {str(e)}',
             'guidance': 'Ensure the cross-account role has ce:ListCostAllocationTags permission.',
@@ -8396,6 +8399,7 @@ def _check_aws_generated_tags(ce_client):
             return {
                 'id': 'aws_generated_tags',
                 'name': 'AWS-Generated Tags',
+                'group': 'slashmybill',
                 'status': 'pass',
                 'description': 'aws:createdBy tag is active',
                 'guidance': 'The aws:createdBy tag tracks which IAM entity created each resource.',
@@ -8406,6 +8410,7 @@ def _check_aws_generated_tags(ce_client):
         return {
             'id': 'aws_generated_tags',
             'name': 'AWS-Generated Tags',
+            'group': 'slashmybill',
             'status': 'fail',
             'description': 'aws:createdBy tag is not active',
             'guidance': 'Activate the aws:createdBy tag to track resource accountability in cost reports.',
@@ -8417,6 +8422,7 @@ def _check_aws_generated_tags(ce_client):
         return {
             'id': 'aws_generated_tags',
             'name': 'AWS-Generated Tags',
+            'group': 'slashmybill',
             'status': 'error',
             'description': f'Error checking AWS-generated tags: {str(e)}',
             'guidance': 'Ensure the cross-account role has ce:ListCostAllocationTags permission.',
@@ -8437,6 +8443,7 @@ def _check_anomaly_detection(ce_client):
             return {
                 'id': 'anomaly_detection',
                 'name': 'Cost Anomaly Detection',
+                'group': 'slashmybill',
                 'status': 'pass',
                 'description': f'{total} anomaly monitor(s) configured',
                 'guidance': 'Cost Anomaly Detection alerts you to unexpected spending patterns.',
@@ -8447,6 +8454,7 @@ def _check_anomaly_detection(ce_client):
         return {
             'id': 'anomaly_detection',
             'name': 'Cost Anomaly Detection',
+            'group': 'slashmybill',
             'status': 'fail',
             'description': 'No anomaly monitors configured',
             'guidance': 'Set up Cost Anomaly Detection to receive alerts on unexpected spending.',
@@ -8458,6 +8466,7 @@ def _check_anomaly_detection(ce_client):
         return {
             'id': 'anomaly_detection',
             'name': 'Cost Anomaly Detection',
+            'group': 'slashmybill',
             'status': 'error',
             'description': f'Error checking anomaly monitors: {str(e)}',
             'guidance': 'Ensure the cross-account role has ce:GetAnomalyMonitors permission.',
@@ -8485,6 +8494,7 @@ def _check_hourly_granularity(ce_client):
             return {
                 'id': 'hourly_granularity',
                 'name': 'Hourly Granularity',
+                'group': 'aws_console',
                 'status': 'pass',
                 'description': 'Hourly cost granularity is enabled',
                 'guidance': 'Hourly data provides real-time cost visibility for faster anomaly detection.',
@@ -8495,9 +8505,10 @@ def _check_hourly_granularity(ce_client):
         return {
             'id': 'hourly_granularity',
             'name': 'Hourly Granularity',
-            'status': 'fail',
+            'group': 'aws_console',
+            'status': 'info',
             'description': 'Hourly cost granularity is not enabled',
-            'guidance': 'Hourly granularity must be enabled manually in the AWS Billing console. Go to Cost Explorer preferences and enable hourly granularity.',
+            'guidance': 'Hourly granularity must be enabled manually in the AWS Billing console. Go to Cost Explorer preferences and enable hourly granularity. This is informational and does not affect your score.',
             'fixAction': None,
             'fixLabel': None,
             'details': {}
@@ -8506,9 +8517,10 @@ def _check_hourly_granularity(ce_client):
         return {
             'id': 'hourly_granularity',
             'name': 'Hourly Granularity',
-            'status': 'fail',
+            'group': 'aws_console',
+            'status': 'info',
             'description': 'Hourly cost granularity is not available',
-            'guidance': 'Hourly granularity must be enabled manually in the AWS Billing console.',
+            'guidance': 'Hourly granularity must be enabled manually in the AWS Billing console. This is informational and does not affect your score.',
             'fixAction': None,
             'fixLabel': None,
             'details': {'error': str(e)}
@@ -8542,6 +8554,7 @@ def _check_ce_preferences(ce_client):
                 return {
                     'id': 'ce_preferences',
                     'name': 'CE Preferences (Right-Sizing)',
+                    'group': 'slashmybill',
                     'status': 'pass',
                     'description': 'Rightsizing recommendations are available',
                     'guidance': 'EC2 rightsizing recommendations help identify over-provisioned instances.',
@@ -8553,6 +8566,7 @@ def _check_ce_preferences(ce_client):
                 return {
                     'id': 'ce_preferences',
                     'name': 'CE Preferences (Right-Sizing)',
+                    'group': 'slashmybill',
                     'status': 'warning',
                     'description': 'Rightsizing recommendations may not be enabled',
                     'guidance': 'Click Enable to turn on rightsizing recommendations, or verify in the AWS Billing console under Preferences.',
@@ -8564,6 +8578,7 @@ def _check_ce_preferences(ce_client):
             return {
                 'id': 'ce_preferences',
                 'name': 'CE Preferences (Right-Sizing)',
+                'group': 'slashmybill',
                 'status': 'warning',
                 'description': 'Could not verify rightsizing preferences',
                 'guidance': 'Click Enable to turn on rightsizing recommendations, or verify in the AWS Billing console under Preferences.',
@@ -8594,6 +8609,7 @@ def _check_cur_reports(cur_client):
             return {
                 'id': 'cur_reports',
                 'name': 'Cost and Usage Report',
+                'group': 'aws_console',
                 'status': 'pass',
                 'description': f'{len(reports)} CUR report(s) configured',
                 'guidance': 'CUR reports provide the most detailed billing data for analysis.',
@@ -8604,9 +8620,10 @@ def _check_cur_reports(cur_client):
         return {
             'id': 'cur_reports',
             'name': 'Cost and Usage Report',
-            'status': 'fail',
+            'group': 'aws_console',
+            'status': 'info',
             'description': 'No Cost and Usage Reports configured',
-            'guidance': 'Set up a CUR report in the AWS Billing console. CUR requires an S3 bucket and cannot be created via API alone.',
+            'guidance': 'Set up a CUR report in the AWS Billing console. CUR requires an S3 bucket and cannot be created via API alone. This is informational and does not affect your score.',
             'fixAction': None,
             'fixLabel': None,
             'details': {'reports': []}
@@ -8615,6 +8632,7 @@ def _check_cur_reports(cur_client):
         return {
             'id': 'cur_reports',
             'name': 'Cost and Usage Report',
+            'group': 'aws_console',
             'status': 'error',
             'description': f'Error checking CUR reports: {str(e)}',
             'guidance': 'Ensure the cross-account role has cur:DescribeReportDefinitions permission.',
@@ -8633,6 +8651,7 @@ def _check_tag_backfill(ce_client):
             return {
                 'id': 'tag_backfill',
                 'name': 'Tag Backfill',
+                'group': 'slashmybill',
                 'status': 'fail',
                 'description': 'No tag backfill has been run',
                 'guidance': 'Run a tag backfill to apply newly activated cost allocation tags to historical billing data (up to 12 months).',
@@ -8646,6 +8665,7 @@ def _check_tag_backfill(ce_client):
             return {
                 'id': 'tag_backfill',
                 'name': 'Tag Backfill',
+                'group': 'slashmybill',
                 'status': 'pass',
                 'description': f'{len(completed)} completed backfill(s)',
                 'guidance': 'Tag backfill ensures historical cost data reflects your current tag configuration.',
@@ -8657,6 +8677,7 @@ def _check_tag_backfill(ce_client):
             return {
                 'id': 'tag_backfill',
                 'name': 'Tag Backfill',
+                'group': 'slashmybill',
                 'status': 'warning',
                 'description': 'Tag backfill is in progress',
                 'guidance': 'A backfill is currently running. This may take several hours to complete.',
@@ -8667,6 +8688,7 @@ def _check_tag_backfill(ce_client):
         return {
             'id': 'tag_backfill',
             'name': 'Tag Backfill',
+            'group': 'slashmybill',
             'status': 'fail',
             'description': 'No completed tag backfill found',
             'guidance': 'Run a tag backfill to apply cost allocation tags to historical data.',
@@ -8678,6 +8700,7 @@ def _check_tag_backfill(ce_client):
         return {
             'id': 'tag_backfill',
             'name': 'Tag Backfill',
+            'group': 'slashmybill',
             'status': 'error',
             'description': f'Error checking tag backfill: {str(e)}',
             'guidance': 'Ensure the cross-account role has ce:ListCostAllocationTagBackfillHistory permission.',
@@ -8694,6 +8717,7 @@ def _check_linked_billing_access(org_client):
     return {
         'id': 'linked_billing_access',
         'name': 'Linked Account Billing Access',
+        'group': 'aws_console',
         'status': 'info',
         'description': 'Cannot verify programmatically - check in AWS Organizations console',
         'guidance': 'Enable IAM user and role access to billing in the AWS Organizations console. Go to AWS Organizations > Settings > IAM user and role access to billing information.',
@@ -8713,6 +8737,7 @@ def _check_budgets_healthcheck(budgets_client, account_id):
             return {
                 'id': 'budgets',
                 'name': 'Budgets',
+                'group': 'slashmybill',
                 'status': 'pass',
                 'description': f'{len(budgets)} budget(s) configured',
                 'guidance': 'AWS Budgets help you track spending and set alerts at custom thresholds.',
@@ -8723,6 +8748,7 @@ def _check_budgets_healthcheck(budgets_client, account_id):
         return {
             'id': 'budgets',
             'name': 'Budgets',
+            'group': 'slashmybill',
             'status': 'fail',
             'description': 'No budgets configured',
             'guidance': 'Create at least one monthly budget with alerts at 50%, 75%, and 100% thresholds. Go to Plan > Budget in SlashMyBill to create one.',
@@ -8734,6 +8760,7 @@ def _check_budgets_healthcheck(budgets_client, account_id):
         return {
             'id': 'budgets',
             'name': 'Budgets',
+            'group': 'slashmybill',
             'status': 'error',
             'description': f'Error checking budgets: {str(e)}',
             'guidance': 'Ensure the cross-account role has budgets:DescribeBudgets permission.',
@@ -8753,6 +8780,7 @@ def _check_tag_coverage(tagging_client):
             return {
                 'id': 'tag_coverage',
                 'name': 'Resource Tag Coverage',
+                'group': 'aws_console',
                 'status': 'warning',
                 'description': 'No resources found to check tag coverage',
                 'guidance': 'Tag your resources with meaningful tags to improve cost attribution. Go to Plan > Tag Resources in SlashMyBill.',
@@ -8775,6 +8803,7 @@ def _check_tag_coverage(tagging_client):
         return {
             'id': 'tag_coverage',
             'name': 'Resource Tag Coverage',
+            'group': 'aws_console',
             'status': status,
             'description': desc,
             'guidance': 'Tag all resources with Environment, Owner, and CostCenter tags. Go to Plan > Tag Resources in SlashMyBill.',
@@ -8786,6 +8815,7 @@ def _check_tag_coverage(tagging_client):
         return {
             'id': 'tag_coverage',
             'name': 'Resource Tag Coverage',
+            'group': 'aws_console',
             'status': 'error',
             'description': f'Error checking tag coverage: {str(e)}',
             'guidance': 'Ensure the cross-account role has tag:GetResources permission.',
@@ -8804,6 +8834,7 @@ def _check_compute_optimizer(co_client):
             return {
                 'id': 'compute_optimizer',
                 'name': 'Compute Optimizer',
+                'group': 'slashmybill',
                 'status': 'pass',
                 'description': 'Compute Optimizer is enrolled and active',
                 'guidance': 'Compute Optimizer analyzes resource utilization and provides rightsizing recommendations.',
@@ -8814,6 +8845,7 @@ def _check_compute_optimizer(co_client):
         return {
             'id': 'compute_optimizer',
             'name': 'Compute Optimizer',
+            'group': 'slashmybill',
             'status': 'fail',
             'description': f'Compute Optimizer is not enrolled (status: {status_val})',
             'guidance': 'Enroll in Compute Optimizer to receive rightsizing recommendations for EC2, EBS, Lambda, and more.',
@@ -8825,6 +8857,7 @@ def _check_compute_optimizer(co_client):
         return {
             'id': 'compute_optimizer',
             'name': 'Compute Optimizer',
+            'group': 'slashmybill',
             'status': 'error',
             'description': f'Error checking Compute Optimizer: {str(e)}',
             'guidance': 'Ensure the cross-account role has compute-optimizer:GetEnrollmentStatus permission.',
@@ -8846,9 +8879,10 @@ def _check_tag_activation_status(ce_client):
             return {
                 'id': 'tag_activation_status',
                 'name': 'Tag Activation Status',
-                'status': 'warning',
+                'group': 'aws_console',
+                'status': 'info',
                 'description': 'No cost allocation tags found',
-                'guidance': 'Ask your management account admin to create and activate cost allocation tags.',
+                'guidance': 'Ask your management account admin to create and activate cost allocation tags. This is informational and does not affect your score.',
                 'fixAction': None,
                 'fixLabel': None,
                 'details': {'tags': []}
@@ -8858,9 +8892,10 @@ def _check_tag_activation_status(ce_client):
         return {
             'id': 'tag_activation_status',
             'name': 'Tag Activation Status',
-            'status': 'pass' if len(active) == len(tags) else 'warning',
+            'group': 'aws_console',
+            'status': 'pass' if len(active) == len(tags) else 'info',
             'description': f'{len(active)}/{len(tags)} cost allocation tags active',
-            'guidance': 'Cost allocation tags are managed by the payer account. Contact your management account admin to activate missing tags.',
+            'guidance': 'Cost allocation tags are managed by the payer account. Contact your management account admin to activate missing tags. This is informational and does not affect your score.',
             'fixAction': None,
             'fixLabel': None,
             'details': {'tags': tag_details}
@@ -8871,9 +8906,10 @@ def _check_tag_activation_status(ce_client):
             return {
                 'id': 'tag_activation_status',
                 'name': 'Tag Activation Status',
-                'status': 'warning',
+                'group': 'aws_console',
+                'status': 'info',
                 'description': 'Managed by payer account',
-                'guidance': 'Ask your management account admin to activate cost allocation tags. Linked accounts cannot view or modify tag activation status.',
+                'guidance': 'Ask your management account admin to activate cost allocation tags. Linked accounts cannot view or modify tag activation status. This is informational and does not affect your score.',
                 'fixAction': None,
                 'fixLabel': None,
                 'details': {'note': 'AccessDenied - tag activation is managed by the payer account'}
@@ -8881,6 +8917,7 @@ def _check_tag_activation_status(ce_client):
         return {
             'id': 'tag_activation_status',
             'name': 'Tag Activation Status',
+            'group': 'aws_console',
             'status': 'error',
             'description': f'Error checking tag activation: {str(e)}',
             'guidance': 'Ensure the cross-account role has ce:ListCostAllocationTags permission.',
@@ -8986,8 +9023,8 @@ def handle_healthcheck_scan(event):
                 'details': {}
             })
 
-    # Compute score — exclude 'info' items (informational, not scoreable)
-    scoreable_items = [item for item in checklist_items if item['status'] != 'info']
+    # Compute score — only count 'slashmybill' group items (fixable from SlashMyBill)
+    scoreable_items = [item for item in checklist_items if item.get('group') == 'slashmybill']
     passed = sum(1 for item in scoreable_items if item['status'] == 'pass')
     total = len(scoreable_items)
     settings_score = {'passed': passed, 'total': total}
@@ -9125,6 +9162,7 @@ def handle_healthcheck_fix(event):
             updated_item = {
                 'id': 'cost_allocation_tags',
                 'name': 'Cost Allocation Tags (User-Defined)',
+                'group': 'slashmybill',
                 'status': 'pass',
                 'description': f'All tags activated successfully ({len(tag_keys)} tags)',
             }
@@ -9137,6 +9175,7 @@ def handle_healthcheck_fix(event):
             updated_item = {
                 'id': 'aws_generated_tags',
                 'name': 'AWS-Generated Tags',
+                'group': 'slashmybill',
                 'status': 'pass',
                 'description': 'aws:createdBy tag activated successfully',
             }
@@ -9201,6 +9240,7 @@ def handle_healthcheck_fix(event):
                 updated_item = {
                     'id': 'ce_preferences',
                     'name': 'CE Preferences (Right-Sizing)',
+                    'group': 'slashmybill',
                     'status': 'pass',
                     'description': 'Cost Explorer preferences updated successfully',
                 }
@@ -9245,6 +9285,7 @@ def handle_healthcheck_fix(event):
             updated_item = {
                 'id': 'tag_backfill',
                 'name': 'Tag Backfill',
+                'group': 'slashmybill',
                 'status': 'warning',
                 'description': 'Tag backfill started - this may take several hours to complete',
             }
@@ -9255,6 +9296,7 @@ def handle_healthcheck_fix(event):
             updated_item = {
                 'id': 'compute_optimizer',
                 'name': 'Compute Optimizer',
+                'group': 'slashmybill',
                 'status': 'pass',
                 'description': 'Compute Optimizer enrolled successfully',
             }
