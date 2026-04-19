@@ -541,6 +541,26 @@ tip_box(doc, 'If fix actions fail with "Permission denied", redeploy the latest 
 note_box(doc, 'Accounts connected before the FinOps Settings feature was released need their CloudFormation stack updated '
     'to include the new IAM permissions. Download the latest template from the Configure tab.')
 
+
+add_heading(doc, '6.4 Tag Policy', 2)
+doc.add_paragraph(
+    'The Tag Policy section lets you define your organization\'s required tag keys. '
+    'These replace the default tags (Environment, Owner, CostCenter, Application) with your own.\n\n'
+    'To configure:\n'
+    '  1. Go to Configure \u2192 FinOps Settings\n'
+    '  2. Scroll to the Tag Policy section\n'
+    '  3. Add or remove required tag keys\n'
+    '  4. Set the coverage threshold (default: 80%)\n'
+    '  5. Click "Save Policy"\n\n'
+    'Where the tag policy is used:\n'
+    '  \u2022 Plan \u2192 Tag Resources: Pre-populates your required keys in the bulk-tag form\n'
+    '  \u2022 FinOps Settings \u2192 Tag Coverage: Calculates coverage based on your required keys\n'
+    '  \u2022 AI Chat: Recommends your specific tag keys instead of generic ones\n'
+    '  \u2022 Dashboard \u2192 Tag Distribution: Defaults to showing your required keys'
+)
+tip_box(doc, 'The default tag keys (Environment, Owner, CostCenter, Application) follow AWS FinOps best practices. '
+    'Customize them to match your organization\'s naming conventions.')
+
 # ── Virtual Tagging ───────────────────────────────────────────────────────────
 add_heading(doc, '7. Virtual Tagging & Cost Allocation', 1)
 doc.add_paragraph(

@@ -123,6 +123,8 @@ def lambda_handler(event, context):
         'GET /members/live-metrics': handle_live_metrics,
         'POST /members/healthcheck/scan': handle_healthcheck_scan,
         'POST /members/healthcheck/fix': handle_healthcheck_fix,
+        'GET /members/tag-policy': handle_get_tag_policy,
+        'POST /members/tag-policy': handle_save_tag_policy,
     }
 
     handler = routes.get(route_key)
@@ -8770,7 +8772,7 @@ def _check_budgets_healthcheck(budgets_client, account_id):
         }
 
 
-def _check_tag_coverage(tagging_client):
+def _check_tag_coverage(tagging_client, required_keys=None):
     """Check resource tag coverage percentage. Returns checklist item dict."""
     try:
         resp = tagging_client.get_resources(ResourcesPerPage=100)
@@ -8789,7 +8791,14 @@ def _check_tag_coverage(tagging_client):
                 'details': {'total': 0, 'tagged': 0, 'coverage': 0}
             }
         tagged = sum(1 for r in resources if any(t.get('Key', '').startswith('aws:') is False and t.get('Key', '') != '' for t in r.get('Tags', [])))
-        tagged = sum(1 for r in resources if any(not t.get('Key', '').startswith('aws:') for t in r.get('Tags', [])))
+        if required_keys:
+            # Count resources that have ALL required tag keys
+            tagged = sum(1 for r in resources if all(
+                any(t.get('Key', '') == rk for t in r.get('Tags', []))
+                for rk in required_keys
+            ))
+        else:
+            tagged = sum(1 for r in resources if any(not t.get('Key', '').startswith('aws:') for t in r.get('Tags', [])))
         coverage = (tagged / total) * 100 if total > 0 else 0
         if coverage > 80:
             status = 'pass'
@@ -8932,6 +8941,89 @@ def _check_tag_activation_status(ce_client):
 # ============================================================
 
 
+
+
+# ============================================================
+# Tag Policy Handlers
+# ============================================================
+
+DEFAULT_TAG_POLICY = {
+    'requiredKeys': ['Environment', 'Owner', 'CostCenter', 'Application'],
+    'allowedValues': {
+        'Environment': ['production', 'staging', 'development', 'sandbox'],
+        'Owner': [],
+        'CostCenter': [],
+        'Application': [],
+    },
+    'coverageThreshold': 80,
+}
+
+
+def handle_get_tag_policy(event):
+    """Get the member's tag policy. Returns default if none set."""
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+    member_email = auth
+
+    try:
+        members_table = dynamodb.Table(MEMBERS_TABLE_NAME)
+        resp = members_table.get_item(
+            Key={'email': member_email},
+            ProjectionExpression='tagPolicy'
+        )
+        policy = resp.get('Item', {}).get('tagPolicy')
+        if not policy:
+            policy = DEFAULT_TAG_POLICY.copy()
+        return create_response(200, {'tagPolicy': _decimal_to_native(policy)})
+    except Exception as e:
+        logger.error(f"Error fetching tag policy: {e}")
+        return create_response(200, {'tagPolicy': DEFAULT_TAG_POLICY.copy()})
+
+
+def handle_save_tag_policy(event):
+    """Save the member's tag policy."""
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+    member_email = auth
+
+    try:
+        body = json.loads(event.get('body', '{}'))
+        required_keys = body.get('requiredKeys', [])
+        allowed_values = body.get('allowedValues', {})
+        coverage_threshold = int(body.get('coverageThreshold', 80))
+
+        # Validate
+        if not required_keys or not isinstance(required_keys, list):
+            return create_error_response(400, 'InvalidRequest', 'requiredKeys must be a non-empty list')
+        if len(required_keys) > 20:
+            return create_error_response(400, 'InvalidRequest', 'Maximum 20 required tag keys allowed')
+        if coverage_threshold < 1 or coverage_threshold > 100:
+            return create_error_response(400, 'InvalidRequest', 'coverageThreshold must be between 1 and 100')
+
+        # Clean up keys
+        required_keys = [k.strip() for k in required_keys if k.strip()]
+
+        policy = {
+            'requiredKeys': required_keys,
+            'allowedValues': allowed_values,
+            'coverageThreshold': coverage_threshold,
+        }
+
+        members_table = dynamodb.Table(MEMBERS_TABLE_NAME)
+        members_table.update_item(
+            Key={'email': member_email},
+            UpdateExpression='SET tagPolicy = :policy',
+            ExpressionAttributeValues={':policy': policy},
+        )
+
+        return create_response(200, {'success': True, 'tagPolicy': policy})
+    except Exception as e:
+        logger.error(f"Error saving tag policy: {e}")
+        return create_error_response(500, 'ServerError', f'Failed to save tag policy: {str(e)}')
+
+
 def handle_healthcheck_scan(event):
     """Scan all FinOps settings for a connected AWS account."""
     auth = validate_token(event)
@@ -8983,6 +9075,18 @@ def handle_healthcheck_scan(event):
     account_type_badge = '\U0001f451 Management Account' if account_type == 'management' else '\U0001f517 Linked Account'
 
     # Run checks based on account type
+    # Load member's tag policy for coverage check
+    tag_policy_keys = None
+    try:
+        members_table_tp = dynamodb.Table(MEMBERS_TABLE_NAME)
+        tp_resp = members_table_tp.get_item(Key={'email': member_email}, ProjectionExpression='tagPolicy')
+        tp = tp_resp.get('Item', {}).get('tagPolicy', {})
+        tag_policy_keys = tp.get('requiredKeys') if tp else None
+    except Exception:
+        pass
+    if not tag_policy_keys:
+        tag_policy_keys = DEFAULT_TAG_POLICY['requiredKeys']
+
     checklist_items = []
 
     if account_type == 'management':
@@ -8999,7 +9103,7 @@ def handle_healthcheck_scan(event):
         ]
     else:
         checks = [
-            lambda: _check_tag_coverage(tagging),
+            lambda: _check_tag_coverage(tagging, tag_policy_keys),
             lambda: _check_budgets_healthcheck(budgets, account_id),
             lambda: _check_anomaly_detection(ce),
             lambda: _check_compute_optimizer(co),

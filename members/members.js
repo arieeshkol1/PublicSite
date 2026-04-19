@@ -4279,6 +4279,7 @@ function _switchConfigSection(section) {
 
 function switchToFinOpsSettings() {
     // Navigate to Configure tab -> FinOps Settings section
+    _loadTagPolicy();
     document.querySelectorAll('.member-tab').forEach(function(t) {
         t.classList.toggle('active', t.dataset.tab === 'accounts-tab');
     });
@@ -4597,6 +4598,96 @@ function _loadFinOpsScoreKPI(kpiBar, data) {
             '<div style="color:' + color + ';font-size:1.3em;font-weight:700;">' + totalPassed + '/' + totalItems + '</div>';
     }
     kpiBar.appendChild(kpiDiv);
+}
+
+
+
+// ============================================================
+// Tag Policy — Configure Tab
+// ============================================================
+
+var _tagPolicyCache = null;
+
+async function _loadTagPolicy() {
+    try {
+        var data = await api('GET', '/members/tag-policy');
+        _tagPolicyCache = data.tagPolicy || {requiredKeys: ['Environment','Owner','CostCenter','Application'], allowedValues: {}, coverageThreshold: 80};
+        _renderTagPolicy();
+    } catch(e) {
+        console.error('Failed to load tag policy:', e);
+    }
+}
+
+function _renderTagPolicy() {
+    var container = document.getElementById('tag-policy-content');
+    if (!container || !_tagPolicyCache) return;
+    var policy = _tagPolicyCache;
+    var keys = policy.requiredKeys || [];
+    var threshold = policy.coverageThreshold || 80;
+
+    var html = '<div style="margin-bottom:16px;">';
+    html += '<div style="color:#e6edf3;font-weight:600;margin-bottom:8px;">Required Tag Keys</div>';
+    html += '<div style="color:#8b949e;font-size:0.85em;margin-bottom:10px;">Resources should have all these tags for full coverage. Used in Plan \u2192 Tag Resources and FinOps Settings checks.</div>';
+    html += '<div id="tag-policy-keys" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;">';
+    keys.forEach(function(k) {
+        html += '<span style="background:#1f2937;border:1px solid #374151;border-radius:6px;padding:4px 10px;color:#e6edf3;font-size:0.88em;display:flex;align-items:center;gap:6px;">' + esc(k) + ' <span onclick="_removeTagPolicyKey(\'' + ea(k) + '\')" style="cursor:pointer;color:#ef4444;font-weight:700;">\u00d7</span></span>';
+    });
+    html += '</div>';
+    html += '<div style="display:flex;gap:8px;align-items:center;">';
+    html += '<input type="text" id="tag-policy-new-key" placeholder="Add tag key..." style="background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:6px 10px;color:#e6edf3;font-size:0.88em;flex:1;max-width:200px;" onkeydown="if(event.key===\u0027Enter\u0027)_addTagPolicyKey();">';
+    html += '<button onclick="_addTagPolicyKey()" class="btn btn-outline btn-sm" style="font-size:0.82em;">+ Add</button>';
+    html += '</div>';
+    html += '</div>';
+
+    html += '<div style="margin-bottom:16px;">';
+    html += '<div style="color:#e6edf3;font-weight:600;margin-bottom:8px;">Coverage Threshold</div>';
+    html += '<div style="display:flex;align-items:center;gap:10px;">';
+    html += '<input type="number" id="tag-policy-threshold" value="' + threshold + '" min="1" max="100" style="background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:6px 10px;color:#e6edf3;font-size:0.88em;width:70px;">';
+    html += '<span style="color:#8b949e;font-size:0.85em;">% of resources must have all required tags</span>';
+    html += '</div>';
+    html += '</div>';
+
+    html += '<div style="margin-top:16px;">';
+    html += '<button onclick="_saveTagPolicy()" class="btn btn-primary btn-sm" style="font-size:0.88em;">Save Policy</button>';
+    html += '<span id="tag-policy-status" style="color:#22c55e;font-size:0.85em;margin-left:12px;display:none;">\u2705 Saved</span>';
+    html += '</div>';
+
+    container.innerHTML = html;
+}
+
+function _addTagPolicyKey() {
+    var input = document.getElementById('tag-policy-new-key');
+    if (!input || !input.value.trim()) return;
+    var key = input.value.trim();
+    if (!_tagPolicyCache) return;
+    if (_tagPolicyCache.requiredKeys.indexOf(key) !== -1) { input.value = ''; return; }
+    if (_tagPolicyCache.requiredKeys.length >= 20) { alert('Maximum 20 tag keys allowed.'); return; }
+    _tagPolicyCache.requiredKeys.push(key);
+    input.value = '';
+    _renderTagPolicy();
+}
+
+function _removeTagPolicyKey(key) {
+    if (!_tagPolicyCache) return;
+    _tagPolicyCache.requiredKeys = _tagPolicyCache.requiredKeys.filter(function(k) { return k !== key; });
+    _renderTagPolicy();
+}
+
+async function _saveTagPolicy() {
+    if (!_tagPolicyCache) return;
+    var threshold = parseInt(document.getElementById('tag-policy-threshold').value) || 80;
+    _tagPolicyCache.coverageThreshold = threshold;
+    try {
+        await api('POST', '/members/tag-policy', {
+            requiredKeys: _tagPolicyCache.requiredKeys,
+            allowedValues: _tagPolicyCache.allowedValues || {},
+            coverageThreshold: threshold
+        });
+        var status = document.getElementById('tag-policy-status');
+        if (status) { status.style.display = 'inline'; setTimeout(function() { status.style.display = 'none'; }, 3000); }
+    } catch(e) {
+        alert('Failed to save tag policy: ' + (e.message || 'Unknown error'));
+    }
 }
 
 function _injectFinOpsActCard(grid) {
