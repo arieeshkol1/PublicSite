@@ -9194,6 +9194,7 @@ def handle_healthcheck_fix(event):
                 updated_item = {
                     'id': 'anomaly_detection',
                     'name': 'Cost Anomaly Detection',
+                    'group': 'slashmybill',
                     'status': 'pass',
                     'description': f'Anomaly monitor already exists ({len(existing_monitors)} monitor(s))',
                 }
@@ -9225,6 +9226,7 @@ def handle_healthcheck_fix(event):
                 updated_item = {
                     'id': 'anomaly_detection',
                     'name': 'Cost Anomaly Detection',
+                    'group': 'slashmybill',
                     'status': 'pass',
                     'description': 'Anomaly monitor and subscription created successfully',
                 }
@@ -9257,6 +9259,7 @@ def handle_healthcheck_fix(event):
                     updated_item = {
                         'id': 'ce_preferences',
                         'name': 'CE Preferences (Right-Sizing)',
+                        'group': 'slashmybill',
                         'status': 'pass',
                         'description': 'Rightsizing recommendations are available',
                     }
@@ -9264,6 +9267,7 @@ def handle_healthcheck_fix(event):
                     updated_item = {
                         'id': 'ce_preferences',
                         'name': 'CE Preferences (Right-Sizing)',
+                        'group': 'slashmybill',
                         'status': 'pass',
                         'description': 'Rightsizing preferences enabled (verify in Cost Explorer)',
                     }
@@ -9328,9 +9332,10 @@ def handle_healthcheck_fix(event):
                     items[i]['status'] = updated_item['status']
                     items[i]['description'] = updated_item['description']
                     break
-            # Recalculate score
-            passed = sum(1 for item in items if item['status'] == 'pass')
-            cached['settingsScore'] = {'passed': passed, 'total': len(items)}
+            # Recalculate score — only count 'slashmybill' group items
+            scoreable = [item for item in items if item.get('group') == 'slashmybill']
+            passed = sum(1 for item in scoreable if item['status'] == 'pass')
+            cached['settingsScore'] = {'passed': passed, 'total': len(scoreable)}
             cached['checklistItems'] = items
             members_table.update_item(
                 Key={'email': member_email},

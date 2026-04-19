@@ -4580,11 +4580,15 @@ function _loadFinOpsScoreKPI(kpiBar, data) {
             '<div style="color:#6b7280;font-size:1em;font-weight:600;">Not scanned</div>' +
             '<div style="color:#6366f1;font-size:0.75em;margin-top:2px;cursor:pointer;" onclick="event.stopPropagation();switchToFinOpsSettings();">Scan →</div>';
     } else {
-        // Aggregate scores across all accounts
+        // Aggregate scores across all accounts — only count slashmybill group
         var totalPassed = 0, totalItems = 0;
         accountIds.forEach(function(aid) {
             var r = hcResults[aid];
-            if (r && r.settingsScore) {
+            if (r && r.checklistItems) {
+                var scoreable = r.checklistItems.filter(function(i) { return i.group === 'slashmybill' || !i.group; });
+                totalPassed += scoreable.filter(function(i) { return i.status === 'pass'; }).length;
+                totalItems += scoreable.length;
+            } else if (r && r.settingsScore) {
                 totalPassed += (r.settingsScore.passed || 0);
                 totalItems += (r.settingsScore.total || 0);
             }
@@ -4618,7 +4622,7 @@ function _injectFinOpsActCard(grid) {
         return;
     }
 
-    // Check for failing items across all accounts
+    // Check for failing items across all accounts — only count slashmybill group
     var failingItems = [];
     var totalPassed = 0, totalItems = 0;
     var isRecent = false;
@@ -4630,12 +4634,18 @@ function _injectFinOpsActCard(grid) {
             var scanTime = new Date(r.scanTimestamp).getTime();
             if (Date.now() - scanTime < 24 * 60 * 60 * 1000) isRecent = true;
         }
-        if (r.settingsScore) {
+        // Recalculate score from slashmybill group items
+        if (r.checklistItems) {
+            var scoreable = r.checklistItems.filter(function(i) { return i.group === 'slashmybill' || !i.group; });
+            totalPassed += scoreable.filter(function(i) { return i.status === 'pass'; }).length;
+            totalItems += scoreable.length;
+        } else if (r.settingsScore) {
             totalPassed += (r.settingsScore.passed || 0);
             totalItems += (r.settingsScore.total || 0);
         }
+        // Only show slashmybill group items as failing
         (r.checklistItems || []).forEach(function(item) {
-            if (item.status === 'fail' || item.status === 'error') {
+            if ((item.group === 'slashmybill' || !item.group) && (item.status === 'fail' || item.status === 'error')) {
                 failingItems.push(item);
             }
         });
