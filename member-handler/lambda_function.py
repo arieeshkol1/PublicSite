@@ -9084,9 +9084,12 @@ def handle_healthcheck_fix(event):
             tag_keys = params.get('tagKeys', inactive_keys)
             if not tag_keys:
                 return create_error_response(400, 'InvalidRequest', 'No inactive tags to activate')
-            ce.update_cost_allocation_tags_status(
-                CostAllocationTagsStatus=[{'TagKey': k, 'Status': 'Active'} for k in tag_keys]
-            )
+            # AWS API limit: max 20 tags per call — batch them
+            for i in range(0, len(tag_keys), 20):
+                batch = tag_keys[i:i+20]
+                ce.update_cost_allocation_tags_status(
+                    CostAllocationTagsStatus=[{'TagKey': k, 'Status': 'Active'} for k in batch]
+                )
             updated_item = {
                 'id': 'cost_allocation_tags',
                 'name': 'Cost Allocation Tags (User-Defined)',
