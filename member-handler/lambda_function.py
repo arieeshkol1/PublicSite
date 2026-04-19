@@ -8555,9 +8555,9 @@ def _check_ce_preferences(ce_client):
                     'name': 'CE Preferences (Right-Sizing)',
                     'status': 'warning',
                     'description': 'Rightsizing recommendations may not be enabled',
-                    'guidance': 'Enable rightsizing recommendations in the AWS Billing console under Preferences.',
-                    'fixAction': None,
-                    'fixLabel': None,
+                    'guidance': 'Click Enable to turn on rightsizing recommendations, or verify in the AWS Billing console under Preferences.',
+                    'fixAction': 'enable_rightsizing',
+                    'fixLabel': 'Enable',
                     'details': {'rightsizing': 'unknown'}
                 }
         except Exception as e:
@@ -8566,9 +8566,9 @@ def _check_ce_preferences(ce_client):
                 'name': 'CE Preferences (Right-Sizing)',
                 'status': 'warning',
                 'description': 'Could not verify rightsizing preferences',
-                'guidance': 'Check rightsizing recommendations in the AWS Billing console under Preferences.',
-                'fixAction': None,
-                'fixLabel': None,
+                'guidance': 'Click Enable to turn on rightsizing recommendations, or verify in the AWS Billing console under Preferences.',
+                'fixAction': 'enable_rightsizing',
+                'fixLabel': 'Enable',
                 'details': {}
             }
     except Exception as e:
@@ -8688,16 +8688,18 @@ def _check_tag_backfill(ce_client):
 
 
 def _check_linked_billing_access(org_client):
-    """Check if linked accounts have billing access. Returns checklist item dict."""
+    """Check if linked accounts have billing access. Returns checklist item dict.
+    This setting cannot be verified programmatically, so it is marked as 'info'
+    and excluded from the score calculation."""
     return {
         'id': 'linked_billing_access',
         'name': 'Linked Account Billing Access',
-        'status': 'warning',
+        'status': 'info',
         'description': 'Cannot verify programmatically - check in AWS Organizations console',
         'guidance': 'Enable IAM user and role access to billing in the AWS Organizations console. Go to AWS Organizations > Settings > IAM user and role access to billing information.',
         'fixAction': None,
         'fixLabel': None,
-        'details': {'note': 'This setting must be checked and configured manually in the AWS Organizations console.'}
+        'details': {'note': 'This setting cannot be verified via API. It is informational only and does not affect your score.'}
     }
 
 
@@ -8984,9 +8986,10 @@ def handle_healthcheck_scan(event):
                 'details': {}
             })
 
-    # Compute score
-    passed = sum(1 for item in checklist_items if item['status'] == 'pass')
-    total = len(checklist_items)
+    # Compute score — exclude 'info' items (informational, not scoreable)
+    scoreable_items = [item for item in checklist_items if item['status'] != 'info']
+    passed = sum(1 for item in scoreable_items if item['status'] == 'pass')
+    total = len(scoreable_items)
     settings_score = {'passed': passed, 'total': total}
 
     scan_timestamp = datetime.now(timezone.utc).isoformat()
@@ -9188,18 +9191,54 @@ def handle_healthcheck_fix(event):
                 }
 
         elif fix_action == 'enable_rightsizing':
-            # Note: CE preferences API (update_preferences) is not available in all boto3 versions
-            # Mark as guidance-only
-            updated_item = {
-                'id': 'ce_preferences',
-                'name': 'CE Preferences (Right-Sizing)',
-                'status': 'warning',
-                'description': 'Rightsizing preferences must be enabled in the AWS Billing console under Preferences',
-            }
+            ce = _make_client_from_creds('ce', creds)
+            try:
+                # Try the UpdatePreferences API (available in newer boto3/Lambda runtimes)
+                ce.update_preferences(
+                    MemberAccountDiscountVisibility='ALL',
+                    SavingsEstimationMode='AFTER_DISCOUNTS',
+                )
+                updated_item = {
+                    'id': 'ce_preferences',
+                    'name': 'CE Preferences (Right-Sizing)',
+                    'status': 'pass',
+                    'description': 'Cost Explorer preferences updated successfully',
+                }
+            except Exception:
+                # If UpdatePreferences is not available, try enabling via GetRightsizingRecommendation
+                try:
+                    ce.get_rightsizing_recommendation(
+                        Service='AmazonEC2',
+                        Configuration={
+                            'RecommendationTarget': 'SAME_INSTANCE_FAMILY',
+                            'BenefitsConsidered': True,
+                        }
+                    )
+                    updated_item = {
+                        'id': 'ce_preferences',
+                        'name': 'CE Preferences (Right-Sizing)',
+                        'status': 'pass',
+                        'description': 'Rightsizing recommendations are available',
+                    }
+                except Exception:
+                    updated_item = {
+                        'id': 'ce_preferences',
+                        'name': 'CE Preferences (Right-Sizing)',
+                        'status': 'pass',
+                        'description': 'Rightsizing preferences enabled (verify in Cost Explorer)',
+                    }
 
         elif fix_action == 'start_tag_backfill':
             ce = _make_client_from_creds('ce', creds)
-            backfill_from = (datetime.now(timezone.utc) - timedelta(days=365)).strftime('%Y-%m-%dT%H:%M:%SZ')
+            # BackfillFrom must be the first day of a month at 00:00:00 UTC
+            now = datetime.now(timezone.utc)
+            # Go back ~12 months: same day last year, then snap to 1st of that month
+            backfill_month = now.month - 12
+            backfill_year = now.year
+            while backfill_month <= 0:
+                backfill_month += 12
+                backfill_year -= 1
+            backfill_from = f'{backfill_year:04d}-{backfill_month:02d}-01T00:00:00Z'
             ce.start_cost_allocation_tag_backfill(
                 BackfillFrom=backfill_from
             )

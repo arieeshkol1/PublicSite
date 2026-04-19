@@ -2683,6 +2683,7 @@ function _goToTab(tabId, section) {
     if (section) setTimeout(function() {
         if (tabId === 'act-tab') _switchActSection(section);
         if (tabId === 'plan-tab') _switchPlanSection(section);
+        if (tabId === 'accounts-tab' && section === 'finops-settings') switchToFinOpsSettings();
     }, 100);
 }
 
@@ -4356,6 +4357,7 @@ function _renderFinOpsChecklist(data) {
         if (item.status === 'pass') { statusIcon = '✅'; statusColor = '#22c55e'; }
         else if (item.status === 'warning') { statusIcon = '⚠️'; statusColor = '#f59e0b'; }
         else if (item.status === 'fail') { statusIcon = '❌'; statusColor = '#ef4444'; }
+        else if (item.status === 'info') { statusIcon = 'ℹ️'; statusColor = '#3b82f6'; }
         else if (item.status === 'error') { statusIcon = '⚙️'; statusColor = '#6b7280'; }
 
         var card = document.createElement('div');

@@ -81,7 +81,7 @@ run2.font.color.rgb = RGBColor(99, 102, 241)
 
 meta = doc.add_paragraph()
 meta.alignment = WD_ALIGN_PARAGRAPH.CENTER
-meta.add_run(f'Version 3.0  |  {datetime.date.today().strftime("%B %Y")}  |  AWS FinOps Platform').font.size = Pt(10)
+meta.add_run(f'Version 4.0  |  {datetime.date.today().strftime("%B %Y")}  |  AWS FinOps Platform').font.size = Pt(10)
 doc.add_paragraph()
 
 # ── Introduction ──────────────────────────────────────────────────────────────
@@ -101,7 +101,7 @@ add_table(doc,
         ['Chat', 'Ask natural language questions about your AWS costs and get AI-powered answers'],
         ['Act', 'Scan for idle resources, clean up with one click, and create automated stop/start schedules'],
         ['Plan', 'Create AWS Budgets with alerts and manage resource tags for cost allocation'],
-        ['Configure', 'Connect and manage your AWS accounts'],
+        ['Configure', 'Connect and manage your AWS accounts, audit FinOps settings with one-click fixes'],
     ],
     [2.0, 6.0]
 )
@@ -169,7 +169,9 @@ doc.add_paragraph(
     '  • Month-over-Month: Cost change vs previous month (green = decrease, red = increase)\n'
     '  • Efficiency Score: 0-100% score based on identified waste vs total spend\n'
     '  • Potential Savings: Total monthly savings identified — click to open Chat with a savings question\n'
-    '  • Accounts: Number of connected accounts included in the view'
+    '  • Accounts: Number of connected accounts included in the view\n'
+    '  • FinOps Score: Settings health score (e.g., 7/8) — click to navigate to Configure → FinOps Settings\n'
+    '  • Budget: Current spend vs budget limit — click to navigate to Plan → Budget'
 )
 
 add_heading(doc, '3.2 Dashboard Widgets', 2)
@@ -243,24 +245,6 @@ doc.add_paragraph(
     'displays the budget with the highest utilization percentage.\n\n'
     'Click the Budget KPI card to navigate directly to Plan → Budget for detailed budget management.'
 )
-doc.add_paragraph(
-    'Use the account selector dropdown (top right of the dashboard) to choose which accounts '
-    'to include. All accounts are selected by default. Your selection is preserved when you '
-    'switch between Observe, Chat, and Act tabs.'
-)
-
-add_heading(doc, '3.4 Cost by Service Drill-Down', 2)
-doc.add_paragraph(
-    'The Cost by Service treemap supports 2-phase drill-down:\n\n'
-    '  Level 1 (Services): Shows all AWS services as colored tiles sized by cost\n'
-    '  Level 2 (Usage Types): Click any service tile to see its usage type breakdown '
-    '(e.g., EC2-Other breaks into VolumeUsage.gp3, NatGateway-Hours, DataTransfer)\n\n'
-    'Navigation:\n'
-    '  • Click a tile → drill into usage types\n'
-    '  • Click "← All Services" breadcrumb → return to service view\n'
-    '  • Click "Details ↗" → open side panel with bar chart + AI chat button'
-)
-
 # ── Chat Tab ──────────────────────────────────────────────────────────────────
 add_heading(doc, '4. Chat Tab — AI Agent', 1)
 doc.add_paragraph(
@@ -495,6 +479,68 @@ doc.add_paragraph(
     'you will see a warning with instructions to clean up manually.'
 )
 
+add_heading(doc, '6.3 FinOps Settings Healthcheck', 2)
+doc.add_paragraph(
+    'The FinOps Settings section audits your AWS account\'s billing and cost management configuration '
+    'against FinOps best practices. It detects whether your account is a management (payer) or linked '
+    'account and runs a tailored checklist.\n\n'
+    'To access:\n'
+    '  1. Go to Configure tab\n'
+    '  2. Click "FinOps Settings" in the left navigation\n'
+    '  3. Select an account from the dropdown\n'
+    '  4. Click "Scan Settings" to run the audit\n\n'
+    'The scan checks different settings based on your account type:'
+)
+
+add_heading(doc, 'Management Account Checks (8 scored + 1 informational)', 3)
+add_table(doc,
+    ['Check', 'What It Verifies', 'Fix Available'],
+    [
+        ['Cost Allocation Tags (User-Defined)', 'All user-defined tags are activated for cost reporting', 'Yes — Activate all tags'],
+        ['AWS-Generated Tags', 'aws:createdBy tag is active', 'Yes — Activate tag'],
+        ['Cost Anomaly Detection', 'At least one anomaly monitor exists', 'Yes — Create monitor + email subscription'],
+        ['Hourly Granularity', 'Hourly cost data is available', 'No — must enable in AWS Cost Explorer Settings'],
+        ['CE Preferences (Right-Sizing)', 'Rightsizing recommendations are enabled', 'Yes — Enable preferences'],
+        ['Cost and Usage Report (CUR)', 'At least one CUR report is configured', 'No — requires S3 bucket setup in AWS'],
+        ['Tag Backfill', 'Historical billing data reflects current tags', 'Yes — Start backfill (up to 12 months)'],
+        ['Linked Account Billing Access', 'Linked accounts can view billing data', 'Informational — not scored'],
+        ['Budgets', 'At least one AWS Budget is configured', 'Link to Plan → Budget'],
+    ],
+    [2.5, 3.0, 2.5]
+)
+
+add_heading(doc, 'Linked Account Checks (6 scored)', 3)
+add_table(doc,
+    ['Check', 'What It Verifies', 'Fix Available'],
+    [
+        ['Resource Tag Coverage', 'Percentage of resources with tags (>80% = pass)', 'Link to Plan → Tag Resources'],
+        ['Budgets', 'At least one AWS Budget is configured', 'Link to Plan → Budget'],
+        ['Cost Anomaly Detection', 'At least one anomaly monitor exists', 'Yes — Create monitor + email subscription'],
+        ['Compute Optimizer', 'AWS Compute Optimizer is enrolled', 'Yes — Enroll in Compute Optimizer'],
+        ['Hourly Granularity', 'Hourly cost data is available', 'No — must be enabled from management account'],
+        ['Tag Activation Status', 'Cost allocation tags are activated by management admin', 'Read-only — contact management admin'],
+    ],
+    [2.5, 3.0, 2.5]
+)
+
+doc.add_paragraph(
+    'FinOps Score:\n'
+    '  The score shows X/Y where X is the number of passing checks and Y is the total scored checks.\n'
+    '  Informational items (like Linked Account Billing Access) are excluded from the score.\n'
+    '  Color coding: Green (≥80%) | Amber (50-79%) | Red (<50%)\n\n'
+    'Fix Actions:\n'
+    '  For checks with a Fix/Enable/Setup button, click it to apply the fix directly through your\n'
+    '  cross-account role. The item updates immediately without requiring a full rescan.\n\n'
+    'Integration with other tabs:\n'
+    '  • Dashboard: FinOps Score KPI card shows your score at a glance\n'
+    '  • Act tab: FinOps Settings card appears in waste scan results when issues exist\n'
+    '  • AI Chat: The AI recommends FinOps Settings fixes when relevant to your questions'
+)
+tip_box(doc, 'If fix actions fail with "Permission denied", redeploy the latest CloudFormation template for that account. '
+    'The updated template includes the write permissions needed for FinOps Settings fixes.')
+note_box(doc, 'Accounts connected before the FinOps Settings feature was released need their CloudFormation stack updated '
+    'to include the new IAM permissions. Download the latest template from the Configure tab.')
+
 # ── Virtual Tagging ───────────────────────────────────────────────────────────
 add_heading(doc, '7. Virtual Tagging & Cost Allocation', 1)
 doc.add_paragraph(
@@ -551,6 +597,10 @@ add_table(doc,
         ['Schedule shows ❌ failure', 'Cross-account role missing write permissions', 'Redeploy the latest CloudFormation template for the target account'],
         ['Budget creation fails with InvalidParameterException', 'Tag filter uses unsupported dimension', 'Use TagKeyValue format for tag-based budgets'],
         ['Live metrics shows no data', 'No connected accounts or permissions missing', 'Connect an account and redeploy latest CF template'],
+        ['FinOps Settings fix fails with Permission denied', 'Old CF template without healthcheck write permissions', 'Download and redeploy the latest CF template from Configure tab'],
+        ['FinOps Settings scan shows all errors', 'Cross-account role cannot be assumed', 'Verify account is connected and test the connection first'],
+        ['Tag Backfill fix fails', 'BackfillFrom date format issue or backfill already running', 'Wait for any in-progress backfill to complete, then retry'],
+        ['FinOps Score not showing on dashboard', 'No scan has been run yet', 'Go to Configure → FinOps Settings and run a scan'],
     ],
     [2.0, 2.5, 3.5]
 )
@@ -592,6 +642,17 @@ faqs = [
      'The Plan tab lets you create AWS Budgets with cost alerts and manage resource tags for '
      'cost allocation. Budgets are created directly in your AWS account so alerts come from AWS, '
      'not SlashMyBill.'),
+    ('What is the FinOps Settings Healthcheck?',
+     'FinOps Settings is a configuration audit in the Configure tab that checks your AWS account\'s '
+     'billing best practices (cost allocation tags, anomaly detection, rightsizing, CUR reports, etc.) '
+     'and lets you fix issues with one click. It detects whether your account is a management or linked '
+     'account and shows the appropriate checklist. Your FinOps Score appears on the dashboard and in '
+     'waste scan results.'),
+    ('Why can\'t I reach 100% on the FinOps Score?',
+     'All scored checks are achievable. The "Linked Account Billing Access" check is informational only '
+     'and excluded from the score since it cannot be verified programmatically. If you see failing checks '
+     'for Hourly Granularity or CUR Reports, these require manual setup in the AWS Console — they are '
+     'scored but cannot be fixed via the SlashMyBill fix button.'),
 ]
 
 for q, a in faqs:
@@ -602,5 +663,5 @@ for q, a in faqs:
     doc.add_paragraph('A: ' + a)
     doc.add_paragraph()
 
-doc.save('SlashMyBill-UserGuide-v2.docx')
-print('User Guide saved: SlashMyBill-UserGuide-v2.docx')
+doc.save('SlashMyBill-UserGuide-v4.docx')
+print('User Guide saved: SlashMyBill-UserGuide-v4.docx')

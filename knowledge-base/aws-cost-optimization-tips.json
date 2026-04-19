@@ -497,16 +497,18 @@
       "service": "General",
       "category": "tagging",
       "title": "Implement cost allocation tags",
-      "description": "Tag all resources with project, environment, and owner tags. Enable cost allocation tags in Billing to track costs by team or application.",
+      "description": "Tag all resources with project, environment, and owner tags. Enable cost allocation tags in Billing to track costs by team or application. Use Plan → Tag Resources to scan and bulk-tag resources, then go to Configure → FinOps Settings to activate cost allocation tags.",
       "estimatedSavings": "varies",
       "difficulty": "easy",
-      "automatedCheck": "ce:GetTags â†’ check if cost allocation tags are configured; resourcegroupstaggingapi:GetResources â†’ check tag coverage",
+      "automatedCheck": "ce:GetTags → check if cost allocation tags are configured; resourcegroupstaggingapi:GetResources → check tag coverage",
       "checkImplemented": true,
-      "actionType": "advisory",
+      "actionType": "deep-link",
       "actionLabel": "Tag Resources",
       "level": 2,
       "serviceKey": "General",
-      "implementedInAct": false
+      "implementedInAct": true,
+      "actionTarget": "plan:plan-tagging",
+      "implementedInHealthcheck": true
     },
     {
       "id": "general-006",
