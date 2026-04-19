@@ -1744,7 +1744,7 @@ def _get_healthcheck_results(member_email):
             Key={'email': member_email},
             ProjectionExpression='healthcheckResults'
         )
-        return resp.get('Item', {}).get('healthcheckResults', {})
+        return _decimal_to_native(resp.get('Item', {}).get('healthcheckResults', {}))
     except Exception as e:
         logger.warning(f"Failed to fetch healthcheck results: {e}")
         return {}
