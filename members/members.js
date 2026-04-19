@@ -4508,10 +4508,10 @@ async function _fixFinOpsSetting(accountId, fixAction, params) {
                             break;
                         }
                     }
-                    // Recalculate score
-                    var passed = 0;
-                    items.forEach(function(it) { if (it.status === 'pass') passed++; });
-                    scanData.settingsScore = { passed: passed, total: items.length };
+                    // Recalculate score — only count slashmybill group
+                    var scoreable = items.filter(function(it) { return it.group === 'slashmybill' || !it.group; });
+                    var passed = scoreable.filter(function(it) { return it.status === 'pass'; }).length;
+                    scanData.settingsScore = { passed: passed, total: scoreable.length };
                     container.dataset.scanData = JSON.stringify(scanData);
                     _renderFinOpsChecklist(scanData);
                     _renderFinOpsScore(scanData.settingsScore);
