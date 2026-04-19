@@ -283,11 +283,8 @@ jobs:
             --function-name aws-bill-analyzer-member-api \
             --s3-bucket ${{ env.STORAGE_BUCKET }} \
             --s3-key lambda-packages/member-handler.zip > /dev/null
-          # Ensure Cognito env vars are always set correctly
-          aws lambda update-function-configuration \
-            --function-name aws-bill-analyzer-member-api \
-            --environment "Variables={COGNITO_USER_POOL_ID=us-east-1_FlR2CmFu0,COGNITO_CLIENT_ID=3shmdb332mm8sjheopdu9sg8o4}" \
-            --region us-east-1 > /dev/null 2>&1 || true
+          # Note: Cognito env vars are set in the CloudFormation template (viewmybill-stack.yaml)
+          # Do NOT use update-function-configuration here as it replaces ALL env vars
           aws lambda update-function-code \
             --function-name SlashMyBill-AgentAction \
             --s3-bucket ${{ env.STORAGE_BUCKET }} \
