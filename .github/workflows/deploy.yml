@@ -29,6 +29,7 @@ on:
       - '_gen_ug.py'
       - '_gen_hld.py'
       - 'knowledge-base/**'
+      - 'infrastructure/update-bedrock-agent.py'
   workflow_dispatch:
 
 permissions:
