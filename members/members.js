@@ -997,10 +997,10 @@ function showWizard(accountId) {
     if (!securityEl) {
         securityEl = document.createElement('div');
         securityEl.id = 'wiz-security-explanation';
-        securityEl.style.cssText = 'margin-top:16px;padding:14px 16px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;font-size:12px;line-height:1.6;';
+        securityEl.style.cssText = 'margin-top:12px;padding:10px 12px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;font-size:11px;line-height:1.4;';
         securityEl.innerHTML =
             '<div style="font-weight:600;color:#166534;margin-bottom:8px;">\ud83d\udd12 How it works (secure, read-only access)</div>' +
-            '<div style="background:#fff;border:1px solid #d1d5db;border-radius:6px;padding:10px 12px;font-family:monospace;font-size:11px;color:#374151;margin-bottom:10px;white-space:pre;overflow-x:auto;line-height:1.5;">' +
+            '<div style="background:#fff;border:1px solid #d1d5db;border-radius:6px;padding:10px 12px;font-family:monospace;font-size:10px;color:#374151;margin-bottom:6px;white-space:pre;overflow-x:auto;line-height:1.3;padding:6px 8px;">' +
                 'Your AWS Account\n' +
                 '  \u2514\u2500\u2500 SlashMyBill-' + accountId + ' (IAM Role)\n' +
                 '      \u2514\u2500\u2500 Read-Only Access to:\n' +
@@ -1008,7 +1008,7 @@ function showWizard(accountId) {
                 '          \u2022 CloudWatch (metrics)\n' +
                 '          \u2022 Resource inventory' +
             '</div>' +
-            '<div style="display:grid;gap:4px;">' +
+            '<div style="display:grid;gap:2px;font-size:11px;">' +
                 '<div style="color:#166534;">\u2705 No credentials stored \u2014 access via temporary STS tokens</div>' +
                 '<div style="color:#166534;">\u2705 Read-only by default \u2014 no changes to your resources</div>' +
                 '<div style="color:#166534;">\u2705 You control permissions \u2014 delete the role anytime</div>' +

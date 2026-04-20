@@ -195,7 +195,8 @@
 /* ============================================================
    Setup Wizard
    ============================================================ */
-.modal-card-wizard { max-width: 640px; }
+.modal-card-wizard { max-width: 640px; max-height: 85vh; display: flex; flex-direction: column; }
+.modal-card-wizard .modal-body { overflow-y: auto; flex: 1; }
 
 .wizard-progress {
     display: flex; gap: 8px; margin-bottom: 24px;
