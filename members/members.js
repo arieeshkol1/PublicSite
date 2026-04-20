@@ -3706,7 +3706,16 @@ function _buildMetricSelector(availableMetrics) {
     manualGroup.label = '\u270f\ufe0f Manual';
     var hasAuto = false, hasManual = false;
 
-    availableMetrics.forEach(function(m) {
+    // Sort auto-discovered metrics: Cognito first, then traffic (CloudFront/ELB/Route53), then others
+    var sortedMetrics = availableMetrics.slice().sort(function(a, b) {
+        var priority = ['Cognito:', 'CloudFront:', 'ELB:', 'Route53:', 'Lambda:', 'DynamoDB:', 'API Gateway:', 'S3:'];
+        var aIdx = priority.findIndex(function(p) { return a.name.indexOf(p) === 0; });
+        var bIdx = priority.findIndex(function(p) { return b.name.indexOf(p) === 0; });
+        if (aIdx === -1) aIdx = 99;
+        if (bIdx === -1) bIdx = 99;
+        return aIdx - bIdx;
+    });
+    sortedMetrics.forEach(function(m) {
         var opt = document.createElement('option');
         opt.value = m.name;
         opt.textContent = m.name + (m.source !== 'manual' ? ' \ud83e\udd16' : ' \u270f\ufe0f');
@@ -3722,10 +3731,15 @@ function _buildMetricSelector(availableMetrics) {
     if (hasAuto) select.appendChild(autoGroup);
     if (hasManual) select.appendChild(manualGroup);
 
-    // Default to first auto-discovered or first available
+    // Default priority: Cognito users > CloudFront requests > ELB requests > Route53 > first available
     if (!_selectedMetric && availableMetrics.length > 0) {
-        var autoMetric = availableMetrics.find(function(m) { return m.group === 'Auto-Discovered'; });
-        _selectedMetric = autoMetric ? autoMetric.name : availableMetrics[0].name;
+        var priorityOrder = ['Cognito:', 'CloudFront:', 'ELB:', 'Route53:'];
+        var chosen = null;
+        for (var pi = 0; pi < priorityOrder.length && !chosen; pi++) {
+            chosen = availableMetrics.find(function(m) { return m.name.indexOf(priorityOrder[pi]) === 0; });
+        }
+        if (!chosen) chosen = availableMetrics.find(function(m) { return m.group === 'Auto-Discovered'; });
+        _selectedMetric = chosen ? chosen.name : availableMetrics[0].name;
     }
     select.value = _selectedMetric;
 }
