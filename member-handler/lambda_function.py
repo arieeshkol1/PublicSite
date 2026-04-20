@@ -125,6 +125,7 @@ def lambda_handler(event, context):
         'POST /members/healthcheck/fix': handle_healthcheck_fix,
         'GET /members/tag-policy': handle_get_tag_policy,
         'POST /members/tag-policy': handle_save_tag_policy,
+        'POST /members/agent/invoke': handle_agent_invoke,
     }
 
     handler = routes.get(route_key)
@@ -8968,6 +8969,108 @@ DEFAULT_TAG_POLICY = {
     },
     'coverageThreshold': 80,
 }
+
+
+
+
+# ============================================================
+# Bedrock Agent Invoke Handler
+# ============================================================
+
+BEDROCK_AGENT_ID_V2 = os.environ.get('BEDROCK_AGENT_ID', '')
+BEDROCK_AGENT_ALIAS_V2 = os.environ.get('BEDROCK_AGENT_ALIAS_ID', '')
+
+
+def handle_agent_invoke(event):
+    """Invoke the Bedrock Agent and return the response.
+    This is the new agent-based AI endpoint (alongside the legacy ai-query)."""
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+    member_email = auth['sub']
+
+    try:
+        body = json.loads(event.get('body', '{}'))
+    except (json.JSONDecodeError, TypeError):
+        body = {}
+
+    question = body.get('question', '').strip()
+    account_ids = body.get('accountIds', [])
+    session_id = body.get('sessionId', '')
+
+    if not question:
+        return create_error_response(400, 'InvalidRequest', 'Question is required')
+    if not account_ids:
+        return create_error_response(400, 'InvalidRequest', 'At least one accountId is required')
+
+    # Verify account ownership
+    ownership = _verify_account_ownership(member_email, account_ids)
+    if ownership is not True:
+        return ownership
+
+    # Check credits
+    tier = _get_member_tier(member_email)
+    credit_check = _check_and_consume_credits(member_email, tier, AI_QUERY_CREDIT_COST)
+    if credit_check:
+        return credit_check
+
+    # Generate session ID if not provided
+    if not session_id:
+        session_id = f"{member_email.replace('@', '-').replace('.', '-')}-{int(time.time())}"
+
+    # Build session attributes with account context
+    session_attrs = {
+        'memberEmail': member_email,
+        'accountIds': ','.join(account_ids),
+        'primaryAccountId': account_ids[0],
+    }
+
+    if not BEDROCK_AGENT_ID_V2 or not BEDROCK_AGENT_ALIAS_V2:
+        return create_error_response(503, 'ServiceUnavailable', 'Bedrock Agent not configured. Using legacy AI endpoint.')
+
+    try:
+        bedrock_runtime = boto3.client('bedrock-agent-runtime', region_name='us-east-1')
+
+        response = bedrock_runtime.invoke_agent(
+            agentId=BEDROCK_AGENT_ID_V2,
+            agentAliasId=BEDROCK_AGENT_ALIAS_V2,
+            sessionId=session_id,
+            inputText=f"[Account: {account_ids[0]}, Email: {member_email}] {question}",
+            sessionState={
+                'sessionAttributes': session_attrs,
+            },
+        )
+
+        # Collect the streamed response
+        answer_parts = []
+        trace_steps = []
+
+        for event_chunk in response.get('completion', []):
+            if 'chunk' in event_chunk:
+                chunk_bytes = event_chunk['chunk'].get('bytes', b'')
+                if chunk_bytes:
+                    answer_parts.append(chunk_bytes.decode('utf-8'))
+            if 'trace' in event_chunk:
+                trace = event_chunk['trace'].get('trace', {})
+                orchestration = trace.get('orchestrationTrace', {})
+                if orchestration.get('invocationInput'):
+                    inv = orchestration['invocationInput']
+                    action_group = inv.get('actionGroupInvocationInput', {})
+                    if action_group.get('apiPath'):
+                        trace_steps.append(f"Called: {action_group['apiPath']}")
+
+        answer = ''.join(answer_parts)
+
+        return create_response(200, {
+            'answer': answer,
+            'sessionId': session_id,
+            'commands': trace_steps,
+            'source': 'bedrock-agent',
+        })
+
+    except Exception as e:
+        logger.error(f"Bedrock Agent invoke error: {e}")
+        return create_error_response(500, 'AgentError', f'Agent invocation failed: {str(e)}')
 
 
 def handle_get_tag_policy(event):

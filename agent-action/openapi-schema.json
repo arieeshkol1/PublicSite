@@ -1,0 +1,155 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "SlashMyBill FinOps Agent Actions",
+    "version": "2.0.0",
+    "description": "Action group for the SlashMyBill Bedrock Agent. Provides tools to query AWS account cost data, resource inventory, and optimization recommendations."
+  },
+  "paths": {
+    "/get-cost-data": {
+      "post": {
+        "operationId": "getCostData",
+        "summary": "Get AWS cost breakdown by service (30 days) and daily trend (7 days)",
+        "description": "Retrieves cost by service for the last 30 days and daily cost trend for the last 7 days from AWS Cost Explorer.",
+        "parameters": [
+          {"name": "accountId", "in": "query", "required": true, "schema": {"type": "string"}, "description": "12-digit AWS account ID"},
+          {"name": "memberEmail", "in": "query", "required": true, "schema": {"type": "string"}, "description": "Member email for cross-account role assumption"}
+        ],
+        "responses": {"200": {"description": "Cost data with topServices array and dailyCosts array"}}
+      }
+    },
+    "/get-monthly-comparison": {
+      "post": {
+        "operationId": "getMonthlyComparison",
+        "summary": "Compare costs across multiple months by service",
+        "description": "Gets monthly cost breakdown by service for the last 3-6 months. Use this when the user asks to compare months or see trends.",
+        "parameters": [
+          {"name": "accountId", "in": "query", "required": true, "schema": {"type": "string"}, "description": "12-digit AWS account ID"},
+          {"name": "memberEmail", "in": "query", "required": true, "schema": {"type": "string"}, "description": "Member email"},
+          {"name": "months", "in": "query", "required": false, "schema": {"type": "string"}, "description": "Number of months to compare (default: 3, max: 6)"}
+        ],
+        "responses": {"200": {"description": "Monthly cost comparison data"}}
+      }
+    },
+    "/get-ec2-instances": {
+      "post": {
+        "operationId": "getEC2Instances",
+        "summary": "List EC2 instances with type, state, CPU utilization, and tags",
+        "description": "Lists all EC2 instances with their instance type, state, availability zone, and 14-day average CPU utilization from CloudWatch.",
+        "parameters": [
+          {"name": "accountId", "in": "query", "required": true, "schema": {"type": "string"}},
+          {"name": "memberEmail", "in": "query", "required": true, "schema": {"type": "string"}}
+        ],
+        "responses": {"200": {"description": "EC2 instances with CPU metrics"}}
+      }
+    },
+    "/get-rds-instances": {
+      "post": {
+        "operationId": "getRDSInstances",
+        "summary": "List RDS database instances with class, engine, CPU, and connections",
+        "description": "Lists all RDS instances with their instance class, engine, storage, and 14-day average CPU and connection metrics.",
+        "parameters": [
+          {"name": "accountId", "in": "query", "required": true, "schema": {"type": "string"}},
+          {"name": "memberEmail", "in": "query", "required": true, "schema": {"type": "string"}}
+        ],
+        "responses": {"200": {"description": "RDS instances with metrics"}}
+      }
+    },
+    "/get-lambda-functions": {
+      "post": {
+        "operationId": "getLambdaFunctions",
+        "summary": "List Lambda functions with invocation counts, duration, and errors",
+        "description": "Lists all Lambda functions with their runtime, memory, 30-day invocation count, average duration, and error count.",
+        "parameters": [
+          {"name": "accountId", "in": "query", "required": true, "schema": {"type": "string"}},
+          {"name": "memberEmail", "in": "query", "required": true, "schema": {"type": "string"}}
+        ],
+        "responses": {"200": {"description": "Lambda functions with metrics"}}
+      }
+    },
+    "/get-s3-buckets": {
+      "post": {
+        "operationId": "getS3Buckets",
+        "summary": "List S3 buckets with lifecycle policy status",
+        "description": "Lists all S3 buckets and whether they have lifecycle policies configured.",
+        "parameters": [
+          {"name": "accountId", "in": "query", "required": true, "schema": {"type": "string"}},
+          {"name": "memberEmail", "in": "query", "required": true, "schema": {"type": "string"}}
+        ],
+        "responses": {"200": {"description": "S3 buckets with lifecycle status"}}
+      }
+    },
+    "/get-ebs-volumes": {
+      "post": {
+        "operationId": "getEBSVolumes",
+        "summary": "List EBS volumes with type, size, attachment status, and IOPS",
+        "description": "Lists all EBS volumes including unattached volumes (waste), gp2 volumes (migration candidates), and their sizes.",
+        "parameters": [
+          {"name": "accountId", "in": "query", "required": true, "schema": {"type": "string"}},
+          {"name": "memberEmail", "in": "query", "required": true, "schema": {"type": "string"}}
+        ],
+        "responses": {"200": {"description": "EBS volumes with details"}}
+      }
+    },
+    "/get-network-resources": {
+      "post": {
+        "operationId": "getNetworkResources",
+        "summary": "List NAT Gateways, VPC Endpoints, and Elastic IPs",
+        "description": "Lists NAT Gateways with data transfer metrics, VPC Endpoints with type and cost, and unassociated Elastic IPs.",
+        "parameters": [
+          {"name": "accountId", "in": "query", "required": true, "schema": {"type": "string"}},
+          {"name": "memberEmail", "in": "query", "required": true, "schema": {"type": "string"}}
+        ],
+        "responses": {"200": {"description": "Network resources inventory"}}
+      }
+    },
+    "/get-budgets": {
+      "post": {
+        "operationId": "getBudgets",
+        "summary": "List AWS Budgets with current spend vs limit",
+        "description": "Lists all configured AWS Budgets with their budget amount, actual spend, and forecasted spend.",
+        "parameters": [
+          {"name": "accountId", "in": "query", "required": true, "schema": {"type": "string"}},
+          {"name": "memberEmail", "in": "query", "required": true, "schema": {"type": "string"}}
+        ],
+        "responses": {"200": {"description": "Budgets with spend data"}}
+      }
+    },
+    "/get-finops-settings": {
+      "post": {
+        "operationId": "getFinOpsSettings",
+        "summary": "Get FinOps settings healthcheck status for an account",
+        "description": "Returns the cached FinOps settings scan results including cost allocation tags, anomaly detection, budgets, and other best-practice checks.",
+        "parameters": [
+          {"name": "accountId", "in": "query", "required": true, "schema": {"type": "string"}},
+          {"name": "memberEmail", "in": "query", "required": true, "schema": {"type": "string"}}
+        ],
+        "responses": {"200": {"description": "FinOps settings checklist with scores"}}
+      }
+    },
+    "/get-optimization-tips": {
+      "post": {
+        "operationId": "getOptimizationTips",
+        "summary": "Search the cost optimization tips knowledge base",
+        "description": "Queries the SlashMyBill knowledge base for cost optimization tips. Filter by service name.",
+        "parameters": [
+          {"name": "service", "in": "query", "required": false, "schema": {"type": "string"}, "description": "AWS service name filter (e.g., EC2, S3, RDS, Lambda, General)"}
+        ],
+        "responses": {"200": {"description": "Optimization tips"}}
+      }
+    },
+    "/get-aws-pricing": {
+      "post": {
+        "operationId": "getAWSPricing",
+        "summary": "Get real-time AWS pricing for any service",
+        "description": "Queries the AWS Pricing API for current on-demand, Reserved Instance, and Savings Plan pricing. Use for cost comparisons and commitment recommendations.",
+        "parameters": [
+          {"name": "serviceCode", "in": "query", "required": true, "schema": {"type": "string"}, "description": "AWS service code: AmazonEC2, AmazonRDS, AmazonS3, AWSLambda, AmazonDynamoDB"},
+          {"name": "filters", "in": "query", "required": false, "schema": {"type": "string"}, "description": "Comma-separated key=value filters, e.g. instanceType=m5.large,operatingSystem=Linux"},
+          {"name": "region", "in": "query", "required": false, "schema": {"type": "string"}, "description": "AWS region code (default: us-east-1)"}
+        ],
+        "responses": {"200": {"description": "Pricing data with on-demand rates"}}
+      }
+    }
+  }
+}

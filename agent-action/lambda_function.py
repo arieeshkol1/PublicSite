@@ -48,6 +48,21 @@ def lambda_handler(event, context):
         filters = parameters.get('filters', '')
         region = parameters.get('region', 'us-east-1')
         result = _get_aws_pricing(service_code, filters, region)
+    elif api_path == '/get-monthly-comparison':
+        months = int(parameters.get('months', '3'))
+        result = _get_monthly_comparison(account_id, member_email, months)
+    elif api_path == '/get-rds-instances':
+        result = _get_rds_instances(account_id, member_email)
+    elif api_path == '/get-lambda-functions':
+        result = _get_lambda_functions(account_id, member_email)
+    elif api_path == '/get-ebs-volumes':
+        result = _get_ebs_volumes(account_id, member_email)
+    elif api_path == '/get-network-resources':
+        result = _get_network_resources(account_id, member_email)
+    elif api_path == '/get-budgets':
+        result = _get_budgets(account_id, member_email)
+    elif api_path == '/get-finops-settings':
+        result = _get_finops_settings(account_id, member_email)
     else:
         result = {'error': f'Unknown action: {api_path}'}
 
@@ -285,5 +300,276 @@ def _get_optimization_tips(service=''):
                 'difficulty': str(item.get('difficulty', '')),
             })
         return {'tips': tips, 'count': len(tips)}
+    except Exception as e:
+        return {'error': str(e)}
+
+
+def _get_monthly_comparison(account_id, member_email, months=3):
+    """Get monthly cost comparison by service."""
+    try:
+        creds = _assume_role(account_id, member_email)
+        ce = _make_client('ce', creds)
+        
+        end_date = datetime.now(timezone.utc).replace(day=1).strftime('%Y-%m-%d')
+        start_date = (datetime.now(timezone.utc).replace(day=1) - timedelta(days=months*31)).replace(day=1).strftime('%Y-%m-%d')
+        
+        resp = ce.get_cost_and_usage(
+            TimePeriod={'Start': start_date, 'End': end_date},
+            Granularity='MONTHLY',
+            Metrics=['UnblendedCost'],
+            GroupBy=[{'Type': 'DIMENSION', 'Key': 'SERVICE'}],
+        )
+        
+        monthly_data = {}
+        for period in resp.get('ResultsByTime', []):
+            month = period['TimePeriod']['Start'][:7]
+            monthly_data[month] = {}
+            for group in period.get('Groups', []):
+                svc = group['Keys'][0]
+                cost = float(group['Metrics']['UnblendedCost']['Amount'])
+                if cost > 0.01:
+                    monthly_data[month][svc] = round(cost, 2)
+        
+        return {'monthlyComparison': monthly_data, 'months': sorted(monthly_data.keys())}
+    except Exception as e:
+        return {'error': str(e)}
+
+
+def _get_rds_instances(account_id, member_email):
+    """List RDS instances with metrics."""
+    try:
+        creds = _assume_role(account_id, member_email)
+        rds = _make_client('rds', creds)
+        cw = _make_client('cloudwatch', creds)
+        
+        resp = rds.describe_db_instances()
+        instances = []
+        end_time = datetime.now(timezone.utc)
+        start_time = end_time - timedelta(days=14)
+        
+        for db in resp.get('DBInstances', []):
+            db_id = db['DBInstanceIdentifier']
+            # Get CPU metrics
+            cpu_avg = 0
+            try:
+                cpu_resp = cw.get_metric_statistics(
+                    Namespace='AWS/RDS', MetricName='CPUUtilization',
+                    Dimensions=[{'Name': 'DBInstanceIdentifier', 'Value': db_id}],
+                    StartTime=start_time, EndTime=end_time,
+                    Period=86400, Statistics=['Average']
+                )
+                points = cpu_resp.get('Datapoints', [])
+                if points:
+                    cpu_avg = round(sum(p['Average'] for p in points) / len(points), 1)
+            except Exception:
+                pass
+            
+            instances.append({
+                'dbId': db_id,
+                'instanceClass': db['DBInstanceClass'],
+                'engine': db['Engine'],
+                'engineVersion': db.get('EngineVersion', ''),
+                'status': db['DBInstanceStatus'],
+                'storageGB': db.get('AllocatedStorage', 0),
+                'multiAZ': db.get('MultiAZ', False),
+                'avgCPU14d': cpu_avg,
+            })
+        
+        return {'instances': instances, 'count': len(instances)}
+    except Exception as e:
+        return {'error': str(e)}
+
+
+def _get_lambda_functions(account_id, member_email):
+    """List Lambda functions with invocation metrics."""
+    try:
+        creds = _assume_role(account_id, member_email)
+        lam = _make_client('lambda', creds)
+        cw = _make_client('cloudwatch', creds)
+        
+        resp = lam.list_functions(MaxItems=50)
+        functions = []
+        end_time = datetime.now(timezone.utc)
+        start_time = end_time - timedelta(days=30)
+        
+        for fn in resp.get('Functions', []):
+            fn_name = fn['FunctionName']
+            invocations = 0
+            errors = 0
+            avg_duration = 0
+            
+            try:
+                inv_resp = cw.get_metric_statistics(
+                    Namespace='AWS/Lambda', MetricName='Invocations',
+                    Dimensions=[{'Name': 'FunctionName', 'Value': fn_name}],
+                    StartTime=start_time, EndTime=end_time,
+                    Period=2592000, Statistics=['Sum']
+                )
+                points = inv_resp.get('Datapoints', [])
+                if points:
+                    invocations = int(points[0].get('Sum', 0))
+            except Exception:
+                pass
+            
+            try:
+                err_resp = cw.get_metric_statistics(
+                    Namespace='AWS/Lambda', MetricName='Errors',
+                    Dimensions=[{'Name': 'FunctionName', 'Value': fn_name}],
+                    StartTime=start_time, EndTime=end_time,
+                    Period=2592000, Statistics=['Sum']
+                )
+                points = err_resp.get('Datapoints', [])
+                if points:
+                    errors = int(points[0].get('Sum', 0))
+            except Exception:
+                pass
+            
+            functions.append({
+                'name': fn_name,
+                'runtime': fn.get('Runtime', 'unknown'),
+                'memoryMB': fn.get('MemorySize', 128),
+                'architecture': fn.get('Architectures', ['x86_64'])[0],
+                'invocations30d': invocations,
+                'errors30d': errors,
+            })
+        
+        return {'functions': functions, 'count': len(functions)}
+    except Exception as e:
+        return {'error': str(e)}
+
+
+def _get_ebs_volumes(account_id, member_email):
+    """List EBS volumes with details."""
+    try:
+        creds = _assume_role(account_id, member_email)
+        ec2 = _make_client('ec2', creds)
+        
+        resp = ec2.describe_volumes()
+        volumes = []
+        unattached_count = 0
+        gp2_count = 0
+        total_gb = 0
+        
+        for vol in resp.get('Volumes', []):
+            attached = len(vol.get('Attachments', [])) > 0
+            vol_type = vol.get('VolumeType', 'unknown')
+            size = vol.get('Size', 0)
+            total_gb += size
+            if not attached:
+                unattached_count += 1
+            if vol_type == 'gp2':
+                gp2_count += 1
+            
+            volumes.append({
+                'volumeId': vol['VolumeId'],
+                'type': vol_type,
+                'sizeGB': size,
+                'state': vol['State'],
+                'attached': attached,
+                'iops': vol.get('Iops', 0),
+            })
+        
+        return {
+            'volumes': volumes[:50],
+            'count': len(volumes),
+            'totalGB': total_gb,
+            'unattachedCount': unattached_count,
+            'gp2Count': gp2_count,
+            'gp2ToGp3SavingsUSD': round(gp2_count * 0.02 * (total_gb / max(len(volumes), 1)), 2),
+        }
+    except Exception as e:
+        return {'error': str(e)}
+
+
+def _get_network_resources(account_id, member_email):
+    """List NAT Gateways, VPC Endpoints, and Elastic IPs."""
+    try:
+        creds = _assume_role(account_id, member_email)
+        ec2 = _make_client('ec2', creds)
+        
+        # NAT Gateways
+        nat_resp = ec2.describe_nat_gateways(Filter=[{'Name': 'state', 'Values': ['available']}])
+        nat_gateways = [{'id': n['NatGatewayId'], 'vpcId': n.get('VpcId', ''), 'subnetId': n.get('SubnetId', '')} for n in nat_resp.get('NatGateways', [])]
+        
+        # VPC Endpoints
+        vpce_resp = ec2.describe_vpc_endpoints()
+        endpoints = [{'id': e['VpcEndpointId'], 'type': e['VpcEndpointType'], 'serviceName': e['ServiceName'], 'state': e['State']} for e in vpce_resp.get('VpcEndpoints', [])]
+        
+        # Elastic IPs
+        eip_resp = ec2.describe_addresses()
+        eips = []
+        unassociated = 0
+        for addr in eip_resp.get('Addresses', []):
+            associated = bool(addr.get('AssociationId'))
+            if not associated:
+                unassociated += 1
+            eips.append({'publicIp': addr.get('PublicIp', ''), 'associated': associated, 'instanceId': addr.get('InstanceId', '')})
+        
+        return {
+            'natGateways': nat_gateways,
+            'natGatewayCount': len(nat_gateways),
+            'natGatewayCostEstimate': round(len(nat_gateways) * 32.40, 2),
+            'vpcEndpoints': endpoints,
+            'vpcEndpointCount': len(endpoints),
+            'elasticIPs': eips,
+            'unassociatedEIPs': unassociated,
+            'unassociatedEIPCost': round(unassociated * 3.65, 2),
+        }
+    except Exception as e:
+        return {'error': str(e)}
+
+
+def _get_budgets(account_id, member_email):
+    """List AWS Budgets with spend data."""
+    try:
+        creds = _assume_role(account_id, member_email)
+        budgets_client = _make_client('budgets', creds)
+        
+        resp = budgets_client.describe_budgets(AccountId=account_id)
+        budgets = []
+        for b in resp.get('Budgets', []):
+            limit = float(b.get('BudgetLimit', {}).get('Amount', 0))
+            actual = float(b.get('CalculatedSpend', {}).get('ActualSpend', {}).get('Amount', 0))
+            forecast = float(b.get('CalculatedSpend', {}).get('ForecastedSpend', {}).get('Amount', 0))
+            budgets.append({
+                'name': b.get('BudgetName', ''),
+                'type': b.get('BudgetType', ''),
+                'limit': limit,
+                'actualSpend': actual,
+                'forecastedSpend': forecast,
+                'utilizationPct': round((actual / limit) * 100, 1) if limit > 0 else 0,
+            })
+        
+        return {'budgets': budgets, 'count': len(budgets)}
+    except Exception as e:
+        return {'error': str(e)}
+
+
+def _get_finops_settings(account_id, member_email):
+    """Get cached FinOps settings healthcheck results."""
+    try:
+        members_table = dynamodb.Table('MemberPortal-Members')
+        resp = members_table.get_item(
+            Key={'email': member_email},
+            ProjectionExpression='healthcheckResults'
+        )
+        results = resp.get('Item', {}).get('healthcheckResults', {})
+        account_results = results.get(account_id, {})
+        
+        if not account_results:
+            return {'message': 'No FinOps settings scan has been run for this account. Recommend: Go to Configure > FinOps Settings to run a scan.'}
+        
+        # Convert Decimal to native types
+        import decimal
+        def decimal_to_native(obj):
+            if isinstance(obj, list):
+                return [decimal_to_native(i) for i in obj]
+            if isinstance(obj, dict):
+                return {k: decimal_to_native(v) for k, v in obj.items()}
+            if isinstance(obj, decimal.Decimal):
+                return int(obj) if obj % 1 == 0 else float(obj)
+            return obj
+        
+        return decimal_to_native(account_results)
     except Exception as e:
         return {'error': str(e)}
