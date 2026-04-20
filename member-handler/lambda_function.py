@@ -6334,9 +6334,10 @@ def handle_tag_scan(event):
 
                         # Return all resources (limit to 500)
                         if len(all_resources) < 500:
-                            # Extract resource type and ID from ARN
+                            # Extract resource type, region, and ID from ARN
                             arn_parts = arn.split(':')
                             service = arn_parts[2] if len(arn_parts) > 2 else 'unknown'
+                            region = arn_parts[3] if len(arn_parts) > 3 and arn_parts[3] else 'global'
                             res_type = service.upper()
                             res_id = arn.split('/')[-1] if '/' in arn else arn.split(':')[-1]
                             name = tags.get('Name', res_id)
@@ -6347,6 +6348,7 @@ def handle_tag_scan(event):
                                 'resourceId': res_id,
                                 'name': name,
                                 'account': acct_id,
+                                'region': region,
                                 'existingTags': tags,
                                 'missingTags': missing,
                             })
@@ -9242,6 +9244,19 @@ def handle_healthcheck_scan(event):
                 'fixLabel': None,
                 'details': {}
             })
+
+    # Post-process: enhance guidance for AccessDeniedException errors
+    _ROOT_USER_GUIDANCE = (
+        ' This may occur if the account was connected using root user credentials.'
+        ' Redeploy the latest CloudFormation template to fix.'
+    )
+    for item in checklist_items:
+        if item.get('status') == 'error':
+            desc = (item.get('description') or '').lower()
+            if 'accessdenied' in desc or 'access denied' in desc:
+                existing_guidance = item.get('guidance', '')
+                if 'root user' not in existing_guidance.lower():
+                    item['guidance'] = existing_guidance + _ROOT_USER_GUIDANCE
 
     # Compute score — only count 'slashmybill' group items (fixable from SlashMyBill)
     scoreable_items = [item for item in checklist_items if item.get('group') == 'slashmybill']

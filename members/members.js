@@ -991,6 +991,44 @@ function showWizard(accountId) {
     _fetchTemplate(accountId);
     updateWizardStep();
     wizardModal.hidden = false;
+
+    // Inject security explanation into Step 1
+    var securityEl = document.getElementById('wiz-security-explanation');
+    if (!securityEl) {
+        securityEl = document.createElement('div');
+        securityEl.id = 'wiz-security-explanation';
+        securityEl.style.cssText = 'margin-top:16px;padding:14px 16px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;font-size:12px;line-height:1.6;';
+        securityEl.innerHTML =
+            '<div style="font-weight:600;color:#166534;margin-bottom:8px;">\ud83d\udd12 How it works (secure, read-only access)</div>' +
+            '<div style="background:#fff;border:1px solid #d1d5db;border-radius:6px;padding:10px 12px;font-family:monospace;font-size:11px;color:#374151;margin-bottom:10px;white-space:pre;overflow-x:auto;line-height:1.5;">' +
+                'Your AWS Account\n' +
+                '  \u2514\u2500\u2500 SlashMyBill-' + accountId + ' (IAM Role)\n' +
+                '      \u2514\u2500\u2500 Read-Only Access to:\n' +
+                '          \u2022 Cost Explorer (billing data)\n' +
+                '          \u2022 CloudWatch (metrics)\n' +
+                '          \u2022 Resource inventory' +
+            '</div>' +
+            '<div style="display:grid;gap:4px;">' +
+                '<div style="color:#166534;">\u2705 No credentials stored \u2014 access via temporary STS tokens</div>' +
+                '<div style="color:#166534;">\u2705 Read-only by default \u2014 no changes to your resources</div>' +
+                '<div style="color:#166534;">\u2705 You control permissions \u2014 delete the role anytime</div>' +
+                '<div style="color:#166534;">\u2705 Standard AWS cross-account pattern used by 1000s of tools</div>' +
+            '</div>';
+        var step1 = document.getElementById('wiz-step-1');
+        if (step1) step1.appendChild(securityEl);
+    } else {
+        // Update the account ID in the existing block
+        var monoBlock = securityEl.querySelector('div[style*="monospace"]');
+        if (monoBlock) {
+            monoBlock.textContent =
+                'Your AWS Account\n' +
+                '  \u2514\u2500\u2500 SlashMyBill-' + accountId + ' (IAM Role)\n' +
+                '      \u2514\u2500\u2500 Read-Only Access to:\n' +
+                '          \u2022 Cost Explorer (billing data)\n' +
+                '          \u2022 CloudWatch (metrics)\n' +
+                '          \u2022 Resource inventory';
+        }
+    }
 }
 
 async function _fetchTemplate(accountId) {
@@ -3969,26 +4007,37 @@ function _renderCostByTag(costByTag) {
     var tagKeys = costByTag.tagKeys;
     var data = costByTag.data || {};
 
+    // Filter to only show tag keys that actually have data
+    var tagKeysWithData = tagKeys.filter(function(k) {
+        return data[k] && data[k].values && data[k].values.length > 0;
+    });
+    if (tagKeysWithData.length === 0) {
+        container.innerHTML = '<div style="color:#9ca3af;text-align:center;padding:20px 0;">'
+            + '<div style="margin-bottom:8px;">Tags exist but no cost data available yet.</div>'
+            + '<div style="font-size:0.85em;color:#6b7280;">Cost allocation tags need up to 24 hours to start showing data after activation.</div>'
+            + '</div>';
+        return;
+    }
+
     // Pick default tag key: prefer Environment, CostCenter, Owner, or first available
-    if (!_costByTagCurrentKey || tagKeys.indexOf(_costByTagCurrentKey) === -1) {
+    if (!_costByTagCurrentKey || tagKeysWithData.indexOf(_costByTagCurrentKey) === -1) {
         var preferred = ['Environment', 'environment', 'CostCenter', 'costCenter', 'Owner', 'owner', 'Application', 'application'];
         _costByTagCurrentKey = null;
         for (var i = 0; i < preferred.length; i++) {
-            if (tagKeys.indexOf(preferred[i]) !== -1 && data[preferred[i]]) {
+            if (tagKeysWithData.indexOf(preferred[i]) !== -1) {
                 _costByTagCurrentKey = preferred[i];
                 break;
             }
         }
-        if (!_costByTagCurrentKey) _costByTagCurrentKey = tagKeys[0];
+        if (!_costByTagCurrentKey) _costByTagCurrentKey = tagKeysWithData[0];
     }
 
-    // Build tag key selector
+    // Build tag key selector — only tags with existing data
     var html = '<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">';
     html += '<label style="font-size:12px;font-weight:600;color:#374151;">Tag Key:</label>';
     html += '<select id="dash-tag-key-select" style="padding:4px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;background:#fff;" onchange="_costByTagCurrentKey=this.value;_renderCostByTagChart();">';
-    tagKeys.forEach(function(k) {
-        var hasData = data[k] && data[k].values && data[k].values.length > 0;
-        html += '<option value="' + k + '"' + (k === _costByTagCurrentKey ? ' selected' : '') + (hasData ? '' : ' disabled') + '>' + k + (hasData ? '' : ' (no data)') + '</option>';
+    tagKeysWithData.forEach(function(k) {
+        html += '<option value="' + k + '"' + (k === _costByTagCurrentKey ? ' selected' : '') + '>' + k + '</option>';
     });
     html += '</select>';
 
