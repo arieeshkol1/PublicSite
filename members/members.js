@@ -499,6 +499,7 @@ regEmailForm.onsubmit = async function(e) {
         regEmailDisplay.textContent = regEmailValue;
         regStep1.hidden = true;
         regStep2.hidden = false;
+        _startOtpCountdown();
     } catch (err) {
         regEmailError.textContent = err.message || 'Failed to create account.';
     } finally {
@@ -532,14 +533,56 @@ regOtpForm.onsubmit = async function(e) {
     }
 };
 
-// Resend OTP link
+// Resend OTP link with countdown timer
 var regResendOtp = $('reg-resend-otp');
+var _otpCountdownInterval = null;
+
+function _startOtpCountdown() {
+    // Start 60-second countdown for resend link
+    var remaining = 60;
+    if (regResendOtp) {
+        regResendOtp.style.pointerEvents = 'none';
+        regResendOtp.style.opacity = '0.5';
+        regResendOtp.textContent = 'Resend code (60s)';
+    }
+    if (_otpCountdownInterval) clearInterval(_otpCountdownInterval);
+    _otpCountdownInterval = setInterval(function() {
+        remaining--;
+        if (regResendOtp) regResendOtp.textContent = remaining > 0 ? 'Resend code (' + remaining + 's)' : 'Resend code';
+        if (remaining <= 0) {
+            clearInterval(_otpCountdownInterval);
+            if (regResendOtp) { regResendOtp.style.pointerEvents = ''; regResendOtp.style.opacity = '1'; }
+        }
+    }, 1000);
+
+    // Also show 5-minute OTP expiry countdown
+    var expiryEl = document.getElementById('reg-otp-expiry');
+    if (!expiryEl) {
+        expiryEl = document.createElement('div');
+        expiryEl.id = 'reg-otp-expiry';
+        expiryEl.style.cssText = 'color:#6b7280;font-size:0.82em;text-align:center;margin-top:8px;';
+        var otpForm = $('reg-otp-form');
+        if (otpForm) otpForm.appendChild(expiryEl);
+    }
+    var expiry = 300; // 5 minutes
+    expiryEl.textContent = 'Code expires in 5:00';
+    var expiryInterval = setInterval(function() {
+        expiry--;
+        var mins = Math.floor(expiry / 60);
+        var secs = expiry % 60;
+        if (expiryEl) expiryEl.textContent = expiry > 0 ? 'Code expires in ' + mins + ':' + (secs < 10 ? '0' : '') + secs : 'Code expired — request a new one';
+        if (expiry <= 0) clearInterval(expiryInterval);
+        if (expiry <= 30 && expiryEl) expiryEl.style.color = '#ef4444';
+    }, 1000);
+}
+
 if (regResendOtp) {
     regResendOtp.onclick = async function(e) {
         e.preventDefault();
         try {
             await api('POST', '/members/register', { action: 'resend-otp', email: regEmailValue });
             notify('Verification code resent.', 'success');
+            _startOtpCountdown();
         } catch (err) {
             notify(err.message || 'Failed to resend code.', 'error');
         }
@@ -4330,7 +4373,15 @@ function _populateFinOpsAccountSelector() {
         opt.textContent = (a.accountName || 'Account') + ' (' + a.accountId + ')';
         select.appendChild(opt);
     });
-    if (currentVal) select.value = currentVal;
+    if (currentVal) {
+        select.value = currentVal;
+    } else {
+        // Auto-select first connected account
+        var firstOpt = select.querySelector('option[value]:not([value=""])');
+        if (firstOpt) {
+            select.value = firstOpt.value;
+        }
+    }
 }
 
 function _onFinOpsAccountChange() {

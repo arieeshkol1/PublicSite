@@ -30,6 +30,8 @@ on:
       - '_gen_hld.py'
       - 'knowledge-base/**'
       - 'infrastructure/update-bedrock-agent.py'
+      - 'agent-action/agent-instructions.md'
+      - 'agent-action/openapi-schema.json'
   workflow_dispatch:
 
 permissions:

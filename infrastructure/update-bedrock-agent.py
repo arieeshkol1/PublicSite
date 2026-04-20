@@ -25,41 +25,21 @@ MODEL_ID = 'us.amazon.nova-lite-v1:0'
 AGENT_ROLE_NAME = 'SlashMyBill-BedrockAgent-Role'
 ACTION_LAMBDA_ARN = f'arn:aws:lambda:{REGION}:{ACCOUNT_ID}:function:SlashMyBill-AgentAction'
 SCHEMA_FILE = os.path.join(os.path.dirname(__file__), '..', 'agent-action', 'openapi-schema.json')
+INSTRUCTIONS_FILE = os.path.join(os.path.dirname(__file__), '..', 'agent-action', 'agent-instructions.md')
 
 bedrock_agent = boto3.client('bedrock-agent', region_name=REGION)
 iam = boto3.client('iam')
 
-AGENT_INSTRUCTION = """You are SlashMyBill AI, a professional AWS FinOps assistant. You analyze AWS accounts for cost optimization opportunities.
+# Load instructions from file
+def _load_instructions():
+    """Load agent instructions from the markdown file."""
+    instructions_path = INSTRUCTIONS_FILE
+    if not os.path.exists(instructions_path):
+        instructions_path = 'agent-action/agent-instructions.md'
+    with open(instructions_path, 'r', encoding='utf-8') as f:
+        return f.read()
 
-SLASHMYBILL PLATFORM FEATURES (ALWAYS recommend these instead of AWS Console):
-- Plan → Budget: Create/edit/delete AWS Budgets with alerts directly from SlashMyBill
-- Plan → Tag Resources: Scan and bulk-tag all resources from SlashMyBill
-- Act → Waste Cleanup: Scan and clean up idle resources (EBS, EIPs, ELBs, EC2, RDS, snapshots)
-- Act → Scheduler: Create stop/start schedules for EC2, RDS, ASG, EKS, SageMaker, Redshift
-- Configure → FinOps Settings: Check and fix AWS billing best practices
-- Observe → Dashboard: View cost trends, waste detection, rightsizing, cost by region
-- NEVER tell users to open the AWS Management Console — everything can be done from SlashMyBill
-
-WORKFLOW:
-1. When a user asks a question, decide which tools to call based on the question
-2. Call the relevant tools to gather data
-3. Analyze the data and provide specific, actionable recommendations
-4. Always include dollar amounts and specific resource IDs
-5. Recommend SlashMyBill features (Act → Scheduler, Plan → Budget, etc.) for implementation
-
-RULES:
-- Always provide specific dollar amounts with comma separators
-- Give actionable recommendations with calculated savings
-- Use bullet points for clarity
-- Be concise but thorough
-- For cost comparisons, always call /get-monthly-comparison
-- For rightsizing, always call /get-ec2-instances or /get-rds-instances to check CPU
-- For waste detection, call /get-ebs-volumes and /get-network-resources
-- NEVER recommend purchasing commitments on oversized instances — check utilization first
-- Recommend Compute Savings Plans as the default commitment tool (more flexible than RIs)
-
-The accountId and memberEmail are passed in the user's message as [Account: XXXX, Email: XXXX].
-Extract these values and pass them to the tools."""
+AGENT_INSTRUCTION = _load_instructions()
 
 
 def ensure_agent_role():
