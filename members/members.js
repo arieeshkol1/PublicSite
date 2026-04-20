@@ -1888,11 +1888,9 @@ function addAIMessage(type, content, topServices) {
             '</div>' +
             '<div class="ai-table-area"></div>';
     } else if (type === 'commands') {
-        var cmdsHtml = '<div class="lab-msg-info" style="color:#7ee787;">Commands executed:</div>';
-        content.forEach(function(c) {
-            cmdsHtml += '<div class="lab-msg-command" style="color:#58a6ff;">$ ' + esc(c) + '</div>';
-        });
-        div.innerHTML = cmdsHtml;
+        // Hidden per feedback: keep chat cleaner by not showing commands
+        div.style.display = 'none';
+        div.innerHTML = '';
     } else if (type === 'thinking') {
         div.innerHTML = '<div class="lab-msg-info" style="color:#a78bfa;"><img src="../smallninja2.png" alt="" style="height:32px;vertical-align:middle;margin-right:4px;"> ' + esc(content) + '</div>';
         div.id = 'ai-thinking';
