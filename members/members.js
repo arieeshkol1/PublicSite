@@ -2814,10 +2814,20 @@ function renderDashboardWidgets(data) {
 function _goToTab(tabId, section) {
     document.querySelector('[data-tab=' + tabId + ']').click();
     if (section) setTimeout(function() {
-        if (tabId === 'act-tab') _switchActSection(section);
+        if (tabId === 'act-tab') {
+            _switchActSection(section);
+            // Auto-trigger waste scan if navigating to waste and no results shown
+            if (section === 'waste') {
+                var grid = document.getElementById('act-cards-grid');
+                if (grid && grid.children.length === 0) {
+                    var scanBtn = document.getElementById('act-scan-btn');
+                    if (scanBtn && !scanBtn.disabled) scanBtn.click();
+                }
+            }
+        }
         if (tabId === 'plan-tab') _switchPlanSection(section);
         if (tabId === 'accounts-tab' && section === 'finops-settings') switchToFinOpsSettings();
-    }, 100);
+    }, 200);
 }
 
 // Budget KPI — async load budget data and show in KPI bar

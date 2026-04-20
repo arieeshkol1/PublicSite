@@ -642,11 +642,23 @@ function toggleHelp() {
   if (!panel) return;
   panel.style.right = _helpOpen ? '0' : '-420px';
   // Shrink main content when help is open (side-by-side layout)
-  var dashContent = document.querySelector('.dashboard-content');
-  if (dashContent) {
-    dashContent.style.marginRight = _helpOpen ? '410px' : '0';
-    dashContent.style.transition = 'margin-right 0.3s ease';
+  var dashView = document.getElementById('dashboard-view');
+  if (dashView) {
+    dashView.style.marginRight = _helpOpen ? '410px' : '0';
+    dashView.style.transition = 'margin-right 0.3s ease';
   }
+  // Resize all ECharts instances after the transition completes
+  setTimeout(function() {
+    if (typeof dashboardCharts !== 'undefined') {
+      dashboardCharts.forEach(function(ch) { try { ch.resize(); } catch(e) {} });
+    }
+    // Also resize any echarts instance on the page
+    var allChartDoms = document.querySelectorAll('[_echarts_instance_]');
+    allChartDoms.forEach(function(dom) {
+      var inst = echarts.getInstanceByDom(dom);
+      if (inst) try { inst.resize(); } catch(e) {}
+    });
+  }, 350);
   if (_helpOpen) {
     // Show help for current active tab
     var activeTab = document.querySelector('.member-tab.active');

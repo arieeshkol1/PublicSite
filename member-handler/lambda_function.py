@@ -4344,6 +4344,13 @@ SLASHMYBILL PLATFORM FEATURES (ALWAYS recommend these instead of AWS Console):
 - NEVER ask the user to check something — YOU already have the data, just report it
 - Be direct and factual — every number must come from the actual data provided — everything can be done from SlashMyBill
 
+
+WASTE CLEANUP ALIGNMENT:
+- Act → Waste Cleanup covers ONLY: Elastic IPs, EBS Volumes, Load Balancers, S3 Buckets, EC2 Instances, RDS Instances, EBS Snapshots
+- Do NOT recommend "Go to Act → Waste Cleanup" for KMS keys, NAT Gateways, VPC Endpoints, or Lambda functions
+- For KMS keys: say "Review KMS keys — this requires manual action in AWS KMS"
+- For resources that no longer exist but still show billing charges: say "These charges are historical and will stop next billing cycle"
+
 FINOPS SETTINGS AWARENESS:
 - If healthcheck_results data is present and cost allocation tags are NOT activated, recommend "Go to Configure → FinOps Settings to activate cost allocation tags"
 - If healthcheck_results data is present and no anomaly monitors exist, recommend "Go to Configure → FinOps Settings to set up Cost Anomaly Detection"
@@ -5995,6 +6002,13 @@ SLASHMYBILL PLATFORM FEATURES (ALWAYS recommend these instead of AWS Console):
 - ALWAYS say "Go to Plan → Budget" or "Go to Act → Waste Cleanup" instead of "Go to AWS Console"
 - NEVER tell users to open the AWS Management Console
 
+
+WASTE CLEANUP ALIGNMENT:
+- Act → Waste Cleanup covers ONLY: Elastic IPs, EBS Volumes, Load Balancers, S3 Buckets, EC2 Instances, RDS Instances, EBS Snapshots
+- Do NOT recommend "Go to Act → Waste Cleanup" for KMS keys, NAT Gateways, VPC Endpoints, or Lambda functions
+- For KMS keys: say "Review KMS keys — this requires manual action in AWS KMS"
+- For resources that no longer exist but still show billing charges: say "These charges are historical and will stop next billing cycle"
+
 FINOPS SETTINGS AWARENESS:
 - If healthcheck_results data is present and cost allocation tags are NOT activated, recommend "Go to Configure → FinOps Settings to activate cost allocation tags"
 - If healthcheck_results data is present and no anomaly monitors exist, recommend "Go to Configure → FinOps Settings to set up Cost Anomaly Detection"
@@ -7496,7 +7510,7 @@ def _discover_cognito_metrics(session, account_id):
             pools.extend(page.get('UserPools', []))
     except Exception as e:
         logger.warning(f"Cognito ListUserPools failed for {account_id}: {e}")
-        raise
+        return []  # Don't raise — return empty metrics so other sources still work
 
     now = datetime.now(timezone.utc)
     current_month = now.strftime('%Y-%m')
@@ -7804,6 +7818,112 @@ def _discover_s3_metrics(session, account_id):
     return metrics
 
 
+
+
+def _discover_cloudfront_metrics(session, account_id):
+    """Discover CloudFront request counts per distribution for last 6 months."""
+    cf_client = session.client('cloudfront')
+    cw_client = session.client('cloudwatch')
+    metrics = []
+    periods = _get_monthly_periods(6)
+
+    try:
+        resp = cf_client.list_distributions()
+        distributions = resp.get('DistributionList', {}).get('Items', [])
+    except Exception as e:
+        logger.warning(f"CloudFront ListDistributions failed for {account_id}: {e}")
+        return []
+
+    for dist in distributions[:5]:
+        dist_id = dist.get('Id', '')
+        domain = dist.get('DomainName', dist_id)
+        aliases = dist.get('Aliases', {}).get('Items', [])
+        label = aliases[0] if aliases else domain
+
+        for start_dt, end_dt in periods:
+            month_label = start_dt.strftime('%Y-%m')
+            try:
+                cw_resp = cw_client.get_metric_statistics(
+                    Namespace='AWS/CloudFront',
+                    MetricName='Requests',
+                    Dimensions=[
+                        {'Name': 'DistributionId', 'Value': dist_id},
+                        {'Name': 'Region', 'Value': 'Global'},
+                    ],
+                    StartTime=start_dt,
+                    EndTime=end_dt,
+                    Period=int((end_dt - start_dt).total_seconds()),
+                    Statistics=['Sum'],
+                )
+                points = cw_resp.get('Datapoints', [])
+                total_requests = int(sum(p.get('Sum', 0) for p in points))
+                if total_requests > 0:
+                    metrics.append({
+                        'metricName': f'CloudFront:{label} requests',
+                        'volume': total_requests,
+                        'source': 'aws-cloudfront',
+                        'month': month_label,
+                        'description': f'Total requests to CloudFront distribution {label}',
+                        'accountId': account_id,
+                    })
+            except Exception:
+                pass
+
+    return metrics
+
+
+def _discover_elb_metrics(session, account_id):
+    """Discover ELB/ALB request counts for last 6 months."""
+    elbv2_client = session.client('elbv2')
+    cw_client = session.client('cloudwatch')
+    metrics = []
+    periods = _get_monthly_periods(6)
+
+    try:
+        resp = elbv2_client.describe_load_balancers()
+        lbs = resp.get('LoadBalancers', [])
+    except Exception as e:
+        logger.warning(f"ELB DescribeLoadBalancers failed for {account_id}: {e}")
+        return []
+
+    for lb in lbs[:5]:
+        lb_name = lb.get('LoadBalancerName', '')
+        lb_arn = lb.get('LoadBalancerArn', '')
+        # Extract the ARN suffix for CloudWatch dimension (app/name/id or net/name/id)
+        arn_suffix = '/'.join(lb_arn.split(':loadbalancer/')[-1:]) if ':loadbalancer/' in lb_arn else ''
+
+        if not arn_suffix:
+            continue
+
+        for start_dt, end_dt in periods:
+            month_label = start_dt.strftime('%Y-%m')
+            try:
+                cw_resp = cw_client.get_metric_statistics(
+                    Namespace='AWS/ApplicationELB',
+                    MetricName='RequestCount',
+                    Dimensions=[{'Name': 'LoadBalancer', 'Value': arn_suffix}],
+                    StartTime=start_dt,
+                    EndTime=end_dt,
+                    Period=int((end_dt - start_dt).total_seconds()),
+                    Statistics=['Sum'],
+                )
+                points = cw_resp.get('Datapoints', [])
+                total_requests = int(sum(p.get('Sum', 0) for p in points))
+                if total_requests > 0:
+                    metrics.append({
+                        'metricName': f'ELB:{lb_name} requests',
+                        'volume': total_requests,
+                        'source': 'aws-elb',
+                        'month': month_label,
+                        'description': f'Total requests to load balancer {lb_name}',
+                        'accountId': account_id,
+                    })
+            except Exception:
+                pass
+
+    return metrics
+
+
 def discover_all_metrics(session, account_id):
     """Discover operational metrics from all AWS sources in a customer account."""
     all_metrics = []
@@ -7814,6 +7934,8 @@ def discover_all_metrics(session, account_id):
         ('aws-dynamodb', _discover_dynamodb_metrics),
         ('aws-apigateway', _discover_apigateway_metrics),
         ('aws-route53', _discover_route53_metrics),
+        ('aws-cloudfront', _discover_cloudfront_metrics),
+        ('aws-elb', _discover_elb_metrics),
         ('aws-cloudwatch-custom', _discover_cloudwatch_custom_metrics),
         ('aws-lambda', _discover_lambda_metrics),
         ('aws-s3', _discover_s3_metrics),
@@ -7839,6 +7961,8 @@ _SOURCE_TO_SERVICE = {
     'aws-dynamodb': 'Amazon DynamoDB',
     'aws-apigateway': 'Amazon API Gateway',
     'aws-route53': 'Amazon Route 53',
+    'aws-cloudfront': 'Amazon CloudFront',
+    'aws-elb': 'Amazon Elastic Load Balancing',
     'aws-lambda': 'AWS Lambda',
     'aws-s3': 'Amazon Simple Storage Service',
     'aws-cloudwatch-custom': 'total',
