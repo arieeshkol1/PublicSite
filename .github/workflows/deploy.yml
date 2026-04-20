@@ -158,6 +158,31 @@ jobs:
                     "arn:aws:s3:::slashmycloudbill.com",
                     "arn:aws:s3:::slashmycloudbill.com/*"
                   ]
+                },
+                {
+                  "Sid": "BedrockAgent",
+                  "Effect": "Allow",
+                  "Action": [
+                    "bedrock:CreateAgent",
+                    "bedrock:UpdateAgent",
+                    "bedrock:GetAgent",
+                    "bedrock:ListAgents",
+                    "bedrock:PrepareAgent",
+                    "bedrock:CreateAgentActionGroup",
+                    "bedrock:UpdateAgentActionGroup",
+                    "bedrock:ListAgentActionGroups",
+                    "bedrock:CreateAgentAlias",
+                    "bedrock:UpdateAgentAlias",
+                    "bedrock:ListAgentAliases",
+                    "bedrock:GetAgentAlias",
+                    "iam:CreateRole",
+                    "iam:GetRole",
+                    "iam:PutRolePolicy",
+                    "iam:PassRole",
+                    "lambda:AddPermission",
+                    "lambda:GetPolicy"
+                  ],
+                  "Resource": "*"
                 }
               ]
             }'
@@ -356,6 +381,12 @@ jobs:
           pip install boto3 --quiet
           python knowledge-base/seed-dynamodb.py
           echo "✓ DynamoDB seeded"
+
+      - name: Update Bedrock Agent (create/update schema + prepare)
+        continue-on-error: true
+        run: |
+          python infrastructure/update-bedrock-agent.py
+          echo "✓ Bedrock Agent updated"
 
       - name: Generate documentation (User Guide + HLD)
         run: |
