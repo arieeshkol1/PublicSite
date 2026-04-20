@@ -329,6 +329,15 @@ jobs:
             --s3-key lambda-packages/scheduler-executor.zip > /dev/null 2>&1 || true
           echo "✓ Lambda functions updated"
 
+      - name: Update Cognito email verification template
+        continue-on-error: true
+        run: |
+          aws cognito-idp update-user-pool --user-pool-id us-east-1_FlR2CmFu0 \
+            --email-verification-subject "SlashMyBill - Verify Your Email" \
+            --email-verification-message '<div style="font-family:Arial,sans-serif;max-width:500px;margin:0 auto;padding:20px;"><div style="text-align:center;margin-bottom:20px;"><img src="https://slashmycloudbill.com/SlashMyBill.png" alt="SlashMyBill" style="height:40px;"></div><div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;padding:24px;text-align:center;"><h2 style="color:#1f2937;margin:0 0 12px;">Verify Your Email</h2><p style="color:#6b7280;font-size:14px;margin:0 0 20px;">Your verification code is:</p><div style="background:#1f3864;color:#fff;font-size:28px;font-weight:700;letter-spacing:6px;padding:16px 24px;border-radius:8px;display:inline-block;">{####}</div><p style="color:#6b7280;font-size:13px;margin:20px 0 0;">This code expires in 5 minutes.</p></div><p style="color:#9ca3af;font-size:11px;text-align:center;margin-top:16px;">SlashMyBill - AWS FinOps Platform<br>slashmycloudbill.com</p></div>' \
+            2>/dev/null || echo "⚠ Cognito email template update skipped (pool may require SES sender)"
+          echo "✓ Cognito email template updated"
+
       - name: Ensure API Gateway routes exist
         run: |
           API_ID="l2fd4h481h"

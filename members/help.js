@@ -641,6 +641,12 @@ function toggleHelp() {
   var panel = document.getElementById('help-panel');
   if (!panel) return;
   panel.style.right = _helpOpen ? '0' : '-420px';
+  // Shrink main content when help is open (side-by-side layout)
+  var dashContent = document.querySelector('.dashboard-content');
+  if (dashContent) {
+    dashContent.style.marginRight = _helpOpen ? '410px' : '0';
+    dashContent.style.transition = 'margin-right 0.3s ease';
+  }
   if (_helpOpen) {
     // Show help for current active tab
     var activeTab = document.querySelector('.member-tab.active');
