@@ -2415,6 +2415,18 @@ def handle_actions_scan(event):
     all_cards.sort(key=lambda c: (c.get('monthlySavings') or 0), reverse=True)
     all_findings.sort(key=lambda f: (f.get('savingsUsd') or 0), reverse=True)
 
+    # Deduplicate findings by tipId (same tip can appear for multiple accounts)
+    seen_tips = set()
+    deduped_findings = []
+    for f in all_findings:
+        tip_key = f.get('tipId') or f.get('tipTitle') or ''
+        if tip_key and tip_key in seen_tips:
+            continue
+        if tip_key:
+            seen_tips.add(tip_key)
+        deduped_findings.append(f)
+    all_findings = deduped_findings
+
     scanned_at = datetime.now(timezone.utc).isoformat()
     result = create_response(200, {
         'cards': all_cards,
@@ -6363,9 +6375,27 @@ def handle_tag_scan(event):
                             arn_parts = arn.split(':')
                             service = arn_parts[2] if len(arn_parts) > 2 else 'unknown'
                             region = arn_parts[3] if len(arn_parts) > 3 and arn_parts[3] else 'global'
-                            res_type = service.upper()
+                            # Build a descriptive resource type from the ARN
+                            res_type_raw = arn.split(':')[-1].split('/')[0] if ':' in arn else service
+                            _SERVICE_LABELS = {
+                                'ec2': 'EC2', 'rds': 'RDS', 's3': 'S3', 'lambda': 'Lambda',
+                                'elasticloadbalancing': 'ELB', 'dynamodb': 'DynamoDB',
+                                'cloudformation': 'CloudFormation', 'ecs': 'ECS', 'eks': 'EKS',
+                                'sagemaker': 'SageMaker', 'secretsmanager': 'Secrets Manager',
+                                'kms': 'KMS', 'sns': 'SNS', 'sqs': 'SQS', 'logs': 'CloudWatch Logs',
+                                'events': 'EventBridge', 'states': 'Step Functions',
+                                'apigateway': 'API Gateway', 'cognito-idp': 'Cognito',
+                                'bedrock': 'Bedrock', 'ecr': 'ECR', 'route53': 'Route 53',
+                            }
+                            res_type = _SERVICE_LABELS.get(service, service.upper())
+                            # Extract a meaningful resource ID
                             res_id = arn.split('/')[-1] if '/' in arn else arn.split(':')[-1]
-                            name = tags.get('Name', res_id)
+                            # Use Name tag, or stack:resource-name, or the ID
+                            name = tags.get('Name', '')
+                            if not name:
+                                name = tags.get('aws:cloudformation:logical-id', '')
+                            if not name:
+                                name = res_id
 
                             all_resources.append({
                                 'arn': arn,
