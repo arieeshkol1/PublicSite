@@ -3666,7 +3666,7 @@ function _renderLiveMetrics(container) {
         + '<select id="live-metric-select" style="padding:4px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:0.85em;max-width:250px;" onchange="_onMetricChange()"></select>'
         + '<select id="live-cost-dim-select" style="padding:4px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:0.85em;max-width:200px;" onchange="_onCostDimChange()"></select>'
         + '</div>'
-        + '<button onclick="_liveMetricsCacheTime=0;_refreshLiveMetrics()" class="btn btn-outline btn-sm" style="font-size:0.8em;">&#x1f504; Refresh</button>'
+        + '<button onclick="_liveMetricsCacheTime=0;_liveMetricsData=null;_refreshLiveMetrics()" class="btn btn-outline btn-sm" style="font-size:0.8em;">&#x1f504; Refresh</button>'
         + '</div>'
         + '<div id="live-metrics-warnings" style="display:none;"></div>'
         + '<div id="live-metrics-chart" style="width:100%;height:300px;"></div>'
@@ -3685,15 +3685,32 @@ async function _refreshLiveMetrics() {
     if (emptyEl) emptyEl.style.display = 'none';
 
     var data = await _fetchLiveMetrics(_selectedCostDim);
+
+    // Always show warnings/traces first (even if no metrics found)
+    if (data && data.warnings && data.warnings.length > 0) {
+        _showLiveMetricsWarnings(data.warnings);
+    }
+
     if (!data || !data.availableMetrics || data.availableMetrics.length === 0) {
         if (chartEl) chartEl.style.display = 'none';
-        if (emptyEl) emptyEl.style.display = 'block';
+        if (emptyEl) {
+            emptyEl.style.display = 'block';
+            // Show more helpful message with trace info
+            var traceHtml = '';
+            if (data && data.warnings && data.warnings.length > 0) {
+                traceHtml = '<div style="margin-top:12px;text-align:left;font-size:0.82em;color:#92400e;background:#fef3c7;border-radius:6px;padding:10px 12px;">';
+                traceHtml += '<div style="font-weight:600;margin-bottom:4px;">Discovery Trace:</div>';
+                data.warnings.forEach(function(w) { traceHtml += '<div>' + esc(w) + '</div>'; });
+                traceHtml += '</div>';
+            }
+            emptyEl.innerHTML = '<div style="font-size:2em;margin-bottom:8px;">&#x1f4ca;</div>'
+                + '<div>No business metrics discovered.</div>'
+                + '<div style="font-size:0.85em;color:#6b7280;margin-top:4px;">Looking for: Cognito users, CloudFront requests, ELB requests, Route53 queries</div>'
+                + traceHtml;
+        }
         return;
     }
     if (chartEl) chartEl.style.display = 'block';
-
-    // Show warnings
-    _showLiveMetricsWarnings(data.warnings || []);
 
     // Populate selectors
     _buildMetricSelector(data.availableMetrics);
