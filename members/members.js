@@ -2666,6 +2666,7 @@ if (visualizeSaveBtn) visualizeSaveBtn.onclick = saveVisualizedAnswer;
 // ============================================================
 var dashDataCache = null;
 var dashDataCacheTime = 0;
+var dashDataCacheKey = '';
 var DASH_CACHE_TTL = 300000; // 5 minutes
 
 function populateDashAccounts() {
@@ -2737,8 +2738,12 @@ async function loadDashboardData() {
     var grid = $('dash-grid');
     if (!kpiBar || !grid) { console.error('Dashboard containers not found'); return; }
 
+    var selectedIds = getDashSelectedAccountIds();
+    var cacheKey = selectedIds.sort().join(',');
     var now = Date.now();
-    if (dashDataCache && (now - dashDataCacheTime) < DASH_CACHE_TTL) {
+
+    // Use cache only if same accounts and within TTL
+    if (dashDataCache && dashDataCacheKey === cacheKey && (now - dashDataCacheTime) < DASH_CACHE_TTL) {
         renderDashboardWidgets(dashDataCache);
         return;
     }
@@ -2747,12 +2752,12 @@ async function loadDashboardData() {
     grid.innerHTML = '';
 
     try {
-        var selectedIds = getDashSelectedAccountIds();
         var url = '/members/dashboard-data';
         if (selectedIds.length > 0) url += '?accountIds=' + selectedIds.join(',');
         var data = await api('GET', url);
         dashDataCache = data;
         dashDataCacheTime = Date.now();
+        dashDataCacheKey = cacheKey;
         renderDashboardWidgets(data);
     } catch (e) {
         console.error('Dashboard load error:', e);
@@ -3626,17 +3631,31 @@ function _renderUnitEconomicsLegacy(ue) {
 // ============================================================
 var _liveMetricsData = null;
 var _liveMetricsChart = null;
+var _liveMetricsCacheTime = 0;
+var _liveMetricsCacheKey = '';
+var _LIVE_METRICS_CACHE_TTL = 1800000; // 30 minutes
 var _selectedMetric = '';
 var _selectedCostDim = 'total';
 
 async function _fetchLiveMetrics(costDimension) {
+    // Cache key includes selected accounts + cost dimension
+    var accountIds = getDashSelectedAccountIds ? getDashSelectedAccountIds() : [];
+    var cacheKey = accountIds.sort().join(',') + '|' + (costDimension || 'total');
+    var now = Date.now();
+
+    // Use cache only if same accounts + dimension + within TTL
+    if (_liveMetricsData && _liveMetricsCacheKey === cacheKey && (now - _liveMetricsCacheTime) < _LIVE_METRICS_CACHE_TTL) {
+        return _liveMetricsData;
+    }
     try {
         var data = await api('GET', '/members/live-metrics?costDimension=' + encodeURIComponent(costDimension || 'total'));
         _liveMetricsData = data;
+        _liveMetricsCacheTime = Date.now();
+        _liveMetricsCacheKey = cacheKey;
         return data;
     } catch (e) {
         console.error('Failed to fetch live metrics:', e);
-        return null;
+        return _liveMetricsData || null;
     }
 }
 
@@ -3647,7 +3666,7 @@ function _renderLiveMetrics(container) {
         + '<select id="live-metric-select" style="padding:4px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:0.85em;max-width:250px;" onchange="_onMetricChange()"></select>'
         + '<select id="live-cost-dim-select" style="padding:4px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:0.85em;max-width:200px;" onchange="_onCostDimChange()"></select>'
         + '</div>'
-        + '<button onclick="_refreshLiveMetrics()" class="btn btn-outline btn-sm" style="font-size:0.8em;">&#x1f504; Refresh</button>'
+        + '<button onclick="_liveMetricsCacheTime=0;_refreshLiveMetrics()" class="btn btn-outline btn-sm" style="font-size:0.8em;">&#x1f504; Refresh</button>'
         + '</div>'
         + '<div id="live-metrics-warnings" style="display:none;"></div>'
         + '<div id="live-metrics-chart" style="width:100%;height:300px;"></div>'
