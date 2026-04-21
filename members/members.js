@@ -2842,6 +2842,9 @@ function _goToTab(tabId, section) {
 
 // Budget KPI — async load budget data and show in KPI bar
 function _loadBudgetKPI(kpiBar) {
+    // Remove existing budget KPI cards to prevent duplicates
+    var existing = kpiBar.querySelectorAll('[data-kpi-type="budget"]');
+    existing.forEach(function(el) { el.remove(); });
     // Try to load budgets in background
     api('POST', '/members/budgets/list', {}).then(function(data) {
         var budgets = data.budgets || [];
@@ -2850,6 +2853,7 @@ function _loadBudgetKPI(kpiBar) {
             var card = document.createElement('div');
             card.style.cssText = 'background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;padding:12px 16px;flex:1;min-width:130px;cursor:pointer;';
             card.title = 'Click to create a budget in the Plan tab';
+            card.setAttribute('data-kpi-type', 'budget');
             card.onclick = function() { _goToTab('plan-tab', 'plan-budget'); };
             card.innerHTML = '<div style="color:#92400e;font-size:0.75em;">Budget</div><div style="color:#92400e;font-size:1.1em;font-weight:700;">Not Set \u25b6</div>';
             kpiBar.appendChild(card);
@@ -2862,6 +2866,7 @@ function _loadBudgetKPI(kpiBar) {
         var card = document.createElement('div');
         card.style.cssText = 'background:#f0f4f8;border:1px solid #d0d7de;border-radius:8px;padding:12px 16px;flex:1;min-width:130px;cursor:pointer;';
         card.title = 'Budget: ' + b.name + ' — Click to manage budgets';
+        card.setAttribute('data-kpi-type', 'budget');
         card.onclick = function() { _goToTab('plan-tab', 'plan-budget'); };
         card.innerHTML = '<div style="color:#6b7280;font-size:0.75em;">Budget (' + b.name.substring(0, 15) + ') \u25b6</div>'
             + '<div style="color:' + budgetColor + ';font-size:1.3em;font-weight:700;">$' + Math.round(b.actualSpend) + ' / $' + Math.round(b.limit) + '</div>'
@@ -3691,10 +3696,10 @@ async function _refreshLiveMetrics() {
 
     var data = await _fetchLiveMetrics(_selectedCostDim);
 
-    // Always show warnings/traces first (even if no metrics found)
-    if (data && data.warnings && data.warnings.length > 0) {
-        _showLiveMetricsWarnings(data.warnings);
-    }
+    // Only show warnings when no metrics found (trace is for debugging)
+    // When metrics exist, hide the warnings panel
+    var warningsEl = document.getElementById('live-metrics-warnings');
+    if (warningsEl) warningsEl.style.display = 'none';
 
     if (!data || !data.availableMetrics || data.availableMetrics.length === 0) {
         if (chartEl) chartEl.style.display = 'none';
