@@ -7524,7 +7524,27 @@ def _discover_cognito_metrics(session, account_id):
     current_month = now.strftime('%Y-%m')
 
     if not pools:
-        raise Exception(f"No Cognito User Pools found in account {account_id}")
+        # No pools in customer account — try to get SlashMyBill's own Cognito pool user count
+        # (the platform Cognito pool is in account 991105135552)
+        try:
+            platform_cognito = boto3.client('cognito-idp', region_name='us-east-1')
+            platform_pool_id = os.environ.get('COGNITO_USER_POOL_ID', '')
+            if platform_pool_id:
+                desc = platform_cognito.describe_user_pool(UserPoolId=platform_pool_id)
+                user_count = desc['UserPool'].get('EstimatedNumberOfUsers', 0)
+                if user_count and user_count > 0:
+                    now = datetime.now(timezone.utc)
+                    return [{
+                        'metricName': 'Cognito:SlashMyBill users',
+                        'volume': int(user_count),
+                        'source': 'aws-cognito',
+                        'month': now.strftime('%Y-%m'),
+                        'description': 'Total registered SlashMyBill users',
+                        'accountId': 'platform',
+                    }]
+        except Exception as e2:
+            logger.warning(f"Platform Cognito fallback failed: {e2}")
+        return []  # No pools anywhere
 
     for pool in pools:
         pool_id = pool['Id']
@@ -7849,14 +7869,28 @@ def _discover_cloudfront_metrics(session, account_id):
     # CloudFront CloudWatch metrics must be queried from us-east-1
     cw_client = session.client('cloudwatch', region_name='us-east-1')
 
+    if not distributions:
+        return []
+
+    # Always return distribution count as a metric
+    now = datetime.now(timezone.utc)
+    current_month = now.strftime('%Y-%m')
+    metrics.append({
+        'metricName': f'CloudFront:{len(distributions)} distribution(s)',
+        'volume': len(distributions),
+        'source': 'aws-cloudfront',
+        'month': current_month,
+        'description': f'{len(distributions)} CloudFront distribution(s) in account',
+        'accountId': account_id,
+    })
+
     for dist in distributions[:5]:
         dist_id = dist.get('Id', '')
         domain = dist.get('DomainName', dist_id)
         aliases = dist.get('Aliases', {}).get('Items', [])
         label = aliases[0] if aliases else domain
 
-        for start_dt, end_dt in periods:
-            month_label = start_dt.strftime('%Y-%m')
+        for start_dt, end_dt, month_label in periods:
             try:
                 cw_resp = cw_client.get_metric_statistics(
                     Namespace='AWS/CloudFront',
@@ -7901,6 +7935,21 @@ def _discover_elb_metrics(session, account_id):
         logger.warning(f"ELB DescribeLoadBalancers failed for {account_id}: {e}")
         return []
 
+    if not lbs:
+        return []
+
+    # Always return LB count as a metric
+    now = datetime.now(timezone.utc)
+    current_month = now.strftime('%Y-%m')
+    metrics.append({
+        'metricName': f'ELB:{len(lbs)} load balancer(s)',
+        'volume': len(lbs),
+        'source': 'aws-elb',
+        'month': current_month,
+        'description': f'{len(lbs)} load balancer(s) in account',
+        'accountId': account_id,
+    })
+
     for lb in lbs[:5]:
         lb_name = lb.get('LoadBalancerName', '')
         lb_arn = lb.get('LoadBalancerArn', '')
@@ -7910,8 +7959,7 @@ def _discover_elb_metrics(session, account_id):
         if not arn_suffix:
             continue
 
-        for start_dt, end_dt in periods:
-            month_label = start_dt.strftime('%Y-%m')
+        for start_dt, end_dt, month_label in periods:
             try:
                 cw_resp = cw_client.get_metric_statistics(
                     Namespace='AWS/ApplicationELB',
