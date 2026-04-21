@@ -3708,10 +3708,14 @@ function _showLiveMetricsWarnings(warnings) {
     if (!el) return;
     if (!warnings || warnings.length === 0) { el.style.display = 'none'; return; }
     el.style.display = 'block';
-    el.innerHTML = '<div style="background:#fef3c7;border:1px solid #f59e0b;border-radius:8px;padding:8px 12px;margin-bottom:8px;font-size:0.85em;color:#92400e;">'
-        + '\u26a0\ufe0f ' + warnings.join(' | ')
-        + ' <button onclick="this.parentElement.parentElement.style.display=\'none\'" style="float:right;background:none;border:none;cursor:pointer;color:#92400e;">\u2715</button>'
-        + '</div>';
+    var html = '<div style="background:#fef3c7;border:1px solid #f59e0b;border-radius:8px;padding:10px 14px;margin-bottom:10px;font-size:0.82em;color:#92400e;">';
+    html += '<div style="font-weight:600;margin-bottom:4px;">\u26a0\ufe0f Metric Discovery Trace (' + warnings.length + ' source(s)):</div>';
+    warnings.forEach(function(w) {
+        var isError = w.indexOf('ERROR') !== -1;
+        html += '<div style="padding:2px 0;color:' + (isError ? '#dc2626' : '#92400e') + ';">' + (isError ? '\u274c ' : '\u2139\ufe0f ') + esc(w) + '</div>';
+    });
+    html += '</div>';
+    el.innerHTML = html;
 }
 
 function _buildMetricSelector(availableMetrics) {

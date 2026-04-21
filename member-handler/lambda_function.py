@@ -7508,7 +7508,7 @@ def _get_monthly_periods(months=6):
 
 
 def _discover_cognito_metrics(session, account_id):
-    """Discover user counts from Cognito User Pools."""
+    """Discover user counts from Cognito User Pools via cognito-idp API."""
     cognito_client_x = session.client('cognito-idp')
     metrics = []
     pools = []
@@ -7517,11 +7517,14 @@ def _discover_cognito_metrics(session, account_id):
         for page in paginator.paginate(MaxResults=60):
             pools.extend(page.get('UserPools', []))
     except Exception as e:
-        logger.warning(f"Cognito ListUserPools failed for {account_id}: {e}")
-        return []  # Don't raise — return empty metrics so other sources still work
+        # Re-raise so the error shows in the warnings on screen
+        raise Exception(f"cognito-idp:ListUserPools failed: {str(e)}")
 
     now = datetime.now(timezone.utc)
     current_month = now.strftime('%Y-%m')
+
+    if not pools:
+        raise Exception(f"No Cognito User Pools found in account {account_id}")
 
     for pool in pools:
         pool_id = pool['Id']
@@ -7529,10 +7532,10 @@ def _discover_cognito_metrics(session, account_id):
         try:
             desc = cognito_client_x.describe_user_pool(UserPoolId=pool_id)
             user_count = desc['UserPool'].get('EstimatedNumberOfUsers', 0)
-            if user_count and user_count > 0:
+            if user_count is not None and user_count >= 0:
                 metrics.append({
                     'metricName': f'Cognito:{pool_name} users',
-                    'volume': user_count,
+                    'volume': int(user_count),
                     'source': 'aws-cognito',
                     'month': current_month,
                     'description': f'Total users in Cognito pool {pool_name}',
@@ -7830,17 +7833,21 @@ def _discover_s3_metrics(session, account_id):
 
 def _discover_cloudfront_metrics(session, account_id):
     """Discover CloudFront request counts per distribution for last 6 months."""
-    cf_client = session.client('cloudfront')
+    cf_client = session.client('cloudfront', region_name='us-east-1')
     cw_client = session.client('cloudwatch')
     metrics = []
     periods = _get_monthly_periods(6)
 
     try:
         resp = cf_client.list_distributions()
-        distributions = resp.get('DistributionList', {}).get('Items', [])
+        dist_list = resp.get('DistributionList', {})
+        distributions = dist_list.get('Items', []) if isinstance(dist_list, dict) else []
     except Exception as e:
         logger.warning(f"CloudFront ListDistributions failed for {account_id}: {e}")
         return []
+    
+    # CloudFront CloudWatch metrics must be queried from us-east-1
+    cw_client = session.client('cloudwatch', region_name='us-east-1')
 
     for dist in distributions[:5]:
         dist_id = dist.get('Id', '')
@@ -7933,29 +7940,29 @@ def _discover_elb_metrics(session, account_id):
 
 
 def discover_all_metrics(session, account_id):
-    """Discover operational metrics from all AWS sources in a customer account."""
+    """Discover operational metrics from key AWS sources.
+    Focus on: Cognito users, CloudFront traffic, ELB traffic, Route53 queries.
+    Excludes: DynamoDB items, S3 objects, Lambda invocations, API GW (noise)."""
     all_metrics = []
     warnings = []
 
+    # Only discover the metrics that matter for business KPIs
     sources = [
         ('aws-cognito', _discover_cognito_metrics),
-        ('aws-dynamodb', _discover_dynamodb_metrics),
-        ('aws-apigateway', _discover_apigateway_metrics),
-        ('aws-route53', _discover_route53_metrics),
         ('aws-cloudfront', _discover_cloudfront_metrics),
         ('aws-elb', _discover_elb_metrics),
-        ('aws-cloudwatch-custom', _discover_cloudwatch_custom_metrics),
-        ('aws-lambda', _discover_lambda_metrics),
-        ('aws-s3', _discover_s3_metrics),
+        ('aws-route53', _discover_route53_metrics),
     ]
 
     for source_name, discover_fn in sources:
         try:
             metrics = discover_fn(session, account_id)
             all_metrics.extend(metrics)
+            if not metrics:
+                warnings.append(f"{source_name}: no metrics found (0 results)")
         except Exception as e:
             logger.warning(f"Metric discovery failed for {source_name} in {account_id}: {e}")
-            warnings.append(f"{source_name} discovery failed for account {account_id}: {str(e)}")
+            warnings.append(f"{source_name}: ERROR - {str(e)}")
 
     return all_metrics, warnings
 
