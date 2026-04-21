@@ -982,6 +982,11 @@ function showWizard(accountId) {
     wizStackName2.textContent = stackName;
     wizRoleName2.textContent = roleName;
     wizAccountDisplay.textContent = accountId;
+    // Populate account verification warning
+    var verifyId1 = document.getElementById('wiz-verify-account-id');
+    var verifyId2 = document.getElementById('wiz-verify-account-id-2');
+    if (verifyId1) verifyId1.textContent = accountId;
+    if (verifyId2) verifyId2.textContent = accountId;
     wizTestResult.hidden = true;
     wizTestResult.className = 'wizard-test-result';
     wizLaunchCfBtn.href = '#';
@@ -2976,7 +2981,7 @@ function _moveWidget(widgetId, direction) {
 
 function _addWidget(grid, id, title, height, aiQuestion, idx, total) {
     var w = document.createElement('div');
-    w.style.cssText = 'background:#f0f4f8;border:1px solid #d0d7de;border-radius:8px;padding:14px;';
+    w.style.cssText = 'background:#f0f4f8;border:1px solid #d0d7de;border-radius:8px;padding:14px;overflow:hidden;';
     w.setAttribute('data-widget-id', id);
     var aiLink = aiQuestion ? ' <a href="#" style="font-size:0.7em;color:#6366f1;text-decoration:none;" onclick="event.preventDefault();_askAIFromDashboard(\'' + aiQuestion.replace(/'/g, "\\'") + '\');">Chat &#9654;</a>' : '';
     var controls = '<span style="float:right;display:flex;gap:4px;align-items:center;">';
@@ -3706,7 +3711,7 @@ async function _refreshLiveMetrics() {
             emptyEl.innerHTML = '<div style="font-size:2em;margin-bottom:8px;">&#x1f4ca;</div>'
                 + '<div>No business metrics discovered.</div>'
                 + '<div style="font-size:0.85em;color:#6b7280;margin-top:4px;">Looking for: Cognito users, CloudFront requests, ELB requests, Route53 queries</div>'
-                + traceHtml;
+                + (traceHtml ? '<details style="margin-top:8px;"><summary style="cursor:pointer;color:#6366f1;font-size:0.82em;">Show discovery trace</summary>' + traceHtml + '</details>' : '');
         }
         return;
     }
