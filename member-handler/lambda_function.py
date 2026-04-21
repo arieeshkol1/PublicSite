@@ -3031,6 +3031,200 @@ def _check_graviton_candidates(tip, data, account_id, acct_label, creds):
 
 
 # ── Registry: tip.id → check function ────────────────────────────────────────
+
+
+def _check_ebs_gp2(tip, data, account_id, acct_label, creds):
+    """Check for gp2 EBS volumes that should be migrated to gp3 (20% savings)."""
+    gp2_vols = [v for v in data.get('all_volumes', []) if v.get('VolumeType') == 'gp2']
+    if not gp2_vols:
+        return None
+    total_gb = sum(v.get('Size', 0) for v in gp2_vols)
+    savings = round(total_gb * 0.02, 2)  # gp3 is ~$0.02/GB cheaper than gp2
+    resources = []
+    for v in gp2_vols[:10]:
+        vid = v.get('VolumeId', '')
+        size = v.get('Size', 0)
+        resources.append({
+            'resourceId': vid, 'resourceType': 'EBS Volume',
+            'account': acct_label, 'detail': f'{size} GB gp2',
+            'monthlySavings': round(size * 0.02, 2),
+        })
+    return {
+        'tipId': tip.get('tipId', 'ebs-001'), 'tipTitle': tip.get('title', ''),
+        'service': 'EBS', 'status': 'found',
+        'savingsUsd': savings,
+        'message': f'{len(gp2_vols)} gp2 volume(s) ({total_gb} GB) can be migrated to gp3 for ~${savings}/mo savings',
+        'resources': resources,
+    }
+
+
+def _check_ec2_scheduling(tip, data, account_id, acct_label, creds):
+    """Check for non-production EC2 instances that should be scheduled."""
+    instances = data.get('ec2_instances', [])
+    non_prod = []
+    for inst in instances:
+        if inst.get('State', {}).get('Name') != 'running':
+            continue
+        tags = {t['Key']: t['Value'] for t in inst.get('Tags', [])}
+        env = tags.get('Environment', tags.get('environment', tags.get('env', ''))).lower()
+        if env in ('dev', 'development', 'test', 'testing', 'staging', 'qa', 'sandbox', 'demo'):
+            non_prod.append(inst)
+    if not non_prod:
+        return None
+    # Estimate savings: ~65% if stopped nights/weekends (14h/day * 5d = 70h vs 168h)
+    savings = 0
+    resources = []
+    for inst in non_prod[:10]:
+        iid = inst.get('InstanceId', '')
+        itype = inst.get('InstanceType', '')
+        name = ''
+        for t in inst.get('Tags', []):
+            if t['Key'] == 'Name':
+                name = t['Value']
+        # Rough estimate: $0.05/hr average * 98 saved hours/week * 4.3 weeks
+        est = round(0.05 * 98 * 4.3, 2)
+        savings += est
+        resources.append({
+            'resourceId': iid, 'resourceType': 'EC2 Instance',
+            'account': acct_label, 'detail': f'{name or iid} ({itype}) - {inst.get("Tags", [{}])[0].get("Value", "non-prod")}',
+            'monthlySavings': est,
+        })
+    return {
+        'tipId': tip.get('tipId', 'ec2-004'), 'tipTitle': tip.get('title', ''),
+        'service': 'EC2', 'status': 'found',
+        'savingsUsd': round(savings, 2),
+        'message': f'{len(non_prod)} non-production instance(s) running 24/7. Use Act \u2192 Scheduler to save ~${round(savings, 2)}/mo',
+        'resources': resources,
+    }
+
+
+def _check_s3_intelligent_tiering(tip, data, account_id, acct_label, creds):
+    """Check for S3 buckets without Intelligent-Tiering configuration."""
+    buckets = data.get('s3_buckets', [])
+    missing = [b for b in buckets if not b.get('hasIntelligentTiering', False) and not b.get('hasLifecyclePolicy', False)]
+    if not missing:
+        return None
+    resources = []
+    for b in missing[:10]:
+        resources.append({
+            'resourceId': b.get('Name', ''), 'resourceType': 'S3 Bucket',
+            'account': acct_label, 'detail': 'No lifecycle or Intelligent-Tiering',
+        })
+    return {
+        'tipId': tip.get('tipId', 's3-001'), 'tipTitle': tip.get('title', ''),
+        'service': 'S3', 'status': 'found',
+        'savingsUsd': 0,  # Savings depend on data access patterns
+        'message': f'{len(missing)} bucket(s) without Intelligent-Tiering or lifecycle policy',
+        'resources': resources,
+    }
+
+
+def _check_s3_versioning(tip, data, account_id, acct_label, creds):
+    """Check for S3 buckets with versioning but no noncurrent version expiration."""
+    buckets = data.get('s3_buckets', [])
+    flagged = [b for b in buckets if b.get('versioningEnabled', False) and not b.get('hasNoncurrentExpiration', False)]
+    if not flagged:
+        return None
+    resources = []
+    for b in flagged[:10]:
+        resources.append({
+            'resourceId': b.get('Name', ''), 'resourceType': 'S3 Bucket',
+            'account': acct_label, 'detail': 'Versioning ON but no noncurrent version expiration',
+        })
+    return {
+        'tipId': tip.get('tipId', 's3-004'), 'tipTitle': tip.get('title', ''),
+        'service': 'S3', 'status': 'found',
+        'savingsUsd': 0,
+        'message': f'{len(flagged)} bucket(s) with versioning but no noncurrent version cleanup',
+        'resources': resources,
+    }
+
+
+def _check_lambda_memory(tip, data, account_id, acct_label, creds):
+    """Check for Lambda functions with potentially oversized memory."""
+    functions = data.get('lambda_functions', [])
+    oversized = []
+    for fn in functions:
+        mem = fn.get('MemorySize', 128)
+        invocations = fn.get('invocations_30d', 0)
+        avg_duration = fn.get('avg_duration_ms', 0)
+        # Flag: high memory (>512MB) with low duration (<100ms) = likely oversized
+        if mem >= 512 and avg_duration > 0 and avg_duration < 100 and invocations > 100:
+            oversized.append(fn)
+    if not oversized:
+        return None
+    resources = []
+    for fn in oversized[:10]:
+        resources.append({
+            'resourceId': fn.get('FunctionName', ''), 'resourceType': 'Lambda Function',
+            'account': acct_label,
+            'detail': f'{fn.get("MemorySize", 0)}MB, avg {fn.get("avg_duration_ms", 0):.0f}ms',
+        })
+    return {
+        'tipId': tip.get('tipId', 'lambda-001'), 'tipTitle': tip.get('title', ''),
+        'service': 'Lambda', 'status': 'found',
+        'savingsUsd': 0,
+        'message': f'{len(oversized)} Lambda function(s) may be over-provisioned (high memory, low duration)',
+        'resources': resources,
+    }
+
+
+def _check_ec2_asg_zero(tip, data, account_id, acct_label, creds):
+    """Check for non-prod ASGs that could scale to zero after hours."""
+    asgs = data.get('auto_scaling_groups', [])
+    candidates = []
+    for asg in asgs:
+        tags = {t['Key']: t['Value'] for t in asg.get('Tags', [])}
+        env = tags.get('Environment', tags.get('environment', '')).lower()
+        if env in ('dev', 'development', 'test', 'staging', 'qa', 'sandbox') and asg.get('MinSize', 0) > 0:
+            candidates.append(asg)
+    if not candidates:
+        return None
+    resources = []
+    for asg in candidates[:10]:
+        resources.append({
+            'resourceId': asg.get('AutoScalingGroupName', ''), 'resourceType': 'Auto Scaling Group',
+            'account': acct_label,
+            'detail': f'Min={asg.get("MinSize", 0)}, Desired={asg.get("DesiredCapacity", 0)}',
+        })
+    return {
+        'tipId': tip.get('tipId', 'ec2-013'), 'tipTitle': tip.get('title', ''),
+        'service': 'EC2', 'status': 'found',
+        'savingsUsd': 0,
+        'message': f'{len(candidates)} non-prod ASG(s) could scale to zero after hours via Act \u2192 Scheduler',
+        'resources': resources,
+    }
+
+
+def _check_rds_scheduling(tip, data, account_id, acct_label, creds):
+    """Check for non-production RDS instances that should be scheduled."""
+    instances = data.get('rds_instances', [])
+    non_prod = []
+    for db in instances:
+        if db.get('DBInstanceStatus') != 'available':
+            continue
+        tags = {t['Key']: t['Value'] for t in db.get('TagList', [])}
+        env = tags.get('Environment', tags.get('environment', '')).lower()
+        if env in ('dev', 'development', 'test', 'staging', 'qa', 'sandbox'):
+            non_prod.append(db)
+    if not non_prod:
+        return None
+    resources = []
+    for db in non_prod[:10]:
+        resources.append({
+            'resourceId': db.get('DBInstanceIdentifier', ''), 'resourceType': 'RDS Instance',
+            'account': acct_label,
+            'detail': f'{db.get("DBInstanceClass", "")} ({db.get("Engine", "")})',
+        })
+    return {
+        'tipId': tip.get('tipId', 'rds-007'), 'tipTitle': tip.get('title', ''),
+        'service': 'RDS', 'status': 'found',
+        'savingsUsd': 0,
+        'message': f'{len(non_prod)} non-prod RDS instance(s) running 24/7. Use Act \u2192 Scheduler to stop after hours',
+        'resources': resources,
+    }
+
+
 _SCAN_REGISTRY = {
     # Level 1 — Resource Hygiene
     'ebs-004':     _check_ebs_unattached,
@@ -3052,6 +3246,15 @@ _SCAN_REGISTRY = {
     'rds-006':     _check_rds_commercial_engine,
     # Level 3 — Architecture / Commitment
     'general-014': _check_ri_marketplace,
+    # New checks — gp2 migration, scheduling, S3 optimization, Lambda memory
+    'ebs-001':     _check_ebs_gp2,
+    'ec2-004':     _check_ec2_scheduling,
+    'ec2-011':     _check_ec2_scheduling,     # Instance Scheduler = same check
+    'ec2-013':     _check_ec2_asg_zero,
+    's3-001':      _check_s3_intelligent_tiering,
+    's3-004':      _check_s3_versioning,
+    'lambda-001':  _check_lambda_memory,
+    'rds-007':     _check_rds_scheduling,
 }
 
 
