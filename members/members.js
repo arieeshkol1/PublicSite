@@ -5613,7 +5613,15 @@ function _renderFindingsWidget(scan) {
 
     widget.style.display = 'block';
 
-    var findings = (scan.findings || []).filter(function(f) { return f.status === 'found'; }).slice(0, 5);
+    var findings = (scan.findings || []).filter(function(f) { return f.status === 'found'; });
+    // Deduplicate by tipId (same tip can appear for multiple accounts)
+    var seen = {};
+    findings = findings.filter(function(f) {
+        var key = f.tipId || f.tipTitle || '';
+        if (seen[key]) return false;
+        seen[key] = true;
+        return true;
+    }).slice(0, 5);
     var totalSavings = parseFloat(scan.totalSavings || 0);
 
     if (title) title.textContent = 'Top Findings  ·  $' + totalSavings.toFixed(2) + '/mo potential savings';
@@ -5904,7 +5912,7 @@ function _renderTagList() {
         return;
     }
     var html = '<table style="width:100%;border-collapse:collapse;font-size:0.9em;">';
-    html += '<thead><tr style="border-bottom:2px solid #e5e7eb;"><th style="padding:8px 10px;text-align:left;color:#374151;font-weight:600;width:30px;position:sticky;top:0;background:#fff;z-index:1;"></th><th style="padding:8px 10px;text-align:left;color:#374151;font-weight:600;position:sticky;top:0;background:#fff;z-index:1;">Resource</th><th style="padding:8px 10px;text-align:left;color:#374151;font-weight:600;position:sticky;top:0;background:#fff;z-index:1;">Type</th><th style="padding:8px 10px;text-align:left;color:#374151;font-weight:600;position:sticky;top:0;background:#fff;z-index:1;">Account</th><th style="padding:8px 10px;text-align:left;color:#374151;font-weight:600;position:sticky;top:0;background:#fff;z-index:1;">Missing Tags</th></tr></thead><tbody>';
+    html += '<thead><tr style="border-bottom:2px solid #e5e7eb;"><th style="padding:8px 10px;text-align:left;color:#374151;font-weight:600;width:30px;position:sticky;top:0;background:#fff;z-index:1;"></th><th style="padding:8px 10px;text-align:left;color:#374151;font-weight:600;position:sticky;top:0;background:#fff;z-index:1;">Resource</th><th style="padding:8px 10px;text-align:left;color:#374151;font-weight:600;position:sticky;top:0;background:#fff;z-index:1;">Type</th><th style="padding:8px 10px;text-align:left;color:#374151;font-weight:600;position:sticky;top:0;background:#fff;z-index:1;">Region</th><th style="padding:8px 10px;text-align:left;color:#374151;font-weight:600;position:sticky;top:0;background:#fff;z-index:1;">Account</th><th style="padding:8px 10px;text-align:left;color:#374151;font-weight:600;position:sticky;top:0;background:#fff;z-index:1;">Missing Tags</th></tr></thead><tbody>';
     visible.forEach(function(r) {
         var checked = _tagSelectedArns.has(r.arn) ? ' checked' : '';
         var missingHtml = (r.missingTags || []).map(function(t) {
@@ -5912,11 +5920,15 @@ function _renderTagList() {
         }).join('');
         var rowBg = (r.missingTags && r.missingTags.length > 0) ? '' : 'background:#f0fdf4;';
         var statusBadge = (r.missingTags && r.missingTags.length > 0) ? '' : '<span style="color:#10b981;font-weight:600;font-size:0.85em;">✓ Tagged</span>';
+        var displayName = r.name || r.resourceId || '';
+        var subtitle = (r.name && r.name !== r.resourceId) ? '<div style="color:#9ca3af;font-size:0.78em;margin-top:1px;">' + esc(r.resourceId || '') + '</div>' : '';
+        var region = r.region || 'global';
         html += '<tr style="border-bottom:1px solid #e5e7eb;' + rowBg + '">'
             + '<td style="padding:8px 10px;"><input type="checkbox" class="tag-chk" data-arn="' + r.arn + '"' + checked + '></td>'
-            + '<td style="padding:8px 10px;color:#1f2937;font-weight:500;" title="' + r.arn + '">' + (r.name || r.resourceId) + '</td>'
-            + '<td style="padding:8px 10px;color:#6b7280;">' + (r.resourceType || '') + '</td>'
-            + '<td style="padding:8px 10px;color:#6b7280;">' + (r.account || '').slice(-4) + '</td>'
+            + '<td style="padding:8px 10px;color:#1f2937;font-weight:500;" title="' + ea(r.arn || '') + '"><div>' + esc(displayName) + '</div>' + subtitle + '</td>'
+            + '<td style="padding:8px 10px;color:#6b7280;font-size:0.85em;">' + esc(r.resourceType || '') + '</td>'
+            + '<td style="padding:8px 10px;color:#6b7280;font-size:0.85em;">' + esc(region) + '</td>'
+            + '<td style="padding:8px 10px;color:#6b7280;font-size:0.85em;">' + (r.account || '').slice(-4) + '</td>'
             + '<td style="padding:8px 10px;">' + (missingHtml || statusBadge) + '</td></tr>';
     });
     html += '</tbody></table>';
