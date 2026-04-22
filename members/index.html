@@ -322,6 +322,9 @@
                         <button class="act-nav-btn active" data-section="waste" onclick="_switchActSection('waste')">
                             <span style="font-size:1.2em;">🗑️</span> Waste Cleanup
                         </button>
+                        <button class="act-nav-btn" data-section="optimization" onclick="_switchActSection('optimization')">
+                            <span style="font-size:1.2em;">⚡</span> Optimize
+                        </button>
                         <button class="act-nav-btn" data-section="scheduler" onclick="_switchActSection('scheduler')">
                             <span style="font-size:1.2em;">⏰</span> Scheduler
                         </button>
@@ -346,6 +349,22 @@
                                 <div style="font-size:2.5em;margin-bottom:12px;">🧹</div>
                                 <div style="font-size:1em;margin-bottom:6px;color:#1f2937;">Click "Scan for Waste" to identify idle resources</div>
                                 <div style="font-size:0.9em;color:#6b7280;">Scans for unassociated Elastic IPs, unattached EBS volumes,<br>idle Load Balancers, and S3 buckets without lifecycle rules.</div>
+                            </div>
+                        </div>
+
+                        <!-- Service Optimization Section -->
+                        <div id="act-section-optimization" style="display:none;">
+                            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+                                <h2 style="margin:0;color:#1f2937;">Service Optimization</h2>
+                                <button id="act-optimize-scan-btn" class="btn btn-primary btn-sm">⚡ Scan for Savings</button>
+                            </div>
+                            <p style="color:#6b7280;font-size:0.9em;margin-bottom:16px;">Active services you need but can pay less for — rightsizing, Spot migration, storage optimization.</p>
+                            <div id="act-optimize-status" style="padding:0 0 12px;color:#6b7280;font-size:0.9em;min-height:20px;"></div>
+                            <div id="act-optimize-cards" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:16px;padding-bottom:32px;"></div>
+                            <div id="act-optimize-empty" style="text-align:center;padding:60px 20px;color:#6b7280;">
+                                <div style="font-size:2.5em;margin-bottom:12px;">⚡</div>
+                                <div style="font-size:1em;margin-bottom:6px;color:#1f2937;">Click "Scan for Savings" to find optimization opportunities</div>
+                                <div style="font-size:0.9em;color:#6b7280;">Checks for: EC2 rightsizing, Spot candidates, Graviton migration,<br>gp2→gp3 volumes, non-prod scheduling, Lambda memory optimization.</div>
                             </div>
                         </div>
 
@@ -925,7 +944,7 @@
         <span id="notification-message"></span>
     </div>
 
-    <script src="members.js?v=68"></script>
+    <script src="members.js?v=69"></script>
     <script src="help.js?v=3"></script>
 </body>
 </html>

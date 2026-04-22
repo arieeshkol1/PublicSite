@@ -1722,12 +1722,16 @@ function _addNavLinks(html) {
     var navMap = [
         { pattern: /Go to Act \u2192 Waste Cleanup[\s\u25b6\u25b8]*/gi, label: 'Go to Act \u2192 Waste Cleanup', onclick: "_goToTab('act-tab','waste')" },
         { pattern: /Go to Act \u2192 Scheduler[\s\u25b6\u25b8]*/gi, label: 'Go to Act \u2192 Scheduler', onclick: "_goToTab('act-tab','scheduler')" },
+        { pattern: /Go to Act \u2192 Optimize[\s\u25b6\u25b8]*/gi, label: 'Go to Act \u2192 Optimize', onclick: "_goToTab('act-tab','optimization')" },
+        { pattern: /Go to Act \u2192 Service Optimization[\s\u25b6\u25b8]*/gi, label: 'Go to Act \u2192 Service Optimization', onclick: "_goToTab('act-tab','optimization')" },
         { pattern: /Go to Plan \u2192 Budget[\s\u25b6\u25b8]*/gi, label: 'Go to Plan \u2192 Budget', onclick: "_goToTab('plan-tab','plan-budget')" },
         { pattern: /Go to Plan \u2192 Tag Resources[\s\u25b6\u25b8]*/gi, label: 'Go to Plan \u2192 Tag Resources', onclick: "_goToTab('plan-tab','plan-tagging')" },
         { pattern: /Go to Configure \u2192 FinOps Settings[\s\u25b6\u25b8]*/gi, label: 'Go to Configure \u2192 FinOps Settings', onclick: "switchToFinOpsSettings()" },
         { pattern: /Go to Observe \u2192 Dashboard[\s\u25b6\u25b8]*/gi, label: 'Go to Observe \u2192 Dashboard', onclick: "activateMemberTab('dash-tab')" },
         { pattern: /Act \u2192 Waste Cleanup[\s\u25b6\u25b8]*/gi, label: 'Act \u2192 Waste Cleanup', onclick: "_goToTab('act-tab','waste')" },
         { pattern: /Act \u2192 Scheduler[\s\u25b6\u25b8]*/gi, label: 'Act \u2192 Scheduler', onclick: "_goToTab('act-tab','scheduler')" },
+        { pattern: /Act \u2192 Optimize[\s\u25b6\u25b8]*/gi, label: 'Act \u2192 Optimize', onclick: "_goToTab('act-tab','optimization')" },
+        { pattern: /Act \u2192 Service Optimization[\s\u25b6\u25b8]*/gi, label: 'Act \u2192 Service Optimization', onclick: "_goToTab('act-tab','optimization')" },
         { pattern: /Plan \u2192 Budget[\s\u25b6\u25b8]*/gi, label: 'Plan \u2192 Budget', onclick: "_goToTab('plan-tab','plan-budget')" },
         { pattern: /Plan \u2192 Tag Resources[\s\u25b6\u25b8]*/gi, label: 'Plan \u2192 Tag Resources', onclick: "_goToTab('plan-tab','plan-tagging')" },
         { pattern: /Configure \u2192 FinOps Settings[\s\u25b6\u25b8]*/gi, label: 'Configure \u2192 FinOps Settings', onclick: "switchToFinOpsSettings()" },
@@ -4445,10 +4449,12 @@ function _switchActSection(section) {
     var tagging = document.getElementById('act-section-tagging');
     var scheduler = document.getElementById('act-section-scheduler');
     var budget = document.getElementById('act-section-budget');
+    var optimization = document.getElementById('act-section-optimization');
     if (waste) waste.style.display = section === 'waste' ? 'block' : 'none';
     if (tagging) tagging.style.display = section === 'tagging' ? 'block' : 'none';
     if (scheduler) scheduler.style.display = section === 'scheduler' ? 'block' : 'none';
     if (budget) budget.style.display = section === 'budget' ? 'block' : 'none';
+    if (optimization) optimization.style.display = section === 'optimization' ? 'block' : 'none';
     // Auto-load scheduler data when switching to scheduler section
     if (section === 'scheduler') _loadSchedulerData();
 }
