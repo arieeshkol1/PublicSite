@@ -7244,3 +7244,162 @@ async function _runOptimizeScan() {
     var btn = document.getElementById('act-optimize-scan-btn');
     if (btn) btn.onclick = _runOptimizeScan;
 })();
+
+
+// ============================================================
+// Spot Migration Panel -- Act > Optimize
+// ============================================================
+
+function _populateSpotMigrateAccounts() {
+    var select = document.getElementById('spot-migrate-account');
+    if (!select) return;
+    var current = select.value;
+    select.innerHTML = '<option value="">Select account...</option>';
+    var connected = (typeof allAccounts !== 'undefined' ? allAccounts : []).filter(function(a) { return a.connectionStatus === 'connected'; });
+    connected.forEach(function(a) {
+        var opt = document.createElement('option');
+        opt.value = a.accountId;
+        opt.textContent = (a.accountName || 'Account') + ' (' + a.accountId + ')';
+        select.appendChild(opt);
+    });
+    if (current) select.value = current;
+}
+
+// Auto-populate when switching to optimization section
+var _origSwitchActSection = _switchActSection;
+_switchActSection = function(section) {
+    _origSwitchActSection(section);
+    if (section === 'optimization') _populateSpotMigrateAccounts();
+};
+
+async function _loadSpotASGs() {
+    var acctSelect = document.getElementById('spot-migrate-account');
+    var asgSelect = document.getElementById('spot-migrate-asg');
+    if (!acctSelect || !asgSelect || !acctSelect.value) {
+        if (asgSelect) asgSelect.innerHTML = '<option value="">Select ASG...</option>';
+        return;
+    }
+    asgSelect.innerHTML = '<option value="">Loading ASGs...</option>';
+    try {
+        var data = await api('POST', '/members/spot/qualify', { accountId: acctSelect.value });
+        asgSelect.innerHTML = '<option value="">Select ASG...</option>';
+        (data.qualified || []).forEach(function(a) {
+            var opt = document.createElement('option');
+            opt.value = a.asgName;
+            opt.textContent = a.asgName + ' (' + a.currentInstanceType + ', ' + a.instanceCount + ' inst, ' + a.risk + ' risk)';
+            asgSelect.appendChild(opt);
+        });
+        if ((data.qualified || []).length === 0) {
+            asgSelect.innerHTML = '<option value="">No qualified ASGs found</option>';
+        }
+    } catch(e) {
+        asgSelect.innerHTML = '<option value="">Error: ' + (e.message || e) + '</option>';
+    }
+}
+
+function _getSpotMigrateParams() {
+    var accountId = (document.getElementById('spot-migrate-account') || {}).value || '';
+    var asgName = (document.getElementById('spot-migrate-asg') || {}).value || '';
+    var odBase = parseInt((document.getElementById('spot-od-base') || {}).value || '2');
+    var odPct = parseInt((document.getElementById('spot-od-pct') || {}).value || '20');
+    var vcpuRange = (document.getElementById('spot-vcpu-range') || {}).value || '2-8';
+    var parts = vcpuRange.split('-');
+    var vcpuMin = parseInt(parts[0]) || 2;
+    var vcpuMax = parseInt(parts[1]) || 8;
+    return {
+        accountId: accountId,
+        asgName: asgName,
+        capacityMix: {
+            onDemandBaseCapacity: odBase,
+            onDemandPercentageAboveBase: odPct,
+            instanceRequirements: {
+                vCpuCount: { min: vcpuMin, max: vcpuMax },
+                memoryMiB: { min: vcpuMin * 2048, max: vcpuMax * 2048 }
+            }
+        }
+    };
+}
+
+async function _spotDryRun() {
+    var params = _getSpotMigrateParams();
+    if (!params.accountId || !params.asgName) { notify('Select account and ASG first', 'error'); return; }
+    var status = document.getElementById('spot-migrate-status');
+    var result = document.getElementById('spot-migrate-result');
+    if (status) status.textContent = 'Running dry-run...';
+    try {
+        var data = await api('POST', '/members/spot/migrate', {
+            accountId: params.accountId, asgName: params.asgName,
+            action: 'dry-run', capacityMix: params.capacityMix
+        });
+        if (result) {
+            var html = '<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:12px;">';
+            html += '<div style="font-weight:600;margin-bottom:8px;">Dry Run Results</div>';
+            (data.changes || []).forEach(function(c) { html += '<div style="padding:2px 0;color:#374151;">' + c + '</div>'; });
+            if (data.risks) {
+                html += '<div style="margin-top:8px;font-weight:600;color:#b45309;">Risks:</div>';
+                data.risks.forEach(function(r) { html += '<div style="padding:2px 0;color:#92400e;">' + r + '</div>'; });
+            }
+            html += '</div>';
+            result.innerHTML = html;
+        }
+        if (status) status.textContent = '';
+    } catch(e) {
+        if (status) status.textContent = '';
+        if (result) result.innerHTML = '<div style="color:#dc2626;">Dry run failed: ' + (e.message || e) + '</div>';
+    }
+}
+
+async function _spotExecuteMigrate() {
+    var params = _getSpotMigrateParams();
+    if (!params.accountId || !params.asgName) { notify('Select account and ASG first', 'error'); return; }
+    if (!confirm('This will update ASG "' + params.asgName + '" to use Spot Instances with price-capacity-optimized strategy.\n\nRollback is available for 7 days.\n\nProceed?')) return;
+    var status = document.getElementById('spot-migrate-status');
+    var result = document.getElementById('spot-migrate-result');
+    if (status) status.textContent = 'Migrating...';
+    try {
+        var data = await api('POST', '/members/spot/migrate', {
+            accountId: params.accountId, asgName: params.asgName,
+            action: 'migrate', capacityMix: params.capacityMix
+        });
+        if (result) {
+            result.innerHTML = '<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:12px;">'
+                + '<div style="font-weight:600;color:#059669;">Migration Complete</div>'
+                + '<div>ASG: ' + data.asgName + '</div>'
+                + '<div>Rollback available until: ' + new Date(data.rollbackExpiresAt).toLocaleDateString() + '</div>'
+                + '<div style="margin-top:4px;color:#6b7280;">A confirmation email has been sent.</div>'
+                + '</div>';
+        }
+        if (status) status.textContent = '';
+        notify('Spot migration complete for ' + params.asgName, 'success');
+    } catch(e) {
+        if (status) status.textContent = '';
+        if (result) result.innerHTML = '<div style="color:#dc2626;">Migration failed: ' + (e.message || e) + '</div>';
+        notify('Migration failed: ' + (e.message || e), 'error');
+    }
+}
+
+async function _spotRollback() {
+    var params = _getSpotMigrateParams();
+    if (!params.accountId || !params.asgName) { notify('Select account and ASG first', 'error'); return; }
+    if (!confirm('Rollback ASG "' + params.asgName + '" to its pre-migration configuration?')) return;
+    var status = document.getElementById('spot-migrate-status');
+    var result = document.getElementById('spot-migrate-result');
+    if (status) status.textContent = 'Rolling back...';
+    try {
+        var data = await api('POST', '/members/spot/migrate', {
+            accountId: params.accountId, asgName: params.asgName,
+            action: 'rollback', capacityMix: {}
+        });
+        if (result) {
+            result.innerHTML = '<div style="background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;padding:12px;">'
+                + '<div style="font-weight:600;color:#92400e;">Rollback Complete</div>'
+                + '<div>ASG ' + data.asgName + ' restored to original configuration.</div>'
+                + '</div>';
+        }
+        if (status) status.textContent = '';
+        notify('Rollback complete for ' + params.asgName, 'success');
+    } catch(e) {
+        if (status) status.textContent = '';
+        if (result) result.innerHTML = '<div style="color:#dc2626;">Rollback failed: ' + (e.message || e) + '</div>';
+    }
+}

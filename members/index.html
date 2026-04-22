@@ -359,6 +359,53 @@
                                 <button id="act-optimize-scan-btn" class="btn btn-primary btn-sm">⚡ Scan for Savings</button>
                             </div>
                             <p style="color:#6b7280;font-size:0.9em;margin-bottom:16px;">Active services you need but can pay less for — rightsizing, Spot migration, storage optimization.</p>
+
+                            <!-- Spot Migration Panel -->
+                            <div id="spot-migrate-panel" style="background:linear-gradient(135deg,#eef2ff,#e0e7ff);border:1px solid #c7d2fe;border-radius:12px;padding:20px;margin-bottom:20px;">
+                                <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
+                                    <span style="font-size:1.5em;">⚡</span>
+                                    <div>
+                                        <div style="font-weight:700;color:#1f2937;font-size:1.05em;">Spot Instance Migration</div>
+                                        <div style="color:#6b7280;font-size:0.85em;">Migrate ASGs to use Spot Instances with price-capacity-optimized strategy (up to 90% savings)</div>
+                                    </div>
+                                </div>
+                                <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">
+                                    <div>
+                                        <label style="font-size:0.8em;color:#6b7280;">Account</label>
+                                        <select id="spot-migrate-account" style="width:100%;padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:0.85em;" onchange="_loadSpotASGs()">
+                                            <option value="">Select account...</option>
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label style="font-size:0.8em;color:#6b7280;">ASG</label>
+                                        <select id="spot-migrate-asg" style="width:100%;padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:0.85em;">
+                                            <option value="">Select ASG...</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:12px;">
+                                    <div>
+                                        <label style="font-size:0.8em;color:#6b7280;">On-Demand Base</label>
+                                        <input type="number" id="spot-od-base" value="2" min="0" style="width:100%;padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:0.85em;">
+                                    </div>
+                                    <div>
+                                        <label style="font-size:0.8em;color:#6b7280;">On-Demand % Above Base</label>
+                                        <input type="number" id="spot-od-pct" value="20" min="0" max="100" style="width:100%;padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:0.85em;">
+                                    </div>
+                                    <div>
+                                        <label style="font-size:0.8em;color:#6b7280;">vCPU Range</label>
+                                        <input type="text" id="spot-vcpu-range" value="2-8" placeholder="2-8" style="width:100%;padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:0.85em;">
+                                    </div>
+                                </div>
+                                <div style="display:flex;gap:8px;align-items:center;">
+                                    <button class="btn btn-outline btn-sm" onclick="_spotDryRun()">🔍 Dry Run</button>
+                                    <button class="btn btn-primary btn-sm" onclick="_spotExecuteMigrate()" style="background:#6366f1;border-color:#6366f1;">⚡ Migrate to Spot</button>
+                                    <button class="btn btn-outline btn-sm" onclick="_spotRollback()" style="color:#dc2626;border-color:#dc2626;">↩ Rollback</button>
+                                    <span id="spot-migrate-status" style="color:#6b7280;font-size:0.85em;margin-left:8px;"></span>
+                                </div>
+                                <div id="spot-migrate-result" style="margin-top:12px;font-size:0.85em;"></div>
+                            </div>
+
                             <div id="act-optimize-status" style="padding:0 0 12px;color:#6b7280;font-size:0.9em;min-height:20px;"></div>
                             <div id="act-optimize-cards" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:16px;padding-bottom:32px;"></div>
                             <div id="act-optimize-empty" style="text-align:center;padding:60px 20px;color:#6b7280;">
@@ -974,7 +1021,7 @@
         <span id="notification-message"></span>
     </div>
 
-    <script src="members.js?v=71"></script>
+    <script src="members.js?v=72"></script>
     <script src="help.js?v=3"></script>
 </body>
 </html>
