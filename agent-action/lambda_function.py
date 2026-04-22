@@ -63,6 +63,14 @@ def lambda_handler(event, context):
         result = _get_budgets(account_id, member_email)
     elif api_path == '/get-finops-settings':
         result = _get_finops_settings(account_id, member_email)
+    elif api_path == '/get-spot-placement-score':
+        vcpu_min = int(parameters.get('vCpuMin', '2'))
+        vcpu_max = int(parameters.get('vCpuMax', '8'))
+        mem_min = int(parameters.get('memoryMiBMin', '4096'))
+        mem_max = int(parameters.get('memoryMiBMax', '16384'))
+        target_cap = int(parameters.get('targetCapacity', '10'))
+        regions = parameters.get('regions', '')
+        result = _get_spot_placement_score(account_id, member_email, vcpu_min, vcpu_max, mem_min, mem_max, target_cap, regions)
     else:
         result = {'error': f'Unknown action: {api_path}'}
 
@@ -573,3 +581,68 @@ def _get_finops_settings(account_id, member_email):
         return decimal_to_native(account_results)
     except Exception as e:
         return {'error': str(e)}
+
+
+def _get_spot_placement_score(account_id, member_email, vcpu_min, vcpu_max, mem_min, mem_max, target_capacity, regions_str):
+    """Query AWS Spot Placement Score API for capacity availability."""
+    if not account_id or not member_email:
+        return {'error': 'accountId and memberEmail are required'}
+
+    try:
+        credentials = _assume_role(account_id, member_email)
+    except Exception as e:
+        return {'error': f'Cannot assume role: {str(e)}'}
+
+    region_list = [r.strip() for r in regions_str.split(',') if r.strip()] if regions_str else [
+        'us-east-1', 'us-east-2', 'us-west-1', 'us-west-2'
+    ]
+
+    all_scores = []
+    for region in region_list:
+        try:
+            ec2 = _make_client('ec2', credentials, region)
+            resp = ec2.get_spot_placement_scores(
+                TargetCapacity=target_capacity,
+                InstanceRequirementsWithMetadata={
+                    'ArchitectureTypes': ['x86_64', 'arm64'],
+                    'InstanceRequirements': {
+                        'VCpuCount': {'Min': vcpu_min, 'Max': vcpu_max},
+                        'MemoryMiB': {'Min': mem_min, 'Max': mem_max},
+                    }
+                },
+                SingleAvailabilityZone=False,
+                MaxResults=10,
+            )
+            for score in resp.get('SpotPlacementScores', []):
+                all_scores.append({
+                    'region': score.get('Region', region),
+                    'az': score.get('AvailabilityZoneId', ''),
+                    'score': score.get('Score', 0),
+                })
+        except Exception as e:
+            logger.warning(f"Spot Placement Score failed for {region}: {e}")
+            all_scores.append({
+                'region': region,
+                'az': '',
+                'score': 0,
+                'error': str(e),
+            })
+
+    # Sort by score descending, remove duplicates
+    seen = set()
+    deduped = []
+    for s in sorted(all_scores, key=lambda x: x.get('score', 0), reverse=True):
+        key = f"{s['region']}#{s['az']}"
+        if key not in seen:
+            seen.add(key)
+            deduped.append(s)
+
+    return {
+        'scores': deduped,
+        'targetCapacity': target_capacity,
+        'instanceRequirements': {
+            'vCpuCount': {'min': vcpu_min, 'max': vcpu_max},
+            'memoryMiB': {'min': mem_min, 'max': mem_max},
+        },
+        'summary': f'{len(deduped)} region/AZ scores retrieved for {target_capacity} instances',
+    }

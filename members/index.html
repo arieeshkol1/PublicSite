@@ -560,6 +560,9 @@
                         <button class="act-nav-btn" data-section="tag-policy" onclick="_switchConfigSection('tag-policy')">
                             <span style="font-size:1.2em;">🏷️</span> Tag Policy
                         </button>
+                        <button class="act-nav-btn" data-section="spot" onclick="_switchConfigSection('spot')">
+                            <span style="font-size:1.2em;">⚡</span> Spot Mgmt
+                        </button>
                     </div>
 
                     <!-- Right Content Area -->
@@ -639,6 +642,33 @@
                             </div>
                         </div>
 
+
+                        <!-- Spot Management Sub-Section -->
+                        <div id="config-section-spot" style="display:none;">
+                            <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px;">
+                                <h2 style="margin:0;color:#1f2937;">Spot Instance Management</h2>
+                            </div>
+                            <p style="color:#6b7280;font-size:0.9em;margin-bottom:16px;">Enable Spot orchestration per account. SlashMyBill will manage ASG capacity mix and send real-time interruption notifications.</p>
+                            <div style="margin-bottom:16px;">
+                                <label style="font-size:0.85em;color:#6b7280;">Account</label>
+                                <select id="spot-account-select" style="width:100%;padding:8px;border:1px solid #d1d5db;border-radius:6px;font-size:0.9em;" onchange="_loadSpotConfig()"></select>
+                            </div>
+                            <div id="spot-config-panel" style="display:none;">
+                                <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;padding:12px;background:#f0fdf4;border-radius:8px;border:1px solid #bbf7d0;">
+                                    <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+                                        <input type="checkbox" id="spot-enabled-toggle" onchange="_toggleSpotEnabled()">
+                                        <span style="font-weight:600;">Enable Spot Management</span>
+                                    </label>
+                                </div>
+                                <div id="spot-qualify-results" style="margin-bottom:16px;"></div>
+                                <button id="spot-qualify-btn" class="btn btn-outline btn-sm" onclick="_runSpotQualify()" style="margin-bottom:16px;">Scan ASGs</button>
+                                <div id="spot-config-status" style="color:#6b7280;font-size:0.85em;"></div>
+                            </div>
+                            <div id="spot-config-empty" style="text-align:center;padding:40px;color:#6b7280;">
+                                <div style="font-size:2em;margin-bottom:8px;">&#9889;</div>
+                                <div>Select a connected account to configure Spot management</div>
+                            </div>
+                        </div>
                         <!-- Tag Policy Sub-Section -->
                         <div id="config-section-tag-policy" style="display:none;">
                             <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px;">
@@ -944,7 +974,7 @@
         <span id="notification-message"></span>
     </div>
 
-    <script src="members.js?v=69"></script>
+    <script src="members.js?v=70"></script>
     <script src="help.js?v=3"></script>
 </body>
 </html>

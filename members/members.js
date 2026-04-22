@@ -4470,11 +4470,14 @@ function _switchConfigSection(section) {
     var accounts = document.getElementById('config-section-accounts');
     var finops = document.getElementById('config-section-finops-settings');
     var tagPolicy = document.getElementById('config-section-tag-policy');
+    var spot = document.getElementById('config-section-spot');
     if (accounts) accounts.style.display = section === 'accounts' ? 'block' : 'none';
     if (finops) finops.style.display = section === 'finops-settings' ? 'block' : 'none';
     if (tagPolicy) tagPolicy.style.display = section === 'tag-policy' ? 'block' : 'none';
+    if (spot) spot.style.display = section === 'spot' ? 'block' : 'none';
     if (section === 'finops-settings') _populateFinOpsAccountSelector();
     if (section === 'tag-policy') _loadTagPolicy();
+    if (section === 'spot') _populateSpotAccountSelector();
 }
 
 function switchToFinOpsSettings() {
@@ -7019,3 +7022,225 @@ function _renderSchedResources() {
     });
     if (countEl) countEl.textContent = _schedSelectedResources.size + ' resources selected';
 }
+
+
+// ============================================================
+// Spot Instance Management -- Frontend Logic
+// ============================================================
+
+function _populateSpotAccountSelector() {
+    var select = document.getElementById('spot-account-select');
+    if (!select) return;
+    select.innerHTML = '<option value="">Select an account...</option>';
+    var connected = (typeof allAccounts !== 'undefined' ? allAccounts : []).filter(function(a) { return a.connectionStatus === 'connected'; });
+    connected.forEach(function(a) {
+        var opt = document.createElement('option');
+        opt.value = a.accountId;
+        opt.textContent = (a.accountName || 'Account') + ' (' + a.accountId + ')';
+        select.appendChild(opt);
+    });
+}
+
+var _spotConfigCache = {};
+
+async function _loadSpotConfig() {
+    var select = document.getElementById('spot-account-select');
+    var panel = document.getElementById('spot-config-panel');
+    var empty = document.getElementById('spot-config-empty');
+    if (!select || !select.value) {
+        if (panel) panel.style.display = 'none';
+        if (empty) empty.style.display = 'block';
+        return;
+    }
+    if (panel) panel.style.display = 'block';
+    if (empty) empty.style.display = 'none';
+
+    // Load current config from backend
+    try {
+        var data = await api('POST', '/members/spot/config', {
+            accountId: select.value,
+            spotEnabled: false, // Just reading -- will be overwritten by toggle
+        });
+        // Actually we need a GET endpoint. For now, use the toggle state from the response
+        _spotConfigCache[select.value] = data;
+    } catch(e) {
+        // Config not set yet -- that's fine
+    }
+
+    var toggle = document.getElementById('spot-enabled-toggle');
+    if (toggle) {
+        var cached = _spotConfigCache[select.value];
+        toggle.checked = cached && cached.spotEnabled;
+    }
+}
+
+async function _toggleSpotEnabled() {
+    var select = document.getElementById('spot-account-select');
+    var toggle = document.getElementById('spot-enabled-toggle');
+    var status = document.getElementById('spot-config-status');
+    if (!select || !select.value || !toggle) return;
+
+    try {
+        if (status) status.textContent = toggle.checked ? 'Enabling Spot management...' : 'Disabling...';
+        var data = await api('POST', '/members/spot/config', {
+            accountId: select.value,
+            spotEnabled: toggle.checked,
+            qualifiedASGs: [],
+            excludedASGs: [],
+        });
+        _spotConfigCache[select.value] = data;
+        if (status) status.textContent = toggle.checked
+            ? 'Spot management enabled. EventBridge rule deployed for interruption notifications.'
+            : 'Spot management disabled.';
+        notify(toggle.checked ? 'Spot management enabled' : 'Spot management disabled', 'success');
+    } catch(e) {
+        if (status) status.textContent = 'Error: ' + (e.message || e);
+        toggle.checked = !toggle.checked;
+        notify('Failed: ' + (e.message || e), 'error');
+    }
+}
+
+async function _runSpotQualify() {
+    var select = document.getElementById('spot-account-select');
+    var results = document.getElementById('spot-qualify-results');
+    var btn = document.getElementById('spot-qualify-btn');
+    if (!select || !select.value) return;
+
+    if (btn) { btn.disabled = true; btn.textContent = 'Scanning...'; }
+    if (results) results.innerHTML = '<div style="color:#6b7280;">Scanning ASGs...</div>';
+
+    try {
+        var data = await api('POST', '/members/spot/qualify', { accountId: select.value });
+        var html = '<div style="margin-bottom:8px;font-weight:600;">' + data.summary + '</div>';
+
+        if (data.qualified && data.qualified.length > 0) {
+            html += '<div style="margin-bottom:12px;"><div style="font-size:0.85em;color:#059669;font-weight:600;margin-bottom:4px;">Qualified for Spot</div>';
+            data.qualified.forEach(function(a) {
+                html += '<div style="padding:6px 10px;background:#f0fdf4;border-radius:6px;margin-bottom:4px;font-size:0.85em;">'
+                    + '<span style="font-weight:600;">' + a.asgName + '</span>'
+                    + ' <span style="color:#6b7280;">(' + a.currentInstanceType + ', ' + a.instanceCount + ' instances, ' + a.azCount + ' AZs)</span>'
+                    + ' <span style="background:' + (a.risk === 'low' ? '#dcfce7' : '#fef3c7') + ';padding:1px 6px;border-radius:4px;font-size:0.8em;">' + a.risk + ' risk</span>'
+                    + '</div>';
+            });
+            html += '</div>';
+        }
+
+        if (data.excluded && data.excluded.length > 0) {
+            html += '<div><div style="font-size:0.85em;color:#dc2626;font-weight:600;margin-bottom:4px;">Excluded</div>';
+            data.excluded.forEach(function(a) {
+                html += '<div style="padding:6px 10px;background:#fef2f2;border-radius:6px;margin-bottom:4px;font-size:0.85em;">'
+                    + '<span style="font-weight:600;">' + a.asgName + '</span>'
+                    + ' <span style="color:#6b7280;">(' + (a.reasons || []).join(', ') + ')</span>'
+                    + '</div>';
+            });
+            html += '</div>';
+        }
+
+        if (results) results.innerHTML = html;
+    } catch(e) {
+        if (results) results.innerHTML = '<div style="color:#dc2626;">Scan failed: ' + (e.message || e) + '</div>';
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = 'Scan ASGs'; }
+    }
+}
+
+// _switchConfigSection extended inline to handle 'spot' section
+
+
+// ============================================================
+// Act > Service Optimization -- Scan + Render
+// ============================================================
+
+// Tip IDs that belong to "optimization" (active services, pay less)
+var OPTIMIZE_TIP_IDS = {
+    'ec2-001':1, 'ec2-003':1, 'ec2-009':1, 'ec2-006':1,
+    'rds-001':1, 'rds-006':1, 'ebs-001':1,
+    'ec2-004':1, 'ec2-011':1, 'ec2-013':1,
+    's3-001':1, 's3-004':1, 'lambda-001':1, 'rds-007':1
+};
+
+async function _runOptimizeScan() {
+    var status = document.getElementById('act-optimize-status');
+    var grid = document.getElementById('act-optimize-cards');
+    var empty = document.getElementById('act-optimize-empty');
+    var btn = document.getElementById('act-optimize-scan-btn');
+
+    if (status) status.textContent = 'Scanning for optimization opportunities...';
+    if (grid) grid.innerHTML = '';
+    if (empty) empty.style.display = 'none';
+    if (btn) { btn.disabled = true; btn.textContent = 'Scanning...'; }
+
+    try {
+        _syncActSelection();
+        var accountIds = getActSelectedAccountIds();
+        var data = await api('POST', '/members/actions/scan', { accountIds: accountIds });
+
+        // Filter findings to optimization-only
+        var optFindings = (data.findings || []).filter(function(f) {
+            return OPTIMIZE_TIP_IDS[f.tipId] && f.status === 'found';
+        });
+
+        // Filter cards to optimization-only
+        var optCards = (data.cards || []).filter(function(c) {
+            // Cards from optimization checks: ec2-idle (rightsizing), advisory (spot/graviton), etc.
+            var t = c.type || '';
+            return t === 'ec2-idle' || t === 'advisory' || t === 'rds-idle';
+        });
+
+        if (status) {
+            var ts = new Date(data.scannedAt || Date.now()).toLocaleTimeString();
+            status.textContent = 'Scanned ' + (data.scannedAccounts || 0) + ' account(s) at ' + ts +
+                ' \u00b7 ' + optFindings.length + ' optimization finding(s)';
+        }
+
+        if (optFindings.length === 0 && optCards.length === 0) {
+            if (empty) empty.style.display = 'block';
+            if (grid) grid.innerHTML = '<div style="text-align:center;padding:40px;color:#059669;font-size:1.1em;">All services are optimally configured \u2705</div>';
+        } else {
+            // Render optimization cards
+            optCards.forEach(function(card) {
+                if (grid) grid.appendChild(_actBuildCard(card));
+            });
+
+            // Render findings that don't have cards (newer checks)
+            var cardTipIds = {};
+            optCards.forEach(function(c) { if (c.tipId) cardTipIds[c.tipId] = true; });
+
+            optFindings.forEach(function(f) {
+                if (cardTipIds[f.tipId]) return; // Already rendered as card
+                var el = document.createElement('div');
+                el.style.cssText = 'background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:16px;';
+                var savings = f.savingsUsd ? ' \u00b7 ~$' + f.savingsUsd.toFixed(2) + '/mo' : '';
+                el.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">'
+                    + '<span style="font-weight:600;color:#1f2937;">' + (f.tipTitle || f.tipId) + '</span>'
+                    + '<span style="font-size:0.8em;background:#dbeafe;color:#1e40af;padding:2px 8px;border-radius:4px;">' + (f.service || '') + '</span>'
+                    + '</div>'
+                    + '<div style="color:#6b7280;font-size:0.9em;">' + (f.message || f.evidence || '') + savings + '</div>';
+                if (f.resources && f.resources.length > 0) {
+                    var resHtml = '<div style="margin-top:8px;font-size:0.85em;">';
+                    f.resources.slice(0, 5).forEach(function(r) {
+                        resHtml += '<div style="padding:3px 0;border-top:1px solid #f3f4f6;">'
+                            + (r.resourceId || r.id || '') + ' <span style="color:#6b7280;">' + (r.detail || r.resourceType || '') + '</span>'
+                            + (r.monthlySavings ? ' <span style="color:#059669;font-weight:600;">~$' + r.monthlySavings.toFixed(2) + '/mo</span>' : '')
+                            + '</div>';
+                    });
+                    if (f.resources.length > 5) resHtml += '<div style="color:#6b7280;">+' + (f.resources.length - 5) + ' more</div>';
+                    resHtml += '</div>';
+                    el.innerHTML += resHtml;
+                }
+                if (grid) grid.appendChild(el);
+            });
+        }
+    } catch(err) {
+        if (status) status.textContent = 'Scan failed: ' + (err.message || 'Unknown error');
+        if (empty) empty.style.display = 'block';
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = '\u26a1 Scan for Savings'; }
+    }
+}
+
+// Wire the button
+(function() {
+    var btn = document.getElementById('act-optimize-scan-btn');
+    if (btn) btn.onclick = _runOptimizeScan;
+})();

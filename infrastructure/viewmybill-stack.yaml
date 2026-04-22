@@ -1015,6 +1015,29 @@ Resources:
                   - iam:PassRole
                 Resource:
                   - !GetAtt EventBridgeSchedulerRole.Arn
+        - PolicyName: DynamoDBSpotLedgerAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:Query
+                  - dynamodb:BatchWriteItem
+                Resource:
+                  - !GetAtt SpotSavingsLedgerTable.Arn
+                  - !Sub '${SpotSavingsLedgerTable.Arn}/index/*'
+        - PolicyName: SNSSpotPublish
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sns:Publish
+                Resource:
+                  - !Ref SpotInterruptionsTopic
       Tags:
         - Key: Project
           Value: ViewMyBill
@@ -1051,6 +1074,8 @@ Resources:
           BUSINESS_METRICS_TABLE: !Ref BusinessMetricsTable
           COGNITO_USER_POOL_ID: 'us-east-1_FlR2CmFu0'
           COGNITO_CLIENT_ID: '3shmdb332mm8sjheopdu9sg8o4'
+          SPOT_LEDGER_TABLE_NAME: !Ref SpotSavingsLedgerTable
+          SPOT_SNS_TOPIC_ARN: !Ref SpotInterruptionsTopic
       Tags:
         - Key: Project
           Value: ViewMyBill
@@ -1505,6 +1530,88 @@ Resources:
   #
   # ============================================================
 
+  # ============================================================
+  # DynamoDB Table - Spot Savings Ledger (Gainshare Billing)
+  # ============================================================
+  SpotSavingsLedgerTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: SpotSavingsLedger
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+        - AttributeName: memberEmail
+          AttributeType: S
+        - AttributeName: recordedAt
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+      GlobalSecondaryIndexes:
+        - IndexName: MemberTimeIndex
+          KeySchema:
+            - AttributeName: memberEmail
+              KeyType: HASH
+            - AttributeName: recordedAt
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+      SSESpecification:
+        SSEEnabled: true
+      Tags:
+        - Key: Project
+          Value: ViewMyBill
+
+  # ============================================================
+  # SNS Topic - Spot Interruption Notifications (Push Pipeline)
+  # ============================================================
+  SpotInterruptionsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: SlashMyBill-SpotInterruptions
+      Tags:
+        - Key: Project
+          Value: ViewMyBill
+
+  SpotInterruptionsTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      Topics:
+        - !Ref SpotInterruptionsTopic
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AllowEventBridgeCrossAccountPublish
+            Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sns:Publish
+            Resource: !Ref SpotInterruptionsTopic
+
+  SpotInterruptionsSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref SpotInterruptionsTopic
+      Protocol: lambda
+      Endpoint: !GetAtt MemberHandlerFunction.Arn
+
+  SpotInterruptionsSNSPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref MemberHandlerFunction
+      Action: lambda:InvokeFunction
+      Principal: sns.amazonaws.com
+      SourceArn: !Ref SpotInterruptionsTopic
+
+
 Outputs:
   ApiEndpoint:
     Description: API Gateway endpoint URL
@@ -1591,3 +1698,15 @@ Outputs:
   AgentFeedbackTableArn:
     Description: DynamoDB Agent Feedback table ARN
     Value: !GetAtt AgentFeedbackTable.Arn
+
+  SpotSavingsLedgerTableName:
+    Description: DynamoDB table name for Spot savings ledger
+    Value: !Ref SpotSavingsLedgerTable
+
+  SpotSavingsLedgerTableArn:
+    Description: DynamoDB Spot Savings Ledger table ARN
+    Value: !GetAtt SpotSavingsLedgerTable.Arn
+
+  SpotInterruptionsTopicArn:
+    Description: SNS topic ARN for Spot interruption notifications
+    Value: !Ref SpotInterruptionsTopic

@@ -4,25 +4,53 @@
 
 SlashMyBill currently identifies Spot Instance candidates passively through the `_check_spot_candidates` function in the waste-scan engine — flagging non-production EC2 instances with low CPU as advisory cards. This feature expands that passive detection into a full autonomous Spot Instance lifecycle orchestration system, comparable to CAST AI and Spot by NetApp.
 
-The feature is organized into four major components: **Configure** (IAM role expansion, Spot opt-in toggle, workload qualification), **Plan** (Spot Placement Score forecasting via Bedrock Agent, attribute-based instance selection, capacity mix configuration), **Observe** (dashboard widget for On-Demand vs Spot ratio, Effective Savings Rate tracking, savings ledger for gainshare billing), and **Act** (ASG migration to price-capacity-optimized strategy, EventBridge-based interruption monitoring, graceful draining with ELB/EKS integration).
+The feature is organized into four major components: **Configure** (IAM role expansion, Spot opt-in toggle, workload qualification), **Plan** (Spot Placement Score forecasting via Bedrock Agent, attribute-based instance selection, capacity mix configuration), **Observe** (dashboard widget for On-Demand vs Spot ratio, Effective Savings Rate tracking, savings ledger for gainshare billing), and **Act** (ASG migration to price-capacity-optimized strategy). Email notifications via SES keep the member informed of migrations, interruptions, and rollbacks.
 
 The system operates cross-account via the existing STS AssumeRole pattern (SHA-256 ExternalId), extends the Bedrock Agent (IDG5VJGUOZ5W) with new action tools for Spot placement scoring and migration execution, and stores all savings tracking data in a new DynamoDB table (`SpotSavingsLedger`) to support the 30% gainshare billing model.
 
 ### Key Design Decision: ASG-Native Interruption Handling
 
-When an ASG is configured with a `price-capacity-optimized` Mixed Instances Policy, the ASG handles Spot interruptions natively:
+When an ASG is configured with a `price-capacity-optimized` Mixed Instances Policy, the ASG handles Spot interruptions natively — **no SlashMyBill intervention is needed for replacement**:
 
-1. **Automatic Replacement**: When AWS reclaims a Spot instance (2-minute warning), the ASG detects the disruption and automatically requests replacement capacity to maintain the desired count.
-2. **Intelligent Provisioning**: The `price-capacity-optimized` strategy provisions replacements from capacity pools with the most available spare hardware at the lowest price.
-3. **Connection Draining**: ELB connection draining (configured on the target group) handles graceful request completion before the instance is terminated.
+#### Interruption Timeline
 
-**Therefore, SlashMyBill does NOT need to build a custom Interruption Guardian.** The ASG does all the heavy lifting — seamlessly handling interruptions, replacing servers, and adjusting the mix. SlashMyBill's role is limited to:
-- Detecting Spot candidates (waste scan)
-- Planning the capacity mix (Placement Score + attribute-based selection)
-- Executing the one-time ASG migration (MixedInstancesPolicy update)
-- Tracking realized savings (On-Demand vs Spot rate delta)
+| Time | What Happens | Who Does It |
+|------|-------------|-------------|
+| **T+0s** | AWS issues EC2 Spot Instance Interruption Warning (2-minute notice) | AWS EC2 |
+| **T+0–5s** | ASG detects capacity drop, requests replacement from the pool with most spare capacity at lowest price | ASG (native) |
+| **T+5–60s** | Replacement instance boots, runs launch template config, registers with ELB target group | ASG + ELB (native) |
+| **T+0–120s** | Old instance drains connections gracefully via ELB deregistration delay | ELB (native) |
+| **T+120s** | AWS terminates the reclaimed instance. Replacement is already serving traffic. | AWS EC2 |
+| **Next dashboard load** | SlashMyBill detects the interruption via `ec2:DescribeSpotInstanceRequests` polling, sends email notification to member | SlashMyBill |
 
-The EventBridge interruption monitoring rule is **optional** — only needed for observability (tracking interruption frequency and recovery metrics on the dashboard), not for operational recovery.
+#### Why SlashMyBill Does NOT Purchase Replacements
+
+The ASG is the orchestrator. When you set `price-capacity-optimized` as the allocation strategy:
+- The ASG **automatically** launches a replacement when any instance leaves the fleet
+- It picks from diversified instance pools (attribute-based selection = 10+ instance types)
+- It prioritizes pools with the most available spare hardware at the lowest price
+- ELB connection draining handles in-flight requests on the old instance
+
+**SlashMyBill's role is limited to:**
+- **Before**: Detect candidates, plan the capacity mix, execute the one-time ASG migration
+- **After**: Observe the results (Spot/On-Demand ratio, savings, interruption count) and **notify the customer via email**
+
+#### Email Notifications (Push-Based via EventBridge → SNS → Lambda)
+
+Interruption notifications are **push-based**, not polling-based. The flow:
+
+1. **EventBridge rule** in the customer account catches `EC2 Spot Instance Interruption Warning` and `EC2 Instance Rebalance Recommendation` events
+2. **SNS topic** in the platform account (`SlashMyBill-SpotInterruptions`) receives the event cross-account
+3. **Member Handler Lambda** is invoked by SNS, looks up the member by account ID, and sends the email via SES immediately
+
+This means the customer gets the email **within seconds** of the interruption — not on next dashboard load.
+
+SlashMyBill sends email notifications to the member's registered email (via existing SES infrastructure: `noreply@slashmycloudbill.com`) for:
+1. **Interruption detected** (push, ~2s latency) — ASG name, interrupted instance ID/type, reason, timestamp, confirmation that ASG has automatically launched a replacement
+2. **Migration complete** (synchronous) — ASG name, capacity mix, estimated savings, rollback available for 7 days
+3. **Rollback complete** (synchronous) — ASG name, confirmation that original config is restored
+
+Deduplication: if the same instance ID was notified within the last 5 minutes, the duplicate event is skipped.
 
 ## Architecture
 
@@ -1288,73 +1316,73 @@ savingsChart.setOption({
 
 *For any* valid capacity mix configuration with `onDemandBaseCapacity` B and `onDemandPercentageAboveBase` P applied to an ASG with desired capacity D, the resulting On-Demand count SHALL equal `B + ceil((D - B) * P / 100)` and the Spot count SHALL equal `D - onDemandCount`, and `onDemandCount + spotCount == D`.
 
-**Validates: Capacity Mix Configuration (Plan Component)**
+**Validates: Requirement 5.2**
 
 ### Property 2: Savings ledger arithmetic consistency
 
-*For any* savings ledger record with `onDemandRate` R_od, `spotRate` R_sp, and `hours` H, the record SHALL satisfy: `savingsPerHour == R_od - R_sp`, `totalSavings == savingsPerHour * H`, `gainshareAmount == totalSavings * 0.30`, and `R_sp <= R_od` (Spot is never more expensive than On-Demand).
+*For any* savings ledger record with `onDemandRate` R_od, `spotRate` R_sp, and `hours` H, the record SHALL satisfy: `savingsPerHour == R_od - R_sp`, `totalSavings == savingsPerHour * H`, `gainshareAmount == totalSavings * 0.30`, and `R_sp <= R_od` (Spot is never more expensive than On-Demand). The `eventType` field SHALL be one of {running, interrupted, migrated, rolled-back}.
 
-**Validates: Savings Ledger (Observe Component)**
+**Validates: Requirements 8.1, 8.2, 8.6**
 
 ### Property 3: Effective Savings Rate is bounded [0, 1]
 
 *For any* set of savings ledger records over any time period, the computed Effective Savings Rate (ESR) SHALL be in the range [0.0, 1.0], where ESR = actual_savings / maximum_possible_savings. If no Spot instances are running (zero records), ESR SHALL be 0.0.
 
-**Validates: ESR Tracking (Observe Component)**
+**Validates: Requirement 9.2**
 
-### Property 4: Workload qualification completeness
+### Property 4: Workload qualification completeness and exclusion correctness
 
-*For any* list of N ASG names submitted for qualification validation, the result SHALL contain exactly N entries, and each entry SHALL have status in {qualified, excluded, ineligible}. The sum `len(qualified) + len(excluded) + len(ineligible)` SHALL equal N.
+*For any* list of N ASG names submitted for qualification validation, the result SHALL contain exactly N entries, and each entry SHALL have status in {qualified, excluded, ineligible}. The sum `len(qualified) + len(excluded) + len(ineligible)` SHALL equal N. ASGs with database-related keywords in name or tags, `Stateful=true` tag, MaxSize <= 1, existing Spot allocation, or production environment in fewer than 2 AZs SHALL be classified as excluded.
 
-**Validates: Workload Qualification (Configure Component)**
+**Validates: Requirements 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7**
 
 ### Property 5: Migration rollback restores original config
 
 *For any* ASG that has been migrated to Spot, executing a rollback SHALL restore the ASG to its exact pre-migration configuration (LaunchTemplate, DesiredCapacity, MinSize, MaxSize, and absence of MixedInstancesPolicy if none existed before). The rollback SHALL be available for exactly 7 days after migration.
 
-**Validates: Capacity Mix Auto-Migrator (Act Component)**
+**Validates: Requirement 7.1**
 
 ### Property 6: Spot Placement Score response validity
 
 *For any* valid instance requirements (vCpuMin <= vCpuMax, memoryMin <= memoryMax, targetCapacity > 0), the Spot Placement Score response SHALL contain only scores in the integer range [1, 10], SHALL be sorted by score descending, and SHALL not contain duplicate region+AZ combinations.
 
-**Validates: Spot Placement Predictor (Plan Component)**
+**Validates: Requirements 4.2, 4.3**
 
 ### Property 7: Attribute-based selection pool minimum
 
 *For any* instance requirements configuration used in a migration, the attribute-based selection SHALL match at least 10 distinct instance types across the target region. If fewer than 10 instance types match, the migration SHALL be rejected with an error before any ASG changes are made.
 
-**Validates: Attribute-Based Selection (Plan Component)**
+**Validates: Requirement 5.5**
 
 ### Property 8: Interruption event completeness
 
-*For any* Spot interruption or rebalance event processed by the Interruption Guardian, the resulting DynamoDB record SHALL contain all required fields: instanceId, instanceType, eventType (rebalance or interruption), detectedAt, drainingStartedAt, drainingCompletedAt, recoverySeconds, gracefulDrain (boolean), and asgName. The `recoverySeconds` SHALL equal `drainingCompletedAt - detectedAt` in seconds.
+*For any* Spot interruption or rebalance event processed by the Interruption Guardian, the resulting DynamoDB record SHALL contain all required fields: instanceId, instanceType, eventType (rebalance or interruption), detectedAt, recoverySeconds, gracefulDrain (boolean), and asgName. The `recoverySeconds` SHALL equal `drainingCompletedAt - detectedAt` in seconds.
 
-**Validates: Interruption Guardian (Act Component)**
+**Validates: Requirement 10.2**
 
 ### Property 9: Cross-account template contains all Spot permissions
 
-*For any* valid 12-digit account ID and member email where Spot management is enabled, the CloudFormation template generated by `handle_generate_template` SHALL include all of the following IAM actions: `ec2:GetSpotPlacementScores`, `ec2:ModifySpotFleetRequest`, `autoscaling:UpdateAutoScalingGroup`, `events:PutRule`, `events:PutTargets`, `events:DeleteRule`, `events:RemoveTargets`, `elasticloadbalancing:DeregisterTargets`, `elasticloadbalancing:DescribeTargetHealth`.
+*For any* valid 12-digit account ID and member email where Spot management is enabled, the CloudFormation template generated by `handle_generate_template` SHALL include all of the following IAM actions: `ec2:GetSpotPlacementScores`, `autoscaling:UpdateAutoScalingGroup`, `autoscaling:DescribeAutoScalingGroups`, `events:PutRule`, `events:PutTargets`, `events:DeleteRule`, `events:RemoveTargets`, `elasticloadbalancing:DeregisterTargets`, `elasticloadbalancing:DescribeTargetHealth`.
 
-**Validates: IAM Role Expansion (Configure Component)**
+**Validates: Requirement 3.1**
 
-### Property 10: Dashboard capacity ratio consistency
+### Property 10: Dashboard capacity ratio and savings trend consistency
 
-*For any* dashboard data response, `capacityRatio.total` SHALL equal `capacityRatio.onDemand + capacityRatio.spot`, and `capacityRatio.spotPercentage` SHALL equal `round(capacityRatio.spot / capacityRatio.total * 100)` when total > 0, or 0 when total == 0. Each `savingsTrend` entry SHALL satisfy `savings == onDemandCost - spotCost`.
+*For any* dashboard data response, `capacityRatio.total` SHALL equal `capacityRatio.onDemand + capacityRatio.spot`, and `capacityRatio.spotPercentage` SHALL equal `round(capacityRatio.spot / capacityRatio.total * 100)` when total > 0, or 0 when total == 0. Each `savingsTrend` entry SHALL satisfy `savings == onDemandCost - spotCost`, and the trend array SHALL be sorted by date ascending.
 
-**Validates: Spot Operations Dashboard Widget (Observe Component)**
+**Validates: Requirements 9.1, 9.4**
 
 ### Property 11: Qualified and excluded ASGs are disjoint
 
 *For any* Spot configuration for an account, the sets `qualifiedASGs` and `excludedASGs` SHALL be disjoint — no ASG name SHALL appear in both sets. Any attempt to add an ASG to both sets SHALL be rejected with a validation error.
 
-**Validates: Workload Qualification (Configure Component)**
+**Validates: Requirement 1.2**
 
 ### Property 12: EventBridge rule deployment idempotency
 
 *For any* sequence of enable/disable operations on the interruption monitor for a given account, the final state SHALL match the last operation: if the last call was `enable=True`, exactly one EventBridge rule SHALL exist with the correct pattern; if the last call was `enable=False`, no EventBridge rule SHALL exist. Repeated enable calls SHALL not create duplicate rules.
 
-**Validates: Interruption Guardian deployment (Configure Component)**
+**Validates: Requirement 10.3**
 
 ## Error Handling
 

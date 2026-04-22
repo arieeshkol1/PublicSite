@@ -368,6 +368,11 @@ jobs:
             "GET /members/tag-policy"
             "POST /members/tag-policy"
             "POST /members/agent/invoke"
+            "POST /members/spot/config"
+            "POST /members/spot/qualify"
+            "POST /members/spot/plan"
+            "POST /members/spot/migrate"
+            "GET /members/spot/dashboard"
           )
           for ROUTE in "${MEMBER_ROUTES[@]}"; do
             aws apigatewayv2 create-route --api-id $API_ID --route-key "$ROUTE" --target "integrations/$MEMBER_INT" 2>/dev/null || true

@@ -32,6 +32,8 @@ OTP_TABLE_NAME = os.environ.get('OTP_TABLE_NAME', 'ViewMyBill-OTP')
 SES_SENDER_EMAIL = os.environ.get('SES_SENDER_EMAIL', 'noreply@slashmycloudbill.com')
 PLATFORM_ACCOUNT_ID = os.environ.get('PLATFORM_ACCOUNT_ID', '991105135552')
 TIPS_TABLE_NAME = os.environ.get('TIPS_TABLE_NAME', 'ViewMyBill-CostOptimizationTips')
+SPOT_LEDGER_TABLE_NAME = os.environ.get('SPOT_LEDGER_TABLE_NAME', 'SpotSavingsLedger')
+SPOT_SNS_TOPIC_ARN = os.environ.get('SPOT_SNS_TOPIC_ARN', '')
 BEDROCK_MODEL_ID = os.environ.get('BEDROCK_MODEL_ID', 'us.amazon.nova-2-lite-v1:0')
 BEDROCK_AGENT_ID = os.environ.get('BEDROCK_AGENT_ID', '')
 BEDROCK_AGENT_ALIAS_ID = os.environ.get('BEDROCK_AGENT_ALIAS_ID', '')
@@ -72,6 +74,14 @@ def _decimal_to_native(obj):
 
 def lambda_handler(event, context):
     """Main entry point — dispatches to handler based on routeKey."""
+    # ── SNS event detection (Spot interruption push pipeline) ──
+    records = event.get('Records', [])
+    if records and records[0].get('EventSource') == 'aws:sns':
+        topic_arn = records[0].get('Sns', {}).get('TopicArn', '')
+        if 'SlashMyBill-SpotInterruptions' in topic_arn:
+            return _handle_spot_interruption_sns(records[0])
+        return create_response(200, {'message': 'SNS event ignored'})
+
     route_key = event.get('routeKey', '')
     logger.info(f"Member API request: {route_key}")
 
@@ -126,6 +136,11 @@ def lambda_handler(event, context):
         'GET /members/tag-policy': handle_get_tag_policy,
         'POST /members/tag-policy': handle_save_tag_policy,
         'POST /members/agent/invoke': handle_agent_invoke,
+        'POST /members/spot/config': handle_spot_config,
+        'POST /members/spot/qualify': handle_spot_qualify,
+        'POST /members/spot/plan': handle_spot_plan,
+        'POST /members/spot/migrate': handle_spot_migrate,
+        'GET /members/spot/dashboard': handle_spot_dashboard,
     }
 
     handler = routes.get(route_key)
@@ -10112,3 +10127,1011 @@ def handle_update_tier(event):
     except Exception as e:
         logger.error(f'handle_update_tier error: {e}', exc_info=True)
         return create_error_response(500, 'InternalError', 'Failed to update tier')
+
+
+
+# ============================================================
+# Spot Instance Management -- Configuration, Notifications, EventBridge
+# ============================================================
+
+def _send_spot_email(member_email, subject, body_html):
+    """Send a Spot-related email notification via SES."""
+    try:
+        ses_client.send_email(
+            Source=f'SlashMyBill <{SES_SENDER_EMAIL}>',
+            Destination={'ToAddresses': [member_email]},
+            Message={
+                'Subject': {'Data': subject, 'Charset': 'UTF-8'},
+                'Body': {'Html': {'Data': body_html, 'Charset': 'UTF-8'}}
+            }
+        )
+        logger.info(f"Spot email sent to {member_email}: {subject}")
+    except Exception as e:
+        logger.warning(f"Failed to send Spot email to {member_email}: {e}")
+
+
+def _build_spot_email(title, rows, footer=''):
+    """Build a styled HTML email for Spot notifications."""
+    row_html = ''.join(
+        '<tr><td style="padding:6px 12px;border-bottom:1px solid #e5e7eb;color:#6b7280;font-size:0.9em;">'
+        + str(k) + '</td><td style="padding:6px 12px;border-bottom:1px solid #e5e7eb;font-weight:600;">'
+        + str(v) + '</td></tr>' for k, v in rows
+    )
+    footer_html = f'<p style="margin-top:16px;color:#6b7280;font-size:0.85em;">{footer}</p>' if footer else ''
+    return (
+        '<div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;background:#fff;'
+        'border:1px solid #e5e7eb;border-radius:12px;overflow:hidden;">'
+        '<div style="background:linear-gradient(135deg,#6366f1,#8b5cf6);padding:20px 24px;color:#fff;">'
+        f'<h2 style="margin:0;font-size:1.2em;">{title}</h2></div>'
+        f'<div style="padding:20px 24px;"><table style="width:100%;border-collapse:collapse;">{row_html}</table>'
+        f'{footer_html}</div>'
+        '<div style="padding:12px 24px;background:#f9fafb;text-align:center;color:#9ca3af;font-size:0.8em;">'
+        'SlashMyBill - Autonomous Spot Instance Management</div></div>'
+    )
+
+
+def _deploy_interruption_rule(member_email, account_id, enable):
+    """Deploy or remove EventBridge rule for Spot interruption notifications in customer account."""
+    rule_name = f'SlashMyBill-SpotInterruption-{account_id}'
+    try:
+        creds = _assume_role_for_account(member_email, account_id)
+        events_client = _make_client_from_creds('events', creds)
+    except Exception as e:
+        logger.warning(f"Cannot assume role for EventBridge in {account_id}: {e}")
+        return None
+
+    if enable:
+        try:
+            resp = events_client.put_rule(
+                Name=rule_name,
+                EventPattern=json.dumps({
+                    "source": ["aws.ec2"],
+                    "detail-type": [
+                        "EC2 Instance Rebalance Recommendation",
+                        "EC2 Spot Instance Interruption Warning"
+                    ]
+                }),
+                State='ENABLED',
+                Description='SlashMyBill Spot interruption notification pipeline'
+            )
+            rule_arn = resp.get('RuleArn', '')
+            if SPOT_SNS_TOPIC_ARN:
+                events_client.put_targets(
+                    Rule=rule_name,
+                    Targets=[{'Id': 'SlashMyBillPlatform', 'Arn': SPOT_SNS_TOPIC_ARN}]
+                )
+            logger.info(f"EventBridge rule deployed in {account_id}: {rule_arn}")
+            return rule_arn
+        except Exception as e:
+            logger.warning(f"Failed to deploy EventBridge rule in {account_id}: {e}")
+            return None
+    else:
+        try:
+            events_client.remove_targets(Rule=rule_name, Ids=['SlashMyBillPlatform'])
+        except Exception:
+            pass
+        try:
+            events_client.delete_rule(Name=rule_name)
+        except Exception:
+            pass
+        logger.info(f"EventBridge rule removed from {account_id}")
+        return None
+
+
+def _load_spot_config(member_email):
+    """Load spotConfig from member DynamoDB item."""
+    try:
+        members_table = dynamodb.Table(MEMBERS_TABLE_NAME)
+        result = members_table.get_item(Key={'email': member_email})
+        item = result.get('Item', {})
+        return item.get('spotConfig', {})
+    except Exception:
+        return {}
+
+
+def _save_spot_config(member_email, spot_config):
+    """Save spotConfig to member DynamoDB item."""
+    try:
+        members_table = dynamodb.Table(MEMBERS_TABLE_NAME)
+        members_table.update_item(
+            Key={'email': member_email},
+            UpdateExpression='SET spotConfig = :sc',
+            ExpressionAttributeValues={':sc': spot_config},
+        )
+    except Exception as e:
+        logger.warning(f"Failed to save spotConfig for {member_email}: {e}")
+
+
+def handle_spot_config(event):
+    """POST /members/spot/config -- Enable/disable Spot management per account."""
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+    member_email = auth['sub']
+
+    try:
+        body = json.loads(event.get('body', '{}'))
+    except (json.JSONDecodeError, TypeError):
+        return create_error_response(400, 'InvalidRequest', 'Invalid request body')
+
+    account_id = body.get('accountId', '')
+    if not account_id or len(account_id) != 12 or not account_id.isdigit():
+        return create_error_response(400, 'InvalidAccountId', 'Account ID must be 12 digits')
+
+    ownership = _verify_account_ownership(member_email, [account_id])
+    if isinstance(ownership, dict):
+        return ownership
+
+    spot_enabled = body.get('spotEnabled', False)
+    qualified_asgs = body.get('qualifiedASGs', [])
+    excluded_asgs = body.get('excludedASGs', [])
+
+    overlap = set(qualified_asgs) & set(excluded_asgs)
+    if overlap:
+        return create_error_response(400, 'OverlappingASGs',
+            f'ASGs appear in both qualified and excluded: {list(overlap)}')
+
+    if qualified_asgs or excluded_asgs:
+        try:
+            creds = _assume_role_for_account(member_email, account_id)
+            asg_client = _make_client_from_creds('autoscaling', creds)
+            all_names = list(set(qualified_asgs + excluded_asgs))
+            resp = asg_client.describe_auto_scaling_groups(AutoScalingGroupNames=all_names[:50])
+            found_names = {a['AutoScalingGroupName'] for a in resp.get('AutoScalingGroups', [])}
+            missing = [n for n in all_names if n not in found_names]
+            if missing:
+                return create_error_response(404, 'ASGNotFound',
+                    f'ASGs not found in account: {missing}')
+        except ClientError as e:
+            if 'AccessDenied' in str(e) or 'not authorized' in str(e):
+                return create_error_response(403, 'InsufficientPermissions',
+                    'Cross-account role lacks autoscaling permissions. Update the CloudFormation template.')
+            return create_error_response(500, 'ServerError', f'Failed to validate ASGs: {e}')
+
+    spot_config = _load_spot_config(member_email)
+    enabled_accounts = spot_config.get('enabledAccounts', {})
+
+    if spot_enabled:
+        rule_arn = _deploy_interruption_rule(member_email, account_id, True)
+        enabled_accounts[account_id] = {
+            'spotEnabled': True,
+            'qualifiedASGs': qualified_asgs,
+            'excludedASGs': excluded_asgs,
+            'eventBridgeRuleArn': rule_arn or '',
+            'enabledAt': datetime.now(timezone.utc).isoformat(),
+        }
+    else:
+        _deploy_interruption_rule(member_email, account_id, False)
+        enabled_accounts.pop(account_id, None)
+
+    spot_config['enabledAccounts'] = enabled_accounts
+    _save_spot_config(member_email, spot_config)
+
+    return create_response(200, {
+        'spotEnabled': spot_enabled,
+        'accountId': account_id,
+        'qualifiedASGs': qualified_asgs,
+        'excludedASGs': excluded_asgs,
+        'eventBridgeRuleArn': enabled_accounts.get(account_id, {}).get('eventBridgeRuleArn', ''),
+    })
+
+
+def _handle_spot_interruption_sns(record):
+    """Handle SNS event from EventBridge Spot interruption pipeline -- send email immediately."""
+    try:
+        sns_message = json.loads(record.get('Sns', {}).get('Message', '{}'))
+        detail = sns_message.get('detail', {})
+        instance_id = detail.get('instance-id', 'unknown')
+        account_id = sns_message.get('account', '')
+        event_type = sns_message.get('detail-type', 'Spot Interruption')
+        event_time = sns_message.get('time', datetime.now(timezone.utc).isoformat())
+
+        if not account_id:
+            logger.warning("Spot interruption event missing account ID")
+            return create_response(200, {'message': 'No account ID'})
+
+        accounts_table = dynamodb.Table(ACCOUNTS_TABLE_NAME)
+        resp = accounts_table.scan(
+            FilterExpression=boto3.dynamodb.conditions.Attr('accountId').eq(account_id),
+            Limit=10
+        )
+        items = resp.get('Items', [])
+        if not items:
+            logger.warning(f"No member found for account {account_id}")
+            return create_response(200, {'message': 'Unknown account'})
+
+        member_email = items[0].get('memberEmail', '')
+        if not member_email:
+            return create_response(200, {'message': 'No member email'})
+
+        # Dedup check
+        spot_config = _load_spot_config(member_email)
+        last_notified = spot_config.get('lastNotifiedInterruption', {})
+        if last_notified.get('instanceId') == instance_id and last_notified.get('timestamp'):
+            try:
+                delta = (datetime.now(timezone.utc) - datetime.fromisoformat(
+                    last_notified['timestamp'].replace('Z', '+00:00'))).total_seconds()
+                if delta < 300:
+                    logger.info(f"Dedup: skipping duplicate notification for {instance_id}")
+                    return create_response(200, {'message': 'Deduplicated'})
+            except Exception:
+                pass
+
+        # Get instance details
+        instance_type = 'unknown'
+        asg_name = 'N/A'
+        try:
+            creds = _assume_role_for_account(member_email, account_id)
+            ec2 = _make_client_from_creds('ec2', creds)
+            desc = ec2.describe_instances(InstanceIds=[instance_id])
+            reservations = desc.get('Reservations', [])
+            if reservations and reservations[0].get('Instances'):
+                inst = reservations[0]['Instances'][0]
+                instance_type = inst.get('InstanceType', 'unknown')
+                tags = {t['Key']: t['Value'] for t in inst.get('Tags', [])}
+                asg_name = tags.get('aws:autoscaling:groupName', 'N/A')
+        except Exception as e:
+            logger.warning(f"Could not describe instance {instance_id}: {e}")
+
+        if 'Rebalance' in event_type:
+            reason = 'Rebalance recommendation (early warning)'
+        elif detail.get('instance-action') == 'terminate':
+            reason = 'Capacity reclaimed by AWS (2-minute warning)'
+        else:
+            reason = event_type
+
+        email_html = _build_spot_email(
+            'Spot Instance Interruption Detected',
+            [
+                ('Account', account_id),
+                ('ASG', asg_name),
+                ('Instance', instance_id),
+                ('Type', instance_type),
+                ('Reason', reason),
+                ('Time', event_time),
+                ('Status', 'ASG is automatically launching a replacement instance'),
+            ],
+            footer='The ASG price-capacity-optimized strategy handles replacement automatically. No action required.'
+        )
+        _send_spot_email(member_email, f'Spot Interruption: {instance_id} in {asg_name}', email_html)
+
+        # Record in ledger
+        try:
+            ledger_table = dynamodb.Table(SPOT_LEDGER_TABLE_NAME)
+            now_iso = datetime.now(timezone.utc).isoformat()
+            ledger_table.put_item(Item={
+                'pk': f'{member_email}#{account_id}',
+                'sk': f'{now_iso}#{instance_id}#interruption',
+                'memberEmail': member_email,
+                'instanceId': instance_id,
+                'instanceType': instance_type,
+                'eventType': 'interrupted',
+                'interruptionType': 'rebalance' if 'Rebalance' in event_type else 'termination',
+                'asgName': asg_name,
+                'recordedAt': now_iso,
+                'ttl': int((datetime.now(timezone.utc) + timedelta(days=365)).timestamp()),
+            })
+        except Exception as e:
+            logger.warning(f"Failed to record interruption in ledger: {e}")
+
+        spot_config['lastNotifiedInterruption'] = {
+            'instanceId': instance_id,
+            'timestamp': datetime.now(timezone.utc).isoformat(),
+        }
+        _save_spot_config(member_email, spot_config)
+
+        return create_response(200, {'message': 'Interruption notification sent', 'instanceId': instance_id})
+
+    except Exception as e:
+        logger.error(f"Error handling Spot interruption SNS event: {e}")
+        return create_response(200, {'message': f'Error: {e}'})
+
+
+
+# ============================================================
+# Spot Instance Management -- Qualification, Planning, Migration
+# ============================================================
+
+def handle_spot_qualify(event):
+    """POST /members/spot/qualify -- Evaluate which ASGs are safe for Spot migration."""
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+    member_email = auth['sub']
+
+    try:
+        body = json.loads(event.get('body', '{}'))
+    except (json.JSONDecodeError, TypeError):
+        return create_error_response(400, 'InvalidRequest', 'Invalid request body')
+
+    account_id = body.get('accountId', '')
+    if not account_id or len(account_id) != 12:
+        return create_error_response(400, 'InvalidAccountId', 'Account ID must be 12 digits')
+
+    ownership = _verify_account_ownership(member_email, [account_id])
+    if isinstance(ownership, dict):
+        return ownership
+
+    try:
+        creds = _assume_role_for_account(member_email, account_id)
+        asg_client = _make_client_from_creds('autoscaling', creds)
+    except Exception as e:
+        return create_error_response(500, 'ServerError', f'Cannot assume role: {e}')
+
+    # List all ASGs in the account
+    all_asgs = []
+    paginator = asg_client.get_paginator('describe_auto_scaling_groups')
+    for page in paginator.paginate(MaxRecords=100):
+        all_asgs.extend(page.get('AutoScalingGroups', []))
+
+    db_keywords = {'database', 'db', 'rds', 'mongo', 'redis', 'elastic', 'mysql', 'postgres', 'sql'}
+    qualified = []
+    excluded = []
+    for asg in all_asgs:
+        name = asg['AutoScalingGroupName']
+        tags = {t['Key']: t['Value'] for t in asg.get('Tags', [])}
+        instances = asg.get('Instances', [])
+        reasons = []
+
+        name_lower = name.lower()
+        tag_str = ' '.join(tags.values()).lower()
+        if any(kw in name_lower or kw in tag_str for kw in db_keywords):
+            reasons.append('Database workload detected')
+
+        if tags.get('Stateful', '').lower() == 'true':
+            reasons.append('Stateful workload (tagged)')
+
+        if asg.get('MaxSize', 0) <= 1:
+            reasons.append('Single-instance ASG (no redundancy)')
+
+        mip = asg.get('MixedInstancesPolicy')
+        if mip:
+            dist = mip.get('InstancesDistribution', {})
+            if dist.get('SpotAllocationStrategy'):
+                reasons.append('Already using Spot allocation')
+
+        env = tags.get('Environment', tags.get('Env', '')).lower()
+        azs = set(i.get('AvailabilityZone', '') for i in instances)
+        is_prod = env in ('prod', 'production')
+        if is_prod and len(azs) < 2:
+            reasons.append('Production workload in single AZ')
+
+        if reasons:
+            excluded.append({
+                'asgName': name,
+                'status': 'excluded',
+                'reasons': reasons,
+                'risk': 'high',
+                'instanceCount': len(instances),
+            })
+        else:
+            risk = 'low' if not is_prod else 'medium'
+            itype = instances[0].get('InstanceType', 'unknown') if instances else 'unknown'
+            qualified.append({
+                'asgName': name,
+                'status': 'qualified',
+                'risk': risk,
+                'currentInstanceType': itype,
+                'instanceCount': len(instances),
+                'azCount': len(azs),
+            })
+
+    return create_response(200, {
+        'qualified': qualified,
+        'excluded': excluded,
+        'summary': f'{len(qualified)} qualified, {len(excluded)} excluded out of {len(all_asgs)} ASGs',
+    })
+
+
+def handle_spot_plan(event):
+    """POST /members/spot/plan -- Configure capacity mix and get savings estimate."""
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+    member_email = auth['sub']
+
+    try:
+        body = json.loads(event.get('body', '{}'))
+    except (json.JSONDecodeError, TypeError):
+        return create_error_response(400, 'InvalidRequest', 'Invalid request body')
+
+    account_id = body.get('accountId', '')
+    asg_name = body.get('asgName', '')
+    capacity_mix = body.get('capacityMix', {})
+
+    if not account_id or not asg_name:
+        return create_error_response(400, 'MissingParams', 'accountId and asgName are required')
+
+    ownership = _verify_account_ownership(member_email, [account_id])
+    if isinstance(ownership, dict):
+        return ownership
+
+    # Validate ASG is qualified
+    spot_config = _load_spot_config(member_email)
+    acct_config = spot_config.get('enabledAccounts', {}).get(account_id, {})
+    if not acct_config.get('spotEnabled'):
+        return create_error_response(400, 'SpotNotEnabled', 'Spot management not enabled for this account')
+    if asg_name in acct_config.get('excludedASGs', []):
+        return create_error_response(400, 'ASGExcluded', f'{asg_name} is in the excluded list')
+
+    try:
+        creds = _assume_role_for_account(member_email, account_id)
+        asg_client = _make_client_from_creds('autoscaling', creds)
+    except Exception as e:
+        return create_error_response(500, 'ServerError', f'Cannot assume role: {e}')
+
+    # Fetch current ASG config
+    try:
+        resp = asg_client.describe_auto_scaling_groups(AutoScalingGroupNames=[asg_name])
+        asgs = resp.get('AutoScalingGroups', [])
+        if not asgs:
+            return create_error_response(404, 'ASGNotFound', f'ASG {asg_name} not found')
+        asg = asgs[0]
+    except Exception as e:
+        return create_error_response(500, 'ServerError', f'Failed to describe ASG: {e}')
+
+    desired = asg.get('DesiredCapacity', 0)
+    min_size = asg.get('MinSize', 0)
+    max_size = asg.get('MaxSize', 0)
+    instances = asg.get('Instances', [])
+    current_type = instances[0].get('InstanceType', 'unknown') if instances else 'unknown'
+
+    # Parse capacity mix
+    import math
+    on_demand_base = capacity_mix.get('onDemandBaseCapacity', 2)
+    on_demand_pct = capacity_mix.get('onDemandPercentageAboveBase', 20)
+
+    if on_demand_base < 0 or on_demand_base > max_size:
+        return create_error_response(400, 'InvalidCapacityMix',
+            f'onDemandBaseCapacity must be 0-{max_size}')
+    if on_demand_pct < 0 or on_demand_pct > 100:
+        return create_error_response(400, 'InvalidCapacityMix',
+            'onDemandPercentageAboveBase must be 0-100')
+
+    # Calculate split
+    above_base = max(0, desired - on_demand_base)
+    on_demand_above = math.ceil(above_base * on_demand_pct / 100) if above_base > 0 else 0
+    on_demand_count = on_demand_base + on_demand_above
+    spot_count = max(0, desired - on_demand_count)
+    spot_pct = round(spot_count / desired * 100) if desired > 0 else 0
+
+    # Estimate savings (assume ~65% Spot discount on average)
+    spot_discount = 0.65
+    # Rough hourly rate lookup
+    hourly_rates = {
+        't3.micro': 0.0104, 't3.small': 0.0208, 't3.medium': 0.0416,
+        'm5.large': 0.096, 'm5.xlarge': 0.192, 'm5.2xlarge': 0.384,
+        'c5.large': 0.085, 'c5.xlarge': 0.17, 'r5.large': 0.126,
+    }
+    hourly_rate = hourly_rates.get(current_type, 0.10)
+    monthly_on_demand = desired * hourly_rate * 730
+    monthly_with_spot = (on_demand_count * hourly_rate + spot_count * hourly_rate * (1 - spot_discount)) * 730
+    estimated_savings = round(monthly_on_demand - monthly_with_spot, 2)
+
+    return create_response(200, {
+        'asgName': asg_name,
+        'currentConfig': {
+            'instanceType': current_type,
+            'desiredCapacity': desired,
+            'minSize': min_size,
+            'maxSize': max_size,
+            'instanceCount': len(instances),
+        },
+        'proposedConfig': {
+            'onDemandBaseCapacity': on_demand_base,
+            'onDemandPercentageAboveBase': on_demand_pct,
+            'onDemandInstances': on_demand_count,
+            'spotInstances': spot_count,
+            'spotPercentage': spot_pct,
+            'estimatedMonthlySavings': estimated_savings,
+            'estimatedSpotDiscount': round(spot_discount * 100),
+        },
+        'monthlyOnDemandCost': round(monthly_on_demand, 2),
+        'monthlyWithSpot': round(monthly_with_spot, 2),
+    })
+
+
+def handle_spot_migrate(event):
+    """POST /members/spot/migrate -- Execute, dry-run, or rollback a Spot migration."""
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+    member_email = auth['sub']
+
+    try:
+        body = json.loads(event.get('body', '{}'))
+    except (json.JSONDecodeError, TypeError):
+        return create_error_response(400, 'InvalidRequest', 'Invalid request body')
+
+    account_id = body.get('accountId', '')
+    asg_name = body.get('asgName', '')
+    action = body.get('action', 'dry-run')
+    capacity_mix = body.get('capacityMix', {})
+
+    if not account_id or not asg_name:
+        return create_error_response(400, 'MissingParams', 'accountId and asgName are required')
+    if action not in ('migrate', 'rollback', 'dry-run'):
+        return create_error_response(400, 'InvalidAction', 'action must be migrate, rollback, or dry-run')
+
+    ownership = _verify_account_ownership(member_email, [account_id])
+    if isinstance(ownership, dict):
+        return ownership
+
+    spot_config = _load_spot_config(member_email)
+    acct_config = spot_config.get('enabledAccounts', {}).get(account_id, {})
+    if not acct_config.get('spotEnabled'):
+        return create_error_response(400, 'SpotNotEnabled', 'Spot management not enabled for this account')
+    if asg_name in acct_config.get('excludedASGs', []):
+        return create_error_response(400, 'ASGExcluded', f'{asg_name} is in the excluded list')
+
+    try:
+        creds = _assume_role_for_account(member_email, account_id)
+        asg_client = _make_client_from_creds('autoscaling', creds)
+    except Exception as e:
+        return create_error_response(500, 'ServerError', f'Cannot assume role: {e}')
+
+    # Fetch current ASG
+    try:
+        resp = asg_client.describe_auto_scaling_groups(AutoScalingGroupNames=[asg_name])
+        asgs = resp.get('AutoScalingGroups', [])
+        if not asgs:
+            return create_error_response(404, 'ASGNotFound', f'ASG {asg_name} not found')
+        asg = asgs[0]
+    except Exception as e:
+        return create_error_response(500, 'ServerError', f'Failed to describe ASG: {e}')
+
+    if action == 'dry-run':
+        return _spot_dry_run(asg, capacity_mix)
+    elif action == 'rollback':
+        return _spot_rollback(member_email, account_id, asg_name, asg_client, spot_config)
+    else:
+        return _spot_execute(member_email, account_id, asg_name, asg, asg_client, capacity_mix, spot_config)
+
+
+def _spot_dry_run(asg, capacity_mix):
+    """Return proposed changes without modifying the ASG."""
+    import math
+    desired = asg.get('DesiredCapacity', 0)
+    on_demand_base = capacity_mix.get('onDemandBaseCapacity', 2)
+    on_demand_pct = capacity_mix.get('onDemandPercentageAboveBase', 20)
+    above_base = max(0, desired - on_demand_base)
+    on_demand_above = math.ceil(above_base * on_demand_pct / 100) if above_base > 0 else 0
+    on_demand_count = on_demand_base + on_demand_above
+    spot_count = max(0, desired - on_demand_count)
+
+    inst_req = capacity_mix.get('instanceRequirements', {})
+    vcpu = inst_req.get('vCpuCount', {})
+    mem = inst_req.get('memoryMiB', {})
+
+    changes = [
+        f'AllocationStrategy -> price-capacity-optimized',
+        f'OnDemandBaseCapacity: {on_demand_base}',
+        f'OnDemandPercentageAboveBase: {on_demand_pct}%',
+        f'Projected split: {on_demand_count} On-Demand + {spot_count} Spot',
+    ]
+    if vcpu:
+        changes.append(f'vCPU range: {vcpu.get("min", 2)}-{vcpu.get("max", 8)}')
+    if mem:
+        changes.append(f'Memory range: {mem.get("min", 4096)}-{mem.get("max", 16384)} MiB')
+
+    return create_response(200, {
+        'status': 'dry-run',
+        'asgName': asg['AutoScalingGroupName'],
+        'changes': changes,
+        'risks': [
+            'Spot interruptions may occur (mitigated by diversified instance pools)',
+            'Instance types may vary (mitigated by attribute-based selection)',
+        ],
+    })
+
+
+def _spot_execute(member_email, account_id, asg_name, asg, asg_client, capacity_mix, spot_config):
+    """Execute the Spot migration -- update ASG with MixedInstancesPolicy."""
+    # Snapshot current config
+    snapshot = {
+        'launchTemplate': asg.get('LaunchTemplate'),
+        'launchConfigurationName': asg.get('LaunchConfigurationName'),
+        'mixedInstancesPolicy': asg.get('MixedInstancesPolicy'),
+        'desiredCapacity': asg.get('DesiredCapacity'),
+        'minSize': asg.get('MinSize'),
+        'maxSize': asg.get('MaxSize'),
+    }
+
+    on_demand_base = capacity_mix.get('onDemandBaseCapacity', 2)
+    on_demand_pct = capacity_mix.get('onDemandPercentageAboveBase', 20)
+    inst_req = capacity_mix.get('instanceRequirements', {})
+
+    # Build MixedInstancesPolicy
+    lt_spec = asg.get('LaunchTemplate')
+    if not lt_spec:
+        # If using LaunchConfiguration, we cannot apply MixedInstancesPolicy directly
+        return create_error_response(400, 'NoLaunchTemplate',
+            'ASG uses a LaunchConfiguration. Migrate to a LaunchTemplate first.')
+
+    overrides = []
+    if inst_req:
+        override = {'InstanceRequirements': {
+            'VCpuCount': {
+                'Min': inst_req.get('vCpuCount', {}).get('min', 2),
+                'Max': inst_req.get('vCpuCount', {}).get('max', 8),
+            },
+            'MemoryMiB': {
+                'Min': inst_req.get('memoryMiB', {}).get('min', 4096),
+                'Max': inst_req.get('memoryMiB', {}).get('max', 16384),
+            },
+            'InstanceGenerations': ['current'],
+        }}
+        overrides.append(override)
+
+    mixed_policy = {
+        'LaunchTemplate': {
+            'LaunchTemplateSpecification': {
+                'LaunchTemplateId': lt_spec.get('LaunchTemplateId', ''),
+                'Version': lt_spec.get('Version', '$Default'),
+            },
+            'Overrides': overrides if overrides else [],
+        },
+        'InstancesDistribution': {
+            'OnDemandBaseCapacity': on_demand_base,
+            'OnDemandPercentageAboveBaseCapacity': on_demand_pct,
+            'SpotAllocationStrategy': 'price-capacity-optimized',
+        },
+    }
+
+    try:
+        asg_client.update_auto_scaling_group(
+            AutoScalingGroupName=asg_name,
+            MixedInstancesPolicy=mixed_policy,
+        )
+    except Exception as e:
+        return create_error_response(500, 'MigrationError', f'Failed to update ASG: {e}')
+
+    # Save snapshot and migration record
+    now_iso = datetime.now(timezone.utc).isoformat()
+    migrated_asgs = spot_config.get('migratedASGs', [])
+    migrated_asgs.append({
+        'accountId': account_id,
+        'asgName': asg_name,
+        'migratedAt': now_iso,
+        'previousConfig': snapshot,
+        'capacityMix': capacity_mix,
+        'rollbackExpiresAt': (datetime.now(timezone.utc) + timedelta(days=7)).isoformat(),
+    })
+    spot_config['migratedASGs'] = migrated_asgs
+    _save_spot_config(member_email, spot_config)
+
+    # Record in ledger
+    try:
+        ledger_table = dynamodb.Table(SPOT_LEDGER_TABLE_NAME)
+        ledger_table.put_item(Item={
+            'pk': f'{member_email}#{account_id}',
+            'sk': f'{now_iso}#{asg_name}#migrated',
+            'memberEmail': member_email,
+            'eventType': 'migrated',
+            'asgName': asg_name,
+            'recordedAt': now_iso,
+            'ttl': int((datetime.now(timezone.utc) + timedelta(days=365)).timestamp()),
+        })
+    except Exception as e:
+        logger.warning(f"Failed to record migration in ledger: {e}")
+
+    # Send migration email
+    import math
+    desired = asg.get('DesiredCapacity', 0)
+    above_base = max(0, desired - on_demand_base)
+    on_demand_above = math.ceil(above_base * on_demand_pct / 100) if above_base > 0 else 0
+    on_demand_count = on_demand_base + on_demand_above
+    spot_count = max(0, desired - on_demand_count)
+
+    email_html = _build_spot_email(
+        'Spot Migration Complete',
+        [
+            ('ASG', asg_name),
+            ('Account', account_id),
+            ('On-Demand', f'{on_demand_count} instances (base: {on_demand_base})'),
+            ('Spot', f'{spot_count} instances ({round(spot_count/desired*100) if desired else 0}%)'),
+            ('Strategy', 'price-capacity-optimized'),
+            ('Rollback', 'Available for 7 days'),
+        ],
+        footer='The ASG will gradually replace instances with the new capacity mix. Existing instances are not terminated immediately.'
+    )
+    _send_spot_email(member_email, f'Spot Migration Complete: {asg_name}', email_html)
+
+    return create_response(200, {
+        'status': 'migrated',
+        'asgName': asg_name,
+        'rollbackAvailable': True,
+        'rollbackExpiresAt': (datetime.now(timezone.utc) + timedelta(days=7)).isoformat(),
+    })
+
+
+def _spot_rollback(member_email, account_id, asg_name, asg_client, spot_config):
+    """Rollback a Spot migration to the pre-migration ASG config."""
+    migrated_asgs = spot_config.get('migratedASGs', [])
+    migration = None
+    migration_idx = -1
+    for i, m in enumerate(migrated_asgs):
+        if m.get('asgName') == asg_name and m.get('accountId') == account_id:
+            migration = m
+            migration_idx = i
+            break
+
+    if not migration:
+        return create_error_response(404, 'NotMigrated', f'{asg_name} has no migration record')
+
+    # Check rollback expiry
+    expires_at = migration.get('rollbackExpiresAt', '')
+    if expires_at:
+        try:
+            exp = datetime.fromisoformat(expires_at.replace('Z', '+00:00'))
+            if datetime.now(timezone.utc) > exp:
+                return create_error_response(400, 'RollbackExpired',
+                    'Rollback window has expired (7 days). Manual revert required.')
+        except Exception:
+            pass
+
+    prev = migration.get('previousConfig', {})
+
+    # Restore ASG
+    try:
+        update_kwargs = {'AutoScalingGroupName': asg_name}
+        if prev.get('desiredCapacity') is not None:
+            update_kwargs['DesiredCapacity'] = prev['desiredCapacity']
+        if prev.get('minSize') is not None:
+            update_kwargs['MinSize'] = prev['minSize']
+        if prev.get('maxSize') is not None:
+            update_kwargs['MaxSize'] = prev['maxSize']
+
+        # If there was a previous MixedInstancesPolicy, restore it; otherwise remove it
+        if prev.get('mixedInstancesPolicy'):
+            update_kwargs['MixedInstancesPolicy'] = prev['mixedInstancesPolicy']
+        elif prev.get('launchTemplate'):
+            # Remove MixedInstancesPolicy by setting LaunchTemplate directly
+            update_kwargs['LaunchTemplate'] = prev['launchTemplate']
+
+        asg_client.update_auto_scaling_group(**update_kwargs)
+    except Exception as e:
+        return create_error_response(500, 'RollbackError', f'Failed to rollback ASG: {e}')
+
+    # Remove from migrated list
+    migrated_asgs.pop(migration_idx)
+    spot_config['migratedASGs'] = migrated_asgs
+    _save_spot_config(member_email, spot_config)
+
+    # Record in ledger
+    try:
+        now_iso = datetime.now(timezone.utc).isoformat()
+        ledger_table = dynamodb.Table(SPOT_LEDGER_TABLE_NAME)
+        ledger_table.put_item(Item={
+            'pk': f'{member_email}#{account_id}',
+            'sk': f'{now_iso}#{asg_name}#rolled-back',
+            'memberEmail': member_email,
+            'eventType': 'rolled-back',
+            'asgName': asg_name,
+            'recordedAt': now_iso,
+            'ttl': int((datetime.now(timezone.utc) + timedelta(days=365)).timestamp()),
+        })
+    except Exception as e:
+        logger.warning(f"Failed to record rollback in ledger: {e}")
+
+    # Send rollback email
+    email_html = _build_spot_email(
+        'Spot Migration Rolled Back',
+        [
+            ('ASG', asg_name),
+            ('Account', account_id),
+            ('Status', 'Original configuration restored'),
+        ],
+        footer='The ASG has been restored to its pre-migration configuration.'
+    )
+    _send_spot_email(member_email, f'Spot Rollback Complete: {asg_name}', email_html)
+
+    return create_response(200, {
+        'status': 'rolled-back',
+        'asgName': asg_name,
+    })
+
+
+
+# ============================================================
+# Spot Instance Management -- Dashboard and Savings Ledger
+# ============================================================
+
+def _record_savings_entry(member_email, account_id, instance_id, instance_type,
+                          on_demand_rate, spot_rate, hours, asg_name, event_type):
+    """Record a savings entry in the SpotSavingsLedger."""
+    if spot_rate > on_demand_rate:
+        logger.warning(f"Spot rate {spot_rate} > On-Demand rate {on_demand_rate} -- skipping")
+        return
+    if event_type not in ('running', 'interrupted', 'migrated', 'rolled-back'):
+        logger.warning(f"Invalid event type: {event_type}")
+        return
+
+    savings_per_hour = on_demand_rate - spot_rate
+    total_savings = savings_per_hour * hours
+    gainshare = total_savings * 0.30
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    try:
+        ledger_table = dynamodb.Table(SPOT_LEDGER_TABLE_NAME)
+        ledger_table.put_item(Item={
+            'pk': f'{member_email}#{account_id}',
+            'sk': f'{now_iso}#{instance_id}',
+            'memberEmail': member_email,
+            'instanceId': instance_id,
+            'instanceType': instance_type,
+            'onDemandRate': str(on_demand_rate),
+            'spotRate': str(spot_rate),
+            'savingsPerHour': str(round(savings_per_hour, 6)),
+            'hours': str(hours),
+            'totalSavings': str(round(total_savings, 4)),
+            'gainshareAmount': str(round(gainshare, 4)),
+            'eventType': event_type,
+            'asgName': asg_name,
+            'recordedAt': now_iso,
+            'ttl': int((datetime.now(timezone.utc) + timedelta(days=365)).timestamp()),
+        })
+    except Exception as e:
+        logger.warning(f"Failed to record savings entry: {e}")
+
+
+def _calculate_esr(member_email, account_ids=None, period_days=30):
+    """Calculate Effective Savings Rate from the SpotSavingsLedger."""
+    try:
+        ledger_table = dynamodb.Table(SPOT_LEDGER_TABLE_NAME)
+        start_date = (datetime.now(timezone.utc) - timedelta(days=period_days)).isoformat()
+
+        # Query by member using GSI
+        resp = ledger_table.query(
+            IndexName='MemberTimeIndex',
+            KeyConditionExpression=boto3.dynamodb.conditions.Key('memberEmail').eq(member_email)
+                & boto3.dynamodb.conditions.Key('recordedAt').gte(start_date),
+        )
+        records = resp.get('Items', [])
+
+        total_od_cost = 0.0
+        total_spot_cost = 0.0
+        for r in records:
+            if r.get('eventType') == 'running':
+                od_rate = float(r.get('onDemandRate', 0))
+                sp_rate = float(r.get('spotRate', 0))
+                hrs = float(r.get('hours', 0))
+                total_od_cost += od_rate * hrs
+                total_spot_cost += sp_rate * hrs
+
+        if total_od_cost == 0:
+            return {'actual': 0.0, 'maximum': 0.0, 'esr': 0.0, 'gainshareAmount': 0.0}
+
+        actual_savings = total_od_cost - total_spot_cost
+        max_savings = total_od_cost * 0.90
+        esr = min(actual_savings / max_savings, 1.0) if max_savings > 0 else 0.0
+        gainshare = actual_savings * 0.30
+
+        return {
+            'actual': round(actual_savings, 2),
+            'maximum': round(max_savings, 2),
+            'esr': round(esr, 4),
+            'gainshareAmount': round(gainshare, 2),
+        }
+    except Exception as e:
+        logger.warning(f"ESR calculation failed: {e}")
+        return {'actual': 0.0, 'maximum': 0.0, 'esr': 0.0, 'gainshareAmount': 0.0}
+
+
+def handle_spot_dashboard(event):
+    """GET /members/spot/dashboard -- Spot operations dashboard data."""
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+    member_email = auth['sub']
+
+    spot_config = _load_spot_config(member_email)
+    migrated_asgs = spot_config.get('migratedASGs', [])
+    enabled_accounts = spot_config.get('enabledAccounts', {})
+
+    if not migrated_asgs and not enabled_accounts:
+        return create_response(200, {
+            'capacityRatio': {'onDemand': 0, 'spot': 0, 'total': 0, 'spotPercentage': 0},
+            'effectiveSavingsRate': {'actual': 0, 'maximum': 0, 'esr': 0, 'gainshareAmount': 0},
+            'interruptions': {'last30Days': 0},
+            'migratedASGs': [],
+            'spotEnabled': False,
+        })
+
+    # Aggregate capacity across migrated ASGs
+    total_on_demand = 0
+    total_spot = 0
+    asg_summaries = []
+    interruption_count = 0
+
+    for migration in migrated_asgs:
+        acct_id = migration.get('accountId', '')
+        asg_name_m = migration.get('asgName', '')
+        try:
+            creds = _assume_role_for_account(member_email, acct_id)
+            asg_client = _make_client_from_creds('autoscaling', creds)
+            resp = asg_client.describe_auto_scaling_groups(AutoScalingGroupNames=[asg_name_m])
+            asgs = resp.get('AutoScalingGroups', [])
+            if asgs:
+                asg = asgs[0]
+                instances = asg.get('Instances', [])
+                od = 0
+                sp = 0
+                for inst in instances:
+                    lifecycle = inst.get('LifecycleState', '')
+                    if lifecycle != 'InService':
+                        continue
+                    # Check if Spot by looking at instance lifecycle
+                    # ASG instances don't directly expose Spot -- check via EC2
+                    od += 1  # Default to on-demand, will adjust below
+
+                # Try to get actual Spot count via EC2
+                try:
+                    ec2 = _make_client_from_creds('ec2', creds)
+                    instance_ids = [i['InstanceId'] for i in instances if i.get('LifecycleState') == 'InService']
+                    if instance_ids:
+                        ec2_resp = ec2.describe_instances(InstanceIds=instance_ids[:50])
+                        od = 0
+                        sp = 0
+                        for res in ec2_resp.get('Reservations', []):
+                            for inst in res.get('Instances', []):
+                                if inst.get('InstanceLifecycle') == 'spot':
+                                    sp += 1
+                                else:
+                                    od += 1
+                except Exception:
+                    pass
+
+                total_on_demand += od
+                total_spot += sp
+
+                asg_summaries.append({
+                    'asgName': asg_name_m,
+                    'accountId': acct_id,
+                    'onDemand': od,
+                    'spot': sp,
+                    'total': od + sp,
+                    'spotPercentage': round(sp / (od + sp) * 100) if (od + sp) > 0 else 0,
+                    'migratedAt': migration.get('migratedAt', ''),
+                    'rollbackExpiresAt': migration.get('rollbackExpiresAt', ''),
+                    'status': 'active',
+                })
+        except Exception as e:
+            logger.warning(f"Failed to get ASG data for {asg_name_m}: {e}")
+            asg_summaries.append({
+                'asgName': asg_name_m,
+                'accountId': acct_id,
+                'status': 'error',
+                'error': str(e),
+            })
+
+    # Get interruption count from ledger
+    try:
+        ledger_table = dynamodb.Table(SPOT_LEDGER_TABLE_NAME)
+        start_date = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+        resp = ledger_table.query(
+            IndexName='MemberTimeIndex',
+            KeyConditionExpression=boto3.dynamodb.conditions.Key('memberEmail').eq(member_email)
+                & boto3.dynamodb.conditions.Key('recordedAt').gte(start_date),
+            FilterExpression=boto3.dynamodb.conditions.Attr('eventType').eq('interrupted'),
+        )
+        interruption_count = len(resp.get('Items', []))
+    except Exception:
+        pass
+
+    total = total_on_demand + total_spot
+    esr_data = _calculate_esr(member_email)
+
+    return create_response(200, {
+        'capacityRatio': {
+            'onDemand': total_on_demand,
+            'spot': total_spot,
+            'total': total,
+            'spotPercentage': round(total_spot / total * 100) if total > 0 else 0,
+        },
+        'effectiveSavingsRate': esr_data,
+        'interruptions': {'last30Days': interruption_count},
+        'migratedASGs': asg_summaries,
+        'spotEnabled': True,
+        'enabledAccounts': list(enabled_accounts.keys()),
+    })

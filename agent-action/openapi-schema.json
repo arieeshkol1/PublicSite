@@ -150,6 +150,24 @@
         ],
         "responses": {"200": {"description": "Pricing data with on-demand rates"}}
       }
+    },
+    "/get-spot-placement-score": {
+      "post": {
+        "operationId": "getSpotPlacementScore",
+        "summary": "Get Spot Instance placement scores by region/AZ",
+        "description": "Queries AWS Spot Placement Score API to assess Spot capacity availability. Returns scores 1-10 per region/AZ for the requested instance requirements. Use when the user asks about Spot availability or before recommending Spot migration.",
+        "parameters": [
+          {"name": "accountId", "in": "query", "required": true, "schema": {"type": "string"}, "description": "12-digit AWS account ID"},
+          {"name": "memberEmail", "in": "query", "required": true, "schema": {"type": "string"}, "description": "Member email for cross-account role assumption"},
+          {"name": "vCpuMin", "in": "query", "required": true, "schema": {"type": "integer"}, "description": "Minimum vCPU count (e.g., 2)"},
+          {"name": "vCpuMax", "in": "query", "required": true, "schema": {"type": "integer"}, "description": "Maximum vCPU count (e.g., 8)"},
+          {"name": "memoryMiBMin", "in": "query", "required": true, "schema": {"type": "integer"}, "description": "Minimum memory in MiB (e.g., 4096)"},
+          {"name": "memoryMiBMax", "in": "query", "required": true, "schema": {"type": "integer"}, "description": "Maximum memory in MiB (e.g., 16384)"},
+          {"name": "targetCapacity", "in": "query", "required": false, "schema": {"type": "integer"}, "description": "Target capacity (default: 10)"},
+          {"name": "regions", "in": "query", "required": false, "schema": {"type": "string"}, "description": "Comma-separated region codes (default: us-east-1,us-east-2,us-west-1,us-west-2)"}
+        ],
+        "responses": {"200": {"description": "Spot placement scores sorted by score descending with region/AZ breakdown"}}
+      }
     }
   }
 }
