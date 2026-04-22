@@ -5055,8 +5055,10 @@ async function _actRunScan(accountIds) {
         }
 
         // Build a map of returned cards by type (may have multiple accounts per type)
+        // Exclude optimization cards — those render in the Optimize section
         var cardsByType = {};
         (data.cards || []).forEach(function(card) {
+            if (card.tipId && typeof OPTIMIZE_TIP_IDS !== 'undefined' && OPTIMIZE_TIP_IDS[card.tipId]) return;
             if (!cardsByType[card.type]) cardsByType[card.type] = [];
             cardsByType[card.type].push(card);
         });
@@ -7180,11 +7182,9 @@ async function _runOptimizeScan() {
             return OPTIMIZE_TIP_IDS[f.tipId] && f.status === 'found';
         });
 
-        // Filter cards to optimization-only
+        // Filter cards to optimization-only (by tipId)
         var optCards = (data.cards || []).filter(function(c) {
-            // Cards from optimization checks: ec2-idle (rightsizing), advisory (spot/graviton), etc.
-            var t = c.type || '';
-            return t === 'ec2-idle' || t === 'advisory' || t === 'rds-idle';
+            return c.tipId && OPTIMIZE_TIP_IDS[c.tipId];
         });
 
         if (status) {

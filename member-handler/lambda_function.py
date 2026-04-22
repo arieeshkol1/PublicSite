@@ -2384,6 +2384,7 @@ def handle_actions_scan(event):
                             card = finding['cardData']
                             card['accountId'] = account_id
                             card['accountLabel'] = acct_label
+                            card['tipId'] = tip_id
                             all_cards.append(card)
                             total_savings += card.get('monthlySavings') or 0
                 except Exception as e:
