@@ -1,0 +1,1739 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'SlashMyBill - me-south-1 deployment (Bedrock + SES cross-region to us-east-1)'
+
+Parameters:
+  BillStorageBucket:
+    Type: String
+    Default: 'slashmybill-storage-me-south-1'
+    Description: Existing S3 bucket for bill storage and reports
+
+  BedrockModelId:
+    Type: String
+    Default: 'amazon.nova-lite-v1:0'
+    Description: Bedrock model ID for bill analysis
+
+  LambdaCodeBucket:
+    Type: String
+    Default: 'slashmybill-storage-me-south-1'
+    Description: S3 bucket containing Lambda deployment packages
+
+  BillAnalyzerCodeKey:
+    Type: String
+    Default: 'lambda-packages/bill-analyzer.zip'
+    Description: S3 key for Bill Analyzer Lambda deployment package
+
+  UploadHandlerCodeKey:
+    Type: String
+    Default: 'lambda-packages/upload-handler.zip'
+    Description: S3 key for Upload Handler Lambda deployment package
+
+  OTPHandlerCodeKey:
+    Type: String
+    Default: 'lambda-packages/otp-handler.zip'
+    Description: S3 key for OTP Handler Lambda deployment package
+
+  AdminHandlerCodeKey:
+    Type: String
+    Default: 'lambda-packages/admin-handler.zip'
+    Description: S3 key for Admin Handler Lambda deployment package
+
+  MemberHandlerCodeKey:
+    Type: String
+    Default: 'lambda-packages/member-handler.zip'
+    Description: S3 key for Member Handler Lambda deployment package
+
+  AdminUsername:
+    Type: String
+    NoEcho: true
+    Description: Admin panel username
+
+  AdminPasswordHash:
+    Type: String
+    NoEcho: true
+    Description: Bcrypt hash of admin password
+
+  JWTSecret:
+    Type: String
+    NoEcho: true
+    Description: Secret key for JWT signing (kept for admin panel; Cognito handles member auth)
+
+  BedrockRegion:
+    Type: String
+    Default: 'us-east-1'
+    Description: Region where Bedrock is available (cross-region from me-south-1)
+
+  SESRegion:
+    Type: String
+    Default: 'us-east-1'
+    Description: Region where SES is available (cross-region from me-south-1)
+
+  CognitoUserPoolId:
+    Type: String
+    Default: 'us-east-1_FlR2CmFu0'
+    Description: Cognito User Pool ID (stays in us-east-1, cross-region)
+
+  CognitoClientId:
+    Type: String
+    Default: '3shmdb332mm8sjheopdu9sg8o4'
+    Description: Cognito App Client ID (stays in us-east-1, cross-region)
+
+
+Resources:
+
+  # NOTE: Cognito UserPool (SlashMyBill-Members) and UserPoolClient are managed
+  # outside this stack — deployed directly. Do not add them here as the
+  # EarlyValidation hook blocks Cognito resources in stack updates.
+
+  # ============================================================
+  # DynamoDB Table - Leads (Contact Information)
+  # ============================================================
+  LeadsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: ViewMyBill-Leads
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: email
+          AttributeType: S
+        - AttributeName: timestamp
+          AttributeType: S
+      KeySchema:
+        - AttributeName: email
+          KeyType: HASH
+        - AttributeName: timestamp
+          KeyType: RANGE
+      SSESpecification:
+        SSEEnabled: true
+      Tags:
+        - Key: Project
+          Value: ViewMyBill
+
+  # ============================================================
+  # DynamoDB Table - Cost Optimization Tips (RAG Knowledge Base)
+  # ============================================================
+  CostOptimizationTipsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: ViewMyBill-CostOptimizationTips
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: service
+          AttributeType: S
+        - AttributeName: tipId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: service
+          KeyType: HASH
+        - AttributeName: tipId
+          KeyType: RANGE
+      SSESpecification:
+        SSEEnabled: true
+      Tags:
+        - Key: Project
+          Value: ViewMyBill
+
+  # ============================================================
+  # IAM Role - Bill Analyzer Lambda
+  # ============================================================
+  BillAnalyzerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: aws-bill-analyzer-viewmybill-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: S3ReadWriteAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:ListBucket
+                Resource:
+                  - !Sub 'arn:aws:s3:::${BillStorageBucket}'
+                  - !Sub 'arn:aws:s3:::${BillStorageBucket}/*'
+        - PolicyName: BedrockInvokeAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                Resource:
+                  - !Sub 'arn:aws:bedrock:${BedrockRegion}::foundation-model/${BedrockModelId}'
+        - PolicyName: DynamoDBReadAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:Query
+                  - dynamodb:BatchGetItem
+                Resource:
+                  - !GetAtt CostOptimizationTipsTable.Arn
+        - PolicyName: DynamoDBLeadsAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:Query
+                  - dynamodb:UpdateItem
+                  - dynamodb:PutItem
+                Resource:
+                  - !GetAtt LeadsTable.Arn
+        - PolicyName: LambdaSelfInvoke
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource:
+                  - !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:aws-bill-analyzer-viewmybill'
+      Tags:
+        - Key: Project
+          Value: ViewMyBill
+
+  # ============================================================
+  # IAM Role - Upload Handler Lambda
+  # ============================================================
+  UploadHandlerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: aws-bill-analyzer-upload-handler-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: S3WriteAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:PutObjectTagging
+                Resource:
+                  - !Sub 'arn:aws:s3:::${BillStorageBucket}/bills/*'
+        - PolicyName: DynamoDBLeadsWriteAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                Resource:
+                  - !GetAtt LeadsTable.Arn
+      Tags:
+        - Key: Project
+          Value: ViewMyBill
+
+  # ============================================================
+  # Lambda Function - Bill Analyzer
+  # ============================================================
+  BillAnalyzerFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: aws-bill-analyzer-viewmybill
+      Runtime: python3.12
+      Handler: lambda_function.lambda_handler
+      MemorySize: 1024
+      Timeout: 900
+      Role: !GetAtt BillAnalyzerRole.Arn
+      Code:
+        S3Bucket: !Ref LambdaCodeBucket
+        S3Key: !Ref BillAnalyzerCodeKey
+      Environment:
+        Variables:
+          BILL_STORAGE_BUCKET: !Ref BillStorageBucket
+          LEADS_TABLE_NAME: !Ref LeadsTable
+          TIPS_TABLE_NAME: !Ref CostOptimizationTipsTable
+          BEDROCK_MODEL_ID: !Ref BedrockModelId
+          BEDROCK_REGION: !Ref BedrockRegion
+          SES_REGION: !Ref SESRegion
+          MAX_TOKENS: '4000'
+          PRESIGNED_URL_EXPIRY: '86400'
+      Tags:
+        - Key: Project
+          Value: ViewMyBill
+
+  # ============================================================
+  # Lambda Function - Upload Handler
+  # ============================================================
+  UploadHandlerFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: aws-bill-analyzer-upload-handler
+      Runtime: python3.12
+      Handler: lambda_function.lambda_handler
+      MemorySize: 256
+      Timeout: 30
+      Role: !GetAtt UploadHandlerRole.Arn
+      Code:
+        S3Bucket: !Ref LambdaCodeBucket
+        S3Key: !Ref UploadHandlerCodeKey
+      Environment:
+        Variables:
+          BILL_STORAGE_BUCKET: !Ref BillStorageBucket
+          LEADS_TABLE_NAME: !Ref LeadsTable
+      Tags:
+        - Key: Project
+          Value: ViewMyBill
+
+  # ============================================================
+  # DynamoDB Table - OTP Codes
+  # ============================================================
+  OTPTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: ViewMyBill-OTP
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: email
+          AttributeType: S
+      KeySchema:
+        - AttributeName: email
+          KeyType: HASH
+      SSESpecification:
+        SSEEnabled: true
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+      Tags:
+        - Key: Project
+          Value: ViewMyBill
+
+  # ============================================================
+  # IAM Role - OTP Handler Lambda
+  # ============================================================
+  OTPHandlerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: aws-bill-analyzer-otp-handler-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: DynamoDBOTPAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:DeleteItem
+                Resource:
+                  - !GetAtt OTPTable.Arn
+        - PolicyName: SESSendEmail
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ses:SendEmail
+                  - ses:SendRawEmail
+                Resource:
+                  - !Sub 'arn:aws:ses:${AWS::Region}:${AWS::AccountId}:identity/*'
+        - PolicyName: CognitoMemberAuth
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - cognito-idp:AdminCreateUser
+                  - cognito-idp:AdminSetUserPassword
+                  - cognito-idp:AdminGetUser
+                  - cognito-idp:AdminDeleteUser
+                  - cognito-idp:AdminUpdateUserAttributes
+                  - cognito-idp:AdminInitiateAuth
+                  - cognito-idp:AdminRespondToAuthChallenge
+                  - cognito-idp:InitiateAuth
+                  - cognito-idp:RespondToAuthChallenge
+                  - cognito-idp:ForgotPassword
+                  - cognito-idp:ConfirmForgotPassword
+                  - cognito-idp:SignUp
+                  - cognito-idp:ConfirmSignUp
+                  - cognito-idp:ResendConfirmationCode
+                  - cognito-idp:GetUser
+                  - cognito-idp:ListUsers
+                Resource:
+                  - !Sub 'arn:aws:cognito-idp:${AWS::Region}:${AWS::AccountId}:userpool/*'
+      Tags:
+        - Key: Project
+          Value: ViewMyBill
+
+  # ============================================================
+  # Lambda Function - OTP Handler
+  # ============================================================
+  OTPHandlerFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: aws-bill-analyzer-otp-handler
+      Runtime: python3.12
+      Handler: lambda_function.lambda_handler
+      MemorySize: 128
+      Timeout: 30
+      Role: !GetAtt OTPHandlerRole.Arn
+      Code:
+        S3Bucket: !Ref LambdaCodeBucket
+        S3Key: !Ref OTPHandlerCodeKey
+      Environment:
+        Variables:
+          OTP_TABLE_NAME: !Ref OTPTable
+          SES_SENDER_EMAIL: 'noreply@eshkolai.com'
+      Tags:
+        - Key: Project
+          Value: ViewMyBill
+
+  # ============================================================
+  # DynamoDB Table - Member Portal Members
+  # ============================================================
+  MembersTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: MemberPortal-Members
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: email
+          AttributeType: S
+      KeySchema:
+        - AttributeName: email
+          KeyType: HASH
+      SSESpecification:
+        SSEEnabled: true
+      Tags:
+        - Key: Project
+          Value: ViewMyBill
+
+  # ============================================================
+  # DynamoDB Table - Member Portal Accounts
+  # ============================================================
+  AccountsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: MemberPortal-Accounts
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: memberEmail
+          AttributeType: S
+        - AttributeName: accountId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: memberEmail
+          KeyType: HASH
+        - AttributeName: accountId
+          KeyType: RANGE
+      SSESpecification:
+        SSEEnabled: true
+      Tags:
+        - Key: Project
+          Value: ViewMyBill
+
+  # ============================================================
+  # DynamoDB Table - Agent Feedback
+  # ============================================================
+  AgentFeedbackTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: MemberPortal-AgentFeedback
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: memberEmail
+          AttributeType: S
+        - AttributeName: interactionId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: memberEmail
+          KeyType: HASH
+        - AttributeName: interactionId
+          KeyType: RANGE
+      SSESpecification:
+        SSEEnabled: true
+      Tags:
+        - Key: Project
+          Value: ViewMyBill
+
+  # ============================================================
+  # DynamoDB Table - Business Metrics (Unit Economics)
+  # ============================================================
+  BusinessMetricsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: MemberPortal-BusinessMetrics
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: memberEmail
+          AttributeType: S
+        - AttributeName: metricMonth
+          AttributeType: S
+      KeySchema:
+        - AttributeName: memberEmail
+          KeyType: HASH
+        - AttributeName: metricMonth
+          KeyType: RANGE
+      SSESpecification:
+        SSEEnabled: true
+      Tags:
+        - Key: Project
+          Value: ViewMyBill
+
+  # ============================================================
+  # SES EmailIdentity removed - SES not available in me-south-1
+
+
+  # ============================================================
+  # SES EmailIdentity — managed by CloudFormation (do not remove)
+  SESEmailIdentity:
+    Type: AWS::SES::EmailIdentity
+    Properties:
+      EmailIdentity: eshkolai.com
+      DkimSigningAttributes:
+        NextSigningKeyLength: RSA_2048_BIT
+
+  # ============================================================
+  # API Gateway - HTTP API
+  # ============================================================
+  ViewMyBillApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: ViewMyBill-API
+      ProtocolType: HTTP
+      Description: HTTP API for ViewMyBill bill analysis tool
+      CorsConfiguration:
+        AllowOrigins:
+          - 'https://eshkolai.com'
+          - 'https://www.eshkolai.com'
+          - 'https://slashmycloudbill.com'
+          - 'https://www.slashmycloudbill.com'
+        AllowMethods:
+          - GET
+          - POST
+          - PUT
+          - DELETE
+          - OPTIONS
+        AllowHeaders:
+          - Content-Type
+          - X-Filename
+          - Authorization
+        MaxAge: 86400
+      Tags:
+        Project: ViewMyBill
+
+  # ============================================================
+  # API Gateway - Stage (auto-deploy)
+  # ============================================================
+  ApiStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      StageName: '$default'
+      AutoDeploy: true
+      Tags:
+        Project: ViewMyBill
+
+  # ============================================================
+  # API Gateway - Lambda Integrations
+  # ============================================================
+  UploadIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !GetAtt UploadHandlerFunction.Arn
+      PayloadFormatVersion: '2.0'
+
+  AnalyzeIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !GetAtt BillAnalyzerFunction.Arn
+      PayloadFormatVersion: '2.0'
+
+  # ============================================================
+  # API Gateway - Routes
+  # ============================================================
+  UploadRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'POST /upload'
+      Target: !Sub 'integrations/${UploadIntegration}'
+
+  AnalyzeRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'POST /analyze'
+      Target: !Sub 'integrations/${AnalyzeIntegration}'
+
+  # ============================================================
+  # API Gateway - OTP Integration and Routes
+  # ============================================================
+  OTPIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !GetAtt OTPHandlerFunction.Arn
+      PayloadFormatVersion: '2.0'
+
+  SendOTPRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'POST /send-otp'
+      Target: !Sub 'integrations/${OTPIntegration}'
+
+  VerifyOTPRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'POST /verify-otp'
+      Target: !Sub 'integrations/${OTPIntegration}'
+
+  # ============================================================
+  # Lambda Permissions - Allow API Gateway to invoke Lambdas
+  # ============================================================
+  UploadHandlerInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref UploadHandlerFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ViewMyBillApi}/*'
+
+  BillAnalyzerInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref BillAnalyzerFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ViewMyBillApi}/*'
+
+  OTPHandlerInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref OTPHandlerFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ViewMyBillApi}/*'
+
+  # ============================================================
+  # IAM Role - Admin Handler Lambda
+  # ============================================================
+  AdminHandlerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: aws-bill-analyzer-admin-handler-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: DynamoDBLeadsCRUDAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:Scan
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                Resource:
+                  - !GetAtt LeadsTable.Arn
+        - PolicyName: DynamoDBTipsCRUDAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:Scan
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                Resource:
+                  - !GetAtt CostOptimizationTipsTable.Arn
+        - PolicyName: S3ResultsReadAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                Resource:
+                  - !Sub 'arn:aws:s3:::${BillStorageBucket}/reports/*'
+        - PolicyName: DynamoDBFeedbackReadAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:Scan
+                Resource:
+                  - !GetAtt AgentFeedbackTable.Arn
+        - PolicyName: DynamoDBMembersReadAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:Scan
+                Resource:
+                  - !GetAtt MembersTable.Arn
+      Tags:
+        - Key: Project
+          Value: ViewMyBill
+
+  # ============================================================
+  # Lambda Function - Admin Handler
+  # ============================================================
+  AdminHandlerFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: aws-bill-analyzer-admin-api
+      Runtime: python3.12
+      Handler: lambda_function.lambda_handler
+      MemorySize: 128
+      Timeout: 30
+      Role: !GetAtt AdminHandlerRole.Arn
+      Code:
+        S3Bucket: !Ref LambdaCodeBucket
+        S3Key: !Ref AdminHandlerCodeKey
+      Environment:
+        Variables:
+          ADMIN_USERNAME: !Ref AdminUsername
+          ADMIN_PASSWORD_HASH: !Ref AdminPasswordHash
+          JWT_SECRET: !Ref JWTSecret
+          LEADS_TABLE_NAME: !Ref LeadsTable
+          TIPS_TABLE_NAME: !Ref CostOptimizationTipsTable
+          STORAGE_BUCKET: !Ref BillStorageBucket
+          FEEDBACK_TABLE_NAME: !Ref AgentFeedbackTable
+      Tags:
+        - Key: Project
+          Value: ViewMyBill
+
+  # ============================================================
+  # API Gateway - Admin Integration and Routes
+  # ============================================================
+  AdminIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !GetAtt AdminHandlerFunction.Arn
+      PayloadFormatVersion: '2.0'
+
+  AdminLoginRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'POST /admin/login'
+      Target: !Sub 'integrations/${AdminIntegration}'
+
+  AdminGetLeadsRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'GET /admin/leads'
+      Target: !Sub 'integrations/${AdminIntegration}'
+
+  AdminUpdateLeadRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'PUT /admin/leads'
+      Target: !Sub 'integrations/${AdminIntegration}'
+
+  AdminDeleteLeadRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'DELETE /admin/leads'
+      Target: !Sub 'integrations/${AdminIntegration}'
+
+  AdminBulkDeleteLeadsRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'POST /admin/leads/bulk-delete'
+      Target: !Sub 'integrations/${AdminIntegration}'
+
+  AdminSyncBillingRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'POST /admin/leads/sync-billing'
+      Target: !Sub 'integrations/${AdminIntegration}'
+
+  AdminGetTipsRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'GET /admin/tips'
+      Target: !Sub 'integrations/${AdminIntegration}'
+
+  AdminCreateTipRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'POST /admin/tips'
+      Target: !Sub 'integrations/${AdminIntegration}'
+
+  AdminUpdateTipRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'PUT /admin/tips'
+      Target: !Sub 'integrations/${AdminIntegration}'
+
+  AdminDeleteTipRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'DELETE /admin/tips'
+      Target: !Sub 'integrations/${AdminIntegration}'
+
+  AdminGetFeedbackRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'GET /admin/feedback'
+      Target: !Sub 'integrations/${AdminIntegration}'
+
+  AdminGetSubscribersRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'GET /admin/subscribers'
+      Target: !Sub 'integrations/${AdminIntegration}'
+
+  AdminUpdateSubscriberTierRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'PUT /admin/subscribers/tier'
+      Target: !Sub 'integrations/${AdminIntegration}'
+
+  AdminAddSubscriberTokensRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'POST /admin/subscribers/tokens'
+      Target: !Sub 'integrations/${AdminIntegration}'
+
+  AdminHandlerInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref AdminHandlerFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ViewMyBillApi}/*'
+
+  # ============================================================
+  # IAM Role - Member Handler Lambda
+  # ============================================================
+  MemberHandlerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: aws-bill-analyzer-member-handler-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: DynamoDBMembersCRUDAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                Resource:
+                  - !GetAtt MembersTable.Arn
+        - PolicyName: DynamoDBAccountsCRUDAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                Resource:
+                  - !GetAtt AccountsTable.Arn
+        - PolicyName: DynamoDBOTPAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:DeleteItem
+                Resource:
+                  - !GetAtt OTPTable.Arn
+        - PolicyName: SESSendEmail
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ses:SendEmail
+                  - ses:SendRawEmail
+                Resource:
+                  - !Sub 'arn:aws:ses:${AWS::Region}:${AWS::AccountId}:identity/*'
+        - PolicyName: STSAssumeRole
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sts:AssumeRole
+                Resource: '*'
+        - PolicyName: S3TemplateUpload
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                Resource:
+                  - !Sub 'arn:aws:s3:::${BillStorageBucket}/cf-templates/*'
+        - PolicyName: BedrockInvokeAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                  - bedrock:InvokeAgent
+                Resource:
+                  - !Sub 'arn:aws:bedrock:${BedrockRegion}::foundation-model/${BedrockModelId}'
+                  - !Sub 'arn:aws:bedrock:${BedrockRegion}::foundation-model/amazon.nova-lite-v1:0'
+                  - !Sub 'arn:aws:bedrock:${BedrockRegion}:${AWS::AccountId}:agent/*'
+                  - !Sub 'arn:aws:bedrock:${BedrockRegion}:${AWS::AccountId}:agent-alias/*'
+        - PolicyName: DynamoDBTipsAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                Resource:
+                  - !GetAtt CostOptimizationTipsTable.Arn
+        - PolicyName: DynamoDBFeedbackAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                Resource:
+                  - !GetAtt AgentFeedbackTable.Arn
+        - PolicyName: DynamoDBBusinessMetricsAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:Query
+                Resource:
+                  - !GetAtt BusinessMetricsTable.Arn
+        - PolicyName: AWSPricingRead
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - pricing:GetProducts
+                  - pricing:DescribeServices
+                Resource: '*'
+        - PolicyName: CognitoMemberAuth
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - cognito-idp:AdminGetUser
+                  - cognito-idp:AdminCreateUser
+                  - cognito-idp:AdminSetUserPassword
+                  - cognito-idp:AdminDeleteUser
+                  - cognito-idp:AdminUpdateUserAttributes
+                  - cognito-idp:AdminInitiateAuth
+                  - cognito-idp:AdminRespondToAuthChallenge
+                  - cognito-idp:InitiateAuth
+                  - cognito-idp:RespondToAuthChallenge
+                  - cognito-idp:SignUp
+                  - cognito-idp:ConfirmSignUp
+                  - cognito-idp:ForgotPassword
+                  - cognito-idp:ConfirmForgotPassword
+                  - cognito-idp:ResendConfirmationCode
+                  - cognito-idp:GetUser
+                  - cognito-idp:ListUsers
+                Resource: !Sub 'arn:aws:cognito-idp:us-east-1:${AWS::AccountId}:userpool/${CognitoUserPoolId}'
+        - PolicyName: EventBridgeSchedulerAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - scheduler:CreateSchedule
+                  - scheduler:DeleteSchedule
+                  - scheduler:UpdateSchedule
+                  - scheduler:GetSchedule
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - iam:PassRole
+                Resource:
+                  - !GetAtt EventBridgeSchedulerRole.Arn
+        - PolicyName: DynamoDBSpotLedgerAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:Query
+                  - dynamodb:BatchWriteItem
+                Resource:
+                  - !GetAtt SpotSavingsLedgerTable.Arn
+                  - !Sub '${SpotSavingsLedgerTable.Arn}/index/*'
+        - PolicyName: SNSSpotPublish
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sns:Publish
+                Resource:
+                  - !Ref SpotInterruptionsTopic
+      Tags:
+        - Key: Project
+          Value: ViewMyBill
+
+  # ============================================================
+  # Lambda Function - Member Handler
+  # ============================================================
+  MemberHandlerFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: aws-bill-analyzer-member-api
+      Runtime: python3.12
+      Handler: lambda_function.lambda_handler
+      MemorySize: 512
+      Timeout: 120
+      Role: !GetAtt MemberHandlerRole.Arn
+      Code:
+        S3Bucket: !Ref LambdaCodeBucket
+        S3Key: !Ref MemberHandlerCodeKey
+      Environment:
+        Variables:
+          JWT_SECRET: !Ref JWTSecret
+          MEMBERS_TABLE_NAME: !Ref MembersTable
+          ACCOUNTS_TABLE_NAME: !Ref AccountsTable
+          OTP_TABLE_NAME: !Ref OTPTable
+          SES_SENDER_EMAIL: 'noreply@eshkolai.com'
+          PLATFORM_ACCOUNT_ID: '991105135552'
+          STORAGE_BUCKET: !Ref BillStorageBucket
+          TIPS_TABLE_NAME: !Ref CostOptimizationTipsTable
+          BEDROCK_MODEL_ID: !Ref BedrockModelId
+          BEDROCK_REGION: !Ref BedrockRegion
+          SES_REGION: !Ref SESRegion
+          BEDROCK_AGENT_ID: 'IDG5VJGUOZ5W'
+          BEDROCK_AGENT_ALIAS_ID: '9VYFXAEEH6'
+          FEEDBACK_TABLE_NAME: !Ref AgentFeedbackTable
+          BUSINESS_METRICS_TABLE: !Ref BusinessMetricsTable
+          COGNITO_USER_POOL_ID: !Ref CognitoUserPoolId
+          COGNITO_CLIENT_ID: !Ref CognitoClientId
+          SPOT_LEDGER_TABLE_NAME: !Ref SpotSavingsLedgerTable
+          SPOT_SNS_TOPIC_ARN: !Ref SpotInterruptionsTopic
+      Tags:
+        - Key: Project
+          Value: ViewMyBill
+
+  # ============================================================
+  # IAM Role - Agent Action Lambda
+  # ============================================================
+  AgentActionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: SlashMyBill-AgentAction-Role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: STSAssumeRole
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sts:AssumeRole
+                Resource: '*'
+        - PolicyName: DynamoDBTipsRead
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                Resource:
+                  - !GetAtt CostOptimizationTipsTable.Arn
+        - PolicyName: AWSPricingRead
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - pricing:GetProducts
+                  - pricing:DescribeServices
+                  - pricing:GetAttributeValues
+                Resource: '*'
+      Tags:
+        - Key: Project
+          Value: ViewMyBill
+
+  # ============================================================
+  # Lambda Function - Agent Action Group
+  # ============================================================
+  AgentActionFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: SlashMyBill-AgentAction
+      Runtime: python3.12
+      Handler: lambda_function.lambda_handler
+      MemorySize: 256
+      Timeout: 120
+      Role: !GetAtt AgentActionRole.Arn
+      Code:
+        S3Bucket: !Ref LambdaCodeBucket
+        S3Key: 'lambda-packages/agent-action.zip'
+      Environment:
+        Variables:
+          PLATFORM_ACCOUNT_ID: '991105135552'
+          TIPS_TABLE_NAME: !Ref CostOptimizationTipsTable
+      Tags:
+        - Key: Project
+          Value: ViewMyBill
+
+  AgentActionBedrockPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref AgentActionFunction
+      Action: lambda:InvokeFunction
+      Principal: bedrock.amazonaws.com
+      SourceAccount: !Ref AWS::AccountId
+
+  # ============================================================
+  # API Gateway - Member Integration and Routes
+  # ============================================================
+  MemberIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !GetAtt MemberHandlerFunction.Arn
+      PayloadFormatVersion: '2.0'
+
+  MemberRegisterRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'POST /members/register'
+      Target: !Sub 'integrations/${MemberIntegration}'
+
+  MemberLoginRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'POST /members/login'
+      Target: !Sub 'integrations/${MemberIntegration}'
+
+  MemberResetPasswordRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'POST /members/reset-password'
+      Target: !Sub 'integrations/${MemberIntegration}'
+
+  MemberGetAccountsRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'GET /members/accounts'
+      Target: !Sub 'integrations/${MemberIntegration}'
+
+  MemberAddAccountRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'POST /members/accounts'
+      Target: !Sub 'integrations/${MemberIntegration}'
+
+  MemberEditAccountRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'PUT /members/accounts'
+      Target: !Sub 'integrations/${MemberIntegration}'
+
+  MemberDeleteAccountRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'DELETE /members/accounts'
+      Target: !Sub 'integrations/${MemberIntegration}'
+
+  MemberTemplateRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'POST /members/accounts/template'
+      Target: !Sub 'integrations/${MemberIntegration}'
+
+  MemberTestRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'POST /members/accounts/test'
+      Target: !Sub 'integrations/${MemberIntegration}'
+
+  MemberReorderRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'POST /members/accounts/reorder'
+      Target: !Sub 'integrations/${MemberIntegration}'
+
+  MemberExecuteRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'POST /members/accounts/execute'
+      Target: !Sub 'integrations/${MemberIntegration}'
+
+  MemberAIQueryRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'POST /members/accounts/ai-query'
+      Target: !Sub 'integrations/${MemberIntegration}'
+
+  MemberAIFeedbackRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'POST /members/accounts/ai-feedback'
+      Target: !Sub 'integrations/${MemberIntegration}'
+
+  MemberDashboardGetRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'GET /members/dashboard'
+      Target: !Sub 'integrations/${MemberIntegration}'
+
+  MemberDashboardDataRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'GET /members/dashboard-data'
+      Target: !Sub 'integrations/${MemberIntegration}'
+
+  MemberDashboardAddRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'POST /members/dashboard'
+      Target: !Sub 'integrations/${MemberIntegration}'
+
+  MemberDashboardDeleteRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'DELETE /members/dashboard'
+      Target: !Sub 'integrations/${MemberIntegration}'
+
+  MemberGetAllocationRulesRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'GET /members/allocation-rules'
+      Target: !Sub 'integrations/${MemberIntegration}'
+
+  MemberSaveAllocationRulesRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'POST /members/allocation-rules'
+      Target: !Sub 'integrations/${MemberIntegration}'
+
+  MemberGetBusinessMetricsRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'GET /members/business-metrics'
+      Target: !Sub 'integrations/${MemberIntegration}'
+
+  MemberSaveBusinessMetricsRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'POST /members/business-metrics'
+      Target: !Sub 'integrations/${MemberIntegration}'
+
+  MemberActScanRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'POST /members/actions/scan'
+      Target: !Sub 'integrations/${MemberIntegration}'
+
+  MemberActLastScanRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'GET /members/actions/last-scan'
+      Target: !Sub 'integrations/${MemberIntegration}'
+
+  MemberActExecuteRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'POST /members/actions/execute'
+      Target: !Sub 'integrations/${MemberIntegration}'
+
+  MemberActBrowseBucketRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'POST /members/actions/browse-bucket'
+      Target: !Sub 'integrations/${MemberIntegration}'
+
+  MemberAddTokensRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'POST /member/add-tokens'
+      Target: !Sub 'integrations/${MemberIntegration}'
+
+  MemberTagScanRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'POST /members/tags/scan'
+      Target: !Sub 'integrations/${MemberIntegration}'
+
+  MemberTagApplyRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'POST /members/tags/apply'
+      Target: !Sub 'integrations/${MemberIntegration}'
+
+  MemberScheduleAnalyzeRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'POST /members/schedules/analyze'
+      Target: !Sub 'integrations/${MemberIntegration}'
+
+  MemberGetSchedulesRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'GET /members/schedules'
+      Target: !Sub 'integrations/${MemberIntegration}'
+
+  MemberUpdateScheduleStatusRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'PUT /members/schedules/status'
+      Target: !Sub 'integrations/${MemberIntegration}'
+
+  MemberUpdateTierRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'POST /member/update-tier'
+      Target: !Sub 'integrations/${MemberIntegration}'
+
+  MemberHealthcheckScanRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'POST /members/healthcheck/scan'
+      Target: !Sub 'integrations/${MemberIntegration}'
+
+  MemberHealthcheckFixRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'POST /members/healthcheck/fix'
+      Target: !Sub 'integrations/${MemberIntegration}'
+
+  MemberHandlerInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref MemberHandlerFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ViewMyBillApi}/*'
+
+  # ============================================================
+  # IAM Role - Scheduler Executor Lambda
+  # ============================================================
+  SchedulerExecutorRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: slashmybill-scheduler-executor-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: STSAssumeRole
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sts:AssumeRole
+                Resource:
+                  - 'arn:aws:iam::*:role/SlashMyBill-*'
+        - PolicyName: DynamoDBMembersReadWrite
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:Query
+                Resource:
+                  - !GetAtt MembersTable.Arn
+      Tags:
+        - Key: Project
+          Value: ViewMyBill
+
+  # ============================================================
+  # Lambda Function - Scheduler Executor
+  # ============================================================
+  SchedulerExecutorFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: slashmybill-scheduler-executor
+      Runtime: python3.12
+      Handler: lambda_function.lambda_handler
+      MemorySize: 512
+      Timeout: 300
+      Role: !GetAtt SchedulerExecutorRole.Arn
+      Code:
+        S3Bucket: !Ref LambdaCodeBucket
+        S3Key: 'lambda-packages/scheduler-executor.zip'
+      Environment:
+        Variables:
+          MEMBERS_TABLE_NAME: !Ref MembersTable
+      Tags:
+        - Key: Project
+          Value: ViewMyBill
+
+  # ============================================================
+  # IAM Role - EventBridge Scheduler Execution Role
+  # ============================================================
+  EventBridgeSchedulerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: SlashMyBill-EventBridge-Scheduler-Role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: scheduler.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: InvokeSchedulerExecutor
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource:
+                  - !GetAtt SchedulerExecutorFunction.Arn
+      Tags:
+        - Key: Project
+          Value: ViewMyBill
+
+  # ============================================================
+  # S3 Lifecycle Rule for reports/ prefix
+  # NOTE: The bucket aws-bill-analyzer-storage-991105135552 already exists
+  # and is NOT managed by this stack. Apply this lifecycle rule manually:
+  #
+  #   aws s3api put-bucket-lifecycle-configuration \
+  #     --bucket aws-bill-analyzer-storage-991105135552 \
+  #     --lifecycle-configuration '{
+  #       "Rules": [
+  #         {
+  #           "ID": "DeleteReportsAfter1Day",
+  #           "Filter": { "Prefix": "reports/" },
+  #           "Status": "Enabled",
+  #           "Expiration": { "Days": 1 }
+  #         }
+  #       ]
+  #     }'
+  #
+  # ============================================================
+
+  # ============================================================
+  # DynamoDB Table - Spot Savings Ledger (Gainshare Billing)
+  # ============================================================
+  SpotSavingsLedgerTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: SpotSavingsLedger
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+        - AttributeName: memberEmail
+          AttributeType: S
+        - AttributeName: recordedAt
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+      GlobalSecondaryIndexes:
+        - IndexName: MemberTimeIndex
+          KeySchema:
+            - AttributeName: memberEmail
+              KeyType: HASH
+            - AttributeName: recordedAt
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+      SSESpecification:
+        SSEEnabled: true
+      Tags:
+        - Key: Project
+          Value: ViewMyBill
+
+  # ============================================================
+  # SNS Topic - Spot Interruption Notifications (Push Pipeline)
+  # ============================================================
+  SpotInterruptionsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: SlashMyBill-SpotInterruptions
+      Tags:
+        - Key: Project
+          Value: ViewMyBill
+
+  SpotInterruptionsTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      Topics:
+        - !Ref SpotInterruptionsTopic
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AllowEventBridgeCrossAccountPublish
+            Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sns:Publish
+            Resource: !Ref SpotInterruptionsTopic
+
+  SpotInterruptionsSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref SpotInterruptionsTopic
+      Protocol: lambda
+      Endpoint: !GetAtt MemberHandlerFunction.Arn
+
+  SpotInterruptionsSNSPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref MemberHandlerFunction
+      Action: lambda:InvokeFunction
+      Principal: sns.amazonaws.com
+      SourceArn: !Ref SpotInterruptionsTopic
+
+
+Outputs:
+  ApiEndpoint:
+    Description: API Gateway endpoint URL
+    Value: !GetAtt ViewMyBillApi.ApiEndpoint
+    Export:
+      Name: ViewMyBill-ApiEndpoint
+
+  CognitoUserPoolId:
+    Description: Cognito User Pool ID (managed outside this stack)
+    Value: 'See AWS Cognito console - SlashMyBill-Members pool'
+
+  CognitoClientId:
+    Description: Cognito App Client ID (managed outside this stack)
+    Value: 'See AWS Cognito console - SlashMyBill-MemberPortal client'
+
+  BillAnalyzerFunctionArn:
+    Description: Bill Analyzer Lambda function ARN
+    Value: !GetAtt BillAnalyzerFunction.Arn
+
+  UploadHandlerFunctionArn:
+    Description: Upload Handler Lambda function ARN
+    Value: !GetAtt UploadHandlerFunction.Arn
+
+  CostOptimizationTipsTableName:
+    Description: DynamoDB table name for cost optimization tips
+    Value: !Ref CostOptimizationTipsTable
+
+  CostOptimizationTipsTableArn:
+    Description: DynamoDB table ARN
+    Value: !GetAtt CostOptimizationTipsTable.Arn
+
+  ApiId:
+    Description: API Gateway ID
+    Value: !Ref ViewMyBillApi
+
+  LeadsTableName:
+    Description: DynamoDB table name for leads
+    Value: !Ref LeadsTable
+
+  LeadsTableArn:
+    Description: DynamoDB Leads table ARN
+    Value: !GetAtt LeadsTable.Arn
+
+  OTPTableName:
+    Description: DynamoDB OTP table name
+    Value: !Ref OTPTable
+
+  OTPTableArn:
+    Description: DynamoDB OTP table ARN
+    Value: !GetAtt OTPTable.Arn
+
+  OTPHandlerFunctionArn:
+    Description: OTP Handler Lambda function ARN
+    Value: !GetAtt OTPHandlerFunction.Arn
+
+  AdminHandlerFunctionArn:
+    Description: Admin Handler Lambda function ARN
+    Value: !GetAtt AdminHandlerFunction.Arn
+
+  MembersTableName:
+    Description: DynamoDB table name for member portal members
+    Value: !Ref MembersTable
+
+  MembersTableArn:
+    Description: DynamoDB Members table ARN
+    Value: !GetAtt MembersTable.Arn
+
+  AccountsTableName:
+    Description: DynamoDB table name for member portal accounts
+    Value: !Ref AccountsTable
+
+  AccountsTableArn:
+    Description: DynamoDB Accounts table ARN
+    Value: !GetAtt AccountsTable.Arn
+
+  MemberHandlerFunctionArn:
+    Description: Member Handler Lambda function ARN
+    Value: !GetAtt MemberHandlerFunction.Arn
+
+  AgentFeedbackTableName:
+    Description: DynamoDB table name for agent feedback
+    Value: !Ref AgentFeedbackTable
+
+  AgentFeedbackTableArn:
+    Description: DynamoDB Agent Feedback table ARN
+    Value: !GetAtt AgentFeedbackTable.Arn
+
+  SpotSavingsLedgerTableName:
+    Description: DynamoDB table name for Spot savings ledger
+    Value: !Ref SpotSavingsLedgerTable
+
+  SpotSavingsLedgerTableArn:
+    Description: DynamoDB Spot Savings Ledger table ARN
+    Value: !GetAtt SpotSavingsLedgerTable.Arn
+
+  SpotInterruptionsTopicArn:
+    Description: SNS topic ARN for Spot interruption notifications
+    Value: !Ref SpotInterruptionsTopic
