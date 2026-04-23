@@ -661,6 +661,9 @@ jobs:
   deploy-ecs-me-central-1:
     runs-on: ubuntu-latest
     needs: deploy
+    permissions:
+      id-token: write
+      contents: read
     steps:
       - uses: actions/checkout@v4
 
@@ -668,9 +671,9 @@ jobs:
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: arn:aws:iam::991105135552:role/GitHubActionsRole
-          aws-region: me-central-1
+          aws-region: us-east-1
 
-      - name: Deploy ECS billing test stack
+      - name: Deploy ECS billing test stack to me-central-1
         continue-on-error: true
         run: |
           echo "Deploying ECS/Fargate billing test to me-central-1..."
