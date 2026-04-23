@@ -1,5 +1,6 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: 'ViewMyBill - AWS Bill Analysis Tool infrastructure'
+# v23 - Spot management + ECS billing test
 
 Parameters:
   BillStorageBucket:
