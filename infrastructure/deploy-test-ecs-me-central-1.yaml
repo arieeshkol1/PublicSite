@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'SlashMyBill Test ECS/Fargate in me-central-1 (billing test)'
+Description: 'SlashMyBill Test ECS/Fargate in me-central-1 (billing test) v2'
 
 Resources:
 
