@@ -11519,9 +11519,13 @@ def handle_server_analyze(event):
 
     needed_mem = current_mem
     if mem_avg is not None and mem_avg < 40 and current_mem > 2:
-        needed_mem = max(2, current_mem // 2)
+        needed_mem = max(1, current_mem // 2)
+    elif mem_avg is None and cpu_avg < 20 and current_mem > 1:
+        # No memory data + low CPU = likely over-provisioned, allow smaller memory
+        needed_mem = max(0.5, current_mem // 4)
 
     recommendations = _get_rightsizing_candidates(ec2, current_type, needed_vcpu, needed_mem, current_hourly, arch)
+    logger.info(f"Resize analysis: {current_type} ({current_vcpu}vCPU, {current_mem}GB, ${current_hourly}/hr) -> needed: {needed_vcpu}vCPU, {needed_mem}GB. Found {len(recommendations)} recommendations.")
 
     # Get free tier usage for this account
     free_tier = {}
