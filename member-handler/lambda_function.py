@@ -11249,10 +11249,9 @@ def _get_rightsizing_candidates(ec2_client, current_type, needed_vcpu, needed_me
             resp = ec2_client.describe_instance_types(
                 Filters=[
                     {'Name': 'instance-type', 'Values': [f'{fam}.*']},
-                    {'Name': 'vcpu-info.default-vcpus', 'Values': [str(v) for v in range(max(1, needed_vcpu), needed_vcpu * 4 + 1)]},
                     {'Name': 'current-generation', 'Values': ['true']},
                 ],
-                MaxResults=20,
+                MaxResults=40,
             )
             for t in resp.get('InstanceTypes', []):
                 itype = t['InstanceType']
@@ -11262,7 +11261,12 @@ def _get_rightsizing_candidates(ec2_client, current_type, needed_vcpu, needed_me
                 mem_mb = t.get('MemoryInfo', {}).get('SizeInMiB', 0)
                 mem_gb = round(mem_mb / 1024, 1)
                 archs = t.get('ProcessorInfo', {}).get('SupportedArchitectures', [])
+                # Must meet minimum needs
                 if vcpu < needed_vcpu or mem_gb < needed_mem:
+                    continue
+                # Skip very large instances (more than 4x current vCPU)
+                current_vcpu = int(current_type.split('.')[1].replace('nano','1').replace('micro','1').replace('small','1').replace('medium','2').replace('large','2').replace('xlarge','4').replace('2xlarge','8').replace('4xlarge','16')) if '.' in current_type else 2
+                if vcpu > max(4, needed_vcpu * 4):
                     continue
                 is_graviton = 'arm64' in archs and 'x86_64' not in archs
                 net_perf = t.get('NetworkInfo', {}).get('NetworkPerformance', '')
@@ -11289,9 +11293,16 @@ def _get_rightsizing_candidates(ec2_client, current_type, needed_vcpu, needed_me
         except Exception:
             pass
 
-    # Get prices for candidates (batch -- limit to top 15 by vcpu to avoid too many API calls)
+    # Get prices for candidates — sort smallest first, limit API calls
     candidates.sort(key=lambda c: (c['vcpu'], c['memory']))
-    candidates = candidates[:15]
+    # Deduplicate by instance type
+    seen = set()
+    deduped = []
+    for c in candidates:
+        if c['instanceType'] not in seen:
+            seen.add(c['instanceType'])
+            deduped.append(c)
+    candidates = deduped[:25]
 
     result = []
     for c in candidates:
@@ -11324,7 +11335,7 @@ def _get_rightsizing_candidates(ec2_client, current_type, needed_vcpu, needed_me
         result.append(rec)
 
     result.sort(key=lambda r: r['monthlySavings'], reverse=True)
-    return result[:5]
+    return result[:10]
 
 
 
