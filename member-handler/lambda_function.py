@@ -11288,28 +11288,34 @@ def _get_rightsizing_candidates(ec2_client, current_type, needed_vcpu, needed_me
             'processorManufacturer': 'AWS' if is_graviton else 'Intel/AMD',
             'clockSpeed': 0,
         }
-        if is_graviton and arch == 'x86_64':
-            rec['warning'] = 'Graviton (ARM) -- verify your AMI supports ARM architecture'
         result.append(rec)
 
     result.sort(key=lambda r: r['monthlyRate'])
 
-    # Enrich top 10 with real specs from DescribeInstanceTypes
-    for rec in result[:10]:
+    # Enrich top 10 with real specs from DescribeInstanceTypes and filter incompatible
+    enriched = []
+    for rec in result[:15]:
         try:
             resp = ec2_client.describe_instance_types(InstanceTypes=[rec['instanceType']])
             if resp.get('InstanceTypes'):
                 t = resp['InstanceTypes'][0]
+                supported_archs = t.get('ProcessorInfo', {}).get('SupportedArchitectures', [])
+                # Filter: only show types compatible with the source architecture
+                if arch not in supported_archs:
+                    continue
                 rec['networkPerformance'] = t.get('NetworkInfo', {}).get('NetworkPerformance', '')
                 rec['ebsOptimized'] = t.get('EbsInfo', {}).get('EbsOptimizedSupport', '')
                 rec['ebsMaxIops'] = t.get('EbsInfo', {}).get('EbsOptimizedInfo', {}).get('MaximumIops', 0)
                 rec['ebsMaxBandwidthMbps'] = t.get('EbsInfo', {}).get('EbsOptimizedInfo', {}).get('MaximumBandwidthInMbps', 0)
                 rec['processorManufacturer'] = t.get('ProcessorInfo', {}).get('Manufacturer', rec['processorManufacturer'])
                 rec['clockSpeed'] = t.get('ProcessorInfo', {}).get('SustainedClockSpeedInGhz', 0)
+                rec['hypervisor'] = t.get('Hypervisor', '')
+                rec['currentGeneration'] = t.get('CurrentGeneration', True)
         except Exception:
             pass
+        enriched.append(rec)
 
-    return result[:10]
+    return enriched[:10]
 
 
 
@@ -11579,6 +11585,18 @@ def handle_server_resize(event):
 
     if current_type == new_type:
         return create_error_response(400, 'SameType', f'Instance is already {new_type}')
+
+    # Validate architecture compatibility
+    try:
+        current_arch = inst.get('Architecture', 'x86_64')
+        new_type_resp = ec2.describe_instance_types(InstanceTypes=[new_type])
+        if new_type_resp.get('InstanceTypes'):
+            supported_archs = new_type_resp['InstanceTypes'][0].get('ProcessorInfo', {}).get('SupportedArchitectures', [])
+            if current_arch not in supported_archs:
+                return create_error_response(400, 'ArchMismatch',
+                    f'Cannot resize {current_arch} instance to {new_type} (supports: {", ".join(supported_archs)}). Choose a compatible instance type.')
+    except Exception:
+        pass
 
     steps = []
 
