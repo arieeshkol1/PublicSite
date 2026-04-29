@@ -377,6 +377,7 @@ jobs:
             "GET /members/spot/dashboard"
             "POST /members/servers/analyze"
             "POST /members/servers/resize"
+            "POST /members/servers/list-instances"
           )
           for ROUTE in "${MEMBER_ROUTES[@]}"; do
             aws apigatewayv2 create-route --api-id $API_ID --route-key "$ROUTE" --target "integrations/$MEMBER_INT" 2>/dev/null || true

@@ -143,6 +143,7 @@ def lambda_handler(event, context):
         'GET /members/spot/dashboard': handle_spot_dashboard,
         'POST /members/servers/analyze': handle_server_analyze,
         'POST /members/servers/resize': handle_server_resize,
+        'POST /members/servers/list-instances': handle_server_list_instances,
     }
 
     handler = routes.get(route_key)
@@ -11480,3 +11481,51 @@ def handle_server_resize(event):
             pass
         steps.append({'step': f'Error: {e}', 'status': 'failed'})
         return create_error_response(500, 'ResizeError', f'Resize failed: {e}. Instance may need manual restart.')
+
+
+
+def handle_server_list_instances(event):
+    """POST /members/servers/list-instances -- List EC2 instances for resize wizard."""
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+    member_email = auth['sub']
+
+    try:
+        body = json.loads(event.get('body', '{}'))
+    except (json.JSONDecodeError, TypeError):
+        return create_error_response(400, 'InvalidRequest', 'Invalid request body')
+
+    account_id = body.get('accountId', '')
+    if not account_id:
+        return create_error_response(400, 'MissingParams', 'accountId required')
+
+    ownership = _verify_account_ownership(member_email, [account_id])
+    if isinstance(ownership, dict):
+        return ownership
+
+    try:
+        creds = _assume_role_for_account(member_email, account_id)
+        ec2 = _make_client_from_creds('ec2', creds)
+    except Exception as e:
+        return create_error_response(500, 'ServerError', f'Cannot assume role: {e}')
+
+    instances = []
+    try:
+        paginator = ec2.get_paginator('describe_instances')
+        for page in paginator.paginate(Filters=[{'Name': 'instance-state-name', 'Values': ['running', 'stopped']}]):
+            for res in page.get('Reservations', []):
+                for inst in res.get('Instances', []):
+                    tags = {t['Key']: t['Value'] for t in inst.get('Tags', [])}
+                    instances.append({
+                        'instanceId': inst['InstanceId'],
+                        'name': tags.get('Name', inst['InstanceId']),
+                        'instanceType': inst.get('InstanceType', ''),
+                        'state': inst.get('State', {}).get('Name', ''),
+                        'az': inst.get('Placement', {}).get('AvailabilityZone', ''),
+                        'inASG': 'aws:autoscaling:groupName' in tags,
+                    })
+    except Exception as e:
+        return create_error_response(500, 'ServerError', f'Failed to list instances: {e}')
+
+    return create_response(200, {'instances': instances, 'count': len(instances)})

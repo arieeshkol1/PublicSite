@@ -7438,31 +7438,22 @@ async function _resizeLoadInstances() {
     instSelect.innerHTML = '<option value="">Loading instances...</option>';
     try {
         // Use the existing scan data or fetch EC2 instances
-        var data = await api('POST', '/members/accounts/execute', {
-            accountId: acctSelect.value,
-            command: 'list-ec2'
+        var data = await api('POST', '/members/servers/list-instances', {
+            accountId: acctSelect.value
         });
         instSelect.innerHTML = '<option value="">Select instance...</option>';
-        var instances = data.instances || data.results || [];
-        if (Array.isArray(instances)) {
-            instances.forEach(function(inst) {
-                var iid = inst.InstanceId || inst.instanceId || '';
-                var itype = inst.InstanceType || inst.instanceType || '';
-                var state = (inst.State && inst.State.Name) || inst.state || '';
-                var name = '';
-                (inst.Tags || []).forEach(function(t) { if (t.Key === 'Name') name = t.Value; });
-                if (!name) name = iid;
-                var opt = document.createElement('option');
-                opt.value = iid;
-                opt.textContent = name + ' (' + itype + ', ' + state + ')';
-                instSelect.appendChild(opt);
-            });
-        }
+        var instances = data.instances || [];
+        instances.forEach(function(inst) {
+            var opt = document.createElement('option');
+            opt.value = inst.instanceId;
+            opt.textContent = inst.name + ' (' + inst.instanceType + ', ' + inst.state + ')' + (inst.inASG ? ' [ASG]' : '');
+            instSelect.appendChild(opt);
+        });
         if (instSelect.options.length <= 1) {
-            instSelect.innerHTML = '<option value="">No EC2 instances found</option>';
+            if (instances.length === 0) instSelect.innerHTML = '<option value="">No EC2 instances in this account</option>';
         }
     } catch(e) {
-        instSelect.innerHTML = '<option value="">Error loading instances</option>';
+        instSelect.innerHTML = '<option value="">No instances found</option>';
     }
 }
 
