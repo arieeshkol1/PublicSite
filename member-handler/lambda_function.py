@@ -11232,130 +11232,82 @@ def _get_instance_price(instance_type, region='us-east-1'):
 
 
 def _get_rightsizing_candidates(ec2_client, current_type, needed_vcpu, needed_mem, current_hourly, arch='x86_64'):
-    """Find cheaper instance types that meet the workload needs using ec2:DescribeInstanceTypes."""
-    candidates = []
-    # Query instance types in the same family and nearby families
-    family = current_type.split('.')[0] if '.' in current_type else ''
-    # Search families: same family, t3, m5, m6i, c5, c6g, m6g, r5
-    families_to_check = set()
-    if family:
-        families_to_check.add(family)
-    families_to_check.update(['t3', 't3a', 'm5', 'm5a', 'm6i', 'c5', 'c5a', 'c6i', 'r5', 'r5a'])
-    # Add Graviton families
-    families_to_check.update(['t4g', 'm6g', 'm7g', 'c6g', 'c7g', 'r6g', 'r7g'])
-
-    for fam in families_to_check:
-        try:
-            resp = ec2_client.describe_instance_types(
-                Filters=[
-                    {'Name': 'instance-type', 'Values': [f'{fam}.*']},
-                    {'Name': 'current-generation', 'Values': ['true']},
-                ],
-                MaxResults=40,
-            )
-            for t in resp.get('InstanceTypes', []):
-                itype = t['InstanceType']
-                if itype == current_type:
-                    continue
-                vcpu = t.get('VCpuInfo', {}).get('DefaultVCpus', 0)
-                mem_mb = t.get('MemoryInfo', {}).get('SizeInMiB', 0)
-                mem_gb = round(mem_mb / 1024, 1)
-                archs = t.get('ProcessorInfo', {}).get('SupportedArchitectures', [])
-                # Must meet minimum needs
-                if vcpu < needed_vcpu or mem_gb < needed_mem:
-                    continue
-                # Skip very large instances (more than 4x current vCPU)
-                current_vcpu = int(current_type.split('.')[1].replace('nano','1').replace('micro','1').replace('small','1').replace('medium','2').replace('large','2').replace('xlarge','4').replace('2xlarge','8').replace('4xlarge','16')) if '.' in current_type else 2
-                if vcpu > max(4, needed_vcpu * 4):
-                    continue
-                is_graviton = 'arm64' in archs and 'x86_64' not in archs
-                net_perf = t.get('NetworkInfo', {}).get('NetworkPerformance', '')
-                ebs_opt = t.get('EbsInfo', {}).get('EbsOptimizedSupport', '')
-                ebs_iops = t.get('EbsInfo', {}).get('EbsOptimizedInfo', {}).get('MaximumIops', 0)
-                ebs_bw = t.get('EbsInfo', {}).get('EbsOptimizedInfo', {}).get('MaximumBandwidthInMbps', 0)
-                burstable = t.get('BurstablePerformanceSupported', False)
-                proc_mfr = t.get('ProcessorInfo', {}).get('Manufacturer', '')
-                clock = t.get('ProcessorInfo', {}).get('SustainedClockSpeedInGhz', 0)
-                candidates.append({
-                    'instanceType': itype,
-                    'vcpu': vcpu,
-                    'memory': mem_gb,
-                    'isGraviton': is_graviton,
-                    'archs': archs,
-                    'networkPerformance': net_perf,
-                    'ebsOptimized': ebs_opt,
-                    'ebsMaxIops': ebs_iops,
-                    'ebsMaxBandwidthMbps': ebs_bw,
-                    'burstable': burstable,
-                    'processorManufacturer': proc_mfr,
-                    'clockSpeed': clock,
-                })
-        except Exception:
-            pass
-
-    # Get prices for candidates — sort smallest first, limit API calls
-    candidates.sort(key=lambda c: (c['vcpu'], c['memory']))
-    # Deduplicate by instance type
-    seen = set()
-    deduped = []
-    for c in candidates:
-        if c['instanceType'] not in seen:
-            seen.add(c['instanceType'])
-            deduped.append(c)
-    # Only price the 8 smallest candidates to stay within API Gateway timeout
-    candidates = deduped[:8]
-
-    # Fallback pricing for common types (used when Pricing API is slow/unavailable)
-    _FALLBACK_PRICES = {
-        't3.nano': 0.0052, 't3.micro': 0.0104, 't3.small': 0.0208, 't3.medium': 0.0416,
-        't3.large': 0.0832, 't3.xlarge': 0.1664, 't3a.nano': 0.0047, 't3a.micro': 0.0094,
-        't3a.small': 0.0188, 't3a.medium': 0.0376, 't3a.large': 0.0752,
-        't4g.nano': 0.0042, 't4g.micro': 0.0084, 't4g.small': 0.0168, 't4g.medium': 0.0336,
-        't4g.large': 0.0672, 'm5.large': 0.096, 'm5.xlarge': 0.192, 'm5a.large': 0.086,
-        'm6i.large': 0.096, 'm6g.medium': 0.0385, 'm6g.large': 0.077, 'm7g.medium': 0.0408,
-        'm7g.large': 0.0816, 'c5.large': 0.085, 'c5a.large': 0.077, 'c6i.large': 0.085,
-        'c6g.medium': 0.034, 'c6g.large': 0.068, 'c7g.medium': 0.0361, 'c7g.large': 0.0725,
-        'r5.large': 0.126, 'r5a.large': 0.113, 'r6g.large': 0.1008, 'r7g.large': 0.1071,
-    }
+    """Find cheaper instance types using a known pricing catalog + DescribeInstanceTypes for specs."""
+    # Known instance types with pricing (us-east-1 on-demand)
+    CATALOG = [
+        ('t3.nano',    2, 0.5, 0.0052, False), ('t3.micro',   2, 1,   0.0104, False),
+        ('t3.small',   2, 2,   0.0208, False), ('t3.medium',  2, 4,   0.0416, False),
+        ('t3.large',   2, 8,   0.0832, False), ('t3.xlarge',  4, 16,  0.1664, False),
+        ('t3a.nano',   2, 0.5, 0.0047, False), ('t3a.micro',  2, 1,   0.0094, False),
+        ('t3a.small',  2, 2,   0.0188, False), ('t3a.medium', 2, 4,   0.0376, False),
+        ('t3a.large',  2, 8,   0.0752, False),
+        ('t4g.nano',   2, 0.5, 0.0042, True),  ('t4g.micro',  2, 1,   0.0084, True),
+        ('t4g.small',  2, 2,   0.0168, True),  ('t4g.medium', 2, 4,   0.0336, True),
+        ('t4g.large',  2, 8,   0.0672, True),
+        ('m5.large',   2, 8,   0.096,  False),  ('m5.xlarge',  4, 16,  0.192,  False),
+        ('m5a.large',  2, 8,   0.086,  False),
+        ('m6i.large',  2, 8,   0.096,  False),  ('m6i.xlarge', 4, 16,  0.192,  False),
+        ('m6g.medium', 1, 4,   0.0385, True),   ('m6g.large',  2, 8,   0.077,  True),
+        ('m7g.medium', 1, 4,   0.0408, True),   ('m7g.large',  2, 8,   0.0816, True),
+        ('c5.large',   2, 4,   0.085,  False),  ('c5.xlarge',  4, 8,   0.17,   False),
+        ('c5a.large',  2, 4,   0.077,  False),
+        ('c6i.large',  2, 4,   0.085,  False),
+        ('c6g.medium', 1, 2,   0.034,  True),   ('c6g.large',  2, 4,   0.068,  True),
+        ('c7g.medium', 1, 2,   0.0361, True),   ('c7g.large',  2, 4,   0.0725, True),
+        ('r5.large',   2, 16,  0.126,  False),  ('r5a.large',  2, 16,  0.113,  False),
+        ('r6g.large',  2, 16,  0.1008, True),   ('r7g.large',  2, 16,  0.1071, True),
+    ]
 
     result = []
-    for c in candidates:
-        # Try Pricing API first, fall back to hardcoded table
-        price = _FALLBACK_PRICES.get(c['instanceType'], 0)
-        try:
-            api_price = _get_instance_price(c['instanceType'])
-            if api_price > 0:
-                price = api_price
-        except Exception:
-            pass
-        if price <= 0 or price >= current_hourly:
+    for itype, vcpu, mem, hourly, is_graviton in CATALOG:
+        if itype == current_type:
             continue
-        monthly = round(price * 730, 2)
+        if vcpu < needed_vcpu or mem < needed_mem:
+            continue
+        if hourly >= current_hourly:
+            continue
+        monthly = round(hourly * 730, 2)
         current_monthly = round(current_hourly * 730, 2)
         savings = round(current_monthly - monthly, 2)
         pct = round(savings / current_monthly * 100) if current_monthly > 0 else 0
         rec = {
-            'instanceType': c['instanceType'],
-            'vcpu': c['vcpu'],
-            'memory': c['memory'],
-            'hourlyRate': price,
+            'instanceType': itype,
+            'vcpu': vcpu,
+            'memory': mem,
+            'hourlyRate': hourly,
             'monthlyRate': monthly,
             'monthlySavings': savings,
             'savingsPercent': pct,
-            'isGraviton': c['isGraviton'],
-            'networkPerformance': c.get('networkPerformance', ''),
-            'ebsOptimized': c.get('ebsOptimized', ''),
-            'ebsMaxIops': c.get('ebsMaxIops', 0),
-            'ebsMaxBandwidthMbps': c.get('ebsMaxBandwidthMbps', 0),
-            'burstable': c.get('burstable', False),
-            'processorManufacturer': c.get('processorManufacturer', ''),
-            'clockSpeed': c.get('clockSpeed', 0),
+            'isGraviton': is_graviton,
+            'networkPerformance': '',
+            'ebsOptimized': '',
+            'ebsMaxIops': 0,
+            'ebsMaxBandwidthMbps': 0,
+            'burstable': itype.startswith('t'),
+            'processorManufacturer': 'AWS' if is_graviton else 'Intel/AMD',
+            'clockSpeed': 0,
         }
-        if c['isGraviton'] and arch == 'x86_64':
+        if is_graviton and arch == 'x86_64':
             rec['warning'] = 'Graviton (ARM) -- verify your AMI supports ARM architecture'
         result.append(rec)
 
-    result.sort(key=lambda r: r['monthlySavings'], reverse=True)
+    result.sort(key=lambda r: r['monthlyRate'])
+
+    # Enrich top 10 with real specs from DescribeInstanceTypes
+    for rec in result[:10]:
+        try:
+            resp = ec2_client.describe_instance_types(InstanceTypes=[rec['instanceType']])
+            if resp.get('InstanceTypes'):
+                t = resp['InstanceTypes'][0]
+                rec['networkPerformance'] = t.get('NetworkInfo', {}).get('NetworkPerformance', '')
+                rec['ebsOptimized'] = t.get('EbsInfo', {}).get('EbsOptimizedSupport', '')
+                rec['ebsMaxIops'] = t.get('EbsInfo', {}).get('EbsOptimizedInfo', {}).get('MaximumIops', 0)
+                rec['ebsMaxBandwidthMbps'] = t.get('EbsInfo', {}).get('EbsOptimizedInfo', {}).get('MaximumBandwidthInMbps', 0)
+                rec['processorManufacturer'] = t.get('ProcessorInfo', {}).get('Manufacturer', rec['processorManufacturer'])
+                rec['clockSpeed'] = t.get('ProcessorInfo', {}).get('SustainedClockSpeedInGhz', 0)
+        except Exception:
+            pass
+
     return result[:10]
 
 
