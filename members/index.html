@@ -328,9 +328,7 @@
                         <button class="act-nav-btn" data-section="scheduler" onclick="_switchActSection('scheduler')">
                             <span style="font-size:1.2em;">⏰</span> Scheduler
                         </button>
-                        <button class="act-nav-btn" data-section="clusters" onclick="_switchActSection('clusters')">
-                            <span style="font-size:1.2em;">🖥️</span> Server Clusters
-                        </button>
+
                     </div>
 
                     <!-- Right Content Area -->
@@ -368,8 +366,8 @@
                                 <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
                                     <span style="font-size:1.5em;">⚡</span>
                                     <div>
-                                        <div style="font-weight:700;color:#1f2937;font-size:1.05em;">Spot Instance Migration</div>
-                                        <div style="color:#6b7280;font-size:0.85em;">Migrate ASGs to use Spot Instances with price-capacity-optimized strategy (up to 90% savings)</div>
+                                        <div style="font-weight:700;color:#1f2937;font-size:1.05em;">Optimize Auto Scaling Group using Spot Instances</div>
+                                        <div style="color:#6b7280;font-size:0.85em;">Convert ASGs to use Spot Instances with price-capacity-optimized strategy (up to 90% savings)</div>
                                     </div>
                                 </div>
                                 <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">
@@ -409,6 +407,43 @@
                                 <div id="spot-migrate-result" style="margin-top:12px;font-size:0.85em;"></div>
                             </div>
 
+
+                            <!-- Resize Server Card -->
+                            <div style="background:linear-gradient(135deg,#f0fdf4,#dcfce7);border:1px solid #bbf7d0;border-radius:12px;padding:20px;margin-bottom:20px;">
+                                <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;">
+                                    <span style="font-size:1.5em;">&#128202;</span>
+                                    <div>
+                                        <div style="font-weight:700;color:#1f2937;font-size:1.05em;">Resize a Server</div>
+                                        <div style="color:#6b7280;font-size:0.85em;">Analyze usage, find cheaper instance types, and resize with one click</div>
+                                    </div>
+                                </div>
+                                <div id="resize-step-1-opt">
+                                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">
+                                        <div>
+                                            <label style="font-size:0.8em;color:#6b7280;">Account</label>
+                                            <select id="resize-account" style="width:100%;padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:0.85em;" onchange="_resizeLoadInstances()">
+                                                <option value="">Select account...</option>
+                                            </select>
+                                        </div>
+                                        <div>
+                                            <label style="font-size:0.8em;color:#6b7280;">Instance</label>
+                                            <select id="resize-instance" style="width:100%;padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:0.85em;">
+                                                <option value="">Select instance...</option>
+                                            </select>
+                                        </div>
+                                    </div>
+                                    <button class="btn btn-primary btn-sm" onclick="_resizeAnalyze()">&#128270; Analyze Usage</button>
+                                </div>
+                                <div id="resize-step-2" style="display:none;margin-top:16px;">
+                                    <div id="resize-analysis" style="margin-bottom:16px;"></div>
+                                    <div id="resize-recommendations" style="margin-bottom:16px;"></div>
+                                </div>
+                                <div id="resize-step-4" style="display:none;margin-top:12px;">
+                                    <div id="resize-progress"></div>
+                                </div>
+                                <div id="resize-status" style="color:#6b7280;font-size:0.85em;margin-top:8px;"></div>
+                            </div>
+
                             <div id="act-optimize-status" style="padding:0 0 12px;color:#6b7280;font-size:0.9em;min-height:20px;"></div>
                             <div id="act-optimize-cards" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:16px;padding-bottom:32px;"></div>
                             <div id="act-optimize-empty" style="text-align:center;padding:60px 20px;color:#6b7280;">
@@ -438,65 +473,6 @@
                         </div>
 
 
-                        <!-- Server Clusters Section -->
-                        <div id="act-section-clusters" style="display:none;">
-                            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
-                                <h2 style="margin:0;color:#1f2937;">Server Clusters</h2>
-                            </div>
-                            <p style="color:#6b7280;font-size:0.9em;margin-bottom:20px;">Resize servers, migrate to clusters, and optimize compute capacity.</p>
-
-                            <!-- Resize Server Card -->
-                            <div style="background:linear-gradient(135deg,#eef2ff,#e0e7ff);border:1px solid #c7d2fe;border-radius:12px;padding:20px;margin-bottom:20px;">
-                                <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;">
-                                    <span style="font-size:1.5em;">&#128202;</span>
-                                    <div>
-                                        <div style="font-weight:700;color:#1f2937;font-size:1.05em;">Resize a Server</div>
-                                        <div style="color:#6b7280;font-size:0.85em;">Analyze usage, find cheaper instance types, and resize with one click</div>
-                                    </div>
-                                </div>
-
-                                <!-- Step 1: Select Instance -->
-                                <div id="resize-step-1">
-                                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">
-                                        <div>
-                                            <label style="font-size:0.8em;color:#6b7280;">Account</label>
-                                            <select id="resize-account" style="width:100%;padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:0.85em;" onchange="_resizeLoadInstances()">
-                                                <option value="">Select account...</option>
-                                            </select>
-                                        </div>
-                                        <div>
-                                            <label style="font-size:0.8em;color:#6b7280;">Instance</label>
-                                            <select id="resize-instance" style="width:100%;padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:0.85em;">
-                                                <option value="">Select instance...</option>
-                                            </select>
-                                        </div>
-                                    </div>
-                                    <button class="btn btn-primary btn-sm" onclick="_resizeAnalyze()">&#128270; Analyze Usage</button>
-                                </div>
-
-                                <!-- Step 2+3: Analysis Results + Recommendations -->
-                                <div id="resize-step-2" style="display:none;margin-top:16px;">
-                                    <div id="resize-analysis" style="margin-bottom:16px;"></div>
-                                    <div id="resize-recommendations" style="margin-bottom:16px;"></div>
-                                </div>
-
-                                <!-- Step 4: Execute -->
-                                <div id="resize-step-4" style="display:none;margin-top:12px;">
-                                    <div id="resize-progress"></div>
-                                </div>
-
-                                <div id="resize-status" style="color:#6b7280;font-size:0.85em;margin-top:8px;"></div>
-                            </div>
-
-                            <!-- Spot Migration Card (moved from Optimize) -->
-                            <div id="spot-migrate-panel-clusters" style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:20px;">
-                                <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
-                                    <span style="font-size:1.3em;">&#9889;</span>
-                                    <div style="font-weight:600;color:#1f2937;">Spot Instance Migration</div>
-                                </div>
-                                <p style="color:#6b7280;font-size:0.85em;">Migrate ASGs to use Spot Instances. Available in Act &#8594; Optimize section.</p>
-                            </div>
-                        </div>
                         <!-- Schedule Create Wizard Modal -->
                         <div id="act-sched-wizard" class="modal-overlay" hidden>
                             <div class="modal-card" style="max-width:520px;max-height:85vh;overflow-y:auto;">
@@ -1082,7 +1058,7 @@
         <span id="notification-message"></span>
     </div>
 
-    <script src="members.js?v=74"></script>
+    <script src="members.js?v=75"></script>
     <script src="help.js?v=3"></script>
 </body>
 </html>

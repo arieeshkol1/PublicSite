@@ -4451,16 +4451,14 @@ function _switchActSection(section) {
     var scheduler = document.getElementById('act-section-scheduler');
     var budget = document.getElementById('act-section-budget');
     var optimization = document.getElementById('act-section-optimization');
-    var clusters = document.getElementById('act-section-clusters');
     if (waste) waste.style.display = section === 'waste' ? 'block' : 'none';
     if (tagging) tagging.style.display = section === 'tagging' ? 'block' : 'none';
     if (scheduler) scheduler.style.display = section === 'scheduler' ? 'block' : 'none';
     if (budget) budget.style.display = section === 'budget' ? 'block' : 'none';
     if (optimization) optimization.style.display = section === 'optimization' ? 'block' : 'none';
-    if (clusters) clusters.style.display = section === 'clusters' ? 'block' : 'none';
     // Auto-load scheduler data when switching to scheduler section
     if (section === 'scheduler') _loadSchedulerData();
-    if (section === 'clusters') _resizePopulateAccounts();
+    if (section === 'optimization') { _populateSpotMigrateAccounts(); _resizePopulateAccounts(); }
 }
 
 // ============================================================
