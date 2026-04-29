@@ -11302,11 +11302,32 @@ def _get_rightsizing_candidates(ec2_client, current_type, needed_vcpu, needed_me
         if c['instanceType'] not in seen:
             seen.add(c['instanceType'])
             deduped.append(c)
-    candidates = deduped[:25]
+    # Only price the 8 smallest candidates to stay within API Gateway timeout
+    candidates = deduped[:8]
+
+    # Fallback pricing for common types (used when Pricing API is slow/unavailable)
+    _FALLBACK_PRICES = {
+        't3.nano': 0.0052, 't3.micro': 0.0104, 't3.small': 0.0208, 't3.medium': 0.0416,
+        't3.large': 0.0832, 't3.xlarge': 0.1664, 't3a.nano': 0.0047, 't3a.micro': 0.0094,
+        't3a.small': 0.0188, 't3a.medium': 0.0376, 't3a.large': 0.0752,
+        't4g.nano': 0.0042, 't4g.micro': 0.0084, 't4g.small': 0.0168, 't4g.medium': 0.0336,
+        't4g.large': 0.0672, 'm5.large': 0.096, 'm5.xlarge': 0.192, 'm5a.large': 0.086,
+        'm6i.large': 0.096, 'm6g.medium': 0.0385, 'm6g.large': 0.077, 'm7g.medium': 0.0408,
+        'm7g.large': 0.0816, 'c5.large': 0.085, 'c5a.large': 0.077, 'c6i.large': 0.085,
+        'c6g.medium': 0.034, 'c6g.large': 0.068, 'c7g.medium': 0.0361, 'c7g.large': 0.0725,
+        'r5.large': 0.126, 'r5a.large': 0.113, 'r6g.large': 0.1008, 'r7g.large': 0.1071,
+    }
 
     result = []
     for c in candidates:
-        price = _get_instance_price(c['instanceType'])
+        # Try Pricing API first, fall back to hardcoded table
+        price = _FALLBACK_PRICES.get(c['instanceType'], 0)
+        try:
+            api_price = _get_instance_price(c['instanceType'])
+            if api_price > 0:
+                price = api_price
+        except Exception:
+            pass
         if price <= 0 or price >= current_hourly:
             continue
         monthly = round(price * 730, 2)
