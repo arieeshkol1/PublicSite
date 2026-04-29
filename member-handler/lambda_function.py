@@ -1135,6 +1135,7 @@ def handle_generate_template(event):
                                             'ec2:StopInstances',
                                             'ec2:TerminateInstances',
                                             'ec2:DescribeInstanceAttribute',
+                                            'ec2:ModifyInstanceAttribute',
                                             'autoscaling:DescribeAutoScalingInstances',
                                             'autoscaling:DetachInstances',
                                             'autoscaling:UpdateAutoScalingGroup',
