@@ -7485,6 +7485,19 @@ async function _resizeAnalyze() {
             html += '<div style="text-align:center;"><div style="font-size:1.5em;font-weight:700;">' + (m.mem_avg !== null ? m.mem_avg + '%' : 'N/A') + '</div><div style="font-size:0.75em;color:#6b7280;">Memory Avg</div></div>';
             html += '<div style="text-align:center;"><div style="font-size:1.5em;font-weight:700;">$' + (data.currentSpecs.monthlyRate || 0) + '</div><div style="font-size:0.75em;color:#6b7280;">Current/mo</div></div>';
             html += '</div>';
+            // Free tier info
+            var ft = data.freeTier || {};
+            var ftKeys = Object.keys(ft);
+            if (ftKeys.length > 0) {
+                html += '<div style="margin-top:8px;padding:8px 12px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:6px;font-size:0.85em;">';
+                html += '<span style="font-weight:600;color:#1e40af;">Free Tier Status:</span> ';
+                ftKeys.forEach(function(k) {
+                    var f = ft[k];
+                    html += '<span style="color:#1e40af;">' + f.service + '</span>: ' + f.actualUsage + '/' + f.limit + ' ' + f.limitUnit + ' (' + f.percentUsed + '% used, ' + f.freeTierType.replace('_', ' ') + ') ';
+                });
+                html += '</div>';
+            }
+            html += '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:12px;display:none;">';
             var a = data.analysis || {};
             var verdictColor = a.verdict === 'over-provisioned' ? '#059669' : a.verdict === 'right-sized' ? '#6b7280' : '#d97706';
             html += '<div style="padding:8px 12px;background:' + (a.verdict === 'over-provisioned' ? '#f0fdf4' : '#f9fafb') + ';border-radius:6px;font-size:0.9em;">';
@@ -7492,6 +7505,7 @@ async function _resizeAnalyze() {
             html += ' is <strong style="color:' + verdictColor + ';">' + a.verdict + '</strong>';
             if (a.verdict !== 'right-sized') html += ' - savings available below';
             html += '</div></div>';
+            if (a.note) html += '<div style="margin-top:6px;font-size:0.8em;color:#6b7280;font-style:italic;">' + a.note + '</div>';
             analysisEl.innerHTML = html;
         }
 

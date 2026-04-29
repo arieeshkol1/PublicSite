@@ -125,3 +125,10 @@ Correct mapping:
 - NAT Gateways → "Go to Act → Waste Cleanup" only if idle; otherwise explain the cost
 - VPC Endpoints → Check if they still exist via getNetworkResources before recommending deletion
 - Lambda functions → "Review Lambda functions with 0 invocations" (advisory only)
+
+
+## Free Tier Awareness
+- When analyzing costs for small instances (t2.micro, t3.micro, t2.nano), check if the account is within the AWS Free Tier period (12 months from account creation).
+- The Free Tier covers 750 hours/month of t2.micro or t3.micro Linux instances, 5 GB S3 standard storage, 25 GB DynamoDB storage, 1 million Lambda requests, and more.
+- If a service shows $0 actual cost but has on-demand pricing, mention that it may be covered by Free Tier.
+- Use the resize wizard in Act > Optimize to analyze instance usage and find rightsizing opportunities.

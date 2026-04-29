@@ -11276,6 +11276,49 @@ def _get_rightsizing_candidates(ec2_client, current_type, needed_vcpu, needed_me
     return result[:5]
 
 
+
+
+def _get_free_tier_usage(creds=None):
+    """Query AWS Free Tier usage via freetier:GetFreeTierUsage API."""
+    try:
+        if creds:
+            ft_client = _make_client_from_creds('freetier', creds, region_name='us-east-1')
+        else:
+            ft_client = boto3.client('freetier', region_name='us-east-1')
+        
+        usage_items = []
+        paginator = ft_client.get_paginator('get_free_tier_usage')
+        for page in paginator.paginate():
+            usage_items.extend(page.get('freeTierUsages', []))
+        
+        result = {}
+        for item in usage_items:
+            service = item.get('service', '')
+            desc = item.get('description', '')
+            usage_type = item.get('usageType', '')
+            limit = item.get('limit', {})
+            limit_amount = float(limit.get('amount', 0))
+            limit_unit = limit.get('unit', '')
+            actual = float(item.get('actualUsageAmount', 0))
+            forecast = float(item.get('forecastedUsageAmount', 0))
+            free_tier_type = item.get('freeTierType', '')  # ALWAYS_FREE, 12_MONTHS_FREE, etc.
+            
+            result[usage_type] = {
+                'service': service,
+                'description': desc,
+                'usageType': usage_type,
+                'limit': limit_amount,
+                'limitUnit': limit_unit,
+                'actualUsage': actual,
+                'forecastedUsage': forecast,
+                'freeTierType': free_tier_type,
+                'percentUsed': round(actual / limit_amount * 100, 1) if limit_amount > 0 else 0,
+            }
+        return result
+    except Exception as e:
+        logger.warning(f"Free Tier API failed: {e}")
+        return {}
+
 def handle_server_analyze(event):
     """POST /members/servers/analyze -- Analyze EC2 instance usage and recommend resize options."""
     auth = validate_token(event)
@@ -11397,6 +11440,17 @@ def handle_server_analyze(event):
 
     recommendations = _get_rightsizing_candidates(ec2, current_type, needed_vcpu, needed_mem, current_hourly, arch)
 
+    # Get free tier usage for this account
+    free_tier = {}
+    try:
+        ft_data = _get_free_tier_usage(creds)
+        # Find EC2-related free tier entries
+        for key, val in ft_data.items():
+            if 'EC2' in val.get('service', '') or 'ec2' in key.lower():
+                free_tier[key] = val
+    except Exception:
+        pass
+
     return create_response(200, {
         'instanceId': instance_id,
         'instanceName': name,
@@ -11413,10 +11467,15 @@ def handle_server_analyze(event):
         },
         'metrics': metrics,
         'recommendations': recommendations,
+        'freeTier': free_tier,
         'analysis': {
             'cpuUtilization': 'low' if cpu_avg < 10 else 'moderate' if cpu_avg < 50 else 'high',
             'memoryUtilization': ('low' if mem_avg and mem_avg < 30 else 'moderate' if mem_avg and mem_avg < 60 else 'high' if mem_avg else 'unknown'),
-            'verdict': 'over-provisioned' if cpu_avg < 20 and (mem_avg is None or mem_avg < 40) else 'right-sized' if cpu_avg > 50 else 'slightly over-provisioned',
+            'verdict': ('right-sized (already smallest available)' if not recommendations
+                        else 'over-provisioned' if cpu_avg < 20 and (mem_avg is None or mem_avg < 40)
+                        else 'right-sized' if cpu_avg > 50
+                        else 'slightly over-provisioned'),
+            'note': 'Price shown is on-demand rate. Free tier discounts (if applicable) are applied at the billing level.' if current_type in ('t2.micro', 't3.micro', 't2.nano') else '',
         },
     })
 
