@@ -375,6 +375,8 @@ jobs:
             "POST /members/spot/plan"
             "POST /members/spot/migrate"
             "GET /members/spot/dashboard"
+            "POST /members/servers/analyze"
+            "POST /members/servers/resize"
           )
           for ROUTE in "${MEMBER_ROUTES[@]}"; do
             aws apigatewayv2 create-route --api-id $API_ID --route-key "$ROUTE" --target "integrations/$MEMBER_INT" 2>/dev/null || true
@@ -656,25 +658,7 @@ jobs:
           echo "Member Portal: https://slashmycloudbill.com/members/"
           echo "API: ${{ steps.api-url.outputs.api_endpoint }}"
 
-  # ============================================================
-  # Deploy test ECS/Fargate in me-central-1 for billing testing
-  # ============================================================
-  deploy-ecs-me-central-1:
-    runs-on: ubuntu-latest
-    needs: deploy
-    permissions:
-      id-token: write
-      contents: read
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: arn:aws:iam::991105135552:role/GitHubActionsRole
-          aws-region: us-east-1
-
-      - name: Deploy ECS billing test stack to me-central-1
+      - name: Deploy ECS billing test to me-central-1
         continue-on-error: true
         run: |
           echo "Deploying ECS/Fargate billing test to me-central-1..."
@@ -683,6 +667,6 @@ jobs:
             --stack-name slashmybill-billing-test \
             --region me-central-1 \
             --capabilities CAPABILITY_NAMED_IAM \
-            --no-fail-on-empty-changeset
-          echo "ECS billing test deployed in me-central-1"
+            --no-fail-on-empty-changeset || echo "ECS deploy failed (likely IAM permissions for me-central-1 needed)"
           echo "To delete: aws cloudformation delete-stack --stack-name slashmybill-billing-test --region me-central-1"
+

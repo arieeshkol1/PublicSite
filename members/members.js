@@ -4451,13 +4451,16 @@ function _switchActSection(section) {
     var scheduler = document.getElementById('act-section-scheduler');
     var budget = document.getElementById('act-section-budget');
     var optimization = document.getElementById('act-section-optimization');
+    var clusters = document.getElementById('act-section-clusters');
     if (waste) waste.style.display = section === 'waste' ? 'block' : 'none';
     if (tagging) tagging.style.display = section === 'tagging' ? 'block' : 'none';
     if (scheduler) scheduler.style.display = section === 'scheduler' ? 'block' : 'none';
     if (budget) budget.style.display = section === 'budget' ? 'block' : 'none';
     if (optimization) optimization.style.display = section === 'optimization' ? 'block' : 'none';
+    if (clusters) clusters.style.display = section === 'clusters' ? 'block' : 'none';
     // Auto-load scheduler data when switching to scheduler section
     if (section === 'scheduler') _loadSchedulerData();
+    if (section === 'clusters') _resizePopulateAccounts();
 }
 
 // ============================================================
@@ -7402,5 +7405,186 @@ async function _spotRollback() {
     } catch(e) {
         if (status) status.textContent = '';
         if (result) result.innerHTML = '<div style="color:#dc2626;">Rollback failed: ' + (e.message || e) + '</div>';
+    }
+}
+
+
+// ============================================================
+// Server Clusters -- Resize Server Wizard
+// ============================================================
+
+function _resizePopulateAccounts() {
+    var select = document.getElementById('resize-account');
+    if (!select) return;
+    var current = select.value;
+    select.innerHTML = '<option value="">Select account...</option>';
+    var connected = (typeof allAccounts !== 'undefined' ? allAccounts : []).filter(function(a) { return a.connectionStatus === 'connected'; });
+    connected.forEach(function(a) {
+        var opt = document.createElement('option');
+        opt.value = a.accountId;
+        opt.textContent = (a.accountName || 'Account') + ' (' + a.accountId + ')';
+        select.appendChild(opt);
+    });
+    if (current) select.value = current;
+}
+
+async function _resizeLoadInstances() {
+    var acctSelect = document.getElementById('resize-account');
+    var instSelect = document.getElementById('resize-instance');
+    if (!acctSelect || !instSelect || !acctSelect.value) {
+        if (instSelect) instSelect.innerHTML = '<option value="">Select instance...</option>';
+        return;
+    }
+    instSelect.innerHTML = '<option value="">Loading instances...</option>';
+    try {
+        // Use the existing scan data or fetch EC2 instances
+        var data = await api('POST', '/members/accounts/execute', {
+            accountId: acctSelect.value,
+            command: 'list-ec2'
+        });
+        instSelect.innerHTML = '<option value="">Select instance...</option>';
+        var instances = data.instances || data.results || [];
+        if (Array.isArray(instances)) {
+            instances.forEach(function(inst) {
+                var iid = inst.InstanceId || inst.instanceId || '';
+                var itype = inst.InstanceType || inst.instanceType || '';
+                var state = (inst.State && inst.State.Name) || inst.state || '';
+                var name = '';
+                (inst.Tags || []).forEach(function(t) { if (t.Key === 'Name') name = t.Value; });
+                if (!name) name = iid;
+                var opt = document.createElement('option');
+                opt.value = iid;
+                opt.textContent = name + ' (' + itype + ', ' + state + ')';
+                instSelect.appendChild(opt);
+            });
+        }
+        if (instSelect.options.length <= 1) {
+            instSelect.innerHTML = '<option value="">No EC2 instances found</option>';
+        }
+    } catch(e) {
+        instSelect.innerHTML = '<option value="">Error loading instances</option>';
+    }
+}
+
+var _resizeData = null;
+
+async function _resizeAnalyze() {
+    var accountId = (document.getElementById('resize-account') || {}).value;
+    var instanceId = (document.getElementById('resize-instance') || {}).value;
+    var status = document.getElementById('resize-status');
+    var step2 = document.getElementById('resize-step-2');
+    var step4 = document.getElementById('resize-step-4');
+
+    if (!accountId || !instanceId) { notify('Select account and instance first', 'error'); return; }
+    if (status) status.textContent = 'Analyzing 30 days of usage data...';
+    if (step2) step2.style.display = 'none';
+    if (step4) step4.style.display = 'none';
+
+    try {
+        var data = await api('POST', '/members/servers/analyze', { accountId: accountId, instanceId: instanceId });
+        _resizeData = data;
+
+        // Render analysis
+        var analysisEl = document.getElementById('resize-analysis');
+        if (analysisEl) {
+            var m = data.metrics || {};
+            var html = '<div style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:16px;">';
+            html += '<div style="font-weight:600;margin-bottom:8px;">Usage Analysis: ' + data.instanceName + '</div>';
+            html += '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:12px;">';
+            html += '<div style="text-align:center;"><div style="font-size:1.5em;font-weight:700;color:' + (m.cpu_avg < 20 ? '#059669' : m.cpu_avg < 50 ? '#d97706' : '#dc2626') + ';">' + (m.cpu_avg || 0) + '%</div><div style="font-size:0.75em;color:#6b7280;">CPU Avg</div></div>';
+            html += '<div style="text-align:center;"><div style="font-size:1.5em;font-weight:700;">' + (m.cpu_max || 0) + '%</div><div style="font-size:0.75em;color:#6b7280;">CPU Max</div></div>';
+            html += '<div style="text-align:center;"><div style="font-size:1.5em;font-weight:700;">' + (m.mem_avg !== null ? m.mem_avg + '%' : 'N/A') + '</div><div style="font-size:0.75em;color:#6b7280;">Memory Avg</div></div>';
+            html += '<div style="text-align:center;"><div style="font-size:1.5em;font-weight:700;">$' + (data.currentSpecs.monthlyRate || 0) + '</div><div style="font-size:0.75em;color:#6b7280;">Current/mo</div></div>';
+            html += '</div>';
+            var a = data.analysis || {};
+            var verdictColor = a.verdict === 'over-provisioned' ? '#059669' : a.verdict === 'right-sized' ? '#6b7280' : '#d97706';
+            html += '<div style="padding:8px 12px;background:' + (a.verdict === 'over-provisioned' ? '#f0fdf4' : '#f9fafb') + ';border-radius:6px;font-size:0.9em;">';
+            html += '<span style="font-weight:600;color:' + verdictColor + ';">' + (data.currentType) + ' (' + data.currentSpecs.vcpu + ' vCPU, ' + data.currentSpecs.memory + ' GB)</span>';
+            html += ' is <strong style="color:' + verdictColor + ';">' + a.verdict + '</strong>';
+            if (a.verdict !== 'right-sized') html += ' - savings available below';
+            html += '</div></div>';
+            analysisEl.innerHTML = html;
+        }
+
+        // Render recommendations
+        var recsEl = document.getElementById('resize-recommendations');
+        if (recsEl) {
+            var recs = data.recommendations || [];
+            if (recs.length === 0) {
+                recsEl.innerHTML = '<div style="padding:16px;background:#f9fafb;border-radius:8px;text-align:center;color:#6b7280;">This instance is already optimally sized. No cheaper options available.</div>';
+            } else {
+                var html = '<div style="font-weight:600;margin-bottom:8px;">Recommended Sizes</div>';
+                html += '<div style="display:grid;gap:8px;">';
+                recs.forEach(function(r, i) {
+                    var border = i === 0 ? 'border:2px solid #059669;' : 'border:1px solid #e5e7eb;';
+                    html += '<div style="background:#fff;' + border + 'border-radius:8px;padding:12px;display:flex;justify-content:space-between;align-items:center;">';
+                    html += '<div>';
+                    html += '<div style="font-weight:600;">' + r.instanceType + (r.isGraviton ? ' <span style="background:#dbeafe;color:#1e40af;padding:1px 6px;border-radius:4px;font-size:0.75em;">Graviton</span>' : '') + '</div>';
+                    html += '<div style="font-size:0.8em;color:#6b7280;">' + r.vcpu + ' vCPU, ' + r.memory + ' GB RAM - $' + r.monthlyRate + '/mo</div>';
+                    if (r.warning) html += '<div style="font-size:0.75em;color:#b45309;">' + r.warning + '</div>';
+                    html += '</div>';
+                    html += '<div style="text-align:right;">';
+                    html += '<div style="font-weight:700;color:#059669;font-size:1.1em;">-$' + r.monthlySavings + '/mo</div>';
+                    html += '<div style="font-size:0.75em;color:#6b7280;">(' + r.savingsPercent + '% savings)</div>';
+                    html += '<button class="btn btn-primary btn-sm" style="margin-top:4px;font-size:0.8em;padding:4px 12px;" onclick="_resizeExecute(\'' + r.instanceType + '\')">Resize</button>';
+                    html += '</div></div>';
+                });
+                html += '</div>';
+                recsEl.innerHTML = html;
+            }
+        }
+
+        if (step2) step2.style.display = 'block';
+        if (status) status.textContent = '';
+    } catch(e) {
+        if (status) status.textContent = 'Analysis failed: ' + (e.message || e);
+    }
+}
+
+async function _resizeExecute(newType) {
+    if (!_resizeData) return;
+    var name = _resizeData.instanceName || _resizeData.instanceId;
+
+    if (_resizeData.inASG) {
+        notify('This instance is in an ASG. Resize the Launch Template instead.', 'error');
+        return;
+    }
+
+    var msg = 'Resize "' + name + '" from ' + _resizeData.currentType + ' to ' + newType + '?\n\n';
+    msg += 'WARNING: The instance will be STOPPED for 1-3 minutes during the resize.\n';
+    msg += 'All network connections will be dropped. EBS volumes and Elastic IPs are preserved.\n\n';
+    msg += 'Proceed?';
+    if (!confirm(msg)) return;
+
+    var status = document.getElementById('resize-status');
+    var step4 = document.getElementById('resize-step-4');
+    var progress = document.getElementById('resize-progress');
+
+    if (step4) step4.style.display = 'block';
+    if (progress) progress.innerHTML = '<div style="padding:12px;background:#fef3c7;border-radius:8px;color:#92400e;font-weight:600;">Resizing in progress... Instance is being stopped, modified, and restarted. This takes 1-3 minutes.</div>';
+    if (status) status.textContent = 'Executing resize...';
+
+    try {
+        var data = await api('POST', '/members/servers/resize', {
+            accountId: (document.getElementById('resize-account') || {}).value,
+            instanceId: _resizeData.instanceId,
+            newInstanceType: newType,
+        });
+
+        if (progress) {
+            var html = '<div style="padding:16px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;">';
+            html += '<div style="font-weight:700;color:#059669;font-size:1.1em;margin-bottom:8px;">Resize Complete</div>';
+            html += '<div>' + data.previousType + ' &#8594; ' + data.newType + '</div>';
+            html += '<div style="font-weight:600;color:#059669;margin-top:4px;">Saving $' + data.monthlySavings + '/month</div>';
+            html += '<div style="margin-top:8px;font-size:0.85em;color:#6b7280;">A confirmation email has been sent.</div>';
+            html += '</div>';
+            progress.innerHTML = html;
+        }
+        if (status) status.textContent = '';
+        notify('Resize complete: ' + data.previousType + ' -> ' + data.newType + ' (saving $' + data.monthlySavings + '/mo)', 'success', 8000);
+    } catch(e) {
+        if (progress) progress.innerHTML = '<div style="padding:12px;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;color:#dc2626;">Resize failed: ' + (e.message || e) + '</div>';
+        if (status) status.textContent = '';
+        notify('Resize failed: ' + (e.message || e), 'error');
     }
 }

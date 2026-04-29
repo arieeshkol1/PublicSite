@@ -141,6 +141,8 @@ def lambda_handler(event, context):
         'POST /members/spot/plan': handle_spot_plan,
         'POST /members/spot/migrate': handle_spot_migrate,
         'GET /members/spot/dashboard': handle_spot_dashboard,
+        'POST /members/servers/analyze': handle_server_analyze,
+        'POST /members/servers/resize': handle_server_resize,
     }
 
     handler = routes.get(route_key)
@@ -11136,3 +11138,345 @@ def handle_spot_dashboard(event):
         'spotEnabled': True,
         'enabledAccounts': list(enabled_accounts.keys()),
     })
+
+
+
+# ============================================================
+# Server Clusters -- Resize Server Wizard
+# ============================================================
+
+# Instance type specs for rightsizing recommendations
+_INSTANCE_SPECS = {
+    't3.nano':    {'vcpu': 2, 'mem': 0.5, 'hourly': 0.0052},
+    't3.micro':   {'vcpu': 2, 'mem': 1,   'hourly': 0.0104},
+    't3.small':   {'vcpu': 2, 'mem': 2,   'hourly': 0.0208},
+    't3.medium':  {'vcpu': 2, 'mem': 4,   'hourly': 0.0416},
+    't3.large':   {'vcpu': 2, 'mem': 8,   'hourly': 0.0832},
+    't3.xlarge':  {'vcpu': 4, 'mem': 16,  'hourly': 0.1664},
+    't3.2xlarge': {'vcpu': 8, 'mem': 32,  'hourly': 0.3328},
+    'm5.large':   {'vcpu': 2, 'mem': 8,   'hourly': 0.096},
+    'm5.xlarge':  {'vcpu': 4, 'mem': 16,  'hourly': 0.192},
+    'm5.2xlarge': {'vcpu': 8, 'mem': 32,  'hourly': 0.384},
+    'm5.4xlarge': {'vcpu': 16,'mem': 64,  'hourly': 0.768},
+    'm6i.large':  {'vcpu': 2, 'mem': 8,   'hourly': 0.096},
+    'm6i.xlarge': {'vcpu': 4, 'mem': 16,  'hourly': 0.192},
+    'm6g.medium': {'vcpu': 1, 'mem': 4,   'hourly': 0.0385},
+    'm6g.large':  {'vcpu': 2, 'mem': 8,   'hourly': 0.077},
+    'm6g.xlarge': {'vcpu': 4, 'mem': 16,  'hourly': 0.154},
+    'c5.large':   {'vcpu': 2, 'mem': 4,   'hourly': 0.085},
+    'c5.xlarge':  {'vcpu': 4, 'mem': 8,   'hourly': 0.17},
+    'c5.2xlarge': {'vcpu': 8, 'mem': 16,  'hourly': 0.34},
+    'c6g.medium': {'vcpu': 1, 'mem': 2,   'hourly': 0.034},
+    'c6g.large':  {'vcpu': 2, 'mem': 4,   'hourly': 0.068},
+    'c6g.xlarge': {'vcpu': 4, 'mem': 8,   'hourly': 0.136},
+    'r5.large':   {'vcpu': 2, 'mem': 16,  'hourly': 0.126},
+    'r5.xlarge':  {'vcpu': 4, 'mem': 32,  'hourly': 0.252},
+    'r6g.large':  {'vcpu': 2, 'mem': 16,  'hourly': 0.1008},
+    'r6g.xlarge': {'vcpu': 4, 'mem': 32,  'hourly': 0.2016},
+}
+
+
+def handle_server_analyze(event):
+    """POST /members/servers/analyze -- Analyze EC2 instance usage and recommend resize options."""
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+    member_email = auth['sub']
+
+    try:
+        body = json.loads(event.get('body', '{}'))
+    except (json.JSONDecodeError, TypeError):
+        return create_error_response(400, 'InvalidRequest', 'Invalid request body')
+
+    account_id = body.get('accountId', '')
+    instance_id = body.get('instanceId', '')
+    if not account_id or not instance_id:
+        return create_error_response(400, 'MissingParams', 'accountId and instanceId required')
+
+    ownership = _verify_account_ownership(member_email, [account_id])
+    if isinstance(ownership, dict):
+        return ownership
+
+    try:
+        creds = _assume_role_for_account(member_email, account_id)
+    except Exception as e:
+        return create_error_response(500, 'ServerError', f'Cannot assume role: {e}')
+
+    # Get instance details
+    ec2 = _make_client_from_creds('ec2', creds)
+    try:
+        resp = ec2.describe_instances(InstanceIds=[instance_id])
+        reservations = resp.get('Reservations', [])
+        if not reservations or not reservations[0].get('Instances'):
+            return create_error_response(404, 'NotFound', f'Instance {instance_id} not found')
+        inst = reservations[0]['Instances'][0]
+    except Exception as e:
+        return create_error_response(500, 'ServerError', f'Failed to describe instance: {e}')
+
+    current_type = inst.get('InstanceType', '')
+    state = inst.get('State', {}).get('Name', '')
+    tags = {t['Key']: t['Value'] for t in inst.get('Tags', [])}
+    name = tags.get('Name', instance_id)
+    platform = inst.get('PlatformDetails', 'Linux/UNIX')
+    arch = inst.get('Architecture', 'x86_64')
+    in_asg = 'aws:autoscaling:groupName' in tags
+
+    # Get CloudWatch metrics (30 days)
+    cw = _make_client_from_creds('cloudwatch', creds)
+    end_time = datetime.now(timezone.utc)
+    start_time = end_time - timedelta(days=30)
+
+    metrics = {}
+    metric_queries = [
+        ('cpu_avg', 'CPUUtilization', 'Average'),
+        ('cpu_max', 'CPUUtilization', 'Maximum'),
+        ('net_in',  'NetworkIn',      'Average'),
+        ('net_out', 'NetworkOut',     'Average'),
+    ]
+
+    for key, metric_name, stat in metric_queries:
+        try:
+            mr = cw.get_metric_statistics(
+                Namespace='AWS/EC2',
+                MetricName=metric_name,
+                Dimensions=[{'Name': 'InstanceId', 'Value': instance_id}],
+                StartTime=start_time, EndTime=end_time,
+                Period=86400, Statistics=[stat],
+            )
+            points = sorted(mr.get('Datapoints', []), key=lambda d: d['Timestamp'])
+            values = [p[stat] for p in points]
+            metrics[key] = round(sum(values) / len(values), 2) if values else 0
+            if key == 'cpu_avg':
+                metrics['cpu_daily'] = [{'date': p['Timestamp'].strftime('%m/%d'), 'value': round(p[stat], 1)} for p in points[-14:]]
+        except Exception:
+            metrics[key] = 0
+
+    # Try memory metrics (CW Agent)
+    try:
+        mr = cw.get_metric_statistics(
+            Namespace='CWAgent',
+            MetricName='mem_used_percent',
+            Dimensions=[{'Name': 'InstanceId', 'Value': instance_id}],
+            StartTime=start_time, EndTime=end_time,
+            Period=86400, Statistics=['Average', 'Maximum'],
+        )
+        points = mr.get('Datapoints', [])
+        if points:
+            metrics['mem_avg'] = round(sum(p['Average'] for p in points) / len(points), 1)
+            metrics['mem_max'] = round(max(p['Maximum'] for p in points), 1)
+        else:
+            metrics['mem_avg'] = None
+            metrics['mem_max'] = None
+    except Exception:
+        metrics['mem_avg'] = None
+        metrics['mem_max'] = None
+
+    # Current instance specs
+    current_specs = _INSTANCE_SPECS.get(current_type, {})
+    current_vcpu = current_specs.get('vcpu', 0)
+    current_mem = current_specs.get('mem', 0)
+    current_hourly = current_specs.get('hourly', 0)
+    current_monthly = round(current_hourly * 730, 2)
+
+    # Generate recommendations
+    recommendations = []
+    cpu_avg = metrics.get('cpu_avg', 0)
+    cpu_max = metrics.get('cpu_max', 0)
+    mem_avg = metrics.get('mem_avg')
+
+    # Determine needed vCPU and memory
+    if cpu_max < 30 and current_vcpu > 1:
+        needed_vcpu = max(1, current_vcpu // 2)
+    elif cpu_max < 60:
+        needed_vcpu = current_vcpu
+    else:
+        needed_vcpu = current_vcpu
+
+    needed_mem = current_mem
+    if mem_avg is not None and mem_avg < 40 and current_mem > 2:
+        needed_mem = max(2, current_mem // 2)
+
+    # Find cheaper instance types that meet the needs
+    is_arm = arch == 'arm64'
+    for itype, specs in _INSTANCE_SPECS.items():
+        if specs['vcpu'] < needed_vcpu:
+            continue
+        if specs['mem'] < needed_mem:
+            continue
+        if specs['hourly'] >= current_hourly:
+            continue
+        if itype == current_type:
+            continue
+        # ARM filter
+        is_graviton = any(g in itype for g in ['6g.', '7g.', 't4g.'])
+        if is_graviton and not is_arm and arch != 'x86_64':
+            continue
+
+        monthly = round(specs['hourly'] * 730, 2)
+        savings = round(current_monthly - monthly, 2)
+        pct = round(savings / current_monthly * 100) if current_monthly > 0 else 0
+
+        rec = {
+            'instanceType': itype,
+            'vcpu': specs['vcpu'],
+            'memory': specs['mem'],
+            'hourlyRate': specs['hourly'],
+            'monthlyRate': monthly,
+            'monthlySavings': savings,
+            'savingsPercent': pct,
+            'isGraviton': is_graviton,
+        }
+        if is_graviton and not is_arm:
+            rec['warning'] = 'Graviton (ARM) -- verify your AMI supports ARM architecture'
+        recommendations.append(rec)
+
+    # Sort by savings descending
+    recommendations.sort(key=lambda r: r['monthlySavings'], reverse=True)
+    # Limit to top 5
+    recommendations = recommendations[:5]
+
+    return create_response(200, {
+        'instanceId': instance_id,
+        'instanceName': name,
+        'currentType': current_type,
+        'state': state,
+        'platform': platform,
+        'architecture': arch,
+        'inASG': in_asg,
+        'currentSpecs': {
+            'vcpu': current_vcpu,
+            'memory': current_mem,
+            'hourlyRate': current_hourly,
+            'monthlyRate': current_monthly,
+        },
+        'metrics': metrics,
+        'recommendations': recommendations,
+        'analysis': {
+            'cpuUtilization': 'low' if cpu_avg < 10 else 'moderate' if cpu_avg < 50 else 'high',
+            'memoryUtilization': ('low' if mem_avg and mem_avg < 30 else 'moderate' if mem_avg and mem_avg < 60 else 'high' if mem_avg else 'unknown'),
+            'verdict': 'over-provisioned' if cpu_avg < 20 and (mem_avg is None or mem_avg < 40) else 'right-sized' if cpu_avg > 50 else 'slightly over-provisioned',
+        },
+    })
+
+
+def handle_server_resize(event):
+    """POST /members/servers/resize -- Execute instance type change (stop, modify, start)."""
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+    member_email = auth['sub']
+
+    try:
+        body = json.loads(event.get('body', '{}'))
+    except (json.JSONDecodeError, TypeError):
+        return create_error_response(400, 'InvalidRequest', 'Invalid request body')
+
+    account_id = body.get('accountId', '')
+    instance_id = body.get('instanceId', '')
+    new_type = body.get('newInstanceType', '')
+    if not account_id or not instance_id or not new_type:
+        return create_error_response(400, 'MissingParams', 'accountId, instanceId, and newInstanceType required')
+
+    ownership = _verify_account_ownership(member_email, [account_id])
+    if isinstance(ownership, dict):
+        return ownership
+
+    try:
+        creds = _assume_role_for_account(member_email, account_id)
+    except Exception as e:
+        return create_error_response(500, 'ServerError', f'Cannot assume role: {e}')
+
+    ec2 = _make_client_from_creds('ec2', creds)
+
+    # Verify instance exists and get current state
+    try:
+        resp = ec2.describe_instances(InstanceIds=[instance_id])
+        inst = resp['Reservations'][0]['Instances'][0]
+        current_type = inst.get('InstanceType', '')
+        state = inst.get('State', {}).get('Name', '')
+        tags = {t['Key']: t['Value'] for t in inst.get('Tags', [])}
+    except Exception as e:
+        return create_error_response(500, 'ServerError', f'Failed to describe instance: {e}')
+
+    # Safety checks
+    if 'aws:autoscaling:groupName' in tags:
+        return create_error_response(400, 'InASG',
+            'This instance is managed by an Auto Scaling Group. Resize the ASG Launch Template instead.')
+
+    if current_type == new_type:
+        return create_error_response(400, 'SameType', f'Instance is already {new_type}')
+
+    steps = []
+
+    try:
+        # Step 1: Stop the instance (if running)
+        if state == 'running':
+            steps.append({'step': 'Stopping instance', 'status': 'in-progress'})
+            ec2.stop_instances(InstanceIds=[instance_id])
+            # Wait for stopped
+            waiter = ec2.get_waiter('instance_stopped')
+            waiter.wait(InstanceIds=[instance_id], WaiterConfig={'Delay': 5, 'MaxAttempts': 60})
+            steps[-1]['status'] = 'complete'
+        elif state == 'stopped':
+            steps.append({'step': 'Instance already stopped', 'status': 'complete'})
+        else:
+            return create_error_response(400, 'InvalidState',
+                f'Instance is in {state} state. Must be running or stopped to resize.')
+
+        # Step 2: Modify instance type
+        steps.append({'step': f'Changing type from {current_type} to {new_type}', 'status': 'in-progress'})
+        ec2.modify_instance_attribute(
+            InstanceId=instance_id,
+            InstanceType={'Value': new_type}
+        )
+        steps[-1]['status'] = 'complete'
+
+        # Step 3: Start the instance
+        steps.append({'step': 'Starting instance', 'status': 'in-progress'})
+        ec2.start_instances(InstanceIds=[instance_id])
+        waiter = ec2.get_waiter('instance_running')
+        waiter.wait(InstanceIds=[instance_id], WaiterConfig={'Delay': 5, 'MaxAttempts': 60})
+        steps[-1]['status'] = 'complete'
+
+        # Calculate savings
+        old_specs = _INSTANCE_SPECS.get(current_type, {})
+        new_specs = _INSTANCE_SPECS.get(new_type, {})
+        old_monthly = round(old_specs.get('hourly', 0) * 730, 2)
+        new_monthly = round(new_specs.get('hourly', 0) * 730, 2)
+        savings = round(old_monthly - new_monthly, 2)
+
+        # Send confirmation email
+        name = tags.get('Name', instance_id)
+        email_html = _build_spot_email(
+            'Server Resize Complete',
+            [
+                ('Instance', f'{name} ({instance_id})'),
+                ('Previous Type', current_type),
+                ('New Type', new_type),
+                ('Previous Cost', f'${old_monthly}/mo'),
+                ('New Cost', f'${new_monthly}/mo'),
+                ('Monthly Savings', f'${savings}/mo'),
+            ],
+            footer='The instance has been resized and is now running with the new instance type.'
+        )
+        _send_spot_email(member_email, f'Server Resized: {name} ({current_type} -> {new_type})', email_html)
+
+        return create_response(200, {
+            'status': 'resized',
+            'instanceId': instance_id,
+            'previousType': current_type,
+            'newType': new_type,
+            'previousMonthlyCost': old_monthly,
+            'newMonthlyCost': new_monthly,
+            'monthlySavings': savings,
+            'steps': steps,
+        })
+
+    except Exception as e:
+        # If resize failed mid-way, try to restart the instance
+        try:
+            ec2.start_instances(InstanceIds=[instance_id])
+        except Exception:
+            pass
+        steps.append({'step': f'Error: {e}', 'status': 'failed'})
+        return create_error_response(500, 'ResizeError', f'Resize failed: {e}. Instance may need manual restart.')
