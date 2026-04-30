@@ -11325,7 +11325,7 @@ def _get_free_tier_usage(creds=None):
     """Query AWS Free Tier usage via freetier:GetFreeTierUsage API."""
     try:
         if creds:
-            ft_client = _make_client_from_creds('freetier', creds, region_name='us-east-1')
+            ft_client = _make_client_from_creds('freetier', creds, region='us-east-1')
         else:
             ft_client = boto3.client('freetier', region_name='us-east-1')
         
