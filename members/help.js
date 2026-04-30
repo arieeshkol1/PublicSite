@@ -24,7 +24,7 @@ var HELP_CONTENT = {
           <ul>
             <li><strong>Observe</strong> — FinOps dashboard with interactive charts and regional cost breakdown</li>
             <li><strong>Chat</strong> — Ask natural language questions about your AWS costs (🪙 2 tokens per question)</li>
-            <li><strong>Act</strong> — Scan for waste, clean up idle resources, and automate stop/start schedules (🪙 10 per scan, 🪙 50 per action)</li>
+            <li><strong>Act</strong> — Scan for waste, clean up idle resources, automate stop/start schedules, resize servers, and optimize ASG clusters (🪙 10 per scan, 🪙 50 per action)</li>
             <li><strong>Configure</strong> — Connect and manage your AWS accounts</li>
           </ul>
           <p><strong>Platform URL:</strong> <a href="https://slashmycloudbill.com/members/" target="_blank">slashmycloudbill.com/members</a></p>
@@ -162,6 +162,36 @@ var HELP_CONTENT = {
           <div class="help-note">⚠ This cannot be enabled via API — it requires a manual action in the AWS Console from the management account.</div>
           <p>To check status: click the ⏱ button next to any account, or run "Test Connection" — the result shows ⏱✓ or ⏱✗</p>
         `
+      },
+      {
+        id: 'optimize-cluster',
+        heading: 'Optimize a Cluster',
+        icon: '\u26a1',
+        body: '<p>The <strong>Optimize a Cluster</strong> wizard analyzes your Auto Scaling Groups against 7 best practices:</p>'
+          + '<ol>'
+          + '<li><strong>Multi-AZ</strong> \u2014 Ensures instances span 2+ Availability Zones for high availability</li>'
+          + '<li><strong>Load Balancer</strong> \u2014 Verifies ALB/NLB is attached with healthy targets</li>'
+          + '<li><strong>Spot Mix</strong> \u2014 Checks for MixedInstancesPolicy with price-capacity-optimized strategy</li>'
+          + '<li><strong>Instance Diversification</strong> \u2014 Multiple instance types for better Spot availability</li>'
+          + '<li><strong>Scaling Policy</strong> \u2014 Target tracking or step scaling configured</li>'
+          + '<li><strong>Launch Template</strong> \u2014 Uses Launch Template (not deprecated LaunchConfiguration)</li>'
+          + '<li><strong>Health Check Type</strong> \u2014 ELB health checks when load balancer is attached</li>'
+          + '</ol>'
+          + '<p>Each check shows a grade (A/B/C/D) and specific fix recommendations.</p>'
+      },
+      {
+        id: 'resize-server',
+        heading: 'Resize a Server',
+        icon: '\U0001f4ca',
+        body: '<p>The <strong>Resize a Server</strong> wizard helps you find cheaper EC2 instance types:</p>'
+          + '<ol>'
+          + '<li>Select an account and EC2 instance</li>'
+          + '<li>Click <strong>Optimize</strong> to analyze 30 days of CPU and memory usage</li>'
+          + '<li>Review the full instance spec card (vCPU, memory, network, EBS, architecture)</li>'
+          + '<li>Browse the sortable comparison table of cheaper alternatives</li>'
+          + '<li>Click <strong>Resize</strong> to execute (instance stops for 1-3 minutes during resize)</li>'
+          + '</ol>'
+          + '<p>The wizard only shows instance types compatible with your current architecture (x86/ARM).</p>'
       },
       {
         id: 'delete-account',
