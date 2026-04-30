@@ -11605,9 +11605,14 @@ def handle_server_resize(event):
         if state == 'running':
             steps.append({'step': 'Stopping instance', 'status': 'in-progress'})
             ec2.stop_instances(InstanceIds=[instance_id])
-            # Wait for stopped
-            waiter = ec2.get_waiter('instance_stopped')
-            waiter.wait(InstanceIds=[instance_id], WaiterConfig={'Delay': 5, 'MaxAttempts': 60})
+            # Poll for stopped state (max 20 seconds to stay within API GW timeout)
+            for _ in range(10):
+                import time
+                time.sleep(2)
+                check = ec2.describe_instances(InstanceIds=[instance_id])
+                s = check['Reservations'][0]['Instances'][0].get('State', {}).get('Name', '')
+                if s == 'stopped':
+                    break
             steps[-1]['status'] = 'complete'
         elif state == 'stopped':
             steps.append({'step': 'Instance already stopped', 'status': 'complete'})
@@ -11623,11 +11628,9 @@ def handle_server_resize(event):
         )
         steps[-1]['status'] = 'complete'
 
-        # Step 3: Start the instance
+        # Step 3: Start the instance (don't wait — return immediately)
         steps.append({'step': 'Starting instance', 'status': 'in-progress'})
         ec2.start_instances(InstanceIds=[instance_id])
-        waiter = ec2.get_waiter('instance_running')
-        waiter.wait(InstanceIds=[instance_id], WaiterConfig={'Delay': 5, 'MaxAttempts': 60})
         steps[-1]['status'] = 'complete'
 
         # Calculate savings (live pricing)
