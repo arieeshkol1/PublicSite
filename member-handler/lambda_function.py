@@ -144,6 +144,7 @@ def lambda_handler(event, context):
         'POST /members/servers/analyze': handle_server_analyze,
         'POST /members/servers/resize': handle_server_resize,
         'POST /members/servers/list-instances': handle_server_list_instances,
+        'POST /members/cluster/analyze': handle_cluster_analyze,
     }
 
     handler = routes.get(route_key)
@@ -11723,3 +11724,282 @@ def handle_server_list_instances(event):
         return create_error_response(500, 'ServerError', f'Failed to list instances: {e}')
 
     return create_response(200, {'instances': instances, 'count': len(instances)})
+
+
+
+# ============================================================
+# Optimize a Cluster -- ASG Health Report + Optimization
+# ============================================================
+
+def handle_cluster_analyze(event):
+    """POST /members/cluster/analyze -- Analyze an existing ASG and return optimization report."""
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+    member_email = auth['sub']
+
+    try:
+        body = json.loads(event.get('body', '{}'))
+    except (json.JSONDecodeError, TypeError):
+        return create_error_response(400, 'InvalidRequest', 'Invalid request body')
+
+    account_id = body.get('accountId', '')
+    asg_name = body.get('asgName', '')
+    if not account_id or not asg_name:
+        return create_error_response(400, 'MissingParams', 'accountId and asgName required')
+
+    ownership = _verify_account_ownership(member_email, [account_id])
+    if isinstance(ownership, dict):
+        return ownership
+
+    try:
+        creds = _assume_role_for_account(member_email, account_id)
+    except Exception as e:
+        return create_error_response(500, 'ServerError', f'Cannot assume role: {e}')
+
+    asg_client = _make_client_from_creds('autoscaling', creds)
+    ec2 = _make_client_from_creds('ec2', creds)
+    elbv2 = _make_client_from_creds('elbv2', creds)
+
+    # Fetch ASG details
+    try:
+        resp = asg_client.describe_auto_scaling_groups(AutoScalingGroupNames=[asg_name])
+        asgs = resp.get('AutoScalingGroups', [])
+        if not asgs:
+            return create_error_response(404, 'NotFound', f'ASG {asg_name} not found')
+        asg = asgs[0]
+    except Exception as e:
+        return create_error_response(500, 'ServerError', f'Failed to describe ASG: {e}')
+
+    # Extract ASG config
+    instances = asg.get('Instances', [])
+    desired = asg.get('DesiredCapacity', 0)
+    min_size = asg.get('MinSize', 0)
+    max_size = asg.get('MaxSize', 0)
+    azs = asg.get('AvailabilityZones', [])
+    tags = {t['Key']: t['Value'] for t in asg.get('Tags', [])}
+    lt = asg.get('LaunchTemplate')
+    lc = asg.get('LaunchConfigurationName')
+    mip = asg.get('MixedInstancesPolicy')
+    tg_arns = asg.get('TargetGroupARNs', [])
+    lb_names = asg.get('LoadBalancerNames', [])
+    health_check_type = asg.get('HealthCheckType', 'EC2')
+    scaling_policies = []
+
+    # Get scaling policies
+    try:
+        pol_resp = asg_client.describe_policies(AutoScalingGroupName=asg_name)
+        scaling_policies = pol_resp.get('ScalingPolicies', [])
+    except Exception:
+        pass
+
+    # Get instance details (On-Demand vs Spot)
+    on_demand_count = 0
+    spot_count = 0
+    instance_types_used = set()
+    instance_azs = set()
+    for inst in instances:
+        if inst.get('LifecycleState') != 'InService':
+            continue
+        instance_azs.add(inst.get('AvailabilityZone', ''))
+
+    if instances:
+        try:
+            iids = [i['InstanceId'] for i in instances if i.get('LifecycleState') == 'InService']
+            if iids:
+                ec2_resp = ec2.describe_instances(InstanceIds=iids[:20])
+                for res in ec2_resp.get('Reservations', []):
+                    for inst_detail in res.get('Instances', []):
+                        itype = inst_detail.get('InstanceType', '')
+                        instance_types_used.add(itype)
+                        if inst_detail.get('InstanceLifecycle') == 'spot':
+                            spot_count += 1
+                        else:
+                            on_demand_count += 1
+        except Exception:
+            on_demand_count = len(instances)
+
+    # Check target group health
+    tg_healthy = None
+    if tg_arns:
+        try:
+            for tg_arn in tg_arns[:1]:
+                th_resp = elbv2.describe_target_health(TargetGroupArn=tg_arn)
+                targets = th_resp.get('TargetHealthDescriptions', [])
+                healthy = sum(1 for t in targets if t.get('TargetHealth', {}).get('State') == 'healthy')
+                tg_healthy = {'total': len(targets), 'healthy': healthy, 'targetGroupArn': tg_arn}
+        except Exception:
+            pass
+
+    # Determine Spot allocation strategy
+    spot_strategy = None
+    spot_pct_config = None
+    od_base = None
+    if mip:
+        dist = mip.get('InstancesDistribution', {})
+        spot_strategy = dist.get('SpotAllocationStrategy', '')
+        spot_pct_config = 100 - dist.get('OnDemandPercentageAboveBaseCapacity', 100)
+        od_base = dist.get('OnDemandBaseCapacity', 0)
+
+    # Build health checks
+    checks = []
+
+    # Check 1: Multi-AZ
+    if len(azs) < 2:
+        checks.append({
+            'id': 'multi-az', 'status': 'fail', 'severity': 'high',
+            'title': 'Single Availability Zone',
+            'detail': f'ASG is in {len(azs)} AZ(s): {", ".join(azs)}. Use 2+ AZs for high availability.',
+            'fix': 'Add subnets from additional AZs to the ASG configuration.',
+        })
+    else:
+        checks.append({
+            'id': 'multi-az', 'status': 'pass', 'severity': 'info',
+            'title': f'Multi-AZ ({len(azs)} AZs)',
+            'detail': f'ASG spans {", ".join(azs)}.',
+        })
+
+    # Check 2: Load Balancer
+    if not tg_arns and not lb_names:
+        checks.append({
+            'id': 'load-balancer', 'status': 'warn', 'severity': 'medium',
+            'title': 'No Load Balancer attached',
+            'detail': 'ASG has no ALB/NLB target group. Traffic cannot be distributed across instances.',
+            'fix': 'Create an Application Load Balancer and attach the ASG to a target group.',
+        })
+    else:
+        health_str = ''
+        if tg_healthy:
+            health_str = f' ({tg_healthy["healthy"]}/{tg_healthy["total"]} healthy)'
+        checks.append({
+            'id': 'load-balancer', 'status': 'pass', 'severity': 'info',
+            'title': f'Load Balancer attached{health_str}',
+            'detail': f'{len(tg_arns)} target group(s), health check type: {health_check_type}.',
+        })
+
+    # Check 3: Spot Instances
+    if spot_count == 0 and not mip:
+        checks.append({
+            'id': 'spot-mix', 'status': 'fail', 'severity': 'high',
+            'title': 'No Spot Instances (100% On-Demand)',
+            'detail': f'All {on_demand_count} instances are On-Demand. Spot can save 60-90%.',
+            'fix': 'Enable MixedInstancesPolicy with price-capacity-optimized strategy.',
+        })
+    elif mip and spot_strategy == 'price-capacity-optimized':
+        checks.append({
+            'id': 'spot-mix', 'status': 'pass', 'severity': 'info',
+            'title': f'Spot enabled ({spot_count} Spot, {on_demand_count} On-Demand)',
+            'detail': f'Strategy: {spot_strategy}, OD base: {od_base}.',
+        })
+    elif mip:
+        checks.append({
+            'id': 'spot-mix', 'status': 'warn', 'severity': 'medium',
+            'title': f'Spot enabled but not optimal strategy',
+            'detail': f'Current strategy: {spot_strategy}. Recommended: price-capacity-optimized.',
+            'fix': 'Switch allocation strategy to price-capacity-optimized for fewer interruptions.',
+        })
+    else:
+        checks.append({
+            'id': 'spot-mix', 'status': 'warn', 'severity': 'medium',
+            'title': f'Spot mix: {spot_count} Spot, {on_demand_count} On-Demand',
+            'detail': 'Spot instances detected but no MixedInstancesPolicy configured.',
+        })
+
+    # Check 4: Instance Diversification
+    if len(instance_types_used) <= 1:
+        checks.append({
+            'id': 'diversification', 'status': 'warn', 'severity': 'medium',
+            'title': f'Single instance type ({", ".join(instance_types_used) or "unknown"})',
+            'detail': 'Using one instance type limits Spot capacity pools. Diversify for better availability.',
+            'fix': 'Use attribute-based instance selection (vCPU/memory range) to access 10+ capacity pools.',
+        })
+    else:
+        checks.append({
+            'id': 'diversification', 'status': 'pass', 'severity': 'info',
+            'title': f'{len(instance_types_used)} instance types in use',
+            'detail': f'Types: {", ".join(sorted(instance_types_used))}.',
+        })
+
+    # Check 5: Scaling Policy
+    if not scaling_policies:
+        checks.append({
+            'id': 'scaling-policy', 'status': 'warn', 'severity': 'medium',
+            'title': 'No scaling policy configured',
+            'detail': 'ASG has fixed capacity. Add a target tracking policy to scale with demand.',
+            'fix': 'Add a target tracking policy (e.g., CPU 60% or ALB request count).',
+        })
+    else:
+        pol_names = [p.get('PolicyName', '') for p in scaling_policies]
+        checks.append({
+            'id': 'scaling-policy', 'status': 'pass', 'severity': 'info',
+            'title': f'{len(scaling_policies)} scaling policy(ies)',
+            'detail': f'Policies: {", ".join(pol_names[:3])}.',
+        })
+
+    # Check 6: Launch Template vs Launch Configuration
+    if lc and not lt:
+        checks.append({
+            'id': 'launch-template', 'status': 'warn', 'severity': 'medium',
+            'title': 'Uses Launch Configuration (deprecated)',
+            'detail': f'Launch Configuration: {lc}. AWS recommends migrating to Launch Templates.',
+            'fix': 'Create a Launch Template from the current configuration and update the ASG.',
+        })
+    elif lt:
+        checks.append({
+            'id': 'launch-template', 'status': 'pass', 'severity': 'info',
+            'title': 'Uses Launch Template',
+            'detail': f'Template: {lt.get("LaunchTemplateId", "")} v{lt.get("Version", "")}.',
+        })
+
+    # Check 7: Health Check Type
+    if health_check_type == 'EC2' and tg_arns:
+        checks.append({
+            'id': 'health-check', 'status': 'warn', 'severity': 'medium',
+            'title': 'Health check type is EC2 (not ELB)',
+            'detail': 'ASG has a load balancer but uses EC2 health checks. ELB health checks are more accurate.',
+            'fix': 'Change health check type to ELB so unhealthy instances are replaced based on ALB health.',
+        })
+    elif health_check_type == 'ELB':
+        checks.append({
+            'id': 'health-check', 'status': 'pass', 'severity': 'info',
+            'title': 'ELB health check enabled',
+            'detail': 'Instances are replaced based on load balancer health checks.',
+        })
+
+    # Calculate score
+    total = len(checks)
+    passed = sum(1 for c in checks if c['status'] == 'pass')
+    score = round(passed / total * 100) if total > 0 else 0
+
+    return create_response(200, {
+        'asgName': asg_name,
+        'accountId': account_id,
+        'config': {
+            'desiredCapacity': desired,
+            'minSize': min_size,
+            'maxSize': max_size,
+            'availabilityZones': azs,
+            'launchTemplate': lt,
+            'launchConfiguration': lc,
+            'hasMixedInstancesPolicy': mip is not None,
+            'spotStrategy': spot_strategy,
+            'onDemandBase': od_base,
+            'healthCheckType': health_check_type,
+        },
+        'instances': {
+            'total': on_demand_count + spot_count,
+            'onDemand': on_demand_count,
+            'spot': spot_count,
+            'typesUsed': sorted(instance_types_used),
+            'azCount': len(instance_azs),
+        },
+        'loadBalancer': {
+            'attached': bool(tg_arns or lb_names),
+            'targetGroups': len(tg_arns),
+            'health': tg_healthy,
+        },
+        'scalingPolicies': len(scaling_policies),
+        'checks': checks,
+        'score': score,
+        'grade': 'A' if score >= 85 else 'B' if score >= 70 else 'C' if score >= 50 else 'D',
+    })
