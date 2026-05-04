@@ -623,7 +623,7 @@ function initHelp() {
     </div>
     <div id="help-body" style="flex:1;padding:16px 20px;overflow-y:auto;"></div>
     <div style="padding:12px 20px;border-top:1px solid #e5e7eb;background:#f9fafb;flex-shrink:0;font-size:0.78em;color:#6b7280;text-align:center;">
-      SlashMyBill Help v3.0 · <a href="mailto:info@slashmycloudbill.com" style="color:#6366f1;">info@slashmycloudbill.com</a>
+      SlashMyBill Help v3.0 · <a href="mailto:ariel@slashmycloudbill.com" style="color:#6366f1;">ariel@slashmycloudbill.com</a>
     </div>
   `;
 

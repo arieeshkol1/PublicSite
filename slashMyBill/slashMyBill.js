@@ -687,7 +687,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     _tagLead(email, 'consultation-booked', _pipelineSavings);
                 } catch (err) {
                     statusEl.className = 'smb-consult-status smb-consult-error';
-                    statusEl.textContent = 'Failed to send. Please email us at info@slashmycloudbill.com';
+                    statusEl.textContent = 'Failed to send. Please email us at ariel@slashmycloudbill.com';
                     submitBtn.disabled = false;
                     submitBtn.textContent = 'Send Request';
                 }

@@ -345,7 +345,7 @@ function _showUpgradeModal() {
             if (plan === 'free') {
                 // Downgrade — just notify, backend handles via webhook on cancel
                 if (confirm('Downgrade to Free? Your paid features will remain active until the end of your billing period.')) {
-                    notify('To downgrade, cancel your subscription from the Paddle receipt email or contact info@slashmycloudbill.com', 'info', 8000);
+                    notify('To downgrade, cancel your subscription from the Paddle receipt email or contact ariel@slashmycloudbill.com', 'info', 8000);
                 }
                 return;
             }

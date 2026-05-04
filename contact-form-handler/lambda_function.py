@@ -47,7 +47,7 @@ def lambda_handler(event, context):
             }
         
         # Get recipient email from environment variable
-        recipient_email = os.environ.get('RECIPIENT_EMAIL', 'ariel.eshkol@gmail.com')
+        recipient_email = os.environ.get('RECIPIENT_EMAIL', 'ariel@slashmycloudbill.com')
         sender_email = os.environ.get('SENDER_EMAIL', 'noreply@slashmycloudbill.com')
         
         # Prepare email content
