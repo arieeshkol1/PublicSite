@@ -1052,7 +1052,7 @@ Resources:
       FunctionName: aws-bill-analyzer-member-api
       Runtime: python3.12
       Handler: lambda_function.lambda_handler
-      MemorySize: 512
+      MemorySize: 1024
       Timeout: 120
       Role: !GetAtt MemberHandlerRole.Arn
       Code:

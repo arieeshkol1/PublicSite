@@ -2348,6 +2348,8 @@ def handle_actions_scan(event):
     all_cards = []
     all_findings = []
     total_savings = 0.0
+    scan_start = datetime.now(timezone.utc)
+    SCAN_TIMEOUT_SECONDS = 22  # Leave 8s buffer for API Gateway 30s limit
 
     for account_id in account_ids[:5]:
         try:
@@ -2366,6 +2368,12 @@ def handle_actions_scan(event):
 
         # ── Step 4: Evaluate each tip against collected data ──────────────
         for tip in tips:
+            # Time budget guard — return partial results if approaching API GW timeout
+            elapsed = (datetime.now(timezone.utc) - scan_start).total_seconds()
+            if elapsed > SCAN_TIMEOUT_SECONDS:
+                logger.warning(f"Scan time budget exceeded ({elapsed:.1f}s) — returning partial results")
+                break
+
             svc_key = tip.get('serviceKey', tip.get('service', 'General'))
             # Gate: only evaluate if service is present (General always runs)
             if svc_key != 'General' and svc_key not in active_services:
