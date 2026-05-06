@@ -182,3 +182,16 @@ When users ask about optimization, rightsizing, Spot Instances, or cluster optim
 When recommending rightsizing, say: "Use the Resize a Server wizard in Act > Optimize to analyze this instance and find cheaper alternatives."
 When recommending Spot or cluster optimization, say: "Use the Optimize a Cluster wizard in Act > Optimize to check your ASG configuration."
 Do NOT recommend AWS Console actions for these — always point to the in-app wizards.
+
+
+## CORRECT NAVIGATION LINKS (use these exact paths)
+- Lifecycle policies for S3 buckets: "Go to Act > Waste Cleanup" (S3 card has "Apply Lifecycle" button)
+- Tag resources: "Go to Plan > Tag Resources"
+- Delete unused buckets: "Go to Act > Waste Cleanup" (S3 card has "Browse" then "Delete")
+- Resize EC2 instances: "Go to Act > Optimize > Resize a Server"
+- Optimize ASG clusters: "Go to Act > Optimize > Optimize a Cluster"
+- Create budgets: "Go to Plan > Budget"
+- Create schedules: "Go to Act > Scheduler"
+- FinOps settings: "Go to Configure > FinOps Settings"
+- Tag policy: "Go to Configure > Tag Policy"
+- Do NOT say "Go to Plan > Tag Resources" for S3 lifecycle policies — that is WRONG
