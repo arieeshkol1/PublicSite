@@ -1,11 +1,11 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'ViewMyBill - AWS Bill Analysis Tool infrastructure'
-# v23 - Spot management + ECS billing test
+Description: 'SlashMyBill - me-central-1 (UAE) deployment'
+# UAE region deployment - all services local except Cognito + Pricing API
 
 Parameters:
   BillStorageBucket:
     Type: String
-    Default: 'aws-bill-analyzer-storage-991105135552'
+    Default: 'slashmybill-storage-me-central-1'
     Description: Existing S3 bucket for bill storage and reports
 
   BedrockModelId:
@@ -15,7 +15,7 @@ Parameters:
 
   LambdaCodeBucket:
     Type: String
-    Default: 'aws-bill-analyzer-storage-991105135552'
+    Default: 'slashmybill-storage-me-central-1'
     Description: S3 bucket containing Lambda deployment packages
 
   BillAnalyzerCodeKey:
@@ -57,6 +57,46 @@ Parameters:
     Type: String
     NoEcho: true
     Description: Secret key for JWT signing (kept for admin panel; Cognito handles member auth)
+
+  BedrockRegion:
+    Type: String
+    Default: 'me-central-1'
+    Description: Region for Bedrock model invocation
+
+  SESRegion:
+    Type: String
+    Default: 'me-central-1'
+    Description: Region for SES email sending
+
+  CognitoUserPoolId:
+    Type: String
+    Default: 'us-east-1_FlR2CmFu0'
+    Description: Cognito User Pool ID (cross-region from us-east-1)
+
+  CognitoClientId:
+    Type: String
+    Default: '3shmdb332mm8sjheopdu9sg8o4'
+    Description: Cognito App Client ID
+
+  CognitoRegion:
+    Type: String
+    Default: 'us-east-1'
+    Description: Region where Cognito pool lives
+
+  PricingRegion:
+    Type: String
+    Default: 'us-east-1'
+    Description: Region for AWS Pricing API (only available in us-east-1/ap-south-1)
+
+  BedrockAgentId:
+    Type: String
+    Default: 'PLACEHOLDER'
+    Description: Bedrock Agent ID in me-central-1 (set after first agent creation)
+
+  BedrockAgentAliasId:
+    Type: String
+    Default: 'PLACEHOLDER'
+    Description: Bedrock Agent Alias ID in me-central-1 (set after first agent creation)
 
 Resources:
 
@@ -118,7 +158,7 @@ Resources:
   BillAnalyzerRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: aws-bill-analyzer-viewmybill-role
+      RoleName: aws-bill-analyzer-viewmybill-role-me-central-1
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -149,7 +189,7 @@ Resources:
                 Action:
                   - bedrock:InvokeModel
                 Resource:
-                  - !Sub 'arn:aws:bedrock:us-east-1::foundation-model/${BedrockModelId}'
+                  - !Sub 'arn:aws:bedrock:${BedrockRegion}::foundation-model/${BedrockModelId}'
         - PolicyName: DynamoDBReadAccess
           PolicyDocument:
             Version: '2012-10-17'
@@ -191,7 +231,7 @@ Resources:
   UploadHandlerRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: aws-bill-analyzer-upload-handler-role
+      RoleName: aws-bill-analyzer-upload-handler-role-me-central-1
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -251,7 +291,7 @@ Resources:
           BEDROCK_MODEL_ID: !Ref BedrockModelId
           MAX_TOKENS: '4000'
           PRESIGNED_URL_EXPIRY: '86400'
-          BEDROCK_REGION: 'us-east-1'
+          BEDROCK_REGION: !Ref BedrockRegion
       Tags:
         - Key: Project
           Value: ViewMyBill
@@ -308,7 +348,7 @@ Resources:
   OTPHandlerRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: aws-bill-analyzer-otp-handler-role
+      RoleName: aws-bill-analyzer-otp-handler-role-me-central-1
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -387,7 +427,7 @@ Resources:
         Variables:
           OTP_TABLE_NAME: !Ref OTPTable
           SES_SENDER_EMAIL: 'noreply@eshkolai.com'
-          SES_REGION: 'us-east-1'
+          SES_REGION: !Ref SESRegion
       Tags:
         - Key: Project
           Value: ViewMyBill
@@ -510,6 +550,7 @@ Resources:
           - 'https://www.eshkolai.com'
           - 'https://slashmycloudbill.com'
           - 'https://www.slashmycloudbill.com'
+          - 'https://uae.slashmycloudbill.com'
         AllowMethods:
           - GET
           - POST
@@ -630,7 +671,7 @@ Resources:
   AdminHandlerRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: aws-bill-analyzer-admin-handler-role
+      RoleName: aws-bill-analyzer-admin-handler-role-me-central-1
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -847,7 +888,7 @@ Resources:
   MemberHandlerRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: aws-bill-analyzer-member-handler-role
+      RoleName: aws-bill-analyzer-member-handler-role-me-central-1
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -934,8 +975,8 @@ Resources:
                   - bedrock:InvokeModel
                   - bedrock:InvokeAgent
                 Resource:
-                  - !Sub 'arn:aws:bedrock:us-east-1::foundation-model/${BedrockModelId}'
-                  - 'arn:aws:bedrock:us-east-1::foundation-model/amazon.nova-lite-v1:0'
+                  - !Sub 'arn:aws:bedrock:${BedrockRegion}::foundation-model/${BedrockModelId}'
+                  - !Sub 'arn:aws:bedrock:${BedrockRegion}::foundation-model/amazon.nova-lite-v1:0'
                   - !Sub 'arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:agent/*'
                   - !Sub 'arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:agent-alias/*'
         - PolicyName: DynamoDBTipsAccess
@@ -1001,7 +1042,7 @@ Resources:
                   - cognito-idp:ResendConfirmationCode
                   - cognito-idp:GetUser
                   - cognito-idp:ListUsers
-                Resource: 'arn:aws:cognito-idp:us-east-1:991105135552:userpool/us-east-1_FlR2CmFu0'
+                Resource: !Sub 'arn:aws:cognito-idp:${CognitoRegion}:${AWS::AccountId}:userpool/${CognitoUserPoolId}'
         - PolicyName: EventBridgeSchedulerAccess
           PolicyDocument:
             Version: '2012-10-17'
@@ -1071,18 +1112,18 @@ Resources:
           STORAGE_BUCKET: !Ref BillStorageBucket
           TIPS_TABLE_NAME: !Ref CostOptimizationTipsTable
           BEDROCK_MODEL_ID: !Ref BedrockModelId
-          BEDROCK_AGENT_ID: 'IDG5VJGUOZ5W'
-          BEDROCK_AGENT_ALIAS_ID: '9VYFXAEEH6'
+          BEDROCK_AGENT_ID: !Ref BedrockAgentId
+          BEDROCK_AGENT_ALIAS_ID: !Ref BedrockAgentAliasId
           FEEDBACK_TABLE_NAME: !Ref AgentFeedbackTable
           BUSINESS_METRICS_TABLE: !Ref BusinessMetricsTable
-          COGNITO_USER_POOL_ID: 'us-east-1_FlR2CmFu0'
-          COGNITO_CLIENT_ID: '3shmdb332mm8sjheopdu9sg8o4'
+          COGNITO_USER_POOL_ID: !Ref CognitoUserPoolId
+          COGNITO_CLIENT_ID: !Ref CognitoClientId
           SPOT_LEDGER_TABLE_NAME: !Ref SpotSavingsLedgerTable
           SPOT_SNS_TOPIC_ARN: !Ref SpotInterruptionsTopic
-          COGNITO_REGION: 'us-east-1'
-          PRICING_REGION: 'us-east-1'
-          BEDROCK_REGION: 'us-east-1'
-          SES_REGION: 'us-east-1'
+          COGNITO_REGION: !Ref CognitoRegion
+          PRICING_REGION: !Ref PricingRegion
+          BEDROCK_REGION: !Ref BedrockRegion
+          SES_REGION: !Ref SESRegion
       Tags:
         - Key: Project
           Value: ViewMyBill
@@ -1093,7 +1134,7 @@ Resources:
   AgentActionRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: SlashMyBill-AgentAction-Role
+      RoleName: SlashMyBill-AgentAction-Role-me-central-1
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -1156,7 +1197,7 @@ Resources:
         Variables:
           PLATFORM_ACCOUNT_ID: '991105135552'
           TIPS_TABLE_NAME: !Ref CostOptimizationTipsTable
-          PRICING_REGION: 'us-east-1'
+          PRICING_REGION: !Ref PricingRegion
       Tags:
         - Key: Project
           Value: ViewMyBill
@@ -1432,7 +1473,7 @@ Resources:
   SchedulerExecutorRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: slashmybill-scheduler-executor-role
+      RoleName: slashmybill-scheduler-executor-role-me-central-1
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -1496,7 +1537,7 @@ Resources:
   EventBridgeSchedulerRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: SlashMyBill-EventBridge-Scheduler-Role
+      RoleName: SlashMyBill-EventBridge-Scheduler-Role-me-central-1
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:

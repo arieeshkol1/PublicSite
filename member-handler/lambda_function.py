@@ -46,8 +46,8 @@ SCHEDULER_ROLE_ARN = os.environ.get('SCHEDULER_ROLE_ARN', 'arn:aws:iam::99110513
 
 # AWS clients
 dynamodb = boto3.resource('dynamodb')
-ses_client = boto3.client('ses')
-cognito_client = boto3.client('cognito-idp', region_name='us-east-1')
+ses_client = boto3.client('ses', region_name=os.environ.get('SES_REGION', os.environ.get('AWS_REGION', 'us-east-1')))
+cognito_client = boto3.client('cognito-idp', region_name=os.environ.get('COGNITO_REGION', 'us-east-1'))
 
 # Constants
 OTP_TTL_SECONDS = 300  # 5 minutes
@@ -4300,7 +4300,7 @@ def handle_ai_query(event):
 
 def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
     """Invoke the Bedrock Agent for a conversational FinOps query."""
-    agent_runtime = boto3.client('bedrock-agent-runtime', region_name='us-east-1')
+    agent_runtime = boto3.client('bedrock-agent-runtime', region_name=os.environ.get('BEDROCK_REGION', os.environ.get('AWS_REGION', 'us-east-1')))
 
     # Include account context in the prompt
     enriched_prompt = f"[Account: {account_id}, Member: {member_email}] {question}"
@@ -4535,7 +4535,7 @@ def _invoke_multi_account(question, account_ids, member_email, interaction_id):
 
 def _ask_bedrock_multi_account(question, tips_context, aggregate, all_account_data, account_ids):
     """Call Bedrock to analyze multi-account data."""
-    bedrock_client = boto3.client('bedrock-runtime', region_name='us-east-1')
+    bedrock_client = boto3.client('bedrock-runtime', region_name=os.environ.get('BEDROCK_REGION', os.environ.get('AWS_REGION', 'us-east-1')))
 
     tips_text = ""
     if tips_context:
@@ -6091,7 +6091,7 @@ def _fetch_pricing_context(service_costs, account_data=None):
         },
     }
 
-    pricing_client = boto3.client('pricing', region_name='us-east-1')
+    pricing_client = boto3.client('pricing', region_name=os.environ.get('PRICING_REGION', 'us-east-1'))
     results = {}
     top_services = [s['service'] for s in service_costs[:5]]
 
@@ -6228,7 +6228,7 @@ def _fetch_pricing_context(service_costs, account_data=None):
 
 def _ask_bedrock_analyze(question, tips_context, account_data, account_id):
     """Call Bedrock to analyze gathered data and answer the question."""
-    bedrock_client = boto3.client('bedrock-runtime', region_name='us-east-1')
+    bedrock_client = boto3.client('bedrock-runtime', region_name=os.environ.get('BEDROCK_REGION', os.environ.get('AWS_REGION', 'us-east-1')))
 
     tips_text = ""
     if tips_context:

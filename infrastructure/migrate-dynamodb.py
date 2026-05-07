@@ -75,7 +75,7 @@ def migrate_table(source_region, target_region, table_name):
 def main():
     parser = argparse.ArgumentParser(description='Migrate SlashMyBill DynamoDB tables between regions')
     parser.add_argument('--source-region', default='us-east-1', help='Source AWS region')
-    parser.add_argument('--target-region', default='me-south-1', help='Target AWS region')
+    parser.add_argument('--target-region', default='me-central-1', help='Target AWS region')
     parser.add_argument('--tables', nargs='*', help='Specific tables to migrate (default: all)')
     parser.add_argument('--dry-run', action='store_true', help='Only scan, do not write')
     args = parser.parse_args()

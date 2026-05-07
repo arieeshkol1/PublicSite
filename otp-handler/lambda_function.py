@@ -13,7 +13,7 @@ import boto3
 from botocore.exceptions import ClientError
 
 dynamodb = boto3.resource('dynamodb')
-ses_client = boto3.client('ses')
+ses_client = boto3.client('ses', region_name=os.environ.get('SES_REGION', os.environ.get('AWS_REGION', 'us-east-1')))
 
 OTP_TABLE_NAME = os.environ.get('OTP_TABLE_NAME', 'ViewMyBill-OTP')
 SES_SENDER_EMAIL = os.environ.get('SES_SENDER_EMAIL', 'noreply@slashmycloudbill.com')

@@ -466,7 +466,7 @@ def _invoke_bedrock(prompt: str) -> str:
         RuntimeError: If Bedrock returns a throttling (429) or
                       unavailability (503) error.
     """
-    bedrock = boto3.client('bedrock-runtime')
+    bedrock = boto3.client('bedrock-runtime', region_name=os.environ.get('BEDROCK_REGION', os.environ.get('AWS_REGION', 'us-east-1')))
 
     request_body = {
         "messages": [{"role": "user", "content": [{"text": prompt}]}],

@@ -209,7 +209,7 @@ def _get_aws_pricing(service_code, filters_str='', region='us-east-1'):
     filters_str: comma-separated key=value pairs, e.g. "instanceType=m5.large,operatingSystem=Linux"
     """
     try:
-        pricing = boto3.client('pricing', region_name='us-east-1')
+        pricing = boto3.client('pricing', region_name=os.environ.get('PRICING_REGION', 'us-east-1'))
 
         if not service_code:
             # Return available service codes if none specified

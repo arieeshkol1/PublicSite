@@ -672,3 +672,320 @@ jobs:
             --no-fail-on-empty-changeset || echo "ECS deploy failed (likely IAM permissions for me-central-1 needed)"
           echo "To delete: aws cloudformation delete-stack --stack-name slashmybill-billing-test --region me-central-1"
 
+  # ================================================================
+  # UAE Region Deployment (me-central-1)
+  # ================================================================
+  deploy-uae:
+    needs: deploy
+    runs-on: ubuntu-latest
+    env:
+      UAE_REGION: me-central-1
+      UAE_STORAGE_BUCKET: slashmybill-storage-me-central-1
+      UAE_STACK_NAME: slashmybill-me-central-1
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::991105135552:role/GitHubDeployRole
+          aws-region: me-central-1
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Create S3 bucket if not exists
+        continue-on-error: true
+        run: |
+          aws s3api create-bucket \
+            --bucket ${{ env.UAE_STORAGE_BUCKET }} \
+            --region ${{ env.UAE_REGION }} \
+            --create-bucket-configuration LocationConstraint=${{ env.UAE_REGION }} 2>/dev/null || echo "Bucket exists"
+          echo "✓ S3 bucket ready: ${{ env.UAE_STORAGE_BUCKET }}"
+
+      - name: Package Bill Analyzer Lambda
+        run: |
+          pip install -r bill-analyzer/requirements.txt -t .build-bill-analyzer/ --quiet
+          cp bill-analyzer/*.py .build-bill-analyzer/
+          cp bill-analyzer/SlashMyBill.png .build-bill-analyzer/
+          cd .build-bill-analyzer && zip -r ../bill-analyzer-lambda.zip . -q
+          cd ..
+          aws s3 cp bill-analyzer-lambda.zip s3://${{ env.UAE_STORAGE_BUCKET }}/lambda-packages/bill-analyzer.zip
+          echo "✓ Bill Analyzer packaged (UAE)"
+
+      - name: Package Upload Handler Lambda
+        run: |
+          mkdir -p .build-upload-handler
+          cp upload-handler/lambda_function.py .build-upload-handler/
+          cd .build-upload-handler && zip -r ../upload-handler-lambda.zip . -q
+          cd ..
+          aws s3 cp upload-handler-lambda.zip s3://${{ env.UAE_STORAGE_BUCKET }}/lambda-packages/upload-handler.zip
+          echo "✓ Upload Handler packaged (UAE)"
+
+      - name: Package OTP Handler Lambda
+        run: |
+          mkdir -p .build-otp-handler
+          cp otp-handler/lambda_function.py .build-otp-handler/
+          cd .build-otp-handler && zip -r ../otp-handler-lambda.zip . -q
+          cd ..
+          aws s3 cp otp-handler-lambda.zip s3://${{ env.UAE_STORAGE_BUCKET }}/lambda-packages/otp-handler.zip
+          echo "✓ OTP Handler packaged (UAE)"
+
+      - name: Package Admin Handler Lambda
+        run: |
+          pip install PyJWT bcrypt -t .build-admin-handler/ --quiet
+          cp admin-handler/lambda_function.py .build-admin-handler/
+          cd .build-admin-handler && zip -r ../admin-handler-lambda.zip . -q
+          cd ..
+          aws s3 cp admin-handler-lambda.zip s3://${{ env.UAE_STORAGE_BUCKET }}/lambda-packages/admin-handler.zip
+          echo "✓ Admin Handler packaged (UAE)"
+
+      - name: Package Member Handler Lambda
+        run: |
+          pip install PyJWT bcrypt pyyaml -t .build-member-handler/ --quiet
+          cp member-handler/lambda_function.py .build-member-handler/
+          cd .build-member-handler && zip -r ../member-handler-lambda.zip . -q
+          cd ..
+          aws s3 cp member-handler-lambda.zip s3://${{ env.UAE_STORAGE_BUCKET }}/lambda-packages/member-handler.zip
+          echo "✓ Member Handler packaged (UAE)"
+
+      - name: Package Agent Action Lambda
+        run: |
+          mkdir -p .build-agent-action
+          cp agent-action/lambda_function.py .build-agent-action/
+          cd .build-agent-action && zip -r ../agent-action-lambda.zip . -q
+          cd ..
+          aws s3 cp agent-action-lambda.zip s3://${{ env.UAE_STORAGE_BUCKET }}/lambda-packages/agent-action.zip
+          echo "✓ Agent Action packaged (UAE)"
+
+      - name: Package Scheduler Executor Lambda
+        run: |
+          mkdir -p .build-scheduler-executor
+          cp scheduler-executor/lambda_function.py .build-scheduler-executor/
+          cd .build-scheduler-executor && zip -r ../scheduler-executor-lambda.zip . -q
+          cd ..
+          aws s3 cp scheduler-executor-lambda.zip s3://${{ env.UAE_STORAGE_BUCKET }}/lambda-packages/scheduler-executor.zip
+          echo "✓ Scheduler Executor packaged (UAE)"
+
+      - name: Package Paddle Webhook Lambda
+        run: |
+          mkdir -p .build-paddle-webhook
+          cp paddle-webhook-handler/lambda_function.py .build-paddle-webhook/
+          cd .build-paddle-webhook && zip -r ../paddle-webhook-lambda.zip . -q
+          cd ..
+          aws s3 cp paddle-webhook-lambda.zip s3://${{ env.UAE_STORAGE_BUCKET }}/lambda-packages/paddle-webhook.zip
+          echo "✓ Paddle Webhook packaged (UAE)"
+
+      - name: Deploy CloudFormation stack (me-central-1)
+        continue-on-error: true
+        run: |
+          echo "Deploying SlashMyBill infrastructure to me-central-1..."
+          aws cloudformation deploy \
+            --template-file infrastructure/viewmybill-stack-me-central-1.yaml \
+            --stack-name ${{ env.UAE_STACK_NAME }} \
+            --region ${{ env.UAE_REGION }} \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --no-fail-on-empty-changeset \
+            --parameter-overrides \
+              AdminUsername='${{ secrets.ADMIN_USERNAME }}' \
+              AdminPasswordHash='${{ secrets.ADMIN_PASSWORD_HASH }}' \
+              JWTSecret='${{ secrets.JWT_SECRET }}' \
+            --tags Project=ViewMyBill
+          echo "✓ UAE infrastructure deployed"
+
+      - name: Update Lambda function code (me-central-1)
+        continue-on-error: true
+        run: |
+          aws lambda update-function-code \
+            --function-name aws-bill-analyzer-viewmybill \
+            --s3-bucket ${{ env.UAE_STORAGE_BUCKET }} \
+            --s3-key lambda-packages/bill-analyzer.zip \
+            --region ${{ env.UAE_REGION }} > /dev/null 2>&1 || true
+          aws lambda update-function-code \
+            --function-name aws-bill-analyzer-upload-handler \
+            --s3-bucket ${{ env.UAE_STORAGE_BUCKET }} \
+            --s3-key lambda-packages/upload-handler.zip \
+            --region ${{ env.UAE_REGION }} > /dev/null 2>&1 || true
+          aws lambda update-function-code \
+            --function-name aws-bill-analyzer-otp-handler \
+            --s3-bucket ${{ env.UAE_STORAGE_BUCKET }} \
+            --s3-key lambda-packages/otp-handler.zip \
+            --region ${{ env.UAE_REGION }} > /dev/null 2>&1 || true
+          aws lambda update-function-code \
+            --function-name aws-bill-analyzer-admin-api \
+            --s3-bucket ${{ env.UAE_STORAGE_BUCKET }} \
+            --s3-key lambda-packages/admin-handler.zip \
+            --region ${{ env.UAE_REGION }} > /dev/null 2>&1 || true
+          aws lambda update-function-code \
+            --function-name aws-bill-analyzer-member-api \
+            --s3-bucket ${{ env.UAE_STORAGE_BUCKET }} \
+            --s3-key lambda-packages/member-handler.zip \
+            --region ${{ env.UAE_REGION }} > /dev/null 2>&1 || true
+          aws lambda update-function-code \
+            --function-name SlashMyBill-AgentAction \
+            --s3-bucket ${{ env.UAE_STORAGE_BUCKET }} \
+            --s3-key lambda-packages/agent-action.zip \
+            --region ${{ env.UAE_REGION }} > /dev/null 2>&1 || true
+          aws lambda update-function-code \
+            --function-name slashmybill-scheduler-executor \
+            --s3-bucket ${{ env.UAE_STORAGE_BUCKET }} \
+            --s3-key lambda-packages/scheduler-executor.zip \
+            --region ${{ env.UAE_REGION }} > /dev/null 2>&1 || true
+          aws lambda update-function-code \
+            --function-name slashmybill-paddle-webhook \
+            --s3-bucket ${{ env.UAE_STORAGE_BUCKET }} \
+            --s3-key lambda-packages/paddle-webhook.zip \
+            --region ${{ env.UAE_REGION }} > /dev/null 2>&1 || true
+          echo "✓ Lambda functions updated (UAE)"
+
+      - name: Ensure API Gateway routes (me-central-1)
+        continue-on-error: true
+        run: |
+          # Get the API ID from the stack
+          UAE_API_ID=$(aws cloudformation describe-stacks \
+            --stack-name ${{ env.UAE_STACK_NAME }} \
+            --region ${{ env.UAE_REGION }} \
+            --query "Stacks[0].Outputs[?OutputKey=='ApiId'].OutputValue" \
+            --output text 2>/dev/null || echo "")
+
+          if [ -z "$UAE_API_ID" ] || [ "$UAE_API_ID" = "None" ]; then
+            echo "⚠ Could not get UAE API ID — stack may not be deployed yet"
+            exit 0
+          fi
+
+          MEMBER_INT=$(aws apigatewayv2 get-integrations --api-id $UAE_API_ID --region ${{ env.UAE_REGION }} \
+            --query "Items[?contains(IntegrationUri, 'member-api')].IntegrationId" --output text 2>/dev/null || echo "")
+
+          if [ -z "$MEMBER_INT" ]; then
+            echo "⚠ Member integration not found"
+            exit 0
+          fi
+
+          MEMBER_ROUTES=(
+            "POST /member/add-tokens"
+            "POST /member/update-tier"
+            "POST /members/tags/scan"
+            "POST /members/tags/apply"
+            "POST /members/schedules/analyze"
+            "GET /members/schedules"
+            "PUT /members/schedules/status"
+            "POST /members/schedules/create"
+            "DELETE /members/schedules/delete"
+            "PUT /members/schedules/pause"
+            "PUT /members/schedules/resume"
+            "PUT /members/schedules/edit"
+            "POST /members/budgets/list"
+            "POST /members/budgets/create"
+            "PUT /members/budgets/update"
+            "DELETE /members/budgets/delete"
+            "GET /members/live-metrics"
+            "POST /members/healthcheck/scan"
+            "POST /members/healthcheck/fix"
+            "GET /members/tag-policy"
+            "POST /members/tag-policy"
+            "POST /members/agent/invoke"
+            "POST /members/spot/config"
+            "POST /members/spot/qualify"
+            "POST /members/spot/plan"
+            "POST /members/spot/migrate"
+            "GET /members/spot/dashboard"
+            "POST /members/servers/analyze"
+            "POST /members/servers/resize"
+            "POST /members/servers/list-instances"
+            "POST /members/cluster/analyze"
+          )
+          for ROUTE in "${MEMBER_ROUTES[@]}"; do
+            aws apigatewayv2 create-route --api-id $UAE_API_ID --region ${{ env.UAE_REGION }} \
+              --route-key "$ROUTE" --target "integrations/$MEMBER_INT" 2>/dev/null || true
+          done
+
+          aws apigatewayv2 create-deployment --api-id $UAE_API_ID --region ${{ env.UAE_REGION }} > /dev/null 2>&1 || true
+          echo "✓ API Gateway routes ensured (UAE)"
+
+      - name: Seed DynamoDB knowledge base (me-central-1)
+        run: |
+          pip install boto3 --quiet
+          python knowledge-base/seed-dynamodb.py --region ${{ env.UAE_REGION }}
+          echo "✓ DynamoDB seeded (UAE)"
+        env:
+          AWS_REGION: me-central-1
+
+      - name: Update Bedrock Agent (me-central-1)
+        continue-on-error: true
+        run: |
+          python infrastructure/update-bedrock-agent-me-central-1.py
+          echo "✓ Bedrock Agent updated (UAE)"
+
+      - name: Configure S3 lifecycle rules (me-central-1)
+        continue-on-error: true
+        run: |
+          aws s3api put-bucket-lifecycle-configuration \
+            --bucket ${{ env.UAE_STORAGE_BUCKET }} \
+            --region ${{ env.UAE_REGION }} \
+            --lifecycle-configuration '{
+              "Rules": [
+                {"ID":"DeleteReportsAfter1Day","Filter":{"Prefix":"reports/"},"Status":"Enabled","Expiration":{"Days":1}},
+                {"ID":"DeleteBillsAfter1Day","Filter":{"Prefix":"bills/"},"Status":"Enabled","Expiration":{"Days":1}}
+              ]
+            }'
+          echo "✓ Lifecycle rules set (UAE)"
+
+      - name: UAE Deploy Summary
+        continue-on-error: true
+        run: |
+          UAE_API_URL=$(aws cloudformation describe-stacks \
+            --stack-name ${{ env.UAE_STACK_NAME }} \
+            --region ${{ env.UAE_REGION }} \
+            --query "Stacks[0].Outputs[?OutputKey=='ApiEndpoint'].OutputValue" \
+            --output text 2>/dev/null || echo "NOT YET DEPLOYED")
+          echo "=== UAE Deploy Complete ==="
+          echo "Region: ${{ env.UAE_REGION }}"
+          echo "Stack: ${{ env.UAE_STACK_NAME }}"
+          echo "API: $UAE_API_URL"
+
+      - name: Deploy UAE frontend
+        continue-on-error: true
+        run: |
+          UAE_API_URL=$(aws cloudformation describe-stacks \
+            --stack-name ${{ env.UAE_STACK_NAME }} \
+            --region ${{ env.UAE_REGION }} \
+            --query "Stacks[0].Outputs[?OutputKey=='ApiEndpoint'].OutputValue" \
+            --output text 2>/dev/null || echo "")
+
+          if [ -z "$UAE_API_URL" ] || [ "$UAE_API_URL" = "None" ]; then
+            echo "⚠ UAE API URL not available — skipping frontend deploy"
+            exit 0
+          fi
+
+          # Deploy frontend with UAE API URL to /uae/ prefix on slashmycloudbill.com bucket
+          echo "Deploying UAE frontend to s3://slashmycloudbill.com/uae/..."
+
+          # Copy and patch members.js with UAE API URL
+          mkdir -p .build-uae-frontend
+          cp -r members/* .build-uae-frontend/
+          sed -i "s|https://l2fd4h481h.execute-api.us-east-1.amazonaws.com|${UAE_API_URL}|g" .build-uae-frontend/members.js
+
+          # Upload to /uae/members/ on the SMB bucket
+          aws s3 sync .build-uae-frontend/ s3://slashmycloudbill.com/uae/members/ \
+            --cache-control "no-cache, no-store, must-revalidate" \
+            --exclude "*.py"
+
+          # Copy slashMyBill landing page for UAE
+          cp -r slashMyBill/ .build-uae-landing/
+          sed -i "s|https://l2fd4h481h.execute-api.us-east-1.amazonaws.com|${UAE_API_URL}|g" .build-uae-landing/slashMyBill.js 2>/dev/null || true
+          aws s3 sync .build-uae-landing/ s3://slashmycloudbill.com/uae/ \
+            --cache-control "no-cache, no-store, must-revalidate" \
+            --exclude "*.py" --exclude "*.md" 2>/dev/null || true
+
+          # Copy shared assets
+          for f in SlashMyBill.png smallninja2.png styles.css; do
+            [ -f "$f" ] && aws s3 cp "$f" s3://slashmycloudbill.com/uae/$f \
+              --cache-control "max-age=2592000" 2>/dev/null || true
+          done
+
+          echo "✓ UAE frontend deployed to slashmycloudbill.com/uae/"
+          echo "  Access: https://slashmycloudbill.com/uae/members/"
+

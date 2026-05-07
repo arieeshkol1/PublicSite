@@ -7,6 +7,7 @@ to the ViewMyBill-CostOptimizationTips DynamoDB table.
 
 Usage:
     python knowledge-base/seed-dynamodb.py
+    python knowledge-base/seed-dynamodb.py --region me-central-1
 """
 
 import json
@@ -17,7 +18,7 @@ import boto3
 from botocore.exceptions import ClientError
 
 TABLE_NAME = "ViewMyBill-CostOptimizationTips"
-REGION = "us-east-1"
+REGION = os.environ.get("AWS_REGION", "us-east-1")
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 TIPS_FILE = os.path.join(SCRIPT_DIR, "aws-cost-optimization-tips.json")
 
@@ -65,7 +66,15 @@ def seed_table(tips, table):
 
 
 def main():
+    global REGION
+    # Support --region argument
+    if '--region' in sys.argv:
+        idx = sys.argv.index('--region')
+        if idx + 1 < len(sys.argv):
+            REGION = sys.argv[idx + 1]
+
     print(f"Loading tips from {TIPS_FILE}")
+    print(f"Target region: {REGION}")
     try:
         tips = load_tips(TIPS_FILE)
     except (FileNotFoundError, json.JSONDecodeError, KeyError) as e:
