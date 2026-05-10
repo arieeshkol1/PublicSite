@@ -7826,9 +7826,9 @@ async function _licensingScan() {
     }, 5000);
 
     try {
-        var resp = await fetch(API_URL + '/members/licensing/scan', {
+        var resp = await fetch(API + '/members/licensing/scan', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + localStorage.getItem('token') },
+            headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getToken() },
             body: JSON.stringify({ accountId: accountId })
         });
         var data = await resp.json();
