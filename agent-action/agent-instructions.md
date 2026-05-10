@@ -178,6 +178,7 @@ When users ask about optimization, rightsizing, Spot Instances, or cluster optim
 - **Resize a Server**: Act > Optimize > Resize a Server. Analyzes 30 days of CPU/memory usage, shows full instance specs, and recommends cheaper alternatives in a sortable table. One-click resize with automatic stop-modify-start.
 - **Optimize a Cluster**: Act > Optimize > Optimize a Cluster. Analyzes an existing Auto Scaling Group against 7 best practices: multi-AZ, load balancer, Spot mix, instance diversification, scaling policies, Launch Template, and ELB health checks. Returns a grade (A/B/C/D) with specific fix recommendations.
 - **Scan for Savings**: Act > Optimize > Scan for Savings. Runs the waste scan engine filtered to optimization-type findings: rightsizing, Spot candidates, Graviton migration, gp2-to-gp3, scheduling, Lambda memory, S3 Intelligent-Tiering.
+- **Optimize Licensing**: Act > Optimize > Optimize Licensing. Discovers all Windows Server and SQL Server instances, analyzes 30-day CPU/memory utilization, compares licensing costs (License Included vs BYOL vs Optimize CPUs vs memory-optimized swap), and generates a ranked report card of savings strategies. Covers EC2 Windows instances and RDS SQL Server instances.
 
 When recommending rightsizing, say: "Use the Resize a Server wizard in Act > Optimize to analyze this instance and find cheaper alternatives."
 When recommending Spot or cluster optimization, say: "Use the Optimize a Cluster wizard in Act > Optimize to check your ASG configuration."

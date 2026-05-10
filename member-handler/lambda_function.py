@@ -145,6 +145,7 @@ def lambda_handler(event, context):
         'POST /members/servers/resize': handle_server_resize,
         'POST /members/servers/list-instances': handle_server_list_instances,
         'POST /members/cluster/analyze': handle_cluster_analyze,
+        'POST /members/licensing/scan': handle_licensing_scan,
     }
 
     handler = routes.get(route_key)
@@ -12017,3 +12018,476 @@ def handle_cluster_analyze(event):
         'score': score,
         'grade': 'A' if score >= 85 else 'B' if score >= 70 else 'C' if score >= 50 else 'D',
     })
+
+
+# ============================================================
+# Licensing Optimizer — Windows/SQL Server Cost Analysis
+# ============================================================
+
+def handle_licensing_scan(event):
+    """POST /members/licensing/scan -- Discover Windows/SQL instances, analyze utilization, calculate licensing costs, generate recommendations."""
+    import math
+    import time as _time
+
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+    member_email = auth
+
+    try:
+        body = json.loads(event.get('body', '{}'))
+    except (json.JSONDecodeError, TypeError):
+        return create_error_response(400, 'InvalidRequest', 'Invalid request body')
+
+    account_id = body.get('accountId', '')
+    if not account_id or not re.match(r'^\d{12}$', account_id):
+        return create_error_response(400, 'InvalidAccountId', 'Please provide a valid 12-digit account ID')
+
+    # Verify account belongs to member
+    accounts_table = dynamodb.Table(ACCOUNTS_TABLE_NAME)
+    acct_resp = accounts_table.get_item(Key={'memberEmail': member_email, 'accountId': account_id})
+    if 'Item' not in acct_resp:
+        return create_error_response(403, 'AccountNotFound', 'Account not connected')
+
+    external_id = hashlib.sha256(member_email.encode('utf-8')).hexdigest()
+    role_arn = f'arn:aws:iam::{account_id}:role/SlashMyBill-{account_id}'
+    scan_start = _time.time()
+
+    # --- Phase 1: Assume Role ---
+    try:
+        sts_client = boto3.client('sts')
+        assume_resp = sts_client.assume_role(
+            RoleArn=role_arn, RoleSessionName='SlashMyBillLicensing', ExternalId=external_id,
+            DurationSeconds=900
+        )
+        creds = assume_resp['Credentials']
+    except Exception as e:
+        return create_error_response(403, 'AssumeRoleFailed', f'Cannot access account: {str(e)[:200]}')
+
+    def _client(service, region=None):
+        return boto3.client(service,
+            aws_access_key_id=creds['AccessKeyId'],
+            aws_secret_access_key=creds['SecretAccessKey'],
+            aws_session_token=creds['SessionToken'],
+            region_name=region or os.environ.get('AWS_REGION', 'us-east-1')
+        )
+
+    # --- Phase 2: Discovery ---
+    instances = []
+
+    # EC2 Windows instances
+    try:
+        ec2 = _client('ec2')
+        ec2_resp = ec2.describe_instances(Filters=[
+            {'Name': 'platform', 'Values': ['windows']},
+            {'Name': 'instance-state-name', 'Values': ['running', 'stopped']}
+        ])
+        ami_ids = set()
+        ec2_instances_raw = []
+        for res in ec2_resp.get('Reservations', []):
+            for inst in res.get('Instances', []):
+                ec2_instances_raw.append(inst)
+                ami_ids.add(inst.get('ImageId', ''))
+
+        # Get AMI descriptions for SQL detection
+        ami_descriptions = {}
+        if ami_ids:
+            try:
+                ami_resp = ec2.describe_images(ImageIds=list(ami_ids)[:50])
+                for img in ami_resp.get('Images', []):
+                    ami_descriptions[img['ImageId']] = img.get('Description', '') or img.get('Name', '')
+            except Exception:
+                pass
+
+        # Get instance type specs
+        unique_types = set(inst.get('InstanceType', '') for inst in ec2_instances_raw)
+        type_specs = {}
+        if unique_types:
+            try:
+                types_resp = ec2.describe_instance_types(InstanceTypes=list(unique_types)[:50])
+                for t in types_resp.get('InstanceTypes', []):
+                    type_specs[t['InstanceType']] = {
+                        'vcpus': t['VCpuInfo']['DefaultVCpus'],
+                        'cores': t['VCpuInfo']['DefaultCores'],
+                        'memory_mb': t['MemoryInfo']['SizeInMiB'],
+                        'valid_cores': t['VCpuInfo'].get('ValidCores', []),
+                    }
+            except Exception:
+                pass
+
+        for inst in ec2_instances_raw:
+            itype = inst.get('InstanceType', '')
+            specs = type_specs.get(itype, {})
+            tags = {t['Key']: t['Value'] for t in inst.get('Tags', [])}
+            tag_values_lower = ' '.join(tags.values()).lower()
+            ami_desc = ami_descriptions.get(inst.get('ImageId', ''), '').lower()
+
+            # Detect SQL Server
+            sql_edition = None
+            if any(kw in tag_values_lower for kw in ['sql', 'mssql', 'sqlserver']):
+                if 'enterprise' in tag_values_lower:
+                    sql_edition = 'Enterprise'
+                elif 'standard' in tag_values_lower:
+                    sql_edition = 'Standard'
+                else:
+                    sql_edition = 'Unknown'
+            elif 'sql server enterprise' in ami_desc or 'sql_server_enterprise' in ami_desc:
+                sql_edition = 'Enterprise'
+            elif 'sql server standard' in ami_desc or 'sql_server_standard' in ami_desc:
+                sql_edition = 'Standard'
+            elif 'sql server' in ami_desc or 'sql_server' in ami_desc:
+                sql_edition = 'Unknown'
+
+            instances.append({
+                'instanceId': inst['InstanceId'],
+                'accountId': account_id,
+                'source': 'ec2',
+                'instanceType': itype,
+                'platform': 'Windows',
+                'sqlEdition': sql_edition,
+                'vcpus': specs.get('vcpus', 0),
+                'cores': specs.get('cores', 0),
+                'memoryGb': round(specs.get('memory_mb', 0) / 1024, 1),
+                'validCores': specs.get('valid_cores', []),
+                'state': inst.get('State', {}).get('Name', 'unknown'),
+                'name': tags.get('Name', ''),
+            })
+    except Exception as e:
+        if 'not authorized' in str(e).lower() or 'accessdenied' in str(e).lower():
+            return create_error_response(403, 'PermissionDenied', f'Missing permission: ec2:DescribeInstances. Update the cross-account role.')
+
+    # RDS SQL Server instances
+    try:
+        rds = _client('rds')
+        rds_resp = rds.describe_db_instances()
+        for db in rds_resp.get('DBInstances', []):
+            engine = db.get('Engine', '')
+            if engine.startswith('sqlserver-'):
+                edition = 'Enterprise' if engine == 'sqlserver-ee' else 'Standard' if engine == 'sqlserver-se' else 'Unknown'
+                db_class = db.get('DBInstanceClass', '')
+                # Parse vCPUs from class (approximate)
+                vcpus = 0
+                mem_gb = 0
+                # Try to get from instance type specs
+                ec2_equiv = db_class.replace('db.', '')
+                if ec2_equiv in type_specs:
+                    vcpus = type_specs[ec2_equiv].get('vcpus', 0)
+                    mem_gb = round(type_specs[ec2_equiv].get('memory_mb', 0) / 1024, 1)
+
+                instances.append({
+                    'instanceId': db['DBInstanceIdentifier'],
+                    'accountId': account_id,
+                    'source': 'rds',
+                    'instanceType': db_class,
+                    'platform': 'Windows',
+                    'sqlEdition': edition,
+                    'vcpus': vcpus,
+                    'cores': vcpus // 2 if vcpus else 0,
+                    'memoryGb': mem_gb,
+                    'validCores': [],
+                    'state': db.get('DBInstanceStatus', 'unknown'),
+                    'name': db['DBInstanceIdentifier'],
+                    'engine': engine,
+                })
+    except Exception:
+        pass  # RDS access optional
+
+    if not instances:
+        return create_success_response({
+            'success': True,
+            'reportCard': {
+                'totalInstances': 0,
+                'instancesWithRecommendations': 0,
+                'currentMonthlySpend': 0,
+                'totalPotentialSavings': 0,
+                'savingsPercentage': 0,
+                'byStrategy': [],
+                'instances': [],
+                'message': 'No Windows or SQL Server instances found in this account.'
+            }
+        })
+
+    # --- Phase 3: Utilization Analysis (30-day CloudWatch) ---
+    cw = _client('cloudwatch')
+    from datetime import datetime, timedelta
+    end_time = datetime.utcnow()
+    start_time = end_time - timedelta(days=30)
+
+    for inst in instances:
+        if _time.time() - scan_start > 100:  # timeout guard
+            break
+        try:
+            if inst['source'] == 'ec2':
+                namespace = 'AWS/EC2'
+                dimensions = [{'Name': 'InstanceId', 'Value': inst['instanceId']}]
+            else:
+                namespace = 'AWS/RDS'
+                dimensions = [{'Name': 'DBInstanceIdentifier', 'Value': inst['instanceId']}]
+
+            # CPU
+            cpu_resp = cw.get_metric_statistics(
+                Namespace=namespace, MetricName='CPUUtilization',
+                Dimensions=dimensions,
+                StartTime=start_time, EndTime=end_time,
+                Period=3600, Statistics=['Average', 'Maximum']
+            )
+            datapoints = cpu_resp.get('Datapoints', [])
+            if datapoints:
+                avgs = [d['Average'] for d in datapoints]
+                maxes = [d['Maximum'] for d in datapoints]
+                inst['cpuAvg'] = round(sum(avgs) / len(avgs), 1)
+                inst['cpuMax'] = round(max(maxes), 1)
+                # p95 approximation from sorted averages
+                sorted_avgs = sorted(avgs)
+                p95_idx = int(len(sorted_avgs) * 0.95)
+                inst['cpuP95'] = round(sorted_avgs[min(p95_idx, len(sorted_avgs)-1)], 1)
+                inst['cpuEfficiencyRatio'] = round(inst['cpuP95'] / 100, 2)
+            else:
+                inst['cpuAvg'] = None
+                inst['cpuMax'] = None
+                inst['cpuP95'] = None
+                inst['cpuEfficiencyRatio'] = None
+
+            # Memory (EC2 only, requires CWAgent)
+            if inst['source'] == 'ec2':
+                try:
+                    mem_resp = cw.get_metric_statistics(
+                        Namespace='CWAgent', MetricName='mem_used_percent',
+                        Dimensions=[{'Name': 'InstanceId', 'Value': inst['instanceId']}],
+                        StartTime=start_time, EndTime=end_time,
+                        Period=3600, Statistics=['Average', 'Maximum']
+                    )
+                    mem_dp = mem_resp.get('Datapoints', [])
+                    if mem_dp:
+                        inst['memoryAvg'] = round(sum(d['Average'] for d in mem_dp) / len(mem_dp), 1)
+                        inst['memoryMax'] = round(max(d['Maximum'] for d in mem_dp), 1)
+                    else:
+                        inst['memoryAvg'] = None
+                        inst['memoryMax'] = None
+                except Exception:
+                    inst['memoryAvg'] = None
+                    inst['memoryMax'] = None
+            else:
+                inst['memoryAvg'] = None
+                inst['memoryMax'] = None
+        except Exception:
+            inst['cpuAvg'] = None
+            inst['cpuMax'] = None
+            inst['cpuP95'] = None
+            inst['cpuEfficiencyRatio'] = None
+            inst['memoryAvg'] = None
+            inst['memoryMax'] = None
+
+    # --- Phase 4: Pricing & Cost Calculation ---
+    pricing_region = os.environ.get('PRICING_REGION', 'us-east-1')
+    pricing_client = boto3.client('pricing', region_name=pricing_region)
+    pricing_cache = {}  # key: (instance_type, license_model, pre_installed_sw) -> hourly_rate
+
+    def _get_price(instance_type, license_model='License Included', pre_installed_sw='NA'):
+        cache_key = (instance_type, license_model, pre_installed_sw)
+        if cache_key in pricing_cache:
+            return pricing_cache[cache_key]
+        try:
+            # Strip db. prefix for RDS → EC2 type mapping in pricing
+            ec2_type = instance_type.replace('db.', '')
+            filters = [
+                {'Type': 'TERM_MATCH', 'Field': 'instanceType', 'Value': ec2_type},
+                {'Type': 'TERM_MATCH', 'Field': 'operatingSystem', 'Value': 'Windows'},
+                {'Type': 'TERM_MATCH', 'Field': 'tenancy', 'Value': 'Shared'},
+                {'Type': 'TERM_MATCH', 'Field': 'licenseModel', 'Value': license_model},
+                {'Type': 'TERM_MATCH', 'Field': 'preInstalledSw', 'Value': pre_installed_sw},
+                {'Type': 'TERM_MATCH', 'Field': 'location', 'Value': 'US East (N. Virginia)'},
+                {'Type': 'TERM_MATCH', 'Field': 'capacitystatus', 'Value': 'Used'},
+            ]
+            resp = pricing_client.get_products(ServiceCode='AmazonEC2', Filters=filters, MaxResults=1)
+            price_list = resp.get('PriceList', [])
+            if price_list:
+                price_data = json.loads(price_list[0])
+                terms = price_data.get('terms', {}).get('OnDemand', {})
+                for term in terms.values():
+                    for dim in term.get('priceDimensions', {}).values():
+                        rate = float(dim.get('pricePerUnit', {}).get('USD', '0'))
+                        if rate > 0:
+                            pricing_cache[cache_key] = rate
+                            return rate
+        except Exception:
+            pass
+        pricing_cache[cache_key] = None
+        return None
+
+    # Calculate pricing for each instance
+    for inst in instances:
+        if _time.time() - scan_start > 105:
+            break
+        itype = inst['instanceType']
+
+        # License Included (Windows only)
+        li_rate = _get_price(itype, 'License Included', 'NA')
+        # BYOL (Windows only)
+        byol_rate = _get_price(itype, 'Bring your own license', 'NA')
+
+        # With SQL Server
+        sql_li_rate = None
+        sql_std_rate = None
+        if inst['sqlEdition'] == 'Enterprise':
+            sql_li_rate = _get_price(itype, 'License Included', 'SQL Ent')
+        elif inst['sqlEdition'] == 'Standard':
+            sql_li_rate = _get_price(itype, 'License Included', 'SQL Std')
+        if inst['sqlEdition'] in ('Enterprise', 'Unknown'):
+            sql_std_rate = _get_price(itype, 'License Included', 'SQL Std')
+
+        # Use SQL rate if available, otherwise Windows-only rate
+        current_rate = sql_li_rate or li_rate
+        inst['pricing'] = {
+            'licenseIncludedHourly': current_rate,
+            'byolHourly': byol_rate,
+            'sqlEnterpriseHourly': _get_price(itype, 'License Included', 'SQL Ent') if inst['sqlEdition'] else None,
+            'sqlStandardHourly': sql_std_rate,
+        }
+        inst['currentMonthlyCost'] = round(current_rate * 730, 2) if current_rate else None
+
+    # --- Phase 5: Recommendations ---
+    for inst in instances:
+        inst['recommendations'] = []
+        current_rate = inst['pricing'].get('licenseIncludedHourly')
+        byol_rate = inst['pricing'].get('byolHourly')
+        if not current_rate:
+            continue
+
+        monthly_cost = current_rate * 730
+
+        # 1. Optimize CPUs (EC2 only, if CPU p95 < 50%)
+        if inst['source'] == 'ec2' and inst.get('cpuP95') and inst['cpuP95'] < 50 and inst.get('validCores'):
+            vcpus = inst['vcpus']
+            peak_needed = max(1, math.ceil(vcpus * (inst['cpuP95'] / 100)))
+            valid = sorted(inst['validCores'])
+            target_cores = next((c for c in valid if c >= peak_needed), vcpus)
+            if target_cores < vcpus and byol_rate:
+                license_portion = current_rate - byol_rate
+                reduction_ratio = (vcpus - target_cores) / vcpus
+                hourly_savings = license_portion * reduction_ratio
+                monthly_savings = round(hourly_savings * 730, 2)
+                if monthly_savings > 5:
+                    inst['recommendations'].append({
+                        'strategy': 'optimizeCpus',
+                        'title': f'Reduce vCPUs from {vcpus} to {target_cores} using Optimize CPUs',
+                        'description': f'Your p95 CPU is {inst["cpuP95"]}% — {target_cores} vCPUs can sustain this. Reduces licensing costs.',
+                        'targetVcpus': target_cores,
+                        'monthlySavings': monthly_savings,
+                        'savingsPercent': round((monthly_savings / monthly_cost) * 100, 1),
+                        'action': 'advisory',
+                        'deepLink': 'act:optimization:resize'
+                    })
+
+        # 2. BYOL savings
+        if byol_rate and current_rate > byol_rate:
+            byol_savings = round((current_rate - byol_rate) * 730, 2)
+            if byol_savings > 10:
+                inst['recommendations'].append({
+                    'strategy': 'byol',
+                    'title': 'Switch to BYOL with Software Assurance',
+                    'description': f'Saves ${byol_savings}/mo. Requires active Microsoft Software Assurance.',
+                    'monthlySavings': byol_savings,
+                    'savingsPercent': round((byol_savings / monthly_cost) * 100, 1),
+                    'action': 'advisory',
+                    'prerequisite': 'Software Assurance required'
+                })
+
+        # 3. SQL Edition Downgrade (Enterprise → Standard)
+        if inst['sqlEdition'] == 'Enterprise':
+            std_rate = inst['pricing'].get('sqlStandardHourly')
+            ent_rate = inst['pricing'].get('sqlEnterpriseHourly')
+            if std_rate and ent_rate and ent_rate > std_rate:
+                downgrade_savings = round((ent_rate - std_rate) * 730, 2)
+                if downgrade_savings > 10:
+                    inst['recommendations'].append({
+                        'strategy': 'editionDowngrade',
+                        'title': 'Downgrade from SQL Enterprise to Standard',
+                        'description': f'Saves ${downgrade_savings}/mo if Enterprise-only features (partitioning, compression, multi-secondary AG) are not used.',
+                        'monthlySavings': downgrade_savings,
+                        'savingsPercent': round((downgrade_savings / monthly_cost) * 100, 1),
+                        'action': 'advisory',
+                        'requiresConfirmation': True
+                    })
+
+        # 4. Memory-optimized swap (fewer vCPUs, same memory)
+        if inst['source'] == 'ec2' and inst['vcpus'] >= 4:
+            # Suggest R-family with fewer vCPUs
+            current_mem = inst['memoryGb']
+            current_vcpus_val = inst['vcpus']
+            r_alternatives = [
+                ('r6i.large', 2, 16), ('r6i.xlarge', 4, 32), ('r6i.2xlarge', 8, 64),
+                ('r7i.large', 2, 16), ('r7i.xlarge', 4, 32), ('r7i.2xlarge', 8, 64),
+            ]
+            for alt_type, alt_vcpus, alt_mem in r_alternatives:
+                if alt_vcpus < current_vcpus_val and alt_mem >= current_mem * 0.7:
+                    alt_rate = _get_price(alt_type, 'License Included', 'NA')
+                    if alt_rate and alt_rate < current_rate:
+                        swap_savings = round((current_rate - alt_rate) * 730, 2)
+                        if swap_savings > 20:
+                            inst['recommendations'].append({
+                                'strategy': 'instanceSwap',
+                                'title': f'Switch to {alt_type} ({alt_vcpus} vCPUs, {alt_mem} GB)',
+                                'description': f'Fewer vCPUs = lower licensing. Memory: {alt_mem} GB vs current {current_mem} GB.',
+                                'targetInstanceType': alt_type,
+                                'targetVcpus': alt_vcpus,
+                                'targetMemoryGb': alt_mem,
+                                'monthlySavings': swap_savings,
+                                'savingsPercent': round((swap_savings / monthly_cost) * 100, 1),
+                                'action': 'advisory',
+                                'deepLink': 'act:optimization:resize'
+                            })
+                            break  # Only best alternative
+
+        # Sort recommendations by savings
+        inst['recommendations'].sort(key=lambda r: r.get('monthlySavings', 0), reverse=True)
+
+    # --- Phase 6: Report Card ---
+    total_spend = sum(i.get('currentMonthlyCost', 0) or 0 for i in instances)
+    instances_with_recs = [i for i in instances if i.get('recommendations')]
+
+    # Best savings per instance (non-conflicting)
+    total_savings = 0
+    for inst in instances_with_recs:
+        if inst['recommendations']:
+            total_savings += inst['recommendations'][0]['monthlySavings']
+
+    # Group by strategy
+    strategy_totals = {}
+    for inst in instances:
+        for rec in inst.get('recommendations', []):
+            strat = rec['strategy']
+            if strat not in strategy_totals:
+                strategy_totals[strat] = {'savings': 0, 'count': 0}
+            strategy_totals[strat]['savings'] += rec['monthlySavings']
+            strategy_totals[strat]['count'] += 1
+
+    strategy_labels = {
+        'optimizeCpus': 'Optimize CPUs',
+        'byol': 'Bring Your Own License',
+        'editionDowngrade': 'SQL Edition Downgrade',
+        'instanceSwap': 'Memory-Optimized Swap',
+        'dedicatedHost': 'Dedicated Host',
+    }
+
+    by_strategy = sorted([
+        {
+            'strategy': k,
+            'label': strategy_labels.get(k, k),
+            'savings': round(v['savings'], 2),
+            'instanceCount': v['count']
+        }
+        for k, v in strategy_totals.items()
+    ], key=lambda x: x['savings'], reverse=True)
+
+    report_card = {
+        'totalInstances': len(instances),
+        'instancesWithRecommendations': len(instances_with_recs),
+        'currentMonthlySpend': round(total_spend, 2),
+        'totalPotentialSavings': round(total_savings, 2),
+        'savingsPercentage': round((total_savings / total_spend * 100), 1) if total_spend > 0 else 0,
+        'byStrategy': by_strategy,
+        'instances': instances,
+    }
+
+    return create_success_response({'success': True, 'reportCard': report_card})
