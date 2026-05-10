@@ -7780,3 +7780,144 @@ async function _clusterAnalyze() {
         if (section === 'optimization') _clusterPopulateAccounts();
     };
 })();
+
+
+// ============================================================
+// Optimize Licensing -- Windows/SQL Server Cost Analysis
+// ============================================================
+
+function _licensingPopulateAccounts() {
+    var select = document.getElementById('licensing-account');
+    if (!select) return;
+    select.innerHTML = '<option value="">Select account...</option>';
+    (window._memberAccounts || []).forEach(function(a) {
+        var opt = document.createElement('option');
+        opt.value = a.accountId;
+        opt.textContent = a.accountName || a.accountId;
+        select.appendChild(opt);
+    });
+}
+
+async function _licensingScan() {
+    var accountId = (document.getElementById('licensing-account') || {}).value;
+    if (!accountId) { alert('Please select an account'); return; }
+
+    var progress = document.getElementById('licensing-progress');
+    var progressText = document.getElementById('licensing-progress-text');
+    var report = document.getElementById('licensing-report');
+    var status = document.getElementById('licensing-status');
+
+    if (progress) progress.style.display = 'block';
+    if (report) report.style.display = 'none';
+    if (status) status.textContent = '';
+
+    var phases = ['Discovering Windows/SQL instances...', 'Analyzing 30-day utilization...', 'Calculating licensing costs...', 'Generating recommendations...'];
+    var phaseIdx = 0;
+    var phaseInterval = setInterval(function() {
+        phaseIdx++;
+        if (phaseIdx < phases.length && progressText) {
+            progressText.textContent = phases[phaseIdx];
+        }
+    }, 5000);
+
+    try {
+        var resp = await fetch(API_URL + '/members/licensing/scan', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + localStorage.getItem('token') },
+            body: JSON.stringify({ accountId: accountId })
+        });
+        var data = await resp.json();
+        clearInterval(phaseInterval);
+        if (progress) progress.style.display = 'none';
+
+        if (!resp.ok || !data.success) {
+            if (status) status.textContent = '❌ ' + (data.message || 'Scan failed');
+            return;
+        }
+
+        _renderLicensingReport(data.reportCard);
+    } catch (e) {
+        clearInterval(phaseInterval);
+        if (progress) progress.style.display = 'none';
+        if (status) status.textContent = '❌ ' + e.message;
+    }
+}
+
+function _renderLicensingReport(rc) {
+    var el = document.getElementById('licensing-report');
+    if (!el) return;
+    el.style.display = 'block';
+
+    if (rc.totalInstances === 0) {
+        el.innerHTML = '<div style="text-align:center;padding:30px;color:#6b7280;"><div style="font-size:2em;margin-bottom:8px;">✅</div><div>No Windows or SQL Server instances found in this account.</div></div>';
+        return;
+    }
+
+    var html = '';
+    // Summary header
+    html += '<div style="background:#f0fdf4;border:1px solid #86efac;border-radius:10px;padding:16px;margin-bottom:16px;">';
+    html += '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">';
+    html += '<div><span style="font-size:1.8em;font-weight:700;color:#166534;">$' + rc.totalPotentialSavings.toLocaleString() + '</span><span style="color:#6b7280;font-size:0.9em;">/mo potential savings</span></div>';
+    html += '<div style="display:flex;gap:16px;font-size:0.85em;color:#374151;">';
+    html += '<div><strong>' + rc.totalInstances + '</strong> instances</div>';
+    html += '<div><strong>' + rc.instancesWithRecommendations + '</strong> with recommendations</div>';
+    html += '<div>Current: <strong>$' + rc.currentMonthlySpend.toLocaleString() + '/mo</strong></div>';
+    html += '</div></div></div>';
+
+    // Strategy bars
+    if (rc.byStrategy && rc.byStrategy.length > 0) {
+        html += '<div style="margin-bottom:16px;">';
+        html += '<div style="font-weight:600;margin-bottom:8px;color:#1f2937;">Savings by Strategy:</div>';
+        var maxSavings = rc.byStrategy[0].savings;
+        rc.byStrategy.forEach(function(s) {
+            var pct = maxSavings > 0 ? (s.savings / maxSavings * 100) : 0;
+            html += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">';
+            html += '<div style="width:180px;font-size:0.85em;color:#374151;">' + s.label + '</div>';
+            html += '<div style="flex:1;background:#e5e7eb;border-radius:4px;height:20px;overflow:hidden;">';
+            html += '<div style="width:' + pct + '%;background:#10b981;height:100%;border-radius:4px;"></div></div>';
+            html += '<div style="width:120px;font-size:0.85em;color:#059669;font-weight:600;">$' + s.savings.toLocaleString() + '/mo (' + s.instanceCount + ')</div>';
+            html += '</div>';
+        });
+        html += '</div>';
+    }
+
+    // Instance table
+    if (rc.instances && rc.instances.length > 0) {
+        html += '<div style="font-weight:600;margin-bottom:8px;color:#1f2937;">Per-Instance Breakdown:</div>';
+        html += '<div style="max-height:400px;overflow-y:auto;">';
+        rc.instances.forEach(function(inst) {
+            if (!inst.recommendations || inst.recommendations.length === 0) return;
+            var bestSavings = inst.recommendations[0].monthlySavings || 0;
+            var sqlBadge = inst.sqlEdition ? '<span style="background:#7c3aed;color:#fff;font-size:0.7em;padding:2px 6px;border-radius:4px;margin-left:6px;">SQL ' + inst.sqlEdition + '</span>' : '';
+            html += '<details style="border:1px solid #e5e7eb;border-radius:8px;padding:12px;margin-bottom:8px;">';
+            html += '<summary style="cursor:pointer;display:flex;justify-content:space-between;align-items:center;">';
+            html += '<div><strong>' + (inst.name || inst.instanceId) + '</strong>' + sqlBadge + ' <span style="color:#6b7280;font-size:0.8em;">' + inst.instanceType + '</span></div>';
+            html += '<div style="color:#059669;font-weight:600;">-$' + bestSavings.toLocaleString() + '/mo</div>';
+            html += '</summary>';
+            html += '<div style="margin-top:10px;padding-left:8px;">';
+            html += '<div style="font-size:0.8em;color:#6b7280;margin-bottom:8px;">' + inst.vcpus + ' vCPUs | ' + inst.memoryGb + ' GB RAM | CPU avg: ' + (inst.cpuAvg || 'N/A') + '% | p95: ' + (inst.cpuP95 || 'N/A') + '%</div>';
+            inst.recommendations.forEach(function(rec) {
+                html += '<div style="background:#f9fafb;border-radius:6px;padding:10px;margin-bottom:6px;">';
+                html += '<div style="font-weight:600;font-size:0.9em;color:#1f2937;">' + rec.title + '</div>';
+                html += '<div style="font-size:0.8em;color:#6b7280;margin-top:4px;">' + rec.description + '</div>';
+                html += '<div style="font-size:0.85em;color:#059669;font-weight:600;margin-top:4px;">Saves $' + rec.monthlySavings.toLocaleString() + '/mo (' + rec.savingsPercent + '%)</div>';
+                html += '</div>';
+            });
+            html += '</div></details>';
+        });
+        html += '</div>';
+    }
+
+    el.innerHTML = html;
+}
+
+// Populate licensing accounts when Act tab loads
+(function() {
+    var origShowAct = window._showActTab;
+    window._showActTab = function() {
+        if (origShowAct) origShowAct();
+        _licensingPopulateAccounts();
+    };
+    // Also populate on initial load if accounts exist
+    setTimeout(_licensingPopulateAccounts, 1000);
+})();

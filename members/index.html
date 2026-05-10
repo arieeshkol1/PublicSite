@@ -425,6 +425,36 @@
                                 <div id="resize-status" style="color:#6b7280;font-size:0.85em;margin-top:8px;"></div>
                             </div>
 
+
+                            <!-- Optimize Licensing -->
+                            <div style="background:linear-gradient(135deg,#fef3c7,#fde68a);border:1px solid #f59e0b;border-radius:12px;padding:20px;margin-bottom:20px;">
+                                <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;">
+                                    <span style="font-size:1.5em;">&#128176;</span>
+                                    <div>
+                                        <div style="font-weight:700;color:#1f2937;font-size:1.05em;">Optimize Licensing</div>
+                                        <div style="color:#6b7280;font-size:0.85em;">Analyze Windows Server &amp; SQL Server licensing costs. Find savings through vCPU optimization, BYOL, and edition downgrades.</div>
+                                    </div>
+                                </div>
+                                <div id="licensing-wizard" style="margin-top:12px;">
+                                    <div id="licensing-step-1">
+                                        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+                                            <select id="licensing-account" style="padding:8px 12px;border:1px solid #d1d5db;border-radius:8px;font-size:0.9em;min-width:200px;">
+                                                <option value="">Select account...</option>
+                                            </select>
+                                            <button onclick="_licensingScan()" class="btn btn-primary btn-sm">&#128270; Scan Licensing</button>
+                                        </div>
+                                    </div>
+                                    <div id="licensing-progress" style="display:none;margin-top:12px;">
+                                        <div style="display:flex;align-items:center;gap:8px;">
+                                            <div class="spinner-sm"></div>
+                                            <span id="licensing-progress-text" style="color:#6b7280;font-size:0.9em;">Discovering instances...</span>
+                                        </div>
+                                    </div>
+                                    <div id="licensing-report" style="display:none;margin-top:16px;"></div>
+                                </div>
+                                <div id="licensing-status" style="color:#6b7280;font-size:0.85em;margin-top:8px;"></div>
+                            </div>
+
                             <div id="act-optimize-status" style="padding:0 0 12px;color:#6b7280;font-size:0.9em;min-height:20px;"></div>
                             <div id="act-optimize-cards" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:16px;padding-bottom:32px;"></div>
                             <div id="act-optimize-empty" style="text-align:center;padding:60px 20px;color:#6b7280;">
@@ -1039,7 +1069,7 @@
         <span id="notification-message"></span>
     </div>
 
-    <script src="members.js?v=79"></script>
+    <script src="members.js?v=80"></script>
     <script src="help.js?v=6"></script>
 </body>
 </html>
