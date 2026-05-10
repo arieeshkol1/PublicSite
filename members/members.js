@@ -4458,7 +4458,7 @@ function _switchActSection(section) {
     if (optimization) optimization.style.display = section === 'optimization' ? 'block' : 'none';
     // Auto-load scheduler data when switching to scheduler section
     if (section === 'scheduler') _loadSchedulerData();
-    if (section === 'optimization') { _populateSpotMigrateAccounts(); _resizePopulateAccounts(); }
+    if (section === 'optimization') { _populateSpotMigrateAccounts(); _resizePopulateAccounts(); _licensingPopulateAccounts(); }
 }
 
 // ============================================================
@@ -7777,7 +7777,7 @@ async function _clusterAnalyze() {
     var origSwitch = _switchActSection;
     _switchActSection = function(section) {
         origSwitch(section);
-        if (section === 'optimization') _clusterPopulateAccounts();
+        if (section === 'optimization') { _clusterPopulateAccounts(); _licensingPopulateAccounts(); }
     };
 })();
 
@@ -7790,10 +7790,15 @@ function _licensingPopulateAccounts() {
     var select = document.getElementById('licensing-account');
     if (!select) return;
     select.innerHTML = '<option value="">Select account...</option>';
-    (window._memberAccounts || []).forEach(function(a) {
+    var connected = (typeof allAccounts !== 'undefined' ? allAccounts : []).filter(function(a) { return a.connectionStatus === 'connected'; });
+    if (connected.length === 0) {
+        select.innerHTML = '<option value="">No accounts connected</option>';
+        return;
+    }
+    connected.forEach(function(a) {
         var opt = document.createElement('option');
         opt.value = a.accountId;
-        opt.textContent = a.accountName || a.accountId;
+        opt.textContent = (a.accountName || a.accountId) + ' (' + a.accountId + ')';
         select.appendChild(opt);
     });
 }
@@ -7911,13 +7916,4 @@ function _renderLicensingReport(rc) {
     el.innerHTML = html;
 }
 
-// Populate licensing accounts when Act tab loads
-(function() {
-    var origShowAct = window._showActTab;
-    window._showActTab = function() {
-        if (origShowAct) origShowAct();
-        _licensingPopulateAccounts();
-    };
-    // Also populate on initial load if accounts exist
-    setTimeout(_licensingPopulateAccounts, 1000);
-})();
+// Licensing accounts populated via _switchActSection('optimization')
