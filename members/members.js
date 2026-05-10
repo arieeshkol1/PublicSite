@@ -7826,16 +7826,11 @@ async function _licensingScan() {
     }, 5000);
 
     try {
-        var resp = await fetch(API + '/members/licensing/scan', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getToken() },
-            body: JSON.stringify({ accountId: accountId })
-        });
-        var data = await resp.json();
+        var data = await api('POST', '/members/licensing/scan', { accountId: accountId });
         clearInterval(phaseInterval);
         if (progress) progress.style.display = 'none';
 
-        if (!resp.ok || !data.success) {
+        if (!data.success) {
             if (status) status.textContent = '❌ ' + (data.message || 'Scan failed');
             return;
         }
@@ -7844,7 +7839,7 @@ async function _licensingScan() {
     } catch (e) {
         clearInterval(phaseInterval);
         if (progress) progress.style.display = 'none';
-        if (status) status.textContent = '❌ ' + e.message;
+        if (status) status.textContent = '❌ ' + (e.message || 'Scan failed');
     }
 }
 
