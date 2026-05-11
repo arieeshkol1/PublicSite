@@ -7912,3 +7912,162 @@ function _renderLicensingReport(rc) {
 }
 
 // Licensing accounts populated via _switchActSection('optimization')
+
+
+// ============================================================
+// Unified Service Optimization Controller
+// ============================================================
+
+function _unifiedOptPopulateAccounts() {
+    var select = document.getElementById('unified-opt-account');
+    if (!select) return;
+    select.innerHTML = '<option value="">Select account...</option>';
+    var connected = (typeof allAccounts !== 'undefined' ? allAccounts : []).filter(function(a) { return a.connectionStatus === 'connected'; });
+    connected.forEach(function(a) {
+        var opt = document.createElement('option');
+        opt.value = a.accountId;
+        opt.textContent = (a.accountName || a.accountId) + ' (' + a.accountId + ')';
+        select.appendChild(opt);
+    });
+}
+
+function _unifiedOptAccountChanged() {
+    var accountId = (document.getElementById('unified-opt-account') || {}).value;
+    var optType = (document.getElementById('unified-opt-type') || {}).value;
+    // Load sub-selectors based on type
+    if (optType === 'instance' && accountId) {
+        _unifiedLoadInstances(accountId);
+    } else if (optType === 'cluster' && accountId) {
+        _unifiedLoadASGs(accountId);
+    }
+    _unifiedOptUpdateButton();
+}
+
+function _unifiedOptTypeChanged() {
+    var optType = (document.getElementById('unified-opt-type') || {}).value;
+    var accountId = (document.getElementById('unified-opt-account') || {}).value;
+    // Show/hide sub-selectors
+    var instPicker = document.getElementById('unified-opt-instance-picker');
+    var clusterPicker = document.getElementById('unified-opt-cluster-picker');
+    if (instPicker) instPicker.style.display = optType === 'instance' ? 'block' : 'none';
+    if (clusterPicker) clusterPicker.style.display = optType === 'cluster' ? 'block' : 'none';
+    // Load data if account already selected
+    if (optType === 'instance' && accountId) _unifiedLoadInstances(accountId);
+    if (optType === 'cluster' && accountId) _unifiedLoadASGs(accountId);
+    _unifiedOptUpdateButton();
+}
+
+function _unifiedOptUpdateButton() {
+    var btn = document.getElementById('unified-opt-go-btn');
+    if (!btn) return;
+    var accountId = (document.getElementById('unified-opt-account') || {}).value;
+    var optType = (document.getElementById('unified-opt-type') || {}).value;
+    btn.disabled = !accountId || !optType;
+    // Update button text
+    if (optType === 'instance') btn.textContent = '\u{1F50D} Analyze Instance';
+    else if (optType === 'cluster') btn.textContent = '\u{1F50D} Analyze Cluster';
+    else if (optType === 'licensing') btn.textContent = '\u{1F50D} Scan Licensing';
+    else btn.textContent = '\u{1F50D} Analyze';
+}
+
+async function _unifiedLoadInstances(accountId) {
+    var select = document.getElementById('resize-instance');
+    if (!select) return;
+    select.innerHTML = '<option value="">Loading...</option>';
+    try {
+        var data = await api('POST', '/members/servers/list-instances', { accountId: accountId });
+        select.innerHTML = '<option value="">Select instance...</option>';
+        (data.instances || []).forEach(function(inst) {
+            var opt = document.createElement('option');
+            opt.value = inst.instanceId;
+            opt.textContent = (inst.name || inst.instanceId) + ' (' + inst.instanceType + ')';
+            select.appendChild(opt);
+        });
+    } catch (e) {
+        select.innerHTML = '<option value="">Error loading instances</option>';
+    }
+}
+
+async function _unifiedLoadASGs(accountId) {
+    var select = document.getElementById('cluster-asg');
+    if (!select) return;
+    select.innerHTML = '<option value="">Loading...</option>';
+    try {
+        var data = await api('POST', '/members/cluster/analyze', { accountId: accountId, listOnly: true });
+        select.innerHTML = '<option value="">Select ASG...</option>';
+        (data.asgs || []).forEach(function(asg) {
+            var opt = document.createElement('option');
+            opt.value = asg.name;
+            opt.textContent = asg.name + ' (' + asg.instances + ' instances)';
+            select.appendChild(opt);
+        });
+    } catch (e) {
+        select.innerHTML = '<option value="">Error loading ASGs</option>';
+    }
+}
+
+function _unifiedOptGo() {
+    var optType = (document.getElementById('unified-opt-type') || {}).value;
+    var accountId = (document.getElementById('unified-opt-account') || {}).value;
+    if (!optType || !accountId) return;
+
+    // Clear previous results
+    var els = ['resize-step-2','resize-step-4','cluster-report','licensing-report','licensing-progress'];
+    els.forEach(function(id) { var el = document.getElementById(id); if (el) el.style.display = 'none'; });
+    var statusEl = document.getElementById('unified-opt-status');
+    if (statusEl) statusEl.textContent = '';
+
+    if (optType === 'instance') {
+        // Reuse existing resize logic - set the hidden account select and trigger
+        var resizeAcct = document.getElementById('resize-account');
+        if (resizeAcct) resizeAcct.value = accountId;
+        _resizeAnalyze();
+    } else if (optType === 'cluster') {
+        var clusterAcct = document.getElementById('cluster-account');
+        if (clusterAcct) clusterAcct.value = accountId;
+        _clusterAnalyze();
+    } else if (optType === 'licensing') {
+        _licensingScanUnified(accountId);
+    }
+}
+
+async function _licensingScanUnified(accountId) {
+    var progress = document.getElementById('licensing-progress');
+    var progressText = document.getElementById('licensing-progress-text');
+    var report = document.getElementById('licensing-report');
+    var status = document.getElementById('unified-opt-status');
+
+    if (progress) progress.style.display = 'block';
+    if (report) report.style.display = 'none';
+
+    var phases = ['Discovering Windows/SQL instances...', 'Analyzing 30-day utilization...', 'Calculating licensing costs...', 'Generating recommendations...'];
+    var phaseIdx = 0;
+    var phaseInterval = setInterval(function() {
+        phaseIdx++;
+        if (phaseIdx < phases.length && progressText) progressText.textContent = phases[phaseIdx];
+    }, 5000);
+
+    try {
+        var data = await api('POST', '/members/licensing/scan', { accountId: accountId });
+        clearInterval(phaseInterval);
+        if (progress) progress.style.display = 'none';
+        if (!data.success) {
+            if (status) status.textContent = '\u274c ' + (data.message || 'Scan failed');
+            return;
+        }
+        _renderLicensingReport(data.reportCard);
+    } catch (e) {
+        clearInterval(phaseInterval);
+        if (progress) progress.style.display = 'none';
+        if (status) status.textContent = '\u274c ' + (e.message || 'Scan failed');
+    }
+}
+
+// Wire up: populate accounts when optimization section is shown
+(function() {
+    var origSwitch = window._switchActSection;
+    window._switchActSection = function(section) {
+        if (origSwitch) origSwitch(section);
+        if (section === 'optimization') _unifiedOptPopulateAccounts();
+    };
+})();

@@ -361,60 +361,56 @@
                             </div>
                             <p style="color:#6b7280;font-size:0.9em;margin-bottom:16px;">Active services you need but can pay less for — rightsizing, Spot migration, storage optimization.</p>
 
-                            <!-- Optimize a Cluster -->
+                            <!-- Unified Service Optimization -->
                             <div style="background:linear-gradient(135deg,#eef2ff,#e0e7ff);border:1px solid #c7d2fe;border-radius:12px;padding:20px;margin-bottom:20px;">
                                 <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;">
                                     <span style="font-size:1.5em;">&#9889;</span>
                                     <div>
-                                        <div style="font-weight:700;color:#1f2937;font-size:1.05em;">Optimize a Cluster</div>
-                                        <div style="color:#6b7280;font-size:0.85em;">Analyze your Auto Scaling Group for HA, Spot mix, scaling policies, and cost optimization</div>
+                                        <div style="font-weight:700;color:#1f2937;font-size:1.05em;">Optimize a Service</div>
+                                        <div style="color:#6b7280;font-size:0.85em;">Rightsize instances, optimize clusters, or analyze licensing costs</div>
                                     </div>
                                 </div>
-                                <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">
-                                    <div>
-                                        <label style="font-size:0.8em;color:#6b7280;">Account</label>
-                                        <select id="cluster-account" style="width:100%;padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:0.85em;" onchange="_clusterLoadASGs()">
-                                            <option value="">Select account...</option>
+
+                                <!-- Step 1: Select Account -->
+                                <div id="unified-opt-step1">
+                                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">
+                                        <div>
+                                            <label style="font-size:0.8em;color:#6b7280;">Account</label>
+                                            <select id="unified-opt-account" style="width:100%;padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:0.85em;" onchange="_unifiedOptAccountChanged()">
+                                                <option value="">Select account...</option>
+                                            </select>
+                                        </div>
+                                        <div>
+                                            <label style="font-size:0.8em;color:#6b7280;">What to optimize</label>
+                                            <select id="unified-opt-type" style="width:100%;padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:0.85em;" onchange="_unifiedOptTypeChanged()">
+                                                <option value="">Select type...</option>
+                                                <option value="instance">&#128202; Resize an Instance</option>
+                                                <option value="cluster">&#9889; Optimize a Cluster (ASG)</option>
+                                                <option value="licensing">&#128176; Optimize Licensing</option>
+                                            </select>
+                                        </div>
+                                    </div>
+
+                                    <!-- Sub-selector: Instance picker (shown when type=instance) -->
+                                    <div id="unified-opt-instance-picker" style="display:none;margin-bottom:12px;">
+                                        <label style="font-size:0.8em;color:#6b7280;">Instance</label>
+                                        <select id="resize-instance" style="width:100%;padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:0.85em;">
+                                            <option value="">Select instance...</option>
                                         </select>
                                     </div>
-                                    <div>
+
+                                    <!-- Sub-selector: ASG picker (shown when type=cluster) -->
+                                    <div id="unified-opt-cluster-picker" style="display:none;margin-bottom:12px;">
                                         <label style="font-size:0.8em;color:#6b7280;">Auto Scaling Group</label>
                                         <select id="cluster-asg" style="width:100%;padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:0.85em;">
                                             <option value="">Select ASG...</option>
                                         </select>
                                     </div>
-                                </div>
-                                <button class="btn btn-primary btn-sm" onclick="_clusterAnalyze()">&#128270; Analyze Cluster</button>
-                                <div id="cluster-report" style="margin-top:16px;"></div>
-                                <div id="cluster-status" style="color:#6b7280;font-size:0.85em;margin-top:8px;"></div>
-                            </div>
 
-                            <!-- Resize Server Card -->
-                            <div style="background:linear-gradient(135deg,#f0fdf4,#dcfce7);border:1px solid #bbf7d0;border-radius:12px;padding:20px;margin-bottom:20px;">
-                                <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;">
-                                    <span style="font-size:1.5em;">&#128202;</span>
-                                    <div>
-                                        <div style="font-weight:700;color:#1f2937;font-size:1.05em;">Resize a Server</div>
-                                        <div style="color:#6b7280;font-size:0.85em;">Analyze usage, find cheaper instance types, and resize with one click</div>
-                                    </div>
+                                    <button id="unified-opt-go-btn" class="btn btn-primary btn-sm" onclick="_unifiedOptGo()" disabled>&#128270; Analyze</button>
                                 </div>
-                                <div id="resize-step-1-opt">
-                                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">
-                                        <div>
-                                            <label style="font-size:0.8em;color:#6b7280;">Account</label>
-                                            <select id="resize-account" style="width:100%;padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:0.85em;" onchange="_resizeLoadInstances()">
-                                                <option value="">Select account...</option>
-                                            </select>
-                                        </div>
-                                        <div>
-                                            <label style="font-size:0.8em;color:#6b7280;">Instance</label>
-                                            <select id="resize-instance" style="width:100%;padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:0.85em;">
-                                                <option value="">Select instance...</option>
-                                            </select>
-                                        </div>
-                                    </div>
-                                    <button class="btn btn-primary btn-sm" onclick="_resizeAnalyze()">&#128270; Optimize</button>
-                                </div>
+
+                                <!-- Results area (shared) -->
                                 <div id="resize-step-2" style="display:none;margin-top:16px;">
                                     <div id="resize-analysis" style="margin-bottom:16px;"></div>
                                     <div id="resize-recommendations" style="margin-bottom:16px;"></div>
@@ -422,37 +418,19 @@
                                 <div id="resize-step-4" style="display:none;margin-top:12px;">
                                     <div id="resize-progress"></div>
                                 </div>
-                                <div id="resize-status" style="color:#6b7280;font-size:0.85em;margin-top:8px;"></div>
-                            </div>
-
-
-                            <!-- Optimize Licensing -->
-                            <div style="background:linear-gradient(135deg,#fef3c7,#fde68a);border:1px solid #f59e0b;border-radius:12px;padding:20px;margin-bottom:20px;">
-                                <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;">
-                                    <span style="font-size:1.5em;">&#128176;</span>
-                                    <div>
-                                        <div style="font-weight:700;color:#1f2937;font-size:1.05em;">Optimize Licensing</div>
-                                        <div style="color:#6b7280;font-size:0.85em;">Analyze Windows Server &amp; SQL Server licensing costs. Find savings through vCPU optimization, BYOL, and edition downgrades.</div>
+                                <div id="cluster-report" style="margin-top:16px;"></div>
+                                <div id="licensing-progress" style="display:none;margin-top:12px;">
+                                    <div style="display:flex;align-items:center;gap:8px;">
+                                        <div class="spinner-sm"></div>
+                                        <span id="licensing-progress-text" style="color:#6b7280;font-size:0.9em;">Scanning...</span>
                                     </div>
                                 </div>
-                                <div id="licensing-wizard" style="margin-top:12px;">
-                                    <div id="licensing-step-1">
-                                        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
-                                            <select id="licensing-account" style="padding:8px 12px;border:1px solid #d1d5db;border-radius:8px;font-size:0.9em;min-width:200px;">
-                                                <option value="">Select account...</option>
-                                            </select>
-                                            <button onclick="_licensingScan()" class="btn btn-primary btn-sm">&#128270; Scan Licensing</button>
-                                        </div>
-                                    </div>
-                                    <div id="licensing-progress" style="display:none;margin-top:12px;">
-                                        <div style="display:flex;align-items:center;gap:8px;">
-                                            <div class="spinner-sm"></div>
-                                            <span id="licensing-progress-text" style="color:#6b7280;font-size:0.9em;">Discovering instances...</span>
-                                        </div>
-                                    </div>
-                                    <div id="licensing-report" style="display:none;margin-top:16px;"></div>
-                                </div>
-                                <div id="licensing-status" style="color:#6b7280;font-size:0.85em;margin-top:8px;"></div>
+                                <div id="licensing-report" style="display:none;margin-top:16px;"></div>
+                                <div id="unified-opt-status" style="color:#6b7280;font-size:0.85em;margin-top:8px;"></div>
+                                <!-- Hidden selects for backward compat with existing JS -->
+                                <select id="resize-account" style="display:none;"></select>
+                                <select id="cluster-account" style="display:none;"></select>
+                                <select id="licensing-account" style="display:none;"></select>
                             </div>
 
                             <div id="act-optimize-status" style="padding:0 0 12px;color:#6b7280;font-size:0.9em;min-height:20px;"></div>
@@ -1069,7 +1047,7 @@
         <span id="notification-message"></span>
     </div>
 
-    <script src="members.js?v=80"></script>
+    <script src="members.js?v=81"></script>
     <script src="help.js?v=6"></script>
 </body>
 </html>
