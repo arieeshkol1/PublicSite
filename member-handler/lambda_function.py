@@ -12020,6 +12020,15 @@ def handle_cluster_analyze(event):
     })
 
 
+
+def create_success_response(data):
+    """Return a 200 JSON response."""
+    return {
+        'statusCode': 200,
+        'headers': {'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*'},
+        'body': json.dumps(data, default=str)
+    }
+
 # ============================================================
 # Licensing Optimizer — Windows/SQL Server Cost Analysis
 # ============================================================
@@ -12032,7 +12041,7 @@ def handle_licensing_scan(event):
     auth = validate_token(event)
     if isinstance(auth, dict) and 'statusCode' in auth:
         return auth
-    member_email = auth
+    member_email = auth['sub'] if isinstance(auth, dict) else auth
 
     try:
         body = json.loads(event.get('body', '{}'))
@@ -12490,4 +12499,8 @@ def handle_licensing_scan(event):
         'instances': instances,
     }
 
-    return create_success_response({'success': True, 'reportCard': report_card})
+    return {
+        'statusCode': 200,
+        'headers': {'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*'},
+        'body': json.dumps({'success': True, 'reportCard': report_card}, default=str)
+    }
