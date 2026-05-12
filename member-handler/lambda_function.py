@@ -11729,19 +11729,32 @@ def handle_server_list_instances(event):
 
     instances = []
     try:
-        paginator = ec2.get_paginator('describe_instances')
-        for page in paginator.paginate(Filters=[{'Name': 'instance-state-name', 'Values': ['running', 'stopped']}]):
-            for res in page.get('Reservations', []):
-                for inst in res.get('Instances', []):
-                    tags = {t['Key']: t['Value'] for t in inst.get('Tags', [])}
-                    instances.append({
-                        'instanceId': inst['InstanceId'],
-                        'name': tags.get('Name', inst['InstanceId']),
-                        'instanceType': inst.get('InstanceType', ''),
-                        'state': inst.get('State', {}).get('Name', ''),
-                        'az': inst.get('Placement', {}).get('AvailabilityZone', ''),
-                        'inASG': 'aws:autoscaling:groupName' in tags,
-                    })
+        # Get all enabled regions
+        try:
+            regions_resp = ec2.describe_regions(AllRegions=False)
+            all_regions = [r['RegionName'] for r in regions_resp.get('Regions', [])]
+        except Exception:
+            all_regions = ['us-east-1', 'eu-central-1', 'eu-west-1', 'us-west-2', 'ap-southeast-1']
+
+        for _region in all_regions:
+            try:
+                ec2_r = _make_client_from_creds('ec2', creds, _region)
+                paginator = ec2_r.get_paginator('describe_instances')
+                for page in paginator.paginate(Filters=[{'Name': 'instance-state-name', 'Values': ['running', 'stopped']}]):
+                    for res in page.get('Reservations', []):
+                        for inst in res.get('Instances', []):
+                            tags = {t['Key']: t['Value'] for t in inst.get('Tags', [])}
+                            instances.append({
+                                'instanceId': inst['InstanceId'],
+                                'name': tags.get('Name', inst['InstanceId']),
+                                'instanceType': inst.get('InstanceType', ''),
+                                'state': inst.get('State', {}).get('Name', ''),
+                                'az': inst.get('Placement', {}).get('AvailabilityZone', ''),
+                                'region': _region,
+                                'inASG': 'aws:autoscaling:groupName' in tags,
+                            })
+            except Exception:
+                continue
     except Exception as e:
         return create_error_response(500, 'ServerError', f'Failed to list instances: {e}')
 
@@ -12088,125 +12101,140 @@ def handle_licensing_scan(event):
             region_name=region or os.environ.get('AWS_REGION', 'us-east-1')
         )
 
-    # --- Phase 2: Discovery ---
+    # --- Phase 2: Discovery (ALL REGIONS) ---
     instances = []
 
-    # EC2 Windows instances
+    # Get list of enabled regions
     try:
-        ec2 = _client('ec2')
-        ec2_resp = ec2.describe_instances(Filters=[
-            {'Name': 'platform', 'Values': ['windows']},
-            {'Name': 'instance-state-name', 'Values': ['running', 'stopped']}
-        ])
-        ami_ids = set()
-        ec2_instances_raw = []
-        for res in ec2_resp.get('Reservations', []):
-            for inst in res.get('Instances', []):
-                ec2_instances_raw.append(inst)
-                ami_ids.add(inst.get('ImageId', ''))
+        ec2_default = _client('ec2')
+        regions_resp = ec2_default.describe_regions(AllRegions=False)
+        scan_regions = [r['RegionName'] for r in regions_resp.get('Regions', [])]
+    except Exception:
+        scan_regions = ['us-east-1', 'eu-central-1', 'eu-west-1', 'us-west-2', 'ap-southeast-1', 'ap-northeast-1']
 
-        # Get AMI descriptions for SQL detection
-        ami_descriptions = {}
-        if ami_ids:
-            try:
-                ami_resp = ec2.describe_images(ImageIds=list(ami_ids)[:50])
-                for img in ami_resp.get('Images', []):
-                    ami_descriptions[img['ImageId']] = img.get('Description', '') or img.get('Name', '')
-            except Exception:
-                pass
+    # EC2 Windows instances — scan all regions
+    for _scan_region in scan_regions:
+        if _time.time() - scan_start > 80:  # timeout guard for discovery phase
+            break
+        try:
+            ec2 = _client('ec2', _scan_region)
+            ec2_resp = ec2.describe_instances(Filters=[
+                {'Name': 'platform', 'Values': ['windows']},
+                {'Name': 'instance-state-name', 'Values': ['running', 'stopped']}
+            ])
+            ami_ids = set()
+            ec2_instances_raw = []
+            for res in ec2_resp.get('Reservations', []):
+                for inst in res.get('Instances', []):
+                    ec2_instances_raw.append(inst)
+                    ami_ids.add(inst.get('ImageId', ''))
 
-        # Get instance type specs
-        unique_types = set(inst.get('InstanceType', '') for inst in ec2_instances_raw)
-        type_specs = {}
-        if unique_types:
-            try:
-                types_resp = ec2.describe_instance_types(InstanceTypes=list(unique_types)[:50])
-                for t in types_resp.get('InstanceTypes', []):
-                    type_specs[t['InstanceType']] = {
-                        'vcpus': t['VCpuInfo']['DefaultVCpus'],
-                        'cores': t['VCpuInfo']['DefaultCores'],
-                        'memory_mb': t['MemoryInfo']['SizeInMiB'],
-                        'valid_cores': t['VCpuInfo'].get('ValidCores', []),
-                    }
-            except Exception:
-                pass
+            if not ec2_instances_raw:
+                continue
 
-        for inst in ec2_instances_raw:
-            itype = inst.get('InstanceType', '')
-            specs = type_specs.get(itype, {})
-            tags = {t['Key']: t['Value'] for t in inst.get('Tags', [])}
-            tag_values_lower = ' '.join(tags.values()).lower()
-            ami_desc = ami_descriptions.get(inst.get('ImageId', ''), '').lower()
+            # Get AMI descriptions for SQL detection (same region)
+            ami_descriptions = {}
+            if ami_ids:
+                try:
+                    ami_resp = ec2.describe_images(ImageIds=list(ami_ids)[:50])
+                    for img in ami_resp.get('Images', []):
+                        ami_descriptions[img['ImageId']] = img.get('Description', '') or img.get('Name', '')
+                except Exception:
+                    pass
 
-            # Detect SQL Server
-            sql_edition = None
-            if any(kw in tag_values_lower for kw in ['sql', 'mssql', 'sqlserver']):
-                if 'enterprise' in tag_values_lower:
+            # Get instance type specs (same region)
+            unique_types = set(inst.get('InstanceType', '') for inst in ec2_instances_raw)
+            type_specs = {}
+            if unique_types:
+                try:
+                    types_resp = ec2.describe_instance_types(InstanceTypes=list(unique_types)[:50])
+                    for t in types_resp.get('InstanceTypes', []):
+                        type_specs[t['InstanceType']] = {
+                            'vcpus': t['VCpuInfo']['DefaultVCpus'],
+                            'cores': t['VCpuInfo']['DefaultCores'],
+                            'memory_mb': t['MemoryInfo']['SizeInMiB'],
+                            'valid_cores': t['VCpuInfo'].get('ValidCores', []),
+                        }
+                except Exception:
+                    pass
+
+            for inst in ec2_instances_raw:
+                itype = inst.get('InstanceType', '')
+                specs = type_specs.get(itype, {})
+                tags = {t['Key']: t['Value'] for t in inst.get('Tags', [])}
+                tag_values_lower = ' '.join(tags.values()).lower()
+                ami_desc = ami_descriptions.get(inst.get('ImageId', ''), '').lower()
+
+                # Detect SQL Server
+                sql_edition = None
+                if any(kw in tag_values_lower for kw in ['sql', 'mssql', 'sqlserver']):
+                    if 'enterprise' in tag_values_lower:
+                        sql_edition = 'Enterprise'
+                    elif 'standard' in tag_values_lower:
+                        sql_edition = 'Standard'
+                    else:
+                        sql_edition = 'Unknown'
+                elif 'sql server enterprise' in ami_desc or 'sql_server_enterprise' in ami_desc:
                     sql_edition = 'Enterprise'
-                elif 'standard' in tag_values_lower:
+                elif 'sql server standard' in ami_desc or 'sql_server_standard' in ami_desc:
                     sql_edition = 'Standard'
-                else:
+                elif 'sql server' in ami_desc or 'sql_server' in ami_desc:
                     sql_edition = 'Unknown'
-            elif 'sql server enterprise' in ami_desc or 'sql_server_enterprise' in ami_desc:
-                sql_edition = 'Enterprise'
-            elif 'sql server standard' in ami_desc or 'sql_server_standard' in ami_desc:
-                sql_edition = 'Standard'
-            elif 'sql server' in ami_desc or 'sql_server' in ami_desc:
-                sql_edition = 'Unknown'
-
-            instances.append({
-                'instanceId': inst['InstanceId'],
-                'accountId': account_id,
-                'source': 'ec2',
-                'instanceType': itype,
-                'platform': 'Windows',
-                'sqlEdition': sql_edition,
-                'vcpus': specs.get('vcpus', 0),
-                'cores': specs.get('cores', 0),
-                'memoryGb': round(specs.get('memory_mb', 0) / 1024, 1),
-                'validCores': specs.get('valid_cores', []),
-                'state': inst.get('State', {}).get('Name', 'unknown'),
-                'name': tags.get('Name', ''),
-            })
-    except Exception as e:
-        if 'not authorized' in str(e).lower() or 'accessdenied' in str(e).lower():
-            return create_error_response(403, 'PermissionDenied', f'Missing permission: ec2:DescribeInstances. Update the cross-account role.')
-
-    # RDS SQL Server instances
-    try:
-        rds = _client('rds')
-        rds_resp = rds.describe_db_instances()
-        for db in rds_resp.get('DBInstances', []):
-            engine = db.get('Engine', '')
-            if engine.startswith('sqlserver-'):
-                edition = 'Enterprise' if engine == 'sqlserver-ee' else 'Standard' if engine == 'sqlserver-se' else 'Unknown'
-                db_class = db.get('DBInstanceClass', '')
-                # Parse vCPUs from class (approximate)
-                vcpus = 0
-                mem_gb = 0
-                # Try to get from instance type specs
-                ec2_equiv = db_class.replace('db.', '')
-                if ec2_equiv in type_specs:
-                    vcpus = type_specs[ec2_equiv].get('vcpus', 0)
-                    mem_gb = round(type_specs[ec2_equiv].get('memory_mb', 0) / 1024, 1)
 
                 instances.append({
-                    'instanceId': db['DBInstanceIdentifier'],
+                    'instanceId': inst['InstanceId'],
                     'accountId': account_id,
-                    'source': 'rds',
-                    'instanceType': db_class,
+                    'source': 'ec2',
+                    'instanceType': itype,
                     'platform': 'Windows',
-                    'sqlEdition': edition,
-                    'vcpus': vcpus,
-                    'cores': vcpus // 2 if vcpus else 0,
-                    'memoryGb': mem_gb,
-                    'validCores': [],
-                    'state': db.get('DBInstanceStatus', 'unknown'),
-                    'name': db['DBInstanceIdentifier'],
-                    'engine': engine,
+                    'sqlEdition': sql_edition,
+                    'vcpus': specs.get('vcpus', 0),
+                    'cores': specs.get('cores', 0),
+                    'memoryGb': round(specs.get('memory_mb', 0) / 1024, 1),
+                    'validCores': specs.get('valid_cores', []),
+                    'state': inst.get('State', {}).get('Name', 'unknown'),
+                    'name': tags.get('Name', ''),
+                    'region': _scan_region,
                 })
-    except Exception:
-        pass  # RDS access optional
+        except Exception as e:
+            if 'not authorized' in str(e).lower() or 'accessdenied' in str(e).lower():
+                if not instances:  # Only error if we found nothing in any region
+                    pass
+            continue
+
+    # RDS SQL Server instances — scan all regions
+    for _scan_region in scan_regions:
+        if _time.time() - scan_start > 90:
+            break
+        try:
+            rds = _client('rds', _scan_region)
+            rds_resp = rds.describe_db_instances()
+            for db in rds_resp.get('DBInstances', []):
+                engine = db.get('Engine', '')
+                if engine.startswith('sqlserver-'):
+                    edition = 'Enterprise' if engine == 'sqlserver-ee' else 'Standard' if engine == 'sqlserver-se' else 'Unknown'
+                    db_class = db.get('DBInstanceClass', '')
+                    vcpus = 0
+                    mem_gb = 0
+
+                    instances.append({
+                        'instanceId': db['DBInstanceIdentifier'],
+                        'accountId': account_id,
+                        'source': 'rds',
+                        'instanceType': db_class,
+                        'platform': 'Windows',
+                        'sqlEdition': edition,
+                        'vcpus': vcpus,
+                        'cores': vcpus // 2 if vcpus else 0,
+                        'memoryGb': mem_gb,
+                        'validCores': [],
+                        'state': db.get('DBInstanceStatus', 'unknown'),
+                        'name': db['DBInstanceIdentifier'],
+                        'engine': engine,
+                        'region': _scan_region,
+                    })
+        except Exception:
+            continue
 
     if not instances:
         return create_success_response({
