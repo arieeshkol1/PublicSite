@@ -2854,12 +2854,12 @@ function _populateValueSelect(selectElement, values) {
 }
 
 function getTagFilterParams() {
-    if (!globalTagFilter.key || !globalTagFilter.value) return '';
+    if (!globalTagFilter || !globalTagFilter.key || !globalTagFilter.value) return '';
     return 'tagKey=' + encodeURIComponent(globalTagFilter.key) + '&tagValue=' + encodeURIComponent(globalTagFilter.value);
 }
 
 function getTagFilterBody() {
-    if (!globalTagFilter.key || !globalTagFilter.value) return {};
+    if (!globalTagFilter || !globalTagFilter.key || !globalTagFilter.value) return {};
     return { tagKey: globalTagFilter.key, tagValue: globalTagFilter.value };
 }
 
@@ -2877,8 +2877,8 @@ function clearTagFilter() {
 
 function onTagFilterChange() {
     // Invalidate dashboard cache
-    dashDataCache = null;
-    dashDataCacheKey = null;
+    if (typeof dashDataCache !== 'undefined') dashDataCache = null;
+    if (typeof dashDataCacheKey !== 'undefined') dashDataCacheKey = null;
 
     // Reload dashboard if on Observe tab
     var dashTab = document.getElementById('dash-tab');
@@ -2967,10 +2967,11 @@ async function loadDashboardData() {
     if (!kpiBar || !grid) { console.error('Dashboard containers not found'); return; }
 
     var selectedIds = getDashSelectedAccountIds();
-    var cacheKey = selectedIds.sort().join(',');
+    var tagP = getTagFilterParams();
+    var cacheKey = selectedIds.slice().sort().join(',') + '|' + tagP;
     var now = Date.now();
 
-    // Use cache only if same accounts and within TTL
+    // Use cache only if same accounts + tag filter and within TTL
     if (dashDataCache && dashDataCacheKey === cacheKey && (now - dashDataCacheTime) < DASH_CACHE_TTL) {
         renderDashboardWidgets(dashDataCache);
         return;
