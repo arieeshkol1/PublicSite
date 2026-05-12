@@ -6818,38 +6818,37 @@ def handle_tag_apply(event):
             creds = assume_resp['Credentials']
             # Group ARNs by region and tag in each region
             arns_by_region = {}
-            for arn in batch_arns:
+            for arn in acct_arns:
                 # ARN format: arn:aws:service:region:account:resource
                 parts = arn.split(':')
                 arn_region = parts[3] if len(parts) > 3 and parts[3] else 'us-east-1'
                 arns_by_region.setdefault(arn_region, []).append(arn)
 
+            # Tag in batches of 20 per region (API limit)
             for _apply_region, _region_arns in arns_by_region.items():
                 tagging = boto3.client('resourcegroupstaggingapi',
                     aws_access_key_id=creds['AccessKeyId'],
                     aws_secret_access_key=creds['SecretAccessKey'],
                     aws_session_token=creds['SessionToken'],
                     region_name=_apply_region)
-
-            # Tag in batches of 20 (API limit)
-            for i in range(0, len(acct_arns), 20):
-                batch = acct_arns[i:i+20]
-                try:
-                    resp = tagging.tag_resources(
-                        ResourceARNList=batch,
-                        Tags=tags,
-                    )
-                    failed = resp.get('FailedResourcesMap', {})
-                    results['tagged'] += len(batch) - len(failed)
-                    results['failed'] += len(failed)
-                    for arn, err in failed.items():
-                        err_msg = err.get('ErrorMessage', '') or err.get('ErrorCode', '') or str(err)
-                        logger.warning(f"Tag failed for {arn}: {err_msg} (full: {err})")
-                        results['errors'].append(f"{arn}: {err_msg}")
-                except Exception as e:
-                    logger.error(f"tag_resources exception for {acct_id}: {e}", exc_info=True)
-                    results['failed'] += len(batch)
-                    results['errors'].append(f"Batch failed for {acct_id}: {str(e)}")
+                for i in range(0, len(_region_arns), 20):
+                    batch = _region_arns[i:i+20]
+                    try:
+                        resp = tagging.tag_resources(
+                            ResourceARNList=batch,
+                            Tags=tags,
+                        )
+                        failed = resp.get('FailedResourcesMap', {})
+                        results['tagged'] += len(batch) - len(failed)
+                        results['failed'] += len(failed)
+                        for arn, err in failed.items():
+                            err_msg = err.get('ErrorMessage', '') or err.get('ErrorCode', '') or str(err)
+                            logger.warning(f"Tag failed for {arn}: {err_msg} (full: {err})")
+                            results['errors'].append(f"{arn}: {err_msg}")
+                    except Exception as e:
+                        logger.error(f"tag_resources exception for {acct_id}/{_apply_region}: {e}", exc_info=True)
+                        results['failed'] += len(batch)
+                        results['errors'].append(f"Batch failed for {acct_id}/{_apply_region}: {str(e)}")
 
         except Exception as e:
             logger.error(f"Cannot access {acct_id} for tagging: {e}", exc_info=True)
