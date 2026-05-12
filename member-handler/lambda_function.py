@@ -4919,8 +4919,12 @@ def _gather_account_data(question, credentials):
     # Always get cost data — it's the most common question
     try:
         ce = _make_client('ce')
-        end_date = datetime.now(timezone.utc).strftime('%Y-%m-%d')
-        start_30d = (datetime.now(timezone.utc) - timedelta(days=30)).strftime('%Y-%m-%d')
+        # Use FULL PREVIOUS CALENDAR MONTH for accurate monthly analysis
+        _now = datetime.now(timezone.utc)
+        _first_this_month = _now.replace(day=1)
+        _first_last_month = (_first_this_month - timedelta(days=1)).replace(day=1)
+        end_date = _first_this_month.strftime('%Y-%m-%d')
+        start_30d = _first_last_month.strftime('%Y-%m-%d')
 
         # Detect month comparison questions (e.g. "compare Feb and March", "Jan vs Feb")
         month_names = {

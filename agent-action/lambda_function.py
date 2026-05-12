@@ -113,18 +113,26 @@ def _make_client(service, credentials, region='us-east-1'):
 
 
 def _get_cost_data(account_id, member_email):
-    """Get cost breakdown by service and daily trend."""
+    """Get cost breakdown by service (full previous month) and daily trend (last 7 days)."""
     try:
         creds = _assume_role(account_id, member_email)
         ce = _make_client('ce', creds)
 
-        end_date = datetime.now(timezone.utc).strftime('%Y-%m-%d')
-        start_30d = (datetime.now(timezone.utc) - timedelta(days=30)).strftime('%Y-%m-%d')
-        start_7d = (datetime.now(timezone.utc) - timedelta(days=7)).strftime('%Y-%m-%d')
+        # Use FULL PREVIOUS CALENDAR MONTH for accurate monthly costs
+        now = datetime.now(timezone.utc)
+        # End = 1st of current month (exclusive in Cost Explorer)
+        end_date = now.replace(day=1).strftime('%Y-%m-%d')
+        # Start = 1st of previous month
+        first_of_this_month = now.replace(day=1)
+        first_of_last_month = (first_of_this_month - timedelta(days=1)).replace(day=1)
+        start_date = first_of_last_month.strftime('%Y-%m-%d')
+        # Daily trend: last 7 days (current period)
+        start_7d = (now - timedelta(days=7)).strftime('%Y-%m-%d')
+        today = now.strftime('%Y-%m-%d')
 
-        # Cost by service (last 30 days)
+        # Cost by service (full previous month)
         by_service = ce.get_cost_and_usage(
-            TimePeriod={'Start': start_30d, 'End': end_date},
+            TimePeriod={'Start': start_date, 'End': end_date},
             Granularity='MONTHLY',
             Metrics=['UnblendedCost'],
             GroupBy=[{'Type': 'DIMENSION', 'Key': 'SERVICE'}],
@@ -141,7 +149,7 @@ def _get_cost_data(account_id, member_email):
 
         # Daily trend (last 7 days)
         daily = ce.get_cost_and_usage(
-            TimePeriod={'Start': start_7d, 'End': end_date},
+            TimePeriod={'Start': start_7d, 'End': today},
             Granularity='DAILY',
             Metrics=['UnblendedCost'],
         )
@@ -156,7 +164,7 @@ def _get_cost_data(account_id, member_email):
             'totalCost30Days': round(total, 2),
             'topServices': services[:10],
             'dailyCosts': daily_costs,
-            'period': f'{start_30d} to {end_date}',
+            'period': f'{start_date} to {end_date} (full previous month)',
         }
     except Exception as e:
         return {'error': str(e)}
