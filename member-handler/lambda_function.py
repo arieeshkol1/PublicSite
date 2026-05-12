@@ -6680,65 +6680,65 @@ def handle_tag_scan(event):
                     aws_session_token=creds['SessionToken'],
                     region_name=_tr_region)
 
-            # Scan ALL taggable resources (no type filter = all resource types)
-            # This catches everything on the bill: EC2, RDS, Lambda, S3, ELB, NAT, EBS,
-            # ElastiCache, DynamoDB, ECS, EKS, CloudFront, SageMaker, Redshift, etc.
-            paginator = tagging.get_paginator('get_resources')
-            try:
-                for page in paginator.paginate(ResourcesPerPage=100):
-                    for res in page.get('ResourceTagMappingList', []):
-                        arn = res.get('ResourceARN', '')
-                        tags = {t['Key']: t['Value'] for t in res.get('Tags', []) if not t['Key'].startswith('aws:')}
-                        missing = [k for k in required_tags if k not in tags]
+            # Scan ALL taggable resources per charged region
+            for _tr_region in _scan_tag_regions:
+                tagging = boto3.client('resourcegroupstaggingapi',
+                    aws_access_key_id=creds['AccessKeyId'],
+                    aws_secret_access_key=creds['SecretAccessKey'],
+                    aws_session_token=creds['SessionToken'],
+                    region_name=_tr_region)
+                paginator = tagging.get_paginator('get_resources')
+                try:
+                    for page in paginator.paginate(ResourcesPerPage=100):
+                        for res in page.get('ResourceTagMappingList', []):
+                            arn = res.get('ResourceARN', '')
+                            tags = {t['Key']: t['Value'] for t in res.get('Tags', []) if not t['Key'].startswith('aws:')}
+                            missing = [k for k in required_tags if k not in tags]
 
-                        summary['total'] += 1
-                        if not missing:
-                            summary['fullyTagged'] += 1
-                        elif len(missing) < len(required_tags):
-                            summary['partiallyTagged'] += 1
-                        else:
-                            summary['untagged'] += 1
+                            summary['total'] += 1
+                            if not missing:
+                                summary['fullyTagged'] += 1
+                            elif len(missing) < len(required_tags):
+                                summary['partiallyTagged'] += 1
+                            else:
+                                summary['untagged'] += 1
 
-                        # Return all resources (limit to 500)
-                        if len(all_resources) < 500:
-                            # Extract resource type, region, and ID from ARN
-                            arn_parts = arn.split(':')
-                            service = arn_parts[2] if len(arn_parts) > 2 else 'unknown'
-                            region = arn_parts[3] if len(arn_parts) > 3 and arn_parts[3] else 'global'
-                            # Build a descriptive resource type from the ARN
-                            res_type_raw = arn.split(':')[-1].split('/')[0] if ':' in arn else service
-                            _SERVICE_LABELS = {
-                                'ec2': 'EC2', 'rds': 'RDS', 's3': 'S3', 'lambda': 'Lambda',
-                                'elasticloadbalancing': 'ELB', 'dynamodb': 'DynamoDB',
-                                'cloudformation': 'CloudFormation', 'ecs': 'ECS', 'eks': 'EKS',
-                                'sagemaker': 'SageMaker', 'secretsmanager': 'Secrets Manager',
-                                'kms': 'KMS', 'sns': 'SNS', 'sqs': 'SQS', 'logs': 'CloudWatch Logs',
-                                'events': 'EventBridge', 'states': 'Step Functions',
-                                'apigateway': 'API Gateway', 'cognito-idp': 'Cognito',
-                                'bedrock': 'Bedrock', 'ecr': 'ECR', 'route53': 'Route 53',
-                            }
-                            res_type = _SERVICE_LABELS.get(service, service.upper())
-                            # Extract a meaningful resource ID
-                            res_id = arn.split('/')[-1] if '/' in arn else arn.split(':')[-1]
-                            # Use Name tag, or stack:resource-name, or the ID
-                            name = tags.get('Name', '')
-                            if not name:
-                                name = tags.get('aws:cloudformation:logical-id', '')
-                            if not name:
-                                name = res_id
+                            # Return all resources (limit to 500)
+                            if len(all_resources) < 500:
+                                arn_parts = arn.split(':')
+                                service = arn_parts[2] if len(arn_parts) > 2 else 'unknown'
+                                region = arn_parts[3] if len(arn_parts) > 3 and arn_parts[3] else 'global'
+                                res_type_raw = arn.split(':')[-1].split('/')[0] if ':' in arn else service
+                                _SERVICE_LABELS = {
+                                    'ec2': 'EC2', 'rds': 'RDS', 's3': 'S3', 'lambda': 'Lambda',
+                                    'elasticloadbalancing': 'ELB', 'dynamodb': 'DynamoDB',
+                                    'cloudformation': 'CloudFormation', 'ecs': 'ECS', 'eks': 'EKS',
+                                    'sagemaker': 'SageMaker', 'secretsmanager': 'Secrets Manager',
+                                    'kms': 'KMS', 'sns': 'SNS', 'sqs': 'SQS', 'logs': 'CloudWatch Logs',
+                                    'events': 'EventBridge', 'states': 'Step Functions',
+                                    'apigateway': 'API Gateway', 'cognito-idp': 'Cognito',
+                                    'bedrock': 'Bedrock', 'ecr': 'ECR', 'route53': 'Route 53',
+                                }
+                                res_type = _SERVICE_LABELS.get(service, service.upper())
+                                res_id = arn.split('/')[-1] if '/' in arn else arn.split(':')[-1]
+                                name = tags.get('Name', '')
+                                if not name:
+                                    name = tags.get('aws:cloudformation:logical-id', '')
+                                if not name:
+                                    name = res_id
 
-                            all_resources.append({
-                                'arn': arn,
-                                'resourceType': res_type,
-                                'resourceId': res_id,
-                                'name': name,
-                                'account': acct_id,
-                                'region': region,
-                                'existingTags': tags,
-                                'missingTags': missing,
-                            })
-            except Exception as e:
-                logger.warning(f"Tag scan in {acct_id}: {e}")
+                                all_resources.append({
+                                    'arn': arn,
+                                    'resourceType': res_type,
+                                    'resourceId': res_id,
+                                    'name': name,
+                                    'account': acct_id,
+                                    'region': region,
+                                    'existingTags': tags,
+                                    'missingTags': missing,
+                                })
+                except Exception as e:
+                    logger.warning(f"Tag scan in {acct_id}/{_tr_region}: {e}")
 
         except Exception as e:
             logger.warning(f"Tag scan failed for {acct_id}: {e}")
