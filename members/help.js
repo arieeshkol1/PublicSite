@@ -333,6 +333,32 @@ var HELP_CONTENT = {
           All accounts are selected by default.</p>
           <p>Your selection is preserved when you switch between Observe, Chat, and Act tabs.</p>
         `
+      },
+      {
+        id: 'tag-filter',
+        heading: 'Tag-Based Cost Filtering',
+        icon: '🏷️',
+        content: `
+          <p>Filter all dashboard widgets by a specific cost allocation tag. This lets you view costs for a single team, environment, or project.</p>
+          <h4>How to Use</h4>
+          <ol>
+            <li>In the Observe tab header, find the <strong>"Filter by Tag"</strong> dropdowns</li>
+            <li>Select a <strong>Tag Key</strong> (e.g., Environment, Team, CostCenter)</li>
+            <li>Select a <strong>Tag Value</strong> (e.g., production, dev, marketing)</li>
+            <li>All widgets refresh with filtered data</li>
+          </ol>
+          <h4>Behavior</h4>
+          <ul>
+            <li><strong>Default:</strong> "All (no filter)" — shows all costs unfiltered</li>
+            <li><strong>Tag Distribution widget:</strong> Always shows unfiltered data regardless of filter</li>
+            <li><strong>Chat tab:</strong> When a tag filter is active, AI queries also use the filter</li>
+            <li><strong>Persistence:</strong> Filter state is preserved when switching between Observe and Chat tabs</li>
+            <li><strong>Cache:</strong> Tag keys and values are cached for 5 minutes to avoid repeated API calls</li>
+          </ul>
+          <h4>Prerequisites</h4>
+          <p>Tag filtering requires <strong>cost allocation tags</strong> to be activated in your AWS management account (Billing → Cost Allocation Tags). Resource tags alone are not enough — they must be activated for cost tracking.</p>
+          <div class="help-tip">💡 Use the FinOps Healthcheck (Act tab) to check if cost allocation tags are activated and fix it with one click.</div>
+        `
       }
     ]
   },
@@ -377,6 +403,7 @@ var HELP_CONTENT = {
           </ul>
           <p>Your remaining tokens are shown in the header bar (🪙 icon).</p>
           <div class="help-tip">💡 For multi-account questions, select multiple accounts using the account dropdown. The AI will provide per-account breakdowns.</div>
+          <div class="help-tip">🏷️ When a tag filter is active in the Observe tab (e.g., Environment=production), AI queries automatically use the same filter. Clear the filter to ask about all costs.</div>
         `
       },
       {
@@ -745,7 +772,7 @@ function initHelp() {
     </div>
     <div id="help-body" style="flex:1;padding:16px 20px;overflow-y:auto;"></div>
     <div style="padding:12px 20px;border-top:1px solid #e5e7eb;background:#f9fafb;flex-shrink:0;font-size:0.78em;color:#6b7280;text-align:center;">
-      SlashMyBill Help v4.0 · <a href="mailto:ariel@slashmycloudbill.com" style="color:#6366f1;">ariel@slashmycloudbill.com</a>
+      SlashMyBill Help v5.0 · <a href="mailto:ariel@slashmycloudbill.com" style="color:#6366f1;">ariel@slashmycloudbill.com</a>
     </div>
   `;
 
