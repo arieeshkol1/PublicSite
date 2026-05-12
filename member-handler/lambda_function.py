@@ -5212,11 +5212,15 @@ def _gather_account_data(question, credentials):
         data['cost_error'] = str(e)
         logger.warning(f"Cost Explorer error: {e}")
 
-    # EC2 instances — fetch when question mentions EC2 OR when EC2 Compute is a top cost
-    # (needed for pricing engine to use actual instance types)
+    # EC2 instances — fetch ONLY when question specifically asks about EC2 instances
+    # Skip for broad questions like "how efficient" or "optimize" to avoid timeout
+    _ec2_specific_keywords = ['ec2', 'instance', 'server', 'running', 'ri', 'reserved']
+    _broad_keywords = ['efficient', 'optimize', 'saving', 'save', 'overview', 'summary', 'breakdown']
+    _is_broad_question = any(kw in question_lower for kw in _broad_keywords)
+    _is_ec2_specific = any(kw in question_lower for kw in _ec2_specific_keywords)
+    
     top_service_names_ec2 = [s['service'] for s in data.get('cost_by_service', [])[:8]]
-    if 'Amazon Elastic Compute Cloud - Compute' in top_service_names_ec2 or \
-       any(kw in question_lower for kw in ['ec2', 'instance', 'server', 'compute', 'running', 'saving', 'save', 'efficient', 'optimize', 'ri', 'reserved']):
+    if _is_ec2_specific and not _is_broad_question:
         try:
             # Detect active regions from Cost Explorer billing data (single API call)
             _ec2_regions = _detect_charged_regions(credentials)[:2]  # Cap at 2 regions to stay within timeout
