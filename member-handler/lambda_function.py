@@ -6808,6 +6808,7 @@ def handle_tag_apply(event):
             arns_by_account.setdefault(acct_id, []).append(arn)
 
     results = {'tagged': 0, 'failed': 0, 'errors': []}
+    logger.info(f"Tag apply request: {len(arns)} ARNs, tags={list(tags.keys())}, accounts={list(arns_by_account.keys())}")
 
     for acct_id, acct_arns in arns_by_account.items():
         try:

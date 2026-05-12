@@ -6055,8 +6055,15 @@ async function _applyTags() {
 
     try {
         var data = await api('POST', '/members/tags/apply', { arns: arns, tags: tags });
-        if (statusEl) { statusEl.style.color = '#10b981'; statusEl.textContent = data.message || 'Tags applied!'; }
-        notify(data.message || 'Tags applied!', 'success');
+        var msg = data.message || 'Tags applied!';
+        if (data.errors && data.errors.length > 0) {
+            msg += ' | Errors: ' + data.errors.slice(0, 3).join('; ');
+            if (statusEl) { statusEl.style.color = '#f59e0b'; statusEl.textContent = msg; }
+            notify(msg, 'warning');
+        } else {
+            if (statusEl) { statusEl.style.color = '#10b981'; statusEl.textContent = msg; }
+            notify(msg, 'success');
+        }
         if (confirmBtn) { confirmBtn.disabled = false; confirmBtn.textContent = '✓ Done — Close'; confirmBtn.style.background = '#10b981'; confirmBtn.style.borderColor = '#10b981'; confirmBtn.style.opacity = '1';
             confirmBtn.onclick = function() {
                 document.getElementById('plan-tag-modal').hidden = true;
