@@ -13339,8 +13339,6 @@ def handle_rds_optimize(event):
     all_rds_clients = []
     for _r in rds_regions:
         all_rds_clients.append((_r, boto3.client('rds', aws_access_key_id=creds['AccessKeyId'], aws_secret_access_key=creds['SecretAccessKey'], aws_session_token=creds['SessionToken'], region_name=_r)))
-    cw = boto3.client('cloudwatch', aws_access_key_id=creds['AccessKeyId'], aws_secret_access_key=creds['SecretAccessKey'], aws_session_token=creds['SessionToken'], region_name=rds_regions[0] if rds_regions else 'us-east-1')
-
     # Discover RDS instances across all charged regions
     instances = []
     try:
@@ -13368,13 +13366,30 @@ def handle_rds_optimize(event):
     if not instances:
         return create_success_response({'success': True, 'instances': [], 'recommendations': [], 'message': 'No RDS instances found in this account.'})
 
-    # Analyze utilization (30-day CloudWatch)
+    # Analyze utilization (30-day CloudWatch) — use instance's region for CW
     from datetime import datetime, timedelta
     end_time = datetime.utcnow()
     start_time = end_time - timedelta(days=30)
 
+    # RDS instance class approximate monthly costs (On-Demand, us-east-1 baseline)
+    _RDS_CLASS_COSTS = {
+        'db.t3.micro': 12, 'db.t3.small': 25, 'db.t3.medium': 50, 'db.t3.large': 100,
+        'db.t4g.micro': 11, 'db.t4g.small': 22, 'db.t4g.medium': 44, 'db.t4g.large': 88,
+        'db.m5.large': 125, 'db.m5.xlarge': 250, 'db.m5.2xlarge': 500,
+        'db.m6g.large': 112, 'db.m6g.xlarge': 225, 'db.m6g.2xlarge': 450,
+        'db.r5.large': 175, 'db.r5.xlarge': 350, 'db.r5.2xlarge': 700,
+        'db.r6g.large': 157, 'db.r6g.xlarge': 315, 'db.r6g.2xlarge': 630,
+    }
+
     recommendations = []
     for inst in instances:
+        inst_region = inst.get('region', 'us-east-1')
+        # Create CW client for the instance's region
+        cw = boto3.client('cloudwatch',
+            aws_access_key_id=creds['AccessKeyId'],
+            aws_secret_access_key=creds['SecretAccessKey'],
+            aws_session_token=creds['SessionToken'],
+            region_name=inst_region)
         try:
             cpu_resp = cw.get_metric_statistics(
                 Namespace='AWS/RDS', MetricName='CPUUtilization',
@@ -13408,20 +13423,57 @@ def handle_rds_optimize(event):
             inst['connAvg'] = None
             inst['connMax'] = None
 
+        # Estimate monthly cost
+        est_cost = _RDS_CLASS_COSTS.get(inst['instanceClass'], 0)
+        if inst['multiAZ']:
+            est_cost *= 2
+        inst['estimatedMonthlyCost'] = est_cost
+
         # Generate recommendations
         recs = []
-        # 1. Rightsizing (CPU < 20% avg)
-        if inst.get('cpuAvg') is not None and inst['cpuAvg'] < 20:
-            recs.append({'type': 'rightsize', 'title': 'Downsize instance class', 'description': f'Average CPU is only {inst["cpuAvg"]}%. Consider a smaller instance class.', 'savings': '20-40%'})
-        # 2. gp2 -> gp3
-        if inst.get('storageType') == 'gp2':
-            recs.append({'type': 'storage', 'title': 'Migrate storage from gp2 to gp3', 'description': f'gp3 is 20% cheaper than gp2 with configurable IOPS. Current: {inst["allocatedStorage"]} GB gp2.', 'savings': '20%'})
-        # 3. Multi-AZ review (if non-prod)
-        if inst.get('multiAZ') and inst.get('cpuAvg') is not None and inst['cpuAvg'] < 10:
-            recs.append({'type': 'multiaz', 'title': 'Review Multi-AZ necessity', 'description': 'Very low utilization suggests this may be a dev/test DB. Multi-AZ doubles the cost.', 'savings': '50%'})
-        # 4. Idle database
+
+        # 1. Idle database (0 connections)
         if inst.get('connAvg') is not None and inst['connAvg'] < 1:
-            recs.append({'type': 'idle', 'title': 'Database appears idle', 'description': f'Average connections: {inst["connAvg"]}. Consider stopping or deleting if unused.', 'savings': '100%'})
+            recs.append({'type': 'idle', 'title': 'Database appears idle — consider stopping or deleting',
+                'description': f'Average connections: {inst["connAvg"]}. No active workload detected over 30 days.',
+                'savings': f'${est_cost}/mo', 'savingsAmount': est_cost, 'priority': 'high'})
+
+        # 2. Rightsizing (CPU < 20% avg)
+        if inst.get('cpuAvg') is not None and inst['cpuAvg'] < 20 and est_cost > 0:
+            downsize_savings = round(est_cost * 0.3, 2)
+            recs.append({'type': 'rightsize', 'title': f'Downsize instance (CPU avg {inst["cpuAvg"]}%)',
+                'description': f'Average CPU is only {inst["cpuAvg"]}%, max {inst.get("cpuMax", "N/A")}%. A smaller instance class would handle this workload.',
+                'savings': f'~${downsize_savings}/mo', 'savingsAmount': downsize_savings, 'priority': 'medium'})
+
+        # 3. gp2 → gp3 storage
+        if inst.get('storageType') == 'gp2':
+            storage_savings = round(inst['allocatedStorage'] * 0.02, 2)  # $0.10 vs $0.08 per GB
+            recs.append({'type': 'storage', 'title': 'Migrate storage from gp2 to gp3',
+                'description': f'gp3 is 20% cheaper with configurable IOPS/throughput. Current: {inst["allocatedStorage"]} GB gp2.',
+                'savings': f'~${storage_savings}/mo', 'savingsAmount': storage_savings, 'priority': 'low'})
+
+        # 4. Multi-AZ review (low utilization)
+        if inst.get('multiAZ') and inst.get('cpuAvg') is not None and inst['cpuAvg'] < 15:
+            multiaz_savings = round(est_cost / 2, 2)
+            recs.append({'type': 'multiaz', 'title': 'Review Multi-AZ necessity',
+                'description': f'Low utilization ({inst["cpuAvg"]}% CPU) suggests dev/test workload. Multi-AZ doubles the cost.',
+                'savings': f'~${multiaz_savings}/mo', 'savingsAmount': multiaz_savings, 'priority': 'medium'})
+
+        # 5. Graviton migration (if using m5/r5, suggest m6g/r6g)
+        iclass = inst.get('instanceClass', '')
+        if any(x in iclass for x in ['db.m5', 'db.r5', 'db.t3']):
+            graviton_savings = round(est_cost * 0.1, 2)
+            graviton_target = iclass.replace('db.m5', 'db.m6g').replace('db.r5', 'db.r6g').replace('db.t3', 'db.t4g')
+            recs.append({'type': 'graviton', 'title': f'Migrate to Graviton ({graviton_target})',
+                'description': f'Graviton instances offer 10-20% better price-performance. Same specs, lower cost.',
+                'savings': f'~${graviton_savings}/mo', 'savingsAmount': graviton_savings, 'priority': 'medium'})
+
+        # 6. Reserved Instance suggestion (if running 24/7 with decent utilization)
+        if inst.get('cpuAvg') is not None and inst['cpuAvg'] > 10 and est_cost > 50:
+            ri_savings = round(est_cost * 0.35, 2)
+            recs.append({'type': 'reserved', 'title': 'Consider Reserved Instance (1-year)',
+                'description': f'Steady workload ({inst["cpuAvg"]}% avg CPU). A 1-year RI saves ~35% vs On-Demand.',
+                'savings': f'~${ri_savings}/mo', 'savingsAmount': ri_savings, 'priority': 'medium'})
 
         inst['recommendations'] = recs
         recommendations.extend(recs)
