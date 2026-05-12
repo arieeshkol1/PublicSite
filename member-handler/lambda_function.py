@@ -13068,8 +13068,25 @@ def handle_licensing_scan(event):
                         if rate > 0:
                             pricing_cache[cache_key] = rate
                             return rate
-        except Exception:
-            pass
+            # If no results for this region, try us-east-1 as fallback estimate
+            if location != 'US East (N. Virginia)':
+                fallback_filters = list(filters)
+                for f in fallback_filters:
+                    if f['Field'] == 'location':
+                        f['Value'] = 'US East (N. Virginia)'
+                resp2 = pricing_client.get_products(ServiceCode='AmazonEC2', Filters=fallback_filters, MaxResults=1)
+                price_list2 = resp2.get('PriceList', [])
+                if price_list2:
+                    price_data2 = json.loads(price_list2[0])
+                    terms2 = price_data2.get('terms', {}).get('OnDemand', {})
+                    for term in terms2.values():
+                        for dim in term.get('priceDimensions', {}).values():
+                            rate = float(dim.get('pricePerUnit', {}).get('USD', '0'))
+                            if rate > 0:
+                                pricing_cache[cache_key] = rate
+                                return rate
+        except Exception as e:
+            logger.warning(f"Pricing lookup failed for {instance_type}/{region}: {e}")
         pricing_cache[cache_key] = None
         return None
 
