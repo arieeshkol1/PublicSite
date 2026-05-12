@@ -673,6 +673,7 @@ async function loadAccounts() {
         var data = await api('GET', '/members/accounts');
         allAccounts = data.accounts || [];
         renderAccounts(allAccounts);
+        populateAIAccounts();
         // Update header with tier and token info
         if (data.tier) {
             var badge = $('header-tier-badge');
