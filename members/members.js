@@ -7458,9 +7458,11 @@ async function _resizeLoadInstances() {
 var _resizeData = null;
 
 async function _resizeAnalyze() {
-    var accountId = (document.getElementById('resize-account') || {}).value;
-    var instanceId = (document.getElementById('resize-instance') || {}).value;
-    var status = document.getElementById('resize-status');
+    var accountId = (document.getElementById('resize-account') || {}).value || (document.getElementById('unified-opt-account') || {}).value;
+    var instSelect = document.getElementById('resize-instance');
+    var instanceId = instSelect ? instSelect.value : '';
+    var region = instSelect && instSelect.selectedOptions[0] ? instSelect.selectedOptions[0].getAttribute('data-region') || 'us-east-1' : 'us-east-1';
+    var status = document.getElementById('resize-status') || document.getElementById('unified-opt-status');
     var step2 = document.getElementById('resize-step-2');
     var step4 = document.getElementById('resize-step-4');
 
@@ -7470,7 +7472,7 @@ async function _resizeAnalyze() {
     if (step4) step4.style.display = 'none';
 
     try {
-        var data = await api('POST', '/members/servers/analyze', { accountId: accountId, instanceId: instanceId });
+        var data = await api('POST', '/members/servers/analyze', { accountId: accountId, instanceId: instanceId, region: region });
         _resizeData = data;
 
         // Render analysis - full spec card
@@ -7983,7 +7985,8 @@ async function _unifiedLoadInstances(accountId) {
         (data.instances || []).forEach(function(inst) {
             var opt = document.createElement('option');
             opt.value = inst.instanceId;
-            opt.textContent = (inst.name || inst.instanceId) + ' (' + inst.instanceType + ')';
+            opt.setAttribute('data-region', inst.region || 'us-east-1');
+            opt.textContent = (inst.name || inst.instanceId) + ' (' + inst.instanceType + (inst.region ? ' / ' + inst.region : '') + ')';
             select.appendChild(opt);
         });
     } catch (e) {

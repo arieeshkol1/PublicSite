@@ -11494,6 +11494,9 @@ def handle_server_analyze(event):
     if not account_id or not instance_id:
         return create_error_response(400, 'MissingParams', 'accountId and instanceId required')
 
+    # Region can be passed from the instance list (which includes region per instance)
+    region = body.get('region', 'us-east-1')
+
     ownership = _verify_account_ownership(member_email, [account_id])
     if isinstance(ownership, dict):
         return ownership
@@ -11503,8 +11506,8 @@ def handle_server_analyze(event):
     except Exception as e:
         return create_error_response(500, 'ServerError', f'Cannot assume role: {e}')
 
-    # Get instance details
-    ec2 = _make_client_from_creds('ec2', creds)
+    # Get instance details (use the region where the instance lives)
+    ec2 = _make_client_from_creds('ec2', creds, region)
     try:
         resp = ec2.describe_instances(InstanceIds=[instance_id])
         reservations = resp.get('Reservations', [])
@@ -11522,8 +11525,8 @@ def handle_server_analyze(event):
     arch = inst.get('Architecture', 'x86_64')
     in_asg = 'aws:autoscaling:groupName' in tags
 
-    # Get CloudWatch metrics (30 days)
-    cw = _make_client_from_creds('cloudwatch', creds)
+    # Get CloudWatch metrics (30 days) — same region as the instance
+    cw = _make_client_from_creds('cloudwatch', creds, region)
     end_time = datetime.now(timezone.utc)
     start_time = end_time - timedelta(days=30)
 
