@@ -5166,13 +5166,21 @@ def _gather_account_data(question, credentials):
     if 'Amazon Elastic Compute Cloud - Compute' in top_service_names_ec2 or \
        any(kw in question_lower for kw in ['ec2', 'instance', 'server', 'compute', 'running', 'saving', 'save', 'efficient', 'optimize', 'ri', 'reserved']):
         try:
-            # Scan ALL regions for EC2 instances
-            ec2_default = _make_client('ec2')
+            # Detect active regions from cost data (fast — avoids scanning 15+ regions)
+            _ec2_regions = ['us-east-1', 'eu-central-1']  # Default fallback
             try:
-                _regions_resp = ec2_default.describe_regions(AllRegions=False)
-                _ec2_regions = [r['RegionName'] for r in _regions_resp.get('Regions', [])]
+                # Check cost_by_service usage types for region prefixes
+                _prefix_map = {'EUC1': 'eu-central-1', 'USE1': 'us-east-1', 'USW2': 'us-west-2', 'EUW1': 'eu-west-1', 'APS1': 'ap-southeast-1'}
+                if data.get('usage_types'):
+                    _detected = set()
+                    for ut in data.get('usage_types', []):
+                        _p = ut.split('-')[0] if '-' in ut else ''
+                        if _p in _prefix_map:
+                            _detected.add(_prefix_map[_p])
+                    if _detected:
+                        _ec2_regions = list(_detected)[:5]
             except Exception:
-                _ec2_regions = ['us-east-1', 'eu-central-1', 'eu-west-1', 'us-west-2', 'ap-southeast-1']
+                pass
             instance_list = []
             for _ec2_region in _ec2_regions:
                 try:
@@ -11775,12 +11783,11 @@ def handle_server_list_instances(event):
 
     instances = []
     try:
-        # Get all enabled regions
-        try:
-            regions_resp = ec2.describe_regions(AllRegions=False)
-            all_regions = [r['RegionName'] for r in regions_resp.get('Regions', [])]
-        except Exception:
-            all_regions = ['us-east-1', 'eu-central-1', 'eu-west-1', 'us-west-2', 'ap-southeast-1']
+        # Detect active regions (fast — use common regions, customer can specify)
+        all_regions = ['us-east-1', 'eu-central-1', 'eu-west-1', 'us-west-2', 'ap-southeast-1']
+        # If body specifies a region, use only that
+        if body.get('region'):
+            all_regions = [body['region']]
 
         for _region in all_regions:
             try:
@@ -12150,13 +12157,8 @@ def handle_licensing_scan(event):
     # --- Phase 2: Discovery (ALL REGIONS) ---
     instances = []
 
-    # Get list of enabled regions
-    try:
-        ec2_default = _client('ec2')
-        regions_resp = ec2_default.describe_regions(AllRegions=False)
-        scan_regions = [r['RegionName'] for r in regions_resp.get('Regions', [])]
-    except Exception:
-        scan_regions = ['us-east-1', 'eu-central-1', 'eu-west-1', 'us-west-2', 'ap-southeast-1', 'ap-northeast-1']
+    # Use common regions (fast — avoids describe_regions call)
+    scan_regions = ['us-east-1', 'eu-central-1', 'eu-west-1', 'us-west-2', 'ap-southeast-1']
 
     # EC2 Windows instances — scan all regions
     for _scan_region in scan_regions:

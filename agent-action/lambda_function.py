@@ -171,17 +171,36 @@ def _get_cost_data(account_id, member_email):
 
 
 def _detect_active_regions(creds):
-    """Detect which AWS regions have active resources using EC2 describe_regions."""
+    """Detect active regions from Cost Explorer usage type prefixes. Fast — single API call."""
+    # Region prefixes in Cost Explorer usage types (e.g., EUC1- = eu-central-1, USE1- = us-east-1)
+    PREFIX_TO_REGION = {
+        'USE1': 'us-east-1', 'USE2': 'us-east-2', 'USW1': 'us-west-1', 'USW2': 'us-west-2',
+        'EUC1': 'eu-central-1', 'EUW1': 'eu-west-1', 'EUW2': 'eu-west-2', 'EUW3': 'eu-west-3',
+        'APS1': 'ap-southeast-1', 'APS2': 'ap-southeast-2', 'APN1': 'ap-northeast-1',
+        'SAE1': 'sa-east-1', 'CAN1': 'ca-central-1', 'MES1': 'me-south-1', 'MEC1': 'me-central-1',
+    }
     try:
-        ec2 = _make_client('ec2', creds)
-        resp = ec2.describe_regions(AllRegions=False)
-        all_regions = [r['RegionName'] for r in resp.get('Regions', [])]
-        # Prioritize common regions (check these first for speed)
-        priority = ['us-east-1', 'eu-central-1', 'eu-west-1', 'us-west-2', 'ap-southeast-1', 'ap-northeast-1', 'me-south-1', 'me-central-1']
-        ordered = [r for r in priority if r in all_regions] + [r for r in all_regions if r not in priority]
-        return ordered[:10]  # Cap at 10 regions to avoid timeout
+        ce = _make_client('ce', creds)
+        now = datetime.now(timezone.utc)
+        start = (now.replace(day=1) - timedelta(days=1)).replace(day=1).strftime('%Y-%m-%d')
+        end = now.replace(day=1).strftime('%Y-%m-%d')
+        resp = ce.get_cost_and_usage(
+            TimePeriod={'Start': start, 'End': end},
+            Granularity='MONTHLY', Metrics=['UnblendedCost'],
+            GroupBy=[{'Type': 'DIMENSION', 'Key': 'USAGE_TYPE'}],
+        )
+        regions = set()
+        for period in resp.get('ResultsByTime', []):
+            for group in period.get('Groups', []):
+                usage_type = group['Keys'][0]
+                prefix = usage_type.split('-')[0] if '-' in usage_type else ''
+                if prefix in PREFIX_TO_REGION:
+                    regions.add(PREFIX_TO_REGION[prefix])
+        if not regions:
+            regions = {'us-east-1'}
+        return list(regions)[:5]  # Cap at 5 active regions
     except Exception:
-        return ['us-east-1', 'eu-central-1', 'eu-west-1', 'us-west-2']
+        return ['us-east-1', 'eu-central-1']
 
 
 def _get_ec2_instances(account_id, member_email):
@@ -189,14 +208,8 @@ def _get_ec2_instances(account_id, member_email):
     try:
         creds = _assume_role(account_id, member_email)
         
-        # First, get list of enabled regions
-        ec2_default = _make_client('ec2', creds)
-        try:
-            regions_resp = ec2_default.describe_regions(AllRegions=False)
-            regions = [r['RegionName'] for r in regions_resp.get('Regions', [])]
-        except Exception:
-            # Fallback to common regions if describe_regions fails
-            regions = ['us-east-1', 'us-west-2', 'eu-west-1', 'eu-central-1', 'ap-southeast-1', 'ap-northeast-1', 'me-south-1', 'me-central-1']
+        # Detect active regions from Cost Explorer (fast, single API call)
+        regions = _detect_active_regions(creds)
         
         instances = []
         for region in regions:
