@@ -170,28 +170,59 @@ def _get_cost_data(account_id, member_email):
         return {'error': str(e)}
 
 
+def _detect_active_regions(creds):
+    """Detect which AWS regions have active resources using EC2 describe_regions."""
+    try:
+        ec2 = _make_client('ec2', creds)
+        resp = ec2.describe_regions(AllRegions=False)
+        all_regions = [r['RegionName'] for r in resp.get('Regions', [])]
+        # Prioritize common regions (check these first for speed)
+        priority = ['us-east-1', 'eu-central-1', 'eu-west-1', 'us-west-2', 'ap-southeast-1', 'ap-northeast-1', 'me-south-1', 'me-central-1']
+        ordered = [r for r in priority if r in all_regions] + [r for r in all_regions if r not in priority]
+        return ordered[:10]  # Cap at 10 regions to avoid timeout
+    except Exception:
+        return ['us-east-1', 'eu-central-1', 'eu-west-1', 'us-west-2']
+
+
 def _get_ec2_instances(account_id, member_email):
-    """List EC2 instances with details."""
+    """List EC2 instances across all regions with details."""
     try:
         creds = _assume_role(account_id, member_email)
-        ec2 = _make_client('ec2', creds)
-
-        response = ec2.describe_instances()
+        
+        # First, get list of enabled regions
+        ec2_default = _make_client('ec2', creds)
+        try:
+            regions_resp = ec2_default.describe_regions(AllRegions=False)
+            regions = [r['RegionName'] for r in regions_resp.get('Regions', [])]
+        except Exception:
+            # Fallback to common regions if describe_regions fails
+            regions = ['us-east-1', 'us-west-2', 'eu-west-1', 'eu-central-1', 'ap-southeast-1', 'ap-northeast-1', 'me-south-1', 'me-central-1']
+        
         instances = []
-        for res in response.get('Reservations', []):
-            for inst in res.get('Instances', []):
-                name = ''
-                for tag in inst.get('Tags', []):
-                    if tag['Key'] == 'Name':
-                        name = tag['Value']
-                instances.append({
-                    'instanceId': inst['InstanceId'],
-                    'type': inst['InstanceType'],
-                    'state': inst['State']['Name'],
-                    'name': name,
-                    'az': inst.get('Placement', {}).get('AvailabilityZone', ''),
-                    'launchTime': str(inst.get('LaunchTime', '')),
-                })
+        for region in regions:
+            try:
+                ec2 = _make_client('ec2', creds, region)
+                response = ec2.describe_instances(
+                    Filters=[{'Name': 'instance-state-name', 'Values': ['running', 'stopped']}]
+                )
+                for res in response.get('Reservations', []):
+                    for inst in res.get('Instances', []):
+                        name = ''
+                        for tag in inst.get('Tags', []):
+                            if tag['Key'] == 'Name':
+                                name = tag['Value']
+                        instances.append({
+                            'instanceId': inst['InstanceId'],
+                            'type': inst['InstanceType'],
+                            'state': inst['State']['Name'],
+                            'name': name,
+                            'region': region,
+                            'az': inst.get('Placement', {}).get('AvailabilityZone', ''),
+                            'launchTime': str(inst.get('LaunchTime', '')),
+                        })
+            except Exception:
+                continue  # Skip regions with access issues
+        
         return {'instances': instances, 'count': len(instances)}
     except Exception as e:
         return {'error': str(e)}
@@ -455,35 +486,42 @@ def _get_lambda_functions(account_id, member_email):
 
 
 def _get_ebs_volumes(account_id, member_email):
-    """List EBS volumes with details."""
+    """List EBS volumes across active regions."""
     try:
         creds = _assume_role(account_id, member_email)
-        ec2 = _make_client('ec2', creds)
         
-        resp = ec2.describe_volumes()
+        # Detect active regions from Cost Explorer usage types
+        regions = _detect_active_regions(creds)
+        
         volumes = []
         unattached_count = 0
         gp2_count = 0
         total_gb = 0
         
-        for vol in resp.get('Volumes', []):
-            attached = len(vol.get('Attachments', [])) > 0
-            vol_type = vol.get('VolumeType', 'unknown')
-            size = vol.get('Size', 0)
-            total_gb += size
-            if not attached:
-                unattached_count += 1
-            if vol_type == 'gp2':
-                gp2_count += 1
-            
-            volumes.append({
-                'volumeId': vol['VolumeId'],
-                'type': vol_type,
-                'sizeGB': size,
-                'state': vol['State'],
-                'attached': attached,
-                'iops': vol.get('Iops', 0),
-            })
+        for region in regions:
+            try:
+                ec2 = _make_client('ec2', creds, region)
+                resp = ec2.describe_volumes()
+                for vol in resp.get('Volumes', []):
+                    attached = len(vol.get('Attachments', [])) > 0
+                    vol_type = vol.get('VolumeType', 'unknown')
+                    size = vol.get('Size', 0)
+                    total_gb += size
+                    if not attached:
+                        unattached_count += 1
+                    if vol_type == 'gp2':
+                        gp2_count += 1
+                    volumes.append({
+                        'volumeId': vol['VolumeId'],
+                        'type': vol_type,
+                        'sizeGB': size,
+                        'state': vol['State'],
+                        'attached': attached,
+                        'iops': vol.get('Iops', 0),
+                        'region': region,
+                    })
+            except Exception:
+                continue
         
         return {
             'volumes': volumes[:50],
