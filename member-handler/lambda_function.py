@@ -5219,7 +5219,7 @@ def _gather_account_data(question, credentials):
        any(kw in question_lower for kw in ['ec2', 'instance', 'server', 'compute', 'running', 'saving', 'save', 'efficient', 'optimize', 'ri', 'reserved']):
         try:
             # Detect active regions from Cost Explorer billing data (single API call)
-            _ec2_regions = _detect_charged_regions(credentials)
+            _ec2_regions = _detect_charged_regions(credentials)[:2]  # Cap at 2 regions to stay within timeout
             instance_list = []
             for _ec2_region in _ec2_regions:
                 try:
@@ -5717,8 +5717,8 @@ def _gather_account_data(question, credentials):
         ebs_data = data.get('ebs_summary', {})
         if ebs_data.get('total_gb', 0) > 0:
             try:
-                # Scan multiple regions for EBS volumes
-                _ebs_regions = ['us-east-1', 'eu-central-1', 'eu-west-1', 'us-west-2', 'ap-southeast-1']
+                # Scan charged regions for EBS volumes (cap at 2 for timeout)
+                _ebs_regions = _detect_charged_regions(credentials)[:2]
                 _all_vols = {'Volumes': []}
                 for _ebs_region in _ebs_regions:
                     try:
