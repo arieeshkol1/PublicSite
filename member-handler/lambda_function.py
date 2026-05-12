@@ -13097,27 +13097,27 @@ def handle_licensing_scan(event):
         itype = inst['instanceType']
 
         inst_region = inst.get('region', 'us-east-1')
-        # License Included (Windows only)
-        li_rate = _get_price(itype, 'License Included', 'NA', inst_region)
-        # BYOL (Windows only)
+        # Windows (license included in price, API uses 'No License required')
+        li_rate = _get_price(itype, 'No License required', 'NA', inst_region)
+        # BYOL Windows
         byol_rate = _get_price(itype, 'Bring your own license', 'NA', inst_region)
 
-        # With SQL Server
+        # With SQL Server (also uses 'No License required' with preInstalledSw)
         sql_li_rate = None
         sql_std_rate = None
         if inst['sqlEdition'] == 'Enterprise':
-            sql_li_rate = _get_price(itype, 'License Included', 'SQL Ent', inst_region)
+            sql_li_rate = _get_price(itype, 'No License required', 'SQL Ent', inst_region)
         elif inst['sqlEdition'] == 'Standard':
-            sql_li_rate = _get_price(itype, 'License Included', 'SQL Std', inst_region)
+            sql_li_rate = _get_price(itype, 'No License required', 'SQL Std', inst_region)
         if inst['sqlEdition'] in ('Enterprise', 'Unknown'):
-            sql_std_rate = _get_price(itype, 'License Included', 'SQL Std', inst_region)
+            sql_std_rate = _get_price(itype, 'No License required', 'SQL Std', inst_region)
 
         # Use SQL rate if available, otherwise Windows-only rate
         current_rate = sql_li_rate or li_rate
         inst['pricing'] = {
             'licenseIncludedHourly': current_rate,
             'byolHourly': byol_rate,
-            'sqlEnterpriseHourly': _get_price(itype, 'License Included', 'SQL Ent') if inst['sqlEdition'] else None,
+            'sqlEnterpriseHourly': _get_price(itype, 'No License required', 'SQL Ent', inst_region) if inst['sqlEdition'] else None,
             'sqlStandardHourly': sql_std_rate,
         }
         inst['currentMonthlyCost'] = round(current_rate * 730, 2) if current_rate else None
@@ -13197,7 +13197,7 @@ def handle_licensing_scan(event):
             ]
             for alt_type, alt_vcpus, alt_mem in r_alternatives:
                 if alt_vcpus < current_vcpus_val and alt_mem >= current_mem * 0.7:
-                    alt_rate = _get_price(alt_type, 'License Included', 'NA', inst.get('region', 'us-east-1'))
+                    alt_rate = _get_price(alt_type, 'No License required', 'NA', inst.get('region', 'us-east-1'))
                     if alt_rate and alt_rate < current_rate:
                         swap_savings = round((current_rate - alt_rate) * 730, 2)
                         if swap_savings > 20:
