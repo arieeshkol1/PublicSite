@@ -13155,18 +13155,43 @@ def handle_licensing_scan(event):
                         'deepLink': 'act:optimization:resize'
                     })
 
-        # 2. BYOL savings
+        # 2. BYOL savings (with cost comparison)
         if byol_rate and current_rate > byol_rate:
             byol_savings = round((current_rate - byol_rate) * 730, 2)
             if byol_savings > 10:
+                # Estimate Microsoft license cost for comparison
+                cores_needed = max(inst.get('cores', 0), inst.get('vcpus', 2) // 2)
+                core_packs = max(1, math.ceil(cores_needed / 2))  # 2-core packs, minimum 8 cores (4 packs)
+                core_packs = max(4, core_packs)  # Windows Server minimum is 8 cores (4 x 2-core packs)
+                # Microsoft pricing: ~$972/year per 2-core pack with SA, ~$6,155 retail
+                sa_annual_cost = core_packs * 972  # Software Assurance annual
+                sa_monthly_cost = round(sa_annual_cost / 12, 2)
+                net_monthly_savings = round(byol_savings - sa_monthly_cost, 2)
+                breakeven_months = round(sa_annual_cost / (byol_savings * 12) * 12, 1) if byol_savings > 0 else 999
+
+                if net_monthly_savings > 0:
+                    desc = (f'AWS premium: ${byol_savings}/mo. '
+                            f'Est. Microsoft SA cost: ~${sa_monthly_cost}/mo ({core_packs} x 2-core packs). '
+                            f'Net savings: ${net_monthly_savings}/mo. '
+                            f'Requires active Microsoft Software Assurance or volume licensing.')
+                else:
+                    desc = (f'AWS premium: ${byol_savings}/mo. '
+                            f'Est. Microsoft SA cost: ~${sa_monthly_cost}/mo ({core_packs} x 2-core packs). '
+                            f'BYOL may NOT save money unless you already own licenses with active SA. '
+                            f'Break-even: {breakeven_months} months.')
+
                 inst['recommendations'].append({
                     'strategy': 'byol',
-                    'title': 'Switch to BYOL with Software Assurance',
-                    'description': f'Saves ${byol_savings}/mo. Requires active Microsoft Software Assurance.',
+                    'title': f'BYOL opportunity: ${byol_savings}/mo AWS premium',
+                    'description': desc,
                     'monthlySavings': byol_savings,
+                    'netMonthlySavings': max(0, net_monthly_savings),
+                    'microsoftSACostMonthly': sa_monthly_cost,
+                    'corePacks': core_packs,
                     'savingsPercent': round((byol_savings / monthly_cost) * 100, 1),
                     'action': 'advisory',
-                    'prerequisite': 'Software Assurance required'
+                    'prerequisite': 'Software Assurance or Volume Licensing required',
+                    'breakEvenMonths': breakeven_months,
                 })
 
         # 3. SQL Edition Downgrade (Enterprise → Standard)
