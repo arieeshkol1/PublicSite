@@ -2316,6 +2316,58 @@ def _make_client_from_creds(service, creds, region='us-east-1'):
 
 
 
+
+def _detect_charged_regions(creds_or_client):
+    """Detect regions with actual charges from Cost Explorer. Single API call, returns only active regions."""
+    PREFIX_TO_REGION = {
+        'USE1': 'us-east-1', 'USE2': 'us-east-2', 'USW1': 'us-west-1', 'USW2': 'us-west-2',
+        'EUC1': 'eu-central-1', 'EUW1': 'eu-west-1', 'EUW2': 'eu-west-2', 'EUW3': 'eu-west-3',
+        'EUN1': 'eu-north-1', 'APS1': 'ap-southeast-1', 'APS2': 'ap-southeast-2',
+        'APN1': 'ap-northeast-1', 'APN2': 'ap-northeast-2', 'APN3': 'ap-northeast-3',
+        'SAE1': 'sa-east-1', 'CAN1': 'ca-central-1', 'MES1': 'me-south-1', 'MEC1': 'me-central-1',
+        'AFS1': 'af-south-1', 'APS3': 'ap-south-1',
+    }
+    try:
+        if isinstance(creds_or_client, dict):
+            ce = boto3.client('ce',
+                aws_access_key_id=creds_or_client['AccessKeyId'],
+                aws_secret_access_key=creds_or_client['SecretAccessKey'],
+                aws_session_token=creds_or_client['SessionToken'])
+        else:
+            ce = creds_or_client  # Already a CE client
+
+        now = datetime.now(timezone.utc)
+        first_this = now.replace(day=1)
+        first_last = (first_this - timedelta(days=1)).replace(day=1)
+        resp = ce.get_cost_and_usage(
+            TimePeriod={'Start': first_last.strftime('%Y-%m-%d'), 'End': first_this.strftime('%Y-%m-%d')},
+            Granularity='MONTHLY', Metrics=['UnblendedCost'],
+            GroupBy=[{'Type': 'DIMENSION', 'Key': 'REGION'}],
+        )
+        regions = set()
+        for period in resp.get('ResultsByTime', []):
+            for group in period.get('Groups', []):
+                region_val = group['Keys'][0]
+                cost = float(group['Metrics']['UnblendedCost']['Amount'])
+                if cost > 0.01 and region_val and region_val != 'global':
+                    regions.add(region_val)
+        # Also check usage type prefixes as fallback
+        if not regions:
+            resp2 = ce.get_cost_and_usage(
+                TimePeriod={'Start': first_last.strftime('%Y-%m-%d'), 'End': first_this.strftime('%Y-%m-%d')},
+                Granularity='MONTHLY', Metrics=['UnblendedCost'],
+                GroupBy=[{'Type': 'DIMENSION', 'Key': 'USAGE_TYPE'}],
+            )
+            for period in resp2.get('ResultsByTime', []):
+                for group in period.get('Groups', []):
+                    ut = group['Keys'][0]
+                    prefix = ut.split('-')[0] if '-' in ut else ''
+                    if prefix in PREFIX_TO_REGION:
+                        regions.add(PREFIX_TO_REGION[prefix])
+        return list(regions) if regions else ['us-east-1']
+    except Exception:
+        return ['us-east-1']
+
 def handle_actions_scan(event):
     """Tips-driven scan engine v2."""
     auth = validate_token(event)
@@ -5166,21 +5218,8 @@ def _gather_account_data(question, credentials):
     if 'Amazon Elastic Compute Cloud - Compute' in top_service_names_ec2 or \
        any(kw in question_lower for kw in ['ec2', 'instance', 'server', 'compute', 'running', 'saving', 'save', 'efficient', 'optimize', 'ri', 'reserved']):
         try:
-            # Detect active regions from cost data (fast — avoids scanning 15+ regions)
-            _ec2_regions = ['us-east-1', 'eu-central-1']  # Default fallback
-            try:
-                # Check cost_by_service usage types for region prefixes
-                _prefix_map = {'EUC1': 'eu-central-1', 'USE1': 'us-east-1', 'USW2': 'us-west-2', 'EUW1': 'eu-west-1', 'APS1': 'ap-southeast-1'}
-                if data.get('usage_types'):
-                    _detected = set()
-                    for ut in data.get('usage_types', []):
-                        _p = ut.split('-')[0] if '-' in ut else ''
-                        if _p in _prefix_map:
-                            _detected.add(_prefix_map[_p])
-                    if _detected:
-                        _ec2_regions = list(_detected)[:5]
-            except Exception:
-                pass
+            # Detect active regions from Cost Explorer billing data (single API call)
+            _ec2_regions = _detect_charged_regions(credentials)
             instance_list = []
             for _ec2_region in _ec2_regions:
                 try:
@@ -11783,8 +11822,8 @@ def handle_server_list_instances(event):
 
     instances = []
     try:
-        # Detect active regions (fast — use common regions, customer can specify)
-        all_regions = ['us-east-1', 'eu-central-1', 'eu-west-1', 'us-west-2', 'ap-southeast-1']
+        # Detect active regions from Cost Explorer (only regions with charges)
+        all_regions = _detect_charged_regions(creds)
         # If body specifies a region, use only that
         if body.get('region'):
             all_regions = [body['region']]
@@ -12157,8 +12196,8 @@ def handle_licensing_scan(event):
     # --- Phase 2: Discovery (ALL REGIONS) ---
     instances = []
 
-    # Use common regions (fast — avoids describe_regions call)
-    scan_regions = ['us-east-1', 'eu-central-1', 'eu-west-1', 'us-west-2', 'ap-southeast-1']
+    # Detect active regions from Cost Explorer (only regions with actual charges)
+    scan_regions = _detect_charged_regions(creds)
 
     # EC2 Windows instances — scan all regions
     for _scan_region in scan_regions:
