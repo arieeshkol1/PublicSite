@@ -6965,6 +6965,125 @@ def handle_tag_scan(event):
     })
 
 
+def _tag_resource_service_specific(arn, tags, creds, region):
+    """Try to tag a single resource using its service-specific API.
+    Returns True on success, False on failure."""
+    try:
+        parts = arn.split(':')
+        service = parts[2] if len(parts) > 2 else ''
+        kwargs = dict(
+            aws_access_key_id=creds['AccessKeyId'],
+            aws_secret_access_key=creds['SecretAccessKey'],
+            aws_session_token=creds['SessionToken'],
+            region_name=region,
+        )
+
+        if service == 'ec2':
+            ec2 = boto3.client('ec2', **kwargs)
+            resource_id = arn.split('/')[-1] if '/' in arn else arn.split(':')[-1]
+            ec2.create_tags(Resources=[resource_id], Tags=[{'Key': k, 'Value': v} for k, v in tags.items()])
+            return True
+
+        elif service == 'dynamodb':
+            ddb = boto3.client('dynamodb', **kwargs)
+            ddb.tag_resource(ResourceArn=arn, Tags=[{'Key': k, 'Value': v} for k, v in tags.items()])
+            return True
+
+        elif service == 'rds':
+            rds = boto3.client('rds', **kwargs)
+            rds.add_tags_to_resource(ResourceName=arn, Tags=[{'Key': k, 'Value': v} for k, v in tags.items()])
+            return True
+
+        elif service == 's3':
+            s3 = boto3.client('s3', **kwargs)
+            bucket = arn.split(':::')[-1] if ':::' in arn else arn.split(':')[-1]
+            existing = s3.get_bucket_tagging(Bucket=bucket).get('TagSet', [])
+            merged = {t['Key']: t['Value'] for t in existing}
+            merged.update(tags)
+            s3.put_bucket_tagging(Bucket=bucket, Tagging={'TagSet': [{'Key': k, 'Value': v} for k, v in merged.items()]})
+            return True
+
+        elif service == 'lambda':
+            lam = boto3.client('lambda', **kwargs)
+            lam.tag_resource(Resource=arn, Tags=tags)
+            return True
+
+        elif service == 'sns':
+            sns = boto3.client('sns', **kwargs)
+            sns.tag_resource(ResourceArn=arn, Tags=[{'Key': k, 'Value': v} for k, v in tags.items()])
+            return True
+
+        elif service == 'sqs':
+            sqs = boto3.client('sqs', **kwargs)
+            # SQS needs queue URL, not ARN
+            queue_name = arn.split(':')[-1]
+            account_id = parts[4]
+            queue_url = f"https://sqs.{region}.amazonaws.com/{account_id}/{queue_name}"
+            sqs.tag_queue(QueueUrl=queue_url, Tags=tags)
+            return True
+
+        elif service == 'elasticloadbalancing':
+            elb = boto3.client('elbv2', **kwargs)
+            elb.add_tags(ResourceArns=[arn], Tags=[{'Key': k, 'Value': v} for k, v in tags.items()])
+            return True
+
+        elif service == 'logs':
+            logs = boto3.client('logs', **kwargs)
+            log_group = arn.split(':')[-1] if ':log-group:' in arn else arn.split('log-group:')[-1].rstrip(':*')
+            logs.tag_log_group(logGroupName=log_group, tags=tags)
+            return True
+
+        elif service == 'kms':
+            kms = boto3.client('kms', **kwargs)
+            key_id = arn.split('/')[-1]
+            kms.tag_resource(KeyId=key_id, Tags=[{'TagKey': k, 'TagValue': v} for k, v in tags.items()])
+            return True
+
+        elif service in ('ecs', 'eks', 'secretsmanager', 'glue', 'states', 'stepfunctions'):
+            client = boto3.client(service if service != 'stepfunctions' else 'stepfunctions', **kwargs)
+            client.tag_resource(resourceArn=arn, tags=[{'key': k, 'value': v} for k, v in tags.items()])
+            return True
+
+        elif service == 'elasticache':
+            ec = boto3.client('elasticache', **kwargs)
+            ec.add_tags_to_resource(ResourceName=arn, Tags=[{'Key': k, 'Value': v} for k, v in tags.items()])
+            return True
+
+        elif service == 'es' or service == 'opensearch':
+            es = boto3.client('opensearch', **kwargs)
+            es.add_tags(ARN=arn, TagList=[{'Key': k, 'Value': v} for k, v in tags.items()])
+            return True
+
+        elif service == 'cloudwatch':
+            cw = boto3.client('cloudwatch', **kwargs)
+            cw.tag_resource(ResourceARN=arn, Tags=[{'Key': k, 'Value': v} for k, v in tags.items()])
+            return True
+
+        elif service == 'kinesis':
+            kin = boto3.client('kinesis', **kwargs)
+            stream_name = arn.split('/')[-1]
+            kin.add_tags_to_stream(StreamName=stream_name, Tags=tags)
+            return True
+
+        elif service == 'redshift':
+            rs = boto3.client('redshift', **kwargs)
+            rs.create_tags(ResourceName=arn, Tags=[{'Key': k, 'Value': v} for k, v in tags.items()])
+            return True
+
+        elif service == 'sagemaker':
+            sm = boto3.client('sagemaker', **kwargs)
+            sm.add_tags(ResourceArn=arn, Tags=[{'Key': k, 'Value': v} for k, v in tags.items()])
+            return True
+
+        else:
+            logger.warning(f"No service-specific tagger for service '{service}' (ARN: {arn})")
+            return False
+
+    except Exception as e:
+        logger.warning(f"Service-specific tag failed for {arn}: {e}")
+        return False
+
+
 def handle_tag_apply(event):
     """Apply tags to selected resources in bulk."""
     auth = validate_token(event)
@@ -7100,30 +7219,30 @@ def handle_tag_apply(event):
                         failed = resp.get('FailedResourcesMap', {})
                         results['tagged'] += len(batch) - len(failed)
                         results['failed'] += len(failed)
+                        # Retry failed resources with service-specific APIs
                         for arn, err in failed.items():
-                            err_msg = err.get('ErrorMessage', '') or err.get('ErrorCode', '') or str(err)
-                            logger.warning(f"Tag failed for {arn}: {err_msg} (full: {err})")
-                            results['errors'].append(f"{arn}: {err_msg}")
+                            retry_ok = _tag_resource_service_specific(arn, tags, creds, _apply_region)
+                            if retry_ok:
+                                results['tagged'] += 1
+                                results['failed'] -= 1
+                            else:
+                                err_msg = err.get('ErrorMessage', '') or err.get('ErrorCode', '') or str(err)
+                                logger.warning(f"Tag failed for {arn}: {err_msg}")
+                                results['errors'].append(f"{arn}: {err_msg}")
                     except Exception as e:
-                        # Fallback: use ec2:CreateTags when tag:TagResources is denied
+                        # Fallback: try service-specific tagging for each resource
                         if 'AccessDenied' in str(e) or 'not authorized' in str(e):
-                            try:
-                                ec2_client = boto3.client('ec2',
-                                    aws_access_key_id=creds['AccessKeyId'],
-                                    aws_secret_access_key=creds['SecretAccessKey'],
-                                    aws_session_token=creds['SessionToken'],
-                                    region_name=_apply_region)
-                                resource_ids = [a.split('/')[-1] if '/' in a else a.split(':')[-1] for a in batch]
-                                ec2_tags = [{'Key': k, 'Value': v} for k, v in tags.items()]
-                                ec2_client.create_tags(Resources=resource_ids, Tags=ec2_tags)
-                                results['tagged'] += len(batch)
-                            except Exception as e2:
-                                results['failed'] += len(batch)
-                                results['errors'].append(f"Fallback CreateTags: {str(e2)[:100]}")
+                            for arn in batch:
+                                retry_ok = _tag_resource_service_specific(arn, tags, creds, _apply_region)
+                                if retry_ok:
+                                    results['tagged'] += 1
+                                else:
+                                    results['failed'] += 1
+                                    results['errors'].append(f"{arn}: service-specific tagging failed")
                         else:
                             logger.error(f"tag_resources exception: {e}", exc_info=True)
                             results['failed'] += len(batch)
-                            results['errors'].append(f"Batch failed: {str(e)[:100]}")
+                            results['errors'].append(f"Batch failed for {acct_id}/{_apply_region}: {str(e)[:100]}")
 
         except Exception as e:
             logger.error(f"Cannot access {acct_id} for tagging: {e}", exc_info=True)
