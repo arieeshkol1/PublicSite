@@ -7967,6 +7967,9 @@ function _unifiedOptUpdateButton() {
     if (optType === 'instance') btn.textContent = '\u{1F50D} Analyze Instance';
     else if (optType === 'cluster') btn.textContent = '\u{1F50D} Analyze Cluster';
     else if (optType === 'licensing') btn.textContent = '\u{1F50D} Scan Licensing';
+    else if (optType === 'rds') btn.textContent = '\u{1F50D} Analyze RDS';
+    else if (optType === 'lambda') btn.textContent = '\u{1F50D} Analyze Lambda';
+    else if (optType === 'ebs') btn.textContent = '\u{1F50D} Analyze EBS';
     else btn.textContent = '\u{1F50D} Analyze';
 }
 
@@ -8012,13 +8015,12 @@ function _unifiedOptGo() {
     if (!optType || !accountId) return;
 
     // Clear previous results
-    var els = ['resize-step-2','resize-step-4','cluster-report','licensing-report','licensing-progress'];
+    var els = ['resize-step-2','resize-step-4','cluster-report','licensing-report','licensing-progress','rds-optimize-report','lambda-optimize-report','ebs-optimize-report'];
     els.forEach(function(id) { var el = document.getElementById(id); if (el) el.style.display = 'none'; });
     var statusEl = document.getElementById('unified-opt-status');
     if (statusEl) statusEl.textContent = '';
 
     if (optType === 'instance') {
-        // Reuse existing resize logic - set the hidden account select and trigger
         var resizeAcct = document.getElementById('resize-account');
         if (resizeAcct) resizeAcct.value = accountId;
         _resizeAnalyze();
@@ -8028,6 +8030,12 @@ function _unifiedOptGo() {
         _clusterAnalyze();
     } else if (optType === 'licensing') {
         _licensingScanUnified(accountId);
+    } else if (optType === 'rds') {
+        _rdsOptimize(accountId);
+    } else if (optType === 'lambda') {
+        _lambdaOptimize(accountId);
+    } else if (optType === 'ebs') {
+        _ebsOptimize(accountId);
     }
 }
 
@@ -8071,3 +8079,120 @@ async function _licensingScanUnified(accountId) {
         if (section === 'optimization') _unifiedOptPopulateAccounts();
     };
 })();
+
+
+// ============================================================
+// RDS Optimizer
+// ============================================================
+async function _rdsOptimize(accountId) {
+    var status = document.getElementById('unified-opt-status');
+    var report = document.getElementById('rds-optimize-report');
+    if (status) status.textContent = 'Analyzing RDS instances...';
+    if (report) report.style.display = 'none';
+    try {
+        var data = await api('POST', '/members/rds/optimize', { accountId: accountId });
+        if (status) status.textContent = '';
+        if (!data.success) { if (status) status.textContent = '\u274c ' + (data.message || 'Failed'); return; }
+        _renderRdsReport(data);
+    } catch (e) { if (status) status.textContent = '\u274c ' + (e.message || 'Failed'); }
+}
+
+function _renderRdsReport(data) {
+    var el = document.getElementById('rds-optimize-report');
+    if (!el) return;
+    el.style.display = 'block';
+    if (!data.instances || data.instances.length === 0) {
+        el.innerHTML = '<div style="text-align:center;padding:20px;color:#6b7280;">No RDS instances found.</div>';
+        return;
+    }
+    var html = '<div style="font-weight:600;margin-bottom:12px;">' + data.instances.length + ' RDS instances analyzed | ' + data.totalRecommendations + ' recommendations</div>';
+    data.instances.forEach(function(inst) {
+        var badge = inst.recommendations.length > 0 ? '<span style="background:#f59e0b;color:#fff;font-size:0.7em;padding:2px 6px;border-radius:4px;margin-left:6px;">' + inst.recommendations.length + ' tips</span>' : '<span style="background:#10b981;color:#fff;font-size:0.7em;padding:2px 6px;border-radius:4px;margin-left:6px;">OK</span>';
+        html += '<details style="border:1px solid #e5e7eb;border-radius:8px;padding:12px;margin-bottom:8px;">';
+        html += '<summary style="cursor:pointer;"><strong>' + inst.instanceId + '</strong> ' + badge + ' <span style="color:#6b7280;font-size:0.8em;">' + inst.instanceClass + ' | ' + inst.engine + ' | ' + inst.allocatedStorage + ' GB ' + inst.storageType + '</span></summary>';
+        html += '<div style="margin-top:8px;font-size:0.85em;color:#6b7280;">CPU avg: ' + (inst.cpuAvg || 'N/A') + '% | max: ' + (inst.cpuMax || 'N/A') + '% | Connections avg: ' + (inst.connAvg || 'N/A') + ' | Multi-AZ: ' + (inst.multiAZ ? 'Yes' : 'No') + '</div>';
+        if (inst.recommendations.length > 0) {
+            html += '<div style="margin-top:8px;">';
+            inst.recommendations.forEach(function(r) { html += '<div style="background:#fef3c7;border-radius:6px;padding:8px;margin-top:6px;"><strong>' + r.title + '</strong><br><span style="font-size:0.85em;color:#6b7280;">' + r.description + '</span> <span style="color:#059669;font-weight:600;">Saves: ' + r.savings + '</span></div>'; });
+            html += '</div>';
+        }
+        html += '</details>';
+    });
+    el.innerHTML = html;
+}
+
+// ============================================================
+// Lambda Optimizer
+// ============================================================
+async function _lambdaOptimize(accountId) {
+    var status = document.getElementById('unified-opt-status');
+    var report = document.getElementById('lambda-optimize-report');
+    if (status) status.textContent = 'Analyzing Lambda functions...';
+    if (report) report.style.display = 'none';
+    try {
+        var data = await api('POST', '/members/lambda/optimize', { accountId: accountId });
+        if (status) status.textContent = '';
+        if (!data.success) { if (status) status.textContent = '\u274c ' + (data.message || 'Failed'); return; }
+        _renderLambdaReport(data);
+    } catch (e) { if (status) status.textContent = '\u274c ' + (e.message || 'Failed'); }
+}
+
+function _renderLambdaReport(data) {
+    var el = document.getElementById('lambda-optimize-report');
+    if (!el) return;
+    el.style.display = 'block';
+    if (!data.functions || data.functions.length === 0) {
+        el.innerHTML = '<div style="text-align:center;padding:20px;color:#6b7280;">No Lambda functions found.</div>';
+        return;
+    }
+    var unused = data.functions.filter(function(f) { return f.invocations30d === 0; }).length;
+    var html = '<div style="font-weight:600;margin-bottom:12px;">' + data.functions.length + ' functions | ' + unused + ' unused | ' + data.totalRecommendations + ' recommendations</div>';
+    data.functions.forEach(function(fn) {
+        if (!fn.recommendations || fn.recommendations.length === 0) return;
+        html += '<details style="border:1px solid #e5e7eb;border-radius:8px;padding:12px;margin-bottom:8px;">';
+        html += '<summary style="cursor:pointer;"><strong>' + fn.functionName + '</strong> <span style="color:#6b7280;font-size:0.8em;">' + fn.runtime + ' | ' + fn.memoryMb + ' MB | ' + fn.architecture + ' | ' + (fn.invocations30d || 0).toLocaleString() + ' invocations/30d</span></summary>';
+        html += '<div style="margin-top:8px;">';
+        fn.recommendations.forEach(function(r) { html += '<div style="background:#eef2ff;border-radius:6px;padding:8px;margin-top:6px;"><strong>' + r.title + '</strong><br><span style="font-size:0.85em;color:#6b7280;">' + r.description + '</span> <span style="color:#059669;font-weight:600;">Saves: ' + r.savings + '</span></div>'; });
+        html += '</div></details>';
+    });
+    el.innerHTML = html;
+}
+
+// ============================================================
+// EBS Optimizer
+// ============================================================
+async function _ebsOptimize(accountId) {
+    var status = document.getElementById('unified-opt-status');
+    var report = document.getElementById('ebs-optimize-report');
+    if (status) status.textContent = 'Analyzing EBS volumes...';
+    if (report) report.style.display = 'none';
+    try {
+        var data = await api('POST', '/members/ebs/optimize', { accountId: accountId });
+        if (status) status.textContent = '';
+        if (!data.success) { if (status) status.textContent = '\u274c ' + (data.message || 'Failed'); return; }
+        _renderEbsReport(data);
+    } catch (e) { if (status) status.textContent = '\u274c ' + (e.message || 'Failed'); }
+}
+
+function _renderEbsReport(data) {
+    var el = document.getElementById('ebs-optimize-report');
+    if (!el) return;
+    el.style.display = 'block';
+    if (!data.volumes || data.volumes.length === 0) {
+        el.innerHTML = '<div style="text-align:center;padding:20px;color:#6b7280;">No EBS volumes found.</div>';
+        return;
+    }
+    var s = data.summary || {};
+    var html = '<div style="background:#f0fdf4;border:1px solid #86efac;border-radius:10px;padding:12px;margin-bottom:12px;">';
+    html += '<strong>' + s.totalVolumes + '</strong> volumes | <strong>' + s.gp2Count + '</strong> gp2 (upgrade to gp3) | <strong>' + s.unattachedCount + '</strong> unattached | ';
+    html += 'gp2\u2192gp3 savings: <strong style="color:#059669;">$' + (s.totalGp2Savings || 0).toFixed(2) + '/mo</strong></div>';
+    var withRecs = data.volumes.filter(function(v) { return v.recommendations && v.recommendations.length > 0; });
+    withRecs.forEach(function(vol) {
+        html += '<details style="border:1px solid #e5e7eb;border-radius:8px;padding:10px;margin-bottom:6px;">';
+        html += '<summary style="cursor:pointer;"><strong>' + (vol.name || vol.volumeId) + '</strong> <span style="color:#6b7280;font-size:0.8em;">' + vol.volumeType + ' | ' + vol.sizeGb + ' GB | ' + (vol.attached ? 'attached to ' + vol.attachedTo : 'unattached') + '</span></summary>';
+        html += '<div style="margin-top:8px;">';
+        vol.recommendations.forEach(function(r) { html += '<div style="background:#fef3c7;border-radius:6px;padding:8px;margin-top:4px;"><strong>' + r.title + '</strong><br><span style="font-size:0.85em;color:#6b7280;">' + r.description + '</span></div>'; });
+        html += '</div></details>';
+    });
+    el.innerHTML = html;
+}

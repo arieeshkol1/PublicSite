@@ -387,6 +387,9 @@
                                                 <option value="instance">&#128202; Resize an Instance</option>
                                                 <option value="cluster">&#9889; Optimize a Cluster (ASG)</option>
                                                 <option value="licensing">&#128176; Optimize Licensing</option>
+                                                <option value="rds">&#128451; Optimize RDS Database</option>
+                                                <option value="lambda">&#9889; Optimize Lambda Functions</option>
+                                                <option value="ebs">&#128190; Optimize EBS Volumes</option>
                                             </select>
                                         </div>
                                     </div>
@@ -426,6 +429,9 @@
                                     </div>
                                 </div>
                                 <div id="licensing-report" style="display:none;margin-top:16px;"></div>
+                                <div id="rds-optimize-report" style="display:none;margin-top:16px;"></div>
+                                <div id="lambda-optimize-report" style="display:none;margin-top:16px;"></div>
+                                <div id="ebs-optimize-report" style="display:none;margin-top:16px;"></div>
                                 <div id="unified-opt-status" style="color:#6b7280;font-size:0.85em;margin-top:8px;"></div>
                                 <!-- Hidden selects for backward compat with existing JS -->
                                 <select id="resize-account" style="display:none;"></select>
@@ -1047,7 +1053,7 @@
         <span id="notification-message"></span>
     </div>
 
-    <script src="members.js?v=81"></script>
+    <script src="members.js?v=82"></script>
     <script src="help.js?v=6"></script>
 </body>
 </html>

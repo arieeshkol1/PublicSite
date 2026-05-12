@@ -146,6 +146,9 @@ def lambda_handler(event, context):
         'POST /members/servers/list-instances': handle_server_list_instances,
         'POST /members/cluster/analyze': handle_cluster_analyze,
         'POST /members/licensing/scan': handle_licensing_scan,
+        'POST /members/rds/optimize': handle_rds_optimize,
+        'POST /members/lambda/optimize': handle_lambda_optimize,
+        'POST /members/ebs/optimize': handle_ebs_optimize,
     }
 
     handler = routes.get(route_key)
@@ -12504,3 +12507,332 @@ def handle_licensing_scan(event):
         'headers': {'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*'},
         'body': json.dumps({'success': True, 'reportCard': report_card}, default=str)
     }
+
+
+# ============================================================
+# RDS Optimizer — Rightsize databases, gp2->gp3, Multi-AZ review
+# ============================================================
+
+def handle_rds_optimize(event):
+    """POST /members/rds/optimize -- Analyze RDS instances for cost optimization."""
+    import math
+
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+    member_email = auth['sub'] if isinstance(auth, dict) else auth
+
+    try:
+        body = json.loads(event.get('body', '{}'))
+    except (json.JSONDecodeError, TypeError):
+        return create_error_response(400, 'InvalidRequest', 'Invalid request body')
+
+    account_id = body.get('accountId', '')
+    if not account_id or not re.match(r'^\d{12}$', account_id):
+        return create_error_response(400, 'InvalidAccountId', 'Valid 12-digit account ID required')
+
+    accounts_table = dynamodb.Table(ACCOUNTS_TABLE_NAME)
+    acct_resp = accounts_table.get_item(Key={'memberEmail': member_email, 'accountId': account_id})
+    if 'Item' not in acct_resp:
+        return create_error_response(403, 'AccountNotFound', 'Account not connected')
+
+    external_id = hashlib.sha256(member_email.encode('utf-8')).hexdigest()
+    role_arn = f'arn:aws:iam::{account_id}:role/SlashMyBill-{account_id}'
+
+    try:
+        sts_client = boto3.client('sts')
+        assume_resp = sts_client.assume_role(RoleArn=role_arn, RoleSessionName='SlashMyBillRDS', ExternalId=external_id, DurationSeconds=900)
+        creds = assume_resp['Credentials']
+    except Exception as e:
+        return create_error_response(403, 'AssumeRoleFailed', f'Cannot access account: {str(e)[:200]}')
+
+    rds = boto3.client('rds', aws_access_key_id=creds['AccessKeyId'], aws_secret_access_key=creds['SecretAccessKey'], aws_session_token=creds['SessionToken'])
+    cw = boto3.client('cloudwatch', aws_access_key_id=creds['AccessKeyId'], aws_secret_access_key=creds['SecretAccessKey'], aws_session_token=creds['SessionToken'])
+
+    # Discover RDS instances
+    instances = []
+    try:
+        resp = rds.describe_db_instances()
+        for db in resp.get('DBInstances', []):
+            instances.append({
+                'instanceId': db['DBInstanceIdentifier'],
+                'instanceClass': db.get('DBInstanceClass', ''),
+                'engine': db.get('Engine', ''),
+                'engineVersion': db.get('EngineVersion', ''),
+                'multiAZ': db.get('MultiAZ', False),
+                'storageType': db.get('StorageType', ''),
+                'allocatedStorage': db.get('AllocatedStorage', 0),
+                'iops': db.get('Iops', 0),
+                'status': db.get('DBInstanceStatus', ''),
+            })
+    except Exception as e:
+        return create_error_response(500, 'RDSError', f'Failed to list RDS instances: {str(e)[:200]}')
+
+    if not instances:
+        return create_success_response({'success': True, 'instances': [], 'recommendations': [], 'message': 'No RDS instances found in this account.'})
+
+    # Analyze utilization (30-day CloudWatch)
+    from datetime import datetime, timedelta
+    end_time = datetime.utcnow()
+    start_time = end_time - timedelta(days=30)
+
+    recommendations = []
+    for inst in instances:
+        try:
+            cpu_resp = cw.get_metric_statistics(
+                Namespace='AWS/RDS', MetricName='CPUUtilization',
+                Dimensions=[{'Name': 'DBInstanceIdentifier', 'Value': inst['instanceId']}],
+                StartTime=start_time, EndTime=end_time, Period=3600, Statistics=['Average', 'Maximum']
+            )
+            dps = cpu_resp.get('Datapoints', [])
+            if dps:
+                inst['cpuAvg'] = round(sum(d['Average'] for d in dps) / len(dps), 1)
+                inst['cpuMax'] = round(max(d['Maximum'] for d in dps), 1)
+            else:
+                inst['cpuAvg'] = None
+                inst['cpuMax'] = None
+
+            # Connections
+            conn_resp = cw.get_metric_statistics(
+                Namespace='AWS/RDS', MetricName='DatabaseConnections',
+                Dimensions=[{'Name': 'DBInstanceIdentifier', 'Value': inst['instanceId']}],
+                StartTime=start_time, EndTime=end_time, Period=3600, Statistics=['Average', 'Maximum']
+            )
+            conn_dps = conn_resp.get('Datapoints', [])
+            if conn_dps:
+                inst['connAvg'] = round(sum(d['Average'] for d in conn_dps) / len(conn_dps), 1)
+                inst['connMax'] = round(max(d['Maximum'] for d in conn_dps), 1)
+            else:
+                inst['connAvg'] = None
+                inst['connMax'] = None
+        except Exception:
+            inst['cpuAvg'] = None
+            inst['cpuMax'] = None
+            inst['connAvg'] = None
+            inst['connMax'] = None
+
+        # Generate recommendations
+        recs = []
+        # 1. Rightsizing (CPU < 20% avg)
+        if inst.get('cpuAvg') is not None and inst['cpuAvg'] < 20:
+            recs.append({'type': 'rightsize', 'title': 'Downsize instance class', 'description': f'Average CPU is only {inst["cpuAvg"]}%. Consider a smaller instance class.', 'savings': '20-40%'})
+        # 2. gp2 -> gp3
+        if inst.get('storageType') == 'gp2':
+            recs.append({'type': 'storage', 'title': 'Migrate storage from gp2 to gp3', 'description': f'gp3 is 20% cheaper than gp2 with configurable IOPS. Current: {inst["allocatedStorage"]} GB gp2.', 'savings': '20%'})
+        # 3. Multi-AZ review (if non-prod)
+        if inst.get('multiAZ') and inst.get('cpuAvg') is not None and inst['cpuAvg'] < 10:
+            recs.append({'type': 'multiaz', 'title': 'Review Multi-AZ necessity', 'description': 'Very low utilization suggests this may be a dev/test DB. Multi-AZ doubles the cost.', 'savings': '50%'})
+        # 4. Idle database
+        if inst.get('connAvg') is not None and inst['connAvg'] < 1:
+            recs.append({'type': 'idle', 'title': 'Database appears idle', 'description': f'Average connections: {inst["connAvg"]}. Consider stopping or deleting if unused.', 'savings': '100%'})
+
+        inst['recommendations'] = recs
+        recommendations.extend(recs)
+
+    return create_success_response({'success': True, 'instances': instances, 'totalRecommendations': len(recommendations)})
+
+
+# ============================================================
+# Lambda Optimizer — Memory rightsizing, architecture, unused functions
+# ============================================================
+
+def handle_lambda_optimize(event):
+    """POST /members/lambda/optimize -- Analyze Lambda functions for cost optimization."""
+
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+    member_email = auth['sub'] if isinstance(auth, dict) else auth
+
+    try:
+        body = json.loads(event.get('body', '{}'))
+    except (json.JSONDecodeError, TypeError):
+        return create_error_response(400, 'InvalidRequest', 'Invalid request body')
+
+    account_id = body.get('accountId', '')
+    if not account_id or not re.match(r'^\d{12}$', account_id):
+        return create_error_response(400, 'InvalidAccountId', 'Valid 12-digit account ID required')
+
+    accounts_table = dynamodb.Table(ACCOUNTS_TABLE_NAME)
+    acct_resp = accounts_table.get_item(Key={'memberEmail': member_email, 'accountId': account_id})
+    if 'Item' not in acct_resp:
+        return create_error_response(403, 'AccountNotFound', 'Account not connected')
+
+    external_id = hashlib.sha256(member_email.encode('utf-8')).hexdigest()
+    role_arn = f'arn:aws:iam::{account_id}:role/SlashMyBill-{account_id}'
+
+    try:
+        sts_client = boto3.client('sts')
+        assume_resp = sts_client.assume_role(RoleArn=role_arn, RoleSessionName='SlashMyBillLambda', ExternalId=external_id, DurationSeconds=900)
+        creds = assume_resp['Credentials']
+    except Exception as e:
+        return create_error_response(403, 'AssumeRoleFailed', f'Cannot access account: {str(e)[:200]}')
+
+    lam = boto3.client('lambda', aws_access_key_id=creds['AccessKeyId'], aws_secret_access_key=creds['SecretAccessKey'], aws_session_token=creds['SessionToken'])
+    cw = boto3.client('cloudwatch', aws_access_key_id=creds['AccessKeyId'], aws_secret_access_key=creds['SecretAccessKey'], aws_session_token=creds['SessionToken'])
+
+    # Discover Lambda functions
+    functions = []
+    try:
+        paginator = lam.get_paginator('list_functions')
+        for page in paginator.paginate():
+            for fn in page.get('Functions', []):
+                functions.append({
+                    'functionName': fn['FunctionName'],
+                    'runtime': fn.get('Runtime', 'N/A'),
+                    'memoryMb': fn.get('MemorySize', 128),
+                    'timeout': fn.get('Timeout', 3),
+                    'architecture': fn.get('Architectures', ['x86_64'])[0],
+                    'codeSize': fn.get('CodeSize', 0),
+                    'lastModified': fn.get('LastModified', ''),
+                })
+    except Exception as e:
+        return create_error_response(500, 'LambdaError', f'Failed to list functions: {str(e)[:200]}')
+
+    if not functions:
+        return create_success_response({'success': True, 'functions': [], 'recommendations': [], 'message': 'No Lambda functions found.'})
+
+    # Analyze (30-day metrics for top 20 by invocations)
+    from datetime import datetime, timedelta
+    end_time = datetime.utcnow()
+    start_time = end_time - timedelta(days=30)
+
+    for fn in functions[:30]:  # Limit to avoid timeout
+        try:
+            inv_resp = cw.get_metric_statistics(
+                Namespace='AWS/Lambda', MetricName='Invocations',
+                Dimensions=[{'Name': 'FunctionName', 'Value': fn['functionName']}],
+                StartTime=start_time, EndTime=end_time, Period=86400, Statistics=['Sum']
+            )
+            fn['invocations30d'] = int(sum(d['Sum'] for d in inv_resp.get('Datapoints', [])))
+
+            dur_resp = cw.get_metric_statistics(
+                Namespace='AWS/Lambda', MetricName='Duration',
+                Dimensions=[{'Name': 'FunctionName', 'Value': fn['functionName']}],
+                StartTime=start_time, EndTime=end_time, Period=86400, Statistics=['Average', 'Maximum']
+            )
+            dps = dur_resp.get('Datapoints', [])
+            if dps:
+                fn['durationAvgMs'] = round(sum(d['Average'] for d in dps) / len(dps), 1)
+                fn['durationMaxMs'] = round(max(d['Maximum'] for d in dps), 1)
+            else:
+                fn['durationAvgMs'] = None
+                fn['durationMaxMs'] = None
+        except Exception:
+            fn['invocations30d'] = None
+            fn['durationAvgMs'] = None
+            fn['durationMaxMs'] = None
+
+        # Recommendations
+        recs = []
+        # 1. Unused function (0 invocations in 30 days)
+        if fn.get('invocations30d') == 0:
+            recs.append({'type': 'unused', 'title': 'Function has 0 invocations (30d)', 'description': 'Consider deleting if no longer needed.', 'savings': '100%'})
+        # 2. Over-provisioned memory
+        if fn.get('durationAvgMs') and fn['memoryMb'] >= 512 and fn['durationAvgMs'] < 1000:
+            recs.append({'type': 'memory', 'title': f'Memory may be over-provisioned ({fn["memoryMb"]} MB)', 'description': f'Avg duration is only {fn["durationAvgMs"]}ms. Try reducing memory to {fn["memoryMb"]//2} MB.', 'savings': '50%'})
+        # 3. x86 -> ARM (Graviton)
+        if fn.get('architecture') == 'x86_64' and fn.get('invocations30d', 0) > 1000:
+            recs.append({'type': 'graviton', 'title': 'Switch to ARM64 (Graviton2)', 'description': '20% cheaper with better performance for most workloads.', 'savings': '20%'})
+        # 4. High timeout with low duration
+        if fn.get('durationMaxMs') and fn['timeout'] > 60 and fn['durationMaxMs'] < fn['timeout'] * 100:
+            recs.append({'type': 'timeout', 'title': f'Timeout ({fn["timeout"]}s) much higher than max duration ({round(fn["durationMaxMs"]/1000,1)}s)', 'description': 'Reduce timeout to avoid paying for runaway executions.', 'savings': 'risk reduction'})
+
+        fn['recommendations'] = recs
+
+    total_recs = sum(len(fn.get('recommendations', [])) for fn in functions)
+    return create_success_response({'success': True, 'functions': functions, 'totalRecommendations': total_recs})
+
+
+# ============================================================
+# EBS Optimizer — gp2->gp3, over-provisioned IOPS, unattached volumes
+# ============================================================
+
+def handle_ebs_optimize(event):
+    """POST /members/ebs/optimize -- Analyze EBS volumes for cost optimization."""
+
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+    member_email = auth['sub'] if isinstance(auth, dict) else auth
+
+    try:
+        body = json.loads(event.get('body', '{}'))
+    except (json.JSONDecodeError, TypeError):
+        return create_error_response(400, 'InvalidRequest', 'Invalid request body')
+
+    account_id = body.get('accountId', '')
+    if not account_id or not re.match(r'^\d{12}$', account_id):
+        return create_error_response(400, 'InvalidAccountId', 'Valid 12-digit account ID required')
+
+    accounts_table = dynamodb.Table(ACCOUNTS_TABLE_NAME)
+    acct_resp = accounts_table.get_item(Key={'memberEmail': member_email, 'accountId': account_id})
+    if 'Item' not in acct_resp:
+        return create_error_response(403, 'AccountNotFound', 'Account not connected')
+
+    external_id = hashlib.sha256(member_email.encode('utf-8')).hexdigest()
+    role_arn = f'arn:aws:iam::{account_id}:role/SlashMyBill-{account_id}'
+
+    try:
+        sts_client = boto3.client('sts')
+        assume_resp = sts_client.assume_role(RoleArn=role_arn, RoleSessionName='SlashMyBillEBS', ExternalId=external_id, DurationSeconds=900)
+        creds = assume_resp['Credentials']
+    except Exception as e:
+        return create_error_response(403, 'AssumeRoleFailed', f'Cannot access account: {str(e)[:200]}')
+
+    ec2 = boto3.client('ec2', aws_access_key_id=creds['AccessKeyId'], aws_secret_access_key=creds['SecretAccessKey'], aws_session_token=creds['SessionToken'])
+
+    # Discover EBS volumes
+    volumes = []
+    try:
+        paginator = ec2.get_paginator('describe_volumes')
+        for page in paginator.paginate():
+            for vol in page.get('Volumes', []):
+                tags = {t['Key']: t['Value'] for t in vol.get('Tags', [])}
+                volumes.append({
+                    'volumeId': vol['VolumeId'],
+                    'volumeType': vol.get('VolumeType', ''),
+                    'sizeGb': vol.get('Size', 0),
+                    'iops': vol.get('Iops', 0),
+                    'throughput': vol.get('Throughput', 0),
+                    'state': vol.get('State', ''),
+                    'attached': len(vol.get('Attachments', [])) > 0,
+                    'attachedTo': vol['Attachments'][0]['InstanceId'] if vol.get('Attachments') else None,
+                    'name': tags.get('Name', ''),
+                })
+    except Exception as e:
+        return create_error_response(500, 'EBSError', f'Failed to list volumes: {str(e)[:200]}')
+
+    if not volumes:
+        return create_success_response({'success': True, 'volumes': [], 'recommendations': [], 'message': 'No EBS volumes found.'})
+
+    # Generate recommendations
+    total_gp2_savings = 0
+    for vol in volumes:
+        recs = []
+        # 1. gp2 -> gp3 (20% cheaper)
+        if vol['volumeType'] == 'gp2':
+            monthly_gp2 = vol['sizeGb'] * 0.10
+            monthly_gp3 = vol['sizeGb'] * 0.08
+            savings = round(monthly_gp2 - monthly_gp3, 2)
+            total_gp2_savings += savings
+            recs.append({'type': 'gp2_to_gp3', 'title': f'Migrate to gp3 (saves ${savings}/mo)', 'description': f'{vol["sizeGb"]} GB gp2 → gp3. Same performance, 20% cheaper.', 'monthlySavings': savings})
+        # 2. Unattached volume
+        if not vol['attached'] and vol['state'] == 'available':
+            monthly_cost = vol['sizeGb'] * 0.08 if vol['volumeType'] == 'gp2' else vol['sizeGb'] * 0.08
+            recs.append({'type': 'unattached', 'title': f'Unattached volume (${round(monthly_cost,2)}/mo)', 'description': 'Volume is not attached to any instance. Delete if not needed.', 'monthlySavings': round(monthly_cost, 2)})
+        # 3. Over-provisioned io1/io2 IOPS
+        if vol['volumeType'] in ('io1', 'io2') and vol['iops'] > 3000:
+            recs.append({'type': 'iops', 'title': f'High provisioned IOPS ({vol["iops"]})', 'description': 'Consider if this IOPS level is needed. Each 1000 IOPS costs ~$65/mo.', 'monthlySavings': None})
+
+        vol['recommendations'] = recs
+
+    summary = {
+        'totalVolumes': len(volumes),
+        'gp2Count': sum(1 for v in volumes if v['volumeType'] == 'gp2'),
+        'unattachedCount': sum(1 for v in volumes if not v['attached']),
+        'totalGp2Savings': round(total_gp2_savings, 2),
+    }
+
+    total_recs = sum(len(v.get('recommendations', [])) for v in volumes)
+    return create_success_response({'success': True, 'volumes': volumes, 'summary': summary, 'totalRecommendations': total_recs})
