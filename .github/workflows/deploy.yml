@@ -331,6 +331,15 @@ jobs:
             --s3-key lambda-packages/scheduler-executor.zip > /dev/null 2>&1 || true
           echo "✓ Lambda functions updated"
 
+      - name: Update Lambda memory and timeout (CF stack may fail to apply these)
+        continue-on-error: true
+        run: |
+          aws lambda update-function-configuration \
+            --function-name aws-bill-analyzer-member-api \
+            --memory-size 2048 \
+            --timeout 300 > /dev/null 2>&1 || true
+          echo "✓ Member handler: 2048MB, 300s timeout"
+
       - name: Configure Cognito email via SES (eshkolai.com)
         continue-on-error: true
         run: |
