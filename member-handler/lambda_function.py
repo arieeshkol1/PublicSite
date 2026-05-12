@@ -150,6 +150,8 @@ def lambda_handler(event, context):
         'POST /members/rds/optimize': handle_rds_optimize,
         'POST /members/lambda/optimize': handle_lambda_optimize,
         'POST /members/ebs/optimize': handle_ebs_optimize,
+        'GET /members/tag-keys': handle_get_tag_keys,
+        'GET /members/tag-values': handle_get_tag_values,
     }
 
     handler = routes.get(route_key)
@@ -1621,6 +1623,163 @@ def handle_test_connection(event):
     return create_response(200, {'status': 'connected', 'hourlyEnabled': hourly_enabled, 'message': msg})
 
 
+
+# ============================================================
+# Tag Filter Utilities
+# ============================================================
+
+
+def _build_tag_filter(tag_key, tag_value):
+    """Build a CE-compatible Tags filter expression."""
+    if not tag_key or not tag_value:
+        return None
+    return {"Tags": {"Key": tag_key, "Values": [tag_value]}}
+
+
+def _apply_filter_to_ce_call(base_params, tag_key, tag_value):
+    """Merge tag filter into CE API call params. Handles existing Filter gracefully."""
+    tag_filter = _build_tag_filter(tag_key, tag_value)
+    if not tag_filter:
+        return base_params
+    params = dict(base_params)
+    existing_filter = params.get('Filter')
+    if existing_filter:
+        params['Filter'] = {"And": [existing_filter, tag_filter]}
+    else:
+        params['Filter'] = tag_filter
+    return params
+
+
+# ============================================================
+# Tag Metadata Endpoints
+# ============================================================
+
+
+def handle_get_tag_keys(event):
+    """Return available cost allocation tag keys for selected accounts."""
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+    member_email = auth['sub']
+
+    qs = event.get('queryStringParameters') or {}
+    requested_ids = [a.strip() for a in (qs.get('accountIds') or '').split(',') if a.strip()]
+
+    # Get connected accounts
+    accounts_table = dynamodb.Table(ACCOUNTS_TABLE_NAME)
+    try:
+        result = accounts_table.query(
+            KeyConditionExpression=boto3.dynamodb.conditions.Key('memberEmail').eq(member_email)
+        )
+        owned_accounts = result.get('Items', [])
+    except ClientError:
+        return create_error_response(500, 'ServerError', 'Failed to fetch accounts')
+
+    # Filter to requested IDs if specified
+    if requested_ids:
+        owned_ids = {a['accountId'] for a in owned_accounts}
+        accounts = [a for a in owned_accounts if a['accountId'] in set(requested_ids) & owned_ids]
+    else:
+        accounts = owned_accounts
+
+    if not accounts:
+        return create_response(200, {'tagKeys': []})
+
+    all_keys = set()
+    external_id = hashlib.sha256(member_email.encode('utf-8')).hexdigest()
+    sts_client = boto3.client('sts')
+
+    for acct in accounts[:5]:
+        try:
+            creds = sts_client.assume_role(
+                RoleArn=f"arn:aws:iam::{acct['accountId']}:role/SlashMyBill-{acct['accountId']}",
+                RoleSessionName='SlashMyBillTags',
+                ExternalId=external_id
+            )['Credentials']
+            ce = boto3.client('ce',
+                aws_access_key_id=creds['AccessKeyId'],
+                aws_secret_access_key=creds['SecretAccessKey'],
+                aws_session_token=creds['SessionToken'],
+                region_name='us-east-1')
+
+            end_date = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+            start_date = (datetime.now(timezone.utc) - timedelta(days=30)).strftime('%Y-%m-%d')
+
+            resp = ce.get_tags(TimePeriod={'Start': start_date, 'End': end_date})
+            for tag in resp.get('Tags', []):
+                if tag and not tag.startswith('aws:'):
+                    all_keys.add(tag)
+        except Exception as e:
+            logger.warning(f"Failed to get tag keys for {acct['accountId']}: {e}")
+
+    return create_response(200, {'tagKeys': sorted(all_keys)})
+
+
+def handle_get_tag_values(event):
+    """Return available values for a specific tag key."""
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+    member_email = auth['sub']
+
+    qs = event.get('queryStringParameters') or {}
+    requested_ids = [a.strip() for a in (qs.get('accountIds') or '').split(',') if a.strip()]
+    tag_key = (qs.get('tagKey') or '').strip()
+
+    if not tag_key:
+        return create_error_response(400, 'InvalidRequest', 'tagKey parameter is required')
+
+    accounts_table = dynamodb.Table(ACCOUNTS_TABLE_NAME)
+    try:
+        result = accounts_table.query(
+            KeyConditionExpression=boto3.dynamodb.conditions.Key('memberEmail').eq(member_email)
+        )
+        owned_accounts = result.get('Items', [])
+    except ClientError:
+        return create_error_response(500, 'ServerError', 'Failed to fetch accounts')
+
+    if requested_ids:
+        owned_ids = {a['accountId'] for a in owned_accounts}
+        accounts = [a for a in owned_accounts if a['accountId'] in set(requested_ids) & owned_ids]
+    else:
+        accounts = owned_accounts
+
+    if not accounts:
+        return create_response(200, {'tagValues': []})
+
+    all_values = set()
+    external_id = hashlib.sha256(member_email.encode('utf-8')).hexdigest()
+    sts_client = boto3.client('sts')
+
+    for acct in accounts[:5]:
+        try:
+            creds = sts_client.assume_role(
+                RoleArn=f"arn:aws:iam::{acct['accountId']}:role/SlashMyBill-{acct['accountId']}",
+                RoleSessionName='SlashMyBillTags',
+                ExternalId=external_id
+            )['Credentials']
+            ce = boto3.client('ce',
+                aws_access_key_id=creds['AccessKeyId'],
+                aws_secret_access_key=creds['SecretAccessKey'],
+                aws_session_token=creds['SessionToken'],
+                region_name='us-east-1')
+
+            end_date = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+            start_date = (datetime.now(timezone.utc) - timedelta(days=30)).strftime('%Y-%m-%d')
+
+            resp = ce.get_tags(
+                TimePeriod={'Start': start_date, 'End': end_date},
+                TagKey=tag_key
+            )
+            for val in resp.get('Tags', []):
+                if val:
+                    all_values.add(val)
+        except Exception as e:
+            logger.warning(f"Failed to get tag values for {acct['accountId']}/{tag_key}: {e}")
+
+    return create_response(200, {'tagValues': sorted(all_values)})
+
+
 def handle_dashboard_data(event):
     """Return comprehensive FinOps dashboard data for selected accounts."""
     auth = validate_token(event)
@@ -1632,6 +1791,10 @@ def handle_dashboard_data(event):
     qs = event.get('queryStringParameters') or {}
     requested_ids = (qs.get('accountIds') or '').split(',')
     requested_ids = [a.strip() for a in requested_ids if a.strip()]
+
+    # Extract tag filter params
+    tag_key = qs.get('tagKey', '').strip() or None
+    tag_value = qs.get('tagValue', '').strip() or None
 
     # Get all connected accounts
     accounts_table = dynamodb.Table(ACCOUNTS_TABLE_NAME)
@@ -1695,10 +1858,9 @@ def handle_dashboard_data(event):
                     aws_session_token=creds['SessionToken'])
                 end_date = datetime.now(timezone.utc).strftime('%Y-%m-%d')
                 start_30d = (datetime.now(timezone.utc) - timedelta(days=30)).strftime('%Y-%m-%d')
-                daily_30d = ce_30d.get_cost_and_usage(
-                    TimePeriod={'Start': start_30d, 'End': end_date},
-                    Granularity='DAILY', Metrics=['UnblendedCost'],
-                )
+                _daily_params = {'TimePeriod': {'Start': start_30d, 'End': end_date}, 'Granularity': 'DAILY', 'Metrics': ['UnblendedCost']}
+                _daily_params = _apply_filter_to_ce_call(_daily_params, tag_key, tag_value)
+                daily_30d = ce_30d.get_cost_and_usage(**_daily_params)
                 for period in daily_30d.get('ResultsByTime', []):
                     d_date = period['TimePeriod']['Start']
                     d_cost = float(period['Total']['UnblendedCost']['Amount'])
@@ -1708,11 +1870,9 @@ def handle_dashboard_data(event):
 
             # Fetch cost by region (last 30 days)
             try:
-                region_resp = ce_30d.get_cost_and_usage(
-                    TimePeriod={'Start': start_30d, 'End': end_date},
-                    Granularity='MONTHLY', Metrics=['UnblendedCost'],
-                    GroupBy=[{'Type': 'DIMENSION', 'Key': 'REGION'}],
-                )
+                _region_params = {'TimePeriod': {'Start': start_30d, 'End': end_date}, 'Granularity': 'MONTHLY', 'Metrics': ['UnblendedCost'], 'GroupBy': [{'Type': 'DIMENSION', 'Key': 'REGION'}]}
+                _region_params = _apply_filter_to_ce_call(_region_params, tag_key, tag_value)
+                region_resp = ce_30d.get_cost_and_usage(**_region_params)
                 for period in region_resp.get('ResultsByTime', []):
                     for group in period.get('Groups', []):
                         region_name = group['Keys'][0]
@@ -1734,11 +1894,9 @@ def handle_dashboard_data(event):
 
                 # Try CE HOURLY first (most accurate if enabled)
                 try:
-                    hourly_resp = ce_30d.get_cost_and_usage(
-                        TimePeriod={'Start': (datetime.now(timezone.utc) - timedelta(days=2)).strftime('%Y-%m-%d'),
-                                    'End': datetime.now(timezone.utc).strftime('%Y-%m-%d')},
-                        Granularity='HOURLY', Metrics=['UnblendedCost'],
-                    )
+                    _hourly_params = {'TimePeriod': {'Start': (datetime.now(timezone.utc) - timedelta(days=2)).strftime('%Y-%m-%d'), 'End': datetime.now(timezone.utc).strftime('%Y-%m-%d')}, 'Granularity': 'HOURLY', 'Metrics': ['UnblendedCost']}
+                    _hourly_params = _apply_filter_to_ce_call(_hourly_params, tag_key, tag_value)
+                    hourly_resp = ce_30d.get_cost_and_usage(**_hourly_params)
                     for period in hourly_resp.get('ResultsByTime', []):
                         h_ts = period['TimePeriod']['Start'][:16]
                         h_cost = float(period['Total']['UnblendedCost']['Amount'])
@@ -1788,12 +1946,9 @@ def handle_dashboard_data(event):
                     if svc_name in ('Tax',) or svc.get('cost_usd', 0) < 1:
                         continue
                     try:
-                        ut_resp = ce_30d.get_cost_and_usage(
-                            TimePeriod={'Start': start_30d, 'End': end_date},
-                            Granularity='MONTHLY', Metrics=['UnblendedCost'],
-                            GroupBy=[{'Type': 'DIMENSION', 'Key': 'USAGE_TYPE'}],
-                            Filter={'Dimensions': {'Key': 'SERVICE', 'Values': [svc_name]}},
-                        )
+                        _ut_params = {'TimePeriod': {'Start': start_30d, 'End': end_date}, 'Granularity': 'MONTHLY', 'Metrics': ['UnblendedCost'], 'GroupBy': [{'Type': 'DIMENSION', 'Key': 'USAGE_TYPE'}], 'Filter': {'Dimensions': {'Key': 'SERVICE', 'Values': [svc_name]}}}
+                        _ut_params = _apply_filter_to_ce_call(_ut_params, tag_key, tag_value)
+                        ut_resp = ce_30d.get_cost_and_usage(**_ut_params)
                         usage_items = []
                         for p in ut_resp.get('ResultsByTime', []):
                             for g in p.get('Groups', []):
@@ -4518,6 +4673,8 @@ def handle_ai_query(event):
         return create_error_response(400, 'InvalidRequest', 'Invalid request body')
 
     question = (body.get('question') or '').strip()
+    tag_key = body.get('tagKey', '').strip() or None
+    tag_value = body.get('tagValue', '').strip() or None
     account_id = (body.get('accountId') or '').strip()
     account_ids = body.get('accountIds', [])
 
@@ -4541,12 +4698,17 @@ def handle_ai_query(event):
         return ownership
 
     # Multi-account query: gather data from all accounts, then analyze together
+    # Add tag filter context to the question for AI awareness
+    ai_question = question
+    if tag_key and tag_value:
+        ai_question = f"[FILTER ACTIVE: Showing data filtered by tag {tag_key}={tag_value}] {question}"
+
     if len(account_ids) > 1:
-        result = _invoke_multi_account(question, account_ids, member_email, interaction_id)
+        result = _invoke_multi_account(ai_question, account_ids, member_email, interaction_id)
     elif BEDROCK_AGENT_ID and BEDROCK_AGENT_ALIAS_ID:
-        result = _invoke_bedrock_agent(question, account_ids[0], member_email, interaction_id)
+        result = _invoke_bedrock_agent(ai_question, account_ids[0], member_email, interaction_id)
     else:
-        result = _invoke_direct_model(question, account_ids[0], member_email, interaction_id)
+        result = _invoke_direct_model(ai_question, account_ids[0], member_email, interaction_id)
 
     # Inject credits info into the response body
     max_credits = AI_CREDITS.get(tier, 100)

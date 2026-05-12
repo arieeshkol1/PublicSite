@@ -432,6 +432,7 @@ function showView(name) {
         headerEmail.textContent = getMemberEmail() || '';
         loadAccounts().then(function() {
             populateDashAccounts();
+            initTagFilter('tag-filter-container');
             loadDashboardData();
         });
         loadDashboard();
@@ -1356,6 +1357,7 @@ function activateMemberTab(tabId) {
         console.log('Dashboard tab activated');
         populateDashAccounts();
         _applySharedSelection('dash-acct-cb'); // apply shared selection to dash tab
+        initTagFilter('tag-filter-container');
         loadDashboardData();
     }
     if (tabId === 'act-tab') {
@@ -1954,10 +1956,13 @@ async function askAI() {
     addAIMessage('thinking', 'Analyzing ' + acctLabel + '...');
 
     try {
-        var data = await api('POST', '/members/accounts/ai-query', {
+        var aiPayload = {
             accountIds: accountIds,
             question: question,
-        });
+        };
+        var tagBody = getTagFilterBody();
+        if (tagBody.tagKey) { aiPayload.tagKey = tagBody.tagKey; aiPayload.tagValue = tagBody.tagValue; }
+        var data = await api('POST', '/members/accounts/ai-query', aiPayload);
 
         // Remove thinking message
         var thinking = $('ai-thinking');
@@ -2696,6 +2701,193 @@ if (visualizeSaveBtn) visualizeSaveBtn.onclick = saveVisualizedAnswer;
 
 
 // ============================================================
+// Tag Filter State
+// ============================================================
+var globalTagFilter = { key: null, value: null };
+var tagKeysCache = null;
+var tagKeysCacheTime = 0;
+var tagValuesCache = {};
+var tagValuesCacheTime = {};
+var TAG_CACHE_TTL = 300000; // 5 minutes
+
+
+// ============================================================
+// Tag Filter Component
+// ============================================================
+
+function initTagFilter(containerId) {
+    var container = document.getElementById(containerId);
+    if (!container) return;
+
+    container.innerHTML =
+        '<div class="tag-filter-wrapper" style="display:flex;align-items:center;gap:8px;margin-top:8px;">' +
+            '<label style="font-size:0.8em;color:#6b7280;white-space:nowrap;">Filter by Tag:</label>' +
+            '<select id="tag-key-select" style="padding:4px 8px;border:1px solid #d0d7de;border-radius:6px;font-size:0.85em;">' +
+                '<option value="">All (no filter)</option>' +
+            '</select>' +
+            '<select id="tag-value-select" style="padding:4px 8px;border:1px solid #d0d7de;border-radius:6px;font-size:0.85em;" disabled>' +
+                '<option value="">Select key first</option>' +
+            '</select>' +
+            '<button id="tag-filter-clear-btn" style="font-size:0.75em;color:#6366f1;background:none;border:none;cursor:pointer;display:none;" onclick="clearTagFilter();">Clear</button>' +
+        '</div>';
+
+    var keySelect = document.getElementById('tag-key-select');
+    var valueSelect = document.getElementById('tag-value-select');
+
+    // Load tag keys
+    _loadTagKeys(keySelect);
+
+    // Restore state if filter was previously set
+    if (globalTagFilter.key) {
+        // Will be restored after keys load
+    }
+
+    // Key change handler
+    keySelect.onchange = function() {
+        var selectedKey = keySelect.value;
+        if (!selectedKey) {
+            clearTagFilter();
+            valueSelect.innerHTML = '<option value="">Select key first</option>';
+            valueSelect.disabled = true;
+            document.getElementById('tag-filter-clear-btn').style.display = 'none';
+            onTagFilterChange();
+            return;
+        }
+        globalTagFilter.key = selectedKey;
+        globalTagFilter.value = null;
+        valueSelect.disabled = false;
+        document.getElementById('tag-filter-clear-btn').style.display = 'inline';
+        _loadTagValues(selectedKey, valueSelect);
+    };
+
+    // Value change handler
+    valueSelect.onchange = function() {
+        var selectedValue = valueSelect.value;
+        if (!selectedValue) {
+            globalTagFilter.value = null;
+        } else {
+            globalTagFilter.value = selectedValue;
+        }
+        onTagFilterChange();
+    };
+}
+
+function _loadTagKeys(selectElement) {
+    var now = Date.now();
+    if (tagKeysCache && (now - tagKeysCacheTime) < TAG_CACHE_TTL) {
+        _populateKeySelect(selectElement, tagKeysCache);
+        return;
+    }
+
+    var selectedIds = getDashSelectedAccountIds();
+    var url = '/members/tag-keys';
+    if (selectedIds.length > 0) url += '?accountIds=' + selectedIds.join(',');
+
+    api('GET', url).then(function(data) {
+        tagKeysCache = data.tagKeys || [];
+        tagKeysCacheTime = Date.now();
+        _populateKeySelect(selectElement, tagKeysCache);
+    }).catch(function(e) {
+        console.warn('Failed to load tag keys:', e);
+        selectElement.innerHTML = '<option value="">All (no filter)</option>';
+    });
+}
+
+function _populateKeySelect(selectElement, keys) {
+    selectElement.innerHTML = '<option value="">All (no filter)</option>';
+    for (var i = 0; i < keys.length; i++) {
+        var opt = document.createElement('option');
+        opt.value = keys[i];
+        opt.textContent = keys[i];
+        selectElement.appendChild(opt);
+    }
+    // Restore previous selection if any
+    if (globalTagFilter.key) {
+        selectElement.value = globalTagFilter.key;
+        var valueSelect = document.getElementById('tag-value-select');
+        if (valueSelect && globalTagFilter.key) {
+            valueSelect.disabled = false;
+            _loadTagValues(globalTagFilter.key, valueSelect);
+        }
+    }
+}
+
+function _loadTagValues(key, selectElement) {
+    var now = Date.now();
+    if (tagValuesCache[key] && tagValuesCacheTime[key] && (now - tagValuesCacheTime[key]) < TAG_CACHE_TTL) {
+        _populateValueSelect(selectElement, tagValuesCache[key]);
+        return;
+    }
+
+    selectElement.innerHTML = '<option value="">Loading...</option>';
+    var selectedIds = getDashSelectedAccountIds();
+    var url = '/members/tag-values?tagKey=' + encodeURIComponent(key);
+    if (selectedIds.length > 0) url += '&accountIds=' + selectedIds.join(',');
+
+    api('GET', url).then(function(data) {
+        tagValuesCache[key] = data.tagValues || [];
+        tagValuesCacheTime[key] = Date.now();
+        _populateValueSelect(selectElement, tagValuesCache[key]);
+    }).catch(function(e) {
+        console.warn('Failed to load tag values:', e);
+        selectElement.innerHTML = '<option value="">Error loading values</option>';
+    });
+}
+
+function _populateValueSelect(selectElement, values) {
+    selectElement.innerHTML = '<option value="">All values</option>';
+    if (values.length === 0) {
+        selectElement.innerHTML = '<option value="" disabled>No values found</option>';
+        selectElement.disabled = true;
+        return;
+    }
+    for (var i = 0; i < values.length; i++) {
+        var opt = document.createElement('option');
+        opt.value = values[i];
+        opt.textContent = values[i];
+        selectElement.appendChild(opt);
+    }
+    // Restore previous selection if any
+    if (globalTagFilter.value) {
+        selectElement.value = globalTagFilter.value;
+    }
+}
+
+function getTagFilterParams() {
+    if (!globalTagFilter.key || !globalTagFilter.value) return '';
+    return 'tagKey=' + encodeURIComponent(globalTagFilter.key) + '&tagValue=' + encodeURIComponent(globalTagFilter.value);
+}
+
+function getTagFilterBody() {
+    if (!globalTagFilter.key || !globalTagFilter.value) return {};
+    return { tagKey: globalTagFilter.key, tagValue: globalTagFilter.value };
+}
+
+function clearTagFilter() {
+    globalTagFilter.key = null;
+    globalTagFilter.value = null;
+    var keySelect = document.getElementById('tag-key-select');
+    var valueSelect = document.getElementById('tag-value-select');
+    var clearBtn = document.getElementById('tag-filter-clear-btn');
+    if (keySelect) keySelect.value = '';
+    if (valueSelect) { valueSelect.value = ''; valueSelect.disabled = true; valueSelect.innerHTML = '<option value="">Select key first</option>'; }
+    if (clearBtn) clearBtn.style.display = 'none';
+    onTagFilterChange();
+}
+
+function onTagFilterChange() {
+    // Invalidate dashboard cache
+    dashDataCache = null;
+    dashDataCacheKey = null;
+
+    // Reload dashboard if on Observe tab
+    var dashTab = document.getElementById('dash-tab');
+    if (dashTab && dashTab.style.display !== 'none') {
+        loadDashboardData();
+    }
+}
+
+// ============================================================
 // FinOps Dashboard
 // ============================================================
 var dashDataCache = null;
@@ -2707,6 +2899,8 @@ function populateDashAccounts() {
     var el = $('dash-account-select');
     if (!el) return;
     el.innerHTML = '';
+    // Clear tag caches when accounts change
+    tagKeysCache = null; tagKeysCacheTime = 0; tagValuesCache = {}; tagValuesCacheTime = {};
     var connected = allAccounts.filter(function(a) { return a.connectionStatus === 'connected'; });
     if (!connected.length) { el.innerHTML = '<span style="color:#8b949e;font-size:0.85em;">No connected accounts</span>'; return; }
 
@@ -2787,7 +2981,11 @@ async function loadDashboardData() {
 
     try {
         var url = '/members/dashboard-data';
-        if (selectedIds.length > 0) url += '?accountIds=' + selectedIds.join(',');
+        var params = [];
+        if (selectedIds.length > 0) params.push('accountIds=' + selectedIds.join(','));
+        var tagParams = getTagFilterParams();
+        if (tagParams) params.push(tagParams);
+        if (params.length > 0) url += '?' + params.join('&');
         var data = await api('GET', url);
         dashDataCache = data;
         dashDataCacheTime = Date.now();

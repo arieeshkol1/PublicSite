@@ -399,6 +399,8 @@ jobs:
             "POST /members/rds/optimize"
             "POST /members/lambda/optimize"
             "POST /members/ebs/optimize"
+            "GET /members/tag-keys"
+            "GET /members/tag-values"
             "POST /members/accounts/update-permissions"
           )
           for ROUTE in "${MEMBER_ROUTES[@]}"; do
