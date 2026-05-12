@@ -399,6 +399,7 @@ jobs:
             "POST /members/rds/optimize"
             "POST /members/lambda/optimize"
             "POST /members/ebs/optimize"
+            "POST /members/accounts/update-permissions"
           )
           for ROUTE in "${MEMBER_ROUTES[@]}"; do
             aws apigatewayv2 create-route --api-id $API_ID --route-key "$ROUTE" --target "integrations/$MEMBER_INT" 2>/dev/null || true

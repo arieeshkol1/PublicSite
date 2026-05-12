@@ -727,6 +727,7 @@ function renderAccounts(accounts) {
                 (idx < accounts.length - 1 ? '<button class="btn btn-outline btn-sm" data-a="down" data-id="' + ea(a.accountId) + '" title="Move Down" style="padding:2px 6px;font-size:12px;min-width:28px;">▼</button> ' : '<span style="display:inline-block;width:32px;"></span> ') +
                 '<button class="btn-icon btn-icon-download" data-a="dl" data-id="' + ea(a.accountId) + '" title="Download CF Template">&#8681;</button> ' +
                 '<button class="btn-icon btn-icon-test" data-a="test" data-id="' + ea(a.accountId) + '" title="Test Connection">&#9889;</button> ' +
+                '<button class="btn-icon" data-a="update-perms" data-id="' + ea(a.accountId) + '" title="Update Permissions" style="font-size:11px;">&#128274;</button> ' +
                 '<button class="btn-icon" data-a="hourly" data-id="' + ea(a.accountId) + '" title="Enable Hourly Cost Data" style="font-size:11px;">&#9201;</button> ' +
                 '<button class="btn-icon btn-icon-edit" data-a="edit" data-id="' + ea(a.accountId) + '" title="Edit">&#9998;</button> ' +
                 '<button class="btn-icon btn-icon-delete" data-a="del" data-id="' + ea(a.accountId) + '" title="Delete">&#128465;</button>' +
@@ -749,6 +750,7 @@ accountsTbody.onclick = function(e) {
     else if (action === 'del') showDeleteDialog(accountId);
     else if (action === 'dl') downloadTemplate(accountId);
     else if (action === 'test') testConnection(accountId, btn);
+    else if (action === 'update-perms') updatePermissions(accountId, btn);
     else if (action === 'up' || action === 'down') reorderAccount(accountId, action);
     else if (action === 'hourly') showEnableHourlyModal(accountId);
 };
@@ -924,6 +926,25 @@ async function testConnection(accountId, btn) {
         await loadAccounts();
     } finally {
         hideLoading();
+    }
+}
+
+async function updatePermissions(accountId, btn) {
+    if (!confirm('Update permissions for account ' + accountId + ' to the latest version?')) return;
+    var origText = btn.innerHTML;
+    btn.innerHTML = '&#8987;';
+    btn.disabled = true;
+    try {
+        var data = await api('POST', '/members/accounts/update-permissions', { accountId: accountId });
+        notify(data.message || 'Permissions updated!', 'success');
+        btn.innerHTML = '&#10003;';
+        btn.style.color = '#10b981';
+        setTimeout(function() { btn.innerHTML = origText; btn.style.color = ''; btn.disabled = false; }, 3000);
+    } catch (e) {
+        notify(e.message || 'Failed to update permissions', 'error');
+        btn.innerHTML = '&#10007;';
+        btn.style.color = '#ef4444';
+        setTimeout(function() { btn.innerHTML = origText; btn.style.color = ''; btn.disabled = false; }, 3000);
     }
 }
 
@@ -1254,6 +1275,7 @@ renderAccounts = function(accounts) {
                 setupBtn +
                 '<button class="btn-icon btn-icon-download" data-a="dl" data-id="' + ea(a.accountId) + '" title="Download CF Template">&#8681;</button> ' +
                 '<button class="btn-icon btn-icon-test" data-a="test" data-id="' + ea(a.accountId) + '" title="Test Connection">&#9889;</button> ' +
+                '<button class="btn-icon" data-a="update-perms" data-id="' + ea(a.accountId) + '" title="Update Permissions" style="font-size:11px;">&#128274;</button> ' +
                 '<button class="btn-icon" data-a="hourly" data-id="' + ea(a.accountId) + '" title="Enable Hourly Cost Data" style="font-size:11px;">&#9201;</button> ' +
                 '<button class="btn-icon btn-icon-edit" data-a="edit" data-id="' + ea(a.accountId) + '" title="Edit">&#9998;</button> ' +
                 '<button class="btn-icon btn-icon-delete" data-a="del" data-id="' + ea(a.accountId) + '" title="Delete">&#128465;</button>' +
@@ -1275,6 +1297,7 @@ accountsTbody.onclick = function(e) {
     else if (action === 'del') showDeleteDialog(accountId);
     else if (action === 'dl') downloadTemplate(accountId);
     else if (action === 'test') testConnection(accountId, btn);
+    else if (action === 'update-perms') updatePermissions(accountId, btn);
     else if (action === 'up' || action === 'down') reorderAccount(accountId, action);
     else if (action === 'hourly') showEnableHourlyModal(accountId);
 };

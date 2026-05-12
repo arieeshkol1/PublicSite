@@ -99,6 +99,7 @@ def lambda_handler(event, context):
         'DELETE /members/accounts': handle_delete_account,
         'POST /members/accounts/template': handle_generate_template,
         'POST /members/accounts/test': handle_test_connection,
+        'POST /members/accounts/update-permissions': handle_update_permissions,
         'POST /members/accounts/execute': handle_execute_command,
         'POST /members/accounts/ai-query': handle_ai_query,
         'POST /members/accounts/ai-feedback': handle_ai_feedback,
@@ -1008,6 +1009,175 @@ def handle_delete_account(event):
         'stackName': stack_name,
         'warning': stack_delete_warning,
     })
+
+
+
+def handle_update_permissions(event):
+    """Update the cross-account role's inline policy to the latest version.
+    Assumes the role and calls iam:PutRolePolicy directly."""
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+    member_email = auth['sub']
+
+    try:
+        body = json.loads(event.get('body', '{}'))
+    except (json.JSONDecodeError, TypeError):
+        return create_error_response(400, 'InvalidRequest', 'Invalid request body')
+
+    account_id = (body.get('accountId') or '').strip()
+    if not re.fullmatch(r'\d{12}', account_id):
+        return create_error_response(400, 'InvalidAccountId', 'Account ID must be exactly 12 digits')
+
+    # Verify ownership
+    ownership = _verify_account_ownership(member_email, [account_id])
+    if ownership is not True:
+        return ownership
+
+    external_id = hashlib.sha256(member_email.encode('utf-8')).hexdigest()
+    role_name = f'SlashMyBill-{account_id}'
+
+    # Build the latest policy document (same as in handle_generate_template)
+    policy_document = {
+        'Version': '2012-10-17',
+        'Statement': [
+            {
+                'Effect': 'Allow',
+                'Action': _get_latest_policy_actions(),
+                'Resource': '*'
+            }
+        ]
+    }
+
+    try:
+        sts_client = boto3.client('sts')
+        assume_resp = sts_client.assume_role(
+            RoleArn=f'arn:aws:iam::{account_id}:role/{role_name}',
+            RoleSessionName='SlashMyBillUpdatePerms',
+            ExternalId=external_id,
+        )
+        creds = assume_resp['Credentials']
+
+        iam_client = boto3.client('iam',
+            aws_access_key_id=creds['AccessKeyId'],
+            aws_secret_access_key=creds['SecretAccessKey'],
+            aws_session_token=creds['SessionToken'])
+
+        # Remove old policy if it exists (SlashMyBillBillingReadOnly)
+        try:
+            existing_policies = iam_client.list_role_policies(RoleName=role_name).get('PolicyNames', [])
+            for old_pol in existing_policies:
+                if old_pol != 'SlashMyBillBillingAccess':
+                    iam_client.delete_role_policy(RoleName=role_name, PolicyName=old_pol)
+                    logger.info(f"Removed old policy '{old_pol}' from {role_name}")
+        except Exception as e:
+            logger.warning(f"Could not clean old policies: {e}")
+
+        # Put the latest policy
+        iam_client.put_role_policy(
+            RoleName=role_name,
+            PolicyName='SlashMyBillBillingAccess',
+            PolicyDocument=json.dumps(policy_document),
+        )
+
+        # Also ensure ReadOnlyAccess managed policy is attached
+        try:
+            iam_client.attach_role_policy(
+                RoleName=role_name,
+                PolicyArn='arn:aws:iam::aws:policy/ReadOnlyAccess',
+            )
+        except Exception:
+            pass  # Already attached
+
+        logger.info(f"Updated permissions for {role_name} by {member_email}")
+        return create_response(200, {
+            'message': f'Permissions updated successfully for {role_name}',
+            'policyName': 'SlashMyBillBillingAccess',
+            'actionsCount': len(_get_latest_policy_actions()),
+        })
+
+    except ClientError as e:
+        error_code = e.response.get('Error', {}).get('Code', '')
+        if error_code == 'AccessDenied' or 'not authorized' in str(e):
+            return create_error_response(403, 'AccessDenied',
+                'Cannot update permissions. The role may not have iam:PutRolePolicy permission. '
+                'Please update the CloudFormation stack manually in the AWS Console.')
+        logger.error(f"Update permissions error: {e}", exc_info=True)
+        return create_error_response(500, 'ServerError', f'Failed to update permissions: {str(e)[:100]}')
+    except Exception as e:
+        logger.error(f"Update permissions error: {e}", exc_info=True)
+        return create_error_response(500, 'ServerError', f'Failed to update permissions: {str(e)[:100]}')
+
+
+def _get_latest_policy_actions():
+    """Return the latest list of IAM actions for the SlashMyBillBillingAccess policy."""
+    return [
+        # Cost Explorer
+        'ce:GetCostAndUsage', 'ce:GetCostForecast', 'ce:GetReservationUtilization',
+        'ce:GetReservationCoverage', 'ce:GetSavingsPlansUtilization', 'ce:GetSavingsPlansCoverage',
+        'ce:GetRightsizingRecommendation', 'ce:GetCostCategories', 'ce:GetDimensionValues',
+        'ce:GetTags', 'ce:ListCostAllocationTags', 'ce:GetApproximateUsageRecords',
+        'ce:UpdatePreferences', 'ce:GetPreferences',
+        # Budgets
+        'budgets:ViewBudget', 'budgets:DescribeBudgets', 'budgets:DescribeBudgetActionsForAccount', 'budgets:*',
+        # Cost Optimization Hub
+        'cost-optimization-hub:ListRecommendations', 'cost-optimization-hub:GetRecommendation',
+        # Billing / CUR
+        'cur:DescribeReportDefinitions', 'cur:GetClassicReport', 'cur:GetUsageReport',
+        'billing:GetBillingData', 'billing:GetBillingDetails',
+        # Trusted Advisor
+        'support:DescribeTrustedAdvisorChecks', 'support:DescribeTrustedAdvisorCheckResult',
+        # Stack self-management
+        'cloudformation:DeleteStack', 'cloudformation:UpdateStack', 'cloudformation:CreateStack',
+        'cloudformation:DescribeStacks', 'cloudformation:DescribeStackResources', 'cloudformation:GetTemplate',
+        'iam:GetRole', 'iam:ListRolePolicies', 'iam:ListAttachedRolePolicies',
+        'iam:DeleteRolePolicy', 'iam:DetachRolePolicy', 'iam:DeleteRole',
+        'iam:CreateRole', 'iam:PutRolePolicy', 'iam:AttachRolePolicy', 'iam:TagRole', 'iam:PassRole',
+        # Level 1 cleanup actions
+        'ec2:ReleaseAddress', 'ec2:DeleteVolume', 'elasticloadbalancing:DeleteLoadBalancer',
+        's3:PutBucketLifecycleConfiguration', 's3:GetBucketLifecycleConfiguration',
+        's3:GetBucketLocation', 's3:ListBucketMultipartUploads', 's3:AbortMultipartUpload',
+        's3:ListBucket', 's3:GetObject', 's3:HeadObject', 's3:DeleteObject', 's3:DeleteObjects',
+        # Idle EC2 / RDS / Snapshot cleanup
+        'ec2:StopInstances', 'ec2:TerminateInstances', 'ec2:DescribeInstanceAttribute', 'ec2:ModifyInstanceAttribute',
+        'autoscaling:DescribeAutoScalingInstances', 'autoscaling:DetachInstances', 'autoscaling:UpdateAutoScalingGroup',
+        'ec2:DeleteSnapshot', 'rds:DeleteDBInstance', 'rds:DescribeDBInstances',
+        # Resource tagging (bulk)
+        'tag:GetResources', 'tag:GetTagKeys', 'tag:GetTagValues', 'tag:TagResources', 'tag:UntagResources',
+        # Per-service tagging
+        'ec2:CreateTags', 'ec2:DeleteTags',
+        'rds:AddTagsToResource', 'rds:RemoveTagsFromResource',
+        's3:PutBucketTagging', 's3:GetBucketTagging', 's3:PutObjectTagging', 's3:DeleteObjectTagging',
+        'elasticloadbalancing:AddTags', 'elasticloadbalancing:RemoveTags',
+        'sqs:TagQueue', 'sqs:UntagQueue',
+        'logs:TagLogGroup', 'logs:UntagLogGroup',
+        'dynamodb:TagResource', 'dynamodb:UntagResource',
+        'lambda:TagResource', 'lambda:UntagResource',
+        'sns:TagResource', 'sns:UntagResource',
+        'kms:TagResource', 'kms:UntagResource',
+        'es:AddTags', 'es:RemoveTags',
+        'elasticache:AddTagsToResource', 'elasticache:RemoveTagsFromResource',
+        'ecs:TagResource', 'ecs:UntagResource',
+        'eks:TagResource', 'eks:UntagResource',
+        'secretsmanager:TagResource', 'secretsmanager:UntagResource',
+        'cloudwatch:TagResource', 'cloudwatch:UntagResource',
+        'kinesis:AddTagsToStream', 'kinesis:RemoveTagsFromStream',
+        'redshift:CreateTags', 'redshift:DeleteTags',
+        'glue:TagResource', 'glue:UntagResource',
+        'stepfunctions:TagResource', 'stepfunctions:UntagResource',
+        'sagemaker:AddTags', 'sagemaker:DeleteTags',
+        # Scheduler write actions
+        'ec2:StartInstances', 'rds:StopDBInstance', 'rds:StartDBInstance',
+        'eks:UpdateNodegroupConfig', 'eks:DescribeNodegroup',
+        'sagemaker:StopNotebookInstance', 'sagemaker:StartNotebookInstance',
+        'redshift:PauseCluster', 'redshift:ResumeCluster',
+        'workspaces:ModifyWorkspaceProperties', 'ec2:ModifyVolume',
+        # FinOps Healthcheck
+        'ce:GetAnomalyMonitors', 'ce:GetAnomalySubscriptions', 'ce:ListCostAllocationTagBackfillHistory',
+        'compute-optimizer:GetEnrollmentStatus', 'organizations:DescribeOrganization',
+        'ce:UpdateCostAllocationTagsStatus', 'ce:CreateAnomalyMonitor', 'ce:CreateAnomalySubscription',
+        'ce:StartCostAllocationTagBackfill', 'compute-optimizer:UpdateEnrollmentStatus',
+    ]
 
 
 def handle_generate_template(event):
