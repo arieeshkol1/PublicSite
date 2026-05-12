@@ -5060,7 +5060,7 @@ GENERAL QUESTION RULES (only apply when the question is broad/general):
 3. Identify cross-account patterns.
 4. Savings recommendations ranked by total dollar impact.
 5. NON-ACTIONABLE SERVICES (never list as savings): Tax, Amazon Registrar, AWS Cost Explorer, AWS CloudTrail.
-6. Services < $0.50 across all accounts = Minor costs (do not list individually).
+6. ONLY services < $0.50 across all accounts = Minor costs. ANY service >= $0.50 MUST be listed individually (e.g., $7 Amplify is NOT minor, $38 RDS is NOT minor).
 7. Do NOT give generic advice for services with $0 spend.
 8. ALWAYS rank services by cost descending.
 
@@ -6796,8 +6796,8 @@ IMPORTANT RULES:
   These services should only be mentioned in a cost breakdown if the user asks "what am I spending on?" but NEVER in a "how to save" or "savings opportunities" response.
 - ALWAYS rank services strictly by cost_usd descending. A service costing $1.03 MUST appear above a service costing $0.93.
 - SAVINGS RECOMMENDATIONS SORTING (CRITICAL): When listing savings opportunities or recommendations, ALWAYS sort them by estimated dollar savings descending (highest savings first). A recommendation saving $147/month MUST appear before one saving $37/month. Never list savings in random order.
-- Services costing less than $0.50 MUST be in the "Minor costs" bullet list, not individually numbered. Do NOT give them their own numbered section. This applies to ALL response types including "any savings?" questions.
-- For general cost analysis: collapse ALL services under $0.50 into a single "Minor costs" bullet list at the end. Do NOT give each one its own numbered section.
+- MINOR COSTS THRESHOLD (CRITICAL): ONLY services costing LESS THAN $0.50/month go in the "Minor costs" section. ANY service costing $0.50 or more MUST be listed individually with its own line. $7 is NOT minor. $38 is NOT minor. ONLY costs below fifty cents ($0.50) are minor.
+- For general cost analysis: collapse ONLY services under $0.50 into a single "Minor costs" bullet list at the end. Services costing $1+ MUST NEVER appear in the minor costs section.
 - ALWAYS rank services strictly by cost_usd descending. Never rank a cheaper service above a more expensive one.
 - When month_comparison is present, use ONLY that data for the comparison — do NOT use cost_by_service (which is last 30 days). Show a side-by-side comparison with the difference (+ or -) and percentage change for each service. Highlight services with the biggest absolute dollar change.
 - When monthly_trend is present, use it to show month-over-month costs. Each key in monthly_trend is a YYYY-MM label with a dict of service→cost. Show a table with months as columns and services as rows. Highlight the trend direction. Do NOT fabricate data for months not in the monthly_trend dict.
@@ -6830,6 +6830,7 @@ Real account data (costs in USD, gathered via AWS APIs):
 {data_text}
 
 For general questions: answer ranked by cost impact (highest first), with exact dollar savings and specific resource IDs. Group only truly minor services (< $0.50) at the end.
+VALIDATION: Before outputting, verify that EVERY service in your "Minor costs" section actually costs less than $0.50. If any service costs $0.50 or more, move it to the main ranked list.
 For specific questions: answer the question directly with full resource-level detail from the data."""
 
     try:
