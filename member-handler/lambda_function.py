@@ -7082,7 +7082,43 @@ def handle_tag_scan(event):
                                 arn_parts = arn.split(':')
                                 service = arn_parts[2] if len(arn_parts) > 2 else 'unknown'
                                 region = arn_parts[3] if len(arn_parts) > 3 and arn_parts[3] else 'global'
-                                res_type_raw = arn.split(':')[-1].split('/')[0] if ':' in arn else service
+                                # Extract specific resource type from ARN
+                                # ARN format: arn:aws:service:region:account:resource-type/resource-id
+                                res_type_raw = ''
+                                if len(arn_parts) >= 6:
+                                    resource_part = arn_parts[5] if len(arn_parts) == 6 else ':'.join(arn_parts[5:])
+                                    res_type_raw = resource_part.split('/')[0] if '/' in resource_part else resource_part.split(':')[0] if ':' in resource_part else resource_part
+                                # Map ARN resource-type to human-readable label
+                                _RESOURCE_TYPE_LABELS = {
+                                    # EC2
+                                    'instance': 'EC2 Instance', 'image': 'EC2 AMI', 'snapshot': 'EBS Snapshot',
+                                    'volume': 'EBS Volume', 'elastic-ip': 'Elastic IP', 'security-group': 'Security Group',
+                                    'network-interface': 'Network Interface', 'subnet': 'Subnet', 'vpc': 'VPC',
+                                    'natgateway': 'NAT Gateway', 'internet-gateway': 'Internet Gateway',
+                                    'launch-template': 'Launch Template', 'key-pair': 'Key Pair',
+                                    'placement-group': 'Placement Group', 'route-table': 'Route Table',
+                                    # S3
+                                    'bucket': 'S3 Bucket', 'accesspoint': 'S3 Access Point',
+                                    # RDS
+                                    'db': 'RDS Instance', 'cluster': 'RDS Cluster', 'subgrp': 'RDS Subnet Group',
+                                    # Lambda
+                                    'function': 'Lambda Function',
+                                    # ELB
+                                    'loadbalancer': 'Load Balancer', 'targetgroup': 'Target Group',
+                                    # DynamoDB
+                                    'table': 'DynamoDB Table',
+                                    # CloudFormation
+                                    'stack': 'CF Stack', 'changeset': 'CF Change Set',
+                                    # Others
+                                    'trail': 'CloudTrail', 'alarm': 'CloudWatch Alarm',
+                                    'log-group': 'Log Group', 'rule': 'EventBridge Rule',
+                                    'secret': 'Secret', 'key': 'KMS Key', 'alias': 'KMS Alias',
+                                    'topic': 'SNS Topic', 'queue': 'SQS Queue',
+                                    'repository': 'ECR Repository', 'cluster': 'ECS Cluster',
+                                    'task-definition': 'ECS Task Def', 'service': 'ECS Service',
+                                    'stateMachine': 'Step Function', 'api': 'API Gateway',
+                                    'server': 'MGN Server', 'source-server': 'MGN Source Server',
+                                }
                                 _SERVICE_LABELS = {
                                     'ec2': 'EC2', 'rds': 'RDS', 's3': 'S3', 'lambda': 'Lambda',
                                     'elasticloadbalancing': 'ELB', 'dynamodb': 'DynamoDB',
@@ -7092,8 +7128,10 @@ def handle_tag_scan(event):
                                     'events': 'EventBridge', 'states': 'Step Functions',
                                     'apigateway': 'API Gateway', 'cognito-idp': 'Cognito',
                                     'bedrock': 'Bedrock', 'ecr': 'ECR', 'route53': 'Route 53',
+                                    'mgn': 'MGN', 'backup': 'AWS Backup', 'amplify': 'Amplify',
+                                    'payments': 'Payments',
                                 }
-                                res_type = _SERVICE_LABELS.get(service, service.upper())
+                                res_type = _RESOURCE_TYPE_LABELS.get(res_type_raw, _SERVICE_LABELS.get(service, service.upper()))
                                 res_id = arn.split('/')[-1] if '/' in arn else arn.split(':')[-1]
                                 name = tags.get('Name', '')
                                 if not name:
