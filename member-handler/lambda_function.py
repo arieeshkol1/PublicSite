@@ -5166,23 +5166,35 @@ def _gather_account_data(question, credentials):
     if 'Amazon Elastic Compute Cloud - Compute' in top_service_names_ec2 or \
        any(kw in question_lower for kw in ['ec2', 'instance', 'server', 'compute', 'running', 'saving', 'save', 'efficient', 'optimize', 'ri', 'reserved']):
         try:
-            ec2 = _make_client('ec2')
-            instances = ec2.describe_instances()
+            # Scan ALL regions for EC2 instances
+            ec2_default = _make_client('ec2')
+            try:
+                _regions_resp = ec2_default.describe_regions(AllRegions=False)
+                _ec2_regions = [r['RegionName'] for r in _regions_resp.get('Regions', [])]
+            except Exception:
+                _ec2_regions = ['us-east-1', 'eu-central-1', 'eu-west-1', 'us-west-2', 'ap-southeast-1']
             instance_list = []
-            for res in instances.get('Reservations', []):
-                for inst in res.get('Instances', []):
-                    name_tag = ''
-                    for tag in inst.get('Tags', []):
-                        if tag['Key'] == 'Name':
-                            name_tag = tag['Value']
-                    instance_list.append({
-                        'id': inst['InstanceId'],
-                        'type': inst['InstanceType'],
-                        'state': inst['State']['Name'],
-                        'name': name_tag,
-                        'az': inst.get('Placement', {}).get('AvailabilityZone', ''),
-                        'tags_raw': inst.get('Tags', []),
-                    })
+            for _ec2_region in _ec2_regions:
+                try:
+                    ec2_r = _make_client('ec2', _ec2_region)
+                    instances = ec2_r.describe_instances(Filters=[{'Name': 'instance-state-name', 'Values': ['running', 'stopped']}])
+                    for res in instances.get('Reservations', []):
+                        for inst in res.get('Instances', []):
+                            name_tag = ''
+                            for tag in inst.get('Tags', []):
+                                if tag['Key'] == 'Name':
+                                    name_tag = tag['Value']
+                            instance_list.append({
+                                'id': inst['InstanceId'],
+                                'type': inst['InstanceType'],
+                                'state': inst['State']['Name'],
+                                'name': name_tag,
+                                'region': _ec2_region,
+                                'az': inst.get('Placement', {}).get('AvailabilityZone', ''),
+                                'tags_raw': inst.get('Tags', []),
+                            })
+                except Exception:
+                    continue
             data['ec2_instances'] = instance_list
             actions.append('ec2:DescribeInstances')
         except Exception as e:
@@ -5658,8 +5670,17 @@ def _gather_account_data(question, credentials):
         ebs_data = data.get('ebs_summary', {})
         if ebs_data.get('total_gb', 0) > 0:
             try:
-                ec2_vol = _make_client('ec2')
-                vols = ec2_vol.describe_volumes()
+                # Scan multiple regions for EBS volumes
+                _ebs_regions = ['us-east-1', 'eu-central-1', 'eu-west-1', 'us-west-2', 'ap-southeast-1']
+                _all_vols = {'Volumes': []}
+                for _ebs_region in _ebs_regions:
+                    try:
+                        ec2_vol_r = _make_client('ec2', _ebs_region)
+                        _vr = ec2_vol_r.describe_volumes()
+                        _all_vols['Volumes'].extend(_vr.get('Volumes', []))
+                    except Exception:
+                        continue
+                vols = _all_vols
                 ebs_metrics = []
                 for v in vols.get('Volumes', [])[:15]:
                     vid = v['VolumeId']
