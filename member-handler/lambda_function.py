@@ -2359,7 +2359,7 @@ def handle_actions_scan(event):
     all_findings = []
     total_savings = 0.0
     scan_start = datetime.now(timezone.utc)
-    SCAN_TIMEOUT_SECONDS = 22  # Leave 8s buffer for API Gateway 30s limit
+    SCAN_TIMEOUT_SECONDS = 26  # Leave 4s buffer for API Gateway 30s limit
 
     for account_id in account_ids[:5]:
         try:
