@@ -12987,8 +12987,24 @@ def handle_licensing_scan(event):
     pricing_client = boto3.client('pricing', region_name=pricing_region)
     pricing_cache = {}  # key: (instance_type, license_model, pre_installed_sw) -> hourly_rate
 
-    def _get_price(instance_type, license_model='License Included', pre_installed_sw='NA'):
-        cache_key = (instance_type, license_model, pre_installed_sw)
+    # Region to AWS Pricing API location name mapping
+    _REGION_TO_LOCATION = {
+        'us-east-1': 'US East (N. Virginia)', 'us-east-2': 'US East (Ohio)',
+        'us-west-1': 'US West (N. California)', 'us-west-2': 'US West (Oregon)',
+        'eu-west-1': 'EU (Ireland)', 'eu-west-2': 'EU (London)', 'eu-west-3': 'EU (Paris)',
+        'eu-central-1': 'EU (Frankfurt)', 'eu-central-2': 'EU (Zurich)',
+        'eu-north-1': 'EU (Stockholm)', 'eu-south-1': 'EU (Milan)',
+        'ap-southeast-1': 'Asia Pacific (Singapore)', 'ap-southeast-2': 'Asia Pacific (Sydney)',
+        'ap-northeast-1': 'Asia Pacific (Tokyo)', 'ap-northeast-2': 'Asia Pacific (Seoul)',
+        'ap-south-1': 'Asia Pacific (Mumbai)', 'ca-central-1': 'Canada (Central)',
+        'sa-east-1': 'South America (Sao Paulo)', 'me-south-1': 'Middle East (Bahrain)',
+        'me-central-1': 'Middle East (UAE)', 'il-central-1': 'Israel (Tel Aviv)',
+        'af-south-1': 'Africa (Cape Town)',
+    }
+
+    def _get_price(instance_type, license_model='License Included', pre_installed_sw='NA', region='us-east-1'):
+        location = _REGION_TO_LOCATION.get(region, 'US East (N. Virginia)')
+        cache_key = (instance_type, license_model, pre_installed_sw, region)
         if cache_key in pricing_cache:
             return pricing_cache[cache_key]
         try:
@@ -13000,7 +13016,7 @@ def handle_licensing_scan(event):
                 {'Type': 'TERM_MATCH', 'Field': 'tenancy', 'Value': 'Shared'},
                 {'Type': 'TERM_MATCH', 'Field': 'licenseModel', 'Value': license_model},
                 {'Type': 'TERM_MATCH', 'Field': 'preInstalledSw', 'Value': pre_installed_sw},
-                {'Type': 'TERM_MATCH', 'Field': 'location', 'Value': 'US East (N. Virginia)'},
+                {'Type': 'TERM_MATCH', 'Field': 'location', 'Value': location},
                 {'Type': 'TERM_MATCH', 'Field': 'capacitystatus', 'Value': 'Used'},
             ]
             resp = pricing_client.get_products(ServiceCode='AmazonEC2', Filters=filters, MaxResults=1)
@@ -13025,20 +13041,21 @@ def handle_licensing_scan(event):
             break
         itype = inst['instanceType']
 
+        inst_region = inst.get('region', 'us-east-1')
         # License Included (Windows only)
-        li_rate = _get_price(itype, 'License Included', 'NA')
+        li_rate = _get_price(itype, 'License Included', 'NA', inst_region)
         # BYOL (Windows only)
-        byol_rate = _get_price(itype, 'Bring your own license', 'NA')
+        byol_rate = _get_price(itype, 'Bring your own license', 'NA', inst_region)
 
         # With SQL Server
         sql_li_rate = None
         sql_std_rate = None
         if inst['sqlEdition'] == 'Enterprise':
-            sql_li_rate = _get_price(itype, 'License Included', 'SQL Ent')
+            sql_li_rate = _get_price(itype, 'License Included', 'SQL Ent', inst_region)
         elif inst['sqlEdition'] == 'Standard':
-            sql_li_rate = _get_price(itype, 'License Included', 'SQL Std')
+            sql_li_rate = _get_price(itype, 'License Included', 'SQL Std', inst_region)
         if inst['sqlEdition'] in ('Enterprise', 'Unknown'):
-            sql_std_rate = _get_price(itype, 'License Included', 'SQL Std')
+            sql_std_rate = _get_price(itype, 'License Included', 'SQL Std', inst_region)
 
         # Use SQL rate if available, otherwise Windows-only rate
         current_rate = sql_li_rate or li_rate
@@ -13125,7 +13142,7 @@ def handle_licensing_scan(event):
             ]
             for alt_type, alt_vcpus, alt_mem in r_alternatives:
                 if alt_vcpus < current_vcpus_val and alt_mem >= current_mem * 0.7:
-                    alt_rate = _get_price(alt_type, 'License Included', 'NA')
+                    alt_rate = _get_price(alt_type, 'License Included', 'NA', inst.get('region', 'us-east-1'))
                     if alt_rate and alt_rate < current_rate:
                         swap_savings = round((current_rate - alt_rate) * 730, 2)
                         if swap_savings > 20:
