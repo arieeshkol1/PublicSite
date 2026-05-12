@@ -6847,9 +6847,25 @@ def handle_tag_apply(event):
                             logger.warning(f"Tag failed for {arn}: {err_msg} (full: {err})")
                             results['errors'].append(f"{arn}: {err_msg}")
                     except Exception as e:
-                        logger.error(f"tag_resources exception for {acct_id}/{_apply_region}: {e}", exc_info=True)
-                        results['failed'] += len(batch)
-                        results['errors'].append(f"Batch failed for {acct_id}/{_apply_region}: {str(e)}")
+                        # Fallback: use ec2:CreateTags when tag:TagResources is denied
+                        if 'AccessDenied' in str(e) or 'not authorized' in str(e):
+                            try:
+                                ec2_client = boto3.client('ec2',
+                                    aws_access_key_id=creds['AccessKeyId'],
+                                    aws_secret_access_key=creds['SecretAccessKey'],
+                                    aws_session_token=creds['SessionToken'],
+                                    region_name=_apply_region)
+                                resource_ids = [a.split('/')[-1] if '/' in a else a.split(':')[-1] for a in batch]
+                                ec2_tags = [{'Key': k, 'Value': v} for k, v in tags.items()]
+                                ec2_client.create_tags(Resources=resource_ids, Tags=ec2_tags)
+                                results['tagged'] += len(batch)
+                            except Exception as e2:
+                                results['failed'] += len(batch)
+                                results['errors'].append(f"Fallback CreateTags: {str(e2)[:100]}")
+                        else:
+                            logger.error(f"tag_resources exception: {e}", exc_info=True)
+                            results['failed'] += len(batch)
+                            results['errors'].append(f"Batch failed: {str(e)[:100]}")
 
         except Exception as e:
             logger.error(f"Cannot access {acct_id} for tagging: {e}", exc_info=True)
