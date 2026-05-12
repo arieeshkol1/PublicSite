@@ -6847,6 +6847,28 @@ def handle_tag_apply(event):
                     'tagRelatedActions': policy_actions,
                 }
                 logger.info(f"Role {role_name} policies: inline={inline_policies}, attached={attached_policies}, tag_actions={policy_actions}")
+                # Detect old read-only policy — abort early with upgrade message
+                if 'SlashMyBillBillingReadOnly' in inline_policies and 'tag:TagResources' not in policy_actions:
+                    region = 'eu-central-1'  # default
+                    # Try to detect region from ARNs
+                    for arn in acct_arns:
+                        parts = arn.split(':')
+                        if len(parts) > 3 and parts[3]:
+                            region = parts[3]
+                            break
+                    update_url = (
+                        f"https://{region}.console.aws.amazon.com/cloudformation/home?region={region}"
+                        f"#/stacks?filteringText=SlashMyBill"
+                    )
+                    return create_response(200, {
+                        'message': '0 resources tagged successfully',
+                        'tagged': 0,
+                        'failed': len(arns),
+                        'errors': [f'Role needs upgrade: policy "SlashMyBillBillingReadOnly" is missing write permissions.'],
+                        'upgradeRequired': True,
+                        'upgradeUrl': update_url,
+                        'upgradeAccountId': acct_id,
+                    })
             except Exception as diag_e:
                 results['_debug'] = {'error': str(diag_e)[:200]}
             # Group ARNs by region and tag in each region

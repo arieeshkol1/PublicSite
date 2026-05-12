@@ -6056,9 +6056,19 @@ async function _applyTags() {
     try {
         var data = await api('POST', '/members/tags/apply', { arns: arns, tags: tags });
         var msg = data.message || 'Tags applied!';
-        if (data.errors && data.errors.length > 0) {
+        if (data.upgradeRequired) {
+            var upgradeMsg = '\u26a0\ufe0f Role permissions need updating. The connected role has an older policy that lacks tag-write permissions.';
+            if (statusEl) {
+                statusEl.style.color = '#f59e0b';
+                statusEl.innerHTML = upgradeMsg + '<br><br>' +
+                    '<strong>To fix:</strong> Go to <a href="' + (data.upgradeUrl || '#') + '" target="_blank" style="color:#6366f1">AWS CloudFormation</a> in account ' + (data.upgradeAccountId || '') + ', ' +
+                    'select the <em>SlashMyBill</em> stack, click <strong>Update</strong>, choose <strong>Replace current template</strong>, ' +
+                    'and paste the latest template URL from the <strong>Configure</strong> tab.<br><br>' +
+                    '<span style="color:#8b949e;font-size:0.85em">Current policy: SlashMyBillBillingReadOnly (read-only). Required: SlashMyBillBillingAccess (read+write).</span>';
+            }
+            notify('Role upgrade required — see instructions below', 'warning');
+        } else if (data.errors && data.errors.length > 0) {
             msg += ' | Errors: ' + data.errors.slice(0, 3).join('; ');
-            if (data._debug) msg += ' | DEBUG: ' + JSON.stringify(data._debug);
             if (statusEl) { statusEl.style.color = '#f59e0b'; statusEl.textContent = msg; }
             notify(msg, 'warning');
         } else {
