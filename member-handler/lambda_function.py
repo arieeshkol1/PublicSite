@@ -5495,17 +5495,20 @@ def _gather_account_data(question, credentials):
                 if inst.get('state') != 'running':
                     continue
                 try:
-                    cpu_resp = cw.get_metric_statistics(
+                    # Use the instance's region for CloudWatch (metrics are regional)
+                    _inst_region = inst.get('region', 'us-east-1')
+                    cw_inst = _make_client('cloudwatch', _inst_region)
+                    cpu_resp = cw_inst.get_metric_statistics(
                         Namespace='AWS/EC2', MetricName='CPUUtilization',
                         Dimensions=[{'Name': 'InstanceId', 'Value': inst['id']}],
                         StartTime=start_30d_dt, EndTime=now, Period=2592000, Statistics=['Average', 'Maximum'],
                     )
-                    net_in = cw.get_metric_statistics(
+                    net_in = cw_inst.get_metric_statistics(
                         Namespace='AWS/EC2', MetricName='NetworkIn',
                         Dimensions=[{'Name': 'InstanceId', 'Value': inst['id']}],
                         StartTime=start_30d_dt, EndTime=now, Period=2592000, Statistics=['Average', 'Maximum'],
                     )
-                    net_out = cw.get_metric_statistics(
+                    net_out = cw_inst.get_metric_statistics(
                         Namespace='AWS/EC2', MetricName='NetworkOut',
                         Dimensions=[{'Name': 'InstanceId', 'Value': inst['id']}],
                         StartTime=start_30d_dt, EndTime=now, Period=2592000, Statistics=['Average', 'Maximum'],
@@ -11879,6 +11882,7 @@ def handle_cluster_analyze(event):
 
     account_id = body.get('accountId', '')
     asg_name = body.get('asgName', '')
+    region = body.get('region', '')
     if not account_id or not asg_name:
         return create_error_response(400, 'MissingParams', 'accountId and asgName required')
 
@@ -11891,9 +11895,14 @@ def handle_cluster_analyze(event):
     except Exception as e:
         return create_error_response(500, 'ServerError', f'Cannot assume role: {e}')
 
-    asg_client = _make_client_from_creds('autoscaling', creds)
-    ec2 = _make_client_from_creds('ec2', creds)
-    elbv2 = _make_client_from_creds('elbv2', creds)
+    # Detect region from billing if not provided
+    if not region:
+        detected = _detect_charged_regions(creds)
+        region = detected[0] if detected else 'us-east-1'
+
+    asg_client = _make_client_from_creds('autoscaling', creds, region)
+    ec2 = _make_client_from_creds('ec2', creds, region)
+    elbv2 = _make_client_from_creds('elbv2', creds, region)
 
     # Fetch ASG details
     try:
@@ -12672,25 +12681,33 @@ def handle_rds_optimize(event):
     except Exception as e:
         return create_error_response(403, 'AssumeRoleFailed', f'Cannot access account: {str(e)[:200]}')
 
-    rds = boto3.client('rds', aws_access_key_id=creds['AccessKeyId'], aws_secret_access_key=creds['SecretAccessKey'], aws_session_token=creds['SessionToken'])
-    cw = boto3.client('cloudwatch', aws_access_key_id=creds['AccessKeyId'], aws_secret_access_key=creds['SecretAccessKey'], aws_session_token=creds['SessionToken'])
+    rds_regions = _detect_charged_regions(creds)
+    all_rds_clients = []
+    for _r in rds_regions:
+        all_rds_clients.append((_r, boto3.client('rds', aws_access_key_id=creds['AccessKeyId'], aws_secret_access_key=creds['SecretAccessKey'], aws_session_token=creds['SessionToken'], region_name=_r)))
+    cw = boto3.client('cloudwatch', aws_access_key_id=creds['AccessKeyId'], aws_secret_access_key=creds['SecretAccessKey'], aws_session_token=creds['SessionToken'], region_name=rds_regions[0] if rds_regions else 'us-east-1')
 
-    # Discover RDS instances
+    # Discover RDS instances across all charged regions
     instances = []
     try:
-        resp = rds.describe_db_instances()
-        for db in resp.get('DBInstances', []):
-            instances.append({
-                'instanceId': db['DBInstanceIdentifier'],
-                'instanceClass': db.get('DBInstanceClass', ''),
-                'engine': db.get('Engine', ''),
-                'engineVersion': db.get('EngineVersion', ''),
-                'multiAZ': db.get('MultiAZ', False),
-                'storageType': db.get('StorageType', ''),
-                'allocatedStorage': db.get('AllocatedStorage', 0),
-                'iops': db.get('Iops', 0),
-                'status': db.get('DBInstanceStatus', ''),
-            })
+        for _rds_region, rds in all_rds_clients:
+            try:
+                resp = rds.describe_db_instances()
+                for db in resp.get('DBInstances', []):
+                    instances.append({
+                        'instanceId': db['DBInstanceIdentifier'],
+                        'instanceClass': db.get('DBInstanceClass', ''),
+                        'engine': db.get('Engine', ''),
+                        'engineVersion': db.get('EngineVersion', ''),
+                        'multiAZ': db.get('MultiAZ', False),
+                        'storageType': db.get('StorageType', ''),
+                        'allocatedStorage': db.get('AllocatedStorage', 0),
+                        'iops': db.get('Iops', 0),
+                        'status': db.get('DBInstanceStatus', ''),
+                        'region': _rds_region,
+                    })
+            except Exception:
+                continue
     except Exception as e:
         return create_error_response(500, 'RDSError', f'Failed to list RDS instances: {str(e)[:200]}')
 
@@ -12794,16 +12811,18 @@ def handle_lambda_optimize(event):
     except Exception as e:
         return create_error_response(403, 'AssumeRoleFailed', f'Cannot access account: {str(e)[:200]}')
 
-    lam = boto3.client('lambda', aws_access_key_id=creds['AccessKeyId'], aws_secret_access_key=creds['SecretAccessKey'], aws_session_token=creds['SessionToken'])
-    cw = boto3.client('cloudwatch', aws_access_key_id=creds['AccessKeyId'], aws_secret_access_key=creds['SecretAccessKey'], aws_session_token=creds['SessionToken'])
+    lam_regions = _detect_charged_regions(creds)
 
-    # Discover Lambda functions
+    # Discover Lambda functions across all charged regions
     functions = []
     try:
-        paginator = lam.get_paginator('list_functions')
-        for page in paginator.paginate():
-            for fn in page.get('Functions', []):
-                functions.append({
+        for _lam_r in lam_regions:
+            try:
+                lam = boto3.client('lambda', aws_access_key_id=creds['AccessKeyId'], aws_secret_access_key=creds['SecretAccessKey'], aws_session_token=creds['SessionToken'], region_name=_lam_r)
+                paginator = lam.get_paginator('list_functions')
+                for page in paginator.paginate():
+                    for fn in page.get('Functions', []):
+                        functions.append({
                     'functionName': fn['FunctionName'],
                     'runtime': fn.get('Runtime', 'N/A'),
                     'memoryMb': fn.get('MemorySize', 128),
@@ -12812,6 +12831,8 @@ def handle_lambda_optimize(event):
                     'codeSize': fn.get('CodeSize', 0),
                     'lastModified': fn.get('LastModified', ''),
                 })
+            except Exception:
+                continue
     except Exception as e:
         return create_error_response(500, 'LambdaError', f'Failed to list functions: {str(e)[:200]}')
 
@@ -12822,6 +12843,7 @@ def handle_lambda_optimize(event):
     from datetime import datetime, timedelta
     end_time = datetime.utcnow()
     start_time = end_time - timedelta(days=30)
+    cw = boto3.client('cloudwatch', aws_access_key_id=creds['AccessKeyId'], aws_secret_access_key=creds['SecretAccessKey'], aws_session_token=creds['SessionToken'], region_name=lam_regions[0] if lam_regions else 'us-east-1')
 
     for fn in functions[:30]:  # Limit to avoid timeout
         try:
@@ -12906,26 +12928,32 @@ def handle_ebs_optimize(event):
     except Exception as e:
         return create_error_response(403, 'AssumeRoleFailed', f'Cannot access account: {str(e)[:200]}')
 
-    ec2 = boto3.client('ec2', aws_access_key_id=creds['AccessKeyId'], aws_secret_access_key=creds['SecretAccessKey'], aws_session_token=creds['SessionToken'])
+    ec2_regions = _detect_charged_regions(creds)
 
-    # Discover EBS volumes
+    # Discover EBS volumes across all charged regions
     volumes = []
     try:
-        paginator = ec2.get_paginator('describe_volumes')
-        for page in paginator.paginate():
-            for vol in page.get('Volumes', []):
-                tags = {t['Key']: t['Value'] for t in vol.get('Tags', [])}
-                volumes.append({
-                    'volumeId': vol['VolumeId'],
-                    'volumeType': vol.get('VolumeType', ''),
-                    'sizeGb': vol.get('Size', 0),
-                    'iops': vol.get('Iops', 0),
-                    'throughput': vol.get('Throughput', 0),
-                    'state': vol.get('State', ''),
-                    'attached': len(vol.get('Attachments', [])) > 0,
-                    'attachedTo': vol['Attachments'][0]['InstanceId'] if vol.get('Attachments') else None,
-                    'name': tags.get('Name', ''),
-                })
+        for _ebs_r in ec2_regions:
+            try:
+                ec2 = boto3.client('ec2', aws_access_key_id=creds['AccessKeyId'], aws_secret_access_key=creds['SecretAccessKey'], aws_session_token=creds['SessionToken'], region_name=_ebs_r)
+                paginator = ec2.get_paginator('describe_volumes')
+                for page in paginator.paginate():
+                    for vol in page.get('Volumes', []):
+                        tags = {t['Key']: t['Value'] for t in vol.get('Tags', [])}
+                        volumes.append({
+                            'volumeId': vol['VolumeId'],
+                            'volumeType': vol.get('VolumeType', ''),
+                            'sizeGb': vol.get('Size', 0),
+                            'iops': vol.get('Iops', 0),
+                            'throughput': vol.get('Throughput', 0),
+                            'state': vol.get('State', ''),
+                            'attached': len(vol.get('Attachments', [])) > 0,
+                            'attachedTo': vol['Attachments'][0]['InstanceId'] if vol.get('Attachments') else None,
+                            'name': tags.get('Name', ''),
+                            'region': _ebs_r,
+                        })
+            except Exception:
+                continue
     except Exception as e:
         return create_error_response(500, 'EBSError', f'Failed to list volumes: {str(e)[:200]}')
 
