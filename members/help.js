@@ -143,7 +143,7 @@ var HELP_CONTENT = {
             <li><strong>Wait</strong> — Stack takes 1-2 minutes to deploy</li>
             <li><strong>Test &amp; Configure</strong> — Click "Test Connection" to verify access</li>
           </ol>
-          <div class="help-note">⚠ The CloudFormation stack creates an IAM role named <code>SlashMyBill-{AccountID}</code> with ReadOnlyAccess. It does NOT access your application data.</div>
+          <div class="help-note">⚠ The CloudFormation stack creates an IAM role named <code>SlashMyBill-{AccountID}</code> with ReadOnlyAccess + a write policy for cleanup, tagging, and scheduling. It does NOT access your application data.</div>
         `
       },
       {
@@ -167,7 +167,7 @@ var HELP_CONTENT = {
         id: 'optimize-cluster',
         heading: 'Optimize a Cluster',
         icon: '\u26a1',
-        body: '<p>The <strong>Optimize a Cluster</strong> wizard analyzes your Auto Scaling Groups against 7 best practices:</p>'
+        content: '<p>The <strong>Optimize a Cluster</strong> wizard analyzes your Auto Scaling Groups against 7 best practices:</p>'
           + '<ol>'
           + '<li><strong>Multi-AZ</strong> \u2014 Ensures instances span 2+ Availability Zones for high availability</li>'
           + '<li><strong>Load Balancer</strong> \u2014 Verifies ALB/NLB is attached with healthy targets</li>'
@@ -183,7 +183,7 @@ var HELP_CONTENT = {
         id: 'resize-server',
         heading: 'Resize a Server',
         icon: '\U0001f4ca',
-        body: '<p>The <strong>Resize a Server</strong> wizard helps you find cheaper EC2 instance types:</p>'
+        content: '<p>The <strong>Resize a Server</strong> wizard helps you find cheaper EC2 instance types:</p>'
           + '<ol>'
           + '<li>Select an account and EC2 instance</li>'
           + '<li>Click <strong>Optimize</strong> to analyze 30 days of CPU and memory usage</li>'
@@ -192,6 +192,30 @@ var HELP_CONTENT = {
           + '<li>Click <strong>Resize</strong> to execute (instance stops for 1-3 minutes during resize)</li>'
           + '</ol>'
           + '<p>The wizard only shows instance types compatible with your current architecture (x86/ARM).</p>'
+      },
+      {
+        id: 'update-permissions',
+        heading: 'Updating Role Permissions',
+        icon: '🔒',
+        content: `
+          <p>When new features are added (e.g., tagging, scheduling), the cross-account role needs updated permissions.</p>
+          <h4>One-Click Update (Recommended)</h4>
+          <ol>
+            <li>Go to <strong>Configure</strong> tab</li>
+            <li>Click the <strong>🔒</strong> (lock) button next to the account</li>
+            <li>Confirm the update</li>
+            <li>Done — the latest policy is pushed directly to the role</li>
+          </ol>
+          <p>This uses <code>iam:PutRolePolicy</code> to update the inline policy without touching CloudFormation.</p>
+          <h4>When It Fails</h4>
+          <p>If the role was created with a very old template that lacks <code>iam:PutRolePolicy</code>, the one-click update won’t work. In that case:</p>
+          <ol>
+            <li>Download the latest CF template from Configure tab</li>
+            <li>Go to AWS CloudFormation in the target account</li>
+            <li>Update the stack with the new template</li>
+          </ol>
+          <div class="help-tip">💡 The Update Permissions button is the easiest way to keep your role current. Use it whenever you see permission errors in Act or Plan tabs.</div>
+        `
       },
       {
         id: 'delete-account',
@@ -221,6 +245,7 @@ var HELP_CONTENT = {
             <tr><td>▲▼</td><td>Reorder account priority (affects dashboard and AI query order)</td></tr>
             <tr><td>↓</td><td>Download CloudFormation template</td></tr>
             <tr><td>⚡</td><td>Test connection + detect hourly status</td></tr>
+            <tr><td>🔒</td><td>Update Permissions — push latest IAM policy to the role (no AWS Console needed)</td></tr>
             <tr><td>⏱</td><td>Enable hourly granularity guide</td></tr>
             <tr><td>✏</td><td>Edit account name or ID</td></tr>
             <tr><td>🗑</td><td>Delete account connection</td></tr>
@@ -378,6 +403,24 @@ var HELP_CONTENT = {
           <p>The welcome screen shows clickable example questions under "General questions:".
           Click any example to populate the Ask box, then press Enter to submit.</p>
         `
+      },
+      {
+        id: 'ai-agent',
+        heading: 'AI Agent (Bedrock)',
+        icon: '🤖',
+        content: `
+          <p>The AI Agent tab provides a conversational interface powered by Amazon Bedrock that can execute multi-step actions on your behalf.</p>
+          <h4>Capabilities</h4>
+          <ul>
+            <li>Query cost data across all connected accounts</li>
+            <li>Analyze EC2 instances, EBS volumes, and other resources</li>
+            <li>Provide optimization recommendations with specific savings estimates</li>
+            <li>Execute cleanup actions (with your confirmation)</li>
+          </ul>
+          <h4>Multi-Region</h4>
+          <p>The AI automatically discovers resources across regions where you have charges (via Cost Explorer). For broad questions, it focuses on cost data only to stay within response time limits.</p>
+          <div class="help-tip">💡 For best results, ask specific questions like "List my EC2 instances with CPU usage" rather than broad ones like "How efficient is my account?"</div>
+        `
       }
     ]
   },
@@ -518,6 +561,69 @@ var HELP_CONTENT = {
           </ul>
           <div class="help-note">\u26a0 Scheduler write actions require an updated CloudFormation template with write permissions. Go to <strong>Configure</strong> and re-download the CF template if prompted.</div>
         `
+      },
+      {
+        id: 'service-optimization',
+        heading: 'Service Optimization (Unified Card)',
+        icon: '\u2699\ufe0f',
+        content: `
+          <p>The <strong>Service Optimization</strong> card provides a unified interface for analyzing and optimizing individual AWS resources.</p>
+          <h4>How to Use</h4>
+          <ol>
+            <li>Select an <strong>account</strong> from the dropdown</li>
+            <li>Choose the <strong>optimization type</strong></li>
+            <li>For EC2/Cluster: select the specific resource</li>
+            <li>Click <strong>Analyze</strong></li>
+          </ol>
+          <h4>Optimization Types</h4>
+          <table class="help-table">
+            <tr><th>Type</th><th>What It Does</th></tr>
+            <tr><td>\U0001f4ca Resize an Instance</td><td>Analyze EC2 CPU/memory usage over 30 days. Shows cheaper alternatives sorted by savings. One-click resize (1-3 min downtime).</td></tr>
+            <tr><td>\u26a1 Optimize a Cluster (ASG)</td><td>Grade your Auto Scaling Group against 7 best practices: Multi-AZ, Load Balancer, Spot Mix, Instance Diversification, Scaling Policy, Launch Template, Health Check.</td></tr>
+            <tr><td>\U0001f4b0 Optimize Licensing</td><td>Scan Windows Server and SQL Server instances. Find savings through vCPU optimization, BYOL opportunities, and edition downgrades.</td></tr>
+            <tr><td>\U0001f5c3 Optimize RDS Database</td><td>Analyze RDS instances for rightsizing, Multi-AZ optimization, storage type upgrades, and engine version recommendations.</td></tr>
+            <tr><td>\u26a1 Optimize Lambda Functions</td><td>Analyze Lambda functions for memory optimization, timeout tuning, and architecture recommendations (ARM64 migration).</td></tr>
+            <tr><td>\U0001f4be Optimize EBS Volumes</td><td>Find gp2\u2192gp3 migration candidates, over-provisioned IOPS, and unattached volumes.</td></tr>
+          </table>
+          <div class="help-tip">\U0001f4a1 Multi-region: The optimizer automatically discovers resources across all regions where you have charges \u2014 no need to specify a region.</div>
+        `
+      },
+      {
+        id: 'spot-management',
+        heading: 'Spot Instance Management',
+        icon: '\U0001f4b8',
+        content: `
+          <p>Migrate eligible On-Demand EC2 instances to Spot pricing for up to 90% savings.</p>
+          <h4>Workflow</h4>
+          <ol>
+            <li><strong>Configure</strong> \u2014 Set your risk tolerance and savings target</li>
+            <li><strong>Qualify</strong> \u2014 Scan instances for Spot eligibility (stateless, fault-tolerant, etc.)</li>
+            <li><strong>Plan</strong> \u2014 Review the migration plan with estimated savings</li>
+            <li><strong>Migrate</strong> \u2014 Execute the migration (creates Spot Fleet or modifies ASG)</li>
+          </ol>
+          <h4>Dashboard</h4>
+          <p>Track your Spot savings over time with the Spot Dashboard showing interruption history and cumulative savings.</p>
+          <div class="help-note">\u26a0 Spot instances can be interrupted with 2 minutes notice. Only use for fault-tolerant workloads (batch processing, CI/CD, stateless web servers behind a load balancer).</div>
+        `
+      },
+      {
+        id: 'healthcheck',
+        heading: 'FinOps Healthcheck',
+        icon: '\U0001f3e5',
+        content: `
+          <p>Scan your AWS account for FinOps best-practice settings and fix issues with one click.</p>
+          <h4>What It Checks</h4>
+          <table class="help-table">
+            <tr><th>Check</th><th>What It Verifies</th></tr>
+            <tr><td>Cost Allocation Tags</td><td>Are cost allocation tags activated for tracking?</td></tr>
+            <tr><td>Anomaly Detection</td><td>Is AWS Cost Anomaly Detection configured?</td></tr>
+            <tr><td>Compute Optimizer</td><td>Is AWS Compute Optimizer enrolled?</td></tr>
+            <tr><td>Tag Backfill</td><td>Is cost allocation tag backfill running?</td></tr>
+          </table>
+          <h4>Auto-Fix</h4>
+          <p>Click <strong>Fix</strong> next to any failed check to automatically enable the setting in your AWS account.</p>
+          <div class="help-tip">\U0001f4a1 Run the healthcheck after connecting a new account to ensure all FinOps features are enabled.</div>
+        `
       }
     ]
   },
@@ -550,6 +656,22 @@ var HELP_CONTENT = {
           </ul>
           <div class="help-tip">💡 Budget alerts come directly from AWS, not SlashMyBill — they work even when you're not logged in.</div>
           <div class="help-note">⚠ For tag-based budgets, use TagKeyValue format. The Plan tab handles this formatting automatically.</div>
+        `
+      },
+      {
+        id: 'tag-policy',
+        heading: 'Tag Policy',
+        icon: '📋',
+        content: `
+          <p>Define your organization’s required tags. The tag policy drives the Tag Resources scan — resources missing required tags are flagged.</p>
+          <h4>Setting Up</h4>
+          <ol>
+            <li>Go to <strong>Plan → Tag Policy</strong></li>
+            <li>Add required tag keys (e.g., <code>Environment</code>, <code>Owner</code>, <code>CostCenter</code>)</li>
+            <li>Click <strong>Save</strong></li>
+          </ol>
+          <p>The policy is stored per-member and applies to all connected accounts.</p>
+          <div class="help-tip">💡 A good starting set: Environment, Owner, CostCenter, Application. These enable cost allocation and accountability.</div>
         `
       },
       {
@@ -623,7 +745,7 @@ function initHelp() {
     </div>
     <div id="help-body" style="flex:1;padding:16px 20px;overflow-y:auto;"></div>
     <div style="padding:12px 20px;border-top:1px solid #e5e7eb;background:#f9fafb;flex-shrink:0;font-size:0.78em;color:#6b7280;text-align:center;">
-      SlashMyBill Help v3.0 · <a href="mailto:ariel@slashmycloudbill.com" style="color:#6366f1;">ariel@slashmycloudbill.com</a>
+      SlashMyBill Help v4.0 · <a href="mailto:ariel@slashmycloudbill.com" style="color:#6366f1;">ariel@slashmycloudbill.com</a>
     </div>
   `;
 
