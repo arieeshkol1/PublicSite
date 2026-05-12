@@ -1951,22 +1951,28 @@ def _get_cost_by_tag(accounts, external_id):
                 RoleSessionName='SlashMyBillTagDist', ExternalId=external_id,
             )
             creds = assume_resp['Credentials']
+            # Scan multiple regions for tags
+            _tag_regions = ['us-east-1', 'eu-central-1', 'eu-west-1', 'us-west-2', 'ap-southeast-1']
+            for _tag_region in _tag_regions:
+                try:
+                    tagging = boto3.client('resourcegroupstaggingapi',
+                        aws_access_key_id=creds['AccessKeyId'],
+                        aws_secret_access_key=creds['SecretAccessKey'],
+                        aws_session_token=creds['SessionToken'],
+                        region_name=_tag_region)
+                    tk_resp = tagging.get_tag_keys()
+                    for k in tk_resp.get('TagKeys', []):
+                        if not k.startswith('aws:'):
+                            all_tag_keys.add(k)
+                except Exception:
+                    pass
+
+            # Use first region with resources for the paginator scan
             tagging = boto3.client('resourcegroupstaggingapi',
                 aws_access_key_id=creds['AccessKeyId'],
                 aws_secret_access_key=creds['SecretAccessKey'],
                 aws_session_token=creds['SessionToken'],
                 region_name='us-east-1')
-
-            # Get all tag keys
-            try:
-                tk_resp = tagging.get_tag_keys()
-                for k in tk_resp.get('TagKeys', []):
-                    if not k.startswith('aws:'):
-                        all_tag_keys.add(k)
-            except Exception:
-                pass
-
-            # Scan resources and count tag values
             paginator = tagging.get_paginator('get_resources')
             try:
                 for page in paginator.paginate(ResourcesPerPage=100):
@@ -6581,20 +6587,30 @@ def handle_tag_scan(event):
                 RoleSessionName='SlashMyBillTagScan', ExternalId=external_id,
             )
             creds = assume_resp['Credentials']
-            tagging = boto3.client('resourcegroupstaggingapi',
-                aws_access_key_id=creds['AccessKeyId'],
-                aws_secret_access_key=creds['SecretAccessKey'],
-                aws_session_token=creds['SessionToken'],
-                region_name='us-east-1')
+            # Scan multiple regions for complete tag coverage
+            _tag_regions = ['us-east-1', 'eu-central-1', 'eu-west-1', 'us-west-2', 'ap-southeast-1']
+            for _tag_region in _tag_regions:
+                try:
+                    _tr = boto3.client('resourcegroupstaggingapi',
+                        aws_access_key_id=creds['AccessKeyId'],
+                        aws_secret_access_key=creds['SecretAccessKey'],
+                        aws_session_token=creds['SessionToken'],
+                        region_name=_tag_region)
+                    tk_resp = _tr.get_tag_keys()
+                    for k in tk_resp.get('TagKeys', []):
+                        if not k.startswith('aws:'):
+                            all_tag_keys.add(k)
+                except Exception:
+                    pass
 
-            # Get all tag keys in use
-            try:
-                tk_resp = tagging.get_tag_keys()
-                for k in tk_resp.get('TagKeys', []):
-                    if not k.startswith('aws:'):
-                        all_tag_keys.add(k)
-            except Exception:
-                pass
+            # Scan resources across multiple regions
+            _scan_tag_regions = ['us-east-1', 'eu-central-1', 'eu-west-1', 'us-west-2', 'ap-southeast-1']
+            for _tr_region in _scan_tag_regions:
+                tagging = boto3.client('resourcegroupstaggingapi',
+                    aws_access_key_id=creds['AccessKeyId'],
+                    aws_secret_access_key=creds['SecretAccessKey'],
+                    aws_session_token=creds['SessionToken'],
+                    region_name=_tr_region)
 
             # Scan ALL taggable resources (no type filter = all resource types)
             # This catches everything on the bill: EC2, RDS, Lambda, S3, ELB, NAT, EBS,
@@ -6725,11 +6741,20 @@ def handle_tag_apply(event):
                 RoleSessionName='SlashMyBillTagApply', ExternalId=external_id,
             )
             creds = assume_resp['Credentials']
-            tagging = boto3.client('resourcegroupstaggingapi',
-                aws_access_key_id=creds['AccessKeyId'],
-                aws_secret_access_key=creds['SecretAccessKey'],
-                aws_session_token=creds['SessionToken'],
-                region_name='us-east-1')
+            # Group ARNs by region and tag in each region
+            arns_by_region = {}
+            for arn in batch_arns:
+                # ARN format: arn:aws:service:region:account:resource
+                parts = arn.split(':')
+                arn_region = parts[3] if len(parts) > 3 and parts[3] else 'us-east-1'
+                arns_by_region.setdefault(arn_region, []).append(arn)
+
+            for _apply_region, _region_arns in arns_by_region.items():
+                tagging = boto3.client('resourcegroupstaggingapi',
+                    aws_access_key_id=creds['AccessKeyId'],
+                    aws_secret_access_key=creds['SecretAccessKey'],
+                    aws_session_token=creds['SessionToken'],
+                    region_name=_apply_region)
 
             # Tag in batches of 20 (API limit)
             for i in range(0, len(acct_arns), 20):
