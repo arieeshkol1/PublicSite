@@ -6058,6 +6058,7 @@ async function _applyTags() {
         var msg = data.message || 'Tags applied!';
         if (data.errors && data.errors.length > 0) {
             msg += ' | Errors: ' + data.errors.slice(0, 3).join('; ');
+            if (data._debug) msg += ' | DEBUG: ' + JSON.stringify(data._debug);
             if (statusEl) { statusEl.style.color = '#f59e0b'; statusEl.textContent = msg; }
             notify(msg, 'warning');
         } else {

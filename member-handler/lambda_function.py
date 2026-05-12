@@ -6817,6 +6817,38 @@ def handle_tag_apply(event):
                 RoleSessionName='SlashMyBillTagApply', ExternalId=external_id,
             )
             creds = assume_resp['Credentials']
+
+            # DIAGNOSTIC: List the role's inline policies to debug permission issues
+            try:
+                iam_client = boto3.client('iam',
+                    aws_access_key_id=creds['AccessKeyId'],
+                    aws_secret_access_key=creds['SecretAccessKey'],
+                    aws_session_token=creds['SessionToken'])
+                role_name = f'SlashMyBill-{acct_id}'
+                policies_resp = iam_client.list_role_policies(RoleName=role_name)
+                inline_policies = policies_resp.get('PolicyNames', [])
+                attached_resp = iam_client.list_attached_role_policies(RoleName=role_name)
+                attached_policies = [p['PolicyName'] for p in attached_resp.get('AttachedPolicies', [])]
+                # Get the inline policy document to check for tag:TagResources
+                policy_actions = []
+                for pol_name in inline_policies:
+                    pol_doc = iam_client.get_role_policy(RoleName=role_name, PolicyName=pol_name)
+                    doc = pol_doc.get('PolicyDocument', {})
+                    for stmt in doc.get('Statement', []):
+                        actions = stmt.get('Action', [])
+                        if isinstance(actions, str):
+                            actions = [actions]
+                        tag_actions = [a for a in actions if 'tag' in a.lower() or 'Tag' in a or 'CreateTags' in a]
+                        policy_actions.extend(tag_actions)
+                results['_debug'] = {
+                    'roleName': role_name,
+                    'inlinePolicies': inline_policies,
+                    'attachedPolicies': attached_policies,
+                    'tagRelatedActions': policy_actions,
+                }
+                logger.info(f"Role {role_name} policies: inline={inline_policies}, attached={attached_policies}, tag_actions={policy_actions}")
+            except Exception as diag_e:
+                results['_debug'] = {'error': str(diag_e)[:200]}
             # Group ARNs by region and tag in each region
             arns_by_region = {}
             for arn in acct_arns:
@@ -6879,6 +6911,7 @@ def handle_tag_apply(event):
         'tagged': results['tagged'],
         'failed': results['failed'],
         'errors': results['errors'][:10],
+        '_debug': results.get('_debug'),
     })
 
 
