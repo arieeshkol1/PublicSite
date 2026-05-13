@@ -5580,7 +5580,7 @@ def _gather_account_data(question, credentials):
 
     # EC2 instances — fetch ONLY when question specifically asks about EC2 instances
     # Skip for broad questions like "how efficient" or "optimize" to avoid timeout
-    _ec2_specific_keywords = ['ec2', 'instance', 'server', 'running', 'ri', 'reserved']
+    _ec2_specific_keywords = ['ec2', 'instance', 'server', 'running', 'ri', 'reserved', 'list', 'cost']
     _broad_keywords = ['efficient', 'optimize', 'saving', 'save', 'overview', 'summary', 'breakdown']
     _is_broad_question = any(kw in question_lower for kw in _broad_keywords)
     _is_ec2_specific = any(kw in question_lower for kw in _ec2_specific_keywords)
@@ -5588,10 +5588,14 @@ def _gather_account_data(question, credentials):
     top_service_names_ec2 = [s['service'] for s in data.get('cost_by_service', [])[:8]]
     if _is_ec2_specific and not _is_broad_question:
         try:
-            # Detect active regions from Cost Explorer billing data (single API call)
-            _ec2_regions = _detect_charged_regions(credentials)[:2]  # Cap at 2 regions to stay within timeout
+            import time as _t
+            _ec2_start = _t.time()
+            # Use only 1 region to stay within 30s API Gateway limit
+            _ec2_regions = _detect_charged_regions(credentials)[:1]
             instance_list = []
             for _ec2_region in _ec2_regions:
+                if _t.time() - _ec2_start > 12:  # Hard stop at 12s for EC2 section
+                    break
                 try:
                     ec2_r = _make_client('ec2', _ec2_region)
                     instances = ec2_r.describe_instances(Filters=[{'Name': 'instance-state-name', 'Values': ['running', 'stopped']}])
@@ -5608,7 +5612,7 @@ def _gather_account_data(question, credentials):
                                 'name': name_tag,
                                 'region': _ec2_region,
                                 'az': inst.get('Placement', {}).get('AvailabilityZone', ''),
-                                'tags_raw': inst.get('Tags', []),
+                                'platform': inst.get('Platform', 'Linux'),
                             })
                 except Exception:
                     continue
@@ -5628,7 +5632,8 @@ def _gather_account_data(question, credentials):
         'budget', 'cost alert', 'billing alarm', 'spend limit',                               # Budgets
     ])
     top_service_names = [s['service'] for s in data.get('cost_by_service', [])[:6]]
-    if not _specific_service_question and (
+    _elapsed = _t.time() - _ec2_start if '_ec2_start' in dir() else 0
+    if not _specific_service_question and _elapsed < 18 and (
         any(s in top_service_names for s in ['EC2 - Other', 'Amazon Virtual Private Cloud']) or
         any(kw in question_lower for kw in ['nat', 'vpc', 'network', 'data transfer'])
     ):

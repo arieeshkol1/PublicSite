@@ -8124,9 +8124,18 @@ function _renderLicensingReport(rc) {
         html += '</div>';
     }
 
+    // BYOL explanation note
+    if (rc.byStrategy && rc.byStrategy.some(function(s) { return s.strategy === 'byol'; })) {
+        html += '<div style="background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;padding:12px;margin-bottom:16px;font-size:0.82em;color:#92400e;">';
+        html += '<strong>\u26a0\ufe0f BYOL Note:</strong> The savings shown represent the AWS Windows license premium. ';
+        html += 'To actually save, you need active Microsoft Software Assurance (~$324/mo for 8-core minimum). ';
+        html += 'BYOL is cost-effective only if you already own licenses. Click each instance below for a detailed cost comparison.';
+        html += '</div>';
+    }
+
     // Instance table
     if (rc.instances && rc.instances.length > 0) {
-        html += '<div style="font-weight:600;margin-bottom:8px;color:#1f2937;">Per-Instance Breakdown:</div>';
+        html += '<div style="font-weight:600;margin-bottom:8px;color:#1f2937;">Per-Instance Breakdown: <span style="font-weight:400;font-size:0.8em;color:#6b7280;">(click to expand details)</span></div>';
         html += '<div style="max-height:400px;overflow-y:auto;">';
         rc.instances.forEach(function(inst) {
             if (!inst.recommendations || inst.recommendations.length === 0) return;
