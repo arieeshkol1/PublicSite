@@ -5588,13 +5588,12 @@ def _gather_account_data(question, credentials):
     top_service_names_ec2 = [s['service'] for s in data.get('cost_by_service', [])[:8]]
     if _is_ec2_specific and not _is_broad_question:
         try:
-            import time as _t
-            _ec2_start = _t.time()
+            _ec2_start = time.time()
             # Use only 1 region to stay within 30s API Gateway limit
             _ec2_regions = _detect_charged_regions(credentials)[:1]
             instance_list = []
             for _ec2_region in _ec2_regions:
-                if _t.time() - _ec2_start > 12:  # Hard stop at 12s for EC2 section
+                if time.time() - _ec2_start > 12:  # Hard stop at 12s for EC2 section
                     break
                 try:
                     ec2_r = _make_client('ec2', _ec2_region)
@@ -5632,7 +5631,10 @@ def _gather_account_data(question, credentials):
         'budget', 'cost alert', 'billing alarm', 'spend limit',                               # Budgets
     ])
     top_service_names = [s['service'] for s in data.get('cost_by_service', [])[:6]]
-    _elapsed = _t.time() - _ec2_start if '_ec2_start' in dir() else 0
+    try:
+        _elapsed = time.time() - _ec2_start
+    except NameError:
+        _elapsed = 0
     if not _specific_service_question and _elapsed < 18 and (
         any(s in top_service_names for s in ['EC2 - Other', 'Amazon Virtual Private Cloud']) or
         any(kw in question_lower for kw in ['nat', 'vpc', 'network', 'data transfer'])
