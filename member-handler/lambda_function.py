@@ -1697,49 +1697,26 @@ def handle_get_tag_keys(event):
                 ExternalId=external_id
             )['Credentials']
 
-            # Use Resource Groups Tagging API — scan charged regions
-            _tag_scan_regions = _detect_charged_regions(creds)
-            if not _tag_scan_regions:
-                _tag_scan_regions = ['us-east-1', 'eu-central-1']
-            for _tsr in _tag_scan_regions[:3]:  # Cap at 3 regions
-                try:
-                    tagging = boto3.client('resourcegroupstaggingapi',
-                        aws_access_key_id=creds['AccessKeyId'],
-                        aws_secret_access_key=creds['SecretAccessKey'],
-                        aws_session_token=creds['SessionToken'],
-                        region_name=_tsr)
-                    resp = tagging.get_tag_keys()
-                    for key in resp.get('TagKeys', []):
-                        if key and not key.startswith('aws:'):
-                            all_keys.add(key)
-                    while resp.get('PaginationToken'):
-                        resp = tagging.get_tag_keys(PaginationToken=resp['PaginationToken'])
-                        for key in resp.get('TagKeys', []):
-                            if key and not key.startswith('aws:'):
-                                all_keys.add(key)
-                except Exception:
-                    pass
-
-            # Also try other regions where charges exist
-            try:
-                ce = boto3.client('ce',
-                    aws_access_key_id=creds['AccessKeyId'],
-                    aws_secret_access_key=creds['SecretAccessKey'],
-                    aws_session_token=creds['SessionToken'],
-                    region_name='us-east-1')
-                end_date = datetime.now(timezone.utc).strftime('%Y-%m-%d')
-                start_date = (datetime.now(timezone.utc) - timedelta(days=30)).strftime('%Y-%m-%d')
-                ce_resp = ce.get_tags(TimePeriod={'Start': start_date, 'End': end_date})
-                for tag in ce_resp.get('Tags', []):
-                    if tag and not tag.startswith('aws:'):
-                        all_keys.add(tag)
-            except Exception:
-                pass
+            # Use Cost Explorer GetTags — only returns activated cost allocation tags
+            ce = boto3.client('ce',
+                aws_access_key_id=creds['AccessKeyId'],
+                aws_secret_access_key=creds['SecretAccessKey'],
+                aws_session_token=creds['SessionToken'],
+                region_name='us-east-1')
+            end_date = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+            start_date = (datetime.now(timezone.utc) - timedelta(days=90)).strftime('%Y-%m-%d')
+            resp = ce.get_tags(TimePeriod={'Start': start_date, 'End': end_date})
+            for tag in resp.get('Tags', []):
+                if tag and not tag.startswith('aws:'):
+                    all_keys.add(tag)
 
         except Exception as e:
             logger.warning(f"Failed to get tag keys for {acct['accountId']}: {e}")
 
-    return create_response(200, {'tagKeys': sorted(all_keys)})
+    result = {'tagKeys': sorted(all_keys)}
+    if not all_keys:
+        result['noTagsMessage'] = 'No cost allocation tags found. Activate tags in AWS Billing > Cost Allocation Tags, or run FinOps Healthcheck to auto-activate.'
+    return create_response(200, result)
 
 
 def handle_get_tag_values(event):
@@ -1786,45 +1763,19 @@ def handle_get_tag_values(event):
                 ExternalId=external_id
             )['Credentials']
 
-            # Use Resource Groups Tagging API — scan charged regions
-            _tag_val_regions = _detect_charged_regions(creds)
-            if not _tag_val_regions:
-                _tag_val_regions = ['us-east-1', 'eu-central-1']
-            for _tvr in _tag_val_regions[:3]:
-                try:
-                    tagging = boto3.client('resourcegroupstaggingapi',
-                        aws_access_key_id=creds['AccessKeyId'],
-                        aws_secret_access_key=creds['SecretAccessKey'],
-                        aws_session_token=creds['SessionToken'],
-                        region_name=_tvr)
-                    resp = tagging.get_tag_values(Key=tag_key)
-                    for val in resp.get('TagValues', []):
-                        if val:
-                            all_values.add(val)
-                    while resp.get('PaginationToken'):
-                        resp = tagging.get_tag_values(Key=tag_key, PaginationToken=resp['PaginationToken'])
-                        for val in resp.get('TagValues', []):
-                            if val:
-                                all_values.add(val)
-                except Exception:
-                    pass
+            ce = boto3.client('ce',
+                aws_access_key_id=creds['AccessKeyId'],
+                aws_secret_access_key=creds['SecretAccessKey'],
+                aws_session_token=creds['SessionToken'],
+                region_name='us-east-1')
 
-            # Also try CE for cost-allocation tag values
-            try:
-                ce = boto3.client('ce',
-                    aws_access_key_id=creds['AccessKeyId'],
-                    aws_secret_access_key=creds['SecretAccessKey'],
-                    aws_session_token=creds['SessionToken'],
-                    region_name='us-east-1')
-                end_date = datetime.now(timezone.utc).strftime('%Y-%m-%d')
-                start_date = (datetime.now(timezone.utc) - timedelta(days=30)).strftime('%Y-%m-%d')
-                ce_resp = ce.get_tags(TimePeriod={'Start': start_date, 'End': end_date}, TagKey=tag_key)
-                for val in ce_resp.get('Tags', []):
-                    if val:
-                        all_values.add(val)
-            except Exception:
-                pass
+            end_date = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+            start_date = (datetime.now(timezone.utc) - timedelta(days=90)).strftime('%Y-%m-%d')
 
+            resp = ce.get_tags(TimePeriod={'Start': start_date, 'End': end_date}, TagKey=tag_key)
+            for val in resp.get('Tags', []):
+                if val:
+                    all_values.add(val)
         except Exception as e:
             logger.warning(f"Failed to get tag values for {acct['accountId']}/{tag_key}: {e}")
 
@@ -7509,6 +7460,28 @@ def handle_tag_apply(event):
             results['errors'].append(f"Cannot access {acct_id}: {str(e)}")
 
     logger.info(f"Tag apply by {member_email}: {results['tagged']} tagged, {results['failed']} failed, errors: {results['errors'][:5]}")
+
+    # Auto-activate applied tag keys as cost allocation tags (so they appear in Cost Explorer)
+    if results['tagged'] > 0 and tags:
+        for acct_id in arns_by_account.keys():
+            try:
+                assume_resp2 = sts_client.assume_role(
+                    RoleArn=f'arn:aws:iam::{acct_id}:role/SlashMyBill-{acct_id}',
+                    RoleSessionName='SlashMyBillActivateTags', ExternalId=external_id,
+                )
+                creds2 = assume_resp2['Credentials']
+                ce_client = boto3.client('ce',
+                    aws_access_key_id=creds2['AccessKeyId'],
+                    aws_secret_access_key=creds2['SecretAccessKey'],
+                    aws_session_token=creds2['SessionToken'],
+                    region_name='us-east-1')
+                tag_keys_to_activate = [{'TagKey': k, 'Status': 'Active'} for k in tags.keys()]
+                ce_client.update_cost_allocation_tags_status(CostAllocationTagsStatus=tag_keys_to_activate)
+                logger.info(f"Activated cost allocation tags {list(tags.keys())} for {acct_id}")
+            except Exception as e:
+                # Non-critical — may fail if not management account or missing permission
+                logger.warning(f"Could not activate cost allocation tags for {acct_id}: {e}")
+            break  # Only need to activate once (from management account)
 
     return create_response(200, {
         'message': f"{results['tagged']} resources tagged successfully",
