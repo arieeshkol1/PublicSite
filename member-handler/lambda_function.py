@@ -5745,7 +5745,11 @@ def _gather_account_data(question, credentials):
         any(kw in question_lower for kw in ['nat', 'vpc', 'network', 'data transfer', 'ebs', 'volume', 'eip', 'elastic ip', 'load balancer'])
     ):
         try:
-            ec2 = _make_client('ec2')
+            try:
+                _ebs_region = _ec2_regions[0]
+            except (NameError, IndexError):
+                _ebs_region = 'us-east-1'
+            ec2 = _make_client('ec2', _ebs_region)
             nat_gws = ec2.describe_nat_gateways(
                 Filter=[{'Name': 'state', 'Values': ['available', 'pending']}]
             )
