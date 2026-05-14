@@ -1697,26 +1697,28 @@ def handle_get_tag_keys(event):
                 ExternalId=external_id
             )['Credentials']
 
-            # Use Resource Groups Tagging API — returns ALL resource tags immediately
-            tagging = boto3.client('resourcegroupstaggingapi',
-                aws_access_key_id=creds['AccessKeyId'],
-                aws_secret_access_key=creds['SecretAccessKey'],
-                aws_session_token=creds['SessionToken'],
-                region_name='us-east-1')
-
-            try:
-                resp = tagging.get_tag_keys()
-                for key in resp.get('TagKeys', []):
-                    if key and not key.startswith('aws:'):
-                        all_keys.add(key)
-                # Paginate if needed
-                while resp.get('PaginationToken'):
-                    resp = tagging.get_tag_keys(PaginationToken=resp['PaginationToken'])
+            # Use Resource Groups Tagging API — scan charged regions
+            _tag_scan_regions = _detect_charged_regions(creds)
+            if not _tag_scan_regions:
+                _tag_scan_regions = ['us-east-1', 'eu-central-1']
+            for _tsr in _tag_scan_regions[:3]:  # Cap at 3 regions
+                try:
+                    tagging = boto3.client('resourcegroupstaggingapi',
+                        aws_access_key_id=creds['AccessKeyId'],
+                        aws_secret_access_key=creds['SecretAccessKey'],
+                        aws_session_token=creds['SessionToken'],
+                        region_name=_tsr)
+                    resp = tagging.get_tag_keys()
                     for key in resp.get('TagKeys', []):
                         if key and not key.startswith('aws:'):
                             all_keys.add(key)
-            except Exception:
-                pass
+                    while resp.get('PaginationToken'):
+                        resp = tagging.get_tag_keys(PaginationToken=resp['PaginationToken'])
+                        for key in resp.get('TagKeys', []):
+                            if key and not key.startswith('aws:'):
+                                all_keys.add(key)
+                except Exception:
+                    pass
 
             # Also try other regions where charges exist
             try:
@@ -1784,25 +1786,28 @@ def handle_get_tag_values(event):
                 ExternalId=external_id
             )['Credentials']
 
-            # Use Resource Groups Tagging API to get tag values
-            tagging = boto3.client('resourcegroupstaggingapi',
-                aws_access_key_id=creds['AccessKeyId'],
-                aws_secret_access_key=creds['SecretAccessKey'],
-                aws_session_token=creds['SessionToken'],
-                region_name='us-east-1')
-
-            try:
-                resp = tagging.get_tag_values(Key=tag_key)
-                for val in resp.get('TagValues', []):
-                    if val:
-                        all_values.add(val)
-                while resp.get('PaginationToken'):
-                    resp = tagging.get_tag_values(Key=tag_key, PaginationToken=resp['PaginationToken'])
+            # Use Resource Groups Tagging API — scan charged regions
+            _tag_val_regions = _detect_charged_regions(creds)
+            if not _tag_val_regions:
+                _tag_val_regions = ['us-east-1', 'eu-central-1']
+            for _tvr in _tag_val_regions[:3]:
+                try:
+                    tagging = boto3.client('resourcegroupstaggingapi',
+                        aws_access_key_id=creds['AccessKeyId'],
+                        aws_secret_access_key=creds['SecretAccessKey'],
+                        aws_session_token=creds['SessionToken'],
+                        region_name=_tvr)
+                    resp = tagging.get_tag_values(Key=tag_key)
                     for val in resp.get('TagValues', []):
                         if val:
                             all_values.add(val)
-            except Exception:
-                pass
+                    while resp.get('PaginationToken'):
+                        resp = tagging.get_tag_values(Key=tag_key, PaginationToken=resp['PaginationToken'])
+                        for val in resp.get('TagValues', []):
+                            if val:
+                                all_values.add(val)
+                except Exception:
+                    pass
 
             # Also try CE for cost-allocation tag values
             try:
