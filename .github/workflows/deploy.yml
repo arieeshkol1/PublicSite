@@ -340,6 +340,26 @@ jobs:
             --timeout 300 > /dev/null 2>&1 || true
           echo "✓ Member handler: 2048MB, 300s timeout"
 
+      - name: Grant Lambda self-invoke permission (for async scan)
+        continue-on-error: true
+        run: |
+          # Get the Lambda role ARN
+          ROLE_ARN=$(aws lambda get-function-configuration --function-name aws-bill-analyzer-member-api --query "Role" --output text)
+          ROLE_NAME=$(echo $ROLE_ARN | awk -F'/' '{print $NF}')
+          # Add inline policy for self-invocation
+          aws iam put-role-policy \
+            --role-name "$ROLE_NAME" \
+            --policy-name "SelfInvokePolicy" \
+            --policy-document '{
+              "Version": "2012-10-17",
+              "Statement": [{
+                "Effect": "Allow",
+                "Action": "lambda:InvokeFunction",
+                "Resource": "arn:aws:lambda:us-east-1:991105135552:function:aws-bill-analyzer-member-api"
+              }]
+            }'
+          echo "✓ Lambda self-invoke permission granted"
+
       - name: Configure Cognito email via SES (eshkolai.com)
         continue-on-error: true
         run: |
