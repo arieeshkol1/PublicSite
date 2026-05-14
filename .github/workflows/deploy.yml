@@ -32,7 +32,6 @@ on:
       - 'infrastructure/update-bedrock-agent.py'
       - 'agent-action/agent-instructions.md'
       - 'agent-action/openapi-schema.json'
-      - 'infrastructure/deploy-test-ecs-me-central-1.yaml'
       - '.github/workflows/deploy.yml'
   workflow_dispatch:
 
@@ -423,6 +422,8 @@ jobs:
             "GET /members/tag-values"
             "POST /members/accounts/update-permissions"
             "GET /members/actions/scan-status"
+            "POST /members/committed-discounts/scan"
+            "POST /members/committed-discounts/ladder"
           )
           for ROUTE in "${MEMBER_ROUTES[@]}"; do
             aws apigatewayv2 create-route --api-id $API_ID --route-key "$ROUTE" --target "integrations/$MEMBER_INT" 2>/dev/null || true
@@ -703,15 +704,3 @@ jobs:
           echo "Admin: https://slashmycloudbill.com/admin/"
           echo "Member Portal: https://slashmycloudbill.com/members/"
           echo "API: ${{ steps.api-url.outputs.api_endpoint }}"
-
-      - name: Deploy ECS billing test to me-central-1
-        continue-on-error: true
-        run: |
-          echo "Deploying ECS/Fargate billing test to me-central-1..."
-          aws cloudformation deploy \
-            --template-file infrastructure/deploy-test-ecs-me-central-1.yaml \
-            --stack-name slashmybill-billing-test \
-            --region me-central-1 \
-            --capabilities CAPABILITY_NAMED_IAM \
-            --no-fail-on-empty-changeset || echo "ECS deploy failed (likely IAM permissions for me-central-1 needed)"
-          echo "To delete: aws cloudformation delete-stack --stack-name slashmybill-billing-test --region me-central-1"
