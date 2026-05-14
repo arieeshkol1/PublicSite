@@ -10,9 +10,11 @@ import uuid
 import os
 import re
 import time
+import math
 import secrets
 import hashlib
 import logging
+import concurrent.futures
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
@@ -159,6 +161,8 @@ def lambda_handler(event, context):
         'POST /members/ebs/optimize': handle_ebs_optimize,
         'GET /members/tag-keys': handle_get_tag_keys,
         'GET /members/tag-values': handle_get_tag_values,
+        'POST /members/committed-discounts/scan': handle_committed_discount_scan,
+        'POST /members/committed-discounts/ladder': handle_committed_discount_ladder,
     }
 
     handler = routes.get(route_key)
@@ -1124,9 +1128,12 @@ def _get_latest_policy_actions():
         # Cost Explorer
         'ce:GetCostAndUsage', 'ce:GetCostForecast', 'ce:GetReservationUtilization',
         'ce:GetReservationCoverage', 'ce:GetSavingsPlansUtilization', 'ce:GetSavingsPlansCoverage',
+        'ce:GetSavingsPlansPurchaseRecommendation', 'ce:GetReservationPurchaseRecommendation',
         'ce:GetRightsizingRecommendation', 'ce:GetCostCategories', 'ce:GetDimensionValues',
         'ce:GetTags', 'ce:ListCostAllocationTags', 'ce:GetApproximateUsageRecords',
         'ce:UpdatePreferences', 'ce:GetPreferences',
+        # Savings Plans (expiring commitments retrieval)
+        'savingsplans:DescribeSavingsPlans',
         # Budgets
         'budgets:ViewBudget', 'budgets:DescribeBudgets', 'budgets:DescribeBudgetActionsForAccount', 'budgets:*',
         # Cost Optimization Hub
@@ -1258,6 +1265,8 @@ def handle_generate_template(event):
                                             'ce:GetReservationCoverage',
                                             'ce:GetSavingsPlansUtilization',
                                             'ce:GetSavingsPlansCoverage',
+                                            'ce:GetSavingsPlansPurchaseRecommendation',
+                                            'ce:GetReservationPurchaseRecommendation',
                                             'ce:GetRightsizingRecommendation',
                                             'ce:GetCostCategories',
                                             'ce:GetDimensionValues',
@@ -1266,6 +1275,8 @@ def handle_generate_template(event):
                                             'ce:GetApproximateUsageRecords',
                                             'ce:UpdatePreferences',
                                             'ce:GetPreferences',
+                                            # Savings Plans (expiring commitments retrieval)
+                                            'savingsplans:DescribeSavingsPlans',
                                             # Budgets
                                             'budgets:ViewBudget',
                                             'budgets:DescribeBudgets',
@@ -2296,6 +2307,1682 @@ def _get_commitments_data(accounts, external_id):
         'totalEC2RI': sum(r['count'] for r in all_ri_ec2),
         'totalRDSRI': sum(r['count'] for r in all_ri_rds),
     }
+
+
+def _calculate_p10_baseline(ce_client, account_id):
+    """Calculate P10 baseline from hourly cost data for committed discount analysis.
+
+    Retrieves trailing 30 days of hourly compute spend (EC2, Fargate, Lambda),
+    computes the 10th percentile as the safest commitment level, and returns
+    a dict with baseline metrics and safe commitment range.
+
+    Args:
+        ce_client: A boto3 Cost Explorer client (created from cross-account credentials).
+        account_id: The 12-digit AWS account ID being analyzed.
+
+    Returns:
+        dict with keys: p10HourlySpend, averageHourlySpend, variabilityWarning,
+        safeCommitmentRange, granularity, dataPoints
+    """
+    end_date = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+    start_date = (datetime.now(timezone.utc) - timedelta(days=30)).strftime('%Y-%m-%d')
+
+    # Filter to compute services: EC2, Fargate (ECS), Lambda
+    service_filter = {
+        'Dimensions': {
+            'Key': 'SERVICE',
+            'Values': [
+                'Amazon Elastic Compute Cloud - Compute',
+                'AWS Lambda',
+                'Amazon Elastic Container Service',
+            ]
+        }
+    }
+
+    # Attempt HOURLY granularity first
+    granularity = 'HOURLY'
+    try:
+        response = ce_client.get_cost_and_usage(
+            TimePeriod={'Start': start_date, 'End': end_date},
+            Granularity='HOURLY',
+            Metrics=['UnblendedCost'],
+            Filter=service_filter,
+        )
+    except ClientError as e:
+        logger.warning(f"P10 baseline HOURLY call failed for {account_id}: {e}")
+        response = {'ResultsByTime': []}
+
+    # Extract cost amounts from each period
+    values = []
+    for period in response.get('ResultsByTime', []):
+        amount_str = period.get('Total', {}).get('UnblendedCost', {}).get('Amount', '0')
+        try:
+            amount = float(amount_str)
+        except (ValueError, TypeError):
+            amount = 0.0
+        values.append(amount)
+
+    # Fallback: if fewer than 7 days of hourly data (7*24=168 data points), use DAILY
+    if len(values) < 168:
+        granularity = 'DAILY'
+        try:
+            response = ce_client.get_cost_and_usage(
+                TimePeriod={'Start': start_date, 'End': end_date},
+                Granularity='DAILY',
+                Metrics=['UnblendedCost'],
+                Filter=service_filter,
+            )
+        except ClientError as e:
+            logger.warning(f"P10 baseline DAILY call failed for {account_id}: {e}")
+            response = {'ResultsByTime': []}
+
+        values = []
+        for period in response.get('ResultsByTime', []):
+            amount_str = period.get('Total', {}).get('UnblendedCost', {}).get('Amount', '0')
+            try:
+                amount = float(amount_str)
+            except (ValueError, TypeError):
+                amount = 0.0
+            values.append(amount)
+
+    data_points = len(values)
+
+    # Handle edge case: no data at all
+    if data_points == 0:
+        return {
+            'p10HourlySpend': 0.0,
+            'averageHourlySpend': 0.0,
+            'variabilityWarning': False,
+            'safeCommitmentRange': {'min': 0.0, 'max': 0.0},
+            'granularity': granularity,
+            'dataPoints': 0,
+        }
+
+    # Sort ascending and compute P10
+    values.sort()
+    p10_index = math.floor(len(values) * 0.10)
+    p10 = values[p10_index]
+
+    # Compute average
+    average = sum(values) / len(values)
+
+    # Variability warning: P10 < 70% of average
+    variability_warning = p10 < (average * 0.70) if average > 0 else False
+
+    # Safe commitment range: [p10, min(p10 * 1.1, average * 0.70)]
+    range_max = min(p10 * 1.1, average * 0.70) if average > 0 else p10 * 1.1
+    # Ensure min <= max (can happen if p10 is very close to or above 70% of average)
+    if range_max < p10:
+        range_max = p10
+
+    return {
+        'p10HourlySpend': round(p10, 4),
+        'averageHourlySpend': round(average, 4),
+        'variabilityWarning': variability_warning,
+        'safeCommitmentRange': {'min': round(p10, 4), 'max': round(range_max, 4)},
+        'granularity': granularity,
+        'dataPoints': data_points,
+    }
+
+
+def _get_sp_recommendations(ce_client, average_hourly_spend):
+    """Retrieve Savings Plan purchase recommendations for all types and term-payment combos.
+
+    Queries the Cost Explorer GetSavingsPlansPurchaseRecommendation API for both
+    ComputeSavingsPlans and EC2InstanceSavingsPlans, across all four term-payment
+    combinations (1yr NoUpfront, 1yr AllUpfront, 3yr NoUpfront, 3yr AllUpfront).
+
+    Each recommendation is normalized into a standard response format with break-even
+    calculation and aggressive commitment flagging.
+
+    Args:
+        ce_client: A boto3 Cost Explorer client (created from cross-account credentials).
+        average_hourly_spend: The average hourly on-demand spend for the account (float).
+
+    Returns:
+        dict with keys:
+            - recommendations: list of normalized recommendation objects
+            - message: str or None (set to "insufficient history" if no data available)
+    """
+    plan_types = ['ComputeSavingsPlans', 'EC2InstanceSavingsPlans']
+    term_payment_combos = [
+        ('ONE_YEAR', 'NO_UPFRONT'),
+        ('ONE_YEAR', 'ALL_UPFRONT'),
+        ('THREE_YEARS', 'NO_UPFRONT'),
+        ('THREE_YEARS', 'ALL_UPFRONT'),
+    ]
+
+    recommendations = []
+
+    for plan_type in plan_types:
+        for term, payment_option in term_payment_combos:
+            try:
+                response = ce_client.get_savings_plans_purchase_recommendation(
+                    SavingsPlansType=plan_type,
+                    TermInYears=term,
+                    PaymentOption=payment_option,
+                    LookbackPeriodInDays='THIRTY_DAYS',
+                )
+            except ClientError as e:
+                logger.warning(
+                    f"SP recommendation call failed for {plan_type} {term} {payment_option}: {e}"
+                )
+                continue
+
+            # Extract recommendation details from the response
+            sp_recs = response.get('SavingsPlansPurchaseRecommendation', {})
+            rec_details = sp_recs.get('SavingsPlansPurchaseRecommendationDetails', [])
+
+            if not rec_details:
+                continue
+
+            for detail in rec_details:
+                hourly_commitment = float(detail.get('HourlyCommitmentToPurchase', '0'))
+                estimated_monthly_savings = float(
+                    detail.get('EstimatedMonthlySavingsAmount', '0')
+                )
+                estimated_on_demand_cost = float(
+                    detail.get('EstimatedOnDemandCost', '0')
+                )
+                upfront_cost = float(detail.get('UpfrontCost', '0'))
+
+                # Calculate savings percentage
+                if estimated_on_demand_cost > 0:
+                    savings_percentage = round(
+                        (estimated_monthly_savings / estimated_on_demand_cost) * 100, 1
+                    )
+                else:
+                    savings_percentage = 0.0
+
+                # Calculate break-even months
+                if payment_option != 'NO_UPFRONT' and upfront_cost > 0 and estimated_monthly_savings > 0:
+                    break_even_months = round(upfront_cost / estimated_monthly_savings, 1)
+                else:
+                    break_even_months = None
+
+                # Determine term in years
+                term_in_years = 1 if term == 'ONE_YEAR' else 3
+
+                # Map payment option to display format
+                payment_option_display = {
+                    'NO_UPFRONT': 'NoUpfront',
+                    'ALL_UPFRONT': 'AllUpfront',
+                    'PARTIAL_UPFRONT': 'PartialUpfront',
+                }.get(payment_option, payment_option)
+
+                # Aggressive commitment check
+                is_aggressive = False
+                aggressive_note = None
+                if average_hourly_spend > 0 and hourly_commitment > (average_hourly_spend * 0.70):
+                    is_aggressive = True
+                    aggressive_note = (
+                        f"This commitment (${hourly_commitment:.2f}/hr) exceeds 70% of your "
+                        f"average hourly spend (${average_hourly_spend:.2f}/hr). "
+                        f"Consider the 60-70% range (${average_hourly_spend * 0.60:.2f}-"
+                        f"${average_hourly_spend * 0.70:.2f}/hr) for a safer commitment."
+                    )
+
+                recommendations.append({
+                    'planType': plan_type,
+                    'termInYears': term_in_years,
+                    'paymentOption': payment_option_display,
+                    'hourlyCommitment': round(hourly_commitment, 2),
+                    'estimatedMonthlySavings': round(estimated_monthly_savings, 2),
+                    'estimatedSavingsPercentage': savings_percentage,
+                    'estimatedMonthlyOnDemandCost': round(estimated_on_demand_cost, 2),
+                    'breakEvenMonths': break_even_months,
+                    'upfrontCost': round(upfront_cost, 2),
+                    'isAggressive': is_aggressive,
+                    'aggressiveNote': aggressive_note,
+                })
+
+    # Handle empty results - insufficient history
+    if not recommendations:
+        return {
+            'recommendations': [],
+            'message': 'Insufficient usage history to generate Savings Plan recommendations. '
+                       'A minimum of 7 days of usage data is required.',
+        }
+
+    return {
+        'recommendations': recommendations,
+        'message': None,
+    }
+
+
+def _get_ri_recommendations(ce_client):
+    """Retrieve Reserved Instance purchase recommendations for EC2 and RDS services.
+
+    Queries the Cost Explorer GetReservationPurchaseRecommendation API for both
+    EC2 and RDS services, across Standard and Convertible offering classes, for
+    all three payment options (NoUpfront, PartialUpfront, AllUpfront) and both
+    1-year and 3-year terms.
+
+    Each recommendation is normalized into a standard response format with break-even
+    calculation and a comparison note showing discount difference between Standard
+    and Convertible offerings.
+
+    Args:
+        ce_client: A boto3 Cost Explorer client (created from cross-account credentials).
+
+    Returns:
+        dict with keys:
+            - recommendations: list of normalized recommendation objects
+            - message: str or None (set if no data available)
+    """
+    services = ['Amazon Elastic Compute Cloud - Compute', 'Amazon Relational Database Service']
+    service_display = {
+        'Amazon Elastic Compute Cloud - Compute': 'EC2',
+        'Amazon Relational Database Service': 'RDS',
+    }
+    offering_classes = ['STANDARD', 'CONVERTIBLE']
+    terms = ['ONE_YEAR', 'THREE_YEARS']
+    payment_options = ['NO_UPFRONT', 'PARTIAL_UPFRONT', 'ALL_UPFRONT']
+
+    recommendations = []
+    # Track savings by instance type and offering class for comparison notes
+    savings_by_instance = {}  # key: (service, instanceType, term, payment) -> {standard: %, convertible: %}
+
+    for service in services:
+        for offering_class in offering_classes:
+            for term in terms:
+                for payment_option in payment_options:
+                    try:
+                        response = ce_client.get_reservation_purchase_recommendation(
+                            Service=service,
+                            TermInYears=term,
+                            PaymentOption=payment_option,
+                            OfferingClass=offering_class,
+                        )
+                    except ClientError as e:
+                        logger.warning(
+                            f"RI recommendation call failed for {service} {offering_class} "
+                            f"{term} {payment_option}: {e}"
+                        )
+                        continue
+
+                    ri_recs = response.get('Recommendations', [])
+
+                    if not ri_recs:
+                        continue
+
+                    for rec in ri_recs:
+                        rec_details = rec.get('RecommendationDetails', [])
+                        for detail in rec_details:
+                            instance_details = detail.get('InstanceDetails', {})
+
+                            # Extract instance type and region based on service
+                            if 'EC2InstanceDetails' in instance_details:
+                                ec2_details = instance_details['EC2InstanceDetails']
+                                instance_type = ec2_details.get('InstanceType', 'unknown')
+                                region = ec2_details.get('Region', 'unknown')
+                            elif 'RDSInstanceDetails' in instance_details:
+                                rds_details = instance_details['RDSInstanceDetails']
+                                instance_type = rds_details.get('DatabaseEngine', '') + '.' + rds_details.get('InstanceType', 'unknown')
+                                region = rds_details.get('Region', 'unknown')
+                            else:
+                                instance_type = 'unknown'
+                                region = 'unknown'
+
+                            recommended_count = int(detail.get('RecommendedNumberOfInstancesToPurchase', '0'))
+                            estimated_monthly_savings = float(detail.get('EstimatedMonthlySavingsAmount', '0'))
+                            estimated_on_demand_cost = float(detail.get('EstimatedMonthlyOnDemandCost', '0'))
+                            upfront_cost = float(detail.get('UpfrontCost', '0'))
+
+                            # Calculate savings percentage
+                            if estimated_on_demand_cost > 0:
+                                savings_percentage = round(
+                                    (estimated_monthly_savings / estimated_on_demand_cost) * 100, 1
+                                )
+                            else:
+                                savings_percentage = 0.0
+
+                            # Calculate break-even months for upfront payment options
+                            if payment_option != 'NO_UPFRONT' and upfront_cost > 0 and estimated_monthly_savings > 0:
+                                break_even_months = round(upfront_cost / estimated_monthly_savings, 1)
+                            else:
+                                break_even_months = None
+
+                            # Determine term in years
+                            term_in_years = 1 if term == 'ONE_YEAR' else 3
+
+                            # Map offering class to display format
+                            offering_class_display = {
+                                'STANDARD': 'standard',
+                                'CONVERTIBLE': 'convertible',
+                            }.get(offering_class, offering_class.lower())
+
+                            # Map payment option to display format
+                            payment_option_display = {
+                                'NO_UPFRONT': 'NoUpfront',
+                                'ALL_UPFRONT': 'AllUpfront',
+                                'PARTIAL_UPFRONT': 'PartialUpfront',
+                            }.get(payment_option, payment_option)
+
+                            # Map service to display name
+                            service_name = service_display.get(service, service)
+
+                            # Track savings for Standard vs Convertible comparison
+                            comparison_key = (service_name, instance_type, term_in_years, payment_option_display)
+                            if comparison_key not in savings_by_instance:
+                                savings_by_instance[comparison_key] = {}
+                            savings_by_instance[comparison_key][offering_class_display] = savings_percentage
+
+                            recommendations.append({
+                                'service': service_name,
+                                'instanceType': instance_type,
+                                'region': region,
+                                'offeringClass': offering_class_display,
+                                'termInYears': term_in_years,
+                                'paymentOption': payment_option_display,
+                                'recommendedCount': recommended_count,
+                                'estimatedMonthlySavings': round(estimated_monthly_savings, 2),
+                                'estimatedSavingsPercentage': savings_percentage,
+                                'breakEvenMonths': break_even_months,
+                                'upfrontCost': round(upfront_cost, 2),
+                                'standardVsConvertibleNote': None,  # Populated below
+                            })
+
+    # Add comparison notes showing discount difference between Standard and Convertible
+    for rec in recommendations:
+        comparison_key = (rec['service'], rec['instanceType'], rec['termInYears'], rec['paymentOption'])
+        savings_data = savings_by_instance.get(comparison_key, {})
+
+        standard_pct = savings_data.get('standard')
+        convertible_pct = savings_data.get('convertible')
+
+        if standard_pct is not None and convertible_pct is not None:
+            diff = round(standard_pct - convertible_pct, 1)
+            if diff > 0:
+                rec['standardVsConvertibleNote'] = (
+                    f"Standard saves {diff}% more than Convertible for this instance type"
+                )
+            elif diff < 0:
+                rec['standardVsConvertibleNote'] = (
+                    f"Convertible saves {abs(diff)}% more than Standard for this instance type"
+                )
+            else:
+                rec['standardVsConvertibleNote'] = (
+                    "Standard and Convertible offer the same discount for this instance type"
+                )
+
+    # Handle empty results
+    if not recommendations:
+        return {
+            'recommendations': [],
+            'message': 'No steady-state usage patterns detected for Reserved Instance recommendations. '
+                       'A minimum of 7 days of consistent usage is required.',
+        }
+
+    return {
+        'recommendations': recommendations,
+        'message': None,
+    }
+
+
+def _get_database_sp_monthly_spend(ce_client):
+    """Check combined RDS + ElastiCache monthly spend using Cost Explorer.
+
+    Queries ce:GetCostAndUsage for the trailing 30 days filtered to RDS and
+    ElastiCache services, returning the combined monthly spend.
+
+    Args:
+        ce_client: A boto3 Cost Explorer client (created from cross-account credentials).
+
+    Returns:
+        float: Combined monthly spend for RDS + ElastiCache in USD.
+    """
+    end_date = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+    start_date = (datetime.now(timezone.utc) - timedelta(days=30)).strftime('%Y-%m-%d')
+
+    try:
+        response = ce_client.get_cost_and_usage(
+            TimePeriod={'Start': start_date, 'End': end_date},
+            Granularity='MONTHLY',
+            Metrics=['UnblendedCost'],
+            Filter={
+                'Dimensions': {
+                    'Key': 'SERVICE',
+                    'Values': [
+                        'Amazon Relational Database Service',
+                        'Amazon ElastiCache',
+                    ],
+                }
+            },
+            GroupBy=[{'Type': 'DIMENSION', 'Key': 'SERVICE'}],
+        )
+    except ClientError as e:
+        logger.warning(f"Database SP spend check failed: {e}")
+        return 0.0
+
+    total_spend = 0.0
+    for result_by_time in response.get('ResultsByTime', []):
+        for group in result_by_time.get('Groups', []):
+            amount_str = group.get('Metrics', {}).get('UnblendedCost', {}).get('Amount', '0')
+            try:
+                total_spend += float(amount_str)
+            except (ValueError, TypeError):
+                pass
+
+    return total_spend
+
+
+def _get_database_sp_recommendations(ce_client):
+    """Retrieve Database SP recommendations via RI recommendation API for RDS and ElastiCache.
+
+    Queries the Cost Explorer GetReservationPurchaseRecommendation API for both
+    RDS and ElastiCache services to provide Database Savings Plan equivalent
+    recommendations. Queries Standard offering class for 1yr and 3yr terms with
+    NoUpfront and AllUpfront payment options.
+
+    Args:
+        ce_client: A boto3 Cost Explorer client (created from cross-account credentials).
+
+    Returns:
+        list of normalized recommendation objects with planType 'DatabaseSavingsPlans'.
+    """
+    services = [
+        'Amazon Relational Database Service',
+        'Amazon ElastiCache',
+    ]
+    service_display = {
+        'Amazon Relational Database Service': 'RDS',
+        'Amazon ElastiCache': 'ElastiCache',
+    }
+    terms = ['ONE_YEAR', 'THREE_YEARS']
+    payment_options = ['NO_UPFRONT', 'ALL_UPFRONT']
+
+    recommendations = []
+
+    for service in services:
+        for term in terms:
+            for payment_option in payment_options:
+                try:
+                    response = ce_client.get_reservation_purchase_recommendation(
+                        Service=service,
+                        TermInYears=term,
+                        PaymentOption=payment_option,
+                        OfferingClass='STANDARD',
+                    )
+                except ClientError as e:
+                    logger.warning(
+                        f"Database SP recommendation call failed for {service} "
+                        f"{term} {payment_option}: {e}"
+                    )
+                    continue
+
+                ri_recs = response.get('Recommendations', [])
+                if not ri_recs:
+                    continue
+
+                for rec in ri_recs:
+                    rec_details = rec.get('RecommendationDetails', [])
+                    for detail in rec_details:
+                        instance_details = detail.get('InstanceDetails', {})
+
+                        # Extract instance type and region based on service
+                        if 'RDSInstanceDetails' in instance_details:
+                            rds_details = instance_details['RDSInstanceDetails']
+                            instance_type = rds_details.get('DatabaseEngine', '') + '.' + rds_details.get('InstanceType', 'unknown')
+                            region = rds_details.get('Region', 'unknown')
+                        elif 'ElastiCacheInstanceDetails' in instance_details:
+                            ec_details = instance_details['ElastiCacheInstanceDetails']
+                            instance_type = ec_details.get('NodeType', 'unknown')
+                            region = ec_details.get('Region', 'unknown')
+                        else:
+                            instance_type = 'unknown'
+                            region = 'unknown'
+
+                        recommended_count = int(detail.get('RecommendedNumberOfInstancesToPurchase', '0'))
+                        estimated_monthly_savings = float(detail.get('EstimatedMonthlySavingsAmount', '0'))
+                        estimated_on_demand_cost = float(detail.get('EstimatedMonthlyOnDemandCost', '0'))
+                        upfront_cost = float(detail.get('UpfrontCost', '0'))
+
+                        # Calculate savings percentage
+                        if estimated_on_demand_cost > 0:
+                            savings_percentage = round(
+                                (estimated_monthly_savings / estimated_on_demand_cost) * 100, 1
+                            )
+                        else:
+                            savings_percentage = 0.0
+
+                        # Calculate break-even months for upfront payment options
+                        if payment_option != 'NO_UPFRONT' and upfront_cost > 0 and estimated_monthly_savings > 0:
+                            break_even_months = round(upfront_cost / estimated_monthly_savings, 1)
+                        else:
+                            break_even_months = None
+
+                        # Determine term in years
+                        term_in_years = 1 if term == 'ONE_YEAR' else 3
+
+                        # Map payment option to display format
+                        payment_option_display = {
+                            'NO_UPFRONT': 'NoUpfront',
+                            'ALL_UPFRONT': 'AllUpfront',
+                        }.get(payment_option, payment_option)
+
+                        service_name = service_display.get(service, service)
+
+                        recommendations.append({
+                            'planType': 'DatabaseSavingsPlans',
+                            'service': service_name,
+                            'instanceType': instance_type,
+                            'region': region,
+                            'termInYears': term_in_years,
+                            'paymentOption': payment_option_display,
+                            'recommendedCount': recommended_count,
+                            'estimatedMonthlySavings': round(estimated_monthly_savings, 2),
+                            'estimatedSavingsPercentage': savings_percentage,
+                            'breakEvenMonths': break_even_months,
+                            'upfrontCost': round(upfront_cost, 2),
+                        })
+
+    return recommendations
+
+
+def _add_months(base_date, months):
+    """Add a number of months to a date, handling month-end overflow.
+
+    Args:
+        base_date: A date or datetime object.
+        months: Number of months to add (non-negative integer).
+
+    Returns:
+        A date with the same day (or last day of month if overflow).
+    """
+    import calendar
+    month = base_date.month - 1 + months
+    year = base_date.year + month // 12
+    month = month % 12 + 1
+    day = min(base_date.day, calendar.monthrange(year, month)[1])
+    return base_date.replace(year=year, month=month, day=day)
+
+
+def _generate_laddering_strategy(total_hourly_commitment, average_hourly_spend, current_date):
+    """Generate a quarterly laddering strategy for committed discount purchases.
+
+    Divides the total hourly commitment into 4 equal tranches spread over 12 months,
+    assigns purchase dates at months 0, 3, 6, 9, and recommends plan types based on
+    tranche position (Compute SP for early tranches, EC2 Instance SP for later ones).
+
+    Args:
+        total_hourly_commitment: The total hourly commitment in $/hr (float > 0).
+        average_hourly_spend: The account's trailing 30-day average hourly spend (float).
+        current_date: The reference date for purchase scheduling (date or datetime).
+
+    Returns:
+        dict with keys: totalHourlyCommitment, averageHourlySpend, commitmentPercentage,
+        isAggressive, aggressiveWarning, tranches
+    """
+    # Calculate commitment as percentage of average hourly spend
+    if average_hourly_spend > 0:
+        commitment_percentage = round((total_hourly_commitment / average_hourly_spend) * 100, 1)
+    else:
+        commitment_percentage = 0.0
+
+    # Validate: flag as aggressive if commitment exceeds 70% of average hourly spend
+    is_aggressive = (
+        average_hourly_spend > 0 and total_hourly_commitment > average_hourly_spend * 0.70
+    )
+    aggressive_warning = None
+    if is_aggressive:
+        aggressive_warning = (
+            f"Your commitment of ${total_hourly_commitment:.2f}/hr exceeds 70% of your "
+            f"average hourly spend (${average_hourly_spend:.2f}/hr). "
+            f"We recommend committing to 60-70% of your average "
+            f"(${average_hourly_spend * 0.60:.2f}–${average_hourly_spend * 0.70:.2f}/hr) "
+            f"to avoid over-commitment during usage dips."
+        )
+
+    # Divide total into 4 equal tranches, rounded to nearest $0.01/hr
+    tranche_commitment = round(total_hourly_commitment / 4, 2)
+
+    # Savings rate estimates: ~30% for Compute SP, ~35% for EC2 Instance SP
+    COMPUTE_SP_SAVINGS_RATE = 0.30
+    EC2_INSTANCE_SP_SAVINGS_RATE = 0.35
+
+    # Tranche configuration: type, rationale, savings rate
+    tranche_configs = [
+        {
+            'recommendedType': 'ComputeSavingsPlans',
+            'rationale': 'Flexibility \u2014 covers any EC2, Fargate, or Lambda usage',
+            'savingsRate': COMPUTE_SP_SAVINGS_RATE,
+        },
+        {
+            'recommendedType': 'ComputeSavingsPlans',
+            'rationale': 'Flexibility \u2014 usage patterns still stabilizing',
+            'savingsRate': COMPUTE_SP_SAVINGS_RATE,
+        },
+        {
+            'recommendedType': 'EC2InstanceSavingsPlans',
+            'rationale': 'Deeper discount \u2014 usage patterns confirmed stable',
+            'savingsRate': EC2_INSTANCE_SP_SAVINGS_RATE,
+        },
+        {
+            'recommendedType': 'EC2InstanceSavingsPlans',
+            'rationale': 'Deeper discount \u2014 final tranche locks in remaining baseline',
+            'savingsRate': EC2_INSTANCE_SP_SAVINGS_RATE,
+        },
+    ]
+
+    # Month offsets for purchase dates
+    month_offsets = [0, 3, 6, 9]
+
+    tranches = []
+    cumulative_commitment = 0.0
+    cumulative_monthly_savings = 0.0
+
+    for i, (offset, config) in enumerate(zip(month_offsets, tranche_configs)):
+        # Assign purchase date at month offset from current date
+        purchase_date = _add_months(current_date, offset)
+
+        # For the last tranche, adjust to ensure sum equals total exactly
+        if i == 3:
+            this_tranche = round(total_hourly_commitment - cumulative_commitment, 2)
+        else:
+            this_tranche = tranche_commitment
+
+        cumulative_commitment = round(cumulative_commitment + this_tranche, 2)
+
+        # Estimated monthly savings: hourly commitment * hours/month * savings rate
+        # hours/month ≈ 730 (365.25 * 24 / 12)
+        tranche_monthly_savings = round(this_tranche * 730 * config['savingsRate'], 2)
+        cumulative_monthly_savings = round(cumulative_monthly_savings + tranche_monthly_savings, 2)
+
+        tranches.append({
+            'trancheNumber': i + 1,
+            'purchaseDate': purchase_date.strftime('%Y-%m-%d'),
+            'hourlyCommitment': this_tranche,
+            'cumulativeCommitment': cumulative_commitment,
+            'estimatedMonthlySavings': cumulative_monthly_savings,
+            'recommendedType': config['recommendedType'],
+            'rationale': config['rationale'],
+        })
+
+    return {
+        'totalHourlyCommitment': total_hourly_commitment,
+        'averageHourlySpend': average_hourly_spend,
+        'commitmentPercentage': commitment_percentage,
+        'isAggressive': is_aggressive,
+        'aggressiveWarning': aggressive_warning,
+        'tranches': tranches,
+    }
+
+
+def _get_coverage_utilization(ce_client):
+    """Retrieve SP and RI coverage/utilization for trailing 30 days.
+
+    Calls Cost Explorer coverage and utilization APIs, aggregates overall
+    percentages as weighted averages across time periods, breaks down coverage
+    by service, and flags items with utilization < 80% as underutilized.
+
+    Args:
+        ce_client: A boto3 Cost Explorer client (created from cross-account credentials).
+
+    Returns:
+        dict with keys: coverage, utilization. Coverage contains savingsPlans and
+        reservedInstances with overall percentage and byService breakdown.
+        Utilization contains savingsPlans and reservedInstances with overall
+        percentage and underutilized items list.
+    """
+    end_date = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+    start_date = (datetime.now(timezone.utc) - timedelta(days=30)).strftime('%Y-%m-%d')
+    time_period = {'Start': start_date, 'End': end_date}
+
+    # Services to track for coverage breakdown
+    tracked_services = [
+        'Amazon EC2',
+        'Amazon RDS',
+        'Amazon ElastiCache',
+        'Amazon Redshift',
+        'Amazon OpenSearch',
+    ]
+
+    # --- Savings Plans Coverage ---
+    sp_coverage_overall = 0.0
+    sp_coverage_by_service = {svc: 0.0 for svc in tracked_services}
+    sp_coverage_message = None
+
+    try:
+        sp_cov_response = ce_client.get_savings_plans_coverage(
+            TimePeriod=time_period,
+            Granularity='MONTHLY',
+        )
+    except ClientError as e:
+        logger.warning(f"GetSavingsPlansCoverage failed: {e}")
+        sp_cov_response = {'SavingsPlansCoverages': []}
+
+    sp_coverages = sp_cov_response.get('SavingsPlansCoverages', [])
+    if sp_coverages:
+        # Weighted average across time periods (equal weight per period)
+        total_pct = 0.0
+        count = 0
+        for period in sp_coverages:
+            coverage = period.get('Coverage', {})
+            pct_str = coverage.get('CoveragePercentage', '0')
+            try:
+                pct = float(pct_str)
+            except (ValueError, TypeError):
+                pct = 0.0
+            total_pct += pct
+            count += 1
+        sp_coverage_overall = round(total_pct / count, 1) if count > 0 else 0.0
+    else:
+        sp_coverage_message = 'insufficient history'
+
+    # SP coverage by service - use GroupBy to get per-service breakdown
+    try:
+        sp_cov_by_svc_response = ce_client.get_savings_plans_coverage(
+            TimePeriod=time_period,
+            Granularity='MONTHLY',
+            GroupBy=[{'Type': 'DIMENSION', 'Key': 'SERVICE'}],
+        )
+    except ClientError as e:
+        logger.warning(f"GetSavingsPlansCoverage by service failed: {e}")
+        sp_cov_by_svc_response = {'SavingsPlansCoverages': []}
+
+    sp_cov_by_svc_periods = sp_cov_by_svc_response.get('SavingsPlansCoverages', [])
+    # Aggregate per-service coverage across periods
+    service_pct_totals = {svc: [] for svc in tracked_services}
+    for period in sp_cov_by_svc_periods:
+        # SP coverage with GroupBy returns groups within each period
+        groups = period.get('Groups', [])
+        for group in groups:
+            service_name = group.get('Attributes', {}).get('SERVICE', '')
+            coverage = group.get('Coverage', {})
+            pct_str = coverage.get('CoveragePercentage', '0')
+            try:
+                pct = float(pct_str)
+            except (ValueError, TypeError):
+                pct = 0.0
+            for svc in tracked_services:
+                if svc.lower() in service_name.lower() or service_name.lower() in svc.lower():
+                    service_pct_totals[svc].append(pct)
+                    break
+
+    for svc in tracked_services:
+        values = service_pct_totals[svc]
+        if values:
+            sp_coverage_by_service[svc] = round(sum(values) / len(values), 1)
+
+    # --- Savings Plans Utilization ---
+    sp_util_overall = 0.0
+    sp_underutilized = []
+    sp_util_message = None
+
+    try:
+        sp_util_response = ce_client.get_savings_plans_utilization(
+            TimePeriod=time_period,
+            Granularity='MONTHLY',
+        )
+    except ClientError as e:
+        logger.warning(f"GetSavingsPlansUtilization failed: {e}")
+        sp_util_response = {'SavingsPlansUtilizations': []}
+
+    sp_utilizations = sp_util_response.get('SavingsPlansUtilizations', [])
+    if sp_utilizations:
+        total_pct = 0.0
+        count = 0
+        for period in sp_utilizations:
+            utilization = period.get('Utilization', {})
+            pct_str = utilization.get('UtilizationPercentage', '0')
+            try:
+                pct = float(pct_str)
+            except (ValueError, TypeError):
+                pct = 0.0
+            total_pct += pct
+            count += 1
+        sp_util_overall = round(total_pct / count, 1) if count > 0 else 0.0
+
+        # Flag overall SP utilization if under 80%
+        if sp_util_overall < 80.0:
+            sp_underutilized.append({
+                'id': 'overall-sp',
+                'utilization': sp_util_overall,
+                'service': 'All',
+            })
+    else:
+        sp_util_message = 'insufficient history'
+
+    # --- Reserved Instance Coverage ---
+    ri_coverage_overall = 0.0
+    ri_coverage_by_service = {svc: 0.0 for svc in tracked_services}
+    ri_coverage_message = None
+
+    try:
+        ri_cov_response = ce_client.get_reservation_coverage(
+            TimePeriod=time_period,
+            Granularity='MONTHLY',
+            GroupBy=[{'Type': 'DIMENSION', 'Key': 'SERVICE'}],
+        )
+    except ClientError as e:
+        logger.warning(f"GetReservationCoverage failed: {e}")
+        ri_cov_response = {'CoveragesByTime': []}
+
+    ri_coverages = ri_cov_response.get('CoveragesByTime', [])
+    if ri_coverages:
+        # Aggregate per-service and compute overall as weighted average
+        all_period_pcts = []
+        ri_service_pct_totals = {svc: [] for svc in tracked_services}
+
+        for period in ri_coverages:
+            groups = period.get('Groups', [])
+            period_total_pct = 0.0
+            period_count = 0
+            for group in groups:
+                service_name = ''
+                attributes = group.get('Attributes', {})
+                if 'SERVICE' in attributes:
+                    service_name = attributes['SERVICE']
+                elif 'service' in attributes:
+                    service_name = attributes['service']
+
+                coverage = group.get('Coverage', {})
+                coverage_hours = coverage.get('CoverageHours', {})
+                pct_str = coverage_hours.get('CoverageHoursPercentage', '0') if coverage_hours else '0'
+                # Also check top-level CoveragePercentage
+                if pct_str == '0':
+                    pct_str = coverage.get('CoveragePercentage', '0')
+                try:
+                    pct = float(pct_str)
+                except (ValueError, TypeError):
+                    pct = 0.0
+
+                period_total_pct += pct
+                period_count += 1
+
+                # Map to tracked services
+                for svc in tracked_services:
+                    if svc.lower() in service_name.lower() or service_name.lower() in svc.lower():
+                        ri_service_pct_totals[svc].append(pct)
+                        break
+
+            if period_count > 0:
+                all_period_pcts.append(period_total_pct / period_count)
+
+        ri_coverage_overall = round(sum(all_period_pcts) / len(all_period_pcts), 1) if all_period_pcts else 0.0
+
+        for svc in tracked_services:
+            values = ri_service_pct_totals[svc]
+            if values:
+                ri_coverage_by_service[svc] = round(sum(values) / len(values), 1)
+    else:
+        ri_coverage_message = 'insufficient history'
+
+    # --- Reserved Instance Utilization ---
+    ri_util_overall = 0.0
+    ri_underutilized = []
+    ri_util_message = None
+
+    try:
+        ri_util_response = ce_client.get_reservation_utilization(
+            TimePeriod=time_period,
+            Granularity='MONTHLY',
+            GroupBy=[{'Type': 'DIMENSION', 'Key': 'SERVICE'}],
+        )
+    except ClientError as e:
+        logger.warning(f"GetReservationUtilization failed: {e}")
+        ri_util_response = {'UtilizationsByTime': []}
+
+    ri_utilizations = ri_util_response.get('UtilizationsByTime', [])
+    if ri_utilizations:
+        all_period_pcts = []
+
+        for period in ri_utilizations:
+            groups = period.get('Groups', [])
+            period_total_pct = 0.0
+            period_count = 0
+            for group in groups:
+                service_name = ''
+                attributes = group.get('Attributes', {})
+                if 'SERVICE' in attributes:
+                    service_name = attributes['SERVICE']
+                elif 'service' in attributes:
+                    service_name = attributes['service']
+
+                utilization = group.get('Utilization', {})
+                pct_str = utilization.get('UtilizationPercentage', '0')
+                try:
+                    pct = float(pct_str)
+                except (ValueError, TypeError):
+                    pct = 0.0
+
+                period_total_pct += pct
+                period_count += 1
+
+                # Flag underutilized RIs (< 80%)
+                if pct < 80.0:
+                    ri_id = attributes.get('ReservationId', attributes.get('reservationId', 'unknown'))
+                    instance_type = attributes.get('InstanceType', attributes.get('instanceType', 'unknown'))
+                    # Determine service short name
+                    svc_short = service_name
+                    for svc in tracked_services:
+                        if svc.lower() in service_name.lower() or service_name.lower() in svc.lower():
+                            svc_short = svc.replace('Amazon ', '')
+                            break
+
+                    ri_underutilized.append({
+                        'id': ri_id,
+                        'instanceType': instance_type,
+                        'utilization': round(pct, 1),
+                        'service': svc_short,
+                    })
+
+            if period_count > 0:
+                all_period_pcts.append(period_total_pct / period_count)
+
+        ri_util_overall = round(sum(all_period_pcts) / len(all_period_pcts), 1) if all_period_pcts else 0.0
+    else:
+        ri_util_message = 'insufficient history'
+
+    # Build response
+    result = {
+        'coverage': {
+            'savingsPlans': {
+                'overall': sp_coverage_overall,
+                'byService': sp_coverage_by_service,
+            },
+            'reservedInstances': {
+                'overall': ri_coverage_overall,
+                'byService': ri_coverage_by_service,
+            },
+        },
+        'utilization': {
+            'savingsPlans': {
+                'overall': sp_util_overall,
+                'underutilized': sp_underutilized,
+            },
+            'reservedInstances': {
+                'overall': ri_util_overall,
+                'underutilized': ri_underutilized,
+            },
+        },
+    }
+
+    # Add messages for empty responses
+    if sp_coverage_message:
+        result['coverage']['savingsPlans']['message'] = sp_coverage_message
+    if ri_coverage_message:
+        result['coverage']['reservedInstances']['message'] = ri_coverage_message
+    if sp_util_message:
+        result['utilization']['savingsPlans']['message'] = sp_util_message
+    if ri_util_message:
+        result['utilization']['reservedInstances']['message'] = ri_util_message
+
+    return result
+
+
+def _get_expiring_commitments(ce_client, savingsplans_client, ec2_client, rds_client):
+    """Retrieve active RI and SP commitments expiring within 90 days.
+
+    Queries Savings Plans, EC2 Reserved Instances, and RDS Reserved DB Instances
+    to find commitments approaching expiration. Assigns urgency levels and
+    calculates coverage impact for each expiring commitment.
+
+    Args:
+        ce_client: A boto3 Cost Explorer client (created from cross-account credentials).
+        savingsplans_client: A boto3 Savings Plans client (cross-account credentials).
+        ec2_client: A boto3 EC2 client (cross-account credentials).
+        rds_client: A boto3 RDS client (cross-account credentials).
+
+    Returns:
+        dict with keys: expiring (list of commitment objects), nextExpiration
+        (earliest expiration date string or None), noUpcomingExpirations (bool).
+    """
+    now = datetime.now(timezone.utc)
+    ninety_days_from_now = now + timedelta(days=90)
+    expiring = []
+
+    # --- Savings Plans ---
+    try:
+        sp_response = savingsplans_client.describe_savings_plans(
+            States=['active']
+        )
+        savings_plans = sp_response.get('savingsPlans', [])
+    except (ClientError, Exception) as e:
+        logger.warning(f"DescribeSavingsPlans failed: {e}")
+        savings_plans = []
+
+    # Get total SP hourly commitment for coverage impact calculation
+    total_sp_hourly = sum(
+        float(sp.get('commitment', '0')) for sp in savings_plans
+    )
+
+    for sp in savings_plans:
+        end_str = sp.get('end', '')
+        if not end_str:
+            continue
+        try:
+            # SP end dates can be ISO format or epoch
+            if 'T' in str(end_str):
+                end_date = datetime.fromisoformat(str(end_str).replace('Z', '+00:00'))
+            else:
+                end_date = datetime.fromtimestamp(float(end_str), tz=timezone.utc)
+        except (ValueError, TypeError, OSError):
+            continue
+
+        days_until = (end_date.date() - now.date()).days
+        if days_until < 0 or days_until > 90:
+            continue
+
+        hourly_commitment = float(sp.get('commitment', '0'))
+        monthly_value = round(hourly_commitment * 720, 2)  # ~720 hours/month
+
+        # Coverage impact: what percentage of total SP commitment this represents
+        coverage_impact = round(
+            (hourly_commitment / total_sp_hourly * 100) if total_sp_hourly > 0 else 0.0, 1
+        )
+
+        urgency = 'expiring_soon' if days_until < 30 else 'upcoming'
+
+        expiring.append({
+            'type': 'SavingsPlan',
+            'id': sp.get('savingsPlanId', 'unknown'),
+            'planType': sp.get('savingsPlanType', 'unknown'),
+            'hourlyCommitment': hourly_commitment,
+            'monthlyValue': monthly_value,
+            'expiresAt': end_date.strftime('%Y-%m-%d'),
+            'daysUntilExpiry': days_until,
+            'coverageImpact': coverage_impact,
+            'urgency': urgency,
+        })
+
+    # --- EC2 Reserved Instances ---
+    try:
+        ec2_ri_response = ec2_client.describe_reserved_instances(
+            Filters=[{'Name': 'state', 'Values': ['active']}]
+        )
+        ec2_ris = ec2_ri_response.get('ReservedInstances', [])
+    except (ClientError, Exception) as e:
+        logger.warning(f"DescribeReservedInstances failed: {e}")
+        ec2_ris = []
+
+    # Total monthly value of all active EC2 RIs for coverage impact
+    total_ec2_ri_monthly = 0.0
+    for ri in ec2_ris:
+        count = ri.get('InstanceCount', 1)
+        # Use recurring charges or fixed price to estimate monthly value
+        recurring = ri.get('RecurringCharges', [])
+        if recurring:
+            monthly = sum(float(r.get('Amount', 0)) for r in recurring) * count
+        else:
+            # Estimate from fixed price over term
+            fixed = float(ri.get('FixedPrice', 0))
+            duration_seconds = ri.get('Duration', 31536000)  # default 1 year
+            duration_months = duration_seconds / (30 * 24 * 3600)
+            monthly = (fixed * count / duration_months) if duration_months > 0 else 0.0
+        total_ec2_ri_monthly += monthly
+
+    for ri in ec2_ris:
+        end_dt = ri.get('End')
+        if not end_dt:
+            continue
+        try:
+            if isinstance(end_dt, datetime):
+                end_date = end_dt if end_dt.tzinfo else end_dt.replace(tzinfo=timezone.utc)
+            else:
+                end_date = datetime.fromisoformat(str(end_dt).replace('Z', '+00:00'))
+        except (ValueError, TypeError):
+            continue
+
+        days_until = (end_date.date() - now.date()).days
+        if days_until < 0 or days_until > 90:
+            continue
+
+        count = ri.get('InstanceCount', 1)
+        recurring = ri.get('RecurringCharges', [])
+        if recurring:
+            monthly_value = round(sum(float(r.get('Amount', 0)) for r in recurring) * count, 2)
+        else:
+            fixed = float(ri.get('FixedPrice', 0))
+            duration_seconds = ri.get('Duration', 31536000)
+            duration_months = duration_seconds / (30 * 24 * 3600)
+            monthly_value = round((fixed * count / duration_months) if duration_months > 0 else 0.0, 2)
+
+        # Coverage impact: percentage of total EC2 RI monthly value
+        coverage_impact = round(
+            (monthly_value / total_ec2_ri_monthly * 100) if total_ec2_ri_monthly > 0 else 0.0, 1
+        )
+
+        urgency = 'expiring_soon' if days_until < 30 else 'upcoming'
+
+        expiring.append({
+            'type': 'ReservedInstance',
+            'id': ri.get('ReservedInstancesId', 'unknown'),
+            'instanceType': ri.get('InstanceType', 'unknown'),
+            'instanceCount': count,
+            'monthlyValue': monthly_value,
+            'expiresAt': end_date.strftime('%Y-%m-%d'),
+            'daysUntilExpiry': days_until,
+            'coverageImpact': coverage_impact,
+            'urgency': urgency,
+            'service': 'EC2',
+        })
+
+    # --- RDS Reserved DB Instances ---
+    try:
+        rds_ri_response = rds_client.describe_reserved_db_instances()
+        rds_ris = [
+            ri for ri in rds_ri_response.get('ReservedDBInstances', [])
+            if ri.get('State', '').lower() == 'active'
+        ]
+    except (ClientError, Exception) as e:
+        logger.warning(f"DescribeReservedDBInstances failed: {e}")
+        rds_ris = []
+
+    # Total monthly value of all active RDS RIs for coverage impact
+    total_rds_ri_monthly = 0.0
+    for ri in rds_ris:
+        count = ri.get('DBInstanceCount', 1)
+        recurring = ri.get('RecurringCharges', [])
+        if recurring:
+            monthly = sum(float(r.get('Amount', 0)) for r in recurring) * count
+        else:
+            fixed = float(ri.get('FixedPrice', 0))
+            duration_seconds = ri.get('Duration', 31536000)
+            duration_months = duration_seconds / (30 * 24 * 3600)
+            monthly = (fixed * count / duration_months) if duration_months > 0 else 0.0
+        total_rds_ri_monthly += monthly
+
+    for ri in rds_ris:
+        # RDS RI uses StartTime + Duration to calculate end
+        start_time = ri.get('StartTime')
+        duration_seconds = ri.get('Duration', 31536000)
+        if not start_time:
+            continue
+        try:
+            if isinstance(start_time, datetime):
+                start_dt = start_time if start_time.tzinfo else start_time.replace(tzinfo=timezone.utc)
+            else:
+                start_dt = datetime.fromisoformat(str(start_time).replace('Z', '+00:00'))
+            end_date = start_dt + timedelta(seconds=duration_seconds)
+        except (ValueError, TypeError):
+            continue
+
+        days_until = (end_date.date() - now.date()).days
+        if days_until < 0 or days_until > 90:
+            continue
+
+        count = ri.get('DBInstanceCount', 1)
+        recurring = ri.get('RecurringCharges', [])
+        if recurring:
+            monthly_value = round(sum(float(r.get('Amount', 0)) for r in recurring) * count, 2)
+        else:
+            fixed = float(ri.get('FixedPrice', 0))
+            duration_months = duration_seconds / (30 * 24 * 3600)
+            monthly_value = round((fixed * count / duration_months) if duration_months > 0 else 0.0, 2)
+
+        # Coverage impact: percentage of total RDS RI monthly value
+        coverage_impact = round(
+            (monthly_value / total_rds_ri_monthly * 100) if total_rds_ri_monthly > 0 else 0.0, 1
+        )
+
+        urgency = 'expiring_soon' if days_until < 30 else 'upcoming'
+
+        expiring.append({
+            'type': 'ReservedInstance',
+            'id': ri.get('ReservedDBInstanceId', 'unknown'),
+            'instanceType': ri.get('DBInstanceClass', 'unknown'),
+            'instanceCount': count,
+            'monthlyValue': monthly_value,
+            'expiresAt': end_date.strftime('%Y-%m-%d'),
+            'daysUntilExpiry': days_until,
+            'coverageImpact': coverage_impact,
+            'urgency': urgency,
+            'service': 'RDS',
+        })
+
+    # Sort by days until expiry (soonest first)
+    expiring.sort(key=lambda x: x['daysUntilExpiry'])
+
+    # Determine next expiration date
+    next_expiration = expiring[0]['expiresAt'] if expiring else None
+
+    return {
+        'expiring': expiring,
+        'nextExpiration': next_expiration,
+        'noUpcomingExpirations': len(expiring) == 0,
+    }
+
+
+# ============================================================
+# Committed Discount Scan Orchestrator
+# ============================================================
+
+
+def handle_committed_discount_scan(event):
+    """Full committed discount analysis: coverage, utilization, recommendations, baseline, laddering.
+
+    Orchestrates parallel retrieval of SP/RI coverage, utilization, recommendations,
+    P10 baseline, and expiring commitments. Cross-references rightsizing recommendations,
+    generates a default laddering strategy, and detects organization sharing context.
+
+    Returns a complete scan response within 30 seconds, handling partial failures gracefully.
+    """
+    scan_start = time.time()
+
+    # ── Auth & validation ──
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+    member_email = auth['sub']
+
+    try:
+        body = json.loads(event.get('body', '{}'))
+    except (json.JSONDecodeError, TypeError):
+        return create_error_response(400, 'InvalidRequest', 'Invalid request body')
+
+    account_id = (body.get('accountId') or '').strip()
+    if not account_id or not re.match(r'^\d{12}$', account_id):
+        return create_error_response(400, 'InvalidAccountId', 'accountId must be exactly 12 digits')
+
+    # Verify account ownership
+    ownership = _verify_account_ownership(member_email, [account_id])
+    if ownership is not True:
+        return ownership
+
+    # ── Assume cross-account role ──
+    try:
+        creds = _assume_role_for_account(member_email, account_id)
+    except ClientError as e:
+        code = e.response['Error']['Code']
+        if code in ('AccessDeniedException', 'AccessDenied'):
+            return create_error_response(403, 'AccessDenied',
+                                         'Cannot access account — please re-deploy the CloudFormation template')
+        return create_error_response(403, 'ConnectionFailed',
+                                     'Cross-account role not found — please deploy the CloudFormation template')
+    except Exception:
+        return create_error_response(403, 'ConnectionFailed',
+                                     'Cross-account role not found — please deploy the CloudFormation template')
+
+    # ── Create service clients ──
+    ce_client = _make_client_from_creds('ce', creds)
+    savingsplans_client = _make_client_from_creds('savingsplans', creds)
+    ec2_client = _make_client_from_creds('ec2', creds)
+    rds_client = _make_client_from_creds('rds', creds)
+
+    # ── Permission pre-check: lightweight 1-day coverage call ──
+    try:
+        now = datetime.now(timezone.utc)
+        yesterday = now - timedelta(days=1)
+        ce_client.get_savings_plans_coverage(
+            TimePeriod={
+                'Start': yesterday.strftime('%Y-%m-%d'),
+                'End': now.strftime('%Y-%m-%d'),
+            },
+            Granularity='DAILY',
+        )
+    except ClientError as e:
+        error_code = e.response['Error']['Code']
+        if error_code in ('AccessDeniedException', 'AccessDenied'):
+            required_actions = [
+                'ce:GetSavingsPlansCoverage',
+                'ce:GetSavingsPlansUtilization',
+                'ce:GetReservationCoverage',
+                'ce:GetReservationUtilization',
+                'ce:GetSavingsPlansPurchaseRecommendation',
+                'ce:GetReservationPurchaseRecommendation',
+                'ce:GetCostAndUsage',
+                'savingsplans:DescribeSavingsPlans',
+            ]
+            return create_error_response(403, 'InsufficientPermissions',
+                                         'The cross-account role lacks required Cost Explorer permissions. '
+                                         'Please update the CloudFormation template.',
+                                         extra={'requiredActions': required_actions})
+        # Other errors (throttling, etc.) — let the scan proceed and handle per-module
+        logger.warning(f"Permission pre-check non-fatal error: {e}")
+
+    # ── Parallel data retrieval ──
+    results = {}
+    errors = {}
+
+    def _run_coverage_utilization():
+        return _get_coverage_utilization(ce_client)
+
+    def _run_p10_baseline():
+        return _calculate_p10_baseline(ce_client, account_id)
+
+    def _run_sp_recommendations(avg_hourly):
+        return _get_sp_recommendations(ce_client, avg_hourly)
+
+    def _run_ri_recommendations():
+        return _get_ri_recommendations(ce_client)
+
+    def _run_expiring_commitments():
+        return _get_expiring_commitments(ce_client, savingsplans_client, ec2_client, rds_client)
+
+    # Phase 1: coverage/utilization and P10 baseline (needed for SP recommendations)
+    timeout_budget = 25  # seconds — leave 5s buffer before Lambda timeout
+    remaining = timeout_budget - (time.time() - scan_start)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+        future_coverage = executor.submit(_run_coverage_utilization)
+        future_baseline = executor.submit(_run_p10_baseline)
+        future_ri = executor.submit(_run_ri_recommendations)
+        future_expiring = executor.submit(_run_expiring_commitments)
+
+        # Collect baseline first (needed for SP recommendations)
+        try:
+            baseline_result = future_baseline.result(timeout=max(remaining, 5))
+            results['baseline'] = baseline_result
+        except concurrent.futures.TimeoutError:
+            errors['baseline'] = 'Timed out retrieving P10 baseline'
+            results['baseline'] = None
+        except Exception as e:
+            logger.error(f"P10 baseline error: {e}")
+            errors['baseline'] = f'Failed to calculate P10 baseline: {str(e)}'
+            results['baseline'] = None
+
+        # Get average hourly spend for SP recommendations
+        avg_hourly_spend = 0.0
+        if results.get('baseline') and isinstance(results['baseline'], dict):
+            avg_hourly_spend = results['baseline'].get('averageHourlySpend', 0.0)
+
+        # Submit SP recommendations now that we have average hourly spend
+        future_sp = executor.submit(_run_sp_recommendations, avg_hourly_spend)
+
+        # Collect remaining results
+        remaining = timeout_budget - (time.time() - scan_start)
+
+        try:
+            coverage_result = future_coverage.result(timeout=max(remaining, 5))
+            results['coverage_utilization'] = coverage_result
+        except concurrent.futures.TimeoutError:
+            errors['coverage'] = 'Timed out retrieving coverage/utilization data'
+            results['coverage_utilization'] = None
+        except Exception as e:
+            logger.error(f"Coverage/utilization error: {e}")
+            errors['coverage'] = f'Failed to retrieve coverage/utilization: {str(e)}'
+            results['coverage_utilization'] = None
+
+        remaining = timeout_budget - (time.time() - scan_start)
+
+        try:
+            sp_result = future_sp.result(timeout=max(remaining, 5))
+            results['sp_recommendations'] = sp_result
+        except concurrent.futures.TimeoutError:
+            errors['spRecommendations'] = 'Timed out retrieving SP recommendations'
+            results['sp_recommendations'] = None
+        except Exception as e:
+            logger.error(f"SP recommendations error: {e}")
+            errors['spRecommendations'] = f'Failed to retrieve SP recommendations: {str(e)}'
+            results['sp_recommendations'] = None
+
+        remaining = timeout_budget - (time.time() - scan_start)
+
+        try:
+            ri_result = future_ri.result(timeout=max(remaining, 5))
+            results['ri_recommendations'] = ri_result
+        except concurrent.futures.TimeoutError:
+            errors['riRecommendations'] = 'Timed out retrieving RI recommendations'
+            results['ri_recommendations'] = None
+        except Exception as e:
+            logger.error(f"RI recommendations error: {e}")
+            errors['riRecommendations'] = f'Failed to retrieve RI recommendations: {str(e)}'
+            results['ri_recommendations'] = None
+
+        remaining = timeout_budget - (time.time() - scan_start)
+
+        try:
+            expiring_result = future_expiring.result(timeout=max(remaining, 5))
+            results['expiring_commitments'] = expiring_result
+        except concurrent.futures.TimeoutError:
+            errors['expiringCommitments'] = 'Timed out retrieving expiring commitments'
+            results['expiring_commitments'] = None
+        except Exception as e:
+            logger.error(f"Expiring commitments error: {e}")
+            errors['expiringCommitments'] = f'Failed to retrieve expiring commitments: {str(e)}'
+            results['expiring_commitments'] = None
+
+    # ── Check timeout before additional processing ──
+    elapsed = time.time() - scan_start
+    incomplete = elapsed >= timeout_budget
+
+    # ── Cross-reference rightsizing recommendations ──
+    rightsize_warning = {'hasRightsizingPending': False, 'flaggedInstances': []}
+    if not incomplete:
+        try:
+            co_client = _make_client_from_creds('compute-optimizer', creds)
+            co_recs = co_client.get_ec2_instance_recommendations(maxResults=20)
+            over_provisioned = [
+                r for r in co_recs.get('instanceRecommendations', [])
+                if r.get('finding') == 'OVER_PROVISIONED'
+            ]
+
+            # Get RI recommended instance types
+            ri_instance_types = set()
+            if results.get('ri_recommendations') and results['ri_recommendations'].get('recommendations'):
+                for rec in results['ri_recommendations']['recommendations']:
+                    it = rec.get('instanceType', '')
+                    if it and it != 'unknown':
+                        ri_instance_types.add(it)
+
+            # Check overlap between rightsizing and RI recommendations
+            flagged = []
+            for rec in over_provisioned:
+                current_type = rec.get('currentInstanceType', '')
+                if current_type in ri_instance_types:
+                    options = rec.get('recommendationOptions', [])
+                    recommended_type = options[0].get('instanceType', '') if options else ''
+                    flagged.append({
+                        'instanceId': rec.get('instanceArn', '').split('/')[-1],
+                        'currentType': current_type,
+                        'recommendedType': recommended_type,
+                        'service': 'EC2',
+                    })
+
+            if flagged:
+                rightsize_warning = {
+                    'hasRightsizingPending': True,
+                    'flaggedInstances': flagged,
+                }
+        except Exception as e:
+            logger.warning(f"Rightsizing cross-reference failed (non-fatal): {e}")
+
+    # ── Generate default laddering strategy ──
+    laddering_strategy = None
+    if not incomplete and results.get('baseline') and avg_hourly_spend > 0:
+        try:
+            p10_spend = results['baseline'].get('p10HourlySpend', 0)
+            # Use P10 as the default commitment (safest level)
+            if p10_spend > 0:
+                current_date = datetime.now(timezone.utc).date()
+                laddering_strategy = _generate_laddering_strategy(
+                    p10_spend, avg_hourly_spend, current_date
+                )
+        except Exception as e:
+            logger.warning(f"Laddering strategy generation failed (non-fatal): {e}")
+            errors['ladderingStrategy'] = f'Failed to generate laddering strategy: {str(e)}'
+
+    # ── Detect organization sharing context ──
+    organization_sharing = {
+        'isManagementAccount': False,
+        'multipleAccountsConnected': False,
+        'sharingNote': None,
+    }
+    if not incomplete:
+        try:
+            # Check if management account
+            org_client = _make_client_from_creds('organizations', creds)
+            account_type, _ = _detect_account_type(org_client, account_id)
+            organization_sharing['isManagementAccount'] = (account_type == 'management')
+        except Exception:
+            pass
+
+        try:
+            # Check if member has multiple accounts connected
+            accounts_table = dynamodb.Table(ACCOUNTS_TABLE_NAME)
+            acct_result = accounts_table.query(
+                KeyConditionExpression=boto3.dynamodb.conditions.Key('memberEmail').eq(member_email),
+                ProjectionExpression='accountId',
+            )
+            connected_count = len(acct_result.get('Items', []))
+            organization_sharing['multipleAccountsConnected'] = connected_count > 1
+        except Exception:
+            pass
+
+        if organization_sharing['multipleAccountsConnected'] or organization_sharing['isManagementAccount']:
+            organization_sharing['sharingNote'] = (
+                'Savings Plans and RIs can be shared across accounts in the same AWS Organization. '
+                'Consider purchasing from the management (payer) account for maximum flexibility.'
+            )
+
+    # ── Assemble response ──
+    # Coverage and utilization
+    coverage_data = results.get('coverage_utilization') or {}
+    coverage = coverage_data.get('coverage', {
+        'savingsPlans': {'overall': 0, 'byService': {}},
+        'reservedInstances': {'overall': 0, 'byService': {}},
+    })
+    utilization = coverage_data.get('utilization', {
+        'savingsPlans': {'overall': 0, 'underutilized': []},
+        'reservedInstances': {'overall': 0, 'underutilized': []},
+    })
+
+    # SP recommendations
+    sp_recs_data = results.get('sp_recommendations') or {}
+    sp_recommendations = sp_recs_data.get('recommendations', [])
+
+    # RI recommendations
+    ri_recs_data = results.get('ri_recommendations') or {}
+    ri_recommendations = ri_recs_data.get('recommendations', [])
+
+    # ── Database SP threshold check ──
+    # Include Database SP recommendations only if RDS + ElastiCache monthly spend > $50
+    database_sp_eligible = False
+    database_sp_recommendations = []
+    if not incomplete:
+        try:
+            db_monthly_spend = _get_database_sp_monthly_spend(ce_client)
+            if db_monthly_spend > 50.0:
+                database_sp_eligible = True
+                database_sp_recommendations = _get_database_sp_recommendations(ce_client)
+        except Exception as e:
+            logger.warning(f"Database SP threshold check failed (non-fatal): {e}")
+
+    # Expiring commitments
+    expiring_data = results.get('expiring_commitments') or {
+        'expiring': [],
+        'nextExpiration': None,
+        'noUpcomingExpirations': True,
+    }
+
+    # Baseline
+    baseline = results.get('baseline') or {
+        'p10HourlySpend': 0,
+        'averageHourlySpend': 0,
+        'variabilityWarning': False,
+        'safeCommitmentRange': {'min': 0, 'max': 0},
+        'granularity': 'HOURLY',
+        'dataPoints': 0,
+    }
+
+    response_body = {
+        'scannedAt': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
+        'accountId': account_id,
+        'coverage': coverage,
+        'utilization': utilization,
+        'baseline': baseline,
+        'spRecommendations': sp_recommendations,
+        'riRecommendations': ri_recommendations,
+        'databaseSpEligible': database_sp_eligible,
+        'expiringCommitments': expiring_data,
+        'ladderingStrategy': laddering_strategy,
+        'organizationSharing': organization_sharing,
+        'rightsizeWarning': rightsize_warning,
+    }
+
+    # Include Database SP recommendations only when eligible (spend > $50/mo)
+    if database_sp_eligible and database_sp_recommendations:
+        response_body['databaseSpRecommendations'] = database_sp_recommendations
+
+    # Add error notes for partial failures
+    if errors:
+        response_body['_errors'] = errors
+
+    # Add incomplete note if approaching timeout
+    if incomplete:
+        response_body['_incomplete'] = True
+        response_body['_incompleteNote'] = (
+            'Scan did not complete within the time budget. '
+            'Some sections may be missing. Please retry for full results.'
+        )
+
+    return create_response(200, response_body)
+
+
+def handle_committed_discount_ladder(event):
+    """Custom laddering strategy with a user-specified hourly commitment.
+
+    Validates the request, retrieves the account's average hourly spend via P10 baseline,
+    and generates a laddering strategy. Returns an aggressive warning if the commitment
+    exceeds 70% of average hourly spend.
+    """
+    # ── Auth & validation ──
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+    member_email = auth['sub']
+
+    try:
+        body = json.loads(event.get('body', '{}'))
+    except (json.JSONDecodeError, TypeError):
+        return create_error_response(400, 'InvalidRequest', 'Invalid request body')
+
+    account_id = (body.get('accountId') or '').strip()
+    if not account_id or not re.match(r'^\d{12}$', account_id):
+        return create_error_response(400, 'InvalidAccountId', 'accountId must be exactly 12 digits')
+
+    total_hourly_commitment = body.get('totalHourlyCommitment')
+    if total_hourly_commitment is None:
+        return create_error_response(400, 'InvalidInput', 'totalHourlyCommitment is required')
+    try:
+        total_hourly_commitment = float(total_hourly_commitment)
+    except (TypeError, ValueError):
+        return create_error_response(400, 'InvalidInput', 'totalHourlyCommitment must be a number')
+
+    if total_hourly_commitment <= 0:
+        return create_error_response(400, 'InvalidInput', 'totalHourlyCommitment must be greater than 0')
+
+    # Verify account ownership
+    ownership = _verify_account_ownership(member_email, [account_id])
+    if ownership is not True:
+        return ownership
+
+    # ── Assume cross-account role ──
+    try:
+        creds = _assume_role_for_account(member_email, account_id)
+    except ClientError as e:
+        code = e.response['Error']['Code']
+        if code in ('AccessDeniedException', 'AccessDenied'):
+            return create_error_response(403, 'AccessDenied',
+                                         'Cannot access account — please re-deploy the CloudFormation template')
+        return create_error_response(403, 'ConnectionFailed',
+                                     'Cross-account role not found — please deploy the CloudFormation template')
+    except Exception:
+        return create_error_response(403, 'ConnectionFailed',
+                                     'Cross-account role not found — please deploy the CloudFormation template')
+
+    # ── Retrieve average hourly spend via P10 baseline ──
+    ce_client = _make_client_from_creds('ce', creds)
+    try:
+        baseline = _calculate_p10_baseline(ce_client, account_id)
+    except Exception as e:
+        logger.error(f"P10 baseline error in ladder route: {e}")
+        return create_error_response(500, 'ServerError', 'Failed to retrieve spend data for the account')
+
+    average_hourly_spend = baseline.get('averageHourlySpend', 0.0) if isinstance(baseline, dict) else 0.0
+
+    if average_hourly_spend == 0:
+        return create_error_response(400, 'InsufficientData',
+                                     'No spend data available for this account. '
+                                     'Ensure the account has at least 7 days of usage history.')
+
+    # ── Generate laddering strategy ──
+    current_date = datetime.now(timezone.utc).date()
+    strategy = _generate_laddering_strategy(total_hourly_commitment, average_hourly_spend, current_date)
+
+    return create_response(200, strategy)
 
 
 def _get_cost_by_tag(accounts, external_id):

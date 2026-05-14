@@ -1759,6 +1759,7 @@ function _addNavLinks(html) {
         { pattern: /Go to Act \u2192 Scheduler[\s\u25b6\u25b8]*/gi, label: 'Go to Act \u2192 Scheduler', onclick: "_goToTab('act-tab','scheduler')" },
         { pattern: /Go to Act \u2192 Optimize[\s\u25b6\u25b8]*/gi, label: 'Go to Act \u2192 Optimize', onclick: "_goToTab('act-tab','optimization')" },
         { pattern: /Go to Act \u2192 Service Optimization[\s\u25b6\u25b8]*/gi, label: 'Go to Act \u2192 Service Optimization', onclick: "_goToTab('act-tab','optimization')" },
+        { pattern: /Go to Act \u2192 Committed Discounts[\s\u25b6\u25b8]*/gi, label: 'Go to Act \u2192 Committed Discounts', onclick: "_goToTab('act-tab','committed')" },
         { pattern: /Go to Plan \u2192 Budget[\s\u25b6\u25b8]*/gi, label: 'Go to Plan \u2192 Budget', onclick: "_goToTab('plan-tab','plan-budget')" },
         { pattern: /Go to Plan \u2192 Tag Resources[\s\u25b6\u25b8]*/gi, label: 'Go to Plan \u2192 Tag Resources', onclick: "_goToTab('plan-tab','plan-tagging')" },
         { pattern: /Go to Configure \u2192 FinOps Settings[\s\u25b6\u25b8]*/gi, label: 'Go to Configure \u2192 FinOps Settings', onclick: "switchToFinOpsSettings()" },
@@ -1767,6 +1768,7 @@ function _addNavLinks(html) {
         { pattern: /Act \u2192 Scheduler[\s\u25b6\u25b8]*/gi, label: 'Act \u2192 Scheduler', onclick: "_goToTab('act-tab','scheduler')" },
         { pattern: /Act \u2192 Optimize[\s\u25b6\u25b8]*/gi, label: 'Act \u2192 Optimize', onclick: "_goToTab('act-tab','optimization')" },
         { pattern: /Act \u2192 Service Optimization[\s\u25b6\u25b8]*/gi, label: 'Act \u2192 Service Optimization', onclick: "_goToTab('act-tab','optimization')" },
+        { pattern: /Act \u2192 Committed Discounts[\s\u25b6\u25b8]*/gi, label: 'Act \u2192 Committed Discounts', onclick: "_goToTab('act-tab','committed')" },
         { pattern: /Plan \u2192 Budget[\s\u25b6\u25b8]*/gi, label: 'Plan \u2192 Budget', onclick: "_goToTab('plan-tab','plan-budget')" },
         { pattern: /Plan \u2192 Tag Resources[\s\u25b6\u25b8]*/gi, label: 'Plan \u2192 Tag Resources', onclick: "_goToTab('plan-tab','plan-tagging')" },
         { pattern: /Configure \u2192 FinOps Settings[\s\u25b6\u25b8]*/gi, label: 'Configure \u2192 FinOps Settings', onclick: "switchToFinOpsSettings()" },
@@ -4678,14 +4680,17 @@ function _switchActSection(section) {
     var scheduler = document.getElementById('act-section-scheduler');
     var budget = document.getElementById('act-section-budget');
     var optimization = document.getElementById('act-section-optimization');
+    var committed = document.getElementById('act-section-committed');
     if (waste) waste.style.display = section === 'waste' ? 'block' : 'none';
     if (tagging) tagging.style.display = section === 'tagging' ? 'block' : 'none';
     if (scheduler) scheduler.style.display = section === 'scheduler' ? 'block' : 'none';
     if (budget) budget.style.display = section === 'budget' ? 'block' : 'none';
     if (optimization) optimization.style.display = section === 'optimization' ? 'block' : 'none';
+    if (committed) committed.style.display = section === 'committed' ? 'block' : 'none';
     // Auto-load scheduler data when switching to scheduler section
     if (section === 'scheduler') _loadSchedulerData();
     if (section === 'optimization') { _populateSpotMigrateAccounts(); _resizePopulateAccounts(); _licensingPopulateAccounts(); }
+    if (section === 'committed') _committedSectionLoad();
 }
 
 // ============================================================
@@ -8509,4 +8514,642 @@ function _renderEbsReport(data) {
         html += '</div></details>';
     });
     el.innerHTML = html;
+}
+
+// ============================================================
+// Committed Discounts Analyzer — Act Tab
+// ============================================================
+
+function _committedSectionLoad() {
+    _committedPopulateAccounts();
+    var sel = document.getElementById('committed-account-select');
+    if (sel && sel.value) {
+        _committedCheckCache(sel.value);
+    }
+}
+
+function _committedPopulateAccounts() {
+    var sel = document.getElementById('committed-account-select');
+    if (!sel) return;
+    var accounts = JSON.parse(sessionStorage.getItem('memberAccounts') || '[]');
+    var current = sel.value;
+    sel.innerHTML = '<option value="">Select an account...</option>';
+    accounts.forEach(function(a) {
+        var opt = document.createElement('option');
+        opt.value = a.accountId;
+        opt.textContent = (a.name || a.accountId) + ' (' + a.accountId + ')';
+        sel.appendChild(opt);
+    });
+    if (current && sel.querySelector('option[value="' + current + '"]')) {
+        sel.value = current;
+    }
+}
+
+function _committedAccountChanged() {
+    var sel = document.getElementById('committed-account-select');
+    if (!sel || !sel.value) {
+        _committedShowEmpty();
+        return;
+    }
+    _committedCheckCache(sel.value);
+}
+
+function _committedCheckCache(accountId) {
+    var cacheKey = 'committedDiscounts_' + accountId;
+    var cached = sessionStorage.getItem(cacheKey);
+    if (cached) {
+        try {
+            var parsed = JSON.parse(cached);
+            _committedRenderResults(parsed.data, parsed.scannedAt);
+            return;
+        } catch (e) { /* fall through to empty state */ }
+    }
+    _committedShowEmpty();
+}
+
+function _committedShowEmpty() {
+    var panels = ['committed-coverage-panel', 'committed-recommendations-panel', 'committed-laddering-panel', 'committed-expiring-panel', 'committed-rightsize-warning', 'committed-org-sharing'];
+    panels.forEach(function(id) { var el = document.getElementById(id); if (el) el.style.display = 'none'; });
+    var empty = document.getElementById('committed-empty');
+    if (empty) empty.style.display = 'block';
+    var scannedAt = document.getElementById('committed-scanned-at');
+    if (scannedAt) scannedAt.style.display = 'none';
+    var rescanBtn = document.getElementById('committed-rescan-btn');
+    if (rescanBtn) rescanBtn.style.display = 'none';
+    var status = document.getElementById('committed-scan-status');
+    if (status) status.textContent = '';
+}
+
+async function _committedDiscountScan() {
+    var sel = document.getElementById('committed-account-select');
+    if (!sel || !sel.value) {
+        notify('Please select an account first.', 'warning');
+        return;
+    }
+    var accountId = sel.value;
+    var scanBtn = document.getElementById('committed-scan-btn');
+    var rescanBtn = document.getElementById('committed-rescan-btn');
+    var status = document.getElementById('committed-scan-status');
+
+    if (scanBtn) scanBtn.disabled = true;
+    if (rescanBtn) rescanBtn.style.display = 'none';
+    if (status) status.innerHTML = '<span style="color:#6366f1;">⏳ Scanning committed discounts... this may take up to 30 seconds.</span>';
+
+    try {
+        var data = await api('POST', '/members/committed-discounts/scan', { accountId: accountId });
+        // Cache results
+        var cacheKey = 'committedDiscounts_' + accountId;
+        sessionStorage.setItem(cacheKey, JSON.stringify({ scannedAt: data.scannedAt, data: data }));
+        _committedRenderResults(data, data.scannedAt);
+        if (status) status.textContent = '';
+    } catch (err) {
+        if (status) {
+            if (err.status === 403 && err.message && err.message.indexOf('ermission') !== -1) {
+                status.innerHTML = '<span style="color:#ef4444;">❌ Permission error: Your cross-account role needs Cost Explorer permissions. </span>'
+                    + '<a href="#" onclick="switchToFinOpsSettings();return false;" style="color:#6366f1;font-weight:600;">Update CloudFormation template ▶</a>';
+            } else if (err.status === 504 || (err.message && err.message.indexOf('imeout') !== -1)) {
+                status.innerHTML = '<span style="color:#ef4444;">❌ Scan timed out. Please try again in a moment.</span>';
+            } else {
+                status.innerHTML = '<span style="color:#ef4444;">❌ ' + (err.message || 'Scan failed') + '</span>';
+            }
+        }
+    } finally {
+        if (scanBtn) scanBtn.disabled = false;
+    }
+}
+
+function _committedDiscountRescan() {
+    var sel = document.getElementById('committed-account-select');
+    if (!sel || !sel.value) return;
+    var cacheKey = 'committedDiscounts_' + sel.value;
+    sessionStorage.removeItem(cacheKey);
+    _committedDiscountScan();
+}
+
+function _committedRenderResults(data, scannedAt) {
+    // Hide empty state
+    var empty = document.getElementById('committed-empty');
+    if (empty) empty.style.display = 'none';
+
+    // Show scannedAt timestamp and rescan button
+    var scannedEl = document.getElementById('committed-scanned-at');
+    if (scannedEl && scannedAt) {
+        scannedEl.style.display = 'block';
+        scannedEl.textContent = '📊 Last scanned: ' + fmtDate(scannedAt);
+    }
+    var rescanBtn = document.getElementById('committed-rescan-btn');
+    if (rescanBtn) rescanBtn.style.display = 'inline-flex';
+
+    // Render rightsize warning
+    _committedRenderRightsizeWarning(data.rightsizeWarning);
+
+    // Render organization sharing note
+    _committedRenderOrgSharing(data.organizationSharing);
+
+    // Render coverage/utilization panel
+    _committedRenderCoverage(data);
+
+    // Render recommendations table
+    _committedRenderRecommendations(data);
+
+    // Render laddering strategy
+    _committedRenderLaddering(data.ladderingStrategy, data.baseline);
+
+    // Render expiring commitments
+    _committedRenderExpiring(data.expiringCommitments);
+}
+
+// Task 11.1: Coverage/Utilization Summary Card Renderer
+function _committedRenderCoverage(data) {
+    var panel = document.getElementById('committed-coverage-panel');
+    if (!panel) return;
+
+    var coverage = data.coverage || {};
+    var utilization = data.utilization || {};
+    var baseline = data.baseline || {};
+    var spCov = (coverage.savingsPlans && coverage.savingsPlans.overall) || 0;
+    var riCov = (coverage.reservedInstances && coverage.reservedInstances.overall) || 0;
+    var spUtil = (utilization.savingsPlans && utilization.savingsPlans.overall) || 0;
+    var riUtil = (utilization.reservedInstances && utilization.reservedInstances.overall) || 0;
+
+    // Calculate total annual savings from recommendations
+    var totalAnnualSavings = 0;
+    var allRecs = (data.spRecommendations || []).concat(data.riRecommendations || []);
+    allRecs.forEach(function(r) { totalAnnualSavings += (r.estimatedMonthlySavings || 0); });
+    totalAnnualSavings = totalAnnualSavings * 12;
+
+    var html = '<div style="background:linear-gradient(135deg,#f0f9ff,#e0f2fe);border:1px solid #7dd3fc;border-radius:12px;padding:20px;margin-bottom:16px;">';
+    html += '<div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;"><span style="font-size:1.5em;">📊</span><div><div style="font-weight:700;color:#0c4a6e;font-size:1.05em;">Coverage & Utilization Summary</div></div></div>';
+
+    // Top metrics row
+    html += '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px;">';
+    html += _committedMetricCard('SP Coverage', spCov.toFixed(1) + '%', spCov < 50 ? '#ef4444' : spCov < 70 ? '#f59e0b' : '#10b981');
+    html += _committedMetricCard('RI Coverage', riCov.toFixed(1) + '%', riCov < 50 ? '#ef4444' : riCov < 70 ? '#f59e0b' : '#10b981');
+    html += _committedMetricCard('SP Utilization', spUtil.toFixed(1) + '%', spUtil < 80 ? '#ef4444' : '#10b981');
+    html += _committedMetricCard('RI Utilization', riUtil.toFixed(1) + '%', riUtil < 80 ? '#ef4444' : '#10b981');
+    html += '</div>';
+
+    // Per-service breakdown
+    var services = ['Amazon EC2', 'Amazon RDS', 'Amazon ElastiCache', 'Amazon Redshift', 'Amazon OpenSearch'];
+    var spByService = (coverage.savingsPlans && coverage.savingsPlans.byService) || {};
+    var riByService = (coverage.reservedInstances && coverage.reservedInstances.byService) || {};
+    var hasServiceData = services.some(function(s) { return (spByService[s] || 0) > 0 || (riByService[s] || 0) > 0; });
+
+    if (hasServiceData) {
+        html += '<div style="margin-bottom:16px;"><div style="font-weight:600;color:#0c4a6e;font-size:0.9em;margin-bottom:8px;">Per-Service Coverage</div>';
+        html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:8px;">';
+        services.forEach(function(svc) {
+            var sp = spByService[svc] || 0;
+            var ri = riByService[svc] || 0;
+            if (sp > 0 || ri > 0) {
+                var shortName = svc.replace('Amazon ', '');
+                html += '<div style="background:#fff;border:1px solid #e0f2fe;border-radius:8px;padding:8px 12px;">';
+                html += '<div style="font-weight:600;font-size:0.8em;color:#374151;">' + shortName + '</div>';
+                html += '<div style="font-size:0.75em;color:#6b7280;">SP: ' + sp.toFixed(1) + '% | RI: ' + ri.toFixed(1) + '%</div>';
+                html += '</div>';
+            }
+        });
+        html += '</div></div>';
+    }
+
+    // Underutilized items
+    var spUnder = (utilization.savingsPlans && utilization.savingsPlans.underutilized) || [];
+    var riUnder = (utilization.reservedInstances && utilization.reservedInstances.underutilized) || [];
+    if (spUnder.length > 0 || riUnder.length > 0) {
+        html += '<div style="background:#fef3c7;border:1px solid #fbbf24;border-radius:8px;padding:10px 14px;margin-bottom:16px;">';
+        html += '<div style="font-weight:600;color:#92400e;font-size:0.85em;margin-bottom:6px;">⚠️ Underutilized Commitments</div>';
+        riUnder.forEach(function(item) {
+            html += '<div style="font-size:0.8em;color:#78350f;">RI ' + (item.instanceType || item.id) + ' (' + item.service + '): <strong>' + item.utilization.toFixed(1) + '%</strong> utilization</div>';
+        });
+        spUnder.forEach(function(item) {
+            html += '<div style="font-size:0.8em;color:#78350f;">SP ' + (item.id || 'plan') + ': <strong>' + item.utilization.toFixed(1) + '%</strong> utilization</div>';
+        });
+        html += '</div>';
+    }
+
+    // P10 Baseline and safe commitment zone
+    if (baseline.p10HourlySpend != null) {
+        html += '<div style="background:#fff;border:1px solid #e0f2fe;border-radius:8px;padding:12px 16px;margin-bottom:12px;">';
+        html += '<div style="font-weight:600;color:#0c4a6e;font-size:0.9em;margin-bottom:8px;">💡 Commitment Recommendation</div>';
+        html += '<div style="display:flex;gap:20px;flex-wrap:wrap;font-size:0.85em;color:#374151;">';
+        html += '<div>P10 Baseline: <strong>$' + baseline.p10HourlySpend.toFixed(2) + '/hr</strong></div>';
+        html += '<div>Average Spend: <strong>$' + baseline.averageHourlySpend.toFixed(2) + '/hr</strong></div>';
+        if (baseline.safeCommitmentRange) {
+            html += '<div>Safe Zone: <strong style="color:#059669;">$' + baseline.safeCommitmentRange.min.toFixed(2) + ' – $' + baseline.safeCommitmentRange.max.toFixed(2) + '/hr</strong></div>';
+        }
+        html += '</div>';
+        if (baseline.variabilityWarning) {
+            html += '<div style="margin-top:8px;font-size:0.8em;color:#b45309;">⚠️ High variability detected — P10 is significantly below average. Consider a conservative commitment (60–70% of baseline).</div>';
+        }
+        html += '</div>';
+    }
+
+    // Total annual savings
+    if (totalAnnualSavings > 0) {
+        html += '<div style="background:linear-gradient(135deg,#064e3b,#065f46);border-radius:8px;padding:10px 16px;display:flex;align-items:center;gap:10px;">';
+        html += '<span style="font-size:1.3em;">💰</span>';
+        html += '<div><div style="color:#6ee7b7;font-size:0.75em;text-transform:uppercase;">Estimated Annual Savings (all recommendations)</div>';
+        html += '<div style="color:#fff;font-size:1.2em;font-weight:700;">$' + totalAnnualSavings.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',') + '</div></div>';
+        html += '</div>';
+    }
+
+    html += '</div>';
+    panel.innerHTML = html;
+    panel.style.display = 'block';
+}
+
+function _committedMetricCard(label, value, color) {
+    return '<div style="background:#fff;border-radius:8px;padding:10px 14px;text-align:center;border:1px solid #e0f2fe;">'
+        + '<div style="font-size:0.75em;color:#6b7280;margin-bottom:4px;">' + label + '</div>'
+        + '<div style="font-size:1.3em;font-weight:700;color:' + color + ';">' + value + '</div>'
+        + '</div>';
+}
+
+// Task 11.2: SP and RI Recommendations Comparison Table Renderer
+function _committedRenderRecommendations(data) {
+    var panel = document.getElementById('committed-recommendations-panel');
+    if (!panel) return;
+
+    var spRecs = data.spRecommendations || [];
+    var riRecs = data.riRecommendations || [];
+    if (spRecs.length === 0 && riRecs.length === 0) {
+        panel.style.display = 'none';
+        return;
+    }
+
+    // Detect diverse workloads (>2 services with >10% of total spend)
+    var coverage = data.coverage || {};
+    var spByService = (coverage.savingsPlans && coverage.savingsPlans.byService) || {};
+    var totalSpend = 0;
+    var serviceSpends = [];
+    Object.keys(spByService).forEach(function(svc) {
+        var val = spByService[svc] || 0;
+        totalSpend += val;
+        serviceSpends.push(val);
+    });
+    var significantServices = serviceSpends.filter(function(v) { return totalSpend > 0 && v > totalSpend * 0.10; }).length;
+    var isDiverse = significantServices > 2;
+
+    var html = '<div style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:20px;">';
+    html += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">';
+    html += '<div style="display:flex;align-items:center;gap:10px;"><span style="font-size:1.3em;">📋</span><strong style="color:#1f2937;">Purchase Recommendations</strong></div>';
+    html += '</div>';
+
+    // SP Recommendations
+    if (spRecs.length > 0) {
+        html += '<div style="margin-bottom:16px;">';
+        html += '<div style="font-weight:600;color:#1e40af;font-size:0.9em;margin-bottom:8px;">Savings Plans</div>';
+        if (isDiverse) {
+            html += '<div style="background:#dbeafe;border:1px solid #93c5fd;border-radius:6px;padding:8px 12px;margin-bottom:10px;font-size:0.8em;color:#1e40af;">✨ <strong>Compute SP recommended for flexibility</strong> — diverse workloads detected across ' + significantServices + ' services.</div>';
+        }
+        html += '<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:0.8em;">';
+        html += '<thead><tr style="background:#f0f4ff;">';
+        html += '<th style="padding:8px;text-align:left;font-weight:600;color:#374151;">Type</th>';
+        html += '<th style="padding:8px;text-align:left;font-weight:600;color:#374151;">Term</th>';
+        html += '<th style="padding:8px;text-align:left;font-weight:600;color:#374151;">Payment</th>';
+        html += '<th style="padding:8px;text-align:right;font-weight:600;color:#374151;">$/hr</th>';
+        html += '<th style="padding:8px;text-align:right;font-weight:600;color:#374151;">Monthly Savings</th>';
+        html += '<th style="padding:8px;text-align:right;font-weight:600;color:#374151;">Savings %</th>';
+        html += '<th style="padding:8px;text-align:right;font-weight:600;color:#374151;">Break-Even</th>';
+        html += '<th style="padding:8px;text-align:right;font-weight:600;color:#374151;">TCO</th>';
+        html += '<th style="padding:8px;text-align:center;font-weight:600;color:#374151;">Action</th>';
+        html += '</tr></thead><tbody>';
+        spRecs.forEach(function(rec) {
+            var planLabel = (rec.planType || '').replace('SavingsPlans', ' SP').replace('Savings', '');
+            var tco = (rec.upfrontCost || 0) + ((rec.estimatedMonthlyOnDemandCost || 0) - (rec.estimatedMonthlySavings || 0)) * (rec.termInYears || 1) * 12;
+            html += '<tr style="border-bottom:1px solid #f0f0f0;">';
+            html += '<td style="padding:8px;">' + planLabel + (rec.isAggressive ? ' <span style="color:#ef4444;font-size:0.8em;">⚠️</span>' : '') + '</td>';
+            html += '<td style="padding:8px;">' + (rec.termInYears || 1) + 'yr</td>';
+            html += '<td style="padding:8px;">' + (rec.paymentOption || '-') + '</td>';
+            html += '<td style="padding:8px;text-align:right;">$' + (rec.hourlyCommitment || 0).toFixed(2) + '</td>';
+            html += '<td style="padding:8px;text-align:right;color:#059669;font-weight:600;">$' + (rec.estimatedMonthlySavings || 0).toFixed(0) + '</td>';
+            html += '<td style="padding:8px;text-align:right;">' + (rec.estimatedSavingsPercentage || 0).toFixed(1) + '%</td>';
+            html += '<td style="padding:8px;text-align:right;">' + (rec.breakEvenMonths != null ? rec.breakEvenMonths.toFixed(1) + ' mo' : '-') + '</td>';
+            html += '<td style="padding:8px;text-align:right;">$' + tco.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',') + '</td>';
+            html += '<td style="padding:8px;text-align:center;"><button onclick="_committedShowPurchaseGuide(\'sp\',\'' + (rec.planType || '') + '\')" style="background:none;border:none;color:#6366f1;cursor:pointer;font-size:0.85em;font-weight:600;">How to Buy</button></td>';
+            html += '</tr>';
+        });
+        html += '</tbody></table></div></div>';
+    }
+
+    // RI Recommendations
+    if (riRecs.length > 0) {
+        html += '<div style="margin-bottom:16px;">';
+        html += '<div style="font-weight:600;color:#7c3aed;font-size:0.9em;margin-bottom:8px;">Reserved Instances</div>';
+        html += '<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:0.8em;">';
+        html += '<thead><tr style="background:#f5f3ff;">';
+        html += '<th style="padding:8px;text-align:left;font-weight:600;color:#374151;">Service</th>';
+        html += '<th style="padding:8px;text-align:left;font-weight:600;color:#374151;">Instance</th>';
+        html += '<th style="padding:8px;text-align:left;font-weight:600;color:#374151;">Class</th>';
+        html += '<th style="padding:8px;text-align:left;font-weight:600;color:#374151;">Term</th>';
+        html += '<th style="padding:8px;text-align:left;font-weight:600;color:#374151;">Payment</th>';
+        html += '<th style="padding:8px;text-align:right;font-weight:600;color:#374151;">Monthly Savings</th>';
+        html += '<th style="padding:8px;text-align:right;font-weight:600;color:#374151;">Savings %</th>';
+        html += '<th style="padding:8px;text-align:right;font-weight:600;color:#374151;">Break-Even</th>';
+        html += '<th style="padding:8px;text-align:center;font-weight:600;color:#374151;">Action</th>';
+        html += '</tr></thead><tbody>';
+        riRecs.forEach(function(rec) {
+            var classLabel = rec.offeringClass === 'convertible' ? 'Convertible' : 'Standard';
+            html += '<tr style="border-bottom:1px solid #f0f0f0;">';
+            html += '<td style="padding:8px;">' + (rec.service || '-') + '</td>';
+            html += '<td style="padding:8px;">' + (rec.instanceType || '-') + ' x' + (rec.recommendedCount || 1) + '</td>';
+            html += '<td style="padding:8px;">' + classLabel + '</td>';
+            html += '<td style="padding:8px;">' + (rec.termInYears || 1) + 'yr</td>';
+            html += '<td style="padding:8px;">' + (rec.paymentOption || '-') + '</td>';
+            html += '<td style="padding:8px;text-align:right;color:#059669;font-weight:600;">$' + (rec.estimatedMonthlySavings || 0).toFixed(0) + '</td>';
+            html += '<td style="padding:8px;text-align:right;">' + (rec.estimatedSavingsPercentage || 0).toFixed(1) + '%</td>';
+            html += '<td style="padding:8px;text-align:right;">' + (rec.breakEvenMonths != null ? rec.breakEvenMonths.toFixed(1) + ' mo' : '-') + '</td>';
+            html += '<td style="padding:8px;text-align:center;"><button onclick="_committedShowPurchaseGuide(\'ri\',\'' + (rec.service || 'EC2') + '\')" style="background:none;border:none;color:#6366f1;cursor:pointer;font-size:0.85em;font-weight:600;">How to Buy</button></td>';
+            html += '</tr>';
+            if (rec.standardVsConvertibleNote) {
+                html += '<tr><td colspan="9" style="padding:4px 8px;font-size:0.75em;color:#6b7280;font-style:italic;">' + rec.standardVsConvertibleNote + '</td></tr>';
+            }
+        });
+        html += '</tbody></table></div></div>';
+    }
+
+    // Database SP section (if applicable)
+    var dbRecs = spRecs.filter(function(r) { return r.planType && r.planType.indexOf('Database') !== -1; });
+    if (dbRecs.length > 0) {
+        html += '<div style="background:#fdf4ff;border:1px solid #e879f9;border-radius:8px;padding:12px 16px;margin-bottom:12px;">';
+        html += '<div style="font-weight:600;color:#86198f;font-size:0.85em;margin-bottom:6px;">🗄️ Database Savings Plans</div>';
+        html += '<div style="font-size:0.8em;color:#6b7280;">Your account has significant RDS/ElastiCache spend. Database SP recommendations are included above.</div>';
+        html += '</div>';
+    }
+
+    html += '</div>';
+    panel.innerHTML = html;
+    panel.style.display = 'block';
+}
+
+// Task 12.1: Laddering Strategy Timeline Renderer
+function _committedRenderLaddering(strategy, baseline) {
+    var panel = document.getElementById('committed-laddering-panel');
+    if (!panel) return;
+
+    if (!strategy || !strategy.tranches || strategy.tranches.length === 0) {
+        panel.style.display = 'none';
+        return;
+    }
+
+    var html = '<div style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:20px;">';
+    html += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">';
+    html += '<div style="display:flex;align-items:center;gap:10px;"><span style="font-size:1.3em;">📅</span><strong style="color:#1f2937;">Laddering Strategy</strong></div>';
+    html += '<button onclick="document.getElementById(\'committed-ladder-modal\').hidden=false;" class="btn btn-outline btn-sm">✏️ Customize</button>';
+    html += '</div>';
+
+    // Aggressive warning
+    if (strategy.isAggressive) {
+        html += '<div style="background:#fef2f2;border:1px solid #fca5a5;border-radius:8px;padding:10px 14px;margin-bottom:12px;font-size:0.85em;color:#991b1b;">';
+        html += '⚠️ <strong>Aggressive commitment</strong> — ' + (strategy.aggressiveWarning || 'This exceeds 70% of your average hourly spend. Consider the 60–70% range for safety.');
+        html += '</div>';
+    }
+
+    // Summary
+    html += '<div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:16px;font-size:0.85em;color:#374151;">';
+    html += '<div>Total Commitment: <strong>$' + (strategy.totalHourlyCommitment || 0).toFixed(2) + '/hr</strong></div>';
+    if (strategy.commitmentPercentage != null) {
+        html += '<div>% of Average: <strong>' + strategy.commitmentPercentage.toFixed(1) + '%</strong></div>';
+    }
+    html += '</div>';
+
+    // Timeline visualization
+    html += '<div style="position:relative;padding-left:24px;border-left:3px solid #6366f1;">';
+    strategy.tranches.forEach(function(tranche, idx) {
+        var isLast = idx === strategy.tranches.length - 1;
+        html += '<div style="position:relative;padding-bottom:' + (isLast ? '0' : '20px') + ';">';
+        // Timeline dot
+        html += '<div style="position:absolute;left:-30px;top:4px;width:12px;height:12px;border-radius:50%;background:#6366f1;border:2px solid #fff;box-shadow:0 0 0 2px #6366f1;"></div>';
+        // Tranche card
+        html += '<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px 16px;">';
+        html += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">';
+        html += '<div style="font-weight:700;color:#1f2937;font-size:0.9em;">Tranche ' + tranche.trancheNumber + '</div>';
+        html += '<div style="font-size:0.8em;color:#6b7280;">' + (tranche.purchaseDate || '') + '</div>';
+        html += '</div>';
+        html += '<div style="display:flex;gap:16px;flex-wrap:wrap;font-size:0.8em;color:#374151;">';
+        html += '<div>Commitment: <strong>$' + (tranche.hourlyCommitment || 0).toFixed(2) + '/hr</strong></div>';
+        html += '<div>Cumulative: <strong>$' + (tranche.cumulativeCommitment || 0).toFixed(2) + '/hr</strong></div>';
+        html += '<div>Est. Savings: <strong style="color:#059669;">$' + (tranche.estimatedMonthlySavings || 0).toFixed(0) + '/mo</strong></div>';
+        html += '</div>';
+        html += '<div style="margin-top:6px;font-size:0.75em;color:#6366f1;font-weight:500;">' + (tranche.recommendedType || '').replace('SavingsPlans', ' SP') + '</div>';
+        if (tranche.rationale) {
+            html += '<div style="margin-top:4px;font-size:0.72em;color:#6b7280;font-style:italic;">' + tranche.rationale + '</div>';
+        }
+        html += '</div></div>';
+    });
+    html += '</div>';
+
+    html += '</div>';
+    panel.innerHTML = html;
+    panel.style.display = 'block';
+}
+
+async function _committedLadderCustom() {
+    var input = document.getElementById('committed-ladder-input');
+    var errorEl = document.getElementById('committed-ladder-error');
+    if (!input) return;
+
+    var commitment = parseFloat(input.value);
+    if (isNaN(commitment) || commitment <= 0) {
+        if (errorEl) errorEl.textContent = 'Please enter a valid hourly commitment greater than 0.';
+        return;
+    }
+
+    var sel = document.getElementById('committed-account-select');
+    if (!sel || !sel.value) {
+        if (errorEl) errorEl.textContent = 'No account selected.';
+        return;
+    }
+
+    if (errorEl) errorEl.textContent = '';
+    var submitBtn = document.getElementById('committed-ladder-submit');
+    if (submitBtn) submitBtn.disabled = true;
+
+    try {
+        var data = await api('POST', '/members/committed-discounts/ladder', {
+            accountId: sel.value,
+            totalHourlyCommitment: commitment
+        });
+        // Close modal
+        document.getElementById('committed-ladder-modal').hidden = true;
+        // Re-render laddering panel
+        _committedRenderLaddering(data, null);
+        notify('Laddering strategy updated.', 'success');
+    } catch (err) {
+        if (errorEl) errorEl.textContent = err.message || 'Failed to generate strategy.';
+    } finally {
+        if (submitBtn) submitBtn.disabled = false;
+    }
+}
+
+// Task 12.2: Expiring Commitments Timeline Renderer
+function _committedRenderExpiring(expiringData) {
+    var panel = document.getElementById('committed-expiring-panel');
+    if (!panel) return;
+
+    if (!expiringData) {
+        panel.style.display = 'none';
+        return;
+    }
+
+    var expiring = expiringData.expiring || [];
+
+    var html = '<div style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:20px;">';
+    html += '<div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;"><span style="font-size:1.3em;">⏳</span><strong style="color:#1f2937;">Expiring Commitments</strong></div>';
+
+    if (expiringData.noUpcomingExpirations || expiring.length === 0) {
+        html += '<div style="text-align:center;padding:20px;color:#6b7280;font-size:0.9em;">✅ No upcoming expirations in the next 90 days.</div>';
+    } else {
+        expiring.forEach(function(item) {
+            var isUrgent = item.urgency === 'expiring_soon' || item.daysUntilExpiry < 30;
+            var borderColor = isUrgent ? '#ef4444' : '#f59e0b';
+            var bgColor = isUrgent ? '#fef2f2' : '#fffbeb';
+
+            html += '<div style="background:' + bgColor + ';border:1px solid ' + borderColor + ';border-radius:8px;padding:12px 16px;margin-bottom:10px;">';
+            html += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">';
+            html += '<div style="display:flex;align-items:center;gap:8px;">';
+            if (isUrgent) {
+                html += '<span style="background:#ef4444;color:#fff;font-size:0.7em;font-weight:700;padding:2px 8px;border-radius:100px;">⚠️ Expiring Soon</span>';
+            }
+            html += '<strong style="color:#1f2937;font-size:0.9em;">' + (item.type || 'Commitment') + '</strong>';
+            html += '</div>';
+            html += '<div style="font-size:0.8em;color:#6b7280;">' + item.daysUntilExpiry + ' days left</div>';
+            html += '</div>';
+            html += '<div style="display:flex;gap:16px;flex-wrap:wrap;font-size:0.8em;color:#374151;">';
+            if (item.planType) html += '<div>Plan: ' + item.planType.replace('SavingsPlans', ' SP') + '</div>';
+            if (item.instanceType) html += '<div>Instance: ' + item.instanceType + '</div>';
+            if (item.hourlyCommitment) html += '<div>Commitment: $' + item.hourlyCommitment.toFixed(2) + '/hr</div>';
+            if (item.monthlyValue) html += '<div>Monthly Value: <strong>$' + item.monthlyValue.toFixed(0) + '</strong></div>';
+            if (item.coverageImpact != null) html += '<div>Coverage Impact: <strong style="color:#ef4444;">-' + item.coverageImpact.toFixed(1) + '%</strong></div>';
+            html += '</div>';
+            html += '<div style="font-size:0.75em;color:#6b7280;margin-top:4px;">Expires: ' + (item.expiresAt || '-') + '</div>';
+            html += '</div>';
+        });
+    }
+
+    html += '</div>';
+    panel.innerHTML = html;
+    panel.style.display = 'block';
+}
+
+// Task 13.1: Rightsize-First Warning Renderer
+function _committedRenderRightsizeWarning(warning) {
+    var el = document.getElementById('committed-rightsize-warning');
+    if (!el) return;
+
+    if (!warning || !warning.hasRightsizingPending || !warning.flaggedInstances || warning.flaggedInstances.length === 0) {
+        el.style.display = 'none';
+        return;
+    }
+
+    var instancesHtml = '';
+    warning.flaggedInstances.forEach(function(inst) {
+        instancesHtml += '<div style="display:flex;align-items:center;gap:8px;padding:4px 0;font-size:0.85em;">';
+        instancesHtml += '<span style="color:#92400e;">•</span>';
+        instancesHtml += '<span><strong>' + (inst.instanceId || '') + '</strong> (' + (inst.service || 'EC2') + '): ';
+        instancesHtml += inst.currentType + ' → <strong style="color:#059669;">' + inst.recommendedType + '</strong></span>';
+        instancesHtml += '</div>';
+    });
+
+    var instancesEl = document.getElementById('committed-rightsize-instances');
+    if (instancesEl) instancesEl.innerHTML = instancesHtml;
+    el.style.display = 'block';
+}
+
+// Task 13.2: Organization Sharing Awareness Note
+function _committedRenderOrgSharing(orgData) {
+    var el = document.getElementById('committed-org-sharing');
+    if (!el) return;
+
+    if (!orgData || !orgData.multipleAccountsConnected) {
+        el.style.display = 'none';
+        return;
+    }
+
+    var text = orgData.sharingNote || 'Savings Plans and RIs can be shared across accounts in the same AWS Organization.';
+    if (orgData.isManagementAccount === false) {
+        text += ' 💡 Tip: For maximum sharing, purchase commitments from the management (payer) account.';
+    }
+
+    var textEl = document.getElementById('committed-org-sharing-text');
+    if (textEl) textEl.textContent = text;
+    el.style.display = 'block';
+}
+
+// Task 13.3: Purchase Guidance Modal
+function _committedShowPurchaseGuide(type, subType) {
+    var modal = document.getElementById('committed-purchase-modal');
+    var body = document.getElementById('committed-purchase-modal-body');
+    if (!modal || !body) return;
+
+    // Determine region from account data
+    var region = 'us-east-1'; // default
+    var sel = document.getElementById('committed-account-select');
+    if (sel && sel.value) {
+        var accounts = JSON.parse(sessionStorage.getItem('memberAccounts') || '[]');
+        var acct = accounts.find(function(a) { return a.accountId === sel.value; });
+        if (acct && acct.region) region = acct.region;
+    }
+
+    var html = '';
+
+    if (type === 'sp') {
+        var consoleUrl = 'https://' + region + '.console.aws.amazon.com/cost-management/home#/savings-plans/purchase';
+        html += '<div style="margin-bottom:16px;">';
+        html += '<h3 style="color:#1e40af;font-size:1em;margin-bottom:12px;">🛒 How to Purchase a Savings Plan</h3>';
+        html += '<ol style="padding-left:20px;font-size:0.9em;line-height:1.8;color:#374151;">';
+        html += '<li>Go to <strong>AWS Cost Explorer</strong> in your AWS Console</li>';
+        html += '<li>Navigate to <strong>Savings Plans</strong> in the left menu</li>';
+        html += '<li>Click <strong>"Purchase Savings Plans"</strong></li>';
+        html += '<li>Select the plan type: <strong>' + (subType || 'Compute').replace('SavingsPlans', ' SP') + '</strong></li>';
+        html += '<li>Choose your term (1 or 3 years) and payment option</li>';
+        html += '<li>Enter your hourly commitment amount</li>';
+        html += '<li>Review the estimated savings and click <strong>"Add to cart"</strong></li>';
+        html += '<li>Complete the purchase in the cart</li>';
+        html += '</ol>';
+        html += '<a href="' + consoleUrl + '" target="_blank" style="display:inline-block;margin-top:12px;background:#1e40af;color:#fff;padding:8px 16px;border-radius:6px;text-decoration:none;font-size:0.85em;font-weight:600;">Open AWS Savings Plans Console ↗</a>';
+        html += '</div>';
+    } else if (type === 'ri') {
+        var service = (subType || 'EC2').toUpperCase();
+        var consoleUrl = '';
+        if (service === 'EC2' || service === 'AMAZON EC2') {
+            consoleUrl = 'https://' + region + '.console.aws.amazon.com/ec2/v2/home#ReservedInstances';
+        } else if (service === 'RDS' || service === 'AMAZON RDS') {
+            consoleUrl = 'https://' + region + '.console.aws.amazon.com/rds/home#reserved-instances';
+        } else {
+            consoleUrl = 'https://' + region + '.console.aws.amazon.com/ec2/v2/home#ReservedInstances';
+        }
+
+        html += '<div style="margin-bottom:16px;">';
+        html += '<h3 style="color:#7c3aed;font-size:1em;margin-bottom:12px;">🛒 How to Purchase a Reserved Instance (' + service + ')</h3>';
+        html += '<ol style="padding-left:20px;font-size:0.9em;line-height:1.8;color:#374151;">';
+        if (service === 'RDS' || service === 'AMAZON RDS') {
+            html += '<li>Go to the <strong>Amazon RDS Console</strong></li>';
+            html += '<li>Click <strong>"Reserved Instances"</strong> in the left navigation</li>';
+            html += '<li>Click <strong>"Purchase Reserved DB Instance"</strong></li>';
+        } else {
+            html += '<li>Go to the <strong>Amazon EC2 Console</strong></li>';
+            html += '<li>Click <strong>"Reserved Instances"</strong> in the left navigation</li>';
+            html += '<li>Click <strong>"Purchase Reserved Instances"</strong></li>';
+        }
+        html += '<li>Select the instance type, term, and payment option</li>';
+        html += '<li>Choose <strong>Standard</strong> (higher discount) or <strong>Convertible</strong> (more flexibility)</li>';
+        html += '<li>Set the quantity and review pricing</li>';
+        html += '<li>Click <strong>"Purchase"</strong> to confirm</li>';
+        html += '</ol>';
+        html += '<a href="' + consoleUrl + '" target="_blank" style="display:inline-block;margin-top:12px;background:#7c3aed;color:#fff;padding:8px 16px;border-radius:6px;text-decoration:none;font-size:0.85em;font-weight:600;">Open AWS ' + service + ' Reserved Instances ↗</a>';
+        html += '</div>';
+    }
+
+    // Warning about non-refundable
+    html += '<div style="background:#fef3c7;border:1px solid #fbbf24;border-radius:8px;padding:12px 16px;margin-top:16px;">';
+    html += '<div style="font-weight:600;color:#92400e;font-size:0.85em;margin-bottom:4px;">⚠️ Important</div>';
+    html += '<div style="font-size:0.8em;color:#78350f;line-height:1.6;">';
+    html += 'Savings Plans and Reserved Instances are <strong>non-refundable</strong> commitments. ';
+    html += 'We recommend the <strong>laddering approach</strong> — purchase in quarterly tranches rather than a single large commitment. ';
+    html += 'This reduces risk and allows you to adjust as your usage evolves.';
+    html += '</div></div>';
+
+    body.innerHTML = html;
+    modal.hidden = false;
 }
