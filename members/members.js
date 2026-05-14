@@ -2,6 +2,14 @@
 /* Build: spot-ecs-trigger */
 var API = 'https://l2fd4h481h.execute-api.us-east-1.amazonaws.com';
 
+// Global state (declared early for hoisting)
+var globalTagFilter = { key: null, value: null };
+var tagKeysCache = null;
+var tagKeysCacheTime = 0;
+var tagValuesCache = {};
+var tagValuesCacheTime = {};
+var TAG_CACHE_TTL = 300000;
+
 // ============================================================
 // Paddle Payment Integration
 // ============================================================
@@ -2701,14 +2709,8 @@ if (visualizeSaveBtn) visualizeSaveBtn.onclick = saveVisualizedAnswer;
 
 
 // ============================================================
-// Tag Filter State
+// Tag Filter State (variables declared at top of file)
 // ============================================================
-var globalTagFilter = { key: null, value: null };
-var tagKeysCache = null;
-var tagKeysCacheTime = 0;
-var tagValuesCache = {};
-var tagValuesCacheTime = {};
-var TAG_CACHE_TTL = 300000; // 5 minutes
 
 
 // ============================================================
@@ -2738,7 +2740,7 @@ function initTagFilter(containerId) {
     _loadTagKeys(keySelect);
 
     // Restore state if filter was previously set
-    if (globalTagFilter.key) {
+    if (globalTagFilter && globalTagFilter.key) {
         // Will be restored after keys load
     }
 
@@ -2999,6 +3001,7 @@ async function loadDashboardData() {
 }
 
 function renderDashboardWidgets(data) {
+    if (!data || typeof data !== 'object') { console.error('Invalid dashboard data:', data); return; }
     // Wire refresh button
     var refreshBtn = $('dash-refresh-btn');
     if (refreshBtn) refreshBtn.onclick = function() { dashDataCache = null; loadDashboardData(); };
@@ -3133,6 +3136,7 @@ function _saveDashLayout(layout) {
 }
 
 function _buildDashWidgets(grid) {
+    if (typeof DASH_WIDGET_DEFS === 'undefined' || !DASH_WIDGET_DEFS) return;
     var layout = _getDashLayout();
     // Ensure all widgets exist in layout (new ones added at end)
     var layoutIds = layout.map(function(l){return l.id;});
