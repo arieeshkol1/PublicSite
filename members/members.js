@@ -4687,6 +4687,9 @@ function _switchActSection(section) {
     if (budget) budget.style.display = section === 'budget' ? 'block' : 'none';
     if (optimization) optimization.style.display = section === 'optimization' ? 'block' : 'none';
     if (committed) committed.style.display = section === 'committed' ? 'block' : 'none';
+    // Hide the shared Act tab account selector when Committed Discounts is active (it has its own)
+    var actTopAccounts = document.getElementById('act-account-select');
+    if (actTopAccounts) actTopAccounts.parentElement.parentElement.style.display = section === 'committed' ? 'none' : 'flex';
     // Auto-load scheduler data when switching to scheduler section
     if (section === 'scheduler') _loadSchedulerData();
     if (section === 'optimization') { _populateSpotMigrateAccounts(); _resizePopulateAccounts(); _licensingPopulateAccounts(); }
@@ -8531,13 +8534,13 @@ function _committedSectionLoad() {
 function _committedPopulateAccounts() {
     var sel = document.getElementById('committed-account-select');
     if (!sel) return;
-    var accounts = JSON.parse(sessionStorage.getItem('memberAccounts') || '[]');
+    var accounts = allAccounts.filter(function(a) { return a.connectionStatus === 'connected'; });
     var current = sel.value;
     sel.innerHTML = '<option value="">Select an account...</option>';
     accounts.forEach(function(a) {
         var opt = document.createElement('option');
         opt.value = a.accountId;
-        opt.textContent = (a.name || a.accountId) + ' (' + a.accountId + ')';
+        opt.textContent = (a.accountName || a.accountId) + ' (' + a.accountId + ')';
         sel.appendChild(opt);
     });
     if (current && sel.querySelector('option[value="' + current + '"]')) {

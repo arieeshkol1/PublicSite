@@ -6496,12 +6496,43 @@ def handle_ai_query(event):
     if tag_key and tag_value:
         ai_question = f"[FILTER ACTIVE: Showing data filtered by tag {tag_key}={tag_value}] {question}"
 
-    if len(account_ids) > 1:
-        result = _invoke_multi_account(ai_question, account_ids, member_email, interaction_id)
-    elif BEDROCK_AGENT_ID and BEDROCK_AGENT_ALIAS_ID:
-        result = _invoke_bedrock_agent(ai_question, account_ids[0], member_email, interaction_id)
-    else:
-        result = _invoke_direct_model(ai_question, account_ids[0], member_email, interaction_id)
+    # Use a timeout to prevent API Gateway 29s timeout from returning 503
+    def _run_ai_query():
+        if len(account_ids) > 1:
+            return _invoke_multi_account(ai_question, account_ids, member_email, interaction_id)
+        elif BEDROCK_AGENT_ID and BEDROCK_AGENT_ALIAS_ID:
+            return _invoke_bedrock_agent(ai_question, account_ids[0], member_email, interaction_id)
+        else:
+            return _invoke_direct_model(ai_question, account_ids[0], member_email, interaction_id)
+
+    try:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(_run_ai_query)
+            result = future.result(timeout=27)  # 27s to stay under API Gateway 29s limit
+    except concurrent.futures.TimeoutError:
+        logger.error("AI query timed out after 27 seconds")
+        result = create_response(200, {
+            'answer': 'The analysis is taking longer than expected. This can happen with complex queries or during high load. Please try again in a moment.',
+            'interactionId': interaction_id,
+            'commands': [],
+            'results': [],
+            'tipFound': False,
+            'agentUsed': False,
+            'chartData': [],
+            'topServices': [],
+        })
+    except Exception as e:
+        logger.error(f"AI query failed: {e}")
+        result = create_response(200, {
+            'answer': 'An error occurred while processing your question. Please try again.',
+            'interactionId': interaction_id,
+            'commands': [],
+            'results': [],
+            'tipFound': False,
+            'agentUsed': False,
+            'chartData': [],
+            'topServices': [],
+        })
 
     # Inject credits info into the response body
     max_credits = AI_CREDITS.get(tier, 100)
@@ -6591,8 +6622,8 @@ def _invoke_direct_model(question, account_id, member_email, interaction_id):
             ProjectionExpression='healthcheckResults'
         )
         hc_results = hc_resp.get('Item', {}).get('healthcheckResults', {})
-        if account_ids[0] in hc_results:
-            account_data['healthcheck_results'] = hc_results[account_ids[0]]
+        if account_id in hc_results:
+            account_data['healthcheck_results'] = hc_results[account_id]
     except Exception:
         pass
 
