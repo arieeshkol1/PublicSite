@@ -2712,13 +2712,13 @@ def _detect_charged_regions(creds_or_client):
             Granularity='MONTHLY', Metrics=['UnblendedCost'],
             GroupBy=[{'Type': 'DIMENSION', 'Key': 'REGION'}],
         )
-        regions = set()
+        regions = {}
         for period in resp.get('ResultsByTime', []):
             for group in period.get('Groups', []):
                 region_val = group['Keys'][0]
                 cost = float(group['Metrics']['UnblendedCost']['Amount'])
                 if cost > 0.01 and region_val and region_val != 'global':
-                    regions.add(region_val)
+                    regions[region_val] = regions.get(region_val, 0) + cost
         # Also check usage type prefixes as fallback
         if not regions:
             resp2 = ce.get_cost_and_usage(
@@ -2731,8 +2731,10 @@ def _detect_charged_regions(creds_or_client):
                     ut = group['Keys'][0]
                     prefix = ut.split('-')[0] if '-' in ut else ''
                     if prefix in PREFIX_TO_REGION:
-                        regions.add(PREFIX_TO_REGION[prefix])
-        return list(regions) if regions else ['us-east-1']
+                        regions[PREFIX_TO_REGION[prefix]] = regions.get(PREFIX_TO_REGION[prefix], 0) + 1
+        # Sort by cost descending — highest-cost region first
+        sorted_regions = sorted(regions.keys(), key=lambda r: regions[r], reverse=True)
+        return sorted_regions if sorted_regions else ['us-east-1']
     except Exception:
         return ['us-east-1']
 
