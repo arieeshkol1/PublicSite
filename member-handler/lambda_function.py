@@ -2406,20 +2406,36 @@ def _calculate_p10_baseline(ce_client, account_id):
     # Compute average
     average = sum(values) / len(values)
 
+    # If using DAILY granularity, convert to hourly equivalent (divide by 24)
+    if granularity == 'DAILY':
+        p10 = p10 / 24.0
+        average = average / 24.0
+
     # Variability warning: P10 < 70% of average
     variability_warning = p10 < (average * 0.70) if average > 0 else False
 
-    # Safe commitment range: [p10, min(p10 * 1.1, average * 0.70)]
-    range_max = min(p10 * 1.1, average * 0.70) if average > 0 else p10 * 1.1
-    # Ensure min <= max (can happen if p10 is very close to or above 70% of average)
-    if range_max < p10:
-        range_max = p10
+    # Safe commitment range:
+    # - If P10 < 70% of average (variable usage): range is [P10, min(P10*1.1, average*0.70)]
+    # - If P10 >= 70% of average (stable usage): range is [average*0.60, average*0.70]
+    #   because committing at P10 would be too aggressive
+    if average > 0:
+        if p10 < average * 0.70:
+            # Variable usage — P10 is the safe floor
+            range_min = p10
+            range_max = min(p10 * 1.1, average * 0.70)
+        else:
+            # Stable usage — P10 is close to average, use 60-70% of average
+            range_min = average * 0.60
+            range_max = average * 0.70
+    else:
+        range_min = 0.0
+        range_max = 0.0
 
     return {
         'p10HourlySpend': round(p10, 4),
         'averageHourlySpend': round(average, 4),
         'variabilityWarning': variability_warning,
-        'safeCommitmentRange': {'min': round(p10, 4), 'max': round(range_max, 4)},
+        'safeCommitmentRange': {'min': round(range_min, 2), 'max': round(range_max, 2)},
         'granularity': granularity,
         'dataPoints': data_points,
     }
@@ -3783,12 +3799,17 @@ def handle_committed_discount_scan(event):
     laddering_strategy = None
     if not incomplete and results.get('baseline') and avg_hourly_spend > 0:
         try:
-            p10_spend = results['baseline'].get('p10HourlySpend', 0)
-            # Use P10 as the default commitment (safest level)
-            if p10_spend > 0:
+            baseline_data = results['baseline']
+            safe_range = baseline_data.get('safeCommitmentRange', {})
+            # Use the safe commitment range max as the default (not raw P10)
+            # This ensures we don't recommend committing above 70% of average
+            default_commitment = safe_range.get('max', 0)
+            if default_commitment <= 0:
+                default_commitment = avg_hourly_spend * 0.65  # fallback: 65% of average
+            if default_commitment > 0:
                 current_date = datetime.now(timezone.utc).date()
                 laddering_strategy = _generate_laddering_strategy(
-                    p10_spend, avg_hourly_spend, current_date
+                    default_commitment, avg_hourly_spend, current_date
                 )
         except Exception as e:
             logger.warning(f"Laddering strategy generation failed (non-fatal): {e}")
