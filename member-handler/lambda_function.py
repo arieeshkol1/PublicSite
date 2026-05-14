@@ -6,6 +6,7 @@ Routes: POST /members/register, POST /members/login, GET /members/accounts,
 """
 
 import json
+import uuid
 import os
 import re
 import time
@@ -48,6 +49,7 @@ SCHEDULER_ROLE_ARN = os.environ.get('SCHEDULER_ROLE_ARN', 'arn:aws:iam::99110513
 dynamodb = boto3.resource('dynamodb')
 ses_client = boto3.client('ses', region_name=os.environ.get('SES_REGION', os.environ.get('AWS_REGION', 'us-east-1')))
 cognito_client = boto3.client('cognito-idp', region_name=os.environ.get('COGNITO_REGION', 'us-east-1'))
+lambda_client = boto3.client('lambda')
 
 # Constants
 OTP_TTL_SECONDS = 300  # 5 minutes
@@ -74,6 +76,10 @@ def _decimal_to_native(obj):
 
 def lambda_handler(event, context):
     """Main entry point — dispatches to handler based on routeKey."""
+    # ── Async scan execution (bypasses API Gateway routing) ──
+    if event.get('_asyncScan'):
+        return _execute_async_scan(event)
+
     # ── SNS event detection (Spot interruption push pipeline) ──
     records = event.get('Records', [])
     if records and records[0].get('EventSource') == 'aws:sns':
@@ -113,6 +119,7 @@ def lambda_handler(event, context):
         'POST /members/business-metrics': handle_save_business_metrics,
         'POST /members/actions/scan': handle_actions_scan,
         'GET /members/actions/last-scan': handle_get_last_scan,
+        'GET /members/actions/scan-status': handle_scan_status,
         'POST /members/actions/execute': handle_actions_execute,
         'POST /members/actions/browse-bucket': handle_browse_bucket,
         'POST /member/add-tokens': handle_add_tokens,
@@ -2730,7 +2737,7 @@ def _detect_charged_regions(creds_or_client):
         return ['us-east-1']
 
 def handle_actions_scan(event):
-    """Tips-driven scan engine v2."""
+    """Async waste scan kickoff — returns scanId immediately, invokes Lambda asynchronously."""
     auth = validate_token(event)
     if isinstance(auth, dict) and 'statusCode' in auth:
         return auth
@@ -2765,133 +2772,228 @@ def handle_actions_scan(event):
     if isinstance(ownership, dict):
         return ownership
 
-    # ── Step 1: Load tips from DynamoDB (ground truth) ────────────────────
-    tips = _load_tips_from_db()
+    # Generate scan ID and store initial status
+    scan_id = str(uuid.uuid4())
+    members_table = dynamodb.Table(MEMBERS_TABLE_NAME)
+    try:
+        members_table.update_item(
+            Key={'email': member_email},
+            UpdateExpression='SET lastScan = :scan',
+            ExpressionAttributeValues={':scan': {
+                'scanId': scan_id,
+                'status': 'in_progress',
+                'startedAt': datetime.now(timezone.utc).isoformat(),
+                'accountIds': account_ids,
+            }},
+        )
+    except Exception as e:
+        logger.warning(f"Failed to store initial scan status: {e}")
 
-    all_cards = []
-    all_findings = []
-    total_savings = 0.0
-    scan_start = datetime.now(timezone.utc)
-    SCAN_TIMEOUT_SECONDS = 26  # Leave 4s buffer for API Gateway 30s limit
+    # Invoke self asynchronously to perform the actual scan
+    try:
+        lambda_client.invoke(
+            FunctionName=os.environ.get('AWS_LAMBDA_FUNCTION_NAME', 'aws-bill-analyzer-member-api'),
+            InvocationType='Event',
+            Payload=json.dumps({
+                '_asyncScan': True,
+                'scanId': scan_id,
+                'memberEmail': member_email,
+                'accountIds': account_ids,
+                'headers': event.get('headers', {}),
+            }),
+        )
+    except Exception as e:
+        logger.error(f"Failed to invoke async scan: {e}")
+        return create_error_response(500, 'ServerError', 'Failed to start scan')
 
-    for account_id in account_ids[:5]:
-        try:
-            creds = _assume_role_for_account(member_email, account_id)
-        except Exception as e:
-            logger.warning(f"Cannot assume role for {account_id}: {e}")
-            continue
+    return create_response(200, {'scanId': scan_id, 'status': 'in_progress'})
 
-        acct_label = f'Account {account_id[-4:]}'
 
-        # ── Step 2: Collect service data ──────────────────────────────────
-        svc_data = _collect_service_data(account_id, creds)
+def handle_scan_status(event):
+    """Return the current status of an async scan by scanId."""
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+    member_email = auth['sub']
 
-        # ── Step 3: Determine active services from CE cost data ───────────
-        active_services = _get_active_services(svc_data.get('cost_by_service', []))
+    # Get scanId from query params
+    params = event.get('queryStringParameters') or {}
+    scan_id = params.get('scanId', '')
+    if not scan_id:
+        return create_error_response(400, 'InvalidRequest', 'Missing scanId parameter')
 
-        # ── Step 4: Evaluate each tip against collected data ──────────────
-        for tip in tips:
-            # Time budget guard — return partial results if approaching API GW timeout
-            elapsed = (datetime.now(timezone.utc) - scan_start).total_seconds()
-            if elapsed > SCAN_TIMEOUT_SECONDS:
-                logger.warning(f"Scan time budget exceeded ({elapsed:.1f}s) — returning partial results")
-                break
+    try:
+        members_table = dynamodb.Table(MEMBERS_TABLE_NAME)
+        member = members_table.get_item(Key={'email': member_email}).get('Item') or {}
+        last_scan = _decimal_to_native(member.get('lastScan') or {})
 
-            svc_key = tip.get('serviceKey', tip.get('service', 'General'))
-            # Gate: only evaluate if service is present (General always runs)
-            if svc_key != 'General' and svc_key not in active_services:
+        if last_scan.get('scanId') != scan_id:
+            return create_error_response(404, 'NotFound', 'Scan not found')
+
+        return create_response(200, last_scan)
+    except ClientError as e:
+        return create_error_response(500, 'ServerError', 'Failed to load scan status')
+
+
+def _execute_async_scan(event):
+    """Execute the actual waste scan asynchronously (invoked via Lambda Event invocation)."""
+    scan_id = event.get('scanId', '')
+    member_email = event.get('memberEmail', '')
+    account_ids = event.get('accountIds', [])
+
+    if not member_email or not account_ids:
+        logger.error("Async scan missing memberEmail or accountIds")
+        return {'statusCode': 400, 'body': 'Missing required fields'}
+
+    members_table = dynamodb.Table(MEMBERS_TABLE_NAME)
+
+    try:
+        # ── Step 1: Load tips from DynamoDB (ground truth) ────────────────────
+        tips = _load_tips_from_db()
+
+        all_cards = []
+        all_findings = []
+        total_savings = 0.0
+
+        for account_id in account_ids[:5]:
+            try:
+                creds = _assume_role_for_account(member_email, account_id)
+            except Exception as e:
+                logger.warning(f"Cannot assume role for {account_id}: {e}")
                 continue
 
-            tip_id = tip.get('tipId', '')
-            check_fn = _SCAN_REGISTRY.get(tip_id)
+            acct_label = f'Account {account_id[-4:]}'
 
-            if check_fn and tip.get('checkImplemented', False):
-                try:
-                    finding = check_fn(tip, svc_data, account_id, acct_label, creds)
-                    if finding:
-                        finding['tipId'] = tip_id
-                        finding['level'] = tip.get('level', 2)
-                        finding['actionType'] = tip.get('actionType', 'advisory')
-                        finding['actionLabel'] = tip.get('actionLabel', 'View')
-                        finding['tipTitle'] = tip.get('title', '')
-                        finding['service'] = tip.get('service', '')
-                        all_findings.append(finding)
-                        if finding.get('cardData'):
-                            card = finding['cardData']
-                            card['accountId'] = account_id
-                            card['accountLabel'] = acct_label
-                            card['tipId'] = tip_id
-                            all_cards.append(card)
-                            total_savings += card.get('monthlySavings') or 0
-                except Exception as e:
-                    logger.warning(f"Check {tip_id} failed for {account_id}: {e}")
-            elif not tip.get('checkImplemented', False):
-                # Placeholder finding for tips not yet implemented
-                all_findings.append({
-                    'tipId': tip_id,
-                    'level': tip.get('level', 2),
-                    'actionType': 'pending',
-                    'actionLabel': 'Coming Soon',
-                    'tipTitle': tip.get('title', ''),
-                    'service': tip.get('service', ''),
-                    'status': 'pending',
-                    'accountId': account_id,
-                    'note': 'Check not yet implemented — will be added in a future update',
-                })
+            # ── Step 2: Collect service data ──────────────────────────────────
+            svc_data = _collect_service_data(account_id, creds)
 
-    # Deduplicate cards: merge multiple cards of the same type+account into one
-    # (happens when multiple tips map to the same check function, e.g. s3-002 and s3-003)
-    seen_card_ids = {}
-    deduped_cards = []
-    for card in all_cards:
-        cid = card.get('cardId', '')
-        if cid not in seen_card_ids:
-            seen_card_ids[cid] = card
-            deduped_cards.append(card)
-        else:
-            # Merge resources from duplicate into existing card
-            existing = seen_card_ids[cid]
-            existing_res = existing.get('resources') or []
-            new_res = card.get('resources') or []
-            # Add resources not already present (by id/name)
-            existing_ids = {r.get('id') or r.get('name') for r in existing_res}
-            for r in new_res:
-                rid = r.get('id') or r.get('name')
-                if rid not in existing_ids:
-                    existing_res.append(r)
-                    existing_ids.add(rid)
-            existing['resources'] = existing_res
-            existing['count'] = len(existing_res)
-    all_cards = deduped_cards
+            # ── Step 3: Determine active services from CE cost data ───────────
+            active_services = _get_active_services(svc_data.get('cost_by_service', []))
 
-    all_cards.sort(key=lambda c: (c.get('monthlySavings') or 0), reverse=True)
-    all_findings.sort(key=lambda f: (f.get('savingsUsd') or 0), reverse=True)
+            # ── Step 4: Evaluate each tip against collected data ──────────────
+            for tip in tips:
+                svc_key = tip.get('serviceKey', tip.get('service', 'General'))
+                # Gate: only evaluate if service is present (General always runs)
+                if svc_key != 'General' and svc_key not in active_services:
+                    continue
 
-    # Deduplicate findings by tipId (same tip can appear for multiple accounts)
-    seen_tips = set()
-    deduped_findings = []
-    for f in all_findings:
-        tip_key = f.get('tipId') or f.get('tipTitle') or ''
-        if tip_key and tip_key in seen_tips:
-            continue
-        if tip_key:
-            seen_tips.add(tip_key)
-        deduped_findings.append(f)
-    all_findings = deduped_findings
+                tip_id = tip.get('tipId', '')
+                check_fn = _SCAN_REGISTRY.get(tip_id)
 
-    scanned_at = datetime.now(timezone.utc).isoformat()
-    result = create_response(200, {
-        'cards': all_cards,
-        'findings': all_findings,
-        'totalSavings': round(total_savings, 2),
-        'scannedAccounts': len(account_ids),
-        'scannedAt': scanned_at,
-    })
+                if check_fn and tip.get('checkImplemented', False):
+                    try:
+                        finding = check_fn(tip, svc_data, account_id, acct_label, creds)
+                        if finding:
+                            finding['tipId'] = tip_id
+                            finding['level'] = tip.get('level', 2)
+                            finding['actionType'] = tip.get('actionType', 'advisory')
+                            finding['actionLabel'] = tip.get('actionLabel', 'View')
+                            finding['tipTitle'] = tip.get('title', '')
+                            finding['service'] = tip.get('service', '')
+                            all_findings.append(finding)
+                            if finding.get('cardData'):
+                                card = finding['cardData']
+                                card['accountId'] = account_id
+                                card['accountLabel'] = acct_label
+                                card['tipId'] = tip_id
+                                all_cards.append(card)
+                                total_savings += card.get('monthlySavings') or 0
+                    except Exception as e:
+                        logger.warning(f"Check {tip_id} failed for {account_id}: {e}")
+                elif not tip.get('checkImplemented', False):
+                    # Placeholder finding for tips not yet implemented
+                    all_findings.append({
+                        'tipId': tip_id,
+                        'level': tip.get('level', 2),
+                        'actionType': 'pending',
+                        'actionLabel': 'Coming Soon',
+                        'tipTitle': tip.get('title', ''),
+                        'service': tip.get('service', ''),
+                        'status': 'pending',
+                        'accountId': account_id,
+                        'note': 'Check not yet implemented — will be added in a future update',
+                    })
 
-    # Cache top findings for the Chat widget
-    _save_last_scan(member_email, account_ids, all_findings[:10], round(total_savings, 2), scanned_at)
+        # Deduplicate cards
+        seen_card_ids = {}
+        deduped_cards = []
+        for card in all_cards:
+            cid = card.get('cardId', '')
+            if cid not in seen_card_ids:
+                seen_card_ids[cid] = card
+                deduped_cards.append(card)
+            else:
+                existing = seen_card_ids[cid]
+                existing_res = existing.get('resources') or []
+                new_res = card.get('resources') or []
+                existing_ids = {r.get('id') or r.get('name') for r in existing_res}
+                for r in new_res:
+                    rid = r.get('id') or r.get('name')
+                    if rid not in existing_ids:
+                        existing_res.append(r)
+                        existing_ids.add(rid)
+                existing['resources'] = existing_res
+                existing['count'] = len(existing_res)
+        all_cards = deduped_cards
 
-    return result
+        all_cards.sort(key=lambda c: (c.get('monthlySavings') or 0), reverse=True)
+        all_findings.sort(key=lambda f: (f.get('savingsUsd') or 0), reverse=True)
+
+        # Deduplicate findings by tipId
+        seen_tips = set()
+        deduped_findings = []
+        for f in all_findings:
+            tip_key = f.get('tipId') or f.get('tipTitle') or ''
+            if tip_key and tip_key in seen_tips:
+                continue
+            if tip_key:
+                seen_tips.add(tip_key)
+            deduped_findings.append(f)
+        all_findings = deduped_findings
+
+        scanned_at = datetime.now(timezone.utc).isoformat()
+
+        # Store completed results in DynamoDB
+        scan_result = {
+            'scanId': scan_id,
+            'status': 'complete',
+            'cards': all_cards,
+            'findings': all_findings[:10],
+            'allFindings': all_findings,
+            'totalSavings': str(round(total_savings, 2)),
+            'scannedAccounts': len(account_ids),
+            'scannedAt': scanned_at,
+            'accountIds': account_ids,
+            'completedAt': datetime.now(timezone.utc).isoformat(),
+        }
+
+        members_table.update_item(
+            Key={'email': member_email},
+            UpdateExpression='SET lastScan = :scan',
+            ExpressionAttributeValues={':scan': scan_result},
+        )
+
+        logger.info(f"Async scan {scan_id} completed for {member_email}: {len(all_cards)} cards, ${total_savings:.2f} savings")
+        return {'statusCode': 200, 'body': json.dumps({'status': 'complete', 'scanId': scan_id})}
+
+    except Exception as e:
+        logger.error(f"Async scan {scan_id} failed: {e}")
+        # Store failed status
+        try:
+            members_table.update_item(
+                Key={'email': member_email},
+                UpdateExpression='SET lastScan = :scan',
+                ExpressionAttributeValues={':scan': {
+                    'scanId': scan_id,
+                    'status': 'failed',
+                    'error': str(e),
+                    'failedAt': datetime.now(timezone.utc).isoformat(),
+                    'accountIds': account_ids,
+                }},
+            )
+        except Exception:
+            pass
+        return {'statusCode': 500, 'body': json.dumps({'status': 'failed', 'error': str(e)})}
 
 
 def _load_tips_from_db():

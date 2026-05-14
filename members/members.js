@@ -5242,6 +5242,27 @@ function initActTab() {
 }
 initActTab();
 
+
+// ============================================================
+// Async Scan Polling Helper
+// ============================================================
+async function _pollScanStatus(scanId, timeoutMs) {
+    var deadline = Date.now() + (timeoutMs || 90000);
+    var interval = 3000;
+    while (Date.now() < deadline) {
+        await new Promise(function(r) { setTimeout(r, interval); });
+        try {
+            var status = await api('GET', '/members/actions/scan-status?scanId=' + encodeURIComponent(scanId));
+            if (status.status === 'complete') return status;
+            if (status.status === 'failed') throw { message: status.error || 'Scan failed' };
+        } catch (err) {
+            if (err.message && err.message !== 'Scan failed') throw err;
+            if (err.message === 'Scan failed') throw err;
+        }
+    }
+    throw { message: 'Scan timed out — please try again' };
+}
+
 async function _actRunScan(accountIds) {
     var status = $('act-scan-status');
     var grid = $('act-cards-grid');
@@ -5267,7 +5288,19 @@ async function _actRunScan(accountIds) {
     ];
 
     try {
-        var data = await api('POST', '/members/actions/scan', { accountIds: accountIds });
+        var kickoff = await api('POST', '/members/actions/scan', { accountIds: accountIds });
+        var data;
+        if (kickoff.scanId) {
+            if (status) status.textContent = '🔍 Scanning accounts (this may take up to 60s)…';
+            data = await _pollScanStatus(kickoff.scanId, 90000);
+            data.cards = data.cards || [];
+            data.findings = data.allFindings || data.findings || [];
+            data.totalSavings = parseFloat(data.totalSavings) || 0;
+            data.scannedAccounts = data.scannedAccounts || 0;
+            data.scannedAt = data.scannedAt || new Date().toISOString();
+        } else {
+            data = kickoff;
+        }
         _actScanData = data;
 
         if (status) {
@@ -5989,7 +6022,19 @@ async function _runScanFromChat() {
     if (status) status.textContent = '🔍 Scanning…';
     try {
         var accountIds = getSelectedAccountIds();
-        var data = await api('POST', '/members/actions/scan', { accountIds: accountIds });
+        var kickoff = await api('POST', '/members/actions/scan', { accountIds: accountIds });
+        var data;
+        if (kickoff.scanId) {
+            if (status) status.textContent = '🔍 Scanning (may take up to 60s)…';
+            data = await _pollScanStatus(kickoff.scanId, 90000);
+            data.cards = data.cards || [];
+            data.findings = data.allFindings || data.findings || [];
+            data.totalSavings = parseFloat(data.totalSavings) || 0;
+            data.scannedAccounts = data.scannedAccounts || 0;
+            data.scannedAt = data.scannedAt || new Date().toISOString();
+        } else {
+            data = kickoff;
+        }
         _lastScanData = data;
         _findingsWidgetOpen = true;
         _renderFindingsWidget(data);
@@ -7422,7 +7467,19 @@ async function _runOptimizeScan() {
     try {
         _syncActSelection();
         var accountIds = getActSelectedAccountIds();
-        var data = await api('POST', '/members/actions/scan', { accountIds: accountIds });
+        var kickoff = await api('POST', '/members/actions/scan', { accountIds: accountIds });
+        var data;
+        if (kickoff.scanId) {
+            if (status) status.textContent = 'Scanning for optimization (may take up to 60s)...';
+            data = await _pollScanStatus(kickoff.scanId, 90000);
+            data.cards = data.cards || [];
+            data.findings = data.allFindings || data.findings || [];
+            data.totalSavings = parseFloat(data.totalSavings) || 0;
+            data.scannedAccounts = data.scannedAccounts || 0;
+            data.scannedAt = data.scannedAt || new Date().toISOString();
+        } else {
+            data = kickoff;
+        }
 
         // Filter findings to optimization-only
         var optFindings = (data.findings || []).filter(function(f) {

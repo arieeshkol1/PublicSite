@@ -402,6 +402,7 @@ jobs:
             "GET /members/tag-keys"
             "GET /members/tag-values"
             "POST /members/accounts/update-permissions"
+            "GET /members/actions/scan-status"
           )
           for ROUTE in "${MEMBER_ROUTES[@]}"; do
             aws apigatewayv2 create-route --api-id $API_ID --route-key "$ROUTE" --target "integrations/$MEMBER_INT" 2>/dev/null || true
