@@ -7038,24 +7038,26 @@ def handle_tag_scan(event):
                 RoleSessionName='SlashMyBillTagScan', ExternalId=external_id,
             )
             creds = assume_resp['Credentials']
-            # Scan multiple regions for complete tag coverage
-            _tag_regions = ['us-east-1', 'eu-central-1', 'eu-west-1', 'us-west-2', 'ap-southeast-1']
-            for _tag_region in _tag_regions:
-                try:
-                    _tr = boto3.client('resourcegroupstaggingapi',
-                        aws_access_key_id=creds['AccessKeyId'],
-                        aws_secret_access_key=creds['SecretAccessKey'],
-                        aws_session_token=creds['SessionToken'],
-                        region_name=_tag_region)
-                    tk_resp = _tr.get_tag_keys()
-                    for k in tk_resp.get('TagKeys', []):
-                        if not k.startswith('aws:'):
-                            all_tag_keys.add(k)
-                except Exception:
-                    pass
+            # Discover cost allocation tag keys via Cost Explorer
+            try:
+                _ce_tags = boto3.client('ce',
+                    aws_access_key_id=creds['AccessKeyId'],
+                    aws_secret_access_key=creds['SecretAccessKey'],
+                    aws_session_token=creds['SessionToken'],
+                    region_name='us-east-1')
+                _end = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+                _start = (datetime.now(timezone.utc) - timedelta(days=90)).strftime('%Y-%m-%d')
+                _ce_resp = _ce_tags.get_tags(TimePeriod={'Start': _start, 'End': _end})
+                for k in _ce_resp.get('Tags', []):
+                    if k and not k.startswith('aws:'):
+                        all_tag_keys.add(k)
+            except Exception:
+                pass
 
-            # Scan resources across multiple regions
-            _scan_tag_regions = ['us-east-1', 'eu-central-1', 'eu-west-1', 'us-west-2', 'ap-southeast-1']
+            # Scan resources across charged regions
+            _scan_tag_regions = _detect_charged_regions(creds)
+            if not _scan_tag_regions:
+                _scan_tag_regions = ['us-east-1', 'eu-central-1']
             for _tr_region in _scan_tag_regions:
                 tagging = boto3.client('resourcegroupstaggingapi',
                     aws_access_key_id=creds['AccessKeyId'],
