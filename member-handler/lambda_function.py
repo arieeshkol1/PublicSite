@@ -5686,7 +5686,7 @@ def _gather_account_data(question, credentials):
 
     # EC2 instances — fetch ONLY when question specifically asks about EC2 instances
     # Skip for broad questions like "how efficient" or "optimize" to avoid timeout
-    _ec2_specific_keywords = ['ec2', 'instance', 'server', 'running', 'ri', 'reserved', 'list', 'cost']
+    _ec2_specific_keywords = ['ec2', 'instance', 'server', 'running', 'ri', 'reserved', 'list', 'cost', 'ebs', 'volume', 'eip', 'elastic ip', 'nat', 'vpc', 'network', 'load balancer', 'elb', 'alb']
     _broad_keywords = ['efficient', 'optimize', 'saving', 'save', 'overview', 'summary', 'breakdown']
     _is_broad_question = any(kw in question_lower for kw in _broad_keywords)
     _is_ec2_specific = any(kw in question_lower for kw in _ec2_specific_keywords)
@@ -5733,7 +5733,6 @@ def _gather_account_data(question, credentials):
         'kms', 'key management', 'encryption key', 'customer-managed key',                    # KMS
         'lambda function', 'invocation', 'serverless function',                               # Lambda
         'rds instance', 'database instance', 'db instance',                                   # RDS specific
-        'snapshot', 'ebs snapshot',                                                            # Snapshots
         'budget', 'cost alert', 'billing alarm', 'spend limit',                               # Budgets
     ])
     top_service_names = [s['service'] for s in data.get('cost_by_service', [])[:6]]
@@ -5743,7 +5742,7 @@ def _gather_account_data(question, credentials):
         _elapsed = 0
     if not _specific_service_question and _elapsed < 18 and (
         any(s in top_service_names for s in ['EC2 - Other', 'Amazon Virtual Private Cloud']) or
-        any(kw in question_lower for kw in ['nat', 'vpc', 'network', 'data transfer'])
+        any(kw in question_lower for kw in ['nat', 'vpc', 'network', 'data transfer', 'ebs', 'volume', 'eip', 'elastic ip', 'load balancer'])
     ):
         try:
             ec2 = _make_client('ec2')
