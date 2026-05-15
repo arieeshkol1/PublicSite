@@ -359,6 +359,27 @@ jobs:
             }'
           echo "✓ Lambda self-invoke permission granted"
 
+      - name: Grant Lambda cost allocation tag permissions
+        continue-on-error: true
+        run: |
+          ROLE_ARN=$(aws lambda get-function-configuration --function-name aws-bill-analyzer-member-api --query "Role" --output text)
+          ROLE_NAME=$(echo $ROLE_ARN | awk -F'/' '{print $NF}')
+          aws iam put-role-policy \
+            --role-name "$ROLE_NAME" \
+            --policy-name "CostAllocationTagsPolicy" \
+            --policy-document '{
+              "Version": "2012-10-17",
+              "Statement": [{
+                "Effect": "Allow",
+                "Action": [
+                  "ce:ListCostAllocationTags",
+                  "ce:UpdateCostAllocationTagsStatus"
+                ],
+                "Resource": "*"
+              }]
+            }'
+          echo "✓ Cost allocation tag permissions granted"
+
       - name: Configure Cognito email via SES (eshkolai.com)
         continue-on-error: true
         run: |
