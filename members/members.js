@@ -2903,6 +2903,11 @@ function onTagFilterChange() {
     if (typeof dashDataCache !== 'undefined') dashDataCache = null;
     if (typeof dashDataCacheKey !== 'undefined') dashDataCacheKey = null;
 
+    // Remove any previous tag filter note
+    var wrapper = document.querySelector('.tag-filter-wrapper');
+    var noteEl = wrapper ? wrapper.querySelector('.tag-filter-note') : null;
+    if (noteEl) noteEl.remove();
+
     // Reload dashboard if on Observe tab
     var dashTab = document.getElementById('dash-tab');
     if (dashTab && dashTab.style.display !== 'none') {
@@ -3015,6 +3020,18 @@ async function loadDashboardData() {
         dashDataCacheTime = Date.now();
         dashDataCacheKey = cacheKey;
         renderDashboardWidgets(data);
+        // Show tag filter warning if backend reports filter had no effect
+        if (data.tagFilterWarning) {
+            var wrapper = document.querySelector('.tag-filter-wrapper');
+            var noteEl = wrapper ? wrapper.querySelector('.tag-filter-note') : null;
+            if (!noteEl && wrapper) {
+                noteEl = document.createElement('div');
+                noteEl.className = 'tag-filter-note';
+                noteEl.style.cssText = 'font-size:0.7em;color:#d97706;margin-top:4px;width:100%;';
+                wrapper.appendChild(noteEl);
+            }
+            if (noteEl) noteEl.textContent = '⚠️ ' + data.tagFilterWarning;
+        }
     } catch (e) {
         console.error('Dashboard load error:', e);
         kpiBar.innerHTML = '<div style="color:#ef4444;padding:20px;">Dashboard failed: ' + esc(e.message || 'Error') + '<br><button class="btn btn-outline btn-sm" style="margin-top:8px;" onclick="dashDataCache=null;loadDashboardData();">Retry</button></div>';

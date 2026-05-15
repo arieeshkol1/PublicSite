@@ -1854,6 +1854,39 @@ def handle_dashboard_data(event):
     tag_key = qs.get('tagKey', '').strip() or None
     tag_value = qs.get('tagValue', '').strip() or None
 
+    # Auto-activate cost allocation tag if tag filter is being used
+    # This uses the PLATFORM account's CE (not cross-account) since cost allocation tags
+    # are managed at the payer/management account level
+    tag_activation_status = None
+    if tag_key and tag_value:
+        try:
+            ce_platform = boto3.client('ce', region_name='us-east-1')
+            # Check if tag is already activated
+            existing = ce_platform.list_cost_allocation_tags(
+                Status='Active',
+                TagKeys=[tag_key],
+                MaxResults=1
+            )
+            active_keys = [t.get('TagKey') for t in existing.get('CostAllocationTags', [])]
+            if tag_key not in active_keys:
+                # Activate the tag for cost allocation
+                try:
+                    ce_platform.update_cost_allocation_tags_status(
+                        CostAllocationTagsStatus=[
+                            {'TagKey': tag_key, 'Status': 'Active'}
+                        ]
+                    )
+                    tag_activation_status = 'just_activated'
+                    logger.info(f"Activated cost allocation tag: {tag_key}")
+                except Exception as e:
+                    logger.warning(f"Failed to activate cost allocation tag {tag_key}: {e}")
+                    tag_activation_status = 'activation_failed'
+            else:
+                tag_activation_status = 'already_active'
+        except Exception as e:
+            logger.warning(f"Cost allocation tag check failed: {e}")
+            tag_activation_status = 'check_failed'
+
     # Get all connected accounts
     accounts_table = dynamodb.Table(ACCOUNTS_TABLE_NAME)
     try:
@@ -1888,6 +1921,7 @@ def handle_dashboard_data(event):
     savings_breakdown = {}
     containers = {'ecsClusters': [], 'eksClusters': []}
     all_discovered_metrics = []
+    tag_filter_empty = False
 
     for acct in accounts[:5]:
         acct_id = acct['accountId']
@@ -1901,7 +1935,13 @@ def handle_dashboard_data(event):
             # Gather data with a broad question to trigger all checks
             acct_data, _ = _gather_account_data('how efficient is my account? rightsizing savings compare last 3 months', creds, tag_key=tag_key, tag_value=tag_value)
 
+            # If tag filter produced empty results, retry without filter and flag it
             acct_total = sum(s['cost_usd'] for s in acct_data.get('cost_by_service', []) if s.get('service') != 'Tax')
+            tag_filter_empty = False
+            if tag_key and tag_value and acct_total == 0:
+                tag_filter_empty = True
+                acct_data, _ = _gather_account_data('how efficient is my account? rightsizing savings compare last 3 months', creds)
+                acct_total = sum(s['cost_usd'] for s in acct_data.get('cost_by_service', []) if s.get('service') != 'Tax')
             for svc in acct_data.get('cost_by_service', []):
                 if svc['service'] != 'Tax':
                     merged_costs[svc['service']] = merged_costs.get(svc['service'], 0) + svc['cost_usd']
@@ -2177,6 +2217,13 @@ def handle_dashboard_data(event):
         'commitments': _get_commitments_data(accounts, external_id),
         'costByTag': _get_cost_by_tag(accounts, external_id),
         'healthcheckResults': _get_healthcheck_results(member_email),
+        'tagFilterWarning': (
+            'Tag "' + tag_key + '" was just activated for cost allocation. AWS needs up to 24 hours to start tracking costs by this tag. The filter will work after that.'
+            if (tag_key and tag_value and tag_activation_status == 'just_activated')
+            else 'Tag "' + tag_key + '" is not yet showing filtered data. It may need up to 24 hours after activation to take effect. If you just activated it via FinOps Settings, please wait and try again tomorrow.'
+            if (tag_key and tag_value and tag_activation_status in ('already_active', 'check_failed', 'activation_failed'))
+            else None
+        ),
     })
 
 
