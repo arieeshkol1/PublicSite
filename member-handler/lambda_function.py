@@ -1728,12 +1728,28 @@ def handle_get_tag_keys(event):
                 if tag and not tag.startswith('aws:'):
                     all_keys.add(tag)
 
+            # Fallback: if CE returned no tags, try Resource Groups Tagging API
+            # This returns ALL resource tags (not just cost allocation tags)
+            if not all_keys:
+                try:
+                    tagging = boto3.client('resourcegroupstaggingapi',
+                        aws_access_key_id=creds['AccessKeyId'],
+                        aws_secret_access_key=creds['SecretAccessKey'],
+                        aws_session_token=creds['SessionToken'],
+                        region_name='us-east-1')
+                    tag_resp = tagging.get_tag_keys()
+                    for key in tag_resp.get('TagKeys', []):
+                        if key and not key.startswith('aws:'):
+                            all_keys.add(key)
+                except Exception as e2:
+                    logger.warning(f"Resource Groups Tagging API fallback failed: {e2}")
+
         except Exception as e:
             logger.warning(f"Failed to get tag keys for {acct['accountId']}: {e}")
 
     result = {'tagKeys': sorted(all_keys)}
     if not all_keys:
-        result['noTagsMessage'] = 'No cost allocation tags found. Activate tags in AWS Billing > Cost Allocation Tags, or run FinOps Healthcheck to auto-activate.'
+        result['noTagsMessage'] = 'No tags found. Make sure your resources are tagged and cost allocation tags are activated in AWS Billing > Cost Allocation Tags. Tags may take up to 24 hours to appear after activation.'
     return create_response(200, result)
 
 

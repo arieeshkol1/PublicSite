@@ -2798,6 +2798,18 @@ function _loadTagKeys(selectElement) {
         tagKeysCache = data.tagKeys || [];
         tagKeysCacheTime = Date.now();
         _populateKeySelect(selectElement, tagKeysCache);
+        // Show message if no tags found
+        if (tagKeysCache.length === 0 && data.noTagsMessage) {
+            var wrapper = selectElement.closest('.tag-filter-wrapper');
+            var msgEl = wrapper ? wrapper.querySelector('.tag-no-keys-msg') : null;
+            if (!msgEl && wrapper) {
+                msgEl = document.createElement('div');
+                msgEl.className = 'tag-no-keys-msg';
+                msgEl.style.cssText = 'font-size:0.75em;color:#d97706;margin-top:4px;';
+                wrapper.appendChild(msgEl);
+            }
+            if (msgEl) msgEl.textContent = data.noTagsMessage;
+        }
     }).catch(function(e) {
         console.warn('Failed to load tag keys:', e);
         selectElement.innerHTML = '<option value="">All (no filter)</option>';
