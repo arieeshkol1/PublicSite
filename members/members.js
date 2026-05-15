@@ -2734,10 +2734,10 @@ function initTagFilter(containerId) {
         '<div class="tag-filter-wrapper" style="display:flex;align-items:center;gap:8px;margin-top:8px;">' +
             '<label style="font-size:0.8em;color:#6b7280;white-space:nowrap;">Filter by Tag:</label>' +
             '<select id="tag-key-select" style="padding:4px 8px;border:1px solid #d0d7de;border-radius:6px;font-size:0.85em;">' +
-                '<option value="">All (no filter)</option>' +
+                '<option value="">1. Tag Name</option>' +
             '</select>' +
             '<select id="tag-value-select" style="padding:4px 8px;border:1px solid #d0d7de;border-radius:6px;font-size:0.85em;" disabled>' +
-                '<option value="">Select key first</option>' +
+                '<option value="">2. Tag Value</option>' +
             '</select>' +
             '<button id="tag-filter-clear-btn" style="font-size:0.75em;color:#6366f1;background:none;border:none;cursor:pointer;display:none;" onclick="clearTagFilter();">Clear</button>' +
         '</div>';
@@ -2758,7 +2758,7 @@ function initTagFilter(containerId) {
         var selectedKey = keySelect.value;
         if (!selectedKey) {
             clearTagFilter();
-            valueSelect.innerHTML = '<option value="">Select key first</option>';
+            valueSelect.innerHTML = '<option value="">2. Tag Value</option>';
             valueSelect.disabled = true;
             document.getElementById('tag-filter-clear-btn').style.display = 'none';
             onTagFilterChange();
@@ -2812,12 +2812,12 @@ function _loadTagKeys(selectElement) {
         }
     }).catch(function(e) {
         console.warn('Failed to load tag keys:', e);
-        selectElement.innerHTML = '<option value="">All (no filter)</option>';
+        selectElement.innerHTML = '<option value="">1. Tag Name</option>';
     });
 }
 
 function _populateKeySelect(selectElement, keys) {
-    selectElement.innerHTML = '<option value="">All (no filter)</option>';
+    selectElement.innerHTML = '<option value="">1. Tag Name</option>';
     for (var i = 0; i < keys.length; i++) {
         var opt = document.createElement('option');
         opt.value = keys[i];
@@ -2893,7 +2893,7 @@ function clearTagFilter() {
     var valueSelect = document.getElementById('tag-value-select');
     var clearBtn = document.getElementById('tag-filter-clear-btn');
     if (keySelect) keySelect.value = '';
-    if (valueSelect) { valueSelect.value = ''; valueSelect.disabled = true; valueSelect.innerHTML = '<option value="">Select key first</option>'; }
+    if (valueSelect) { valueSelect.value = ''; valueSelect.disabled = true; valueSelect.innerHTML = '<option value="">2. Tag Value</option>'; }
     if (clearBtn) clearBtn.style.display = 'none';
     onTagFilterChange();
 }

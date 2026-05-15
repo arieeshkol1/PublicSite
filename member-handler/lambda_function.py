@@ -1730,17 +1730,21 @@ def handle_get_tag_keys(event):
 
             # Fallback: if CE returned no tags, try Resource Groups Tagging API
             # This returns ALL resource tags (not just cost allocation tags)
+            # Scan multiple regions since resources may not be in us-east-1
             if not all_keys:
                 try:
-                    tagging = boto3.client('resourcegroupstaggingapi',
-                        aws_access_key_id=creds['AccessKeyId'],
-                        aws_secret_access_key=creds['SecretAccessKey'],
-                        aws_session_token=creds['SessionToken'],
-                        region_name='us-east-1')
-                    tag_resp = tagging.get_tag_keys()
-                    for key in tag_resp.get('TagKeys', []):
-                        if key and not key.startswith('aws:'):
-                            all_keys.add(key)
+                    for _tag_region in ['us-east-1', 'eu-central-1', 'eu-west-1', 'us-west-2']:
+                        tagging = boto3.client('resourcegroupstaggingapi',
+                            aws_access_key_id=creds['AccessKeyId'],
+                            aws_secret_access_key=creds['SecretAccessKey'],
+                            aws_session_token=creds['SessionToken'],
+                            region_name=_tag_region)
+                        tag_resp = tagging.get_tag_keys()
+                        for key in tag_resp.get('TagKeys', []):
+                            if key and not key.startswith('aws:'):
+                                all_keys.add(key)
+                        if all_keys:
+                            break  # Found tags, no need to check more regions
                 except Exception as e2:
                     logger.warning(f"Resource Groups Tagging API fallback failed: {e2}")
 
