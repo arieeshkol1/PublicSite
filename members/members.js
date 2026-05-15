@@ -2734,7 +2734,7 @@ function initTagFilter(containerId) {
         '<div class="tag-filter-wrapper" style="display:flex;align-items:center;gap:8px;margin-top:8px;">' +
             '<label style="font-size:0.8em;color:#6b7280;white-space:nowrap;">Filter by Tag:</label>' +
             '<select id="tag-key-select" style="padding:4px 8px;border:1px solid #d0d7de;border-radius:6px;font-size:0.85em;">' +
-                '<option value="">1. Tag Name</option>' +
+                '<option value="">All (no filter)</option>' +
             '</select>' +
             '<select id="tag-value-select" style="padding:4px 8px;border:1px solid #d0d7de;border-radius:6px;font-size:0.85em;" disabled>' +
                 '<option value="">2. Tag Value</option>' +
@@ -2812,12 +2812,12 @@ function _loadTagKeys(selectElement) {
         }
     }).catch(function(e) {
         console.warn('Failed to load tag keys:', e);
-        selectElement.innerHTML = '<option value="">1. Tag Name</option>';
+        selectElement.innerHTML = '<option value="">All (no filter)</option>';
     });
 }
 
 function _populateKeySelect(selectElement, keys) {
-    selectElement.innerHTML = '<option value="">1. Tag Name</option>';
+    selectElement.innerHTML = '<option value="">All (no filter)</option>';
     for (var i = 0; i < keys.length; i++) {
         var opt = document.createElement('option');
         opt.value = keys[i];

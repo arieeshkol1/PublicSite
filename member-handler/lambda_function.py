@@ -1814,6 +1814,24 @@ def handle_get_tag_values(event):
             for val in resp.get('Tags', []):
                 if val:
                     all_values.add(val)
+
+            # Fallback: if CE returned no values, try Resource Groups Tagging API
+            if not all_values:
+                for _tv_region in ['us-east-1', 'eu-central-1', 'eu-west-1', 'us-west-2']:
+                    try:
+                        tagging = boto3.client('resourcegroupstaggingapi',
+                            aws_access_key_id=creds['AccessKeyId'],
+                            aws_secret_access_key=creds['SecretAccessKey'],
+                            aws_session_token=creds['SessionToken'],
+                            region_name=_tv_region)
+                        tv_resp = tagging.get_tag_values(Key=tag_key)
+                        for val in tv_resp.get('TagValues', []):
+                            if val:
+                                all_values.add(val)
+                        if all_values:
+                            break
+                    except Exception:
+                        pass
         except Exception as e:
             logger.warning(f"Failed to get tag values for {acct['accountId']}/{tag_key}: {e}")
 
