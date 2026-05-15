@@ -1986,6 +1986,13 @@ async function askAI() {
         // Show the AI answer
         addAIMessage('answer', data.answer || 'No answer available.', data.topServices || []);
 
+        // Inject commitment savings chart data if relevant
+        var _commitCharts = _buildCommitmentChartData(data.answer || '', data.chartData);
+        if (_commitCharts && _commitCharts.length > 0) {
+            if (!data.chartData) data.chartData = [];
+            _commitCharts.forEach(function(c) { data.chartData.push(c); });
+        }
+
         // Store interactionId on the last answer message for feedback
         if (data.interactionId) {
             var lastAnswerMsg = aiChat.querySelector('.lab-message:last-child');
@@ -3028,7 +3035,9 @@ function renderDashboardWidgets(data) {
         _kpiCard('Efficiency Score', (s.efficiencyScore || 0) + '% (' + (s.efficiencyRating || '') + ')', effColor) +
         '<div style="background:#f0f4f8;border:1px solid #d0d7de;border-radius:8px;padding:12px 16px;flex:1;min-width:130px;cursor:pointer;" title="' + ea(savingsTooltip) + '" onclick="_syncAccountSelection(\'dash\');document.querySelector(\'[data-tab=ai-tab]\').click();setTimeout(function(){var inp=document.getElementById(\'ai-question-input\');if(inp){inp.value=\'Where can I save money?\';document.getElementById(\'ai-ask-btn\').click();}},300);">' +
             '<div style="color:#6b7280;font-size:0.75em;">Potential Savings \u25b6</div>' +
-            '<div style="color:#f59e0b;font-size:1.3em;font-weight:700;">$' + (s.potentialSavings || 0).toLocaleString(undefined, {minimumFractionDigits:2}) + '</div></div>' +
+            '<div style="color:#f59e0b;font-size:1.3em;font-weight:700;">$' + (s.potentialSavings || 0).toLocaleString(undefined, {minimumFractionDigits:2}) + '</div>' +
+            (function(){ var cs = _getCommitmentSavingsForKPI(_getDashboardAccountIds()); return cs ? '<div style="color:#6b7280;font-size:0.68em;margin-top:2px;" title="Estimated savings if all recommended Savings Plans and Reserved Instances are purchased.">Commitment Savings: <span style="color:#10b981;font-weight:600;">$' + cs.toFixed(0) + '/mo</span></div>' : ''; })() +
+            '</div>' +
         _kpiCard('Accounts', (s.accountsAnalyzed || 0) + ' / ' + (s.totalAccounts || 0), '#6366f1');
 
     // Budget KPI — show budget status if budgets exist (loaded async)
@@ -3050,6 +3059,8 @@ function renderDashboardWidgets(data) {
         _renderLiveMetrics($("dash-unit-economics"));
         _renderRegionalPie(data.costByRegion || []);
         _renderCostByTag(data.costByTag || {});
+        _renderSPCoverageWidget();
+        _renderRICoverageWidget();
     }, 100);
 }
 
@@ -3123,6 +3134,8 @@ var DASH_WIDGET_DEFS = [
     {id:'dash-unit-economics', title:'Live Business Metrics', height:380, q:'How are my live business metrics trending?'},
     {id:'dash-regional', title:'Cost by Region', height:300, q:'Show me my cost breakdown by region'},
     {id:'dash-cost-by-tag', title:'Tag Distribution', height:320, q:'Show me tag coverage across my resources'},
+    {id:'dash-sp-coverage', title:'SP Coverage', height:180, q:'What is my Savings Plan coverage?'},
+    {id:'dash-ri-coverage', title:'RI Coverage', height:180, q:'What is my Reserved Instance coverage?'},
 ];
 
 function _getDashLayout() {
@@ -8768,124 +8781,671 @@ function _committedMetricCard(label, value, color) {
         + '</div>';
 }
 
-// Task 11.2: SP and RI Recommendations Comparison Table Renderer
-function _committedRenderRecommendations(data) {
+// ============================================================
+// Commitment Savings Explorer — SP/RI Explorer State
+// ============================================================
+var _spExplorerState = {
+    selectedPlanType: 'ComputeSavingsPlans',
+    selectedTerm: 1,
+    selectedPayment: 'NoUpfront',
+    compareExpanded: false
+};
+var _riExplorerState = {
+    selectedInstanceType: '',
+    selectedOfferingClass: 'standard',
+    selectedTerm: 1,
+    selectedPayment: 'NoUpfront',
+    compareExpanded: false
+};
+var _spExplorerData = [];
+var _riExplorerData = [];
+
+// ============================================================
+// SP Savings Explorer (Task 1)
+// ============================================================
+function _spExplorerRender(spRecommendations) {
+    _spExplorerData = spRecommendations || [];
     var panel = document.getElementById('committed-recommendations-panel');
     if (!panel) return;
-
-    var spRecs = data.spRecommendations || [];
-    var riRecs = data.riRecommendations || [];
-    if (spRecs.length === 0 && riRecs.length === 0) {
+    if (_spExplorerData.length === 0 && _riExplorerData.length === 0) {
         panel.style.display = 'none';
         return;
     }
 
-    // Detect diverse workloads (>2 services with >10% of total spend)
-    var coverage = data.coverage || {};
-    var spByService = (coverage.savingsPlans && coverage.savingsPlans.byService) || {};
-    var totalSpend = 0;
-    var serviceSpends = [];
-    Object.keys(spByService).forEach(function(svc) {
-        var val = spByService[svc] || 0;
-        totalSpend += val;
-        serviceSpends.push(val);
-    });
-    var significantServices = serviceSpends.filter(function(v) { return totalSpend > 0 && v > totalSpend * 0.10; }).length;
-    var isDiverse = significantServices > 2;
+    var html = '';
 
-    var html = '<div style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:20px;">';
-    html += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">';
-    html += '<div style="display:flex;align-items:center;gap:10px;"><span style="font-size:1.3em;">📋</span><strong style="color:#1f2937;">Purchase Recommendations</strong></div>';
-    html += '</div>';
-
-    // SP Recommendations
-    if (spRecs.length > 0) {
-        html += '<div style="margin-bottom:16px;">';
-        html += '<div style="font-weight:600;color:#1e40af;font-size:0.9em;margin-bottom:8px;">Savings Plans</div>';
-        if (isDiverse) {
-            html += '<div style="background:#dbeafe;border:1px solid #93c5fd;border-radius:6px;padding:8px 12px;margin-bottom:10px;font-size:0.8em;color:#1e40af;">✨ <strong>Compute SP recommended for flexibility</strong> — diverse workloads detected across ' + significantServices + ' services.</div>';
+    if (_spExplorerData.length > 0) {
+        // Group by planType
+        var planTypes = [];
+        _spExplorerData.forEach(function(r) {
+            if (planTypes.indexOf(r.planType) === -1) planTypes.push(r.planType);
+        });
+        if (planTypes.length > 0 && planTypes.indexOf(_spExplorerState.selectedPlanType) === -1) {
+            _spExplorerState.selectedPlanType = planTypes[0];
         }
-        html += '<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:0.8em;">';
-        html += '<thead><tr style="background:#f0f4ff;">';
-        html += '<th style="padding:8px;text-align:left;font-weight:600;color:#374151;">Type</th>';
-        html += '<th style="padding:8px;text-align:left;font-weight:600;color:#374151;">Term</th>';
-        html += '<th style="padding:8px;text-align:left;font-weight:600;color:#374151;">Payment</th>';
-        html += '<th style="padding:8px;text-align:right;font-weight:600;color:#374151;">$/hr</th>';
-        html += '<th style="padding:8px;text-align:right;font-weight:600;color:#374151;">Monthly Savings</th>';
-        html += '<th style="padding:8px;text-align:right;font-weight:600;color:#374151;">Savings %</th>';
-        html += '<th style="padding:8px;text-align:right;font-weight:600;color:#374151;">Break-Even</th>';
-        html += '<th style="padding:8px;text-align:right;font-weight:600;color:#374151;">TCO</th>';
-        html += '<th style="padding:8px;text-align:center;font-weight:600;color:#374151;">Action</th>';
-        html += '</tr></thead><tbody>';
-        spRecs.forEach(function(rec) {
-            var planLabel = (rec.planType || '').replace('SavingsPlans', ' SP').replace('Savings', '');
-            var tco = (rec.upfrontCost || 0) + ((rec.estimatedMonthlyOnDemandCost || 0) - (rec.estimatedMonthlySavings || 0)) * (rec.termInYears || 1) * 12;
-            html += '<tr style="border-bottom:1px solid #f0f0f0;">';
-            html += '<td style="padding:8px;">' + planLabel + (rec.isAggressive ? ' <span style="color:#ef4444;font-size:0.8em;">⚠️</span>' : '') + '</td>';
-            html += '<td style="padding:8px;">' + (rec.termInYears || 1) + 'yr</td>';
-            html += '<td style="padding:8px;">' + (rec.paymentOption || '-') + '</td>';
-            html += '<td style="padding:8px;text-align:right;">$' + (rec.hourlyCommitment || 0).toFixed(2) + '</td>';
-            html += '<td style="padding:8px;text-align:right;color:#059669;font-weight:600;">$' + (rec.estimatedMonthlySavings || 0).toFixed(0) + '</td>';
-            html += '<td style="padding:8px;text-align:right;">' + (rec.estimatedSavingsPercentage || 0).toFixed(1) + '%</td>';
-            html += '<td style="padding:8px;text-align:right;">' + (rec.breakEvenMonths != null ? rec.breakEvenMonths.toFixed(1) + ' mo' : '-') + '</td>';
-            html += '<td style="padding:8px;text-align:right;">$' + tco.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',') + '</td>';
-            html += '<td style="padding:8px;text-align:center;"><button onclick="_committedShowPurchaseGuide(\'sp\',\'' + (rec.planType || '') + '\')" style="background:none;border:none;color:#6366f1;cursor:pointer;font-size:0.85em;font-weight:600;">How to Buy</button></td>';
-            html += '</tr>';
-        });
-        html += '</tbody></table></div></div>';
-    }
 
-    // RI Recommendations
-    if (riRecs.length > 0) {
-        html += '<div style="margin-bottom:16px;">';
-        html += '<div style="font-weight:600;color:#7c3aed;font-size:0.9em;margin-bottom:8px;">Reserved Instances</div>';
-        html += '<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:0.8em;">';
-        html += '<thead><tr style="background:#f5f3ff;">';
-        html += '<th style="padding:8px;text-align:left;font-weight:600;color:#374151;">Service</th>';
-        html += '<th style="padding:8px;text-align:left;font-weight:600;color:#374151;">Instance</th>';
-        html += '<th style="padding:8px;text-align:left;font-weight:600;color:#374151;">Class</th>';
-        html += '<th style="padding:8px;text-align:left;font-weight:600;color:#374151;">Term</th>';
-        html += '<th style="padding:8px;text-align:left;font-weight:600;color:#374151;">Payment</th>';
-        html += '<th style="padding:8px;text-align:right;font-weight:600;color:#374151;">Monthly Savings</th>';
-        html += '<th style="padding:8px;text-align:right;font-weight:600;color:#374151;">Savings %</th>';
-        html += '<th style="padding:8px;text-align:right;font-weight:600;color:#374151;">Break-Even</th>';
-        html += '<th style="padding:8px;text-align:center;font-weight:600;color:#374151;">Action</th>';
-        html += '</tr></thead><tbody>';
-        riRecs.forEach(function(rec) {
-            var classLabel = rec.offeringClass === 'convertible' ? 'Convertible' : 'Standard';
-            html += '<tr style="border-bottom:1px solid #f0f0f0;">';
-            html += '<td style="padding:8px;">' + (rec.service || '-') + '</td>';
-            html += '<td style="padding:8px;">' + (rec.instanceType || '-') + ' x' + (rec.recommendedCount || 1) + '</td>';
-            html += '<td style="padding:8px;">' + classLabel + '</td>';
-            html += '<td style="padding:8px;">' + (rec.termInYears || 1) + 'yr</td>';
-            html += '<td style="padding:8px;">' + (rec.paymentOption || '-') + '</td>';
-            html += '<td style="padding:8px;text-align:right;color:#059669;font-weight:600;">$' + (rec.estimatedMonthlySavings || 0).toFixed(0) + '</td>';
-            html += '<td style="padding:8px;text-align:right;">' + (rec.estimatedSavingsPercentage || 0).toFixed(1) + '%</td>';
-            html += '<td style="padding:8px;text-align:right;">' + (rec.breakEvenMonths != null ? rec.breakEvenMonths.toFixed(1) + ' mo' : '-') + '</td>';
-            html += '<td style="padding:8px;text-align:center;"><button onclick="_committedShowPurchaseGuide(\'ri\',\'' + (rec.service || 'EC2') + '\')" style="background:none;border:none;color:#6366f1;cursor:pointer;font-size:0.85em;font-weight:600;">How to Buy</button></td>';
-            html += '</tr>';
-            if (rec.standardVsConvertibleNote) {
-                html += '<tr><td colspan="9" style="padding:4px 8px;font-size:0.75em;color:#6b7280;font-style:italic;">' + rec.standardVsConvertibleNote + '</td></tr>';
-            }
-        });
-        html += '</tbody></table></div></div>';
-    }
+        html += '<div class="cse-explorer" id="cse-sp-explorer">';
+        html += '<div class="cse-explorer-header">';
+        html += '<div class="cse-explorer-title"><span class="cse-icon">💳</span> Savings Plan Explorer</div>';
+        html += '<button class="cse-compare-toggle" onclick="_spExplorerToggleCompare()">' + (_spExplorerState.compareExpanded ? '✕ Close Compare' : '📊 Compare All Options') + '</button>';
+        html += '</div>';
 
-    // Database SP section (if applicable)
-    var dbRecs = spRecs.filter(function(r) { return r.planType && r.planType.indexOf('Database') !== -1; });
-    if (dbRecs.length > 0) {
-        html += '<div style="background:#fdf4ff;border:1px solid #e879f9;border-radius:8px;padding:12px 16px;margin-bottom:12px;">';
-        html += '<div style="font-weight:600;color:#86198f;font-size:0.85em;margin-bottom:6px;">🗄️ Database Savings Plans</div>';
-        html += '<div style="font-size:0.8em;color:#6b7280;">Your account has significant RDS/ElastiCache spend. Database SP recommendations are included above.</div>';
+        // Controls
+        html += '<div class="cse-controls">';
+        // Plan Type dropdown
+        if (planTypes.length > 1) {
+            html += '<div class="cse-control-group"><label>SP Type</label><select id="cse-sp-type" onchange="_spExplorerSelectionChanged()">';
+            planTypes.forEach(function(pt) {
+                var label = pt.replace('SavingsPlans', ' SP').replace('Savings', '');
+                html += '<option value="' + pt + '"' + (pt === _spExplorerState.selectedPlanType ? ' selected' : '') + '>' + label + '</option>';
+            });
+            html += '</select></div>';
+        }
+        // Term dropdown
+        html += '<div class="cse-control-group"><label>Term</label><select id="cse-sp-term" onchange="_spExplorerSelectionChanged()">';
+        html += '<option value="1"' + (_spExplorerState.selectedTerm === 1 ? ' selected' : '') + '>1 Year</option>';
+        html += '<option value="3"' + (_spExplorerState.selectedTerm === 3 ? ' selected' : '') + '>3 Years</option>';
+        html += '</select></div>';
+        // Payment dropdown
+        html += '<div class="cse-control-group"><label>Payment Option</label><select id="cse-sp-payment" onchange="_spExplorerSelectionChanged()">';
+        html += '<option value="NoUpfront"' + (_spExplorerState.selectedPayment === 'NoUpfront' ? ' selected' : '') + '>No Upfront</option>';
+        html += '<option value="PartialUpfront"' + (_spExplorerState.selectedPayment === 'PartialUpfront' ? ' selected' : '') + '>Partial Upfront</option>';
+        html += '<option value="AllUpfront"' + (_spExplorerState.selectedPayment === 'AllUpfront' ? ' selected' : '') + '>All Upfront</option>';
+        html += '</select></div>';
+        html += '</div>';
+
+        // Savings display area
+        html += '<div id="cse-sp-savings-display">';
+        html += _spExplorerBuildSavingsCard();
+        html += '</div>';
+
+        // Compare table (if expanded)
+        if (_spExplorerState.compareExpanded) {
+            html += '<div id="cse-sp-compare-area">' + _spExplorerBuildCompareTable() + '</div>';
+        }
+
         html += '</div>';
     }
 
-    html += '</div>';
+    // RI Explorer
+    if (_riExplorerData.length > 0) {
+        html += _riExplorerBuildHTML();
+    }
+
     panel.innerHTML = html;
     panel.style.display = 'block';
 }
 
-// Task 12.1: Laddering Strategy Timeline Renderer
+function _spExplorerBuildSavingsCard() {
+    var match = _spExplorerData.find(function(r) {
+        return r.planType === _spExplorerState.selectedPlanType &&
+            r.termInYears === _spExplorerState.selectedTerm &&
+            r.paymentOption === _spExplorerState.selectedPayment;
+    });
+
+    if (!match) {
+        return '<div class="cse-not-available">No data available for this combination. Try a different term or payment option.</div>';
+    }
+
+    // Determine best value for this plan type
+    var recsForType = _spExplorerData.filter(function(r) { return r.planType === _spExplorerState.selectedPlanType; });
+    var bestValue = recsForType.reduce(function(best, r) {
+        var totalSavings = (r.estimatedMonthlySavings || 0) * (r.termInYears || 1) * 12;
+        return totalSavings > best.totalSavings ? { rec: r, totalSavings: totalSavings } : best;
+    }, { rec: null, totalSavings: 0 });
+
+    var isBestValue = bestValue.rec && bestValue.rec.planType === match.planType &&
+        bestValue.rec.termInYears === match.termInYears && bestValue.rec.paymentOption === match.paymentOption;
+
+    var savingsPerHour = (match.estimatedMonthlySavings || 0) / 730;
+    var savingsPerMonth = match.estimatedMonthlySavings || 0;
+    var breakEven = match.paymentOption === 'NoUpfront' ? null : (match.upfrontCost && match.estimatedMonthlySavings ? (match.upfrontCost / match.estimatedMonthlySavings) : null);
+
+    var html = '<div class="cse-savings-card">';
+    if (isBestValue) {
+        html += '<div style="margin-bottom:8px;"><span class="cse-badge cse-badge-best">⭐ Best Value</span></div>';
+    }
+    html += '<div class="cse-savings-grid">';
+    html += '<div class="cse-savings-metric"><div class="cse-metric-label">Hourly Commitment</div><div class="cse-metric-value cse-neutral">$' + (match.hourlyCommitment || 0).toFixed(2) + '/hr</div></div>';
+    html += '<div class="cse-savings-metric"><div class="cse-metric-label">Savings/Hour</div><div class="cse-metric-value">$' + savingsPerHour.toFixed(3) + '/hr</div></div>';
+    html += '<div class="cse-savings-metric"><div class="cse-metric-label">Savings/Month</div><div class="cse-metric-value">$' + savingsPerMonth.toFixed(0) + '/mo</div></div>';
+    html += '<div class="cse-savings-metric"><div class="cse-metric-label">Savings %</div><div class="cse-metric-value">' + (match.estimatedSavingsPercentage || 0).toFixed(1) + '%</div></div>';
+    html += '<div class="cse-savings-metric"><div class="cse-metric-label">On-Demand Equiv.</div><div class="cse-metric-value cse-neutral">$' + (match.estimatedMonthlyOnDemandCost || 0).toFixed(0) + '/mo</div></div>';
+    if (match.upfrontCost > 0) {
+        html += '<div class="cse-savings-metric"><div class="cse-metric-label">Upfront Cost</div><div class="cse-metric-value cse-warning">$' + (match.upfrontCost || 0).toFixed(0) + '</div></div>';
+    }
+    html += '<div class="cse-savings-metric"><div class="cse-metric-label">Break-Even</div><div class="cse-metric-value cse-neutral">' + (breakEven != null ? breakEven.toFixed(1) + ' mo' : 'Immediate') + '</div></div>';
+    html += '</div></div>';
+    return html;
+}
+
+function _spExplorerSelectionChanged() {
+    var typeEl = document.getElementById('cse-sp-type');
+    var termEl = document.getElementById('cse-sp-term');
+    var payEl = document.getElementById('cse-sp-payment');
+    if (typeEl) _spExplorerState.selectedPlanType = typeEl.value;
+    if (termEl) _spExplorerState.selectedTerm = parseInt(termEl.value, 10);
+    if (payEl) _spExplorerState.selectedPayment = payEl.value;
+
+    var display = document.getElementById('cse-sp-savings-display');
+    if (display) display.innerHTML = _spExplorerBuildSavingsCard();
+
+    // Update compare table if expanded
+    if (_spExplorerState.compareExpanded) {
+        var compareArea = document.getElementById('cse-sp-compare-area');
+        if (compareArea) compareArea.innerHTML = _spExplorerBuildCompareTable();
+    }
+}
+
+function _spExplorerToggleCompare() {
+    _spExplorerState.compareExpanded = !_spExplorerState.compareExpanded;
+    // Re-render the full SP explorer
+    _spExplorerRender(_spExplorerData);
+}
+
+function _spExplorerBuildCompareTable() {
+    var recsForType = _spExplorerData.filter(function(r) { return r.planType === _spExplorerState.selectedPlanType; });
+    if (recsForType.length < 2) return '<div class="cse-not-available">Not enough options to compare.</div>';
+
+    // Find best savings % and lowest total cost
+    var bestSavingsPct = -1, lowestTotalCost = Infinity;
+    recsForType.forEach(function(r) {
+        if ((r.estimatedSavingsPercentage || 0) > bestSavingsPct) bestSavingsPct = r.estimatedSavingsPercentage;
+        var totalCost = (r.upfrontCost || 0) + ((r.estimatedMonthlyOnDemandCost || 0) - (r.estimatedMonthlySavings || 0)) * (r.termInYears || 1) * 12;
+        if (totalCost < lowestTotalCost) lowestTotalCost = totalCost;
+    });
+
+    var html = '<table class="cse-compare-table"><thead><tr>';
+    html += '<th>Term</th><th>Payment</th><th>$/hr</th><th>Monthly Savings</th><th>Savings %</th><th>Upfront</th><th>Break-Even</th><th>Total Cost</th>';
+    html += '</tr></thead><tbody>';
+
+    recsForType.forEach(function(r) {
+        var totalCost = (r.upfrontCost || 0) + ((r.estimatedMonthlyOnDemandCost || 0) - (r.estimatedMonthlySavings || 0)) * (r.termInYears || 1) * 12;
+        var breakEven = r.paymentOption === 'NoUpfront' ? 'Immediate' : (r.upfrontCost && r.estimatedMonthlySavings ? (r.upfrontCost / r.estimatedMonthlySavings).toFixed(1) + ' mo' : '-');
+        var rowClass = '';
+        if ((r.estimatedSavingsPercentage || 0) === bestSavingsPct) rowClass = 'cse-row-best-savings';
+        if (totalCost === lowestTotalCost) rowClass = 'cse-row-lowest-cost';
+
+        html += '<tr class="' + rowClass + '">';
+        html += '<td>' + (r.termInYears || 1) + 'yr</td>';
+        html += '<td>' + (r.paymentOption || '-').replace('Upfront', ' Upfront') + '</td>';
+        html += '<td>$' + (r.hourlyCommitment || 0).toFixed(2) + '</td>';
+        html += '<td style="color:#059669;font-weight:600;">$' + (r.estimatedMonthlySavings || 0).toFixed(0) + '</td>';
+        html += '<td>' + (r.estimatedSavingsPercentage || 0).toFixed(1) + '%</td>';
+        html += '<td>' + (r.upfrontCost > 0 ? '$' + (r.upfrontCost || 0).toFixed(0) : '-') + '</td>';
+        html += '<td>' + breakEven + '</td>';
+        html += '<td>$' + totalCost.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',') + '</td>';
+        html += '</tr>';
+    });
+
+    html += '</tbody></table>';
+    return html;
+}
+
+// ============================================================
+// RI Savings Explorer (Task 2)
+// ============================================================
+function _riExplorerRender(riRecommendations) {
+    _riExplorerData = riRecommendations || [];
+    // This is called from _spExplorerRender which handles the panel
+}
+
+function _riExplorerBuildHTML() {
+    if (_riExplorerData.length === 0) return '';
+
+    // Get unique instance types
+    var instanceTypes = [];
+    _riExplorerData.forEach(function(r) {
+        if (instanceTypes.indexOf(r.instanceType) === -1) instanceTypes.push(r.instanceType);
+    });
+    if (instanceTypes.length > 0 && (!_riExplorerState.selectedInstanceType || instanceTypes.indexOf(_riExplorerState.selectedInstanceType) === -1)) {
+        _riExplorerState.selectedInstanceType = instanceTypes[0];
+    }
+
+    var html = '<div class="cse-explorer" id="cse-ri-explorer">';
+    html += '<div class="cse-explorer-header">';
+    html += '<div class="cse-explorer-title"><span class="cse-icon">🏷️</span> Reserved Instance Explorer</div>';
+    var recsForInstance = _riExplorerData.filter(function(r) { return r.instanceType === _riExplorerState.selectedInstanceType; });
+    if (recsForInstance.length >= 2) {
+        html += '<button class="cse-compare-toggle" onclick="_riExplorerToggleCompare()">' + (_riExplorerState.compareExpanded ? '✕ Close Compare' : '📊 Compare All Options') + '</button>';
+    }
+    html += '</div>';
+
+    // Controls
+    html += '<div class="cse-controls">';
+    // Instance type dropdown
+    html += '<div class="cse-control-group"><label>Instance Type</label><select id="cse-ri-instance" onchange="_riExplorerSelectionChanged()">';
+    instanceTypes.forEach(function(it) {
+        html += '<option value="' + it + '"' + (it === _riExplorerState.selectedInstanceType ? ' selected' : '') + '>' + it + '</option>';
+    });
+    html += '</select></div>';
+    // Offering class dropdown
+    var hasStandard = _riExplorerData.some(function(r) { return r.instanceType === _riExplorerState.selectedInstanceType && r.offeringClass === 'standard'; });
+    var hasConvertible = _riExplorerData.some(function(r) { return r.instanceType === _riExplorerState.selectedInstanceType && r.offeringClass === 'convertible'; });
+    html += '<div class="cse-control-group"><label>Offering Class</label><select id="cse-ri-class" onchange="_riExplorerSelectionChanged()">';
+    html += '<option value="standard"' + (_riExplorerState.selectedOfferingClass === 'standard' ? ' selected' : '') + (hasStandard ? '' : ' disabled') + '>Standard' + (hasStandard ? '' : ' (N/A)') + '</option>';
+    html += '<option value="convertible"' + (_riExplorerState.selectedOfferingClass === 'convertible' ? ' selected' : '') + (hasConvertible ? '' : ' disabled') + '>Convertible' + (hasConvertible ? '' : ' (N/A)') + '</option>';
+    html += '</select></div>';
+    // Term dropdown
+    html += '<div class="cse-control-group"><label>Term</label><select id="cse-ri-term" onchange="_riExplorerSelectionChanged()">';
+    html += '<option value="1"' + (_riExplorerState.selectedTerm === 1 ? ' selected' : '') + '>1 Year</option>';
+    html += '<option value="3"' + (_riExplorerState.selectedTerm === 3 ? ' selected' : '') + '>3 Years</option>';
+    html += '</select></div>';
+    // Payment dropdown
+    html += '<div class="cse-control-group"><label>Payment Option</label><select id="cse-ri-payment" onchange="_riExplorerSelectionChanged()">';
+    html += '<option value="NoUpfront"' + (_riExplorerState.selectedPayment === 'NoUpfront' ? ' selected' : '') + '>No Upfront</option>';
+    html += '<option value="PartialUpfront"' + (_riExplorerState.selectedPayment === 'PartialUpfront' ? ' selected' : '') + '>Partial Upfront</option>';
+    html += '<option value="AllUpfront"' + (_riExplorerState.selectedPayment === 'AllUpfront' ? ' selected' : '') + '>All Upfront</option>';
+    html += '</select></div>';
+    html += '</div>';
+
+    // Savings display area
+    html += '<div id="cse-ri-savings-display">';
+    html += _riExplorerBuildSavingsCard();
+    html += '</div>';
+
+    // Compare table (if expanded)
+    if (_riExplorerState.compareExpanded) {
+        html += '<div id="cse-ri-compare-area">' + _riExplorerBuildCompareTable() + '</div>';
+    }
+
+    html += '</div>';
+    return html;
+}
+
+function _riExplorerBuildSavingsCard() {
+    var match = _riExplorerData.find(function(r) {
+        return r.instanceType === _riExplorerState.selectedInstanceType &&
+            r.offeringClass === _riExplorerState.selectedOfferingClass &&
+            r.termInYears === _riExplorerState.selectedTerm &&
+            r.paymentOption === _riExplorerState.selectedPayment;
+    });
+
+    if (!match) {
+        return '<div class="cse-not-available">Not available for this instance type. Try a different offering class, term, or payment option.</div>';
+    }
+
+    // Calculate TCO
+    var tco = (match.upfrontCost || 0) + (match.monthlyRecurringCost || 0) * (match.termInYears || 1) * 12;
+    var breakEven = match.paymentOption === 'NoUpfront' ? null : (match.upfrontCost && match.estimatedMonthlySavings ? (match.upfrontCost / match.estimatedMonthlySavings) : null);
+
+    // Determine lowest TCO for this instance type
+    var recsForInstance = _riExplorerData.filter(function(r) { return r.instanceType === _riExplorerState.selectedInstanceType; });
+    var lowestTCO = recsForInstance.reduce(function(best, r) {
+        var rTco = (r.upfrontCost || 0) + (r.monthlyRecurringCost || 0) * (r.termInYears || 1) * 12;
+        return rTco < best.tco ? { rec: r, tco: rTco } : best;
+    }, { rec: null, tco: Infinity });
+
+    var isLowestTCO = lowestTCO.rec && lowestTCO.rec.instanceType === match.instanceType &&
+        lowestTCO.rec.offeringClass === match.offeringClass &&
+        lowestTCO.rec.termInYears === match.termInYears &&
+        lowestTCO.rec.paymentOption === match.paymentOption;
+
+    var html = '<div class="cse-savings-card">';
+    if (isLowestTCO) {
+        html += '<div style="margin-bottom:8px;"><span class="cse-badge cse-badge-tco">💎 Lowest TCO</span></div>';
+    }
+    html += '<div class="cse-savings-grid">';
+    html += '<div class="cse-savings-metric"><div class="cse-metric-label">Monthly Savings</div><div class="cse-metric-value">$' + (match.estimatedMonthlySavings || 0).toFixed(0) + '/mo</div></div>';
+    html += '<div class="cse-savings-metric"><div class="cse-metric-label">Savings %</div><div class="cse-metric-value">' + (match.estimatedSavingsPercentage || 0).toFixed(1) + '%</div></div>';
+    html += '<div class="cse-savings-metric"><div class="cse-metric-label">Count</div><div class="cse-metric-value cse-neutral">' + (match.recommendedCount || 1) + 'x</div></div>';
+    html += '<div class="cse-savings-metric"><div class="cse-metric-label">Region</div><div class="cse-metric-value cse-neutral">' + (match.region || '-') + '</div></div>';
+    html += '<div class="cse-savings-metric"><div class="cse-metric-label">TCO</div><div class="cse-metric-value cse-neutral">$' + tco.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',') + '</div></div>';
+    if (match.upfrontCost > 0) {
+        html += '<div class="cse-savings-metric"><div class="cse-metric-label">Upfront Cost</div><div class="cse-metric-value cse-warning">$' + (match.upfrontCost || 0).toFixed(0) + '</div></div>';
+    }
+    html += '<div class="cse-savings-metric"><div class="cse-metric-label">Break-Even</div><div class="cse-metric-value cse-neutral">' + (breakEven != null ? breakEven.toFixed(1) + ' mo' : 'Immediate') + '</div></div>';
+    html += '</div>';
+
+    // Standard vs Convertible note
+    if (match.standardVsConvertibleNote) {
+        html += '<div class="cse-note">' + match.standardVsConvertibleNote + '</div>';
+    } else {
+        // Check if Standard saves >5% more than Convertible
+        var otherClass = match.offeringClass === 'standard' ? 'convertible' : 'standard';
+        var otherMatch = _riExplorerData.find(function(r) {
+            return r.instanceType === match.instanceType && r.offeringClass === otherClass &&
+                r.termInYears === match.termInYears && r.paymentOption === match.paymentOption;
+        });
+        if (otherMatch && match.offeringClass === 'standard') {
+            var diff = (match.estimatedSavingsPercentage || 0) - (otherMatch.estimatedSavingsPercentage || 0);
+            if (diff > 5) {
+                html += '<div class="cse-note">Standard saves ' + diff.toFixed(1) + '% more but cannot be exchanged.</div>';
+            }
+        }
+    }
+
+    html += '</div>';
+    return html;
+}
+
+function _riExplorerSelectionChanged() {
+    var instEl = document.getElementById('cse-ri-instance');
+    var classEl = document.getElementById('cse-ri-class');
+    var termEl = document.getElementById('cse-ri-term');
+    var payEl = document.getElementById('cse-ri-payment');
+    if (instEl) _riExplorerState.selectedInstanceType = instEl.value;
+    if (classEl) _riExplorerState.selectedOfferingClass = classEl.value;
+    if (termEl) _riExplorerState.selectedTerm = parseInt(termEl.value, 10);
+    if (payEl) _riExplorerState.selectedPayment = payEl.value;
+
+    var display = document.getElementById('cse-ri-savings-display');
+    if (display) display.innerHTML = _riExplorerBuildSavingsCard();
+
+    if (_riExplorerState.compareExpanded) {
+        var compareArea = document.getElementById('cse-ri-compare-area');
+        if (compareArea) compareArea.innerHTML = _riExplorerBuildCompareTable();
+    }
+}
+
+function _riExplorerToggleCompare() {
+    _riExplorerState.compareExpanded = !_riExplorerState.compareExpanded;
+    // Re-render the full panel
+    _spExplorerRender(_spExplorerData);
+}
+
+function _riExplorerBuildCompareTable() {
+    var recsForInstance = _riExplorerData.filter(function(r) { return r.instanceType === _riExplorerState.selectedInstanceType; });
+    if (recsForInstance.length < 2) return '<div class="cse-not-available">Not enough options to compare.</div>';
+
+    // Find best savings % and lowest TCO
+    var bestSavingsPct = -1, lowestTCO = Infinity;
+    recsForInstance.forEach(function(r) {
+        if ((r.estimatedSavingsPercentage || 0) > bestSavingsPct) bestSavingsPct = r.estimatedSavingsPercentage;
+        var tco = (r.upfrontCost || 0) + (r.monthlyRecurringCost || 0) * (r.termInYears || 1) * 12;
+        if (tco < lowestTCO) lowestTCO = tco;
+    });
+
+    var html = '<table class="cse-compare-table"><thead><tr>';
+    html += '<th>Class</th><th>Term</th><th>Payment</th><th>Monthly Savings</th><th>Savings %</th><th>Upfront</th><th>Break-Even</th><th>TCO</th>';
+    html += '</tr></thead><tbody>';
+
+    recsForInstance.forEach(function(r) {
+        var tco = (r.upfrontCost || 0) + (r.monthlyRecurringCost || 0) * (r.termInYears || 1) * 12;
+        var breakEven = r.paymentOption === 'NoUpfront' ? 'Immediate' : (r.upfrontCost && r.estimatedMonthlySavings ? (r.upfrontCost / r.estimatedMonthlySavings).toFixed(1) + ' mo' : '-');
+        var rowClass = '';
+        if ((r.estimatedSavingsPercentage || 0) === bestSavingsPct) rowClass = 'cse-row-best-savings';
+        if (tco === lowestTCO) rowClass = 'cse-row-lowest-cost';
+
+        html += '<tr class="' + rowClass + '">';
+        html += '<td>' + (r.offeringClass === 'convertible' ? 'Convertible' : 'Standard') + '</td>';
+        html += '<td>' + (r.termInYears || 1) + 'yr</td>';
+        html += '<td>' + (r.paymentOption || '-').replace('Upfront', ' Upfront') + '</td>';
+        html += '<td style="color:#059669;font-weight:600;">$' + (r.estimatedMonthlySavings || 0).toFixed(0) + '</td>';
+        html += '<td>' + (r.estimatedSavingsPercentage || 0).toFixed(1) + '%</td>';
+        html += '<td>' + (r.upfrontCost > 0 ? '$' + (r.upfrontCost || 0).toFixed(0) : '-') + '</td>';
+        html += '<td>' + breakEven + '</td>';
+        html += '<td>$' + tco.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',') + '</td>';
+        html += '</tr>';
+    });
+
+    html += '</tbody></table>';
+    return html;
+}
+
+// ============================================================
+// Task 3: Wire SP/RI Explorers into existing flow
+// ============================================================
+function _committedRenderRecommendations(data) {
+    var spRecs = data.spRecommendations || [];
+    var riRecs = data.riRecommendations || [];
+    _riExplorerData = riRecs;
+    _spExplorerRender(spRecs);
+}
+
+// ============================================================
+// Task 5: Dashboard Integration — SP and RI Coverage Widgets
+// ============================================================
+
+function _renderSPCoverageWidget(container) {
+    if (!container) container = document.getElementById('dash-sp-coverage');
+    if (!container) return;
+
+    // Read committed discounts data from sessionStorage for selected dashboard accounts
+    var accountIds = _getDashboardAccountIds();
+    var spCoverage = null, spUtilization = null;
+    var hasData = false;
+
+    for (var i = 0; i < accountIds.length; i++) {
+        var cached = null;
+        try { cached = JSON.parse(sessionStorage.getItem('committedDiscounts_' + accountIds[i])); } catch(e) {}
+        if (cached && cached.data) {
+            hasData = true;
+            var cov = cached.data.spCoverage || cached.data.coverage || {};
+            if (cov.spCoveragePercentage != null) spCoverage = cov.spCoveragePercentage;
+            else if (cov.coveragePercentage != null) spCoverage = cov.coveragePercentage;
+            if (cov.spUtilizationPercentage != null) spUtilization = cov.spUtilizationPercentage;
+            else if (cov.utilizationPercentage != null) spUtilization = cov.utilizationPercentage;
+            if (spCoverage != null) break;
+        }
+    }
+
+    if (!hasData || spCoverage == null) {
+        container.innerHTML = '<div class="cse-widget-empty">No scan data — run a Committed Discounts scan in the Act tab.<br><a class="cse-widget-link" onclick="_goToTab(\'act-tab\',\'committed\')">Go to Committed Discounts ▶</a></div>';
+        return;
+    }
+
+    var covColor = spCoverage < 50 ? '#f59e0b' : '#10b981';
+    var utilColor = (spUtilization != null && spUtilization < 80) ? '#ef4444' : '#10b981';
+    var utilTooltip = (spUtilization != null && spUtilization < 80) ? ' title="Underutilized — you are paying for unused commitment"' : '';
+
+    var html = '';
+    html += '<div class="cse-widget-metric-row"><span class="cse-widget-label">Coverage</span><span class="cse-widget-value" style="color:' + covColor + ';">' + (spCoverage || 0).toFixed(0) + '%</span></div>';
+    html += '<div class="cse-widget-progress"><div class="cse-widget-progress-bar" style="width:' + Math.min(spCoverage || 0, 100) + '%;background:' + covColor + ';"></div></div>';
+    if (spUtilization != null) {
+        html += '<div class="cse-widget-metric-row" style="margin-top:12px;"' + utilTooltip + '><span class="cse-widget-label">Utilization</span><span class="cse-widget-value" style="color:' + utilColor + ';">' + spUtilization.toFixed(0) + '%</span></div>';
+        html += '<div class="cse-widget-progress"><div class="cse-widget-progress-bar" style="width:' + Math.min(spUtilization, 100) + '%;background:' + utilColor + ';"></div></div>';
+    }
+    html += '<a class="cse-widget-link" onclick="_goToTab(\'act-tab\',\'committed\')">View Details ▶</a>';
+    container.innerHTML = html;
+}
+
+function _renderRICoverageWidget(container) {
+    if (!container) container = document.getElementById('dash-ri-coverage');
+    if (!container) return;
+
+    var accountIds = _getDashboardAccountIds();
+    var riCoverage = null, riUtilization = null, underutilizedCount = 0;
+    var hasData = false;
+
+    for (var i = 0; i < accountIds.length; i++) {
+        var cached = null;
+        try { cached = JSON.parse(sessionStorage.getItem('committedDiscounts_' + accountIds[i])); } catch(e) {}
+        if (cached && cached.data) {
+            hasData = true;
+            var cov = cached.data.riCoverage || cached.data.coverage || {};
+            if (cov.riCoveragePercentage != null) riCoverage = cov.riCoveragePercentage;
+            else if (cov.coveragePercentage != null && riCoverage == null) riCoverage = cov.coveragePercentage;
+            if (cov.riUtilizationPercentage != null) riUtilization = cov.riUtilizationPercentage;
+            else if (cov.utilizationPercentage != null && riUtilization == null) riUtilization = cov.utilizationPercentage;
+            // Count underutilized RIs
+            var riRecs = cached.data.riRecommendations || [];
+            riRecs.forEach(function(r) {
+                if (r.utilization != null && r.utilization < 80) underutilizedCount++;
+            });
+            if (cov.underutilizedCount != null) underutilizedCount = cov.underutilizedCount;
+            if (riCoverage != null) break;
+        }
+    }
+
+    if (!hasData || riCoverage == null) {
+        container.innerHTML = '<div class="cse-widget-empty">No scan data — run a Committed Discounts scan in the Act tab.<br><a class="cse-widget-link" onclick="_goToTab(\'act-tab\',\'committed\')">Go to Committed Discounts ▶</a></div>';
+        return;
+    }
+
+    var covColor = riCoverage < 50 ? '#f59e0b' : '#10b981';
+    var utilColor = (riUtilization != null && riUtilization < 80) ? '#ef4444' : '#10b981';
+
+    var html = '';
+    html += '<div class="cse-widget-metric-row"><span class="cse-widget-label">Coverage</span><span class="cse-widget-value" style="color:' + covColor + ';">' + (riCoverage || 0).toFixed(0) + '%</span></div>';
+    html += '<div class="cse-widget-progress"><div class="cse-widget-progress-bar" style="width:' + Math.min(riCoverage || 0, 100) + '%;background:' + covColor + ';"></div></div>';
+    if (riUtilization != null) {
+        html += '<div class="cse-widget-metric-row" style="margin-top:12px;"><span class="cse-widget-label">Utilization</span><span class="cse-widget-value" style="color:' + utilColor + ';">' + riUtilization.toFixed(0) + '%</span></div>';
+        html += '<div class="cse-widget-progress"><div class="cse-widget-progress-bar" style="width:' + Math.min(riUtilization, 100) + '%;background:' + utilColor + ';"></div></div>';
+    }
+    if (underutilizedCount > 0) {
+        html += '<div style="margin-top:8px;"><span class="cse-underutilized-badge">' + underutilizedCount + ' underutilized</span></div>';
+    }
+    html += '<a class="cse-widget-link" onclick="_goToTab(\'act-tab\',\'committed\')">View Details ▶</a>';
+    container.innerHTML = html;
+}
+
+function _getDashboardAccountIds() {
+    // Get account IDs from the dashboard account selector checkboxes
+    var cbs = document.querySelectorAll('.dash-acct-cb:checked');
+    if (cbs.length > 0) {
+        var ids = [];
+        cbs.forEach(function(cb) { ids.push(cb.value); });
+        return ids;
+    }
+    // Fallback: try AI account selector
+    cbs = document.querySelectorAll('.ai-acct-cb:checked');
+    if (cbs.length > 0) {
+        var ids = [];
+        cbs.forEach(function(cb) { ids.push(cb.value); });
+        return ids;
+    }
+    // Fallback: try to get from accounts list
+    var accounts = JSON.parse(sessionStorage.getItem('memberAccounts') || '[]');
+    return accounts.map(function(a) { return a.accountId || a.id || ''; }).filter(Boolean);
+}
+
+// ============================================================
+// Task 6: Dashboard Integration — KPI Bar Commitment Savings
+// ============================================================
+
+function _getCommitmentSavingsForKPI(accountIds) {
+    if (!accountIds || accountIds.length === 0) return null;
+    var totalSavings = 0;
+    var hasData = false;
+
+    for (var i = 0; i < accountIds.length; i++) {
+        var cached = null;
+        try { cached = JSON.parse(sessionStorage.getItem('committedDiscounts_' + accountIds[i])); } catch(e) {}
+        if (cached && cached.data) {
+            hasData = true;
+            var spRecs = cached.data.spRecommendations || [];
+            var riRecs = cached.data.riRecommendations || [];
+            spRecs.forEach(function(r) { totalSavings += (r.estimatedMonthlySavings || 0); });
+            riRecs.forEach(function(r) { totalSavings += (r.estimatedMonthlySavings || 0); });
+        }
+    }
+
+    return hasData && totalSavings > 0 ? totalSavings : null;
+}
+
+// ============================================================
+// Task 8: Chat Integration — Savings Comparison Chart
+// ============================================================
+
+function _buildCommitmentChartData(answerText, existingChartData) {
+    if (!answerText) return null;
+
+    // Detect commitment keywords (case-insensitive)
+    var keywords = ['savings plan', 'reserved instance', 'commitment', 'sp coverage', 'ri coverage'];
+    var textLower = answerText.toLowerCase();
+    var hasKeyword = keywords.some(function(kw) { return textLower.indexOf(kw) !== -1; });
+    if (!hasKeyword) return null;
+
+    // Get account IDs from the AI account selector
+    var accountIds = [];
+    var cbs = document.querySelectorAll('.ai-acct-cb:checked');
+    cbs.forEach(function(cb) { accountIds.push(cb.value); });
+    if (accountIds.length === 0) {
+        var accounts = JSON.parse(sessionStorage.getItem('memberAccounts') || '[]');
+        accountIds = accounts.map(function(a) { return a.accountId || a.id || ''; }).filter(Boolean);
+    }
+
+    // Read scan data from sessionStorage
+    var allSpRecs = [], allRiRecs = [];
+    for (var i = 0; i < accountIds.length; i++) {
+        var cached = null;
+        try { cached = JSON.parse(sessionStorage.getItem('committedDiscounts_' + accountIds[i])); } catch(e) {}
+        if (cached && cached.data) {
+            if (cached.data.spRecommendations) allSpRecs = allSpRecs.concat(cached.data.spRecommendations);
+            if (cached.data.riRecommendations) allRiRecs = allRiRecs.concat(cached.data.riRecommendations);
+        }
+    }
+
+    if (allSpRecs.length === 0 && allRiRecs.length === 0) return null;
+
+    // Determine if SP-specific or RI-specific
+    var isSPSpecific = textLower.indexOf('savings plan') !== -1;
+    var isRISpecific = textLower.indexOf('reserved instance') !== -1;
+
+    var chartEntries = [];
+
+    // Build SP chart if we have SP data
+    if (allSpRecs.length > 0 && (isSPSpecific || !isRISpecific)) {
+        // Group by planType, pick first type
+        var planTypes = [];
+        allSpRecs.forEach(function(r) { if (planTypes.indexOf(r.planType) === -1) planTypes.push(r.planType); });
+        var targetType = planTypes[0];
+        var spForType = allSpRecs.filter(function(r) { return r.planType === targetType; });
+
+        if (spForType.length > 0) {
+            var labels = [];
+            var data = [];
+            var colors = [];
+            spForType.forEach(function(r) {
+                var termLabel = (r.termInYears || 1) + 'yr';
+                var payLabel = (r.paymentOption || '').replace('Upfront', ' Upfront');
+                labels.push(termLabel + ' ' + payLabel);
+                data.push(r.estimatedMonthlySavings || 0);
+                colors.push((r.termInYears || 1) === 1 ? '#6366f1' : '#10b981');
+            });
+
+            chartEntries.push({
+                id: 'commitment-sp-comparison',
+                title: 'Savings Plan Options — Monthly Savings',
+                type: 'bar',
+                labels: labels,
+                data: data,
+                color: '#6366f1',
+                backgroundColor: colors
+            });
+        }
+    }
+
+    // Build RI chart if we have RI data
+    if (allRiRecs.length > 0 && (isRISpecific || !isSPSpecific)) {
+        // Pick first instance type
+        var instanceTypes = [];
+        allRiRecs.forEach(function(r) { if (instanceTypes.indexOf(r.instanceType) === -1) instanceTypes.push(r.instanceType); });
+        var targetInstance = instanceTypes[0];
+        var riForInstance = allRiRecs.filter(function(r) { return r.instanceType === targetInstance; });
+
+        if (riForInstance.length > 0) {
+            var labels = [];
+            var data = [];
+            var colors = [];
+            riForInstance.forEach(function(r) {
+                var classLabel = (r.offeringClass === 'convertible' ? 'Conv' : 'Std');
+                var termLabel = (r.termInYears || 1) + 'yr';
+                var payLabel = (r.paymentOption || '').replace('Upfront', ' Upfront');
+                labels.push(classLabel + ' ' + termLabel + ' ' + payLabel);
+                data.push(r.estimatedMonthlySavings || 0);
+                colors.push((r.termInYears || 1) === 1 ? '#6366f1' : '#10b981');
+            });
+
+            chartEntries.push({
+                id: 'commitment-ri-comparison',
+                title: 'Reserved Instance Options — Monthly Savings (' + targetInstance + ')',
+                type: 'bar',
+                labels: labels,
+                data: data,
+                color: '#10b981',
+                backgroundColor: colors
+            });
+        }
+    }
+
+    return chartEntries.length > 0 ? chartEntries : null;
+}
+
+// ============================================================
+// Task 10: Redesigned Laddering Strategy Section
+// ============================================================
 function _committedRenderLaddering(strategy, baseline) {
     var panel = document.getElementById('committed-laddering-panel');
     if (!panel) return;
@@ -8895,68 +9455,103 @@ function _committedRenderLaddering(strategy, baseline) {
         return;
     }
 
+    var tranches = strategy.tranches || [];
     var html = '<div style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:20px;">';
     html += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">';
     html += '<div style="display:flex;align-items:center;gap:10px;"><span style="font-size:1.3em;">📅</span><strong style="color:#1f2937;">Laddering Strategy</strong></div>';
-    html += '<button onclick="document.getElementById(\'committed-ladder-modal\').hidden=false;" class="btn btn-outline btn-sm">✏️ Customize</button>';
+    html += '<button onclick="document.getElementById(\'committed-ladder-modal\').hidden=false;_committedLadderUpdatePresetLabels();" class="btn btn-outline btn-sm">✏️ Customize</button>';
+    html += '</div>';
+
+    // Plain-language explanation
+    html += '<div class="cse-ladder-explanation">';
+    html += 'Instead of buying your full commitment at once, stagger multiple 1-year (or 3-year) purchases across different dates. ';
+    html += 'This way they expire at different times — giving you flexibility to adjust as your usage evolves. ';
+    html += '<strong>Each purchase is a full 1–3 year commitment.</strong> The staggering is about <em>when</em> you buy, not how long each commitment lasts.';
+    html += '</div>';
+
+    // Summary sentence
+    var perTrancheMonthly = tranches.length > 0 ? (tranches[0].hourlyCommitment || 0) * 730 : 0;
+    var totalMonthlySavings = 0;
+    tranches.forEach(function(t) { totalMonthlySavings += (t.estimatedMonthlySavings || 0); });
+    html += '<div class="cse-ladder-summary">';
+    html += '<strong>Recommended:</strong> Buy ' + tranches.length + ' separate commitments of ~$' + perTrancheMonthly.toFixed(0) + '/month each, ';
+    html += 'purchased 3 months apart → total savings ~<strong>$' + totalMonthlySavings.toFixed(0) + '/month</strong> once all are active.';
     html += '</div>';
 
     // Aggressive warning
     if (strategy.isAggressive) {
         html += '<div style="background:#fef2f2;border:1px solid #fca5a5;border-radius:8px;padding:10px 14px;margin-bottom:12px;font-size:0.85em;color:#991b1b;">';
-        html += '⚠️ <strong>Aggressive commitment</strong> — ' + (strategy.aggressiveWarning || 'This exceeds 70% of your average hourly spend. Consider the 60–70% range for safety.');
+        html += '⚠️ <strong>High commitment warning:</strong> This total commitment is high relative to your usage. ';
+        html += 'If your workloads decrease, you\'ll still pay for unused commitment for 1–3 years. Consider the Moderate option.';
         html += '</div>';
     }
 
-    // Summary
-    html += '<div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:16px;font-size:0.85em;color:#374151;">';
-    html += '<div>Total Commitment: <strong>$' + (strategy.totalHourlyCommitment || 0).toFixed(2) + '/hr</strong></div>';
-    if (strategy.commitmentPercentage != null) {
-        html += '<div>% of Average: <strong>' + strategy.commitmentPercentage.toFixed(1) + '%</strong></div>';
-    }
-    html += '</div>';
+    // Visual timeline
+    var now = new Date();
+    html += '<div class="cse-ladder-timeline">';
+    tranches.forEach(function(tranche, idx) {
+        var purchaseDate = tranche.purchaseDate ? new Date(tranche.purchaseDate) : null;
+        var dotClass = 'cse-future';
+        if (purchaseDate && purchaseDate < now) dotClass = 'cse-past';
+        else if (idx === 0 || (idx > 0 && tranches[idx - 1].purchaseDate && new Date(tranches[idx - 1].purchaseDate) < now)) dotClass = 'cse-next';
 
-    // Timeline visualization
-    html += '<div style="position:relative;padding-left:24px;border-left:3px solid #6366f1;">';
-    strategy.tranches.forEach(function(tranche, idx) {
-        var isLast = idx === strategy.tranches.length - 1;
-        html += '<div style="position:relative;padding-bottom:' + (isLast ? '0' : '20px') + ';">';
-        // Timeline dot
-        html += '<div style="position:absolute;left:-30px;top:4px;width:12px;height:12px;border-radius:50%;background:#6366f1;border:2px solid #fff;box-shadow:0 0 0 2px #6366f1;"></div>';
-        // Tranche card
-        html += '<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px 16px;">';
-        html += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">';
-        html += '<div style="font-weight:700;color:#1f2937;font-size:0.9em;">Tranche ' + tranche.trancheNumber + '</div>';
-        html += '<div style="font-size:0.8em;color:#6b7280;">' + (tranche.purchaseDate || '') + '</div>';
+        var monthlyAmt = (tranche.hourlyCommitment || 0) * 730;
+        var termLabel = (tranche.termInYears || 1) + '-year ' + ((tranche.recommendedType || '').replace('SavingsPlans', ' SP').replace('Savings', '') || 'SP');
+
+        html += '<div class="cse-ladder-milestone">';
+        html += '<div class="cse-ladder-dot ' + dotClass + '"></div>';
+        html += '<div class="cse-ladder-milestone-label">Purchase ' + (tranche.trancheNumber || (idx + 1)) + '</div>';
+        html += '<div class="cse-ladder-milestone-amount">$' + monthlyAmt.toFixed(0) + '/mo</div>';
+        html += '<div class="cse-ladder-milestone-term">' + termLabel + '</div>';
+        html += '<div style="font-size:0.68em;color:#6b7280;margin-top:2px;">' + (tranche.purchaseDate || '') + '</div>';
         html += '</div>';
-        html += '<div style="display:flex;gap:16px;flex-wrap:wrap;font-size:0.8em;color:#374151;">';
-        html += '<div>Commitment: <strong>$' + (tranche.hourlyCommitment || 0).toFixed(2) + '/hr</strong></div>';
-        html += '<div>Cumulative: <strong>$' + (tranche.cumulativeCommitment || 0).toFixed(2) + '/hr</strong></div>';
-        html += '<div>Est. Savings: <strong style="color:#059669;">$' + (tranche.estimatedMonthlySavings || 0).toFixed(0) + '/mo</strong></div>';
-        html += '</div>';
-        html += '<div style="margin-top:6px;font-size:0.75em;color:#6366f1;font-weight:500;">' + (tranche.recommendedType || '').replace('SavingsPlans', ' SP') + '</div>';
-        if (tranche.rationale) {
-            html += '<div style="margin-top:4px;font-size:0.72em;color:#6b7280;font-style:italic;">' + tranche.rationale + '</div>';
-        }
-        html += '</div></div>';
     });
     html += '</div>';
+
+    // Summary table
+    html += '<div style="overflow-x:auto;margin-top:12px;">';
+    html += '<table class="cse-ladder-table"><thead><tr>';
+    html += '<th>Purchase #</th><th>Date</th><th>Commitment $/month</th><th>Term</th><th>Cumulative $/month</th><th>Est. Savings $/month</th><th>Plan Type</th>';
+    html += '</tr></thead><tbody>';
+    tranches.forEach(function(tranche, idx) {
+        var monthlyAmt = (tranche.hourlyCommitment || 0) * 730;
+        var cumulativeMonthly = (tranche.cumulativeCommitment || 0) * 730;
+        var termLabel = (tranche.termInYears || 1) + ' year';
+        var typeLabel = (tranche.recommendedType || '').replace('SavingsPlans', ' SP').replace('Savings', '') || 'Compute SP';
+        html += '<tr>';
+        html += '<td style="font-weight:600;">Purchase ' + (tranche.trancheNumber || (idx + 1)) + '</td>';
+        html += '<td>' + (tranche.purchaseDate || '-') + '</td>';
+        html += '<td style="font-weight:600;">$' + monthlyAmt.toFixed(0) + '/mo <span style="font-size:0.8em;color:#6b7280;">($' + (tranche.hourlyCommitment || 0).toFixed(2) + '/hr)</span></td>';
+        html += '<td>' + termLabel + '</td>';
+        html += '<td>$' + cumulativeMonthly.toFixed(0) + '/mo</td>';
+        html += '<td style="color:#059669;font-weight:600;">$' + (tranche.estimatedMonthlySavings || 0).toFixed(0) + '/mo</td>';
+        html += '<td>' + typeLabel + '</td>';
+        html += '</tr>';
+        if (tranche.rationale) {
+            html += '<tr><td colspan="7" style="padding:2px 8px 8px;font-size:0.75em;color:#6b7280;font-style:italic;">' + tranche.rationale + '</td></tr>';
+        }
+    });
+    html += '</tbody></table></div>';
 
     html += '</div>';
     panel.innerHTML = html;
     panel.style.display = 'block';
 }
 
+// Redesigned Customize Modal for Laddering (Task 10.4)
 async function _committedLadderCustom() {
     var input = document.getElementById('committed-ladder-input');
     var errorEl = document.getElementById('committed-ladder-error');
     if (!input) return;
 
-    var commitment = parseFloat(input.value);
-    if (isNaN(commitment) || commitment <= 0) {
-        if (errorEl) errorEl.textContent = 'Please enter a valid hourly commitment greater than 0.';
+    var monthlyCommitment = parseFloat(input.value);
+    if (isNaN(monthlyCommitment) || monthlyCommitment <= 0) {
+        if (errorEl) errorEl.textContent = 'Please enter a valid monthly commitment greater than 0.';
         return;
     }
+
+    // Convert monthly to hourly for the API
+    var commitment = monthlyCommitment / 730;
 
     var sel = document.getElementById('committed-account-select');
     if (!sel || !sel.value) {
@@ -8973,9 +9568,7 @@ async function _committedLadderCustom() {
             accountId: sel.value,
             totalHourlyCommitment: commitment
         });
-        // Close modal
         document.getElementById('committed-ladder-modal').hidden = true;
-        // Re-render laddering panel
         _committedRenderLaddering(data, null);
         notify('Laddering strategy updated.', 'success');
     } catch (err) {
@@ -8983,6 +9576,42 @@ async function _committedLadderCustom() {
     } finally {
         if (submitBtn) submitBtn.disabled = false;
     }
+}
+
+function _committedLadderPreset(type) {
+    // Read baseline from cached scan data
+    var sel = document.getElementById('committed-account-select');
+    var accountId = sel ? sel.value : '';
+    var cached = null;
+    try { cached = JSON.parse(sessionStorage.getItem('committedDiscounts_' + accountId)); } catch(e) {}
+    var baseline = (cached && cached.data && cached.data.baseline) || {};
+    var avgHourly = baseline.averageHourlySpend || 0;
+    var p10Hourly = baseline.p10HourlySpend || 0;
+
+    var monthlyValue = 0;
+    if (type === 'conservative') monthlyValue = p10Hourly * 730;
+    else if (type === 'moderate') monthlyValue = avgHourly * 0.6 * 730;
+    else if (type === 'aggressive') monthlyValue = avgHourly * 0.7 * 730;
+
+    var input = document.getElementById('committed-ladder-input');
+    if (input) input.value = monthlyValue.toFixed(0);
+}
+
+function _committedLadderUpdatePresetLabels() {
+    var sel = document.getElementById('committed-account-select');
+    var accountId = sel ? sel.value : '';
+    var cached = null;
+    try { cached = JSON.parse(sessionStorage.getItem('committedDiscounts_' + accountId)); } catch(e) {}
+    var baseline = (cached && cached.data && cached.data.baseline) || {};
+    var avgHourly = baseline.averageHourlySpend || 0;
+    var p10Hourly = baseline.p10HourlySpend || 0;
+
+    var consVal = document.getElementById('preset-conservative-val');
+    var modVal = document.getElementById('preset-moderate-val');
+    var aggVal = document.getElementById('preset-aggressive-val');
+    if (consVal) consVal.textContent = p10Hourly > 0 ? '$' + (p10Hourly * 730).toFixed(0) + '/mo' : 'P10 floor';
+    if (modVal) modVal.textContent = avgHourly > 0 ? '$' + (avgHourly * 0.6 * 730).toFixed(0) + '/mo' : '60% avg';
+    if (aggVal) aggVal.textContent = avgHourly > 0 ? '$' + (avgHourly * 0.7 * 730).toFixed(0) + '/mo' : '70% avg';
 }
 
 // Task 12.2: Expiring Commitments Timeline Renderer
@@ -9089,8 +9718,7 @@ function _committedShowPurchaseGuide(type, subType) {
     var region = 'us-east-1'; // default
     var sel = document.getElementById('committed-account-select');
     if (sel && sel.value) {
-        var accounts = JSON.parse(sessionStorage.getItem('memberAccounts') || '[]');
-        var acct = accounts.find(function(a) { return a.accountId === sel.value; });
+        var acct = allAccounts.find(function(a) { return a.accountId === sel.value; });
         if (acct && acct.region) region = acct.region;
     }
 
