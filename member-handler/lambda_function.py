@@ -4030,6 +4030,12 @@ def handle_committed_discount_ladder(event):
         return auth
     member_email = auth['sub']
 
+    # Token cost
+    tier = _get_member_tier(member_email)
+    credit_err = _check_and_consume_credits(member_email, tier, AI_QUERY_CREDIT_COST)
+    if credit_err:
+        return credit_err
+
     try:
         body = json.loads(event.get('body', '{}'))
     except (json.JSONDecodeError, TypeError):
@@ -6230,6 +6236,12 @@ def handle_execute_command(event):
         return auth
 
     member_email = auth['sub']
+
+    # Token cost
+    tier = _get_member_tier(member_email)
+    credit_err = _check_and_consume_credits(member_email, tier, AI_QUERY_CREDIT_COST)
+    if credit_err:
+        return credit_err
 
     try:
         body = json.loads(event.get('body', '{}'))
@@ -11202,6 +11214,12 @@ def handle_live_metrics(event):
         return auth
     member_email = auth['sub']
 
+    # Token cost
+    tier = _get_member_tier(member_email)
+    credit_err = _check_and_consume_credits(member_email, tier, SCAN_CREDIT_COST)
+    if credit_err:
+        return credit_err
+
     # Parse query params
     qs = event.get('queryStringParameters') or {}
     cost_dimension = qs.get('costDimension', 'total')
@@ -12284,6 +12302,12 @@ def handle_healthcheck_scan(event):
         return auth
     member_email = auth['sub']
 
+    # Token cost
+    tier = _get_member_tier(member_email)
+    credit_err = _check_and_consume_credits(member_email, tier, SCAN_CREDIT_COST)
+    if credit_err:
+        return credit_err
+
     try:
         body = json.loads(event.get('body', '{}'))
     except (json.JSONDecodeError, TypeError):
@@ -12466,6 +12490,12 @@ def handle_healthcheck_fix(event):
     if isinstance(auth, dict) and 'statusCode' in auth:
         return auth
     member_email = auth['sub']
+
+    # Token cost
+    tier = _get_member_tier(member_email)
+    credit_err = _check_and_consume_credits(member_email, tier, ACTIVITY_CREDIT_COST)
+    if credit_err:
+        return credit_err
 
     try:
         body = json.loads(event.get('body', '{}'))
@@ -13136,6 +13166,12 @@ def handle_spot_qualify(event):
         return auth
     member_email = auth['sub']
 
+    # Token cost
+    tier = _get_member_tier(member_email)
+    credit_err = _check_and_consume_credits(member_email, tier, SCAN_CREDIT_COST)
+    if credit_err:
+        return credit_err
+
     try:
         body = json.loads(event.get('body', '{}'))
     except (json.JSONDecodeError, TypeError):
@@ -13226,6 +13262,12 @@ def handle_spot_plan(event):
     if isinstance(auth, dict) and 'statusCode' in auth:
         return auth
     member_email = auth['sub']
+
+    # Token cost
+    tier = _get_member_tier(member_email)
+    credit_err = _check_and_consume_credits(member_email, tier, AI_QUERY_CREDIT_COST)
+    if credit_err:
+        return credit_err
 
     try:
         body = json.loads(event.get('body', '{}'))
@@ -13334,6 +13376,12 @@ def handle_spot_migrate(event):
     if isinstance(auth, dict) and 'statusCode' in auth:
         return auth
     member_email = auth['sub']
+
+    # Token cost
+    tier = _get_member_tier(member_email)
+    credit_err = _check_and_consume_credits(member_email, tier, ACTIVITY_CREDIT_COST)
+    if credit_err:
+        return credit_err
 
     try:
         body = json.loads(event.get('body', '{}'))
@@ -14101,6 +14149,12 @@ def handle_server_analyze(event):
         return auth
     member_email = auth['sub']
 
+    # Token cost
+    tier = _get_member_tier(member_email)
+    credit_err = _check_and_consume_credits(member_email, tier, SCAN_CREDIT_COST)
+    if credit_err:
+        return credit_err
+
     try:
         body = json.loads(event.get('body', '{}'))
     except (json.JSONDecodeError, TypeError):
@@ -14300,6 +14354,12 @@ def handle_server_resize(event):
     if isinstance(auth, dict) and 'statusCode' in auth:
         return auth
     member_email = auth['sub']
+
+    # Token cost
+    tier = _get_member_tier(member_email)
+    credit_err = _check_and_consume_credits(member_email, tier, ACTIVITY_CREDIT_COST)
+    if credit_err:
+        return credit_err
 
     try:
         body = json.loads(event.get('body', '{}'))
@@ -14503,6 +14563,12 @@ def handle_cluster_analyze(event):
     if isinstance(auth, dict) and 'statusCode' in auth:
         return auth
     member_email = auth['sub']
+
+    # Token cost
+    tier = _get_member_tier(member_email)
+    credit_err = _check_and_consume_credits(member_email, tier, SCAN_CREDIT_COST)
+    if credit_err:
+        return credit_err
 
     try:
         body = json.loads(event.get('body', '{}'))
@@ -14799,6 +14865,12 @@ def handle_licensing_scan(event):
     if isinstance(auth, dict) and 'statusCode' in auth:
         return auth
     member_email = auth['sub'] if isinstance(auth, dict) else auth
+
+    # Token cost
+    tier = _get_member_tier(member_email)
+    credit_err = _check_and_consume_credits(member_email, tier, SCAN_CREDIT_COST)
+    if credit_err:
+        return credit_err
 
     try:
         body = json.loads(event.get('body', '{}'))
@@ -15345,6 +15417,12 @@ def handle_rds_optimize(event):
         return auth
     member_email = auth['sub'] if isinstance(auth, dict) else auth
 
+    # Token cost
+    tier = _get_member_tier(member_email)
+    credit_err = _check_and_consume_credits(member_email, tier, SCAN_CREDIT_COST)
+    if credit_err:
+        return credit_err
+
     try:
         body = json.loads(event.get('body', '{}'))
     except (json.JSONDecodeError, TypeError):
@@ -15527,6 +15605,12 @@ def handle_lambda_optimize(event):
         return auth
     member_email = auth['sub'] if isinstance(auth, dict) else auth
 
+    # Token cost
+    tier = _get_member_tier(member_email)
+    credit_err = _check_and_consume_credits(member_email, tier, SCAN_CREDIT_COST)
+    if credit_err:
+        return credit_err
+
     try:
         body = json.loads(event.get('body', '{}'))
     except (json.JSONDecodeError, TypeError):
@@ -15643,6 +15727,12 @@ def handle_ebs_optimize(event):
     if isinstance(auth, dict) and 'statusCode' in auth:
         return auth
     member_email = auth['sub'] if isinstance(auth, dict) else auth
+
+    # Token cost
+    tier = _get_member_tier(member_email)
+    credit_err = _check_and_consume_credits(member_email, tier, SCAN_CREDIT_COST)
+    if credit_err:
+        return credit_err
 
     try:
         body = json.loads(event.get('body', '{}'))
