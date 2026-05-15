@@ -7860,6 +7860,8 @@ async function _resizeAnalyze() {
             if (a.verdict !== 'right-sized') html += ' - savings available below';
             html += '</div></div>';
             if (a.note) html += '<div style="margin-top:6px;font-size:0.8em;color:#6b7280;font-style:italic;">' + a.note + '</div>';
+            if (a.memoryWarning) html += '<div style="margin-top:8px;padding:8px 12px;background:#fef3c7;border:1px solid #f59e0b;border-radius:6px;font-size:0.85em;color:#92400e;">' + a.memoryWarning + '</div>';
+            if (a.burstableWarning) html += '<div style="margin-top:8px;padding:8px 12px;background:#fef3c7;border:1px solid #f59e0b;border-radius:6px;font-size:0.85em;color:#92400e;">' + a.burstableWarning + '</div>';
             analysisEl.innerHTML = html;
         }
 

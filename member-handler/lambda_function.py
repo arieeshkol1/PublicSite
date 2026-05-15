@@ -13802,7 +13802,30 @@ def _get_instance_specs(ec2_client, instance_type):
     return {'vcpu': 0, 'mem': 0, 'archs': []}
 
 
-def _get_instance_price(instance_type, region='us-east-1'):
+def _parse_platform_for_pricing(platform_details):
+    """Map EC2 PlatformDetails string to (operatingSystem, preInstalledSw) for the Pricing API."""
+    if not platform_details:
+        return ('Linux', 'NA')
+    p = platform_details.strip()
+    if p in ('Linux/UNIX', 'Linux/UNIX (Amazon VPC)'):
+        return ('Linux', 'NA')
+    elif p == 'Red Hat Enterprise Linux':
+        return ('RHEL', 'NA')
+    elif p == 'SUSE Linux':
+        return ('SUSE', 'NA')
+    elif p == 'Windows with SQL Server Enterprise':
+        return ('Windows', 'SQL Ent')
+    elif p == 'Windows with SQL Server Standard':
+        return ('Windows', 'SQL Std')
+    elif p == 'Windows with SQL Server Web':
+        return ('Windows', 'SQL Web')
+    elif 'Windows' in p:
+        return ('Windows', 'NA')
+    else:
+        return ('Linux', 'NA')
+
+
+def _get_instance_price(instance_type, region='us-east-1', operating_system='Linux', pre_installed_sw='NA'):
     """Get on-demand hourly price via AWS Pricing API."""
     region_names = {
         'us-east-1': 'US East (N. Virginia)', 'us-east-2': 'US East (Ohio)',
@@ -13819,9 +13842,9 @@ def _get_instance_price(instance_type, region='us-east-1'):
             Filters=[
                 {'Type': 'TERM_MATCH', 'Field': 'instanceType', 'Value': instance_type},
                 {'Type': 'TERM_MATCH', 'Field': 'location', 'Value': location},
-                {'Type': 'TERM_MATCH', 'Field': 'operatingSystem', 'Value': 'Linux'},
+                {'Type': 'TERM_MATCH', 'Field': 'operatingSystem', 'Value': operating_system},
                 {'Type': 'TERM_MATCH', 'Field': 'tenancy', 'Value': 'Shared'},
-                {'Type': 'TERM_MATCH', 'Field': 'preInstalledSw', 'Value': 'NA'},
+                {'Type': 'TERM_MATCH', 'Field': 'preInstalledSw', 'Value': pre_installed_sw},
                 {'Type': 'TERM_MATCH', 'Field': 'capacitystatus', 'Value': 'Used'},
             ],
             MaxResults=5,
@@ -13839,9 +13862,9 @@ def _get_instance_price(instance_type, region='us-east-1'):
     return 0.0
 
 
-def _get_rightsizing_candidates(ec2_client, current_type, needed_vcpu, needed_mem, current_hourly, arch='x86_64'):
+def _get_rightsizing_candidates(ec2_client, current_type, needed_vcpu, needed_mem, current_hourly, arch='x86_64', region='us-east-1', operating_system='Linux', pre_installed_sw='NA'):
     """Find cheaper instance types using a known pricing catalog + DescribeInstanceTypes for specs."""
-    # Known instance types with pricing (us-east-1 on-demand)
+    # Known instance types with pricing (us-east-1 on-demand, Linux)
     CATALOG = [
         ('t3.nano',    2, 0.5, 0.0052, False), ('t3.micro',   2, 1,   0.0104, False),
         ('t3.small',   2, 2,   0.0208, False), ('t3.medium',  2, 4,   0.0416, False),
@@ -13866,14 +13889,32 @@ def _get_rightsizing_candidates(ec2_client, current_type, needed_vcpu, needed_me
         ('r6g.large',  2, 16,  0.1008, True),   ('r7g.large',  2, 16,  0.1071, True),
     ]
 
-    result = []
+    is_non_linux = operating_system != 'Linux'
+
+    # Filter candidates by vCPU/memory requirements and (for Linux) by price
+    filtered = []
     for itype, vcpu, mem, hourly, is_graviton in CATALOG:
         if itype == current_type:
             continue
         if vcpu < needed_vcpu or mem < needed_mem:
             continue
-        if hourly >= current_hourly:
+        # For Linux, use catalog price to filter; for non-Linux, include all that meet specs
+        if not is_non_linux and hourly >= current_hourly:
             continue
+        filtered.append((itype, vcpu, mem, hourly, is_graviton))
+
+    # Sort by catalog price (cheapest first) to prioritize smaller instances
+    filtered.sort(key=lambda x: x[3])
+
+    # For non-Linux, fetch real prices for the top 10 candidates via Pricing API
+    result = []
+    for itype, vcpu, mem, hourly, is_graviton in filtered[:15 if not is_non_linux else 10]:
+        if is_non_linux:
+            real_price = _get_instance_price(itype, region, operating_system, pre_installed_sw)
+            if real_price <= 0 or real_price >= current_hourly:
+                continue
+            hourly = real_price
+
         monthly = round(hourly * 730, 2)
         current_monthly = round(current_hourly * 730, 2)
         savings = round(current_monthly - monthly, 2)
@@ -14070,7 +14111,8 @@ def handle_server_analyze(event):
     current_specs_raw = _get_instance_specs(ec2, current_type)
     current_vcpu = current_specs_raw.get('vcpu', 0)
     current_mem = current_specs_raw.get('mem', 0)
-    current_hourly = _get_instance_price(current_type)
+    os_name, pre_sw = _parse_platform_for_pricing(platform)
+    current_hourly = _get_instance_price(current_type, region, os_name, pre_sw)
     current_monthly = round(current_hourly * 730, 2)
 
     # Generate recommendations
@@ -14089,11 +14131,17 @@ def handle_server_analyze(event):
     needed_mem = current_mem
     if mem_avg is not None and mem_avg < 40 and current_mem > 2:
         needed_mem = max(1, current_mem // 2)
-    elif mem_avg is None and cpu_avg < 20 and current_mem > 1:
-        # No memory data + low CPU = likely over-provisioned, allow smaller memory
-        needed_mem = max(0.5, current_mem // 4)
+    elif mem_avg is None:
+        # No memory data — do NOT recommend less memory (unsafe)
+        needed_mem = current_mem
 
-    recommendations = _get_rightsizing_candidates(ec2, current_type, needed_vcpu, needed_mem, current_hourly, arch)
+    recommendations = _get_rightsizing_candidates(ec2, current_type, needed_vcpu, needed_mem, current_hourly, arch, region, os_name, pre_sw)
+
+    # Flag recommendations with significant memory downgrade
+    for rec in recommendations:
+        if rec['memory'] < current_mem * 0.5:
+            rec['memoryDowngradeWarning'] = True
+
     logger.info(f"Resize analysis: {current_type} ({current_vcpu}vCPU, {current_mem}GB, ${current_hourly}/hr) -> needed: {needed_vcpu}vCPU, {needed_mem}GB. Found {len(recommendations)} recommendations.")
 
     # Get free tier usage for this account
@@ -14106,6 +14154,17 @@ def handle_server_analyze(event):
                 free_tier[key] = val
     except Exception:
         pass
+
+    # Build analysis warnings
+    analysis_warnings = {}
+    if metrics.get('mem_avg') is None and metrics.get('mem_max') is None:
+        analysis_warnings['memoryWarning'] = '⚠️ Memory data unavailable — install CloudWatch Agent for accurate rightsizing. Without memory metrics, we cannot safely recommend instances with less RAM.'
+
+    # Check if instance is burstable and workload appears to be a database
+    name_lower = name.lower()
+    db_keywords = ('db', 'database', 'sql', 'rds', 'postgres', 'mysql', 'mongo')
+    if current_type.startswith('t') and any(kw in name_lower for kw in db_keywords):
+        analysis_warnings['burstableWarning'] = '⚠️ Burstable instances (t-series) are risky for database workloads. If CPU credits run out, performance will throttle.'
 
     return create_response(200, {
         'instanceId': instance_id,
@@ -14145,6 +14204,7 @@ def handle_server_analyze(event):
                         else 'right-sized' if cpu_avg > 50
                         else 'slightly over-provisioned'),
             'note': 'Price shown is on-demand rate. Free tier discounts (if applicable) are applied at the billing level.' if current_type in ('t2.micro', 't3.micro', 't2.nano') else '',
+            **analysis_warnings,
         },
     })
 
