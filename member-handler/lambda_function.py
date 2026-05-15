@@ -1861,7 +1861,7 @@ def handle_dashboard_data(event):
             )
             creds = assume_resp['Credentials']
             # Gather data with a broad question to trigger all checks
-            acct_data, _ = _gather_account_data('how efficient is my account? rightsizing savings compare last 3 months', creds)
+            acct_data, _ = _gather_account_data('how efficient is my account? rightsizing savings compare last 3 months', creds, tag_key=tag_key, tag_value=tag_value)
 
             acct_total = sum(s['cost_usd'] for s in acct_data.get('cost_by_service', []) if s.get('service') != 'Tax')
             for svc in acct_data.get('cost_by_service', []):
@@ -7170,7 +7170,7 @@ def _search_tips(question):
     return _decimal_to_native(unique_tips[:10])
 
 
-def _gather_account_data(question, credentials):
+def _gather_account_data(question, credentials, tag_key=None, tag_value=None):
     """Gather relevant AWS account data based on the question using direct boto3 calls."""
     question_lower = question.lower()
     data = {}
@@ -7250,12 +7250,14 @@ def _gather_account_data(question, credentials):
             else:
                 range_end = f'{year_hint}-{last_m + 1:02d}-01'
 
-            multi_month = ce.get_cost_and_usage(
-                TimePeriod={'Start': range_start, 'End': range_end},
-                Granularity='MONTHLY',
-                Metrics=['UnblendedCost'],
-                GroupBy=[{'Type': 'DIMENSION', 'Key': 'SERVICE'}],
-            )
+            _mm_params = {
+                'TimePeriod': {'Start': range_start, 'End': range_end},
+                'Granularity': 'MONTHLY',
+                'Metrics': ['UnblendedCost'],
+                'GroupBy': [{'Type': 'DIMENSION', 'Key': 'SERVICE'}],
+            }
+            _mm_params = _apply_filter_to_ce_call(_mm_params, tag_key, tag_value)
+            multi_month = ce.get_cost_and_usage(**_mm_params)
             monthly_data = {}
             for period in multi_month.get('ResultsByTime', []):
                 period_start = period['TimePeriod']['Start']
@@ -7322,12 +7324,14 @@ def _gather_account_data(question, credentials):
             else:
                 range_end = f'{now.year}-{now.month + 1:02d}-01'
 
-            multi_month = ce.get_cost_and_usage(
-                TimePeriod={'Start': range_start, 'End': range_end},
-                Granularity='MONTHLY',
-                Metrics=['UnblendedCost'],
-                GroupBy=[{'Type': 'DIMENSION', 'Key': 'SERVICE'}],
-            )
+            _rm_params = {
+                'TimePeriod': {'Start': range_start, 'End': range_end},
+                'Granularity': 'MONTHLY',
+                'Metrics': ['UnblendedCost'],
+                'GroupBy': [{'Type': 'DIMENSION', 'Key': 'SERVICE'}],
+            }
+            _rm_params = _apply_filter_to_ce_call(_rm_params, tag_key, tag_value)
+            multi_month = ce.get_cost_and_usage(**_rm_params)
 
             # Organize by month
             monthly_data = {}
@@ -7347,12 +7351,14 @@ def _gather_account_data(question, credentials):
             actions.append(f'ce:GetCostAndUsage (monthly trend, {range_start} to {range_end})')
 
         # Monthly cost by service — cost only (no UsageQuantity to avoid unit confusion)
-        cost_by_service = ce.get_cost_and_usage(
-            TimePeriod={'Start': start_30d, 'End': end_date},
-            Granularity='MONTHLY',
-            Metrics=['UnblendedCost'],
-            GroupBy=[{'Type': 'DIMENSION', 'Key': 'SERVICE'}],
-        )
+        _cbs_params = {
+            'TimePeriod': {'Start': start_30d, 'End': end_date},
+            'Granularity': 'MONTHLY',
+            'Metrics': ['UnblendedCost'],
+            'GroupBy': [{'Type': 'DIMENSION', 'Key': 'SERVICE'}],
+        }
+        _cbs_params = _apply_filter_to_ce_call(_cbs_params, tag_key, tag_value)
+        cost_by_service = ce.get_cost_and_usage(**_cbs_params)
         # Flatten to a clean list so the AI gets unambiguous numbers
         service_costs = []
         for period in cost_by_service.get('ResultsByTime', []):
@@ -7371,11 +7377,13 @@ def _gather_account_data(question, credentials):
 
         # Daily cost trend — cost only
         start_7d = (datetime.now(timezone.utc) - timedelta(days=7)).strftime('%Y-%m-%d')
-        daily_cost = ce.get_cost_and_usage(
-            TimePeriod={'Start': start_7d, 'End': end_date},
-            Granularity='DAILY',
-            Metrics=['UnblendedCost'],
-        )
+        _daily_params = {
+            'TimePeriod': {'Start': start_7d, 'End': end_date},
+            'Granularity': 'DAILY',
+            'Metrics': ['UnblendedCost'],
+        }
+        _daily_params = _apply_filter_to_ce_call(_daily_params, tag_key, tag_value)
+        daily_cost = ce.get_cost_and_usage(**_daily_params)
         daily_costs = []
         for period in daily_cost.get('ResultsByTime', []):
             daily_costs.append({
@@ -7396,13 +7404,15 @@ def _gather_account_data(question, credentials):
 
         for svc_name in breakdown_services:
             try:
-                usage_breakdown = ce.get_cost_and_usage(
-                    TimePeriod={'Start': start_30d, 'End': end_date},
-                    Granularity='MONTHLY',
-                    Metrics=['UnblendedCost'],
-                    GroupBy=[{'Type': 'DIMENSION', 'Key': 'USAGE_TYPE'}],
-                    Filter={'Dimensions': {'Key': 'SERVICE', 'Values': [svc_name]}},
-                )
+                _ub_params = {
+                    'TimePeriod': {'Start': start_30d, 'End': end_date},
+                    'Granularity': 'MONTHLY',
+                    'Metrics': ['UnblendedCost'],
+                    'GroupBy': [{'Type': 'DIMENSION', 'Key': 'USAGE_TYPE'}],
+                    'Filter': {'Dimensions': {'Key': 'SERVICE', 'Values': [svc_name]}},
+                }
+                _ub_params = _apply_filter_to_ce_call(_ub_params, tag_key, tag_value)
+                usage_breakdown = ce.get_cost_and_usage(**_ub_params)
                 usage_items = []
                 for period in usage_breakdown.get('ResultsByTime', []):
                     for group in period.get('Groups', []):
