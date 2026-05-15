@@ -8754,6 +8754,9 @@ function _committedRenderCoverage(data) {
             html += '<div>Safe Zone: <strong style="color:#059669;">$' + baseline.safeCommitmentRange.min.toFixed(2) + ' – $' + baseline.safeCommitmentRange.max.toFixed(2) + '/hr</strong></div>';
         }
         html += '</div>';
+        if (baseline.safeCommitmentRange) {
+            html += '<div style="margin-top:8px;font-size:0.8em;color:#6b7280;font-style:italic;">Safe zone is 60-70% of your average spend — commit conservatively and add more later as usage stabilizes.</div>';
+        }
         if (baseline.variabilityWarning) {
             html += '<div style="margin-top:8px;font-size:0.8em;color:#b45309;">⚠️ High variability detected — P10 is significantly below average. Consider a conservative commitment (60–70% of baseline).</div>';
         }
@@ -8784,6 +8787,9 @@ function _committedMetricCard(label, value, color) {
 // ============================================================
 // Commitment Savings Explorer — SP/RI Explorer State
 // ============================================================
+var _committedLadderSelectedTerm = 1;
+var _committedLadderLastStrategy = null;
+var _committedLadderLastBaseline = null;
 var _spExplorerState = {
     selectedPlanType: 'ComputeSavingsPlans',
     selectedTerm: 1,
@@ -9190,6 +9196,21 @@ function _committedRenderRecommendations(data) {
     var spRecs = data.spRecommendations || [];
     var riRecs = data.riRecommendations || [];
     _riExplorerData = riRecs;
+
+    // Show empty state when no recommendations available
+    if (spRecs.length === 0 && riRecs.length === 0) {
+        var panel = document.getElementById('committed-recommendations-panel');
+        if (panel) {
+            panel.innerHTML = '<div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:12px;padding:32px 20px;text-align:center;">'
+                + '<div style="font-size:2em;margin-bottom:12px;">📋</div>'
+                + '<div style="font-size:1em;color:#1f2937;margin-bottom:8px;font-weight:600;">No SP/RI recommendations available from AWS</div>'
+                + '<div style="font-size:0.9em;color:#6b7280;">Your account needs at least 7 days of consistent usage history for AWS to generate recommendations.</div>'
+                + '</div>';
+            panel.style.display = 'block';
+        }
+        return;
+    }
+
     _spExplorerRender(spRecs);
 }
 
@@ -9450,6 +9471,10 @@ function _committedRenderLaddering(strategy, baseline) {
     var panel = document.getElementById('committed-laddering-panel');
     if (!panel) return;
 
+    // Store for re-rendering on term change
+    _committedLadderLastStrategy = strategy;
+    _committedLadderLastBaseline = baseline;
+
     if (!strategy || !strategy.tranches || strategy.tranches.length === 0) {
         panel.style.display = 'none';
         return;
@@ -9459,8 +9484,13 @@ function _committedRenderLaddering(strategy, baseline) {
     var html = '<div style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:20px;">';
     html += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">';
     html += '<div style="display:flex;align-items:center;gap:10px;"><span style="font-size:1.3em;">📅</span><strong style="color:#1f2937;">Laddering Strategy</strong></div>';
+    html += '<div style="display:flex;align-items:center;gap:8px;">';
+    html += '<select id="committed-ladder-term" onchange="_committedLadderTermChanged()" style="padding:4px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:0.85em;">';
+    html += '<option value="1"' + ((_committedLadderSelectedTerm || 1) === 1 ? ' selected' : '') + '>1-year term</option>';
+    html += '<option value="3"' + ((_committedLadderSelectedTerm || 1) === 3 ? ' selected' : '') + '>3-year term</option>';
+    html += '</select>';
     html += '<button onclick="document.getElementById(\'committed-ladder-modal\').hidden=false;_committedLadderUpdatePresetLabels();" class="btn btn-outline btn-sm">✏️ Customize</button>';
-    html += '</div>';
+    html += '</div></div>';
 
     // Plain-language explanation
     html += '<div class="cse-ladder-explanation">';
@@ -9469,10 +9499,14 @@ function _committedRenderLaddering(strategy, baseline) {
     html += '<strong>Each purchase is a full 1–3 year commitment.</strong> The staggering is about <em>when</em> you buy, not how long each commitment lasts.';
     html += '</div>';
 
-    // Summary sentence
+    // Summary sentence — use recalculated savings based on selected term
     var perTrancheMonthly = tranches.length > 0 ? (tranches[0].hourlyCommitment || 0) * 730 : 0;
     var totalMonthlySavings = 0;
-    tranches.forEach(function(t) { totalMonthlySavings += (t.estimatedMonthlySavings || 0); });
+    tranches.forEach(function(t) {
+        var tType = (t.recommendedType || '').replace('SavingsPlans', ' SP').replace('Savings', '') || 'Compute SP';
+        var tRate = _committedGetSavingsRate(tType, _committedLadderSelectedTerm || 1);
+        totalMonthlySavings += (t.hourlyCommitment || 0) * 730 * tRate;
+    });
     html += '<div class="cse-ladder-summary">';
     html += '<strong>Recommended:</strong> Buy ' + tranches.length + ' separate commitments of ~$' + perTrancheMonthly.toFixed(0) + '/month each, ';
     html += 'purchased 3 months apart → total savings ~<strong>$' + totalMonthlySavings.toFixed(0) + '/month</strong> once all are active.';
@@ -9496,7 +9530,7 @@ function _committedRenderLaddering(strategy, baseline) {
         else if (idx === 0 || (idx > 0 && tranches[idx - 1].purchaseDate && new Date(tranches[idx - 1].purchaseDate) < now)) dotClass = 'cse-next';
 
         var monthlyAmt = (tranche.hourlyCommitment || 0) * 730;
-        var termLabel = (tranche.termInYears || 1) + '-year ' + ((tranche.recommendedType || '').replace('SavingsPlans', ' SP').replace('Savings', '') || 'SP');
+        var termLabel = (_committedLadderSelectedTerm || tranche.termInYears || 1) + '-year ' + ((tranche.recommendedType || '').replace('SavingsPlans', ' SP').replace('Savings', '') || 'SP');
 
         html += '<div class="cse-ladder-milestone">';
         html += '<div class="cse-ladder-dot ' + dotClass + '"></div>';
@@ -9516,15 +9550,26 @@ function _committedRenderLaddering(strategy, baseline) {
     tranches.forEach(function(tranche, idx) {
         var monthlyAmt = (tranche.hourlyCommitment || 0) * 730;
         var cumulativeMonthly = (tranche.cumulativeCommitment || 0) * 730;
-        var termLabel = (tranche.termInYears || 1) + ' year';
+        var termLabel = (_committedLadderSelectedTerm || tranche.termInYears || 1) + ' year';
         var typeLabel = (tranche.recommendedType || '').replace('SavingsPlans', ' SP').replace('Savings', '') || 'Compute SP';
+
+        // Recalculate savings based on selected term
+        var savingsRate = _committedGetSavingsRate(typeLabel, _committedLadderSelectedTerm || 1);
+        var trancheSavings = (tranche.hourlyCommitment || 0) * 730 * savingsRate;
+        var cumulativeSavings = 0;
+        for (var si = 0; si <= idx; si++) {
+            var siType = (tranches[si].recommendedType || '').replace('SavingsPlans', ' SP').replace('Savings', '') || 'Compute SP';
+            var siRate = _committedGetSavingsRate(siType, _committedLadderSelectedTerm || 1);
+            cumulativeSavings += (tranches[si].hourlyCommitment || 0) * 730 * siRate;
+        }
+
         html += '<tr>';
         html += '<td style="font-weight:600;">Purchase ' + (tranche.trancheNumber || (idx + 1)) + '</td>';
         html += '<td>' + (tranche.purchaseDate || '-') + '</td>';
         html += '<td style="font-weight:600;">$' + monthlyAmt.toFixed(0) + '/mo <span style="font-size:0.8em;color:#6b7280;">($' + (tranche.hourlyCommitment || 0).toFixed(2) + '/hr)</span></td>';
         html += '<td>' + termLabel + '</td>';
         html += '<td>$' + cumulativeMonthly.toFixed(0) + '/mo</td>';
-        html += '<td style="color:#059669;font-weight:600;">$' + (tranche.estimatedMonthlySavings || 0).toFixed(0) + '/mo</td>';
+        html += '<td style="color:#059669;font-weight:600;">$' + cumulativeSavings.toFixed(0) + '/mo</td>';
         html += '<td>' + typeLabel + '</td>';
         html += '</tr>';
         if (tranche.rationale) {
@@ -9595,6 +9640,25 @@ function _committedLadderPreset(type) {
 
     var input = document.getElementById('committed-ladder-input');
     if (input) input.value = monthlyValue.toFixed(0);
+}
+
+function _committedGetSavingsRate(typeLabel, term) {
+    // Returns the savings rate based on plan type and term
+    // typeLabel examples: "Compute SP", "EC2 Instance SP"
+    var isEC2 = typeLabel.toLowerCase().indexOf('ec2') !== -1;
+    if (term === 3) {
+        return isEC2 ? 0.50 : 0.45;
+    }
+    return isEC2 ? 0.35 : 0.30;
+}
+
+function _committedLadderTermChanged() {
+    var sel = document.getElementById('committed-ladder-term');
+    _committedLadderSelectedTerm = sel ? parseInt(sel.value, 10) : 1;
+    // Re-render with stored strategy data
+    if (_committedLadderLastStrategy) {
+        _committedRenderLaddering(_committedLadderLastStrategy, _committedLadderLastBaseline);
+    }
 }
 
 function _committedLadderUpdatePresetLabels() {
