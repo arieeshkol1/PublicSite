@@ -1960,119 +1960,129 @@ def handle_dashboard_data(event):
 
             acct_total = sum(s['cost_usd'] for s in acct_data.get('cost_by_service', []) if s.get('service') != 'Tax')
 
-            # If Tags filter returned $0, try GroupBy TAG approach as fallback
-            # This works when the tag exists in CE but the Filter syntax doesn't match
+            # If CE Tags filter returned $0, use Resource Groups Tagging API to find
+            # which services have tagged resources and filter cost data to those services.
+            # This works even when cost allocation tags aren't activated at the payer level.
             if tag_key and tag_value and acct_total == 0:
                 try:
-                    ce_fb = boto3.client('ce',
-                        aws_access_key_id=creds['AccessKeyId'],
-                        aws_secret_access_key=creds['SecretAccessKey'],
-                        aws_session_token=creds['SessionToken'],
-                        region_name='us-east-1')
-                    _now_fb = datetime.now(timezone.utc)
-                    fb_end = _now_fb.strftime('%Y-%m-%d')
-                    fb_start = (_now_fb - timedelta(days=30)).strftime('%Y-%m-%d')
-                    # GroupBy TAG to see all tag values and their costs
-                    gb_resp = ce_fb.get_cost_and_usage(
-                        TimePeriod={'Start': fb_start, 'End': fb_end},
-                        Granularity='MONTHLY',
-                        Metrics=['UnblendedCost'],
-                        GroupBy=[{'Type': 'TAG', 'Key': tag_key}]
-                    )
-                    # Extract cost for the matching tag value
-                    tag_cost = 0
-                    for period in gb_resp.get('ResultsByTime', []):
-                        for group in period.get('Groups', []):
-                            # Keys format: ["Customer$Good Market"] or ["Customer$"]
-                            key_str = group['Keys'][0] if group.get('Keys') else ''
-                            # Extract the value part after the $
-                            val_part = key_str.split('$', 1)[1] if '$' in key_str else key_str
-                            if val_part == tag_value:
-                                tag_cost += float(group['Metrics']['UnblendedCost']['Amount'])
-                    if tag_cost > 0:
-                        # GroupBy worked! Now get cost by service with GroupBy TAG + SERVICE
-                        logger.info(f"Tag filter fallback: GroupBy TAG found ${tag_cost:.2f} for {tag_key}={tag_value}")
-                        # Re-fetch with SERVICE grouping filtered by tag
-                        svc_resp = ce_fb.get_cost_and_usage(
-                            TimePeriod={'Start': fb_start, 'End': fb_end},
-                            Granularity='MONTHLY',
-                            Metrics=['UnblendedCost'],
-                            Filter={'Tags': {'Key': tag_key, 'Values': [tag_value], 'MatchOptions': ['EQUALS']}},
-                            GroupBy=[{'Type': 'DIMENSION', 'Key': 'SERVICE'}]
-                        )
-                        # If this also returns empty, use the GroupBy TAG total as a single entry
-                        svc_costs = []
-                        for period in svc_resp.get('ResultsByTime', []):
-                            for group in period.get('Groups', []):
-                                svc_name = group['Keys'][0]
-                                cost = float(group['Metrics']['UnblendedCost']['Amount'])
-                                if cost > 0:
-                                    svc_costs.append({'service': svc_name, 'cost_usd': round(cost, 4), 'period': f'{fb_start} to {fb_end}'})
-                        if svc_costs:
-                            acct_data['cost_by_service'] = sorted(svc_costs, key=lambda x: x['cost_usd'], reverse=True)
-                            acct_total = sum(s['cost_usd'] for s in svc_costs)
-                        else:
-                            # Tags filter with SERVICE GroupBy also empty — use total from TAG GroupBy
-                            acct_data['cost_by_service'] = [{'service': f'Tagged ({tag_key}={tag_value})', 'cost_usd': round(tag_cost, 4), 'period': f'{fb_start} to {fb_end}'}]
-                            acct_total = tag_cost
-
-                        # Also get daily trend with tag filter (retry)
+                    # Find all resources with this tag across multiple regions
+                    tagged_services = set()
+                    _svc_map = {
+                        'ec2': 'Amazon Elastic Compute Cloud - Compute',
+                        'elasticloadbalancing': 'Amazon Elastic Compute Cloud - Compute',
+                        'rds': 'Amazon Relational Database Service',
+                        's3': 'Amazon Simple Storage Service',
+                        'lambda': 'AWS Lambda',
+                        'dynamodb': 'Amazon DynamoDB',
+                        'elasticache': 'Amazon ElastiCache',
+                        'es': 'Amazon OpenSearch Service',
+                        'opensearch': 'Amazon OpenSearch Service',
+                        'ecs': 'Amazon Elastic Container Service',
+                        'eks': 'Amazon Elastic Kubernetes Service',
+                        'sqs': 'Amazon Simple Queue Service',
+                        'sns': 'Amazon Simple Notification Service',
+                        'cloudfront': 'Amazon CloudFront',
+                        'redshift': 'Amazon Redshift',
+                        'kinesis': 'Amazon Kinesis',
+                        'kms': 'AWS Key Management Service',
+                        'secretsmanager': 'AWS Secrets Manager',
+                        'ecr': 'Amazon EC2 Container Registry',
+                        'efs': 'Amazon Elastic File System',
+                        'fsx': 'Amazon FSx',
+                        'workspaces': 'Amazon WorkSpaces',
+                        'sagemaker': 'Amazon SageMaker',
+                        'glue': 'AWS Glue',
+                        'athena': 'Amazon Athena',
+                        'route53': 'Amazon Route 53',
+                        'apigateway': 'Amazon API Gateway',
+                        'cognito': 'Amazon Cognito',
+                        'waf': 'AWS WAF',
+                        'guardduty': 'Amazon GuardDuty',
+                    }
+                    for _tag_region in ['us-east-1', 'eu-central-1', 'eu-west-1', 'us-west-2']:
                         try:
-                            daily_resp = ce_fb.get_cost_and_usage(
-                                TimePeriod={'Start': fb_start, 'End': fb_end},
-                                Granularity='DAILY',
-                                Metrics=['UnblendedCost'],
-                                GroupBy=[{'Type': 'TAG', 'Key': tag_key}]
-                            )
-                            daily_tagged = []
-                            for period in daily_resp.get('ResultsByTime', []):
-                                d_date = period['TimePeriod']['Start']
-                                for group in period.get('Groups', []):
-                                    key_str = group['Keys'][0] if group.get('Keys') else ''
-                                    val_part = key_str.split('$', 1)[1] if '$' in key_str else key_str
-                                    if val_part == tag_value:
-                                        d_cost = float(group['Metrics']['UnblendedCost']['Amount'])
-                                        daily_tagged.append({'date': d_date, 'cost_usd': round(d_cost, 4)})
-                            if daily_tagged:
-                                acct_data['daily_cost_trend'] = daily_tagged
+                            tagging = boto3.client('resourcegroupstaggingapi',
+                                aws_access_key_id=creds['AccessKeyId'],
+                                aws_secret_access_key=creds['SecretAccessKey'],
+                                aws_session_token=creds['SessionToken'],
+                                region_name=_tag_region)
+                            paginator = tagging.get_paginator('get_resources')
+                            for page in paginator.paginate(
+                                TagFilters=[{'Key': tag_key, 'Values': [tag_value]}],
+                                ResourcesPerPage=100
+                            ):
+                                for res in page.get('ResourceTagMappingList', []):
+                                    arn = res.get('ResourceARN', '')
+                                    # Extract service from ARN: arn:aws:SERVICE:region:account:...
+                                    parts = arn.split(':')
+                                    if len(parts) >= 3:
+                                        svc_code = parts[2].lower()
+                                        ce_svc = _svc_map.get(svc_code)
+                                        if ce_svc:
+                                            tagged_services.add(ce_svc)
+                                        else:
+                                            # Try to match partial service names
+                                            tagged_services.add(svc_code)
                         except Exception:
                             pass
 
-                        # Get monthly trend with tag GroupBy
-                        try:
-                            _now_mt = datetime.now(timezone.utc)
-                            mt_start_month = _now_mt.month - 3
-                            mt_start_year = _now_mt.year
-                            while mt_start_month <= 0:
-                                mt_start_month += 12
-                                mt_start_year -= 1
-                            mt_start = f'{mt_start_year}-{mt_start_month:02d}-01'
-                            mt_end = f'{_now_mt.year}-{_now_mt.month + 1:02d}-01' if _now_mt.month < 12 else f'{_now_mt.year + 1}-01-01'
-                            monthly_resp = ce_fb.get_cost_and_usage(
-                                TimePeriod={'Start': mt_start, 'End': mt_end},
-                                Granularity='MONTHLY',
-                                Metrics=['UnblendedCost'],
-                                Filter={'Tags': {'Key': tag_key, 'Values': [tag_value], 'MatchOptions': ['EQUALS']}},
-                                GroupBy=[{'Type': 'DIMENSION', 'Key': 'SERVICE'}]
-                            )
-                            monthly_data = {}
-                            for period in monthly_resp.get('ResultsByTime', []):
-                                month_label = period['TimePeriod']['Start'][:7]
-                                month_costs = {}
-                                for group in period.get('Groups', []):
-                                    svc = group['Keys'][0]
-                                    cost = float(group['Metrics']['UnblendedCost']['Amount'])
-                                    if cost > 0:
-                                        month_costs[svc] = round(cost, 4)
-                                if month_costs:
-                                    monthly_data[month_label] = month_costs
-                            if monthly_data:
-                                acct_data['monthly_trend'] = monthly_data
-                        except Exception:
-                            pass
+                    if tagged_services:
+                        logger.info(f"Tag filter resource-based: found services {tagged_services} for {tag_key}={tag_value}")
+                        # Re-fetch unfiltered cost data and filter to tagged services only
+                        acct_data_unfiltered, _ = _gather_account_data('how efficient is my account? rightsizing savings compare last 3 months', creds)
+                        
+                        # Filter cost_by_service to only tagged services
+                        filtered_cbs = []
+                        for svc in acct_data_unfiltered.get('cost_by_service', []):
+                            svc_name = svc.get('service', '')
+                            if svc_name == 'Tax':
+                                continue
+                            # Match by exact name or by service code in the name
+                            matched = svc_name in tagged_services
+                            if not matched:
+                                svc_lower = svc_name.lower()
+                                for ts in tagged_services:
+                                    if ts in svc_lower or svc_lower in ts.lower():
+                                        matched = True
+                                        break
+                                    # Also check if the raw service code matches
+                                    if isinstance(ts, str) and len(ts) < 20:  # raw service codes are short
+                                        if ts in svc_lower:
+                                            matched = True
+                                            break
+                            if matched:
+                                filtered_cbs.append(svc)
+                        
+                        if filtered_cbs:
+                            acct_data['cost_by_service'] = filtered_cbs
+                            acct_total = sum(s['cost_usd'] for s in filtered_cbs)
+                            # Also filter monthly_trend to tagged services
+                            if acct_data_unfiltered.get('monthly_trend'):
+                                filtered_monthly = {}
+                                for month, svcs in acct_data_unfiltered['monthly_trend'].items():
+                                    month_filtered = {}
+                                    for s, c in svcs.items():
+                                        s_matched = s in tagged_services
+                                        if not s_matched:
+                                            s_lower = s.lower()
+                                            for ts in tagged_services:
+                                                if ts in s_lower or s_lower in ts.lower():
+                                                    s_matched = True
+                                                    break
+                                                if isinstance(ts, str) and len(ts) < 20 and ts in s_lower:
+                                                    s_matched = True
+                                                    break
+                                        if s_matched:
+                                            month_filtered[s] = c
+                                    if month_filtered:
+                                        filtered_monthly[month] = month_filtered
+                                if filtered_monthly:
+                                    acct_data['monthly_trend'] = filtered_monthly
+                            # Keep daily trend as-is (can't easily filter daily by service)
+                            acct_data['daily_cost_trend'] = acct_data_unfiltered.get('daily_cost_trend', [])
 
                 except Exception as e:
-                    logger.warning(f"Tag GroupBy fallback failed for {acct_id}: {e}")
+                    logger.warning(f"Tag resource-based fallback failed for {acct_id}: {e}")
 
             if tag_key and tag_value and acct_total == 0:
                 tag_filter_empty = True
@@ -2352,9 +2362,9 @@ def handle_dashboard_data(event):
         'costByTag': _get_cost_by_tag(accounts, external_id),
         'healthcheckResults': _get_healthcheck_results(member_email),
         'tagFilterWarning': (
-            'Tag "' + tag_key + '" was just activated for cost allocation. AWS needs up to 24 hours to start tracking costs by this tag. The filter will work after that.'
+            'Tag "' + tag_key + '" was just activated for cost allocation on this account. AWS needs up to 24 hours to start tracking costs by this tag.'
             if (tag_key and tag_value and tag_activation_status == 'just_activated')
-            else 'Tag "' + tag_key + '" filter is active but returned no cost data. This can happen if no resources with ' + tag_key + '=' + tag_value + ' generated costs in the last 30 days, or if the tag was recently activated as a cost allocation tag.'
+            else 'No resources found with tag ' + tag_key + '=' + tag_value + '. Please verify the tag was applied to resources in Plan → Tag Resources.'
             if (tag_key and tag_value and tag_filter_empty)
             else None
         ),
