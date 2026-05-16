@@ -1647,8 +1647,8 @@ def handle_test_connection(event):
 # ============================================================
 
 
-def _estimate_instance_hourly_cost(instance_type, region='us-east-1'):
-    """Estimate EC2 on-demand hourly cost based on instance type. Uses hardcoded pricing for common types."""
+def _estimate_instance_hourly_cost(instance_type, region='us-east-1', platform='Linux'):
+    """Estimate EC2 on-demand hourly cost based on instance type and platform."""
     # Pricing approximations (Linux on-demand, USD/hr) — covers most common types
     _pricing = {
         't2.nano': 0.0058, 't2.micro': 0.0116, 't2.small': 0.023, 't2.medium': 0.0464,
@@ -1666,9 +1666,34 @@ def _estimate_instance_hourly_cost(instance_type, region='us-east-1'):
         'i3.large': 0.156, 'i3.xlarge': 0.312, 'i3.2xlarge': 0.624,
     }
     # EU regions are ~10% more expensive
-    multiplier = 1.1 if 'eu-' in region else 1.0
-    hourly = _pricing.get(instance_type, 0.05)  # default $0.05/hr for unknown types
-    return hourly * multiplier
+    region_multiplier = 1.1 if 'eu-' in region else 1.0
+    base_hourly = _pricing.get(instance_type, 0.05)
+
+    # Platform multipliers (approximate surcharge over Linux base)
+    platform_lower = (platform or '').lower()
+    if 'sql' in platform_lower and 'enterprise' in platform_lower:
+        # SQL Server Enterprise: very expensive license
+        platform_multiplier = 6.0
+    elif 'sql' in platform_lower and 'standard' in platform_lower:
+        # SQL Server Standard: ~3-4x Linux price
+        platform_multiplier = 3.5
+    elif 'sql' in platform_lower and 'web' in platform_lower:
+        # SQL Server Web: ~1.5x Linux price
+        platform_multiplier = 1.8
+    elif 'sql' in platform_lower:
+        # SQL Server (unspecified edition): assume Standard
+        platform_multiplier = 3.5
+    elif 'windows' in platform_lower:
+        # Windows only (no SQL): ~1.5-2x Linux price
+        platform_multiplier = 1.8
+    elif 'rhel' in platform_lower or 'red hat' in platform_lower:
+        platform_multiplier = 1.3
+    elif 'suse' in platform_lower:
+        platform_multiplier = 1.2
+    else:
+        platform_multiplier = 1.0
+
+    return base_hourly * region_multiplier * platform_multiplier
 
 
 def _estimate_rds_hourly_cost(db_class, region='us-east-1'):
@@ -2058,9 +2083,10 @@ def handle_dashboard_data(event):
                                         for inst in reservation.get('Instances', []):
                                             itype = inst.get('InstanceType', 't3.medium')
                                             state = inst.get('State', {}).get('Name', 'running')
-                                            # Estimate monthly cost from instance type
-                                            # Use a pricing lookup or hardcoded estimates
-                                            hourly = _estimate_instance_hourly_cost(itype, region)
+                                            # Detect platform from instance metadata
+                                            platform_detail = inst.get('PlatformDetails', '') or inst.get('Platform', '') or 'Linux'
+                                            # Estimate monthly cost from instance type + platform
+                                            hourly = _estimate_instance_hourly_cost(itype, region, platform_detail)
                                             if state == 'running':
                                                 monthly = hourly * 730  # avg hours/month
                                             elif state == 'stopped':
