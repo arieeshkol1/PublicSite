@@ -1995,15 +1995,13 @@ def handle_dashboard_data(event):
                     if not tag_activation_status:
                         tag_activation_status = 'check_failed'
 
-            # Gather data with a broad question to trigger all checks
-            acct_data, _ = _gather_account_data('how efficient is my account? rightsizing savings compare last 3 months', creds, tag_key=tag_key, tag_value=tag_value)
+            # Gather data WITHOUT tag filter — ensures waste, rightsizing, EBS, etc. are always populated
+            acct_data, _ = _gather_account_data('how efficient is my account? rightsizing savings compare last 3 months', creds)
 
             acct_total = sum(s['cost_usd'] for s in acct_data.get('cost_by_service', []) if s.get('service') != 'Tax')
 
-            # If CE Tags filter returned $0, calculate costs from tagged resources directly.
-            # Uses Resource Groups Tagging API to find tagged resources, then estimates
-            # their individual costs based on instance type pricing and running hours.
-            if tag_key and tag_value and acct_total == 0:
+            # If tag filter is active, override cost_by_service/daily/monthly with per-instance estimates
+            if tag_key and tag_value:
                 try:
                     tagged_resources = []  # list of {arn, service, region, resource_id, resource_type}
                     for _tag_region in ['eu-central-1', 'us-east-1', 'eu-west-1', 'us-west-2']:
@@ -2161,8 +2159,11 @@ def handle_dashboard_data(event):
                 except Exception as e:
                     logger.warning(f"Tag resource cost estimation failed for {acct_id}: {e}")
 
-            if tag_key and tag_value and acct_total == 0:
-                tag_filter_empty = True
+            if tag_key and tag_value:
+                # Recalculate acct_total from the (possibly overridden) cost_by_service
+                acct_total = sum(s['cost_usd'] for s in acct_data.get('cost_by_service', []) if s.get('service') != 'Tax' and s.get('period') == 'estimated')
+                if acct_total == 0:
+                    tag_filter_empty = True
             for svc in acct_data.get('cost_by_service', []):
                 if svc['service'] != 'Tax':
                     merged_costs[svc['service']] = merged_costs.get(svc['service'], 0) + svc['cost_usd']
@@ -2170,6 +2171,8 @@ def handle_dashboard_data(event):
                 merged_daily[d['date']] = merged_daily.get(d['date'], 0) + d['cost_usd']
 
             # Fetch 30-day daily trend for dashboard (the standard gather only does 7 days)
+            # Note: daily trend is NOT filtered by tag here — the per-instance fallback
+            # already provides filtered daily data in acct_data['daily_cost_trend']
             try:
                 ce_30d = boto3.client('ce',
                     aws_access_key_id=creds['AccessKeyId'],
@@ -2177,20 +2180,20 @@ def handle_dashboard_data(event):
                     aws_session_token=creds['SessionToken'])
                 end_date = datetime.now(timezone.utc).strftime('%Y-%m-%d')
                 start_30d = (datetime.now(timezone.utc) - timedelta(days=30)).strftime('%Y-%m-%d')
-                _daily_params = {'TimePeriod': {'Start': start_30d, 'End': end_date}, 'Granularity': 'DAILY', 'Metrics': ['UnblendedCost']}
-                _daily_params = _apply_filter_to_ce_call(_daily_params, tag_key, tag_value)
-                daily_30d = ce_30d.get_cost_and_usage(**_daily_params)
-                for period in daily_30d.get('ResultsByTime', []):
-                    d_date = period['TimePeriod']['Start']
-                    d_cost = float(period['Total']['UnblendedCost']['Amount'])
-                    merged_daily[d_date] = merged_daily.get(d_date, 0) + d_cost
+                # Only fetch unfiltered 30-day trend if no tag filter (filtered data comes from fallback)
+                if not (tag_key and tag_value):
+                    _daily_params = {'TimePeriod': {'Start': start_30d, 'End': end_date}, 'Granularity': 'DAILY', 'Metrics': ['UnblendedCost']}
+                    daily_30d = ce_30d.get_cost_and_usage(**_daily_params)
+                    for period in daily_30d.get('ResultsByTime', []):
+                        d_date = period['TimePeriod']['Start']
+                        d_cost = float(period['Total']['UnblendedCost']['Amount'])
+                        merged_daily[d_date] = merged_daily.get(d_date, 0) + d_cost
             except Exception:
                 pass  # Fall back to 7-day data from _gather_account_data
 
-            # Fetch cost by region (last 30 days)
+            # Fetch cost by region (last 30 days) — ALWAYS unfiltered (not affected by tag filter)
             try:
                 _region_params = {'TimePeriod': {'Start': start_30d, 'End': end_date}, 'Granularity': 'MONTHLY', 'Metrics': ['UnblendedCost'], 'GroupBy': [{'Type': 'DIMENSION', 'Key': 'REGION'}]}
-                _region_params = _apply_filter_to_ce_call(_region_params, tag_key, tag_value)
                 region_resp = ce_30d.get_cost_and_usage(**_region_params)
                 for period in region_resp.get('ResultsByTime', []):
                     for group in period.get('Groups', []):
@@ -2214,7 +2217,6 @@ def handle_dashboard_data(event):
                 # Try CE HOURLY first (most accurate if enabled)
                 try:
                     _hourly_params = {'TimePeriod': {'Start': (datetime.now(timezone.utc) - timedelta(days=2)).strftime('%Y-%m-%d'), 'End': datetime.now(timezone.utc).strftime('%Y-%m-%d')}, 'Granularity': 'HOURLY', 'Metrics': ['UnblendedCost']}
-                    _hourly_params = _apply_filter_to_ce_call(_hourly_params, tag_key, tag_value)
                     hourly_resp = ce_30d.get_cost_and_usage(**_hourly_params)
                     for period in hourly_resp.get('ResultsByTime', []):
                         h_ts = period['TimePeriod']['Start'][:16]
@@ -2266,7 +2268,6 @@ def handle_dashboard_data(event):
                         continue
                     try:
                         _ut_params = {'TimePeriod': {'Start': start_30d, 'End': end_date}, 'Granularity': 'MONTHLY', 'Metrics': ['UnblendedCost'], 'GroupBy': [{'Type': 'DIMENSION', 'Key': 'USAGE_TYPE'}], 'Filter': {'Dimensions': {'Key': 'SERVICE', 'Values': [svc_name]}}}
-                        _ut_params = _apply_filter_to_ce_call(_ut_params, tag_key, tag_value)
                         ut_resp = ce_30d.get_cost_and_usage(**_ut_params)
                         usage_items = []
                         for p in ut_resp.get('ResultsByTime', []):
@@ -4356,28 +4357,30 @@ def _get_cost_by_tag(accounts, external_id):
                     pass
 
             # Use first region with resources for the paginator scan
-            tagging = boto3.client('resourcegroupstaggingapi',
-                aws_access_key_id=creds['AccessKeyId'],
-                aws_secret_access_key=creds['SecretAccessKey'],
-                aws_session_token=creds['SessionToken'],
-                region_name='us-east-1')
-            paginator = tagging.get_paginator('get_resources')
-            try:
-                for page in paginator.paginate(ResourcesPerPage=100):
-                    for res in page.get('ResourceTagMappingList', []):
-                        total_resources += 1
-                        tags = {t['Key']: t['Value'] for t in res.get('Tags', []) if not t['Key'].startswith('aws:')}
-                        has_required = any(k in tags for k in required_tags)
-                        if has_required:
-                            tagged_resources += 1
+            # Scan multiple regions to find all tagged resources
+            for _scan_region in _tag_regions:
+                tagging = boto3.client('resourcegroupstaggingapi',
+                    aws_access_key_id=creds['AccessKeyId'],
+                    aws_secret_access_key=creds['SecretAccessKey'],
+                    aws_session_token=creds['SessionToken'],
+                    region_name=_scan_region)
+                paginator = tagging.get_paginator('get_resources')
+                try:
+                    for page in paginator.paginate(ResourcesPerPage=100):
+                        for res in page.get('ResourceTagMappingList', []):
+                            total_resources += 1
+                            tags = {t['Key']: t['Value'] for t in res.get('Tags', []) if not t['Key'].startswith('aws:')}
+                            has_required = any(k in tags for k in required_tags)
+                            if has_required:
+                                tagged_resources += 1
 
-                        for key, value in tags.items():
-                            if key in required_tags or key in all_tag_keys:
-                                if key not in tag_distribution:
-                                    tag_distribution[key] = {}
-                                tag_distribution[key][value] = tag_distribution[key].get(value, 0) + 1
-            except Exception as e:
-                logger.warning(f"Tag distribution scan failed for {acct_id}: {e}")
+                            for key, value in tags.items():
+                                if key in required_tags or key in all_tag_keys:
+                                    if key not in tag_distribution:
+                                        tag_distribution[key] = {}
+                                    tag_distribution[key][value] = tag_distribution[key].get(value, 0) + 1
+                except Exception as e:
+                    logger.warning(f"Tag distribution scan failed for {acct_id} in {_scan_region}: {e}")
 
         except Exception as e:
             logger.warning(f"Tag distribution failed for {acct_id}: {e}")
