@@ -3191,14 +3191,21 @@ function _buildDashWidgets(grid) {
         if (layoutIds.indexOf(def.id) === -1) layout.push({id:def.id, visible:true});
     });
 
+    // Cost widgets go into the orange-framed grid
+    var costGrid = document.getElementById('dash-cost-grid');
+    var costWidgetIds = ['dash-daily', 'dash-treemap', 'dash-monthly'];
+
     grid.innerHTML = '';
+    if (costGrid) costGrid.innerHTML = '';
     var visibleCount = 0;
     layout.forEach(function(item, idx) {
         if (!item.visible) return;
         var def = DASH_WIDGET_DEFS.find(function(d){return d.id===item.id;});
         if (!def) return;
         visibleCount++;
-        _addWidget(grid, def.id, def.title + (def.extraTitle||''), def.height, def.q, idx, layout.length);
+        // Route cost widgets to the orange-framed grid
+        var targetGrid = (costGrid && costWidgetIds.indexOf(def.id) !== -1) ? costGrid : grid;
+        _addWidget(targetGrid, def.id, def.title + (def.extraTitle||''), def.height, def.q, idx, layout.length);
     });
 
     // Add "+" button to add hidden widgets back
