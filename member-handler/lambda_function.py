@@ -9395,6 +9395,47 @@ def handle_tag_scan(event):
         except Exception as e:
             logger.warning(f"Tag scan failed for {acct_id}: {e}")
 
+    # Enrich EC2 instances with cost estimate and running state
+    ec2_instances_by_region = {}
+    for r in all_resources:
+        if r.get('resourceType') == 'EC2 Instance' and r.get('region') != 'global':
+            ec2_instances_by_region.setdefault((r['account'], r['region']), []).append(r)
+
+    if ec2_instances_by_region:
+        for (acct_id_e, region_e), resources_e in ec2_instances_by_region.items():
+            try:
+                assume_e = sts_client.assume_role(
+                    RoleArn=f'arn:aws:iam::{acct_id_e}:role/SlashMyBill-{acct_id_e}',
+                    RoleSessionName='SlashMyBillTagEnrich', ExternalId=external_id,
+                )
+                creds_e = assume_e['Credentials']
+                ec2_e = boto3.client('ec2',
+                    aws_access_key_id=creds_e['AccessKeyId'],
+                    aws_secret_access_key=creds_e['SecretAccessKey'],
+                    aws_session_token=creds_e['SessionToken'],
+                    region_name=region_e)
+                inst_ids = [r['resourceId'] for r in resources_e][:20]
+                desc_e = ec2_e.describe_instances(InstanceIds=inst_ids)
+                inst_map = {}
+                for resv in desc_e.get('Reservations', []):
+                    for inst in resv.get('Instances', []):
+                        iid = inst.get('InstanceId', '')
+                        itype = inst.get('InstanceType', '')
+                        state = inst.get('State', {}).get('Name', 'unknown')
+                        platform = inst.get('PlatformDetails', '') or inst.get('Platform', '') or 'Linux'
+                        hourly = _estimate_instance_hourly_cost(itype, region_e, platform)
+                        monthly = hourly * 730 if state == 'running' else 0
+                        inst_map[iid] = {'state': state, 'monthlyCost': round(monthly, 2), 'instanceType': itype, 'platform': platform}
+                for r in resources_e:
+                    info = inst_map.get(r['resourceId'])
+                    if info:
+                        r['state'] = info['state']
+                        r['estimatedMonthlyCost'] = info['monthlyCost']
+                        r['instanceType'] = info['instanceType']
+                        r['platform'] = info['platform']
+            except Exception as e:
+                logger.warning(f"EC2 enrichment failed for {acct_id_e}/{region_e}: {e}")
+
     coverage = round(summary['fullyTagged'] / summary['total'] * 100, 1) if summary['total'] > 0 else 0
 
     return create_response(200, {
