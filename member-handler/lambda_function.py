@@ -9525,6 +9525,95 @@ def handle_tag_scan(event):
         except Exception as e:
             logger.warning(f"RDS enrichment failed for {acct_id_e}/{region_e}: {e}")
 
+    # Enrich usage-based services with actual CE cost data (last 30 days)
+    # For services like Lambda, S3, DynamoDB, Rekognition, Bedrock — get total service cost
+    # and divide by number of tagged resources of that type (approximate per-resource cost)
+    _usage_svc_map = {
+        'Lambda Function': 'AWS Lambda',
+        'DynamoDB Table': 'Amazon DynamoDB',
+        'S3 Bucket': 'Amazon Simple Storage Service',
+        'SNS Topic': 'Amazon Simple Notification Service',
+        'SQS Queue': 'Amazon Simple Queue Service',
+        'CloudWatch Alarm': 'AmazonCloudWatch',
+        'Log Group': 'AmazonCloudWatch',
+        'KMS Key': 'AWS Key Management Service',
+        'ECR Repository': 'Amazon EC2 Container Registry',
+        'ECS Cluster': 'Amazon Elastic Container Service',
+        'ECS Service': 'Amazon Elastic Container Service',
+        'Step Function': 'AWS Step Functions',
+        'API Gateway': 'Amazon API Gateway',
+        'Secret': 'AWS Secrets Manager',
+    }
+    # Group resources by account that need usage-based enrichment
+    usage_resources_by_acct = {}
+    for r in all_resources:
+        if r.get('estimatedMonthlyCost') is None and r.get('resourceType') in _usage_svc_map:
+            usage_resources_by_acct.setdefault(r['account'], []).append(r)
+
+    for acct_id_u, resources_u in usage_resources_by_acct.items():
+        try:
+            assume_u = sts_client.assume_role(
+                RoleArn=f'arn:aws:iam::{acct_id_u}:role/SlashMyBill-{acct_id_u}',
+                RoleSessionName='SlashMyBillTagCE', ExternalId=external_id,
+            )
+            creds_u = assume_u['Credentials']
+            ce_u = boto3.client('ce',
+                aws_access_key_id=creds_u['AccessKeyId'],
+                aws_secret_access_key=creds_u['SecretAccessKey'],
+                aws_session_token=creds_u['SessionToken'],
+                region_name='us-east-1')
+            _now_u = datetime.now(timezone.utc)
+            _end_u = _now_u.strftime('%Y-%m-%d')
+            _start_u = (_now_u - timedelta(days=30)).strftime('%Y-%m-%d')
+            ce_resp = ce_u.get_cost_and_usage(
+                TimePeriod={'Start': _start_u, 'End': _end_u},
+                Granularity='MONTHLY',
+                Metrics=['UnblendedCost'],
+                GroupBy=[{'Type': 'DIMENSION', 'Key': 'SERVICE'}]
+            )
+            # Build service cost map
+            svc_costs_map = {}
+            for period in ce_resp.get('ResultsByTime', []):
+                for group in period.get('Groups', []):
+                    svc_name = group['Keys'][0]
+                    cost = float(group['Metrics']['UnblendedCost']['Amount'])
+                    if cost > 0:
+                        svc_costs_map[svc_name] = svc_costs_map.get(svc_name, 0) + cost
+
+            # Count resources per CE service name for this account
+            svc_resource_counts = {}
+            for r in resources_u:
+                ce_svc = _usage_svc_map.get(r.get('resourceType', ''))
+                if ce_svc:
+                    svc_resource_counts[ce_svc] = svc_resource_counts.get(ce_svc, 0) + 1
+
+            # Assign per-resource cost (total service cost / number of resources)
+            for r in resources_u:
+                ce_svc = _usage_svc_map.get(r.get('resourceType', ''))
+                if ce_svc and ce_svc in svc_costs_map:
+                    count = svc_resource_counts.get(ce_svc, 1)
+                    per_resource = svc_costs_map[ce_svc] / max(count, 1)
+                    r['estimatedMonthlyCost'] = round(per_resource, 2)
+                    r['state'] = 'active'
+        except Exception as e:
+            logger.warning(f"Usage-based cost enrichment failed for {acct_id_u}: {e}")
+
+    # For any remaining resources with known fixed costs
+    _fixed_cost_types = {
+        'EBS Snapshot': 0.05,  # ~$0.05/GB/mo, assume small
+        'KMS Key': 1.00,  # $1/mo per CMK
+        'KMS Alias': 0,
+        'Secret': 0.40,  # $0.40/mo per secret
+        'CloudTrail': 2.00,  # $2/mo per trail (first free)
+        'EventBridge Rule': 0,  # pay per invocation only
+    }
+    for r in all_resources:
+        if r.get('estimatedMonthlyCost') is None:
+            fixed = _fixed_cost_types.get(r.get('resourceType'))
+            if fixed is not None and fixed > 0:
+                r['estimatedMonthlyCost'] = fixed
+                r['state'] = 'active'
+
     coverage = round(summary['fullyTagged'] / summary['total'] * 100, 1) if summary['total'] > 0 else 0
 
     return create_response(200, {
