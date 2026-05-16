@@ -3080,6 +3080,16 @@ function renderDashboardWidgets(data) {
 
     // Grid widgets — use customizable layout
     grid.innerHTML = '';
+
+    // Insert tag filter above the cost widgets group
+    var tagFilterSection = document.createElement('div');
+    tagFilterSection.style.cssText = 'grid-column:1/-1;margin-bottom:4px;';
+    tagFilterSection.id = 'tag-filter-cost-section';
+    tagFilterSection.innerHTML = '<div id="tag-filter-inline"></div>';
+    grid.appendChild(tagFilterSection);
+    // Move tag filter into the inline container (above cost widgets)
+    initTagFilter('tag-filter-inline');
+
     _buildDashWidgets(grid);
 
     // Render ECharts

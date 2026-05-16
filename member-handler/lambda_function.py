@@ -2137,6 +2137,14 @@ def handle_dashboard_data(event):
                                 key=lambda x: x['cost_usd'], reverse=True
                             )
                             acct_total = sum(service_costs.values())
+                            # Build daily trend from estimated monthly cost
+                            daily_cost = acct_total / 30.0
+                            _now_dt = datetime.now(timezone.utc)
+                            daily_trend_est = []
+                            for d_offset in range(30):
+                                d_date = (_now_dt - timedelta(days=29 - d_offset)).strftime('%Y-%m-%d')
+                                daily_trend_est.append({'date': d_date, 'cost_usd': round(daily_cost, 4)})
+                            acct_data['daily_cost_trend'] = daily_trend_est
                             # Build monthly trend (same estimate for each month since we can't get historical per-resource)
                             _now_mt = datetime.now(timezone.utc)
                             monthly_data = {}
