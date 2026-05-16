@@ -1647,6 +1647,46 @@ def handle_test_connection(event):
 # ============================================================
 
 
+def _estimate_instance_hourly_cost(instance_type, region='us-east-1'):
+    """Estimate EC2 on-demand hourly cost based on instance type. Uses hardcoded pricing for common types."""
+    # Pricing approximations (Linux on-demand, USD/hr) — covers most common types
+    _pricing = {
+        't2.nano': 0.0058, 't2.micro': 0.0116, 't2.small': 0.023, 't2.medium': 0.0464,
+        't2.large': 0.0928, 't2.xlarge': 0.1856, 't2.2xlarge': 0.3712,
+        't3.nano': 0.0052, 't3.micro': 0.0104, 't3.small': 0.0208, 't3.medium': 0.0416,
+        't3.large': 0.0832, 't3.xlarge': 0.1664, 't3.2xlarge': 0.3328,
+        't3a.nano': 0.0047, 't3a.micro': 0.0094, 't3a.small': 0.0188, 't3a.medium': 0.0376,
+        't3a.large': 0.0752, 't3a.xlarge': 0.1504, 't3a.2xlarge': 0.3008,
+        'm5.large': 0.096, 'm5.xlarge': 0.192, 'm5.2xlarge': 0.384, 'm5.4xlarge': 0.768,
+        'm6i.large': 0.096, 'm6i.xlarge': 0.192, 'm6i.2xlarge': 0.384,
+        'c5.large': 0.085, 'c5.xlarge': 0.17, 'c5.2xlarge': 0.34, 'c5.4xlarge': 0.68,
+        'c6i.large': 0.085, 'c6i.xlarge': 0.17, 'c6i.2xlarge': 0.34,
+        'r5.large': 0.126, 'r5.xlarge': 0.252, 'r5.2xlarge': 0.504, 'r5.4xlarge': 1.008,
+        'r6i.large': 0.126, 'r6i.xlarge': 0.252, 'r6i.2xlarge': 0.504,
+        'i3.large': 0.156, 'i3.xlarge': 0.312, 'i3.2xlarge': 0.624,
+    }
+    # EU regions are ~10% more expensive
+    multiplier = 1.1 if 'eu-' in region else 1.0
+    hourly = _pricing.get(instance_type, 0.05)  # default $0.05/hr for unknown types
+    return hourly * multiplier
+
+
+def _estimate_rds_hourly_cost(db_class, region='us-east-1'):
+    """Estimate RDS on-demand hourly cost based on instance class."""
+    _pricing = {
+        'db.t2.micro': 0.017, 'db.t2.small': 0.034, 'db.t2.medium': 0.068,
+        'db.t3.micro': 0.017, 'db.t3.small': 0.034, 'db.t3.medium': 0.068,
+        'db.t3.large': 0.136, 'db.t3.xlarge': 0.272,
+        'db.m5.large': 0.171, 'db.m5.xlarge': 0.342, 'db.m5.2xlarge': 0.684,
+        'db.m6i.large': 0.171, 'db.m6i.xlarge': 0.342,
+        'db.r5.large': 0.24, 'db.r5.xlarge': 0.48, 'db.r5.2xlarge': 0.96,
+        'db.r6i.large': 0.24, 'db.r6i.xlarge': 0.48,
+    }
+    multiplier = 1.1 if 'eu-' in region else 1.0
+    hourly = _pricing.get(db_class, 0.10)
+    return hourly * multiplier
+
+
 def _build_tag_filter(tag_key, tag_value):
     """Build a CE-compatible Tags filter expression."""
     if not tag_key or not tag_value:
@@ -1960,46 +2000,13 @@ def handle_dashboard_data(event):
 
             acct_total = sum(s['cost_usd'] for s in acct_data.get('cost_by_service', []) if s.get('service') != 'Tax')
 
-            # If CE Tags filter returned $0, use Resource Groups Tagging API to find
-            # which services have tagged resources and filter cost data to those services.
-            # This works even when cost allocation tags aren't activated at the payer level.
+            # If CE Tags filter returned $0, calculate costs from tagged resources directly.
+            # Uses Resource Groups Tagging API to find tagged resources, then estimates
+            # their individual costs based on instance type pricing and running hours.
             if tag_key and tag_value and acct_total == 0:
                 try:
-                    # Find all resources with this tag across multiple regions
-                    tagged_services = set()
-                    _svc_map = {
-                        'ec2': 'Amazon Elastic Compute Cloud - Compute',
-                        'elasticloadbalancing': 'Amazon Elastic Compute Cloud - Compute',
-                        'rds': 'Amazon Relational Database Service',
-                        's3': 'Amazon Simple Storage Service',
-                        'lambda': 'AWS Lambda',
-                        'dynamodb': 'Amazon DynamoDB',
-                        'elasticache': 'Amazon ElastiCache',
-                        'es': 'Amazon OpenSearch Service',
-                        'opensearch': 'Amazon OpenSearch Service',
-                        'ecs': 'Amazon Elastic Container Service',
-                        'eks': 'Amazon Elastic Kubernetes Service',
-                        'sqs': 'Amazon Simple Queue Service',
-                        'sns': 'Amazon Simple Notification Service',
-                        'cloudfront': 'Amazon CloudFront',
-                        'redshift': 'Amazon Redshift',
-                        'kinesis': 'Amazon Kinesis',
-                        'kms': 'AWS Key Management Service',
-                        'secretsmanager': 'AWS Secrets Manager',
-                        'ecr': 'Amazon EC2 Container Registry',
-                        'efs': 'Amazon Elastic File System',
-                        'fsx': 'Amazon FSx',
-                        'workspaces': 'Amazon WorkSpaces',
-                        'sagemaker': 'Amazon SageMaker',
-                        'glue': 'AWS Glue',
-                        'athena': 'Amazon Athena',
-                        'route53': 'Amazon Route 53',
-                        'apigateway': 'Amazon API Gateway',
-                        'cognito': 'Amazon Cognito',
-                        'waf': 'AWS WAF',
-                        'guardduty': 'Amazon GuardDuty',
-                    }
-                    for _tag_region in ['us-east-1', 'eu-central-1', 'eu-west-1', 'us-west-2']:
+                    tagged_resources = []  # list of {arn, service, region, resource_id, resource_type}
+                    for _tag_region in ['eu-central-1', 'us-east-1', 'eu-west-1', 'us-west-2']:
                         try:
                             tagging = boto3.client('resourcegroupstaggingapi',
                                 aws_access_key_id=creds['AccessKeyId'],
@@ -2013,76 +2020,138 @@ def handle_dashboard_data(event):
                             ):
                                 for res in page.get('ResourceTagMappingList', []):
                                     arn = res.get('ResourceARN', '')
-                                    # Extract service from ARN: arn:aws:SERVICE:region:account:...
                                     parts = arn.split(':')
-                                    if len(parts) >= 3:
-                                        svc_code = parts[2].lower()
-                                        ce_svc = _svc_map.get(svc_code)
-                                        if ce_svc:
-                                            tagged_services.add(ce_svc)
-                                        else:
-                                            # Try to match partial service names
-                                            tagged_services.add(svc_code)
+                                    if len(parts) >= 6:
+                                        svc_code = parts[2]
+                                        region = parts[3]
+                                        resource_part = ':'.join(parts[5:])
+                                        tagged_resources.append({
+                                            'arn': arn, 'service': svc_code,
+                                            'region': region or _tag_region,
+                                            'resource': resource_part
+                                        })
                         except Exception:
                             pass
 
-                    if tagged_services:
-                        logger.info(f"Tag filter resource-based: found services {tagged_services} for {tag_key}={tag_value}")
-                        # Re-fetch unfiltered cost data and filter to tagged services only
-                        acct_data_unfiltered, _ = _gather_account_data('how efficient is my account? rightsizing savings compare last 3 months', creds)
+                    if tagged_resources:
+                        logger.info(f"Tag filter: found {len(tagged_resources)} resources for {tag_key}={tag_value}")
+                        # Group by service and calculate costs
+                        service_costs = {}
                         
-                        # Filter cost_by_service to only tagged services
-                        filtered_cbs = []
-                        for svc in acct_data_unfiltered.get('cost_by_service', []):
-                            svc_name = svc.get('service', '')
-                            if svc_name == 'Tax':
-                                continue
-                            # Match by exact name or by service code in the name
-                            matched = svc_name in tagged_services
-                            if not matched:
-                                svc_lower = svc_name.lower()
-                                for ts in tagged_services:
-                                    if ts in svc_lower or svc_lower in ts.lower():
-                                        matched = True
-                                        break
-                                    # Also check if the raw service code matches
-                                    if isinstance(ts, str) and len(ts) < 20:  # raw service codes are short
-                                        if ts in svc_lower:
-                                            matched = True
-                                            break
-                            if matched:
-                                filtered_cbs.append(svc)
+                        # For EC2 instances: get instance details and estimate cost
+                        ec2_resources = [r for r in tagged_resources if r['service'] == 'ec2' and 'instance/' in r['resource']]
+                        if ec2_resources:
+                            # Group by region
+                            by_region = {}
+                            for r in ec2_resources:
+                                by_region.setdefault(r['region'], []).append(r)
+                            
+                            ec2_total = 0
+                            for region, instances in by_region.items():
+                                try:
+                                    ec2_client = boto3.client('ec2',
+                                        aws_access_key_id=creds['AccessKeyId'],
+                                        aws_secret_access_key=creds['SecretAccessKey'],
+                                        aws_session_token=creds['SessionToken'],
+                                        region_name=region)
+                                    instance_ids = [r['resource'].split('/')[-1] for r in instances]
+                                    desc = ec2_client.describe_instances(InstanceIds=instance_ids[:20])
+                                    for reservation in desc.get('Reservations', []):
+                                        for inst in reservation.get('Instances', []):
+                                            itype = inst.get('InstanceType', 't3.medium')
+                                            state = inst.get('State', {}).get('Name', 'running')
+                                            # Estimate monthly cost from instance type
+                                            # Use a pricing lookup or hardcoded estimates
+                                            hourly = _estimate_instance_hourly_cost(itype, region)
+                                            if state == 'running':
+                                                monthly = hourly * 730  # avg hours/month
+                                            elif state == 'stopped':
+                                                monthly = 0  # stopped instances don't incur compute cost
+                                            else:
+                                                monthly = hourly * 365  # partial
+                                            ec2_total += monthly
+                                except Exception as e:
+                                    logger.warning(f"EC2 cost estimation failed for region {region}: {e}")
+                                    # Fallback: estimate based on count
+                                    ec2_total += len(instances) * 50  # rough $50/instance/month
+                            
+                            if ec2_total > 0:
+                                service_costs['Amazon Elastic Compute Cloud - Compute'] = round(ec2_total, 2)
+
+                        # For RDS instances
+                        rds_resources = [r for r in tagged_resources if r['service'] == 'rds' and 'db:' in r['resource']]
+                        if rds_resources:
+                            by_region = {}
+                            for r in rds_resources:
+                                by_region.setdefault(r['region'], []).append(r)
+                            rds_total = 0
+                            for region, dbs in by_region.items():
+                                try:
+                                    rds_client = boto3.client('rds',
+                                        aws_access_key_id=creds['AccessKeyId'],
+                                        aws_secret_access_key=creds['SecretAccessKey'],
+                                        aws_session_token=creds['SessionToken'],
+                                        region_name=region)
+                                    for db_res in dbs:
+                                        db_id = db_res['resource'].split(':')[-1]
+                                        try:
+                                            db_desc = rds_client.describe_db_instances(DBInstanceIdentifier=db_id)
+                                            for db in db_desc.get('DBInstances', []):
+                                                db_class = db.get('DBInstanceClass', 'db.t3.medium')
+                                                hourly = _estimate_rds_hourly_cost(db_class, region)
+                                                rds_total += hourly * 730
+                                        except Exception:
+                                            rds_total += 80  # rough estimate
+                                except Exception:
+                                    rds_total += len(dbs) * 80
+                            if rds_total > 0:
+                                service_costs['Amazon Relational Database Service'] = round(rds_total, 2)
+
+                        # For other services: use a rough per-resource estimate
+                        other_svcs = {}
+                        for r in tagged_resources:
+                            if r['service'] not in ('ec2', 'rds') or ('instance/' not in r['resource'] and 'db:' not in r['resource']):
+                                svc = r['service']
+                                other_svcs[svc] = other_svcs.get(svc, 0) + 1
                         
-                        if filtered_cbs:
-                            acct_data['cost_by_service'] = filtered_cbs
-                            acct_total = sum(s['cost_usd'] for s in filtered_cbs)
-                            # Also filter monthly_trend to tagged services
-                            if acct_data_unfiltered.get('monthly_trend'):
-                                filtered_monthly = {}
-                                for month, svcs in acct_data_unfiltered['monthly_trend'].items():
-                                    month_filtered = {}
-                                    for s, c in svcs.items():
-                                        s_matched = s in tagged_services
-                                        if not s_matched:
-                                            s_lower = s.lower()
-                                            for ts in tagged_services:
-                                                if ts in s_lower or s_lower in ts.lower():
-                                                    s_matched = True
-                                                    break
-                                                if isinstance(ts, str) and len(ts) < 20 and ts in s_lower:
-                                                    s_matched = True
-                                                    break
-                                        if s_matched:
-                                            month_filtered[s] = c
-                                    if month_filtered:
-                                        filtered_monthly[month] = month_filtered
-                                if filtered_monthly:
-                                    acct_data['monthly_trend'] = filtered_monthly
-                            # Keep daily trend as-is (can't easily filter daily by service)
-                            acct_data['daily_cost_trend'] = acct_data_unfiltered.get('daily_cost_trend', [])
+                        _other_svc_names = {
+                            's3': ('Amazon Simple Storage Service', 5),
+                            'lambda': ('AWS Lambda', 2),
+                            'dynamodb': ('Amazon DynamoDB', 10),
+                            'elasticache': ('Amazon ElastiCache', 40),
+                            'ecs': ('Amazon Elastic Container Service', 30),
+                            'eks': ('Amazon Elastic Kubernetes Service', 75),
+                            'sqs': ('Amazon Simple Queue Service', 1),
+                            'sns': ('Amazon Simple Notification Service', 1),
+                            'kms': ('AWS Key Management Service', 1),
+                            'elasticloadbalancing': ('Elastic Load Balancing', 20),
+                        }
+                        for svc_code, count in other_svcs.items():
+                            if svc_code in _other_svc_names:
+                                name, per_resource = _other_svc_names[svc_code]
+                                service_costs[name] = service_costs.get(name, 0) + round(count * per_resource, 2)
+
+                        if service_costs:
+                            acct_data['cost_by_service'] = sorted(
+                                [{'service': s, 'cost_usd': c, 'period': 'estimated'} for s, c in service_costs.items()],
+                                key=lambda x: x['cost_usd'], reverse=True
+                            )
+                            acct_total = sum(service_costs.values())
+                            # Build monthly trend (same estimate for each month since we can't get historical per-resource)
+                            _now_mt = datetime.now(timezone.utc)
+                            monthly_data = {}
+                            for m_offset in range(4):
+                                m = _now_mt.month - m_offset
+                                y = _now_mt.year
+                                while m <= 0:
+                                    m += 12
+                                    y -= 1
+                                month_key = f'{y}-{m:02d}'
+                                monthly_data[month_key] = dict(service_costs)
+                            acct_data['monthly_trend'] = monthly_data
 
                 except Exception as e:
-                    logger.warning(f"Tag resource-based fallback failed for {acct_id}: {e}")
+                    logger.warning(f"Tag resource cost estimation failed for {acct_id}: {e}")
 
             if tag_key and tag_value and acct_total == 0:
                 tag_filter_empty = True
