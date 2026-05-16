@@ -3021,9 +3021,9 @@ async function loadDashboardData() {
         dashDataCacheKey = cacheKey;
         renderDashboardWidgets(data);
         // Show tag filter warning if backend reports filter had no effect
+        var wrapper = document.querySelector('.tag-filter-wrapper');
+        var noteEl = wrapper ? wrapper.querySelector('.tag-filter-note') : null;
         if (data.tagFilterWarning) {
-            var wrapper = document.querySelector('.tag-filter-wrapper');
-            var noteEl = wrapper ? wrapper.querySelector('.tag-filter-note') : null;
             if (!noteEl && wrapper) {
                 noteEl = document.createElement('div');
                 noteEl.className = 'tag-filter-note';
@@ -3031,6 +3031,9 @@ async function loadDashboardData() {
                 wrapper.appendChild(noteEl);
             }
             if (noteEl) noteEl.textContent = '⚠️ ' + data.tagFilterWarning;
+        } else {
+            // Clear any previous warning when filter is working
+            if (noteEl) noteEl.remove();
         }
     } catch (e) {
         console.error('Dashboard load error:', e);

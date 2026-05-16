@@ -1935,13 +1935,9 @@ def handle_dashboard_data(event):
             # Gather data with a broad question to trigger all checks
             acct_data, _ = _gather_account_data('how efficient is my account? rightsizing savings compare last 3 months', creds, tag_key=tag_key, tag_value=tag_value)
 
-            # If tag filter produced empty results, retry without filter and flag it
             acct_total = sum(s['cost_usd'] for s in acct_data.get('cost_by_service', []) if s.get('service') != 'Tax')
-            tag_filter_empty = False
             if tag_key and tag_value and acct_total == 0:
                 tag_filter_empty = True
-                acct_data, _ = _gather_account_data('how efficient is my account? rightsizing savings compare last 3 months', creds)
-                acct_total = sum(s['cost_usd'] for s in acct_data.get('cost_by_service', []) if s.get('service') != 'Tax')
             for svc in acct_data.get('cost_by_service', []):
                 if svc['service'] != 'Tax':
                     merged_costs[svc['service']] = merged_costs.get(svc['service'], 0) + svc['cost_usd']
@@ -2220,8 +2216,8 @@ def handle_dashboard_data(event):
         'tagFilterWarning': (
             'Tag "' + tag_key + '" was just activated for cost allocation. AWS needs up to 24 hours to start tracking costs by this tag. The filter will work after that.'
             if (tag_key and tag_value and tag_activation_status == 'just_activated')
-            else 'Tag "' + tag_key + '" is not yet showing filtered data. It may need up to 24 hours after activation to take effect. If you just activated it via FinOps Settings, please wait and try again tomorrow.'
-            if (tag_key and tag_value and tag_activation_status in ('already_active', 'check_failed', 'activation_failed'))
+            else 'Tag "' + tag_key + '" filter is active but returned no cost data. This can happen if no resources with ' + tag_key + '=' + tag_value + ' generated costs in the last 30 days, or if the tag was recently activated as a cost allocation tag.'
+            if (tag_key and tag_value and tag_filter_empty)
             else None
         ),
     })
@@ -7285,12 +7281,17 @@ def _gather_account_data(question, credentials, tag_key=None, tag_value=None):
     # Always get cost data — it's the most common question
     try:
         ce = _make_client('ce')
-        # Use FULL PREVIOUS CALENDAR MONTH for accurate monthly analysis
         _now = datetime.now(timezone.utc)
         _first_this_month = _now.replace(day=1)
         _first_last_month = (_first_this_month - timedelta(days=1)).replace(day=1)
-        end_date = _first_this_month.strftime('%Y-%m-%d')
-        start_30d = _first_last_month.strftime('%Y-%m-%d')
+        # When tag filter is active, use rolling 30 days (includes current month where tag is active)
+        # Otherwise use full previous calendar month for accurate monthly analysis
+        if tag_key and tag_value:
+            end_date = _now.strftime('%Y-%m-%d')
+            start_30d = (_now - timedelta(days=30)).strftime('%Y-%m-%d')
+        else:
+            end_date = _first_this_month.strftime('%Y-%m-%d')
+            start_30d = _first_last_month.strftime('%Y-%m-%d')
 
         # Detect month comparison questions (e.g. "compare Feb and March", "Jan vs Feb")
         month_names = {
