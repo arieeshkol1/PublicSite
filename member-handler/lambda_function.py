@@ -1971,6 +1971,7 @@ def handle_dashboard_data(event):
     merged_regional = {}
     drill_down_data = {}
     all_waste = []
+    all_tagged_resources = []
     all_rightsizing = []
     per_account = []
     total_savings = 0
@@ -2060,6 +2061,7 @@ def handle_dashboard_data(event):
                         logger.info(f"Tag filter: found {len(tagged_resources)} resources for {tag_key}={tag_value}")
                         # Group by service and calculate costs
                         service_costs = {}
+                        tagged_resource_details = []  # Per-resource details for the UI table
                         
                         # For EC2 instances: get instance details and estimate cost
                         ec2_resources = [r for r in tagged_resources if r['service'] == 'ec2' and 'instance/' in r['resource']]
@@ -2083,21 +2085,33 @@ def handle_dashboard_data(event):
                                         for inst in reservation.get('Instances', []):
                                             itype = inst.get('InstanceType', 't3.medium')
                                             state = inst.get('State', {}).get('Name', 'running')
+                                            inst_id = inst.get('InstanceId', '')
                                             # Detect platform from instance metadata
                                             platform_detail = inst.get('PlatformDetails', '') or inst.get('Platform', '') or 'Linux'
                                             # Estimate monthly cost from instance type + platform
                                             hourly = _estimate_instance_hourly_cost(itype, region, platform_detail)
                                             if state == 'running':
-                                                monthly = hourly * 730  # avg hours/month
+                                                monthly = hourly * 730
                                             elif state == 'stopped':
-                                                monthly = 0  # stopped instances don't incur compute cost
+                                                monthly = 0
                                             else:
-                                                monthly = hourly * 365  # partial
+                                                monthly = hourly * 365
                                             ec2_total += monthly
+                                            # Collect tags and name
+                                            inst_tags = {t['Key']: t['Value'] for t in inst.get('Tags', []) if not t['Key'].startswith('aws:')}
+                                            inst_name = inst_tags.pop('Name', inst_id)
+                                            tagged_resource_details.append({
+                                                'name': inst_name,
+                                                'type': f'EC2 ({itype})',
+                                                'region': region,
+                                                'platform': platform_detail,
+                                                'state': state,
+                                                'monthlyCost': round(monthly, 2),
+                                                'tags': inst_tags,
+                                            })
                                 except Exception as e:
                                     logger.warning(f"EC2 cost estimation failed for region {region}: {e}")
-                                    # Fallback: estimate based on count
-                                    ec2_total += len(instances) * 50  # rough $50/instance/month
+                                    ec2_total += len(instances) * 50
                             
                             if ec2_total > 0:
                                 service_costs['Amazon Elastic Compute Cloud - Compute'] = round(ec2_total, 2)
@@ -2161,6 +2175,7 @@ def handle_dashboard_data(event):
                                 key=lambda x: x['cost_usd'], reverse=True
                             )
                             acct_total = sum(service_costs.values())
+                            acct_data['tagged_resources'] = tagged_resource_details
                             # Build daily trend from estimated monthly cost
                             daily_cost = acct_total / 30.0
                             _now_dt = datetime.now(timezone.utc)
@@ -2316,6 +2331,11 @@ def handle_dashboard_data(event):
                 for s, c in svcs.items():
                     merged_monthly[m][s] = merged_monthly[m].get(s, 0) + c
 
+            # Tagged resources (for the resource table in the orange frame)
+            for tr in acct_data.get('tagged_resources', []):
+                tr['account'] = acct_name
+                all_tagged_resources.append(tr)
+
             # Waste items
             ebs = acct_data.get('ebs_summary', {})
             if ebs.get('unattached_count', 0) > 0:
@@ -2465,6 +2485,7 @@ def handle_dashboard_data(event):
         'commitments': _get_commitments_data(accounts, external_id),
         'costByTag': _get_cost_by_tag(accounts, external_id),
         'healthcheckResults': _get_healthcheck_results(member_email),
+        'taggedResources': all_tagged_resources if (tag_key and tag_value and all_tagged_resources) else None,
         'tagFilterWarning': (
             'Tag "' + tag_key + '" was just activated for cost allocation on this account. AWS needs up to 24 hours to start tracking costs by this tag.'
             if (tag_key and tag_value and tag_activation_status == 'just_activated')

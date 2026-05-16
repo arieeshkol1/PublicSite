@@ -3093,6 +3093,7 @@ function renderDashboardWidgets(data) {
         _renderCostByTag(data.costByTag || {});
         _renderSPCoverageWidget();
         _renderRICoverageWidget();
+        _renderTaggedResourcesTable(data.taggedResources || null);
     }, 100);
 }
 
@@ -9349,6 +9350,44 @@ function _renderRICoverageWidget(container) {
         html += '<div style="margin-top:8px;"><span class="cse-underutilized-badge">' + underutilizedCount + ' underutilized</span></div>';
     }
     html += '<a class="cse-widget-link" onclick="_goToTab(\'act-tab\',\'committed\')">View Details ▶</a>';
+    container.innerHTML = html;
+}
+
+function _renderTaggedResourcesTable(resources) {
+    var container = document.getElementById('dash-tagged-resources-table');
+    if (!container) {
+        // Create the container inside the orange frame
+        var costGroup = document.getElementById('tag-cost-group');
+        if (!costGroup) return;
+        container = document.createElement('div');
+        container.id = 'dash-tagged-resources-table';
+        container.style.cssText = 'margin-top:12px;';
+        costGroup.appendChild(container);
+    }
+    if (!resources || resources.length === 0) {
+        container.innerHTML = '';
+        return;
+    }
+    var html = '<div style="font-size:0.8em;font-weight:600;color:#374151;margin-bottom:8px;">Tagged Resources</div>';
+    html += '<table style="width:100%;border-collapse:collapse;font-size:0.78em;">';
+    html += '<thead><tr style="background:#f3f4f6;"><th style="padding:6px 8px;text-align:left;border-bottom:1px solid #e5e7eb;">Resource</th><th style="padding:6px 8px;text-align:left;border-bottom:1px solid #e5e7eb;">Type</th><th style="padding:6px 8px;text-align:left;border-bottom:1px solid #e5e7eb;">Region</th><th style="padding:6px 8px;text-align:right;border-bottom:1px solid #e5e7eb;">Est. $/mo</th><th style="padding:6px 8px;text-align:left;border-bottom:1px solid #e5e7eb;">Tags</th></tr></thead><tbody>';
+    resources.forEach(function(r) {
+        var tagStr = '';
+        if (r.tags && typeof r.tags === 'object') {
+            tagStr = Object.entries(r.tags).map(function(e) {
+                return '<span style="background:#e0e7ff;color:#3730a3;padding:1px 5px;border-radius:3px;margin-right:3px;white-space:nowrap;">' + esc(e[0]) + '=' + esc(e[1]) + '</span>';
+            }).join(' ');
+        }
+        var stateIcon = r.state === 'running' ? '<span style="color:#10b981;">●</span>' : '<span style="color:#6b7280;">○</span>';
+        html += '<tr style="border-bottom:1px solid #f3f4f6;">';
+        html += '<td style="padding:6px 8px;">' + stateIcon + ' ' + esc(r.name || '') + '</td>';
+        html += '<td style="padding:6px 8px;color:#6b7280;">' + esc(r.type || '') + '</td>';
+        html += '<td style="padding:6px 8px;color:#6b7280;">' + esc(r.region || '') + '</td>';
+        html += '<td style="padding:6px 8px;text-align:right;font-weight:600;color:#059669;">$' + (r.monthlyCost || 0).toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2}) + '</td>';
+        html += '<td style="padding:6px 8px;">' + tagStr + '</td>';
+        html += '</tr>';
+    });
+    html += '</tbody></table>';
     container.innerHTML = html;
 }
 
