@@ -9436,6 +9436,95 @@ def handle_tag_scan(event):
             except Exception as e:
                 logger.warning(f"EC2 enrichment failed for {acct_id_e}/{region_e}: {e}")
 
+    # Enrich EBS Volumes with cost estimate (based on size and type)
+    ebs_volumes_by_region = {}
+    for r in all_resources:
+        if r.get('resourceType') == 'EBS Volume' and r.get('region') != 'global':
+            ebs_volumes_by_region.setdefault((r['account'], r['region']), []).append(r)
+    for (acct_id_e, region_e), resources_e in ebs_volumes_by_region.items():
+        try:
+            assume_e = sts_client.assume_role(
+                RoleArn=f'arn:aws:iam::{acct_id_e}:role/SlashMyBill-{acct_id_e}',
+                RoleSessionName='SlashMyBillTagEBS', ExternalId=external_id,
+            )
+            creds_e = assume_e['Credentials']
+            ec2_e = boto3.client('ec2',
+                aws_access_key_id=creds_e['AccessKeyId'],
+                aws_secret_access_key=creds_e['SecretAccessKey'],
+                aws_session_token=creds_e['SessionToken'],
+                region_name=region_e)
+            vol_ids = [r['resourceId'] for r in resources_e][:20]
+            desc_e = ec2_e.describe_volumes(VolumeIds=vol_ids)
+            vol_map = {}
+            _ebs_pricing = {'gp2': 0.10, 'gp3': 0.08, 'io1': 0.125, 'io2': 0.125, 'st1': 0.045, 'sc1': 0.015, 'standard': 0.05}
+            for vol in desc_e.get('Volumes', []):
+                vid = vol.get('VolumeId', '')
+                size_gb = vol.get('Size', 0)
+                vol_type = vol.get('VolumeType', 'gp3')
+                state = vol.get('State', 'unknown')
+                attached = 'in-use' if vol.get('Attachments') else 'available'
+                price_per_gb = _ebs_pricing.get(vol_type, 0.08)
+                monthly = size_gb * price_per_gb
+                vol_map[vid] = {'state': attached, 'monthlyCost': round(monthly, 2), 'size': size_gb, 'volType': vol_type}
+            for r in resources_e:
+                info = vol_map.get(r['resourceId'])
+                if info:
+                    r['state'] = info['state']
+                    r['estimatedMonthlyCost'] = info['monthlyCost']
+        except Exception as e:
+            logger.warning(f"EBS enrichment failed for {acct_id_e}/{region_e}: {e}")
+
+    # Enrich Elastic IPs — $3.75/mo each (since Feb 2024 all EIPs cost money)
+    for r in all_resources:
+        if r.get('resourceType') == 'Elastic IP':
+            r['estimatedMonthlyCost'] = 3.75
+            r['state'] = 'allocated'
+
+    # Enrich NAT Gateways — ~$32/mo base + data transfer
+    for r in all_resources:
+        if r.get('resourceType') == 'NAT Gateway':
+            r['estimatedMonthlyCost'] = 32.40
+            r['state'] = 'active'
+
+    # Enrich Load Balancers — ALB ~$16/mo base, NLB ~$16/mo, CLB ~$18/mo
+    for r in all_resources:
+        if r.get('resourceType') == 'Load Balancer':
+            r['estimatedMonthlyCost'] = 16.20
+            r['state'] = 'active'
+
+    # Enrich RDS instances
+    rds_instances_by_region = {}
+    for r in all_resources:
+        if r.get('resourceType') == 'RDS Instance' and r.get('region') != 'global':
+            rds_instances_by_region.setdefault((r['account'], r['region']), []).append(r)
+    for (acct_id_e, region_e), resources_e in rds_instances_by_region.items():
+        try:
+            assume_e = sts_client.assume_role(
+                RoleArn=f'arn:aws:iam::{acct_id_e}:role/SlashMyBill-{acct_id_e}',
+                RoleSessionName='SlashMyBillTagRDS', ExternalId=external_id,
+            )
+            creds_e = assume_e['Credentials']
+            rds_e = boto3.client('rds',
+                aws_access_key_id=creds_e['AccessKeyId'],
+                aws_secret_access_key=creds_e['SecretAccessKey'],
+                aws_session_token=creds_e['SessionToken'],
+                region_name=region_e)
+            for r in resources_e:
+                try:
+                    db_id = r['resourceId']
+                    desc_db = rds_e.describe_db_instances(DBInstanceIdentifier=db_id)
+                    for db in desc_db.get('DBInstances', []):
+                        db_class = db.get('DBInstanceClass', 'db.t3.medium')
+                        db_state = db.get('DBInstanceStatus', 'unknown')
+                        hourly = _estimate_rds_hourly_cost(db_class, region_e)
+                        monthly = hourly * 730 if db_state == 'available' else 0
+                        r['state'] = db_state
+                        r['estimatedMonthlyCost'] = round(monthly, 2)
+                except Exception:
+                    pass
+        except Exception as e:
+            logger.warning(f"RDS enrichment failed for {acct_id_e}/{region_e}: {e}")
+
     coverage = round(summary['fullyTagged'] / summary['total'] * 100, 1) if summary['total'] > 0 else 0
 
     return create_response(200, {

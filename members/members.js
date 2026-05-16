@@ -6258,7 +6258,7 @@ function _renderTagList() {
         return;
     }
     var html = '<table style="width:100%;border-collapse:collapse;font-size:0.9em;">';
-    html += '<thead><tr style="border-bottom:2px solid #e5e7eb;"><th style="padding:8px 10px;text-align:left;color:#374151;font-weight:600;width:30px;position:sticky;top:0;background:#fff;z-index:1;"></th><th style="padding:8px 10px;text-align:left;color:#374151;font-weight:600;position:sticky;top:0;background:#fff;z-index:1;">Resource</th><th style="padding:8px 10px;text-align:left;color:#374151;font-weight:600;position:sticky;top:0;background:#fff;z-index:1;">Type</th><th style="padding:8px 10px;text-align:left;color:#374151;font-weight:600;position:sticky;top:0;background:#fff;z-index:1;">Region</th><th style="padding:8px 10px;text-align:left;color:#374151;font-weight:600;position:sticky;top:0;background:#fff;z-index:1;">Account</th><th style="padding:8px 10px;text-align:right;color:#374151;font-weight:600;position:sticky;top:0;background:#fff;z-index:1;">Est. $/mo</th><th style="padding:8px 10px;text-align:center;color:#374151;font-weight:600;position:sticky;top:0;background:#fff;z-index:1;">Status</th><th style="padding:8px 10px;text-align:left;color:#374151;font-weight:600;position:sticky;top:0;background:#fff;z-index:1;">Missing Tags</th></tr></thead><tbody>';
+    html += '<thead><tr style="border-bottom:2px solid #e5e7eb;"><th style="padding:8px 10px;text-align:left;color:#374151;font-weight:600;width:30px;position:sticky;top:0;background:#fff;z-index:1;"></th><th style="padding:8px 10px;text-align:left;color:#374151;font-weight:600;position:sticky;top:0;background:#fff;z-index:1;">Resource</th><th style="padding:8px 10px;text-align:left;color:#374151;font-weight:600;position:sticky;top:0;background:#fff;z-index:1;">Type</th><th style="padding:8px 10px;text-align:left;color:#374151;font-weight:600;position:sticky;top:0;background:#fff;z-index:1;">Region</th><th style="padding:8px 10px;text-align:left;color:#374151;font-weight:600;position:sticky;top:0;background:#fff;z-index:1;">Account</th><th style="padding:8px 10px;text-align:right;color:#374151;font-weight:600;position:sticky;top:0;background:#fff;z-index:1;">Est. $/mo</th><th style="padding:8px 10px;text-align:center;color:#374151;font-weight:600;position:sticky;top:0;background:#fff;z-index:1;">Status</th><th style="padding:8px 10px;text-align:left;color:#374151;font-weight:600;position:sticky;top:0;background:#fff;z-index:1;">Tags</th><th style="padding:8px 10px;text-align:left;color:#374151;font-weight:600;position:sticky;top:0;background:#fff;z-index:1;">Missing Tags</th></tr></thead><tbody>';
     visible.forEach(function(r) {
         var checked = _tagSelectedArns.has(r.arn) ? ' checked' : '';
         var missingHtml = (r.missingTags || []).map(function(t) {
@@ -6274,8 +6274,21 @@ function _renderTagList() {
         var stateHtml = '';
         if (r.state === 'running') stateHtml = '<span style="color:#10b981;font-size:0.8em;">● running</span>';
         else if (r.state === 'stopped') stateHtml = '<span style="color:#ef4444;font-size:0.8em;">○ stopped</span>';
+        else if (r.state === 'in-use') stateHtml = '<span style="color:#10b981;font-size:0.8em;">● in-use</span>';
+        else if (r.state === 'available') stateHtml = '<span style="color:#f59e0b;font-size:0.8em;">○ available</span>';
+        else if (r.state === 'allocated') stateHtml = '<span style="color:#6366f1;font-size:0.8em;">● allocated</span>';
+        else if (r.state === 'active') stateHtml = '<span style="color:#10b981;font-size:0.8em;">● active</span>';
         else if (r.state) stateHtml = '<span style="color:#6b7280;font-size:0.8em;">' + r.state + '</span>';
         else stateHtml = '<span style="color:#9ca3af;">—</span>';
+        // Existing tags column
+        var tagsHtml = '';
+        if (r.existingTags && typeof r.existingTags === 'object') {
+            var tagEntries = Object.entries(r.existingTags).filter(function(e) { return e[0] !== 'Name'; });
+            tagsHtml = tagEntries.slice(0, 4).map(function(e) {
+                return '<span style="background:#e0e7ff;color:#3730a3;padding:1px 5px;border-radius:3px;font-size:0.75em;margin-right:2px;white-space:nowrap;">' + esc(e[0]) + '=' + esc(e[1]) + '</span>';
+            }).join('');
+            if (tagEntries.length > 4) tagsHtml += '<span style="color:#6b7280;font-size:0.75em;">+' + (tagEntries.length - 4) + '</span>';
+        }
         html += '<tr style="border-bottom:1px solid #e5e7eb;' + rowBg + '">'
             + '<td style="padding:8px 10px;"><input type="checkbox" class="tag-chk" data-arn="' + r.arn + '"' + checked + '></td>'
             + '<td style="padding:8px 10px;color:#1f2937;font-weight:500;" title="' + ea(r.arn || '') + '"><div>' + esc(displayName) + '</div>' + subtitle + '</td>'
@@ -6284,6 +6297,7 @@ function _renderTagList() {
             + '<td style="padding:8px 10px;color:#6b7280;font-size:0.85em;">' + (r.account || '').slice(-4) + '</td>'
             + '<td style="padding:8px 10px;text-align:right;">' + costHtml + '</td>'
             + '<td style="padding:8px 10px;text-align:center;">' + stateHtml + '</td>'
+            + '<td style="padding:8px 10px;">' + (tagsHtml || '<span style="color:#9ca3af;">—</span>') + '</td>'
             + '<td style="padding:8px 10px;">' + (missingHtml || statusBadge) + '</td></tr>';
     });
     html += '</tbody></table>';
