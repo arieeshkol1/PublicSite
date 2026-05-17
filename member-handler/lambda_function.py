@@ -9735,11 +9735,17 @@ def handle_tag_scan(event):
     _resource_type_to_ce = {
         'EC2 Instance': 'Amazon Elastic Compute Cloud - Compute',
         'EBS Volume': 'Amazon Elastic Compute Cloud - Compute',
+        'EBS Snapshot': 'Amazon Elastic Compute Cloud - Compute',
         'Elastic IP': 'Amazon Elastic Compute Cloud - Compute',
         'NAT Gateway': 'Amazon Elastic Compute Cloud - Compute',
+        'Security Group': 'Amazon Elastic Compute Cloud - Compute',
+        'Network Interface': 'Amazon Elastic Compute Cloud - Compute',
+        'EC2 AMI': 'Amazon Elastic Compute Cloud - Compute',
         'Load Balancer': 'Elastic Load Balancing',
+        'Target Group': 'Elastic Load Balancing',
         'RDS Instance': 'Amazon Relational Database Service',
         'RDS Cluster': 'Amazon Relational Database Service',
+        'RDS Subnet Group': 'Amazon Relational Database Service',
         'S3 Bucket': 'Amazon Simple Storage Service',
         'Lambda Function': 'AWS Lambda',
         'DynamoDB Table': 'Amazon DynamoDB',
@@ -9747,17 +9753,33 @@ def handle_tag_scan(event):
         'SQS Queue': 'Amazon Simple Queue Service',
         'ECS Cluster': 'Amazon Elastic Container Service',
         'ECS Service': 'Amazon Elastic Container Service',
+        'ECS Task Def': 'Amazon Elastic Container Service',
         'ECR Repository': 'Amazon EC2 Container Registry',
         'KMS Key': 'AWS Key Management Service',
+        'KMS Alias': 'AWS Key Management Service',
         'Secret': 'AWS Secrets Manager',
         'Log Group': 'AmazonCloudWatch',
         'CloudWatch Alarm': 'AmazonCloudWatch',
         'API Gateway': 'Amazon API Gateway',
+        'CloudFront Distribution': 'Amazon CloudFront',
+        'Cognito User Pool': 'Amazon Cognito',
+        'Route 53 Hosted Zone': 'Amazon Route 53',
+        'Rekognition Collection': 'Amazon Rekognition',
+        'VPC': 'Amazon Virtual Private Cloud',
+        'Subnet': 'Amazon Virtual Private Cloud',
+        'Internet Gateway': 'Amazon Virtual Private Cloud',
+        'Route Table': 'Amazon Virtual Private Cloud',
+        'CF Stack': 'AWS CloudFormation',
     }
     for r in all_resources:
         ce_svc = _resource_type_to_ce.get(r.get('resourceType'))
         if ce_svc:
             _tagged_ce_services.add(ce_svc)
+    # Also add common service name variations
+    if 'Amazon Elastic Compute Cloud - Compute' in _tagged_ce_services:
+        _tagged_ce_services.add('EC2 - Other')
+    if 'Amazon Virtual Private Cloud' in _tagged_ce_services:
+        _tagged_ce_services.add('Amazon Virtual Private Cloud')
 
     # Query CE for all services with costs (use first account)
     if accounts:
@@ -9782,12 +9804,17 @@ def handle_tag_scan(event):
                 Metrics=['UnblendedCost'],
                 GroupBy=[{'Type': 'DIMENSION', 'Key': 'SERVICE'}]
             )
+            # Aggregate costs across periods (30-day window may span 2 calendar months)
+            _svc_cost_agg = {}
             for period in ce_svc_resp.get('ResultsByTime', []):
                 for group in period.get('Groups', []):
                     svc_name = group['Keys'][0]
                     cost = float(group['Metrics']['UnblendedCost']['Amount'])
-                    if cost > 0.01 and svc_name not in _tagged_ce_services and svc_name != 'Tax':
-                        untaggable_services.append({'service': svc_name, 'monthlyCost': round(cost, 2)})
+                    if cost > 0.01:
+                        _svc_cost_agg[svc_name] = _svc_cost_agg.get(svc_name, 0) + cost
+            for svc_name, cost in _svc_cost_agg.items():
+                if svc_name not in _tagged_ce_services and svc_name != 'Tax':
+                    untaggable_services.append({'service': svc_name, 'monthlyCost': round(cost, 2)})
             untaggable_services.sort(key=lambda x: x['monthlyCost'], reverse=True)
         except Exception as e:
             logger.warning(f"Untaggable services detection failed: {e}")
