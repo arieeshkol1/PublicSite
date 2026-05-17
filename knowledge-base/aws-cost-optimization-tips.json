@@ -1845,6 +1845,41 @@
       "implementedInAct": true,
       "actionTarget": "chat",
       "script": "aws ses get-send-statistics --query 'SendDataPoints | sort_by(@, &Timestamp) | [-5:].[Timestamp,DeliveryAttempts,Bounces,Complaints]' --output table"
+    },
+    {
+      "id": "elb-005",
+      "service": "ELB",
+      "category": "cleanup",
+      "title": "Clean up empty Target Groups and deregister idle targets",
+      "description": "Target Groups with zero healthy targets still incur Load Balancer costs because the LB keeps running. Audit Target Groups for: (1) groups with 0 registered targets (orphaned after instance termination), (2) groups where all targets are unhealthy (misconfigured or dead), (3) targets registered but receiving zero requests. Deregister idle targets and delete empty Target Groups to allow LB consolidation.",
+      "estimatedSavings": "$16-32/month per orphaned LB",
+      "difficulty": "easy",
+      "automatedCheck": "elbv2:DescribeTargetGroups + DescribeTargetHealth per TG -> find TGs with 0 healthy targets or 0 registered targets. Script lists all empty/unhealthy TGs.",
+      "checkImplemented": true,
+      "actionType": "delete",
+      "actionLabel": "Clean Target Groups",
+      "level": 1,
+      "serviceKey": "Elastic Load Balancing",
+      "implementedInAct": true,
+      "script": "aws elbv2 describe-target-groups --query 'TargetGroups[].TargetGroupArn' --output text | tr '\\t' '\\n' | while read tg; do health=$(aws elbv2 describe-target-health --target-group-arn \"$tg\" --query 'TargetHealthDescriptions[?TargetHealth.State==`healthy`]' --output text); if [ -z \"$health\" ]; then echo \"EMPTY/UNHEALTHY: $tg\"; fi; done"
+    },
+    {
+      "id": "general-011",
+      "service": "General",
+      "category": "process",
+      "title": "Monthly cost review automation",
+      "description": "Make cost optimization a monthly habit, not a one-time event. Set up a recurring calendar reminder or Lambda function that: (1) runs Cost Explorer comparison vs previous month, (2) checks for new idle resources, (3) reviews Compute Optimizer recommendations, (4) validates budget alerts are active. Use SlashMyBill's Scheduler to automate waste scans monthly. Small charges daily = big bill monthly.",
+      "estimatedSavings": "10-25% ongoing",
+      "difficulty": "easy",
+      "automatedCheck": "ce:GetCostAndUsage (compare last 2 months); compute-optimizer:GetEC2InstanceRecommendations; budgets:DescribeBudgets -> verify alerts exist",
+      "checkImplemented": true,
+      "actionType": "deep-link",
+      "actionLabel": "Schedule Monthly Review",
+      "level": 2,
+      "serviceKey": "General",
+      "implementedInAct": true,
+      "actionTarget": "act:scheduler",
+      "script": "aws ce get-cost-and-usage --time-period Start=$(date -d 'first day of last month' +%Y-%m-%d),End=$(date -d 'first day of this month' +%Y-%m-%d) --granularity MONTHLY --metrics UnblendedCost --group-by Type=DIMENSION,Key=SERVICE --query 'ResultsByTime[].Groups | [] | sort_by(@, &Metrics.UnblendedCost.Amount) | reverse(@) | [:10].[Keys[0],Metrics.UnblendedCost.Amount]' --output table"
     }
   ]
 }
