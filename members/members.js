@@ -6147,6 +6147,8 @@ async function _runScanFromChat() {
 // ============================================================
 var _tagScanResults = [];
 var _tagSelectedArns = new Set();
+var _tagSortField = 'name';
+var _tagSortAsc = true;
 
 (function initTagManager() {
     var tagBtn = document.getElementById('plan-tag-btn');
@@ -6241,12 +6243,38 @@ function _renderTagStats(data) {
 function _getVisibleTagResources() {
     var q = (document.getElementById('plan-tag-search') || {}).value || '';
     q = q.toLowerCase().trim();
-    if (!q) return _tagScanResults;
-    return _tagScanResults.filter(function(r) {
-        return (r.name || '').toLowerCase().indexOf(q) !== -1
-            || (r.resourceType || '').toLowerCase().indexOf(q) !== -1
-            || (r.arn || '').toLowerCase().indexOf(q) !== -1;
+    var results = _tagScanResults;
+    if (q) {
+        results = results.filter(function(r) {
+            return (r.name || '').toLowerCase().indexOf(q) !== -1
+                || (r.resourceType || '').toLowerCase().indexOf(q) !== -1
+                || (r.arn || '').toLowerCase().indexOf(q) !== -1;
+        });
+    }
+    // Sort by current sort field
+    var field = _tagSortField;
+    var asc = _tagSortAsc;
+    results = results.slice().sort(function(a, b) {
+        var va, vb;
+        if (field === 'cost') { va = a.estimatedMonthlyCost || 0; vb = b.estimatedMonthlyCost || 0; }
+        else if (field === 'status') { va = a.state || ''; vb = b.state || ''; }
+        else if (field === 'type') { va = a.resourceType || ''; vb = b.resourceType || ''; }
+        else if (field === 'region') { va = a.region || ''; vb = b.region || ''; }
+        else if (field === 'account') { va = a.account || ''; vb = b.account || ''; }
+        else if (field === 'missing') { va = (a.missingTags || []).length; vb = (b.missingTags || []).length; }
+        else { va = (a.name || '').toLowerCase(); vb = (b.name || '').toLowerCase(); }
+        if (typeof va === 'number') return asc ? va - vb : vb - va;
+        if (va < vb) return asc ? -1 : 1;
+        if (va > vb) return asc ? 1 : -1;
+        return 0;
     });
+    return results;
+}
+
+function _tagSort(field) {
+    if (_tagSortField === field) { _tagSortAsc = !_tagSortAsc; }
+    else { _tagSortField = field; _tagSortAsc = field === 'cost' ? false : true; }
+    _renderTagList();
 }
 
 function _renderTagList() {
@@ -6258,7 +6286,18 @@ function _renderTagList() {
         return;
     }
     var html = '<table style="width:100%;border-collapse:collapse;font-size:0.9em;">';
-    html += '<thead><tr style="border-bottom:2px solid #e5e7eb;"><th style="padding:8px 10px;text-align:left;color:#374151;font-weight:600;width:30px;position:sticky;top:0;background:#fff;z-index:1;"></th><th style="padding:8px 10px;text-align:left;color:#374151;font-weight:600;position:sticky;top:0;background:#fff;z-index:1;">Resource</th><th style="padding:8px 10px;text-align:left;color:#374151;font-weight:600;position:sticky;top:0;background:#fff;z-index:1;">Type</th><th style="padding:8px 10px;text-align:left;color:#374151;font-weight:600;position:sticky;top:0;background:#fff;z-index:1;">Region</th><th style="padding:8px 10px;text-align:left;color:#374151;font-weight:600;position:sticky;top:0;background:#fff;z-index:1;">Account</th><th style="padding:8px 10px;text-align:right;color:#374151;font-weight:600;position:sticky;top:0;background:#fff;z-index:1;">Est. $/mo</th><th style="padding:8px 10px;text-align:center;color:#374151;font-weight:600;position:sticky;top:0;background:#fff;z-index:1;">Status</th><th style="padding:8px 10px;text-align:left;color:#374151;font-weight:600;position:sticky;top:0;background:#fff;z-index:1;">Tags</th><th style="padding:8px 10px;text-align:left;color:#374151;font-weight:600;position:sticky;top:0;background:#fff;z-index:1;">Missing Tags</th></tr></thead><tbody>';
+    var _sa = function(f) { return _tagSortField === f ? (_tagSortAsc ? ' ▲' : ' ▼') : ''; };
+    var _th = 'padding:8px 10px;color:#374151;font-weight:600;position:sticky;top:0;background:#fff;z-index:1;cursor:pointer;user-select:none;';
+    html += '<thead><tr style="border-bottom:2px solid #e5e7eb;">'
+        + '<th style="padding:8px 10px;width:30px;position:sticky;top:0;background:#fff;z-index:1;"></th>'
+        + '<th style="' + _th + 'text-align:left;" onclick="_tagSort(\'name\')">Resource' + _sa('name') + '</th>'
+        + '<th style="' + _th + 'text-align:left;" onclick="_tagSort(\'type\')">Type' + _sa('type') + '</th>'
+        + '<th style="' + _th + 'text-align:left;" onclick="_tagSort(\'region\')">Region' + _sa('region') + '</th>'
+        + '<th style="' + _th + 'text-align:left;" onclick="_tagSort(\'account\')">Account' + _sa('account') + '</th>'
+        + '<th style="' + _th + 'text-align:right;" onclick="_tagSort(\'cost\')">Est. $/mo' + _sa('cost') + '</th>'
+        + '<th style="' + _th + 'text-align:center;" onclick="_tagSort(\'status\')">Status' + _sa('status') + '</th>'
+        + '<th style="' + _th + 'text-align:left;" onclick="_tagSort(\'missing\')">Missing Tags' + _sa('missing') + '</th>'
+        + '</tr></thead><tbody>';
     visible.forEach(function(r) {
         var checked = _tagSelectedArns.has(r.arn) ? ' checked' : '';
         var missingHtml = (r.missingTags || []).map(function(t) {
