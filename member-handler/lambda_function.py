@@ -9616,12 +9616,77 @@ def handle_tag_scan(event):
 
     coverage = round(summary['fullyTagged'] / summary['total'] * 100, 1) if summary['total'] > 0 else 0
 
+    # Detect untaggable services: services with CE costs but no taggable resources
+    untaggable_services = []
+    # Collect all CE service names that have taggable resources
+    _tagged_ce_services = set()
+    _resource_type_to_ce = {
+        'EC2 Instance': 'Amazon Elastic Compute Cloud - Compute',
+        'EBS Volume': 'Amazon Elastic Compute Cloud - Compute',
+        'Elastic IP': 'Amazon Elastic Compute Cloud - Compute',
+        'NAT Gateway': 'Amazon Elastic Compute Cloud - Compute',
+        'Load Balancer': 'Elastic Load Balancing',
+        'RDS Instance': 'Amazon Relational Database Service',
+        'RDS Cluster': 'Amazon Relational Database Service',
+        'S3 Bucket': 'Amazon Simple Storage Service',
+        'Lambda Function': 'AWS Lambda',
+        'DynamoDB Table': 'Amazon DynamoDB',
+        'SNS Topic': 'Amazon Simple Notification Service',
+        'SQS Queue': 'Amazon Simple Queue Service',
+        'ECS Cluster': 'Amazon Elastic Container Service',
+        'ECS Service': 'Amazon Elastic Container Service',
+        'ECR Repository': 'Amazon EC2 Container Registry',
+        'KMS Key': 'AWS Key Management Service',
+        'Secret': 'AWS Secrets Manager',
+        'Log Group': 'AmazonCloudWatch',
+        'CloudWatch Alarm': 'AmazonCloudWatch',
+        'API Gateway': 'Amazon API Gateway',
+    }
+    for r in all_resources:
+        ce_svc = _resource_type_to_ce.get(r.get('resourceType'))
+        if ce_svc:
+            _tagged_ce_services.add(ce_svc)
+
+    # Query CE for all services with costs (use first account)
+    if accounts:
+        try:
+            acct0 = accounts[0]
+            assume_ce = sts_client.assume_role(
+                RoleArn=f"arn:aws:iam::{acct0['accountId']}:role/SlashMyBill-{acct0['accountId']}",
+                RoleSessionName='SlashMyBillTagCESvc', ExternalId=external_id,
+            )
+            creds_ce = assume_ce['Credentials']
+            ce_svc_client = boto3.client('ce',
+                aws_access_key_id=creds_ce['AccessKeyId'],
+                aws_secret_access_key=creds_ce['SecretAccessKey'],
+                aws_session_token=creds_ce['SessionToken'],
+                region_name='us-east-1')
+            _now_ce = datetime.now(timezone.utc)
+            _ce_end = _now_ce.strftime('%Y-%m-%d')
+            _ce_start = (_now_ce - timedelta(days=30)).strftime('%Y-%m-%d')
+            ce_svc_resp = ce_svc_client.get_cost_and_usage(
+                TimePeriod={'Start': _ce_start, 'End': _ce_end},
+                Granularity='MONTHLY',
+                Metrics=['UnblendedCost'],
+                GroupBy=[{'Type': 'DIMENSION', 'Key': 'SERVICE'}]
+            )
+            for period in ce_svc_resp.get('ResultsByTime', []):
+                for group in period.get('Groups', []):
+                    svc_name = group['Keys'][0]
+                    cost = float(group['Metrics']['UnblendedCost']['Amount'])
+                    if cost > 0.01 and svc_name not in _tagged_ce_services and svc_name != 'Tax':
+                        untaggable_services.append({'service': svc_name, 'monthlyCost': round(cost, 2)})
+            untaggable_services.sort(key=lambda x: x['monthlyCost'], reverse=True)
+        except Exception as e:
+            logger.warning(f"Untaggable services detection failed: {e}")
+
     return create_response(200, {
         'resources': all_resources,
         'summary': summary,
         'coverage': coverage,
         'requiredTags': required_tags,
         'discoveredTagKeys': sorted(list(all_tag_keys)),
+        'untaggableServices': untaggable_services if untaggable_services else None,
     })
 
 

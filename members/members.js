@@ -6214,6 +6214,7 @@ async function _runTagScan(accountIds) {
         if (tagStatus) tagStatus.textContent = 'Tag scan complete — ' + _tagScanResults.length + ' resources need tagging';
         _renderTagStats(data);
         _renderTagList();
+        _renderUntaggableServices(data.untaggableServices || null);
     } catch (e) {
         if (tagStatus) tagStatus.textContent = 'Tag scan failed: ' + (e.message || 'Unknown error');
         notify('Tag scan failed: ' + (e.message || ''), 'error');
@@ -6351,6 +6352,41 @@ function _renderTagList() {
         };
     });
     _updateTagApplyBtn();
+}
+
+function _renderUntaggableServices(services) {
+    var container = document.getElementById('plan-untaggable-services');
+    if (!container) {
+        // Create container after the tag list
+        var tagList = document.getElementById('plan-tag-list');
+        if (!tagList) return;
+        container = document.createElement('div');
+        container.id = 'plan-untaggable-services';
+        container.style.cssText = 'margin-top:20px;';
+        tagList.parentNode.insertBefore(container, tagList.nextSibling);
+    }
+    if (!services || services.length === 0) {
+        container.innerHTML = '';
+        return;
+    }
+    var totalCost = services.reduce(function(s, x) { return s + x.monthlyCost; }, 0);
+    var html = '<div style="border:1px solid #fbbf24;border-radius:8px;padding:16px;background:#fffbeb;">';
+    html += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">';
+    html += '<span style="font-size:1.1em;">⚠️</span>';
+    html += '<span style="font-weight:600;color:#92400e;">Usage-Based Services (cannot be tagged)</span>';
+    html += '<span style="color:#6b7280;font-size:0.8em;margin-left:auto;">Total: $' + totalCost.toFixed(2) + '/mo</span>';
+    html += '</div>';
+    html += '<div style="font-size:0.78em;color:#6b7280;margin-bottom:10px;">These services generate costs from API usage but have no taggable resources. Cost attribution requires AWS Cost Allocation Tags at the payer account level.</div>';
+    html += '<table style="width:100%;border-collapse:collapse;font-size:0.85em;">';
+    html += '<thead><tr style="border-bottom:1px solid #fde68a;"><th style="padding:5px 8px;text-align:left;color:#92400e;">Service</th><th style="padding:5px 8px;text-align:right;color:#92400e;">Last 30 days</th></tr></thead><tbody>';
+    services.forEach(function(s) {
+        html += '<tr style="border-bottom:1px solid #fef3c7;">';
+        html += '<td style="padding:5px 8px;color:#1f2937;">' + esc(s.service) + '</td>';
+        html += '<td style="padding:5px 8px;text-align:right;font-weight:600;color:#d97706;">$' + s.monthlyCost.toFixed(2) + '</td>';
+        html += '</tr>';
+    });
+    html += '</tbody></table></div>';
+    container.innerHTML = html;
 }
 
 function _updateTagApplyBtn() {
