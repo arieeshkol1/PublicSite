@@ -9392,6 +9392,118 @@ def handle_tag_scan(event):
                 except Exception as e:
                     logger.warning(f"Tag scan in {acct_id}/{_tr_region}: {e}")
 
+            # Service-specific resource discovery (services not indexed by Resource Groups API)
+            try:
+                _kwargs = dict(
+                    aws_access_key_id=creds['AccessKeyId'],
+                    aws_secret_access_key=creds['SecretAccessKey'],
+                    aws_session_token=creds['SessionToken'],
+                )
+                _existing_arns = {r['arn'] for r in all_resources}
+
+                # CloudFront distributions (global, us-east-1 only)
+                try:
+                    cf = boto3.client('cloudfront', **_kwargs, region_name='us-east-1')
+                    cf_resp = cf.list_distributions(MaxItems='20')
+                    for dist in (cf_resp.get('DistributionList', {}).get('Items', []) or []):
+                        arn = dist.get('ARN', '')
+                        if arn and arn not in _existing_arns:
+                            # Get tags for this distribution
+                            try:
+                                tag_resp = cf.list_tags_for_resource(Resource=arn)
+                                tags = {t['Key']: t['Value'] for t in tag_resp.get('Tags', {}).get('Items', []) if not t['Key'].startswith('aws:')}
+                            except Exception:
+                                tags = {}
+                            missing = [k for k in required_tags if k not in tags]
+                            summary['total'] += 1
+                            if not missing: summary['fullyTagged'] += 1
+                            elif len(missing) < len(required_tags): summary['partiallyTagged'] += 1
+                            else: summary['untagged'] += 1
+                            name = dist.get('Comment', '') or dist.get('DomainName', dist.get('Id', ''))
+                            all_resources.append({'arn': arn, 'resourceType': 'CloudFront Distribution', 'resourceId': dist.get('Id', ''), 'name': name, 'account': acct_id, 'region': 'global', 'existingTags': tags, 'missingTags': missing})
+                            _existing_arns.add(arn)
+                except Exception:
+                    pass
+
+                # Rekognition collections
+                for _rk_region in ['us-east-1', 'eu-central-1', 'eu-west-1']:
+                    try:
+                        rk = boto3.client('rekognition', **_kwargs, region_name=_rk_region)
+                        rk_resp = rk.list_collections(MaxResults=20)
+                        for coll_id in rk_resp.get('CollectionIds', []):
+                            arn = f'arn:aws:rekognition:{_rk_region}:{acct_id}:collection/{coll_id}'
+                            if arn in _existing_arns:
+                                continue
+                            try:
+                                tag_resp = rk.list_tags_for_resource(ResourceArn=arn)
+                                tags = {k: v for k, v in tag_resp.get('Tags', {}).items() if not k.startswith('aws:')}
+                            except Exception:
+                                tags = {}
+                            missing = [k for k in required_tags if k not in tags]
+                            summary['total'] += 1
+                            if not missing: summary['fullyTagged'] += 1
+                            elif len(missing) < len(required_tags): summary['partiallyTagged'] += 1
+                            else: summary['untagged'] += 1
+                            all_resources.append({'arn': arn, 'resourceType': 'Rekognition Collection', 'resourceId': coll_id, 'name': coll_id, 'account': acct_id, 'region': _rk_region, 'existingTags': tags, 'missingTags': missing})
+                            _existing_arns.add(arn)
+                    except Exception:
+                        pass
+
+                # Cognito User Pools
+                for _cg_region in ['us-east-1', 'eu-central-1', 'eu-west-1']:
+                    try:
+                        cg = boto3.client('cognito-idp', **_kwargs, region_name=_cg_region)
+                        cg_resp = cg.list_user_pools(MaxResults=10)
+                        for pool in cg_resp.get('UserPools', []):
+                            pool_id = pool.get('Id', '')
+                            pool_name = pool.get('Name', pool_id)
+                            arn = f'arn:aws:cognito-idp:{_cg_region}:{acct_id}:userpool/{pool_id}'
+                            if arn in _existing_arns:
+                                continue
+                            try:
+                                desc = cg.describe_user_pool(UserPoolId=pool_id)
+                                tags = desc.get('UserPool', {}).get('UserPoolTags', {})
+                                tags = {k: v for k, v in tags.items() if not k.startswith('aws:')}
+                            except Exception:
+                                tags = {}
+                            missing = [k for k in required_tags if k not in tags]
+                            summary['total'] += 1
+                            if not missing: summary['fullyTagged'] += 1
+                            elif len(missing) < len(required_tags): summary['partiallyTagged'] += 1
+                            else: summary['untagged'] += 1
+                            all_resources.append({'arn': arn, 'resourceType': 'Cognito User Pool', 'resourceId': pool_id, 'name': pool_name, 'account': acct_id, 'region': _cg_region, 'existingTags': tags, 'missingTags': missing})
+                            _existing_arns.add(arn)
+                    except Exception:
+                        pass
+
+                # Route 53 Hosted Zones (global)
+                try:
+                    r53 = boto3.client('route53', **_kwargs, region_name='us-east-1')
+                    r53_resp = r53.list_hosted_zones(MaxItems='20')
+                    for zone in r53_resp.get('HostedZones', []):
+                        zone_id = zone.get('Id', '').replace('/hostedzone/', '')
+                        zone_name = zone.get('Name', zone_id)
+                        arn = f'arn:aws:route53:::hostedzone/{zone_id}'
+                        if arn in _existing_arns:
+                            continue
+                        try:
+                            tag_resp = r53.list_tags_for_resource(ResourceType='hostedzone', ResourceId=zone_id)
+                            tags = {t['Key']: t['Value'] for t in tag_resp.get('ResourceTagSet', {}).get('Tags', []) if not t['Key'].startswith('aws:')}
+                        except Exception:
+                            tags = {}
+                        missing = [k for k in required_tags if k not in tags]
+                        summary['total'] += 1
+                        if not missing: summary['fullyTagged'] += 1
+                        elif len(missing) < len(required_tags): summary['partiallyTagged'] += 1
+                        else: summary['untagged'] += 1
+                        all_resources.append({'arn': arn, 'resourceType': 'Route 53 Hosted Zone', 'resourceId': zone_id, 'name': zone_name.rstrip('.'), 'account': acct_id, 'region': 'global', 'existingTags': tags, 'missingTags': missing})
+                        _existing_arns.add(arn)
+                except Exception:
+                    pass
+
+            except Exception as e:
+                logger.warning(f"Service-specific discovery failed for {acct_id}: {e}")
+
         except Exception as e:
             logger.warning(f"Tag scan failed for {acct_id}: {e}")
 
