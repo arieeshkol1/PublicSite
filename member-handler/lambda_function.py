@@ -2217,7 +2217,7 @@ def handle_dashboard_data(event):
 
             if tag_key and tag_value:
                 # Recalculate acct_total from the (possibly overridden) cost_by_service
-                acct_total = sum(s['cost_usd'] for s in acct_data.get('cost_by_service', []) if s.get('service') != 'Tax' and s.get('period') == 'estimated')
+                acct_total = sum(s['cost_usd'] for s in acct_data.get('cost_by_service', []) if s.get('period') == 'estimated')
                 if acct_total == 0:
                     tag_filter_empty = True
             for svc in acct_data.get('cost_by_service', []):
