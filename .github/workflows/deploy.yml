@@ -382,6 +382,34 @@ jobs:
             }'
           echo "✓ Cost allocation tag permissions granted"
 
+      - name: Grant Lambda DynamoDB Invoices table access
+        continue-on-error: true
+        run: |
+          ROLE_ARN=$(aws lambda get-function-configuration --function-name aws-bill-analyzer-member-api --query "Role" --output text)
+          ROLE_NAME=$(echo $ROLE_ARN | awk -F'/' '{print $NF}')
+          aws iam put-role-policy \
+            --role-name "$ROLE_NAME" \
+            --policy-name "DynamoDBInvoicesCRUDAccess" \
+            --policy-document '{
+              "Version": "2012-10-17",
+              "Statement": [{
+                "Effect": "Allow",
+                "Action": [
+                  "dynamodb:GetItem",
+                  "dynamodb:PutItem",
+                  "dynamodb:UpdateItem",
+                  "dynamodb:DeleteItem",
+                  "dynamodb:Query",
+                  "dynamodb:BatchWriteItem"
+                ],
+                "Resource": [
+                  "arn:aws:dynamodb:us-east-1:991105135552:table/MemberPortal-Invoices",
+                  "arn:aws:dynamodb:us-east-1:991105135552:table/MemberPortal-Invoices/index/*"
+                ]
+              }]
+            }'
+          echo "✓ DynamoDB Invoices table permissions granted"
+
       - name: Configure Cognito email via SES (eshkolai.com)
         continue-on-error: true
         run: |
