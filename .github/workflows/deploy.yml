@@ -187,6 +187,19 @@ jobs:
                     "lambda:GetPolicy"
                   ],
                   "Resource": "*"
+                },
+                {
+                  "Sid": "DynamoDBInvoicesTable",
+                  "Effect": "Allow",
+                  "Action": [
+                    "dynamodb:CreateTable",
+                    "dynamodb:DescribeTable",
+                    "dynamodb:UpdateTimeToLive",
+                    "dynamodb:DescribeTimeToLive",
+                    "dynamodb:TagResource",
+                    "dynamodb:ListTagsOfResource"
+                  ],
+                  "Resource": "arn:aws:dynamodb:us-east-1:991105135552:table/MemberPortal-Invoices"
                 }
               ]
             }'
