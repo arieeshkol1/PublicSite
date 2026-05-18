@@ -802,3 +802,103 @@
         flex-direction: column;
     }
 }
+
+/* ============================================================
+   Invoice Explorer Tab Styles
+   ============================================================ */
+
+/* Summary Cards */
+.inv-summary-card {
+    background: #fff;
+    border: 1px solid #e5e7eb;
+    border-radius: 10px;
+    padding: 16px 20px;
+    text-align: center;
+    transition: border-color 0.2s, box-shadow 0.2s;
+}
+.inv-summary-card:hover {
+    border-color: #6366f1;
+    box-shadow: 0 2px 8px rgba(99,102,241,0.08);
+}
+.inv-card-label {
+    font-size: 0.75em;
+    color: #6b7280;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-bottom: 4px;
+    font-weight: 600;
+}
+.inv-card-value {
+    font-size: 1.4em;
+    font-weight: 700;
+    color: #1f2937;
+}
+.inv-card-value.inv-positive { color: #ef4444; }
+.inv-card-value.inv-negative { color: #10b981; }
+
+/* Filter Bar */
+.inv-filter-group {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+.inv-filter-group label {
+    font-size: 0.72em;
+    color: #6b7280;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+.inv-filter-group input:focus,
+.inv-filter-group select:focus {
+    border-color: #6366f1;
+    outline: none;
+    box-shadow: 0 0 0 2px rgba(99,102,241,0.1);
+}
+
+/* Sortable Table Headers */
+.inv-sortable {
+    cursor: pointer;
+    user-select: none;
+    transition: color 0.15s;
+}
+.inv-sortable:hover {
+    color: #6366f1;
+}
+.inv-sortable.inv-sort-active {
+    color: #4f46e5;
+    font-weight: 700;
+}
+
+/* Skeleton loader for invoice cards */
+.inv-skeleton {
+    background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
+    background-size: 200% 100%;
+    animation: inv-shimmer 1.5s infinite;
+    border-radius: 6px;
+    height: 1.4em;
+    width: 60%;
+    margin: 0 auto;
+}
+@keyframes inv-shimmer {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    #inv-summary-cards {
+        grid-template-columns: 1fr !important;
+    }
+    #inv-filter-bar {
+        flex-direction: column;
+        align-items: stretch !important;
+    }
+    .inv-filter-group {
+        width: 100%;
+    }
+    .inv-filter-group input,
+    .inv-filter-group select {
+        width: 100%;
+    }
+}

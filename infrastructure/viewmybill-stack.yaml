@@ -485,6 +485,44 @@ Resources:
           Value: ViewMyBill
 
   # ============================================================
+  # DynamoDB Table - Invoice Explorer Cache
+  # ============================================================
+  InvoicesTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: MemberPortal-Invoices
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+        - AttributeName: month
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+      GlobalSecondaryIndexes:
+        - IndexName: month-index
+          KeySchema:
+            - AttributeName: pk
+              KeyType: HASH
+            - AttributeName: month
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+      SSESpecification:
+        SSEEnabled: true
+      Tags:
+        - Key: Project
+          Value: ViewMyBill
+
+  # ============================================================
   # SES Email Identity - eshkolai.com domain
   # ============================================================
   # SES EmailIdentity — managed by CloudFormation (do not remove)
@@ -1041,6 +1079,21 @@ Resources:
                   - sns:Publish
                 Resource:
                   - !Ref SpotInterruptionsTopic
+        - PolicyName: DynamoDBInvoicesCRUDAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                  - dynamodb:Query
+                  - dynamodb:BatchWriteItem
+                Resource:
+                  - !GetAtt InvoicesTable.Arn
+                  - !Sub '${InvoicesTable.Arn}/index/*'
       Tags:
         - Key: Project
           Value: ViewMyBill
@@ -1079,6 +1132,7 @@ Resources:
           COGNITO_CLIENT_ID: '3shmdb332mm8sjheopdu9sg8o4'
           SPOT_LEDGER_TABLE_NAME: !Ref SpotSavingsLedgerTable
           SPOT_SNS_TOPIC_ARN: !Ref SpotInterruptionsTopic
+          INVOICES_TABLE_NAME: !Ref InvoicesTable
           COGNITO_REGION: 'us-east-1'
           PRICING_REGION: 'us-east-1'
           BEDROCK_REGION: 'us-east-1'
@@ -1418,6 +1472,37 @@ Resources:
       RouteKey: 'POST /members/healthcheck/fix'
       Target: !Sub 'integrations/${MemberIntegration}'
 
+  # ============================================================
+  # API Gateway - Invoice Explorer Routes
+  # ============================================================
+  MemberGetInvoicesRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'GET /members/invoices'
+      Target: !Sub 'integrations/${MemberIntegration}'
+
+  MemberRefreshInvoicesRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'POST /members/invoices/refresh'
+      Target: !Sub 'integrations/${MemberIntegration}'
+
+  MemberGetInvoiceSummaryRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'GET /members/invoices/summary'
+      Target: !Sub 'integrations/${MemberIntegration}'
+
+  MemberGetInvoiceServicesRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'GET /members/invoices/services'
+      Target: !Sub 'integrations/${MemberIntegration}'
+
   MemberHandlerInvokePermission:
     Type: AWS::Lambda::Permission
     Properties:
@@ -1718,3 +1803,11 @@ Outputs:
   SpotInterruptionsTopicArn:
     Description: SNS topic ARN for Spot interruption notifications
     Value: !Ref SpotInterruptionsTopic
+
+  InvoicesTableName:
+    Description: DynamoDB table name for invoice explorer cache
+    Value: !Ref InvoicesTable
+
+  InvoicesTableArn:
+    Description: DynamoDB Invoices table ARN
+    Value: !GetAtt InvoicesTable.Arn

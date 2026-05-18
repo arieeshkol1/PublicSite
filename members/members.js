@@ -1382,6 +1382,10 @@ function activateMemberTab(tabId) {
         // Pre-load tag policy for tag scan
         if (!_tagPolicyCache) _loadTagPolicy();
     }
+    if (tabId === 'invoices-tab') {
+        _syncAccountSelection('dash');
+        _populateInvoiceAccounts();
+    }
 }
 
 // ============================================================
@@ -10025,4 +10029,509 @@ function _committedShowPurchaseGuide(type, subType) {
 
     body.innerHTML = html;
     modal.hidden = false;
+}
+
+
+// ============================================================
+// Invoice Explorer Tab
+// ============================================================
+
+var _invState = {
+    accountId: '',
+    month: '',
+    service: '',
+    search: '',
+    sortBy: 'cost',
+    sortOrder: 'desc',
+    page: 1,
+    pageSize: 25,
+    totalPages: 0,
+    totalItems: 0
+};
+var _invConsecutiveFailures = 0;
+var _invLoadTimeout = null;
+var _invRefreshCooldown = null;
+
+function _populateInvoiceAccounts() {
+    var sel = $('inv-account-select');
+    if (!sel) return;
+    var connected = allAccounts.filter(function(a) { return a.connectionStatus === 'connected'; });
+    var noAccountsMsg = $('inv-no-accounts');
+
+    // Show "Connect an AWS account" message when no accounts connected
+    if (!connected.length) {
+        if (noAccountsMsg) {
+            noAccountsMsg.hidden = false;
+        } else {
+            // Create the no-accounts message element dynamically
+            var container = sel.closest('#invoices-tab') || sel.parentElement.parentElement.parentElement;
+            var msgDiv = document.createElement('div');
+            msgDiv.id = 'inv-no-accounts';
+            msgDiv.style.cssText = 'text-align:center;padding:60px 20px;color:#6b7280;';
+            msgDiv.innerHTML = '<div style="font-size:2.5em;margin-bottom:12px;">🔗</div>'
+                + '<div style="font-size:1.1em;margin-bottom:8px;color:#1f2937;font-weight:600;">Connect an AWS account to explore invoices</div>'
+                + '<div style="font-size:0.9em;color:#6b7280;margin-bottom:16px;">Go to the Configure tab to add and connect your AWS accounts.</div>'
+                + '<button class="btn btn-primary btn-sm" onclick="document.querySelector(\'[data-tab=accounts-tab]\').click();">Go to Configure</button>';
+            var summaryCards = $('inv-summary-cards');
+            if (summaryCards) summaryCards.parentElement.insertBefore(msgDiv, summaryCards);
+        }
+        // Hide the main content areas
+        var summaryCards = $('inv-summary-cards');
+        var filterBar = $('inv-filter-bar');
+        var tableWrapper = sel.closest('#invoices-tab') ? sel.closest('#invoices-tab').querySelector('.table-wrapper') : null;
+        var pagination = $('inv-pagination');
+        if (summaryCards) summaryCards.style.display = 'none';
+        if (filterBar) filterBar.style.display = 'none';
+        if (tableWrapper) tableWrapper.style.display = 'none';
+        if (pagination) pagination.style.display = 'none';
+        return;
+    }
+
+    // Ensure content areas are visible when accounts exist
+    if (noAccountsMsg) noAccountsMsg.hidden = true;
+    var summaryCards = $('inv-summary-cards');
+    var filterBar = $('inv-filter-bar');
+    var invoicesTab = $('invoices-tab');
+    var tableWrapper = invoicesTab ? invoicesTab.querySelector('.table-wrapper') : null;
+    var pagination = $('inv-pagination');
+    if (summaryCards) summaryCards.style.display = '';
+    if (filterBar) filterBar.style.display = '';
+    if (tableWrapper) tableWrapper.style.display = '';
+    if (pagination) pagination.style.display = '';
+
+    sel.innerHTML = '<option value="">Select an account...</option>';
+    connected.forEach(function(a) {
+        var opt = document.createElement('option');
+        opt.value = a.accountId;
+        opt.textContent = a.accountId + ' (' + (a.accountName || 'Account') + ')';
+        sel.appendChild(opt);
+    });
+    // Restore previous selection if any
+    if (_invState.accountId) {
+        sel.value = _invState.accountId;
+    }
+}
+
+// Wire up invoice tab event listeners
+(function _initInvoiceExplorer() {
+    var acctSel = $('inv-account-select');
+    var monthFilter = $('inv-month-filter');
+    var serviceFilter = $('inv-service-filter');
+    var searchInput = $('inv-search-input');
+    var exportBtn = $('inv-export-btn');
+    var refreshBtn = $('inv-refresh-btn');
+    var prevBtn = $('inv-prev-btn');
+    var nextBtn = $('inv-next-btn');
+
+    if (acctSel) acctSel.onchange = function() {
+        _invState.accountId = acctSel.value;
+        _invState.page = 1;
+        if (_invState.accountId) {
+            _loadInvoiceServices();
+            _loadInvoiceSummary();
+            _loadInvoiceData();
+        } else {
+            _clearInvoiceTable();
+            _clearInvoiceSummary();
+        }
+    };
+
+    if (monthFilter) monthFilter.onchange = function() {
+        var val = monthFilter.value; // YYYY-MM from input type=month
+        _invState.month = val || '';
+        _invState.page = 1;
+        _loadInvoiceSummary();
+        _loadInvoiceData();
+    };
+
+    if (serviceFilter) serviceFilter.onchange = function() {
+        _invState.service = serviceFilter.value;
+        _invState.page = 1;
+        _loadInvoiceData();
+    };
+
+    var _searchTimeout = null;
+    if (searchInput) searchInput.oninput = function() {
+        clearTimeout(_searchTimeout);
+        _searchTimeout = setTimeout(function() {
+            _invState.search = searchInput.value.trim();
+            _invState.page = 1;
+            _loadInvoiceData();
+        }, 400);
+    };
+
+    if (exportBtn) exportBtn.onclick = _exportInvoiceCSV;
+    if (refreshBtn) refreshBtn.onclick = _refreshInvoiceData;
+
+    if (prevBtn) prevBtn.onclick = function() {
+        if (_invState.page > 1) {
+            _invState.page--;
+            _loadInvoiceData();
+        }
+    };
+    if (nextBtn) nextBtn.onclick = function() {
+        if (_invState.page < _invState.totalPages) {
+            _invState.page++;
+            _loadInvoiceData();
+        }
+    };
+
+    // Wire sortable column headers
+    document.querySelectorAll('.inv-sortable').forEach(function(th) {
+        th.onclick = function() {
+            var field = th.dataset.sort;
+            if (_invState.sortBy === field) {
+                _invState.sortOrder = _invState.sortOrder === 'desc' ? 'asc' : 'desc';
+            } else {
+                _invState.sortBy = field;
+                _invState.sortOrder = field === 'service' ? 'asc' : 'desc';
+            }
+            _invState.page = 1;
+            _updateSortHeaders();
+            _loadInvoiceData();
+        };
+    });
+})();
+
+function _updateSortHeaders() {
+    document.querySelectorAll('.inv-sortable').forEach(function(th) {
+        th.classList.toggle('inv-sort-active', th.dataset.sort === _invState.sortBy);
+    });
+}
+
+function _clearInvoiceTable() {
+    var tbody = $('inv-tbody');
+    var empty = $('inv-empty');
+    var loading = $('inv-loading');
+    if (tbody) tbody.innerHTML = '';
+    if (empty) empty.hidden = false;
+    if (loading) loading.hidden = true;
+    _updateInvoicePagination(0, 0);
+}
+
+function _clearInvoiceSummary() {
+    var total = $('inv-total-spend');
+    var mom = $('inv-mom-change');
+    var top = $('inv-top-service');
+    if (total) total.textContent = '—';
+    if (mom) { mom.textContent = '—'; mom.className = 'inv-card-value'; }
+    if (top) top.textContent = '—';
+}
+
+function _showInvoiceLoading() {
+    var tbody = $('inv-tbody');
+    var empty = $('inv-empty');
+    var loading = $('inv-loading');
+    if (tbody) tbody.innerHTML = '';
+    if (empty) empty.hidden = true;
+    if (loading) {
+        loading.hidden = false;
+        loading.innerHTML = '<div class="inv-skeleton" style="width:80%;margin-bottom:10px;"></div>'
+            + '<div class="inv-skeleton" style="width:60%;margin-bottom:10px;"></div>'
+            + '<div class="inv-skeleton" style="width:70%;margin-bottom:10px;"></div>'
+            + '<div class="inv-skeleton" style="width:50%;margin-bottom:10px;"></div>'
+            + '<div class="inv-skeleton" style="width:65%;"></div>'
+            + '<p style="color:#6b7280;font-size:0.85em;margin-top:12px;">Loading invoice data...</p>';
+    }
+}
+
+function _showInvoiceSummarySkeleton() {
+    var total = $('inv-total-spend');
+    var mom = $('inv-mom-change');
+    var top = $('inv-top-service');
+    if (total) total.innerHTML = '<div class="inv-skeleton" style="width:70%;margin:0 auto;"></div>';
+    if (mom) mom.innerHTML = '<div class="inv-skeleton" style="width:50%;margin:0 auto;"></div>';
+    if (top) top.innerHTML = '<div class="inv-skeleton" style="width:80%;margin:0 auto;"></div>';
+}
+
+async function _loadInvoiceData() {
+    if (!_invState.accountId) return;
+    _showInvoiceLoading();
+
+    // Clear any previous timeout
+    if (_invLoadTimeout) { clearTimeout(_invLoadTimeout); _invLoadTimeout = null; }
+
+    var params = 'accountId=' + encodeURIComponent(_invState.accountId);
+    params += '&page=' + _invState.page;
+    params += '&pageSize=' + _invState.pageSize;
+    params += '&sortBy=' + _invState.sortBy;
+    params += '&sortOrder=' + _invState.sortOrder;
+    if (_invState.month) params += '&month=' + encodeURIComponent(_invState.month);
+    if (_invState.service) params += '&service=' + encodeURIComponent(_invState.service);
+    if (_invState.search) params += '&search=' + encodeURIComponent(_invState.search);
+
+    // Set 30-second timeout
+    var timedOut = false;
+    _invLoadTimeout = setTimeout(function() {
+        timedOut = true;
+        var loading = $('inv-loading');
+        if (loading) loading.hidden = true;
+        var empty = $('inv-empty');
+        if (empty) {
+            empty.hidden = false;
+            empty.innerHTML = '<p style="color:#ef4444;">⏱️ Request timed out. The data is taking too long to load.</p>'
+                + '<p style="color:#6b7280;font-size:0.85em;">Try selecting a smaller date range or fewer filters.</p>'
+                + '<button class="btn btn-outline btn-sm" onclick="_loadInvoiceData()">Retry</button>';
+        }
+    }, 30000);
+
+    try {
+        var data = await api('GET', '/members/invoices?' + params);
+        if (timedOut) return; // Ignore late response
+        clearTimeout(_invLoadTimeout);
+        _invLoadTimeout = null;
+        _invConsecutiveFailures = 0;
+        _renderInvoiceTable(data);
+    } catch (err) {
+        if (timedOut) return; // Ignore if already timed out
+        clearTimeout(_invLoadTimeout);
+        _invLoadTimeout = null;
+        _invConsecutiveFailures++;
+        var loading = $('inv-loading');
+        if (loading) loading.hidden = true;
+        var empty = $('inv-empty');
+        if (empty) {
+            empty.hidden = false;
+            var failMsg = _invConsecutiveFailures > 1
+                ? '<p style="color:#ef4444;">Failed to load invoices (' + _invConsecutiveFailures + ' consecutive failures): ' + esc(err.message || 'Unknown error') + '</p>'
+                : '<p style="color:#ef4444;">Failed to load invoices: ' + esc(err.message || 'Unknown error') + '</p>';
+            empty.innerHTML = failMsg + '<button class="btn btn-outline btn-sm" onclick="_loadInvoiceData()">Retry</button>';
+        }
+    }
+}
+
+function _renderInvoiceTable(data) {
+    var tbody = $('inv-tbody');
+    var empty = $('inv-empty');
+    var loading = $('inv-loading');
+    if (loading) loading.hidden = true;
+
+    var items = (data && data.items) || [];
+    var pagination = (data && data.pagination) || {};
+
+    _invState.totalPages = pagination.totalPages || 0;
+    _invState.totalItems = pagination.totalItems || 0;
+
+    if (!items.length) {
+        if (tbody) tbody.innerHTML = '';
+        if (empty) {
+            empty.hidden = false;
+            empty.innerHTML = '<p>No invoice data found for the current filters. Try adjusting your filters or selecting a different account.</p>';
+        }
+        _updateInvoicePagination(0, 0);
+        return;
+    }
+
+    if (empty) empty.hidden = true;
+    var html = '';
+    items.forEach(function(item) {
+        html += '<tr class="inv-row" data-service="' + ea(item.service) + '" data-month="' + ea(item.month) + '">';
+        html += '<td>' + esc(item.service || '') + '</td>';
+        html += '<td>$' + (item.cost != null ? Number(item.cost).toFixed(2) : '0.00') + '</td>';
+        html += '<td>' + esc(item.month || '') + '</td>';
+        html += '<td>' + esc(item.region || '—') + '</td>';
+        html += '</tr>';
+        // Expandable daily breakdown row (hidden by default)
+        if (item.dailyCosts) {
+            html += '<tr class="inv-detail-row" style="display:none;"><td colspan="4" style="padding:8px 20px;background:#f9fafb;">';
+            html += '<div style="font-size:0.8em;color:#6b7280;font-weight:600;margin-bottom:4px;">Daily Breakdown</div>';
+            html += '<div style="display:flex;flex-wrap:wrap;gap:6px;">';
+            var days = Object.keys(item.dailyCosts).sort();
+            days.forEach(function(day) {
+                html += '<span style="background:#eef2ff;padding:2px 8px;border-radius:4px;font-size:0.8em;">' + esc(day) + ': $' + Number(item.dailyCosts[day]).toFixed(2) + '</span>';
+            });
+            html += '</div></td></tr>';
+        }
+    });
+    if (tbody) tbody.innerHTML = html;
+
+    // Wire row expansion
+    tbody.querySelectorAll('.inv-row').forEach(function(row) {
+        row.style.cursor = 'pointer';
+        row.onclick = function() {
+            var detail = row.nextElementSibling;
+            if (detail && detail.classList.contains('inv-detail-row')) {
+                detail.style.display = detail.style.display === 'none' ? '' : 'none';
+            }
+        };
+    });
+
+    _updateInvoicePagination(pagination.page || 1, pagination.totalPages || 1);
+}
+
+function _updateInvoicePagination(page, totalPages) {
+    var info = $('inv-page-info');
+    var prev = $('inv-prev-btn');
+    var next = $('inv-next-btn');
+    if (info) info.textContent = 'Page ' + (page || 1) + ' of ' + (totalPages || 1) + ' (' + (_invState.totalItems || 0) + ' items)';
+    if (prev) prev.disabled = !page || page <= 1;
+    if (next) next.disabled = !page || page >= totalPages;
+}
+
+async function _loadInvoiceSummary() {
+    if (!_invState.accountId) return;
+    _showInvoiceSummarySkeleton();
+    var params = 'accountId=' + encodeURIComponent(_invState.accountId);
+    if (_invState.month) {
+        params += '&startMonth=' + encodeURIComponent(_invState.month);
+        params += '&endMonth=' + encodeURIComponent(_invState.month);
+    }
+    try {
+        var data = await api('GET', '/members/invoices/summary?' + params);
+        _renderInvoiceSummary(data);
+    } catch (err) {
+        // Show dashes on summary failure — table is more important
+        _clearInvoiceSummary();
+        console.warn('Invoice summary failed:', err.message);
+    }
+}
+
+function _renderInvoiceSummary(data) {
+    var total = $('inv-total-spend');
+    var mom = $('inv-mom-change');
+    var top = $('inv-top-service');
+
+    if (total) {
+        var cost = data.totalCost != null ? data.totalCost : 0;
+        total.textContent = '$' + cost.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2});
+    }
+    if (mom) {
+        var change = data.monthOverMonthChange != null ? data.monthOverMonthChange : 0;
+        var arrow = change > 0 ? '↑' : change < 0 ? '↓' : '→';
+        mom.textContent = arrow + ' ' + Math.abs(change).toFixed(1) + '%';
+        mom.className = 'inv-card-value' + (change > 0 ? ' inv-positive' : change < 0 ? ' inv-negative' : '');
+    }
+    if (top) {
+        if (data.topService && data.topService.name) {
+            top.textContent = data.topService.name + ' ($' + Number(data.topService.cost || 0).toFixed(2) + ')';
+        } else {
+            top.textContent = '—';
+        }
+    }
+}
+
+async function _loadInvoiceServices() {
+    if (!_invState.accountId) return;
+    var sel = $('inv-service-filter');
+    if (!sel) return;
+    try {
+        var data = await api('GET', '/members/invoices/services?accountId=' + encodeURIComponent(_invState.accountId));
+        var services = (data && data.services) || [];
+        sel.innerHTML = '<option value="">All Services</option>';
+        services.forEach(function(s) {
+            var opt = document.createElement('option');
+            opt.value = s;
+            opt.textContent = s;
+            sel.appendChild(opt);
+        });
+    } catch (err) {
+        console.warn('Failed to load invoice services:', err.message);
+    }
+}
+
+async function _refreshInvoiceData() {
+    if (!_invState.accountId) {
+        notify('Select an account first.', 'warning');
+        return;
+    }
+    var refreshBtn = $('inv-refresh-btn');
+    if (refreshBtn) { refreshBtn.disabled = true; refreshBtn.textContent = '⏳ Refreshing...'; }
+
+    // Refresh current month and previous month
+    var now = new Date();
+    var currentMonth = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
+    var prevDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    var prevMonth = prevDate.getFullYear() + '-' + String(prevDate.getMonth() + 1).padStart(2, '0');
+
+    try {
+        await api('POST', '/members/invoices/refresh', {
+            accountId: _invState.accountId,
+            months: [currentMonth, prevMonth]
+        });
+        notify('Invoice data refreshed.', 'success');
+        _loadInvoiceSummary();
+        _loadInvoiceData();
+        _loadInvoiceServices();
+        if (refreshBtn) { refreshBtn.disabled = false; refreshBtn.textContent = '🔄 Refresh'; }
+    } catch (err) {
+        if (err.status === 429) {
+            // Rate limited — start countdown on refresh button
+            notify('Please wait before refreshing again. ' + (err.message || ''), 'warning');
+            _startRefreshCooldown(refreshBtn, err.message);
+        } else {
+            notify('Refresh failed: ' + (err.message || 'Unknown error'), 'error');
+            if (refreshBtn) { refreshBtn.disabled = false; refreshBtn.textContent = '🔄 Refresh'; }
+        }
+    }
+}
+
+function _startRefreshCooldown(btn, message) {
+    // Parse seconds from message like "Refresh available in X minutes" or use default 300s
+    var seconds = 300;
+    var match = message && message.match(/(\d+)\s*second/i);
+    if (match) seconds = parseInt(match[1]);
+    var minMatch = message && message.match(/(\d+)\s*minute/i);
+    if (minMatch) seconds = parseInt(minMatch[1]) * 60;
+
+    if (_invRefreshCooldown) clearInterval(_invRefreshCooldown);
+    if (!btn) return;
+
+    btn.disabled = true;
+    var remaining = seconds;
+    btn.textContent = '🔄 ' + Math.ceil(remaining / 60) + 'm';
+
+    _invRefreshCooldown = setInterval(function() {
+        remaining--;
+        if (remaining <= 0) {
+            clearInterval(_invRefreshCooldown);
+            _invRefreshCooldown = null;
+            btn.disabled = false;
+            btn.textContent = '🔄 Refresh';
+        } else if (remaining > 60) {
+            btn.textContent = '🔄 ' + Math.ceil(remaining / 60) + 'm';
+        } else {
+            btn.textContent = '🔄 ' + remaining + 's';
+        }
+    }, 1000);
+}
+
+function _exportInvoiceCSV() {
+    if (!_invState.accountId) {
+        notify('Select an account first.', 'warning');
+        return;
+    }
+    // Fetch all items for current filters (up to 200 per page, iterate)
+    var params = 'accountId=' + encodeURIComponent(_invState.accountId);
+    params += '&pageSize=200&page=1';
+    params += '&sortBy=' + _invState.sortBy;
+    params += '&sortOrder=' + _invState.sortOrder;
+    if (_invState.month) params += '&month=' + encodeURIComponent(_invState.month);
+    if (_invState.service) params += '&service=' + encodeURIComponent(_invState.service);
+    if (_invState.search) params += '&search=' + encodeURIComponent(_invState.search);
+
+    api('GET', '/members/invoices?' + params).then(function(data) {
+        var items = (data && data.items) || [];
+        if (!items.length) {
+            notify('No data to export.', 'warning');
+            return;
+        }
+        var csv = 'Service,Cost,Month,Region\n';
+        items.forEach(function(item) {
+            csv += '"' + (item.service || '').replace(/"/g, '""') + '",';
+            csv += (item.cost != null ? item.cost : 0) + ',';
+            csv += '"' + (item.month || '') + '",';
+            csv += '"' + (item.region || '').replace(/"/g, '""') + '"\n';
+        });
+        var blob = new Blob([csv], {type: 'text/csv'});
+        var url = URL.createObjectURL(blob);
+        var a = document.createElement('a');
+        a.href = url;
+        a.download = 'invoices-' + _invState.accountId + '-' + (new Date().toISOString().slice(0, 10)) + '.csv';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    }).catch(function(err) {
+        notify('Export failed: ' + (err.message || 'Unknown error'), 'error');
+    });
 }

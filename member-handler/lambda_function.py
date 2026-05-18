@@ -163,6 +163,10 @@ def lambda_handler(event, context):
         'GET /members/tag-values': handle_get_tag_values,
         'POST /members/committed-discounts/scan': handle_committed_discount_scan,
         'POST /members/committed-discounts/ladder': handle_committed_discount_ladder,
+        'GET /members/invoices': handle_get_invoices,
+        'POST /members/invoices/refresh': handle_refresh_invoices,
+        'GET /members/invoices/summary': handle_get_invoices_summary,
+        'GET /members/invoices/services': handle_get_invoices_services,
     }
 
     handler = routes.get(route_key)
@@ -16523,3 +16527,631 @@ def handle_ebs_optimize(event):
 
     total_recs = sum(len(v.get('recommendations', [])) for v in volumes)
     return create_success_response({'success': True, 'volumes': volumes, 'summary': summary, 'totalRecommendations': total_recs})
+
+
+# ============================================================
+# Invoice Explorer Handlers
+# ============================================================
+
+INVOICES_TABLE_NAME = os.environ.get('INVOICES_TABLE_NAME', 'MemberPortal-Invoices')
+
+
+def handle_get_invoices(event):
+    """GET /members/invoices — List invoices with filters and pagination."""
+    from invoice_validation import validate_invoice_query_params
+
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+
+    member_email = auth['sub']
+
+    # Validate all query parameters
+    qs = event.get('queryStringParameters') or {}
+    validated, error = validate_invoice_query_params(qs)
+    if error:
+        return error
+
+    account_id = validated['accountId']
+
+    # Verify account ownership
+    ownership = _verify_account_ownership(member_email, [account_id])
+    if ownership is not True:
+        logger.warning(f"Unauthorized invoice access attempt: member={member_email} accountId={account_id}")
+        return ownership
+
+    # --- Query DynamoDB for cached invoice records ---
+    invoices_table = dynamodb.Table(INVOICES_TABLE_NAME)
+    pk_value = f'{member_email}#{account_id}'
+
+    try:
+        query_kwargs = {
+            'KeyConditionExpression': boto3.dynamodb.conditions.Key('pk').eq(pk_value),
+        }
+
+        # If month filter is specified, use sk begins_with to narrow the query
+        if validated['month']:
+            query_kwargs['KeyConditionExpression'] = (
+                boto3.dynamodb.conditions.Key('pk').eq(pk_value)
+                & boto3.dynamodb.conditions.Key('sk').begins_with(validated['month'] + '#')
+            )
+
+        # Paginate through all DynamoDB results (handle >1MB responses)
+        all_items = []
+        while True:
+            response = invoices_table.query(**query_kwargs)
+            all_items.extend(response.get('Items', []))
+            last_key = response.get('LastEvaluatedKey')
+            if not last_key:
+                break
+            query_kwargs['ExclusiveStartKey'] = last_key
+
+    except ClientError as e:
+        logger.error(f"DynamoDB query error for invoices: {e}")
+        return create_error_response(500, 'ServerError', 'Failed to retrieve invoice data')
+
+    # --- Apply server-side filters ---
+    filtered_items = _apply_invoice_filters(all_items, validated)
+
+    # --- Sorting ---
+    sorted_items = _sort_invoice_items(
+        filtered_items, validated['sortBy'], validated['sortOrder']
+    )
+
+    # --- Compute totals before pagination ---
+    total_items = len(sorted_items)
+    total_cost = sum(float(item.get('cost', 0)) for item in sorted_items)
+    total_cost = round(total_cost, 2)
+    distinct_services = set(item.get('service', '') for item in sorted_items)
+
+    # --- Pagination ---
+    page_items, pagination_meta = _paginate_items(
+        sorted_items, validated['page'], validated['pageSize']
+    )
+
+    # Format items for response
+    response_items = []
+    for item in page_items:
+        usage_types = item.get('usageTypes', [])
+        # Convert Decimal values in usageTypes
+        formatted_usage = []
+        for ut in usage_types:
+            formatted_usage.append({
+                'type': ut.get('type', ''),
+                'cost': float(ut.get('cost', 0)),
+                'unit': ut.get('unit', ''),
+                'quantity': float(ut.get('quantity', 0)),
+            })
+
+        daily_costs = item.get('dailyCosts', {})
+        formatted_daily = {k: float(v) for k, v in daily_costs.items()}
+
+        response_items.append({
+            'service': item.get('service', ''),
+            'cost': round(float(item.get('cost', 0)), 2),
+            'month': item.get('month', ''),
+            'usageTypes': formatted_usage,
+            'dailyCosts': formatted_daily,
+            'region': item.get('region', 'global'),
+        })
+
+    # Build filters echo
+    filters_echo = {'accountId': account_id}
+    if validated['month']:
+        filters_echo['month'] = validated['month']
+    if validated['service']:
+        filters_echo['service'] = validated['service']
+    if validated['search']:
+        filters_echo['search'] = validated['search']
+
+    return create_response(200, {
+        'items': response_items,
+        'pagination': pagination_meta,
+        'totals': {
+            'totalCost': total_cost,
+            'serviceCount': len(distinct_services),
+        },
+        'filters': filters_echo,
+    })
+
+
+def _sort_invoice_items(items, sort_by, sort_order):
+    """Sort invoice items by the specified field and order.
+
+    Args:
+        items: List of invoice item dicts (from DynamoDB).
+        sort_by: One of 'cost', 'service', 'date'. Defaults to 'cost'.
+        sort_order: 'asc' or 'desc'. Defaults to 'desc'.
+
+    Returns:
+        A new list of items sorted according to the criteria.
+        Secondary sort by cost descending is applied for equal primary values.
+    """
+    if not items:
+        return []
+
+    # Default to cost descending if sort_by is not specified
+    if not sort_by:
+        sort_by = 'cost'
+    if not sort_order:
+        sort_order = 'desc'
+
+    reverse_primary = (sort_order == 'desc')
+
+    if sort_by == 'cost':
+        # Numeric sort by cost; secondary sort by cost desc is same as primary
+        return sorted(
+            items,
+            key=lambda x: float(x.get('cost', 0)),
+            reverse=reverse_primary,
+        )
+    elif sort_by == 'service':
+        # Case-insensitive alphabetical sort by service name
+        # Secondary sort: cost descending for equal service names
+        if sort_order == 'asc':
+            # Primary asc: (service ASC, cost DESC)
+            # Use -cost so that within same service, highest cost comes first
+            def service_key(x):
+                svc = (x.get('service') or '').lower()
+                cost = float(x.get('cost', 0))
+                return (svc, -cost)
+            return sorted(items, key=service_key)
+        else:
+            # Primary desc: (service DESC, cost DESC)
+            # Use +cost with reverse=True: service reversed=desc, cost reversed=desc
+            def service_key(x):
+                svc = (x.get('service') or '').lower()
+                cost = float(x.get('cost', 0))
+                return (svc, cost)
+            return sorted(items, key=service_key, reverse=True)
+    elif sort_by == 'date':
+        # Chronological sort by month field (YYYY-MM string comparison works)
+        # Secondary sort: cost descending for equal months
+        if sort_order == 'asc':
+            # Primary asc: (month ASC, cost DESC)
+            def date_key(x):
+                month = x.get('month') or ''
+                cost = float(x.get('cost', 0))
+                return (month, -cost)
+            return sorted(items, key=date_key)
+        else:
+            # Primary desc: (month DESC, cost DESC)
+            # Use +cost with reverse=True: month reversed=desc, cost reversed=desc
+            def date_key(x):
+                month = x.get('month') or ''
+                cost = float(x.get('cost', 0))
+                return (month, cost)
+            return sorted(items, key=date_key, reverse=True)
+    else:
+        # Fallback: cost descending
+        return sorted(
+            items,
+            key=lambda x: float(x.get('cost', 0)),
+            reverse=True,
+        )
+
+
+def _paginate_items(items, page, page_size):
+    """Paginate a list of items and return the page slice with metadata.
+
+    Args:
+        items: Full sorted list of items.
+        page: 1-based page number.
+        page_size: Number of items per page (already validated to 1-200).
+
+    Returns:
+        Tuple of (page_items, pagination_metadata).
+        page_items: List of items for the requested page (empty if out of range).
+        pagination_metadata: Dict with page, pageSize, totalItems, totalPages.
+    """
+    total_items = len(items)
+    total_pages = math.ceil(total_items / page_size) if total_items > 0 else 0
+
+    # If page exceeds totalPages, return empty items with correct metadata
+    if page > total_pages or total_items == 0:
+        return [], {
+            'page': page,
+            'pageSize': page_size,
+            'totalItems': total_items,
+            'totalPages': total_pages,
+        }
+
+    start_idx = (page - 1) * page_size
+    end_idx = start_idx + page_size
+    page_items = items[start_idx:end_idx]
+
+    return page_items, {
+        'page': page,
+        'pageSize': page_size,
+        'totalItems': total_items,
+        'totalPages': total_pages,
+    }
+
+
+def _apply_invoice_filters(items, validated):
+    """Apply server-side filters to invoice items.
+
+    Filters:
+    - service: case-insensitive exact match
+    - month: exact match on month field
+    - minCost/maxCost: inclusive range on cost (float, 2 decimal precision)
+    - search: case-insensitive substring on service name OR any usage type's type field
+              (ignored if fewer than 1 character)
+
+    All filters are combined with AND logic.
+    """
+    service_filter = validated.get('service')
+    month_filter = validated.get('month')
+    min_cost = validated.get('minCost')
+    max_cost = validated.get('maxCost')
+    search_filter = validated.get('search')
+
+    # Parse cost filters to float
+    min_cost_val = None
+    if min_cost is not None:
+        try:
+            min_cost_val = round(float(min_cost), 2)
+        except (ValueError, TypeError):
+            min_cost_val = None
+
+    max_cost_val = None
+    if max_cost is not None:
+        try:
+            max_cost_val = round(float(max_cost), 2)
+        except (ValueError, TypeError):
+            max_cost_val = None
+
+    # Ignore search queries shorter than 1 character
+    if search_filter and len(search_filter) < 1:
+        search_filter = None
+
+    filtered = []
+    for item in items:
+        # Service filter: case-insensitive exact match
+        if service_filter:
+            item_service = (item.get('service') or '').lower()
+            if item_service != service_filter.lower():
+                continue
+
+        # Month filter: exact match
+        if month_filter:
+            if item.get('month') != month_filter:
+                continue
+
+        # Cost range filter: inclusive, compared with 2 decimal precision
+        item_cost = round(float(item.get('cost', 0)), 2)
+        if min_cost_val is not None:
+            if item_cost < min_cost_val:
+                continue
+        if max_cost_val is not None:
+            if item_cost > max_cost_val:
+                continue
+
+        # Search filter: case-insensitive substring on service name OR usage type's type field
+        if search_filter:
+            search_lower = search_filter.lower()
+            found = False
+
+            # Check service name
+            if search_lower in (item.get('service') or '').lower():
+                found = True
+
+            # Check usage types' type field
+            if not found:
+                usage_types = item.get('usageTypes', [])
+                for ut in usage_types:
+                    if search_lower in (ut.get('type') or '').lower():
+                        found = True
+                        break
+
+            if not found:
+                continue
+
+        filtered.append(item)
+
+    return filtered
+
+
+def handle_refresh_invoices(event):
+    """POST /members/invoices/refresh — Force re-sync invoice data from AWS."""
+    from invoice_sync import sync_invoice_data, InvoiceSyncError
+
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+
+    member_email = auth['sub']
+
+    try:
+        body = json.loads(event.get('body', '{}'))
+    except (json.JSONDecodeError, TypeError):
+        return create_error_response(400, 'InvalidRequest', 'Invalid request body')
+
+    account_id = (body.get('accountId') or '').strip()
+
+    # Validate accountId is provided
+    if not account_id:
+        return create_error_response(400, 'MissingParam', 'accountId is required')
+
+    # Validate accountId format (12 digits)
+    if not re.fullmatch(r'\d{12}', account_id):
+        return create_error_response(400, 'InvalidAccountId', 'Account ID must be a 12-digit number')
+
+    # Verify account ownership
+    ownership = _verify_account_ownership(member_email, [account_id])
+    if ownership is not True:
+        logger.warning(f"Unauthorized invoice refresh attempt: member={member_email} accountId={account_id}")
+        return ownership
+
+    # Validate months array
+    months = body.get('months', [])
+    if not isinstance(months, list):
+        return create_error_response(400, 'InvalidRequest', 'months must be an array')
+    if len(months) > 6:
+        return create_error_response(400, 'InvalidRequest', 'Maximum 6 months per refresh request')
+    if len(months) == 0:
+        return create_error_response(400, 'InvalidRequest', 'At least one month is required')
+
+    # Validate each month format
+    from invoice_validation import validate_month
+    for m in months:
+        error = validate_month(m)
+        if error:
+            return error
+
+    # --- Rate limiting: 1 refresh per account per 5-minute window ---
+    invoices_table = dynamodb.Table(INVOICES_TABLE_NAME)
+    refresh_pk = f'REFRESH#{account_id}'
+    refresh_sk = 'RATE_LIMIT'
+    now_epoch = int(time.time())
+    cooldown_seconds = 300  # 5 minutes
+
+    try:
+        rate_resp = invoices_table.get_item(
+            Key={'pk': refresh_pk, 'sk': refresh_sk}
+        )
+        rate_item = rate_resp.get('Item')
+        if rate_item:
+            last_refresh = int(rate_item.get('lastRefreshAt', 0))
+            elapsed = now_epoch - last_refresh
+            if elapsed < cooldown_seconds:
+                remaining = cooldown_seconds - elapsed
+                return create_error_response(
+                    429, 'RateLimited',
+                    f'Refresh available in {remaining} seconds',
+                    extra={'cooldownRemaining': remaining}
+                )
+    except ClientError as e:
+        logger.warning(f"Rate limit check error: {e}")
+        # Proceed if we can't check rate limit
+
+    # --- Delete old records for the specified months ---
+    pk_value = f'{member_email}#{account_id}'
+    try:
+        for month in months:
+            # Query all records for this month
+            query_kwargs = {
+                'KeyConditionExpression': (
+                    boto3.dynamodb.conditions.Key('pk').eq(pk_value)
+                    & boto3.dynamodb.conditions.Key('sk').begins_with(month + '#')
+                ),
+                'ProjectionExpression': 'pk, sk',
+            }
+            items_to_delete = []
+            while True:
+                resp = invoices_table.query(**query_kwargs)
+                items_to_delete.extend(resp.get('Items', []))
+                last_key = resp.get('LastEvaluatedKey')
+                if not last_key:
+                    break
+                query_kwargs['ExclusiveStartKey'] = last_key
+
+            # Batch delete old records
+            with invoices_table.batch_writer() as batch:
+                for item in items_to_delete:
+                    batch.delete_item(Key={'pk': item['pk'], 'sk': item['sk']})
+    except ClientError as e:
+        logger.error(f"Failed to delete old invoice records: {e}")
+        return create_error_response(500, 'ServerError', 'Failed to prepare refresh')
+
+    # --- Call sync_invoice_data to fetch fresh data ---
+    try:
+        result = sync_invoice_data(member_email, account_id, months)
+    except InvoiceSyncError as e:
+        # Preserve existing cache on failure (already deleted — but sync failed)
+        logger.error(f"Invoice sync failed during refresh: {e.message}")
+        return create_error_response(e.status_code, e.error_type, e.message)
+    except Exception as e:
+        logger.error(f"Unexpected error during invoice refresh: {e}")
+        return create_error_response(500, 'ServerError', 'Invoice refresh failed')
+
+    # --- Update rate limit record ---
+    try:
+        invoices_table.put_item(Item={
+            'pk': refresh_pk,
+            'sk': refresh_sk,
+            'lastRefreshAt': now_epoch,
+            'accountId': account_id,
+            'memberEmail': member_email,
+            'ttl': now_epoch + cooldown_seconds + 60,  # Auto-cleanup after cooldown + buffer
+        })
+    except ClientError as e:
+        logger.warning(f"Failed to update rate limit record: {e}")
+
+    return create_response(200, {
+        'refreshed': True,
+        'months': result.get('synced_months', []),
+        'recordCount': result.get('record_count', 0),
+    })
+
+
+def handle_get_invoices_summary(event):
+    """GET /members/invoices/summary — Get spending summary (totals, trends)."""
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+
+    member_email = auth['sub']
+
+    qs = event.get('queryStringParameters') or {}
+    account_id = (qs.get('accountId') or '').strip()
+
+    # Validate accountId is provided
+    if not account_id:
+        return create_error_response(400, 'MissingParam', 'accountId query parameter is required')
+
+    # Validate accountId format (12 digits)
+    if not re.fullmatch(r'\d{12}', account_id):
+        return create_error_response(400, 'InvalidAccountId', 'Account ID must be a 12-digit number')
+
+    # Verify account ownership
+    ownership = _verify_account_ownership(member_email, [account_id])
+    if ownership is not True:
+        logger.warning(f"Unauthorized invoice summary access attempt: member={member_email} accountId={account_id}")
+        return ownership
+
+    # --- Query all invoice records for this account ---
+    invoices_table = dynamodb.Table(INVOICES_TABLE_NAME)
+    pk_value = f'{member_email}#{account_id}'
+
+    try:
+        query_kwargs = {
+            'KeyConditionExpression': boto3.dynamodb.conditions.Key('pk').eq(pk_value),
+        }
+        all_items = []
+        while True:
+            response = invoices_table.query(**query_kwargs)
+            all_items.extend(response.get('Items', []))
+            last_key = response.get('LastEvaluatedKey')
+            if not last_key:
+                break
+            query_kwargs['ExclusiveStartKey'] = last_key
+    except ClientError as e:
+        logger.error(f"DynamoDB query error for invoice summary: {e}")
+        return create_error_response(500, 'ServerError', 'Failed to retrieve invoice summary')
+
+    # Filter out rate limit records (pk starts with REFRESH#)
+    all_items = [item for item in all_items if not item.get('sk', '').startswith('RATE_LIMIT')]
+
+    # --- Determine current and previous month ---
+    now = datetime.now(timezone.utc)
+    current_month = now.strftime('%Y-%m')
+    # Calculate previous month
+    if now.month == 1:
+        prev_month = f'{now.year - 1}-12'
+    else:
+        prev_month = f'{now.year}-{now.month - 1:02d}'
+
+    # --- Calculate totals by month ---
+    current_month_items = [item for item in all_items if item.get('month') == current_month]
+    prev_month_items = [item for item in all_items if item.get('month') == prev_month]
+
+    current_total = sum(float(item.get('cost', 0)) for item in current_month_items)
+    current_total = round(current_total, 2)
+
+    prev_total = sum(float(item.get('cost', 0)) for item in prev_month_items)
+    prev_total = round(prev_total, 2)
+
+    # --- Month-over-month change ---
+    if prev_total > 0:
+        mom_change = round(((current_total - prev_total) / prev_total) * 100, 1)
+    else:
+        mom_change = 0
+
+    # --- Top 5 services by spend (current month) ---
+    service_costs = {}
+    for item in current_month_items:
+        svc = item.get('service', 'Unknown')
+        cost = float(item.get('cost', 0))
+        service_costs[svc] = service_costs.get(svc, 0) + cost
+
+    # Sort by cost descending and take top 5
+    sorted_services = sorted(service_costs.items(), key=lambda x: x[1], reverse=True)[:5]
+
+    top_services = []
+    for svc_name, svc_cost in sorted_services:
+        percentage = round((svc_cost / current_total) * 100, 1) if current_total > 0 else 0
+        top_services.append({
+            'name': svc_name,
+            'cost': round(svc_cost, 2),
+            'percentage': percentage,
+        })
+
+    # --- Available months and last synced ---
+    available_months = sorted(set(item.get('month', '') for item in all_items if item.get('month')))
+    last_synced = None
+    for item in all_items:
+        item_synced = item.get('lastSyncedAt')
+        if item_synced and (last_synced is None or item_synced > last_synced):
+            last_synced = item_synced
+
+    # --- Top service (single) for backward compat ---
+    top_service = None
+    if top_services:
+        top_service = top_services[0]
+
+    return create_response(200, {
+        'totalCost': current_total,
+        'currency': 'USD',
+        'monthOverMonthChange': mom_change,
+        'topService': top_service,
+        'topServices': top_services,
+        'serviceCount': len(service_costs),
+        'months': available_months,
+        'lastSyncedAt': last_synced,
+    })
+
+
+def handle_get_invoices_services(event):
+    """GET /members/invoices/services — Get distinct services for filter dropdown."""
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+
+    member_email = auth['sub']
+
+    qs = event.get('queryStringParameters') or {}
+    account_id = (qs.get('accountId') or '').strip()
+
+    # Validate accountId is provided
+    if not account_id:
+        return create_error_response(400, 'MissingParam', 'accountId query parameter is required')
+
+    # Validate accountId format (12 digits)
+    if not re.fullmatch(r'\d{12}', account_id):
+        return create_error_response(400, 'InvalidAccountId', 'Account ID must be a 12-digit number')
+
+    # Verify account ownership
+    ownership = _verify_account_ownership(member_email, [account_id])
+    if ownership is not True:
+        logger.warning(f"Unauthorized invoice services access attempt: member={member_email} accountId={account_id}")
+        return ownership
+
+    # --- Query all invoice records for this account ---
+    invoices_table = dynamodb.Table(INVOICES_TABLE_NAME)
+    pk_value = f'{member_email}#{account_id}'
+
+    try:
+        query_kwargs = {
+            'KeyConditionExpression': boto3.dynamodb.conditions.Key('pk').eq(pk_value),
+            'ProjectionExpression': 'service',
+        }
+        all_services = set()
+        while True:
+            response = invoices_table.query(**query_kwargs)
+            for item in response.get('Items', []):
+                svc = item.get('service')
+                if svc:
+                    all_services.add(svc)
+            last_key = response.get('LastEvaluatedKey')
+            if not last_key:
+                break
+            query_kwargs['ExclusiveStartKey'] = last_key
+    except ClientError as e:
+        logger.error(f"DynamoDB query error for invoice services: {e}")
+        return create_error_response(500, 'ServerError', 'Failed to retrieve services list')
+
+    # Return sorted list in ascending alphabetical order
+    sorted_services = sorted(all_services)
+
+    return create_response(200, {'services': sorted_services})
