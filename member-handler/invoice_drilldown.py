@@ -1746,6 +1746,112 @@ def _get_next_month_first_day(year, month):
     return f'{year}-{month + 1:02d}-01'
 
 
+def _parse_usage_type(usage_type, service):
+    """Parse an AWS usage type string into a human-readable name and type.
+
+    Examples:
+        "USW2-BoxUsage:t3.medium" → ("t3.medium instance", "EC2 Instance")
+        "USW2-EBS:VolumeUsage.gp3" → ("gp3 volume", "EBS Volume")
+        "USW2-DataTransfer-Out-Bytes" → ("Data Transfer Out", "Data Transfer")
+        "USW2-NatGateway-Hours" → ("NAT Gateway", "Networking")
+        "Requests-Tier1" → ("Standard Requests", "API Requests")
+
+    Args:
+        usage_type: Raw usage type string from Cost Explorer.
+        service: AWS service name for context.
+
+    Returns:
+        tuple: (friendly_name, friendly_type)
+    """
+    ut = usage_type
+
+    # Strip region prefix (e.g., "USW2-", "USE1-", "EUW1-")
+    if '-' in ut and len(ut.split('-')[0]) <= 5 and ut.split('-')[0].isupper():
+        ut = ut.split('-', 1)[1]
+
+    # EC2 instance types
+    if 'BoxUsage:' in ut:
+        instance_type = ut.split('BoxUsage:')[-1]
+        return (f'{instance_type} instance', 'EC2 Instance')
+    if 'SpotUsage:' in ut:
+        instance_type = ut.split('SpotUsage:')[-1]
+        return (f'{instance_type} spot instance', 'EC2 Spot')
+
+    # EBS volumes
+    if 'EBS:VolumeUsage' in ut:
+        vol_type = ut.split('.')[-1] if '.' in ut else 'gp2'
+        return (f'{vol_type} volume storage', 'EBS Volume')
+    if 'EBS:SnapshotUsage' in ut:
+        return ('EBS Snapshots', 'EBS Snapshot')
+
+    # Data transfer
+    if 'DataTransfer' in ut:
+        if 'Out' in ut:
+            return ('Data Transfer Out', 'Data Transfer')
+        elif 'In' in ut:
+            return ('Data Transfer In', 'Data Transfer')
+        return ('Data Transfer', 'Data Transfer')
+
+    # NAT Gateway
+    if 'NatGateway' in ut:
+        if 'Hours' in ut:
+            return ('NAT Gateway hours', 'Networking')
+        if 'Bytes' in ut:
+            return ('NAT Gateway data processed', 'Networking')
+        return ('NAT Gateway', 'Networking')
+
+    # Load Balancer
+    if 'LoadBalancer' in ut or 'LCU' in ut:
+        return ('Load Balancer', 'Networking')
+
+    # RDS
+    if 'RDS:' in ut or 'Aurora:' in ut:
+        if 'InstanceUsage:' in ut:
+            db_type = ut.split('InstanceUsage:')[-1]
+            return (f'{db_type} database', 'RDS Instance')
+        if 'StorageUsage' in ut:
+            return ('RDS Storage', 'RDS Storage')
+        if 'BackupUsage' in ut:
+            return ('RDS Backups', 'RDS Backup')
+
+    # S3
+    if 'TimedStorage' in ut:
+        return ('S3 Storage', 'S3 Storage')
+    if 'Requests-Tier1' in ut or 'Requests-Tier2' in ut:
+        tier = '1' if 'Tier1' in ut else '2'
+        return (f'S3 Tier {tier} Requests', 'S3 Requests')
+
+    # Lambda
+    if 'Lambda-GB-Second' in ut:
+        return ('Lambda compute (GB-seconds)', 'Lambda')
+    if 'Lambda-Provisioned' in ut:
+        return ('Lambda provisioned', 'Lambda')
+    if 'Request' in ut and 'lambda' in service.lower():
+        return ('Lambda invocations', 'Lambda')
+
+    # CloudWatch
+    if 'CW:' in ut or 'CloudWatch' in ut:
+        return ('CloudWatch metrics/logs', 'Monitoring')
+
+    # ElastiCache
+    if 'NodeUsage:' in ut:
+        node_type = ut.split('NodeUsage:')[-1]
+        return (f'{node_type} cache node', 'ElastiCache')
+
+    # DynamoDB
+    if 'WriteCapacityUnit' in ut:
+        return ('DynamoDB Write Capacity', 'DynamoDB')
+    if 'ReadCapacityUnit' in ut:
+        return ('DynamoDB Read Capacity', 'DynamoDB')
+    if 'PayPerRequest' in ut:
+        return ('DynamoDB On-Demand', 'DynamoDB')
+
+    # Generic fallback: clean up the string
+    # Remove common prefixes and make readable
+    clean = ut.replace('-', ' ').replace('_', ' ').replace(':', ' - ')
+    return (clean, 'Usage Type')
+
+
 def _fetch_usage_type_breakdown(ce_client, creds, service, start_date, end_date, period):
     """Fallback: fetch usage-type-level breakdown when resource-level data is unavailable.
 
@@ -1806,10 +1912,13 @@ def _fetch_usage_type_breakdown(ce_client, creds, service, start_date, end_date,
 
             cost_explanation = generate_cost_explanation(usage_types_list)
 
+            # Parse usage type into a friendly name and type
+            friendly_name, friendly_type = _parse_usage_type(usage_type, service)
+
             records.append({
                 'resourceId': usage_type,
-                'resourceName': usage_type,
-                'resourceType': 'Usage Type',
+                'resourceName': friendly_name,
+                'resourceType': friendly_type,
                 'amount': round(cost, 2),
                 'costExplanation': cost_explanation,
                 'aiExplanation': None,
