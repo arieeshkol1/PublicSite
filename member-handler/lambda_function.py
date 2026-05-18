@@ -16539,7 +16539,11 @@ INVOICES_TABLE_NAME = os.environ.get('INVOICES_TABLE_NAME', 'MemberPortal-Invoic
 
 def handle_get_invoices(event):
     """GET /members/invoices — List invoices with filters and pagination."""
-    from invoice_validation import validate_invoice_query_params
+    try:
+        from invoice_validation import validate_invoice_query_params
+    except Exception as import_err:
+        logger.error(f"Import error in handle_get_invoices: {import_err}")
+        return create_error_response(500, 'ImportError', f'Module import failed: {str(import_err)}')
 
     auth = validate_token(event)
     if isinstance(auth, dict) and 'statusCode' in auth:
@@ -16588,8 +16592,13 @@ def handle_get_invoices(event):
             query_kwargs['ExclusiveStartKey'] = last_key
 
     except ClientError as e:
-        logger.error(f"DynamoDB query error for invoices: {e}")
-        return create_error_response(500, 'ServerError', 'Failed to retrieve invoice data')
+        error_code = e.response['Error']['Code']
+        error_msg = e.response['Error'].get('Message', str(e))
+        logger.error(f"DynamoDB query error for invoices: {error_code} - {error_msg}")
+        return create_error_response(500, 'ServerError', f'Failed to retrieve invoice data: {error_code} - {error_msg}')
+    except Exception as e:
+        logger.error(f"Unexpected error in handle_get_invoices: {type(e).__name__}: {e}")
+        return create_error_response(500, 'ServerError', f'Unexpected error: {type(e).__name__}: {str(e)}')
 
     # --- Apply server-side filters ---
     filtered_items = _apply_invoice_filters(all_items, validated)
@@ -17149,8 +17158,13 @@ def handle_get_invoices_services(event):
                 break
             query_kwargs['ExclusiveStartKey'] = last_key
     except ClientError as e:
-        logger.error(f"DynamoDB query error for invoice services: {e}")
-        return create_error_response(500, 'ServerError', 'Failed to retrieve services list')
+        error_code = e.response['Error']['Code']
+        error_msg = e.response['Error'].get('Message', str(e))
+        logger.error(f"DynamoDB query error for invoice services: {error_code} - {error_msg}")
+        return create_error_response(500, 'ServerError', f'Failed to retrieve services list: {error_code} - {error_msg}')
+    except Exception as e:
+        logger.error(f"Unexpected error in handle_get_invoices_services: {type(e).__name__}: {e}")
+        return create_error_response(500, 'ServerError', f'Unexpected error: {type(e).__name__}: {str(e)}')
 
     # Return sorted list in ascending alphabetical order
     sorted_services = sorted(all_services)
