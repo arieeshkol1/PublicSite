@@ -10660,7 +10660,7 @@ function _ddRenderInvoices(data) {
 
     var items = (data && data.items) || [];
     var pagination = (data && data.pagination) || {};
-    _ddState.totalPages = pagination.totalPages || 1;
+    _ddState.totalPages = (pagination.totalPages != null) ? pagination.totalPages : 1;
     _ddState.totalItems = pagination.totalItems || items.length;
 
     var tbody = $('dd-tbody');

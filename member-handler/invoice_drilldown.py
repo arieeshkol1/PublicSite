@@ -282,8 +282,9 @@ def handle_invoice_list_request(event, member_email):
         # Task 4.2/4.4: Cache miss — fetch from AWS APIs
         try:
             items = fetch_invoice_list(member_email, account_id)
+            logger.info(f"Invoice drilldown: fetched {len(items)} invoices for {account_id}")
         except Exception as e:
-            logger.error(f"Failed to fetch invoice list for {account_id}: {e}")
+            logger.error(f"Failed to fetch invoice list for {account_id}: {type(e).__name__}: {e}")
             return create_error_response(502, 'FetchError', f'Failed to retrieve invoice data: {str(e)}')
 
         # Task 4.3: Store fetched records in cache
@@ -676,7 +677,7 @@ def fetch_invoice_list(member_email, account_id):
     """
     creds = _assume_role(member_email, account_id)
 
-    # Try AWS Invoicing API first
+    # Try AWS Invoicing API first (may not be available in all boto3 versions)
     try:
         invoicing_client = boto3.client(
             'invoicing',
@@ -686,7 +687,9 @@ def fetch_invoice_list(member_email, account_id):
             region_name='us-east-1',
         )
 
-        response = invoicing_client.list_invoice_summaries()
+        response = invoicing_client.list_invoice_summaries(
+            Filter={'InvoiceReceivers': [account_id]}
+        )
         invoices = response.get('InvoiceSummaries', [])
 
         records = []
@@ -723,7 +726,7 @@ def fetch_invoice_list(member_email, account_id):
         if isinstance(e, ClientError):
             error_code = e.response['Error']['Code']
         logger.info(
-            f"Invoicing API unavailable for {account_id} ({error_code}), "
+            f"Invoicing API unavailable for {account_id} ({type(e).__name__}: {error_code or str(e)}), "
             f"falling back to Cost Explorer"
         )
         return _fetch_invoices_from_cost_explorer(creds, account_id)
@@ -1763,21 +1766,42 @@ def _fetch_invoices_from_cost_explorer(creds, account_id):
     start_month = now.month
     start_date = f'{start_year}-{start_month:02d}-01'
 
+    logger.info(f"Cost Explorer fallback for {account_id}: {start_date} to {end_date}")
+
     try:
+        # Use SERVICE grouping to get totals consistent with the service breakdown
+        # This ensures the invoice total matches the sum of services when drilled down
         response = ce_client.get_cost_and_usage(
             TimePeriod={'Start': start_date, 'End': end_date},
             Granularity='MONTHLY',
             Metrics=['UnblendedCost'],
+            GroupBy=[{'Type': 'DIMENSION', 'Key': 'SERVICE'}],
         )
     except ClientError as e:
         logger.error(f"Cost Explorer fallback failed for {account_id}: {e}")
         raise
 
-    records = []
+    # Aggregate service costs per month (matching the $0.01 threshold from service breakdown)
+    monthly_totals = {}
+    results_count = len(response.get('ResultsByTime', []))
+    logger.info(f"Cost Explorer returned {results_count} periods for {account_id}")
+
     for period_result in response.get('ResultsByTime', []):
         period_start = period_result['TimePeriod']['Start']
         period_str = period_start[:7]
-        total = float(period_result.get('Total', {}).get('UnblendedCost', {}).get('Amount', 0))
+
+        month_total = 0.0
+        for group in period_result.get('Groups', []):
+            cost = float(group['Metrics']['UnblendedCost']['Amount'])
+            if cost >= 0.01:
+                month_total += cost
+
+        if period_str not in monthly_totals:
+            monthly_totals[period_str] = 0.0
+        monthly_totals[period_str] += month_total
+
+    records = []
+    for period_str, total in monthly_totals.items():
 
         if abs(total) < 0.01:
             continue
