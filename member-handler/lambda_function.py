@@ -1,5 +1,6 @@
 """
 Member Handler Lambda v2 - Registration, login, account management, Console, AI Agent.
+Includes Invoice Explorer (invoice_sync.py, invoice_validation.py).
 Routes: POST /members/register, POST /members/login, GET /members/accounts,
         POST /members/accounts, PUT /members/accounts, DELETE /members/accounts,
         POST /members/accounts/template, POST /members/accounts/test
