@@ -1384,15 +1384,11 @@ function activateMemberTab(tabId) {
     }
     if (tabId === 'invoices-tab') {
         _syncAccountSelection('dash');
-        _populateInvoiceAccounts();
-    }
-    if (tabId === 'drilldown-tab') {
-        _syncAccountSelection('dash');
         _populateDrilldownAccounts();
         // Clear cache when navigating away and back
     }
-    // Clear drilldown cache when navigating away from drilldown tab
-    if (tabId !== 'drilldown-tab' && typeof _ddClearCache === 'function') {
+    // Clear drilldown cache when navigating away from invoices tab
+    if (tabId !== 'invoices-tab' && typeof _ddClearCache === 'function') {
         _ddClearCache();
     }
 }

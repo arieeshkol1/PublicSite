@@ -1764,7 +1764,7 @@ def _fetch_usage_type_breakdown(ce_client, creds, service, start_date, end_date,
     Returns:
         tuple: (list[dict], list[str]) — resource records and warnings.
     """
-    warnings = ['Resource-level data is only available for the last 14 days. Showing usage-type breakdown instead.']
+    warnings = []
 
     try:
         response = ce_client.get_cost_and_usage(
