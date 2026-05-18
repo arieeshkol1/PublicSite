@@ -873,6 +873,8 @@ def fetch_resource_breakdown(member_email, account_id, period, service):
     end_date = _get_next_month_first_day(int(year), int(month_num))
 
     # Call GetCostAndUsageWithResources with service filter
+    # Note: This API only supports the last 14 days. For older periods, fall back
+    # to GetCostAndUsage with USAGE_TYPE grouping.
     try:
         response = ce_client.get_cost_and_usage_with_resources(
             TimePeriod={'Start': start_date, 'End': end_date},
@@ -891,12 +893,14 @@ def fetch_resource_breakdown(member_email, account_id, period, service):
     except ClientError as e:
         error_code = e.response['Error']['Code']
         error_msg = e.response['Error'].get('Message', '')
+        # Handle "start date is too old" — fall back to usage-type breakdown
+        if 'ValidationException' in error_code and 'too old' in error_msg.lower():
+            logger.info(f"Resource-level data unavailable for {period} (>14 days), falling back to usage-type breakdown")
+            return _fetch_usage_type_breakdown(ce_client, creds, service, start_date, end_date, period)
         # Handle "resource data not available" gracefully
         if 'ResourceNotAvailable' in error_code or 'not available' in error_msg.lower():
-            warnings.append(
-                'Resource-level data requires Cost Explorer hourly granularity to be enabled'
-            )
-            return [], warnings
+            logger.info(f"Resource-level data not available for {account_id}, falling back to usage-type breakdown")
+            return _fetch_usage_type_breakdown(ce_client, creds, service, start_date, end_date, period)
         logger.error(f"GetCostAndUsageWithResources failed for {account_id}: {e}")
         raise
 
@@ -1740,6 +1744,80 @@ def _get_next_month_first_day(year, month):
     if month == 12:
         return f'{year + 1}-01-01'
     return f'{year}-{month + 1:02d}-01'
+
+
+def _fetch_usage_type_breakdown(ce_client, creds, service, start_date, end_date, period):
+    """Fallback: fetch usage-type-level breakdown when resource-level data is unavailable.
+
+    Uses GetCostAndUsage with USAGE_TYPE grouping filtered by service.
+    Returns usage types as pseudo-resources (since individual resource IDs aren't available
+    for periods older than 14 days).
+
+    Args:
+        ce_client: Cost Explorer boto3 client with cross-account credentials.
+        creds: STS credentials dict (for metadata enrichment if needed).
+        service: AWS service name.
+        start_date: Period start (YYYY-MM-DD).
+        end_date: Period end (YYYY-MM-DD).
+        period: Billing period (YYYY-MM).
+
+    Returns:
+        tuple: (list[dict], list[str]) — resource records and warnings.
+    """
+    warnings = ['Resource-level data is only available for the last 14 days. Showing usage-type breakdown instead.']
+
+    try:
+        response = ce_client.get_cost_and_usage(
+            TimePeriod={'Start': start_date, 'End': end_date},
+            Granularity='MONTHLY',
+            Metrics=['UnblendedCost', 'UsageQuantity'],
+            Filter={
+                'Dimensions': {
+                    'Key': 'SERVICE',
+                    'Values': [service],
+                }
+            },
+            GroupBy=[
+                {'Type': 'DIMENSION', 'Key': 'USAGE_TYPE'},
+            ],
+        )
+    except ClientError as e:
+        logger.error(f"Usage-type fallback failed for {service}: {e}")
+        raise
+
+    records = []
+    for period_result in response.get('ResultsByTime', []):
+        for group in period_result.get('Groups', []):
+            usage_type = group['Keys'][0] if group['Keys'] else 'Unknown'
+            cost = float(group['Metrics']['UnblendedCost']['Amount'])
+            quantity = float(group['Metrics'].get('UsageQuantity', {}).get('Amount', 0))
+            unit = group['Metrics'].get('UsageQuantity', {}).get('Unit', '')
+
+            if abs(cost) < 0.01:
+                continue
+
+            # Use usage type as a pseudo-resource
+            usage_types_list = [{
+                'type': usage_type,
+                'cost': round(cost, 2),
+                'unit': unit,
+                'quantity': round(quantity, 4),
+            }]
+
+            cost_explanation = generate_cost_explanation(usage_types_list)
+
+            records.append({
+                'resourceId': usage_type,
+                'resourceName': usage_type,
+                'resourceType': 'Usage Type',
+                'amount': round(cost, 2),
+                'costExplanation': cost_explanation,
+                'aiExplanation': None,
+                'usageTypes': usage_types_list,
+            })
+
+    records.sort(key=lambda x: x['amount'], reverse=True)
+    return records, warnings
 
 
 def _fetch_invoices_from_cost_explorer(creds, account_id):
