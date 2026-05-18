@@ -1957,18 +1957,18 @@ def _fetch_invoices_from_cost_explorer(creds, account_id):
 
     try:
         # Use SERVICE grouping to get totals consistent with the service breakdown
-        # This ensures the invoice total matches the sum of services when drilled down
+        # Use ungrouped query to get the true total (matching Dashboard numbers)
+        # This includes credits, taxes, support — the real invoice amount
         response = ce_client.get_cost_and_usage(
             TimePeriod={'Start': start_date, 'End': end_date},
             Granularity='MONTHLY',
             Metrics=['UnblendedCost'],
-            GroupBy=[{'Type': 'DIMENSION', 'Key': 'SERVICE'}],
         )
     except ClientError as e:
         logger.error(f"Cost Explorer fallback failed for {account_id}: {e}")
         raise
 
-    # Aggregate service costs per month (matching the $0.01 threshold from service breakdown)
+    # Extract monthly totals from ungrouped response
     monthly_totals = {}
     results_count = len(response.get('ResultsByTime', []))
     logger.info(f"Cost Explorer returned {results_count} periods for {account_id}")
@@ -1977,15 +1977,12 @@ def _fetch_invoices_from_cost_explorer(creds, account_id):
         period_start = period_result['TimePeriod']['Start']
         period_str = period_start[:7]
 
-        month_total = 0.0
-        for group in period_result.get('Groups', []):
-            cost = float(group['Metrics']['UnblendedCost']['Amount'])
-            if cost >= 0.01:
-                month_total += cost
+        # Ungrouped response has Total at the period level
+        total = float(period_result.get('Total', {}).get('UnblendedCost', {}).get('Amount', 0))
 
         if period_str not in monthly_totals:
             monthly_totals[period_str] = 0.0
-        monthly_totals[period_str] += month_total
+        monthly_totals[period_str] += total
 
     records = []
     for period_str, total in monthly_totals.items():
