@@ -46,6 +46,7 @@ COGNITO_USER_POOL_ID = os.environ.get('COGNITO_USER_POOL_ID', '')
 COGNITO_CLIENT_ID = os.environ.get('COGNITO_CLIENT_ID', '')
 SCHEDULER_EXECUTOR_ARN = os.environ.get('SCHEDULER_EXECUTOR_ARN', 'arn:aws:lambda:us-east-1:991105135552:function:slashmybill-scheduler-executor')
 SCHEDULER_ROLE_ARN = os.environ.get('SCHEDULER_ROLE_ARN', 'arn:aws:iam::991105135552:role/SlashMyBill-EventBridge-Scheduler-Role')
+INVOICES_TABLE_NAME = os.environ.get('INVOICES_TABLE_NAME', 'MemberPortal-Invoices')
 
 
 # AWS clients
@@ -168,6 +169,9 @@ def lambda_handler(event, context):
         'POST /members/invoices/refresh': handle_refresh_invoices,
         'GET /members/invoices/summary': handle_get_invoices_summary,
         'GET /members/invoices/services': handle_get_invoices_services,
+        'GET /members/invoices/list': handle_invoice_list,
+        'GET /members/invoices/services-breakdown': handle_service_breakdown,
+        'GET /members/invoices/resources': handle_resource_breakdown,
     }
 
     handler = routes.get(route_key)
@@ -1137,6 +1141,9 @@ def _get_latest_policy_actions():
         'ce:GetRightsizingRecommendation', 'ce:GetCostCategories', 'ce:GetDimensionValues',
         'ce:GetTags', 'ce:ListCostAllocationTags', 'ce:GetApproximateUsageRecords',
         'ce:UpdatePreferences', 'ce:GetPreferences',
+        'ce:GetCostAndUsageWithResources',
+        # AWS Invoicing API (invoice-level metadata)
+        'invoicing:ListInvoiceSummaries',
         # Savings Plans (expiring commitments retrieval)
         'savingsplans:DescribeSavingsPlans',
         # Budgets
@@ -1280,6 +1287,9 @@ def handle_generate_template(event):
                                             'ce:GetApproximateUsageRecords',
                                             'ce:UpdatePreferences',
                                             'ce:GetPreferences',
+                                            'ce:GetCostAndUsageWithResources',
+                                            # AWS Invoicing API (invoice-level metadata)
+                                            'invoicing:ListInvoiceSummaries',
                                             # Savings Plans (expiring commitments retrieval)
                                             'savingsplans:DescribeSavingsPlans',
                                             # Budgets
@@ -17170,3 +17180,64 @@ def handle_get_invoices_services(event):
     sorted_services = sorted(all_services)
 
     return create_response(200, {'services': sorted_services})
+
+# ============================================================
+# Invoice Drilldown Handlers (hierarchical three-level drill-down)
+# ============================================================
+
+
+def handle_invoice_list(event):
+    """GET /members/invoices/list — Paginated invoice-level records for drill-down."""
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+
+    member_email = auth['sub']
+
+    try:
+        from invoice_drilldown import handle_invoice_list_request
+        return handle_invoice_list_request(event, member_email)
+    except ImportError as e:
+        logger.error(f"Import error in handle_invoice_list: {e}")
+        return create_error_response(500, 'ImportError', f'Module import failed: {str(e)}')
+    except Exception as e:
+        logger.error(f"Unexpected error in handle_invoice_list: {type(e).__name__}: {e}")
+        return create_error_response(500, 'ServerError', f'Unexpected error: {type(e).__name__}: {str(e)}')
+
+
+def handle_service_breakdown(event):
+    """GET /members/invoices/services-breakdown — Service-level breakdown for a period."""
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+
+    member_email = auth['sub']
+
+    try:
+        from invoice_drilldown import handle_service_breakdown_request
+        return handle_service_breakdown_request(event, member_email)
+    except ImportError as e:
+        logger.error(f"Import error in handle_service_breakdown: {e}")
+        return create_error_response(500, 'ImportError', f'Module import failed: {str(e)}')
+    except Exception as e:
+        logger.error(f"Unexpected error in handle_service_breakdown: {type(e).__name__}: {e}")
+        return create_error_response(500, 'ServerError', f'Unexpected error: {type(e).__name__}: {str(e)}')
+
+
+def handle_resource_breakdown(event):
+    """GET /members/invoices/resources — Resource-level breakdown for a service+period."""
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+
+    member_email = auth['sub']
+
+    try:
+        from invoice_drilldown import handle_resource_breakdown_request
+        return handle_resource_breakdown_request(event, member_email)
+    except ImportError as e:
+        logger.error(f"Import error in handle_resource_breakdown: {e}")
+        return create_error_response(500, 'ImportError', f'Module import failed: {str(e)}')
+    except Exception as e:
+        logger.error(f"Unexpected error in handle_resource_breakdown: {type(e).__name__}: {e}")
+        return create_error_response(500, 'ServerError', f'Unexpected error: {type(e).__name__}: {str(e)}')

@@ -1386,6 +1386,15 @@ function activateMemberTab(tabId) {
         _syncAccountSelection('dash');
         _populateInvoiceAccounts();
     }
+    if (tabId === 'drilldown-tab') {
+        _syncAccountSelection('dash');
+        _populateDrilldownAccounts();
+        // Clear cache when navigating away and back
+    }
+    // Clear drilldown cache when navigating away from drilldown tab
+    if (tabId !== 'drilldown-tab' && typeof _ddClearCache === 'function') {
+        _ddClearCache();
+    }
 }
 
 // ============================================================
@@ -10535,3 +10544,541 @@ function _exportInvoiceCSV() {
         notify('Export failed: ' + (err.message || 'Unknown error'), 'error');
     });
 }
+
+
+// ============================================================
+// Invoice Drilldown — Hierarchical 3-Level Drill-Down
+// ============================================================
+
+var _drilldownCache = {};
+var _ddState = {
+    accountId: '',
+    page: 1,
+    pageSize: 25,
+    sortBy: 'paymentDate',
+    sortOrder: 'desc',
+    totalPages: 1,
+    totalItems: 0
+};
+var _ddRefreshCooldownInterval = null;
+var _ddExpandedInvoices = {};  // { period: true/false }
+var _ddExpandedServices = {};  // { period_service: true/false }
+
+function _ddCacheKey(level, accountId, period, service) {
+    var key = accountId + '_' + level;
+    if (period) key += '_' + period;
+    if (service) key += '_' + service;
+    return key;
+}
+
+function _ddClearCache() {
+    _drilldownCache = {};
+}
+
+function _ddFormatCurrency(amount) {
+    if (amount == null || isNaN(amount)) return '$0.00';
+    var neg = amount < 0;
+    var abs = Math.abs(amount);
+    var formatted = abs.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    return (neg ? '-$' : '$') + formatted;
+}
+
+function _ddFormatDate(isoDate) {
+    if (!isoDate) return '—';
+    try {
+        var parts = isoDate.split('-');
+        var d = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2] || 1));
+        if (isNaN(d)) return isoDate;
+        var months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+        return months[d.getMonth()] + ' ' + d.getDate() + ', ' + d.getFullYear();
+    } catch (e) { return isoDate; }
+}
+
+function _ddStatusBadge(status) {
+    var s = (status || '').toLowerCase();
+    var cls = 'dd-status-badge ';
+    if (s === 'paid') cls += 'dd-status-paid';
+    else if (s === 'pending') cls += 'dd-status-pending';
+    else if (s === 'overdue') cls += 'dd-status-overdue';
+    else cls += 'dd-status-pending';
+    return '<span class="' + cls + '">' + esc(status || 'Unknown') + '</span>';
+}
+
+// Populate account selector for drilldown tab
+function _populateDrilldownAccounts() {
+    var sel = $('dd-account-select');
+    if (!sel) return;
+    var connected = allAccounts.filter(function(a) { return a.connectionStatus === 'connected'; });
+    sel.innerHTML = '<option value="">Select an account...</option>';
+    connected.forEach(function(a) {
+        var opt = document.createElement('option');
+        opt.value = a.accountId;
+        opt.textContent = a.accountId + ' (' + (a.accountName || 'Account') + ')';
+        sel.appendChild(opt);
+    });
+    if (_ddState.accountId) sel.value = _ddState.accountId;
+}
+
+// Load invoice list (Level 1)
+async function loadInvoiceDrilldown(accountId) {
+    if (!accountId) {
+        _ddShowEmpty('Select an account to explore invoices with drill-down.');
+        return;
+    }
+    _ddState.accountId = accountId;
+
+    // Check client cache
+    var cacheKey = _ddCacheKey('invoices', accountId);
+    if (_drilldownCache[cacheKey]) {
+        _ddRenderInvoices(_drilldownCache[cacheKey]);
+        return;
+    }
+
+    _ddShowLoading();
+
+    var params = 'accountId=' + encodeURIComponent(accountId);
+    params += '&page=' + _ddState.page;
+    params += '&pageSize=' + _ddState.pageSize;
+    params += '&sortBy=' + _ddState.sortBy;
+    params += '&sortOrder=' + _ddState.sortOrder;
+
+    try {
+        var data = await api('GET', '/members/invoices/list?' + params);
+        _drilldownCache[cacheKey] = data;
+        _ddRenderInvoices(data);
+        _ddHideError();
+    } catch (err) {
+        _ddHideLoading();
+        _ddShowError(err.message || 'Failed to load invoices.');
+    }
+}
+
+function _ddRenderInvoices(data) {
+    _ddHideLoading();
+    _ddHideEmpty();
+    _ddHideError();
+
+    var items = (data && data.items) || [];
+    var pagination = (data && data.pagination) || {};
+    _ddState.totalPages = pagination.totalPages || 1;
+    _ddState.totalItems = pagination.totalItems || items.length;
+
+    var tbody = $('dd-tbody');
+    if (!tbody) return;
+
+    if (!items.length) {
+        tbody.innerHTML = '';
+        _ddShowEmpty('No invoices found for this account.');
+        _ddUpdatePagination(0, 0);
+        return;
+    }
+
+    var html = '';
+    items.forEach(function(inv) {
+        var period = inv.period || '';
+        var isExpanded = _ddExpandedInvoices[period];
+        var chevron = isExpanded ? '▼' : '▶';
+        html += '<tr class="dd-invoice-row' + (isExpanded ? ' dd-expanded' : '') + '" data-period="' + ea(period) + '" data-invoice-id="' + ea(inv.invoiceId || '') + '">';
+        html += '<td class="dd-chevron">' + chevron + '</td>';
+        html += '<td>' + esc(inv.invoiceId || '') + '</td>';
+        html += '<td>' + esc(inv.issuer || 'Amazon Web Services') + '</td>';
+        html += '<td>' + _ddFormatDate(inv.paymentDate) + '</td>';
+        html += '<td>' + _ddStatusBadge(inv.paymentStatus) + '</td>';
+        html += '<td style="font-weight:600;">' + _ddFormatCurrency(inv.totalAmount) + '</td>';
+        html += '</tr>';
+        // Placeholder for expanded service rows
+        if (isExpanded) {
+            html += '<tr class="dd-services-container" data-period="' + ea(period) + '"><td colspan="6" style="padding:0;">';
+            html += '<div class="dd-services-area" id="dd-services-' + ea(period) + '"></div>';
+            html += '</td></tr>';
+        }
+    });
+    tbody.innerHTML = html;
+
+    // Wire click handlers
+    tbody.querySelectorAll('.dd-invoice-row').forEach(function(row) {
+        row.onclick = function() {
+            var period = row.getAttribute('data-period');
+            _ddToggleInvoice(period);
+        };
+    });
+
+    _ddUpdatePagination(pagination.page || 1, _ddState.totalPages);
+
+    // Re-load expanded services
+    Object.keys(_ddExpandedInvoices).forEach(function(period) {
+        if (_ddExpandedInvoices[period]) {
+            _ddLoadServices(period);
+        }
+    });
+}
+
+function _ddToggleInvoice(period) {
+    if (_ddExpandedInvoices[period]) {
+        // Collapse
+        delete _ddExpandedInvoices[period];
+        // Also collapse any expanded services within this invoice
+        Object.keys(_ddExpandedServices).forEach(function(key) {
+            if (key.startsWith(period + '_')) delete _ddExpandedServices[key];
+        });
+    } else {
+        // Expand
+        _ddExpandedInvoices[period] = true;
+    }
+    // Re-render from cache
+    var cacheKey = _ddCacheKey('invoices', _ddState.accountId);
+    if (_drilldownCache[cacheKey]) {
+        _ddRenderInvoices(_drilldownCache[cacheKey]);
+    }
+}
+
+// Load service breakdown (Level 2)
+async function _ddLoadServices(period) {
+    var area = document.getElementById('dd-services-' + period);
+    if (!area) return;
+
+    var cacheKey = _ddCacheKey('services', _ddState.accountId, period);
+    if (_drilldownCache[cacheKey]) {
+        _ddRenderServices(area, period, _drilldownCache[cacheKey]);
+        return;
+    }
+
+    area.innerHTML = '<div class="dd-inline-loading"><div class="dd-spinner"></div> Loading services...</div>';
+
+    try {
+        var data = await api('GET', '/members/invoices/services-breakdown?accountId=' + encodeURIComponent(_ddState.accountId) + '&period=' + encodeURIComponent(period));
+        _drilldownCache[cacheKey] = data;
+        _ddRenderServices(area, period, data);
+    } catch (err) {
+        area.innerHTML = '<div class="dd-inline-error"><span>⚠️ ' + esc(err.message || 'Failed to load services.') + '</span> <button class="btn btn-outline btn-sm" onclick="_ddRetryServices(\'' + ea(period) + '\')">Retry</button></div>';
+    }
+}
+
+function _ddRetryServices(period) {
+    var cacheKey = _ddCacheKey('services', _ddState.accountId, period);
+    delete _drilldownCache[cacheKey];
+    _ddLoadServices(period);
+}
+
+function _ddRenderServices(area, period, data) {
+    var services = (data && data.services) || [];
+    if (!services.length) {
+        area.innerHTML = '<div class="dd-inline-info">No service breakdown available for this period.</div>';
+        return;
+    }
+
+    var html = '<table class="dd-subtable dd-service-table"><thead><tr>';
+    html += '<th style="width:24px;"></th>';
+    html += '<th>Service Name</th>';
+    html += '<th>Amount</th>';
+    html += '<th style="width:120px;">%</th>';
+    html += '<th>Cost Explanation</th>';
+    html += '</tr></thead><tbody>';
+
+    services.forEach(function(svc) {
+        var svcKey = period + '_' + (svc.serviceName || '');
+        var isExpanded = _ddExpandedServices[svcKey];
+        var chevron = isExpanded ? '▼' : '▶';
+        var pct = svc.percentage != null ? svc.percentage : 0;
+
+        html += '<tr class="dd-service-row' + (isExpanded ? ' dd-expanded' : '') + '" data-period="' + ea(period) + '" data-service="' + ea(svc.serviceName || '') + '">';
+        html += '<td class="dd-chevron">' + chevron + '</td>';
+        html += '<td>' + esc(svc.serviceName || '') + '</td>';
+        html += '<td style="font-weight:600;">' + _ddFormatCurrency(svc.amount) + '</td>';
+        html += '<td><div class="dd-pct-bar"><div class="dd-pct-fill" style="width:' + Math.min(pct, 100) + '%;"></div></div><span class="dd-pct-label">' + pct.toFixed(1) + '%</span></td>';
+        html += '<td class="dd-explanation">' + esc(svc.costExplanation || '') + '</td>';
+        html += '</tr>';
+
+        if (isExpanded) {
+            html += '<tr class="dd-resources-container" data-period="' + ea(period) + '" data-service="' + ea(svc.serviceName || '') + '"><td colspan="5" style="padding:0;">';
+            html += '<div class="dd-resources-area" id="dd-resources-' + ea(period) + '-' + ea(svc.serviceName || '').replace(/\s+/g, '_') + '"></div>';
+            html += '</td></tr>';
+        }
+    });
+
+    html += '</tbody></table>';
+    area.innerHTML = html;
+
+    // Wire service row click handlers
+    area.querySelectorAll('.dd-service-row').forEach(function(row) {
+        row.onclick = function() {
+            var p = row.getAttribute('data-period');
+            var s = row.getAttribute('data-service');
+            _ddToggleService(p, s);
+        };
+    });
+
+    // Load expanded resources
+    Object.keys(_ddExpandedServices).forEach(function(key) {
+        if (_ddExpandedServices[key] && key.startsWith(period + '_')) {
+            var svc = key.substring(period.length + 1);
+            _ddLoadResources(period, svc);
+        }
+    });
+}
+
+function _ddToggleService(period, service) {
+    var key = period + '_' + service;
+    if (_ddExpandedServices[key]) {
+        delete _ddExpandedServices[key];
+    } else {
+        _ddExpandedServices[key] = true;
+    }
+    // Re-render services from cache
+    var area = document.getElementById('dd-services-' + period);
+    var cacheKey = _ddCacheKey('services', _ddState.accountId, period);
+    if (area && _drilldownCache[cacheKey]) {
+        _ddRenderServices(area, period, _drilldownCache[cacheKey]);
+    }
+}
+
+// Load resource breakdown (Level 3)
+async function _ddLoadResources(period, service) {
+    var areaId = 'dd-resources-' + period + '-' + service.replace(/\s+/g, '_');
+    var area = document.getElementById(areaId);
+    if (!area) return;
+
+    var cacheKey = _ddCacheKey('resources', _ddState.accountId, period, service);
+    if (_drilldownCache[cacheKey]) {
+        _ddRenderResources(area, _drilldownCache[cacheKey]);
+        return;
+    }
+
+    area.innerHTML = '<div class="dd-inline-loading"><div class="dd-spinner"></div> Loading resources...</div>';
+
+    try {
+        var data = await api('GET', '/members/invoices/resources?accountId=' + encodeURIComponent(_ddState.accountId) + '&period=' + encodeURIComponent(period) + '&service=' + encodeURIComponent(service));
+        _drilldownCache[cacheKey] = data;
+        _ddRenderResources(area, data);
+    } catch (err) {
+        area.innerHTML = '<div class="dd-inline-error"><span>⚠️ ' + esc(err.message || 'Failed to load resources.') + '</span> <button class="btn btn-outline btn-sm" onclick="_ddRetryResources(\'' + ea(period) + '\',\'' + ea(service) + '\')">Retry</button></div>';
+    }
+}
+
+function _ddRetryResources(period, service) {
+    var cacheKey = _ddCacheKey('resources', _ddState.accountId, period, service);
+    delete _drilldownCache[cacheKey];
+    _ddLoadResources(period, service);
+}
+
+function _ddRenderResources(area, data) {
+    var resources = (data && data.resources) || [];
+    if (!resources.length) {
+        area.innerHTML = '<div class="dd-inline-info">No resource-level data available for this service.</div>';
+        return;
+    }
+
+    var html = '<table class="dd-subtable dd-resource-table"><thead><tr>';
+    html += '<th>Resource Name/ID</th>';
+    html += '<th>Type</th>';
+    html += '<th>Cost Explanation</th>';
+    html += '<th>Amount</th>';
+    html += '</tr></thead><tbody>';
+
+    resources.forEach(function(res) {
+        var isRawId = res.resourceName === res.resourceId || !res.resourceName;
+        var nameDisplay = isRawId
+            ? '<code class="dd-resource-id">' + esc(res.resourceId || '') + '</code>'
+            : esc(res.resourceName || res.resourceId || '');
+
+        html += '<tr class="dd-resource-row">';
+        html += '<td>' + nameDisplay + '</td>';
+        html += '<td><span class="dd-resource-type-badge">' + esc(res.resourceType || 'Unknown') + '</span></td>';
+        html += '<td class="dd-explanation">' + esc(res.costExplanation || '') + '</td>';
+        html += '<td style="font-weight:600;">' + _ddFormatCurrency(res.amount) + '</td>';
+        html += '</tr>';
+
+        // AI explanation row
+        if (res.aiExplanation) {
+            html += '<tr class="dd-ai-row"><td colspan="4">';
+            html += '<div class="dd-ai-box">🤖 ' + esc(res.aiExplanation) + '</div>';
+            html += '</td></tr>';
+        }
+    });
+
+    html += '</tbody></table>';
+
+    // Warnings
+    if (data.warnings && data.warnings.length) {
+        html += '<div class="dd-inline-warning">';
+        data.warnings.forEach(function(w) { html += '<div>⚠️ ' + esc(w) + '</div>'; });
+        html += '</div>';
+    }
+
+    area.innerHTML = html;
+}
+
+// Refresh button with cooldown (Task 10.6)
+async function _ddRefresh() {
+    if (!_ddState.accountId) {
+        notify('Select an account first.', 'warning');
+        return;
+    }
+    var btn = $('dd-refresh-btn');
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ Refreshing...'; }
+
+    try {
+        await api('POST', '/members/invoices/refresh', { accountId: _ddState.accountId });
+        notify('Invoice data refreshed.', 'success');
+        _ddClearCache();
+        _ddState.page = 1;
+        loadInvoiceDrilldown(_ddState.accountId);
+        if (btn) { btn.disabled = false; btn.textContent = '🔄 Refresh'; }
+    } catch (err) {
+        if (err.status === 429) {
+            // Rate limited — show cooldown
+            var seconds = 300;
+            try {
+                var parsed = JSON.parse(err.message || '{}');
+                if (parsed.secondsRemaining) seconds = parsed.secondsRemaining;
+            } catch (e) {
+                var match = (err.message || '').match(/(\d+)/);
+                if (match) seconds = parseInt(match[1]);
+            }
+            _ddStartCooldown(seconds);
+        } else {
+            notify('Refresh failed: ' + (err.message || 'Unknown error'), 'error');
+            if (btn) { btn.disabled = false; btn.textContent = '🔄 Refresh'; }
+        }
+    }
+}
+
+function _ddStartCooldown(seconds) {
+    var btn = $('dd-refresh-btn');
+    var cooldownEl = $('dd-refresh-cooldown');
+    if (_ddRefreshCooldownInterval) clearInterval(_ddRefreshCooldownInterval);
+
+    var remaining = seconds;
+    if (btn) { btn.disabled = true; btn.textContent = '🔄 Refresh'; }
+    if (cooldownEl) { cooldownEl.style.display = 'inline'; cooldownEl.textContent = remaining + 's'; }
+
+    _ddRefreshCooldownInterval = setInterval(function() {
+        remaining--;
+        if (remaining <= 0) {
+            clearInterval(_ddRefreshCooldownInterval);
+            _ddRefreshCooldownInterval = null;
+            if (btn) { btn.disabled = false; btn.textContent = '🔄 Refresh'; }
+            if (cooldownEl) { cooldownEl.style.display = 'none'; }
+        } else {
+            if (cooldownEl) cooldownEl.textContent = remaining + 's';
+        }
+    }, 1000);
+}
+
+// UI helpers
+function _ddShowLoading() {
+    var el = $('dd-loading');
+    var tbl = $('dd-table-container');
+    var empty = $('dd-empty');
+    if (el) el.hidden = false;
+    if (tbl) tbl.style.display = 'none';
+    if (empty) empty.hidden = true;
+}
+
+function _ddHideLoading() {
+    var el = $('dd-loading');
+    var tbl = $('dd-table-container');
+    if (el) el.hidden = true;
+    if (tbl) tbl.style.display = '';
+}
+
+function _ddShowEmpty(msg) {
+    var el = $('dd-empty');
+    var tbl = $('dd-table-container');
+    if (el) { el.hidden = false; el.innerHTML = '<p>' + esc(msg) + '</p>'; }
+    if (tbl) tbl.style.display = 'none';
+}
+
+function _ddHideEmpty() {
+    var el = $('dd-empty');
+    if (el) el.hidden = true;
+}
+
+function _ddShowError(msg) {
+    var el = $('dd-error');
+    var msgEl = $('dd-error-msg');
+    if (el) el.style.display = '';
+    if (msgEl) msgEl.textContent = msg;
+}
+
+function _ddHideError() {
+    var el = $('dd-error');
+    if (el) el.style.display = 'none';
+}
+
+function _ddRetryLoad() {
+    _ddHideError();
+    var cacheKey = _ddCacheKey('invoices', _ddState.accountId);
+    delete _drilldownCache[cacheKey];
+    loadInvoiceDrilldown(_ddState.accountId);
+}
+
+function _ddUpdatePagination(page, totalPages) {
+    var info = $('dd-page-info');
+    var prev = $('dd-prev-btn');
+    var next = $('dd-next-btn');
+    if (info) info.textContent = 'Page ' + (page || 1) + ' of ' + (totalPages || 1) + ' (' + (_ddState.totalItems || 0) + ' items)';
+    if (prev) prev.disabled = !page || page <= 1;
+    if (next) next.disabled = !page || page >= totalPages;
+}
+
+// Initialize drilldown tab event listeners
+(function _initDrilldown() {
+    var acctSel = $('dd-account-select');
+    var refreshBtn = $('dd-refresh-btn');
+    var prevBtn = $('dd-prev-btn');
+    var nextBtn = $('dd-next-btn');
+
+    if (acctSel) acctSel.onchange = function() {
+        _ddState.accountId = acctSel.value;
+        _ddState.page = 1;
+        _ddExpandedInvoices = {};
+        _ddExpandedServices = {};
+        _ddClearCache();
+        if (_ddState.accountId) {
+            loadInvoiceDrilldown(_ddState.accountId);
+        } else {
+            _ddShowEmpty('Select an account to explore invoices with drill-down.');
+        }
+    };
+
+    if (refreshBtn) refreshBtn.onclick = _ddRefresh;
+
+    if (prevBtn) prevBtn.onclick = function() {
+        if (_ddState.page > 1) {
+            _ddState.page--;
+            var cacheKey = _ddCacheKey('invoices', _ddState.accountId);
+            delete _drilldownCache[cacheKey];
+            loadInvoiceDrilldown(_ddState.accountId);
+        }
+    };
+    if (nextBtn) nextBtn.onclick = function() {
+        if (_ddState.page < _ddState.totalPages) {
+            _ddState.page++;
+            var cacheKey = _ddCacheKey('invoices', _ddState.accountId);
+            delete _drilldownCache[cacheKey];
+            loadInvoiceDrilldown(_ddState.accountId);
+        }
+    };
+
+    // Wire sortable column headers
+    document.querySelectorAll('.dd-sortable').forEach(function(th) {
+        th.onclick = function() {
+            var field = th.dataset.sort;
+            if (_ddState.sortBy === field) {
+                _ddState.sortOrder = _ddState.sortOrder === 'desc' ? 'asc' : 'desc';
+            } else {
+                _ddState.sortBy = field;
+                _ddState.sortOrder = (field === 'paymentDate' || field === 'amount') ? 'desc' : 'asc';
+            }
+            _ddState.page = 1;
+            // Update sort indicator
+            document.querySelectorAll('.dd-sortable').forEach(function(h) {
+                h.classList.toggle('inv-sort-active', h.dataset.sort === _ddState.sortBy);
+            });
+            var cacheKey = _ddCacheKey('invoices', _ddState.accountId);
+            delete _drilldownCache[cacheKey];
+            loadInvoiceDrilldown(_ddState.accountId);
+        };
+    });
+})();

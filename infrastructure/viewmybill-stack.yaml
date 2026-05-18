@@ -1503,6 +1503,30 @@ Resources:
       RouteKey: 'GET /members/invoices/services'
       Target: !Sub 'integrations/${MemberIntegration}'
 
+  # ============================================================
+  # API Gateway - Invoice Drilldown Routes (3-level hierarchy)
+  # ============================================================
+  MemberGetInvoiceListRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'GET /members/invoices/list'
+      Target: !Sub 'integrations/${MemberIntegration}'
+
+  MemberGetServicesBreakdownRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'GET /members/invoices/services-breakdown'
+      Target: !Sub 'integrations/${MemberIntegration}'
+
+  MemberGetInvoiceResourcesRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'GET /members/invoices/resources'
+      Target: !Sub 'integrations/${MemberIntegration}'
+
   MemberHandlerInvokePermission:
     Type: AWS::Lambda::Permission
     Properties:
