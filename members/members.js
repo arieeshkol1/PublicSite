@@ -1385,7 +1385,10 @@ function activateMemberTab(tabId) {
     if (tabId === 'invoices-tab') {
         _syncAccountSelection('dash');
         _populateDrilldownAccounts();
-        // Clear cache when navigating away and back
+        // Auto-load if account already selected
+        if (_ddState.accountId) {
+            loadInvoiceDrilldown(_ddState.accountId);
+        }
     }
     // Clear drilldown cache when navigating away from invoices tab
     if (tabId !== 'invoices-tab' && typeof _ddClearCache === 'function') {
