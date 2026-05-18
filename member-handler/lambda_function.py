@@ -2039,7 +2039,7 @@ def handle_dashboard_data(event):
             # Gather data WITHOUT tag filter — ensures waste, rightsizing, EBS, etc. are always populated
             acct_data, _ = _gather_account_data('how efficient is my account? rightsizing savings compare last 3 months', creds)
 
-            acct_total = sum(s['cost_usd'] for s in acct_data.get('cost_by_service', []) if s.get('service') != 'Tax')
+            acct_total = sum(s['cost_usd'] for s in acct_data.get('cost_by_service', []))
 
             # If tag filter is active, override cost_by_service/daily/monthly with per-instance estimates
             if tag_key and tag_value:
@@ -2221,8 +2221,7 @@ def handle_dashboard_data(event):
                 if acct_total == 0:
                     tag_filter_empty = True
             for svc in acct_data.get('cost_by_service', []):
-                if svc['service'] != 'Tax':
-                    merged_costs[svc['service']] = merged_costs.get(svc['service'], 0) + svc['cost_usd']
+                merged_costs[svc['service']] = merged_costs.get(svc['service'], 0) + svc['cost_usd']
             for d in acct_data.get('daily_cost_trend', []):
                 merged_daily[d['date']] = merged_daily.get(d['date'], 0) + d['cost_usd']
 
