@@ -1385,9 +1385,16 @@ function activateMemberTab(tabId) {
     if (tabId === 'invoices-tab') {
         _syncAccountSelection('dash');
         _populateDrilldownAccounts();
-        // Auto-load if account already selected
-        if (_ddState.accountId) {
-            loadInvoiceDrilldown(_ddState.accountId);
+        // Reset refresh button state (in case it was stuck from a previous cooldown)
+        var ddRefBtn = document.getElementById('dd-refresh-btn');
+        if (ddRefBtn) { ddRefBtn.disabled = false; ddRefBtn.textContent = '🔄 Refresh'; }
+        var ddCooldown = document.getElementById('dd-refresh-cooldown');
+        if (ddCooldown) ddCooldown.style.display = 'none';
+        // Auto-load: read current dropdown value and trigger load
+        var ddSel = document.getElementById('dd-account-select');
+        if (ddSel && ddSel.value) {
+            _ddState.accountId = ddSel.value;
+            loadInvoiceDrilldown(ddSel.value);
         }
     }
     // Clear drilldown cache when navigating away from invoices tab
@@ -10615,7 +10622,13 @@ function _populateDrilldownAccounts() {
         opt.textContent = a.accountId + ' (' + (a.accountName || 'Account') + ')';
         sel.appendChild(opt);
     });
-    if (_ddState.accountId) sel.value = _ddState.accountId;
+    // Restore previous selection, or auto-select first connected account
+    if (_ddState.accountId) {
+        sel.value = _ddState.accountId;
+    } else if (connected.length > 0) {
+        sel.value = connected[0].accountId;
+        _ddState.accountId = connected[0].accountId;
+    }
 }
 
 // Load invoice list (Level 1)
