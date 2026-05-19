@@ -14781,8 +14781,9 @@ def _get_rightsizing_candidates(ec2_client, current_type, needed_vcpu, needed_me
             # Sanity check: Windows + SQL price must be higher than the Linux catalog price
             # If the returned price is lower than the Linux price, the Pricing API returned wrong data
             linux_catalog_price = hourly  # The catalog price is Linux
-            if real_price < linux_catalog_price * 1.5:
+            if real_price < linux_catalog_price * 2.0:
                 # Price is suspiciously low — likely returned Windows-only or Linux price
+                # Windows + SQL Server Standard adds ~$0.54/hr for 4 vCPU instances
                 # Skip this candidate as we can't trust the pricing
                 logger.warning(f"Pricing sanity check failed for {itype}: got ${real_price:.4f}/hr but Linux catalog is ${linux_catalog_price:.4f}/hr (OS={operating_system}, SW={pre_installed_sw})")
                 continue
@@ -14993,10 +14994,15 @@ def handle_server_analyze(event):
     os_name, pre_sw = _parse_platform_for_pricing(platform)
     current_hourly = _get_instance_price(current_type, region, os_name, pre_sw)
 
-    # Use actual hours in the current month (not generic 730)
+    # Use hours from the PREVIOUS month (matches the invoice the user sees)
     import calendar
     now = datetime.now(timezone.utc)
-    _days_in_month = calendar.monthrange(now.year, now.month)[1]
+    # Previous month calculation
+    if now.month == 1:
+        _prev_year, _prev_month = now.year - 1, 12
+    else:
+        _prev_year, _prev_month = now.year, now.month - 1
+    _days_in_month = calendar.monthrange(_prev_year, _prev_month)[1]
     _hours_in_month = _days_in_month * 24
     current_monthly = round(current_hourly * _hours_in_month, 2)
 
@@ -15016,23 +15022,13 @@ def handle_server_analyze(event):
     else:
         needed_vcpu = current_vcpu
 
-    needed_mem = current_mem
-    if mem_avg is not None and mem_avg < 40 and current_mem > 2:
-        needed_mem = max(1, current_mem // 2)
-    elif mem_avg is None:
-        # No memory data — for SQL Server or database workloads, NEVER downsize memory
-        # without metrics. SQL Server uses RAM aggressively for buffer pool caching.
-        name_lower_mem = name.lower()
-        is_db_workload = any(kw in name_lower_mem for kw in ('db', 'database', 'sql', 'mongo', 'redis', 'elastic', 'kafka'))
-        is_sql_server = 'SQL' in pre_sw if pre_sw else False
-        if is_db_workload or is_sql_server:
-            needed_mem = current_mem  # Keep same RAM — cannot safely downsize
-        elif cpu_avg < 10 and current_mem > 4:
-            needed_mem = max(2, int(current_mem * 0.5))
-        else:
-            needed_mem = current_mem
+    # For alternatives: allow ALL cheaper options including downgrades
+    # The frontend will clearly mark downgrades with warnings
+    # Use minimum 2 vCPU and 8 GB RAM as the floor for candidates
+    needed_vcpu_for_filter = max(1, needed_vcpu // 2) if needed_vcpu > 1 else 1
+    needed_mem_for_filter = max(8, current_mem // 4)  # Allow down to 25% of current RAM
 
-    recommendations = _get_rightsizing_candidates(ec2, current_type, needed_vcpu, needed_mem, current_hourly, arch, region, os_name, pre_sw, _hours_in_month)
+    recommendations = _get_rightsizing_candidates(ec2, current_type, needed_vcpu_for_filter, needed_mem_for_filter, current_hourly, arch, region, os_name, pre_sw, _hours_in_month)
 
     # Flag recommendations with significant memory downgrade
     for rec in recommendations:
