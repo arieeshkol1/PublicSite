@@ -14722,7 +14722,7 @@ def _get_instance_price(instance_type, region='us-east-1', operating_system='Lin
     return 0.0
 
 
-def _get_rightsizing_candidates(ec2_client, current_type, needed_vcpu, needed_mem, current_hourly, arch='x86_64', region='us-east-1', operating_system='Linux', pre_installed_sw='NA'):
+def _get_rightsizing_candidates(ec2_client, current_type, needed_vcpu, needed_mem, current_hourly, arch='x86_64', region='us-east-1', operating_system='Linux', pre_installed_sw='NA', hours_in_month=720):
     """Find cheaper instance types using a known pricing catalog + DescribeInstanceTypes for specs."""
     # Known instance types with pricing (us-east-1 on-demand, Linux)
     CATALOG = [
@@ -14780,8 +14780,8 @@ def _get_rightsizing_candidates(ec2_client, current_type, needed_vcpu, needed_me
                 continue
             hourly = real_price
 
-        monthly = round(hourly * 730, 2)
-        current_monthly = round(current_hourly * 730, 2)
+        monthly = round(hourly * hours_in_month, 2)
+        current_monthly = round(current_hourly * hours_in_month, 2)
         savings = round(current_monthly - monthly, 2)
         pct = round(savings / current_monthly * 100) if current_monthly > 0 else 0
         rec = {
@@ -14984,7 +14984,13 @@ def handle_server_analyze(event):
     current_mem = current_specs_raw.get('mem', 0)
     os_name, pre_sw = _parse_platform_for_pricing(platform)
     current_hourly = _get_instance_price(current_type, region, os_name, pre_sw)
-    current_monthly = round(current_hourly * 730, 2)
+
+    # Use actual hours in the current month (not generic 730)
+    import calendar
+    now = datetime.now(timezone.utc)
+    _days_in_month = calendar.monthrange(now.year, now.month)[1]
+    _hours_in_month = _days_in_month * 24
+    current_monthly = round(current_hourly * _hours_in_month, 2)
 
     # Generate recommendations
     cpu_avg = metrics.get('cpu_avg', 0)
@@ -15018,12 +15024,27 @@ def handle_server_analyze(event):
         else:
             needed_mem = current_mem
 
-    recommendations = _get_rightsizing_candidates(ec2, current_type, needed_vcpu, needed_mem, current_hourly, arch, region, os_name, pre_sw)
+    recommendations = _get_rightsizing_candidates(ec2, current_type, needed_vcpu, needed_mem, current_hourly, arch, region, os_name, pre_sw, _hours_in_month)
 
     # Flag recommendations with significant memory downgrade
     for rec in recommendations:
         if rec['memory'] < current_mem * 0.5:
             rec['memoryDowngradeWarning'] = True
+        # Classify recommendation: same-spec, downgrade, or upgrade
+        vcpu_diff = rec['vcpu'] - current_vcpu
+        mem_diff = rec['memory'] - current_mem
+        if vcpu_diff < 0 or mem_diff < 0:
+            rec['category'] = 'downgrade'
+            downgrades = []
+            if vcpu_diff < 0:
+                downgrades.append(f"vCPU: {current_vcpu}→{rec['vcpu']}")
+            if mem_diff < 0:
+                downgrades.append(f"RAM: {current_mem}GB→{rec['memory']}GB")
+            rec['downgradeDetail'] = ', '.join(downgrades)
+        elif vcpu_diff > 0 or mem_diff > 0:
+            rec['category'] = 'upgrade'
+        else:
+            rec['category'] = 'same-spec'
 
     logger.info(f"Resize analysis: {current_type} ({current_vcpu}vCPU, {current_mem}GB, ${current_hourly}/hr) -> needed: {needed_vcpu}vCPU, {needed_mem}GB. Found {len(recommendations)} recommendations.")
 
@@ -15062,6 +15083,7 @@ def handle_server_analyze(event):
             'memory': current_mem,
             'hourlyRate': current_hourly,
             'monthlyRate': current_monthly,
+            'hoursInMonth': _hours_in_month,
             'processor': current_specs_raw.get('processor', 0),
             'processorManufacturer': current_specs_raw.get('processorManufacturer', ''),
             'networkPerformance': current_specs_raw.get('networkPerformance', ''),

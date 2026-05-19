@@ -7633,7 +7633,7 @@ async function _runOptimizeScan() {
     var status = document.getElementById('act-optimize-status');
     var grid = document.getElementById('act-optimize-cards');
     var empty = document.getElementById('act-optimize-empty');
-    var btn = document.getElementById('act-optimize-scan-btn');
+    var btn = document.getElementById('act-optimize-refresh-btn');
 
     if (status) status.textContent = 'Scanning for optimization opportunities...';
     if (grid) grid.innerHTML = '';
@@ -7715,13 +7715,13 @@ async function _runOptimizeScan() {
         if (status) status.textContent = 'Scan failed: ' + (err.message || 'Unknown error');
         if (empty) empty.style.display = 'block';
     } finally {
-        if (btn) { btn.disabled = false; btn.textContent = '\u26a1 Scan for Savings'; }
+        if (btn) { btn.disabled = false; btn.textContent = '\uD83D\uDD04 Refresh'; }
     }
 }
 
 // Wire the button
 (function() {
-    var btn = document.getElementById('act-optimize-scan-btn');
+    var btn = document.getElementById('act-optimize-refresh-btn');
     if (btn) btn.onclick = _runOptimizeScan;
 })();
 
@@ -8126,9 +8126,12 @@ function _renderResizeTable() {
     html += '<th style="padding:6px 8px;border-bottom:2px solid #e5e7eb;"></th></tr></thead><tbody>';
     recs.forEach(function(r, i) {
         var bg = i === 0 ? 'background:#f0fdf4;' : (i % 2 === 0 ? 'background:#fff;' : 'background:#f9fafb;');
+        var isDowngrade = r.category === 'downgrade';
+        if (isDowngrade) bg = 'background:#fef3c7;';
         html += '<tr style="' + bg + '">';
         html += '<td style="padding:6px 8px;font-weight:600;border-bottom:1px solid #f3f4f6;">' + r.instanceType;
         if (r.isGraviton) html += ' <span style="background:#dbeafe;color:#1e40af;padding:0 4px;border-radius:3px;font-size:0.8em;">ARM</span>';
+        if (isDowngrade) html += ' <span style="background:#fbbf24;color:#78350f;padding:0 4px;border-radius:3px;font-size:0.7em;font-weight:700;">⚠️ DOWNGRADE</span>';
         html += '</td>';
         html += '<td style="padding:6px 8px;border-bottom:1px solid #f3f4f6;">' + r.vcpu + '</td>';
         html += '<td style="padding:6px 8px;border-bottom:1px solid #f3f4f6;">' + r.memory + '</td>';
@@ -8140,6 +8143,9 @@ function _renderResizeTable() {
         html += '<td style="padding:6px 8px;border-bottom:1px solid #f3f4f6;font-size:0.9em;">' + (r.processorManufacturer || '') + '</td>';
         html += '<td style="padding:6px 8px;border-bottom:1px solid #f3f4f6;"><button class="btn btn-primary btn-sm" style="font-size:0.75em;padding:3px 10px;" onclick="_resizeExecute(\'' + r.instanceType + '\')">Resize</button></td>';
         html += '</tr>';
+        if (isDowngrade && r.downgradeDetail) {
+            html += '<tr style="' + bg + '"><td colspan="10" style="padding:2px 8px 6px;border-bottom:1px solid #f3f4f6;font-size:0.75em;color:#92400e;">↓ ' + r.downgradeDetail + '</td></tr>';
+        }
     });
     html += '</tbody></table></div>';
     el.innerHTML = html;
