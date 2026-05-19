@@ -1766,12 +1766,22 @@ def _read_resource_cache(member_email, account_id, period, service):
     if not valid_records:
         return []
 
+    # Invalidate cache for EC2 services if records still have raw usage-type IDs
+    # (indicates they were cached before the instance resolution feature)
+    service_lower = (service or '').lower()
+    is_ec2_service = 'elastic compute' in service_lower or 'ec2' in service_lower
+    if is_ec2_service:
+        has_unresolved = any(
+            'BoxUsage:' in r.get('resourceId', '') or 'SpotUsage:' in r.get('resourceId', '')
+            for r in valid_records
+        )
+        if has_unresolved:
+            logger.info(f"Cache invalidated for {service} — contains unresolved usage-type IDs, re-fetching with instance resolution")
+            return []
+
     # Sort by cost descending
     valid_records.sort(key=lambda x: float(x.get('amount', 0)), reverse=True)
     return valid_records
-
-
-def _write_resource_cache(member_email, account_id, period, service, records):
     """Write resource-level records to DynamoDB cache.
 
     Task 7.8: Write with sk = RES#{YYYY-MM}#{serviceName}#{resourceId}.
@@ -2178,6 +2188,7 @@ def _resolve_ec2_instances(creds, raw_items):
                 ],
             )
 
+            found_count = 0
             for reservation in resp.get('Reservations', []):
                 for instance in reservation.get('Instances', []):
                     iid = instance['InstanceId']
@@ -2195,6 +2206,9 @@ def _resolve_ec2_instances(creds, raw_items):
                         'name': name,
                         'type': itype,
                     })
+                    found_count += 1
+
+            logger.info(f"EC2 instance resolution: region={region}, types={instance_types}, found={found_count} instances")
 
         except Exception as e:
             logger.warning(f"EC2 instance resolution failed for region {region}: {e}")
