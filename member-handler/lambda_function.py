@@ -14774,21 +14774,32 @@ def _get_rightsizing_candidates(ec2_client, current_type, needed_vcpu, needed_me
     # For non-Linux, fetch real prices for the top candidates via Pricing API
     # Limit to 5 for non-Linux to avoid timeout (each Pricing API call takes ~1-2s)
     result = []
-    for itype, vcpu, mem, hourly, is_graviton in filtered[:15 if not is_non_linux else 5]:
+
+    # For non-Linux: calculate license surcharge from current instance
+    # license_surcharge = current_hourly (Windows+SQL) - Linux catalog price for same type
+    license_surcharge = 0
+    if is_non_linux:
+        # Find the current instance type in the catalog to get its Linux price
+        current_linux_price = 0
+        for cat_type, _, _, cat_hourly, _ in CATALOG:
+            if cat_type == current_type:
+                current_linux_price = cat_hourly
+                break
+        if current_linux_price > 0 and current_hourly > current_linux_price:
+            license_surcharge = current_hourly - current_linux_price
+        else:
+            # Fallback: estimate license surcharge based on vCPU count
+            # SQL Server Standard license is ~$0.54/hr per 4 vCPUs in eu-central-1
+            license_surcharge = current_hourly * 0.7  # ~70% of cost is license for SQL Std
+
+    for itype, vcpu, mem, hourly, is_graviton in filtered[:10]:
         if is_non_linux:
-            real_price = _get_instance_price(itype, region, operating_system, pre_installed_sw)
-            if real_price <= 0 or real_price >= current_hourly:
+            # Apply the same license surcharge to the alternative's Linux price
+            # This gives a reliable estimate without calling the unreliable Pricing API
+            estimated_hourly = hourly + license_surcharge
+            if estimated_hourly >= current_hourly:
                 continue
-            # Sanity check: Windows + SQL price must be higher than the Linux catalog price
-            # If the returned price is lower than the Linux price, the Pricing API returned wrong data
-            linux_catalog_price = hourly  # The catalog price is Linux
-            if real_price < linux_catalog_price * 2.0:
-                # Price is suspiciously low — likely returned Windows-only or Linux price
-                # Windows + SQL Server Standard adds ~$0.54/hr for 4 vCPU instances
-                # Skip this candidate as we can't trust the pricing
-                logger.warning(f"Pricing sanity check failed for {itype}: got ${real_price:.4f}/hr but Linux catalog is ${linux_catalog_price:.4f}/hr (OS={operating_system}, SW={pre_installed_sw})")
-                continue
-            hourly = real_price
+            hourly = estimated_hourly
 
         monthly = round(hourly * hours_in_month, 2)
         current_monthly = round(current_hourly * hours_in_month, 2)
