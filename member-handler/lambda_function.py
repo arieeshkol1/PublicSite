@@ -161,6 +161,7 @@ def lambda_handler(event, context):
         'POST /members/rds/optimize': handle_rds_optimize,
         'POST /members/lambda/optimize': handle_lambda_optimize,
         'POST /members/ebs/optimize': handle_ebs_optimize,
+        'POST /members/ebs/migrate-gp3': handle_ebs_migrate_gp3,
         'GET /members/tag-keys': handle_get_tag_keys,
         'GET /members/tag-values': handle_get_tag_values,
         'POST /members/committed-discounts/scan': handle_committed_discount_scan,
@@ -16550,6 +16551,75 @@ def handle_ebs_optimize(event):
 
     total_recs = sum(len(v.get('recommendations', [])) for v in volumes)
     return create_success_response({'success': True, 'volumes': volumes, 'summary': summary, 'totalRecommendations': total_recs})
+
+
+def handle_ebs_migrate_gp3(event):
+    """POST /members/ebs/migrate-gp3 -- Execute gp2 to gp3 volume migration."""
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+    member_email = auth['sub']
+
+    try:
+        body = json.loads(event.get('body', '{}'))
+    except (json.JSONDecodeError, TypeError):
+        return create_error_response(400, 'InvalidRequest', 'Invalid request body')
+
+    account_id = body.get('accountId', '')
+    volume_id = body.get('volumeId', '')
+    region = body.get('region', 'us-east-1')
+
+    if not account_id or not volume_id:
+        return create_error_response(400, 'MissingParams', 'accountId and volumeId required')
+
+    if not volume_id.startswith('vol-'):
+        return create_error_response(400, 'InvalidParams', 'volumeId must start with vol-')
+
+    ownership = _verify_account_ownership(member_email, [account_id])
+    if isinstance(ownership, dict):
+        return ownership
+
+    try:
+        creds = _assume_role_for_account(member_email, account_id)
+    except Exception as e:
+        return create_error_response(500, 'ServerError', f'Cannot assume role: {e}')
+
+    ec2 = _make_client_from_creds('ec2', creds, region)
+
+    # Verify volume exists and is gp2
+    try:
+        vol_resp = ec2.describe_volumes(VolumeIds=[volume_id])
+        volumes = vol_resp.get('Volumes', [])
+        if not volumes:
+            return create_error_response(404, 'NotFound', f'Volume {volume_id} not found')
+        vol = volumes[0]
+        if vol.get('VolumeType') != 'gp2':
+            return create_error_response(400, 'InvalidState', f'Volume {volume_id} is already {vol.get("VolumeType")}, not gp2')
+    except ClientError as e:
+        return create_error_response(500, 'AWSError', f'Failed to describe volume: {e}')
+
+    # Execute the migration
+    try:
+        ec2.modify_volume(VolumeId=volume_id, VolumeType='gp3')
+        logger.info(f"EBS migration initiated: {volume_id} gp2→gp3 by {member_email}")
+    except ClientError as e:
+        error_code = e.response['Error']['Code']
+        if 'VolumeModification' in str(e):
+            return create_error_response(409, 'InProgress', f'Volume {volume_id} already has a pending modification')
+        return create_error_response(500, 'AWSError', f'Failed to modify volume: {error_code} - {e}')
+
+    size_gb = vol.get('Size', 0)
+    savings = round(size_gb * 0.02, 2)  # $0.10/GB gp2 vs $0.08/GB gp3
+
+    return create_response(200, {
+        'success': True,
+        'volumeId': volume_id,
+        'previousType': 'gp2',
+        'newType': 'gp3',
+        'sizeGb': size_gb,
+        'monthlySavings': savings,
+        'message': f'Volume {volume_id} migration to gp3 initiated. This is a live operation — no downtime required.',
+    })
 
 
 # ============================================================

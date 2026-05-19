@@ -512,6 +512,7 @@ jobs:
             "POST /members/rds/optimize"
             "POST /members/lambda/optimize"
             "POST /members/ebs/optimize"
+            "POST /members/ebs/migrate-gp3"
             "GET /members/tag-keys"
             "GET /members/tag-values"
             "POST /members/accounts/update-permissions"

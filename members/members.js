@@ -8664,11 +8664,11 @@ async function _ebsOptimize(accountId) {
         var data = await api('POST', '/members/ebs/optimize', { accountId: accountId });
         if (status) status.textContent = '';
         if (!data.success) { if (status) status.textContent = '\u274c ' + (data.message || 'Failed'); return; }
-        _renderEbsReport(data);
+        _renderEbsReport(data, accountId);
     } catch (e) { if (status) status.textContent = '\u274c ' + (e.message || 'Failed'); }
 }
 
-function _renderEbsReport(data) {
+function _renderEbsReport(data, accountId) {
     var el = document.getElementById('ebs-optimize-report');
     if (!el) return;
     el.style.display = 'block';
@@ -8685,10 +8685,32 @@ function _renderEbsReport(data) {
         html += '<details style="border:1px solid #e5e7eb;border-radius:8px;padding:10px;margin-bottom:6px;">';
         html += '<summary style="cursor:pointer;"><strong>' + (vol.name || vol.volumeId) + '</strong> <span style="color:#6b7280;font-size:0.8em;">' + vol.volumeType + ' | ' + vol.sizeGb + ' GB | ' + (vol.attached ? 'attached to ' + vol.attachedTo : 'unattached') + '</span></summary>';
         html += '<div style="margin-top:8px;">';
-        vol.recommendations.forEach(function(r) { html += '<div style="background:#fef3c7;border-radius:6px;padding:8px;margin-top:4px;"><strong>' + r.title + '</strong><br><span style="font-size:0.85em;color:#6b7280;">' + r.description + '</span></div>'; });
+        vol.recommendations.forEach(function(r) {
+            var migrateBtn = '';
+            if (r.type === 'gp2_to_gp3') {
+                migrateBtn = ' <button class="btn btn-primary btn-sm" style="margin-left:8px;padding:2px 10px;font-size:0.8em;cursor:pointer;border-radius:4px;background:#6366f1;color:#fff;border:none;" onclick="_executeEbsMigrate(\'' + accountId + '\', \'' + vol.volumeId + '\', \'' + vol.region + '\', this)">⚡ Migrate Now</button>';
+            }
+            html += '<div style="background:#fef3c7;border-radius:6px;padding:8px;margin-top:4px;"><strong>' + r.title + '</strong>' + migrateBtn + '<br><span style="font-size:0.85em;color:#6b7280;">' + r.description + '</span></div>';
+        });
         html += '</div></details>';
     });
     el.innerHTML = html;
+}
+
+async function _executeEbsMigrate(accountId, volumeId, region, btn) {
+    if (!confirm('Migrate ' + volumeId + ' from gp2 to gp3? This is a live operation with no downtime.')) return;
+    btn.disabled = true;
+    btn.textContent = '⏳ Migrating...';
+    try {
+        var resp = await api('POST', '/members/ebs/migrate-gp3', {accountId: accountId, volumeId: volumeId, region: region});
+        btn.textContent = '✅ Done';
+        btn.style.background = '#10b981';
+        notify('Volume ' + volumeId + ' migrated to gp3! Saves $' + resp.monthlySavings + '/mo', 'success', 5000);
+    } catch (err) {
+        btn.disabled = false;
+        btn.textContent = '⚡ Migrate Now';
+        notify('Migration failed: ' + (err.message || 'Unknown error'), 'error');
+    }
 }
 
 // ============================================================

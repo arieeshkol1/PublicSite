@@ -1475,6 +1475,13 @@ Resources:
   # ============================================================
   # API Gateway - Invoice Explorer Routes
   # ============================================================
+  MemberEbsMigrateGp3Route:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'POST /members/ebs/migrate-gp3'
+      Target: !Sub 'integrations/${MemberIntegration}'
+
   MemberGetInvoicesRoute:
     Type: AWS::ApiGatewayV2::Route
     Properties:
