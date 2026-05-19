@@ -7988,11 +7988,14 @@ async function _resizeAnalyze() {
             });
             html += '</div>';
             // Usage metrics
-            html += '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;padding:8px 0;border-top:1px solid #e5e7eb;font-size:0.85em;">';
+            var hasMemData = m.mem_avg !== null && m.mem_avg !== undefined;
+            html += '<div style="display:grid;grid-template-columns:repeat(' + (hasMemData ? '4' : '2') + ',1fr);gap:8px;padding:8px 0;border-top:1px solid #e5e7eb;font-size:0.85em;">';
             html += '<div style="text-align:center;"><div style="font-size:1.3em;font-weight:700;color:' + (m.cpu_avg < 20 ? '#059669' : m.cpu_avg < 50 ? '#d97706' : '#dc2626') + ';">' + (m.cpu_avg || 0) + '%</div><div style="font-size:0.75em;color:#6b7280;">CPU Avg (30d)</div></div>';
             html += '<div style="text-align:center;"><div style="font-size:1.3em;font-weight:700;">' + (m.cpu_max || 0) + '%</div><div style="font-size:0.75em;color:#6b7280;">CPU Max</div></div>';
-            html += '<div style="text-align:center;"><div style="font-size:1.3em;font-weight:700;">' + (m.mem_avg !== null ? m.mem_avg + '%' : 'N/A') + '</div><div style="font-size:0.75em;color:#6b7280;">Memory Avg</div></div>';
-            html += '<div style="text-align:center;"><div style="font-size:1.3em;font-weight:700;">' + (m.mem_max !== null ? m.mem_max + '%' : 'N/A') + '</div><div style="font-size:0.75em;color:#6b7280;">Memory Max</div></div>';
+            if (hasMemData) {
+                html += '<div style="text-align:center;"><div style="font-size:1.3em;font-weight:700;">' + m.mem_avg + '%</div><div style="font-size:0.75em;color:#6b7280;">Memory Avg</div></div>';
+                html += '<div style="text-align:center;"><div style="font-size:1.3em;font-weight:700;">' + m.mem_max + '%</div><div style="font-size:0.75em;color:#6b7280;">Memory Max</div></div>';
+            }
             html += '</div>';
             // Free tier info
             var ft = data.freeTier || {};
@@ -8015,7 +8018,6 @@ async function _resizeAnalyze() {
             if (a.verdict !== 'right-sized') html += ' - savings available below';
             html += '</div></div>';
             if (a.note) html += '<div style="margin-top:6px;font-size:0.8em;color:#6b7280;font-style:italic;">' + a.note + '</div>';
-            if (a.memoryWarning) html += '<div style="margin-top:8px;padding:8px 12px;background:#fef3c7;border:1px solid #f59e0b;border-radius:6px;font-size:0.85em;color:#92400e;">' + a.memoryWarning + '</div>';
             if (a.burstableWarning) html += '<div style="margin-top:8px;padding:8px 12px;background:#fef3c7;border:1px solid #f59e0b;border-radius:6px;font-size:0.85em;color:#92400e;">' + a.burstableWarning + '</div>';
             analysisEl.innerHTML = html;
         }
@@ -10917,7 +10919,7 @@ function _ddRenderResources(area, data) {
         var tipHtml = '';
         if (res.savingsTip) {
             tipHtml = '<span class="dd-savings-tip">' + esc(res.savingsTip) + '</span>';
-            tipHtml += ' <a href="#" class="dd-chat-link" onclick="event.preventDefault();_ddOpenChatAbout(\'' + ea(res.resourceName || res.resourceId || '') + '\',\'' + ea(res.resourceType || '') + '\')">\uD83D\uDCAC Discuss</a>';
+            tipHtml += ' <a href="#" class="dd-chat-link" onclick="event.preventDefault();_ddOpenChatAbout(\'' + ea(res.resourceName || res.resourceId || '') + '\',\'' + ea(res.resourceType || '') + '\',' + (res.amount || 0) + ',\'' + ea(res.costExplanation || '') + '\')">\uD83D\uDCAC Discuss</a>';
         } else {
             tipHtml = '<span class="dd-no-tip">—</span>';
         }
@@ -10950,16 +10952,20 @@ function _ddRenderResources(area, data) {
 }
 
 // Open Chat tab with a pre-filled question about a specific resource
-function _ddOpenChatAbout(resourceName, resourceType) {
+function _ddOpenChatAbout(resourceName, resourceType, monthlyCost, costExplanation) {
     // Switch to the Chat/AI tab
     var chatTab = document.querySelector('[data-tab="ai-tab"]');
     if (chatTab) chatTab.click();
+
+    // Build a specific question with cost context
+    var costStr = monthlyCost ? ' (current cost: $' + monthlyCost.toFixed(2) + '/month' + (costExplanation ? ', ' + costExplanation : '') + ')' : '';
+    var question = 'Analyze this specific instance and recommend how to optimize it: "' + resourceName + '" — ' + resourceType + costStr + '. Focus ONLY on this instance, show its per-instance cost, and give specific rightsizing or commitment options.';
 
     // Pre-fill the chat input with a savings question
     setTimeout(function() {
         var chatInput = document.getElementById('ai-question-input');
         if (chatInput) {
-            chatInput.value = 'How can I reduce costs for ' + resourceName + ' (' + resourceType + ')? What are the best savings options?';
+            chatInput.value = question;
             chatInput.focus();
             // Auto-submit the question
             var askBtn = document.getElementById('ai-ask-btn');

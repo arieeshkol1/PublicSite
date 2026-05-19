@@ -14736,23 +14736,22 @@ def _get_rightsizing_candidates(ec2_client, current_type, needed_vcpu, needed_me
         ('t4g.small',  2, 2,   0.0168, True),  ('t4g.medium', 2, 4,   0.0336, True),
         ('t4g.large',  2, 8,   0.0672, True),
         ('m5.large',   2, 8,   0.096,  False),  ('m5.xlarge',  4, 16,  0.192,  False),
+        ('m5.2xlarge', 8, 32,  0.384,  False),
         ('m5a.large',  2, 8,   0.086,  False),
         ('m6i.large',  2, 8,   0.096,  False),  ('m6i.xlarge', 4, 16,  0.192,  False),
         ('m6g.medium', 1, 4,   0.0385, True),   ('m6g.large',  2, 8,   0.077,  True),
         ('m7g.medium', 1, 4,   0.0408, True),   ('m7g.large',  2, 8,   0.0816, True),
         ('c5.large',   2, 4,   0.085,  False),  ('c5.xlarge',  4, 8,   0.17,   False),
+        ('c5.2xlarge', 8, 16,  0.34,   False),
         ('c5a.large',  2, 4,   0.077,  False),
         ('c6i.large',  2, 4,   0.085,  False),
         ('c6g.medium', 1, 2,   0.034,  True),   ('c6g.large',  2, 4,   0.068,  True),
         ('c7g.medium', 1, 2,   0.0361, True),   ('c7g.large',  2, 4,   0.0725, True),
         ('r5.large',   2, 16,  0.126,  False),  ('r5.xlarge',  4, 32,  0.252,  False),
-        ('r5a.large',  2, 16,  0.113,  False), ('r5a.xlarge', 4, 32,  0.226,  False),
-        ('r6i.large',  2, 16,  0.126,  False), ('r6i.xlarge', 4, 32,  0.252,  False),
-        ('r6g.large',  2, 16,  0.1008, True),  ('r6g.xlarge', 4, 32,  0.2016, True),
-        ('r7g.large',  2, 16,  0.1071, True),  ('r7g.xlarge', 4, 32,  0.2142, True),
-        ('m5.xlarge',  4, 16,  0.192,  False), ('m5.2xlarge', 8, 32,  0.384,  False),
-        ('m6i.xlarge', 4, 16,  0.192,  False),
-        ('c5.xlarge',  4, 8,   0.17,   False), ('c5.2xlarge', 8, 16,  0.34,   False),
+        ('r5a.large',  2, 16,  0.113,  False),  ('r5a.xlarge', 4, 32,  0.226,  False),
+        ('r6i.large',  2, 16,  0.126,  False),  ('r6i.xlarge', 4, 32,  0.252,  False),
+        ('r6g.large',  2, 16,  0.1008, True),   ('r6g.xlarge', 4, 32,  0.2016, True),
+        ('r7g.large',  2, 16,  0.1071, True),   ('r7g.xlarge', 4, 32,  0.2142, True),
     ]
 
     is_non_linux = operating_system != 'Linux'
@@ -15007,9 +15006,14 @@ def handle_server_analyze(event):
     if mem_avg is not None and mem_avg < 40 and current_mem > 2:
         needed_mem = max(1, current_mem // 2)
     elif mem_avg is None:
-        # No memory data — still allow downsizing memory if CPU is very low,
-        # but flag it with a warning. Use 75% of current as minimum.
-        if cpu_avg < 10 and current_mem > 4:
+        # No memory data — for SQL Server or database workloads, NEVER downsize memory
+        # without metrics. SQL Server uses RAM aggressively for buffer pool caching.
+        name_lower_mem = name.lower()
+        is_db_workload = any(kw in name_lower_mem for kw in ('db', 'database', 'sql', 'mongo', 'redis', 'elastic', 'kafka'))
+        is_sql_server = 'SQL' in pre_sw if pre_sw else False
+        if is_db_workload or is_sql_server:
+            needed_mem = current_mem  # Keep same RAM — cannot safely downsize
+        elif cpu_avg < 10 and current_mem > 4:
             needed_mem = max(2, int(current_mem * 0.5))
         else:
             needed_mem = current_mem
