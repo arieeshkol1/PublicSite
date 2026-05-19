@@ -15,6 +15,7 @@ import math
 import secrets
 import hashlib
 import logging
+import calendar
 import concurrent.futures
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -14771,9 +14772,10 @@ def _get_rightsizing_candidates(ec2_client, current_type, needed_vcpu, needed_me
     # Sort by catalog price (cheapest first) to prioritize smaller instances
     filtered.sort(key=lambda x: x[3])
 
-    # For non-Linux, fetch real prices for the top 10 candidates via Pricing API
+    # For non-Linux, fetch real prices for the top candidates via Pricing API
+    # Limit to 5 for non-Linux to avoid timeout (each Pricing API call takes ~1-2s)
     result = []
-    for itype, vcpu, mem, hourly, is_graviton in filtered[:15 if not is_non_linux else 10]:
+    for itype, vcpu, mem, hourly, is_graviton in filtered[:15 if not is_non_linux else 5]:
         if is_non_linux:
             real_price = _get_instance_price(itype, region, operating_system, pre_installed_sw)
             if real_price <= 0 or real_price >= current_hourly:
@@ -14995,7 +14997,6 @@ def handle_server_analyze(event):
     current_hourly = _get_instance_price(current_type, region, os_name, pre_sw)
 
     # Use hours from the PREVIOUS month (matches the invoice the user sees)
-    import calendar
     now = datetime.now(timezone.utc)
     # Previous month calculation
     if now.month == 1:
