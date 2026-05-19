@@ -15071,7 +15071,7 @@ def _handle_server_analyze_inner(event, member_email):
         else:
             rec['category'] = 'same-spec'
 
-    logger.info(f"Resize analysis: {current_type} ({current_vcpu}vCPU, {current_mem}GB, ${current_hourly}/hr) -> needed: {needed_vcpu}vCPU, {needed_mem}GB. Found {len(recommendations)} recommendations.")
+    logger.info(f"Resize analysis: {current_type} ({current_vcpu}vCPU, {current_mem}GB, ${current_hourly}/hr) -> filter: {needed_vcpu_for_filter}vCPU, {needed_mem_for_filter}GB. Found {len(recommendations)} recommendations.")
 
     # Get free tier usage for this account
     free_tier = {}
