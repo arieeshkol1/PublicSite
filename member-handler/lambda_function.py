@@ -15,7 +15,6 @@ import math
 import secrets
 import hashlib
 import logging
-import calendar
 import concurrent.futures
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -15003,7 +15002,13 @@ def handle_server_analyze(event):
         _prev_year, _prev_month = now.year - 1, 12
     else:
         _prev_year, _prev_month = now.year, now.month - 1
-    _days_in_month = calendar.monthrange(_prev_year, _prev_month)[1]
+    # Days in previous month (simple calculation without calendar module)
+    if _prev_month in (1, 3, 5, 7, 8, 10, 12):
+        _days_in_month = 31
+    elif _prev_month in (4, 6, 9, 11):
+        _days_in_month = 30
+    else:  # February
+        _days_in_month = 29 if (_prev_year % 4 == 0 and (_prev_year % 100 != 0 or _prev_year % 400 == 0)) else 28
     _hours_in_month = _days_in_month * 24
     current_monthly = round(current_hourly * _hours_in_month, 2)
 
@@ -15026,10 +15031,14 @@ def handle_server_analyze(event):
     # For alternatives: allow ALL cheaper options including downgrades
     # The frontend will clearly mark downgrades with warnings
     # Use minimum 2 vCPU and 8 GB RAM as the floor for candidates
-    needed_vcpu_for_filter = max(1, needed_vcpu // 2) if needed_vcpu > 1 else 1
-    needed_mem_for_filter = max(8, current_mem // 4)  # Allow down to 25% of current RAM
+    needed_vcpu_for_filter = max(1, int(needed_vcpu) // 2) if needed_vcpu > 1 else 1
+    needed_mem_for_filter = max(8, int(current_mem) // 4)  # Allow down to 25% of current RAM
 
-    recommendations = _get_rightsizing_candidates(ec2, current_type, needed_vcpu_for_filter, needed_mem_for_filter, current_hourly, arch, region, os_name, pre_sw, _hours_in_month)
+    try:
+        recommendations = _get_rightsizing_candidates(ec2, current_type, needed_vcpu_for_filter, needed_mem_for_filter, current_hourly, arch, region, os_name, pre_sw, _hours_in_month)
+    except Exception as e:
+        logger.error(f"Rightsizing candidates failed: {type(e).__name__}: {e}")
+        recommendations = []
 
     # Flag recommendations with significant memory downgrade
     for rec in recommendations:
