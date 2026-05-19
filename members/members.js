@@ -10904,7 +10904,7 @@ function _ddRenderResources(area, data) {
 
     var html = '<table class="dd-subtable dd-resource-table"><thead><tr>';
     html += '<th>Resource Name/ID</th>';
-    html += '<th>Type</th>';
+    html += '<th>Savings Tip</th>';
     html += '<th>Cost Explanation</th>';
     html += '<th>Amount</th>';
     html += '</tr></thead><tbody>';
@@ -10915,9 +10915,18 @@ function _ddRenderResources(area, data) {
             ? '<code class="dd-resource-id">' + esc(res.resourceId || '') + '</code>'
             : esc(res.resourceName || res.resourceId || '');
 
+        // Savings tip with link to Chat tab
+        var tipHtml = '';
+        if (res.savingsTip) {
+            tipHtml = '<span class="dd-savings-tip">' + esc(res.savingsTip) + '</span>';
+            tipHtml += ' <a href="#" class="dd-chat-link" onclick="event.preventDefault();_ddOpenChatAbout(\'' + ea(res.resourceName || res.resourceId || '') + '\',\'' + ea(res.resourceType || '') + '\')">\uD83D\uDCAC Discuss</a>';
+        } else {
+            tipHtml = '<span class="dd-no-tip">—</span>';
+        }
+
         html += '<tr class="dd-resource-row">';
         html += '<td>' + nameDisplay + '</td>';
-        html += '<td><span class="dd-resource-type-badge">' + esc(res.resourceType || 'Unknown') + '</span></td>';
+        html += '<td class="dd-tip-cell">' + tipHtml + '</td>';
         html += '<td class="dd-explanation">' + esc(res.costExplanation || '') + '</td>';
         html += '<td style="font-weight:600;">' + _ddFormatCurrency(res.amount) + '</td>';
         html += '</tr>';
@@ -10940,6 +10949,25 @@ function _ddRenderResources(area, data) {
     }
 
     area.innerHTML = html;
+}
+
+// Open Chat tab with a pre-filled question about a specific resource
+function _ddOpenChatAbout(resourceName, resourceType) {
+    // Switch to the Chat/AI tab
+    var chatTab = document.querySelector('[data-tab="ai-tab"]');
+    if (chatTab) chatTab.click();
+
+    // Pre-fill the chat input with a savings question
+    setTimeout(function() {
+        var chatInput = document.getElementById('ai-question-input');
+        if (chatInput) {
+            chatInput.value = 'How can I reduce costs for ' + resourceName + ' (' + resourceType + ')? What are the best savings options?';
+            chatInput.focus();
+            // Auto-submit the question
+            var askBtn = document.getElementById('ai-ask-btn');
+            if (askBtn) askBtn.click();
+        }
+    }, 300);
 }
 
 // Refresh button with cooldown (Task 10.6)

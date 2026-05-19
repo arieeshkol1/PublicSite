@@ -1047,6 +1047,36 @@
     border: 1px solid #e5e7eb;
 }
 
+/* Savings tip in resource table */
+.dd-savings-tip {
+    display: inline;
+    font-size: 12px;
+    color: #059669;
+    font-weight: 500;
+    line-height: 1.4;
+}
+.dd-tip-cell {
+    max-width: 260px;
+    line-height: 1.5;
+}
+.dd-chat-link {
+    display: inline-block;
+    margin-top: 2px;
+    font-size: 11px;
+    color: #2563eb;
+    text-decoration: none;
+    font-weight: 600;
+    white-space: nowrap;
+}
+.dd-chat-link:hover {
+    color: #1d4ed8;
+    text-decoration: underline;
+}
+.dd-no-tip {
+    color: #9ca3af;
+    font-size: 12px;
+}
+
 /* Resource ID in monospace */
 .dd-resource-id {
     font-family: 'Consolas', 'Courier New', monospace;

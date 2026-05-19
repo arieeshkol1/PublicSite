@@ -475,6 +475,12 @@ def handle_resource_breakdown_request(event, member_email):
     # Build response
     response_resources = []
     for r in resources:
+        savings_tip = _generate_savings_tip(
+            r.get('resourceName', ''),
+            r.get('resourceType', ''),
+            float(r.get('amount', 0)),
+            r.get('usageTypes', []),
+        )
         response_resources.append({
             'resourceId': r.get('resourceId', ''),
             'resourceName': r.get('resourceName', ''),
@@ -483,6 +489,7 @@ def handle_resource_breakdown_request(event, member_email):
             'costExplanation': r.get('costExplanation', ''),
             'aiExplanation': r.get('aiExplanation'),
             'usageTypes': r.get('usageTypes', []),
+            'savingsTip': savings_tip,
         })
 
     return create_response(200, {
@@ -1453,6 +1460,80 @@ def _get_unit_abbreviation(unit):
     return unit_map.get(unit, unit)
 
 
+def _generate_savings_tip(resource_name, resource_type, amount, usage_types):
+    """Generate a brief savings recommendation for a resource.
+
+    Based on the resource type and cost, provides a short actionable tip
+    that the user can explore further in the Chat tab.
+
+    Args:
+        resource_name: Display name of the resource.
+        resource_type: Type classification (e.g., 'EC2 Instance', 'EBS Volume').
+        amount: Monthly cost in USD.
+        usage_types: List of usage type dicts.
+
+    Returns:
+        str: A brief savings tip, or empty string if no tip applies.
+    """
+    rtype_lower = (resource_type or '').lower()
+    usage_str = ' '.join(ut.get('type', '') for ut in (usage_types or []))
+
+    # EC2 instances
+    if 'ec2 instance' in rtype_lower or 'boxusage' in usage_str.lower():
+        if amount > 500:
+            return "Consider Reserved Instances or Savings Plans for up to 72% savings"
+        elif amount > 100:
+            return "Check if rightsizing or Spot instances could reduce costs"
+        else:
+            return "Review if this instance can be scheduled off-hours"
+
+    # EBS volumes
+    if 'ebs' in rtype_lower or 'volume' in rtype_lower:
+        if 'gp2' in usage_str.lower():
+            return "Migrate from gp2 to gp3 for ~20% savings with better performance"
+        elif 'io1' in usage_str.lower() or 'io2' in usage_str.lower():
+            return "Review provisioned IOPS — consider gp3 if IOPS needs are under 16K"
+        return "Check for unattached or oversized volumes"
+
+    # Data transfer
+    if 'data transfer' in rtype_lower:
+        if amount > 50:
+            return "Use CloudFront or VPC endpoints to reduce transfer costs"
+        return "Review cross-region/cross-AZ data transfer patterns"
+
+    # NAT Gateway
+    if 'nat' in rtype_lower or 'natgateway' in usage_str.lower():
+        return "Consider VPC endpoints for S3/DynamoDB to bypass NAT charges"
+
+    # RDS
+    if 'rds' in rtype_lower:
+        if amount > 200:
+            return "Consider Reserved Instances or Aurora Serverless for variable workloads"
+        return "Review if Multi-AZ is needed or if instance can be rightsized"
+
+    # S3
+    if 's3' in rtype_lower:
+        return "Set up lifecycle policies to move infrequent data to cheaper tiers"
+
+    # Lambda
+    if 'lambda' in rtype_lower:
+        return "Optimize memory allocation and reduce cold starts"
+
+    # Load Balancer
+    if 'load balancer' in rtype_lower or 'elb' in rtype_lower:
+        return "Consolidate load balancers or switch to ALB for cost efficiency"
+
+    # ElastiCache
+    if 'elasticache' in rtype_lower or 'cache' in rtype_lower:
+        return "Consider Reserved Nodes or serverless ElastiCache"
+
+    # Generic high-cost
+    if amount > 100:
+        return "Review usage patterns for potential optimization"
+
+    return ""
+
+
 # ─── Cross-account role assumption ───────────────────────────────────────────
 
 def _assume_role(member_email, account_id):
@@ -1856,8 +1937,8 @@ def _fetch_usage_type_breakdown(ce_client, creds, service, start_date, end_date,
     """Fallback: fetch usage-type-level breakdown when resource-level data is unavailable.
 
     Uses GetCostAndUsage with USAGE_TYPE grouping filtered by service.
-    Returns usage types as pseudo-resources (since individual resource IDs aren't available
-    for periods older than 14 days).
+    For EC2 BoxUsage types, resolves individual instance names by calling
+    DescribeInstances and splits the aggregated cost across them.
 
     Args:
         ce_client: Cost Explorer boto3 client with cross-account credentials.
@@ -1891,7 +1972,8 @@ def _fetch_usage_type_breakdown(ce_client, creds, service, start_date, end_date,
         logger.error(f"Usage-type fallback failed for {service}: {e}")
         raise
 
-    records = []
+    # Collect raw usage-type data
+    raw_items = []
     for period_result in response.get('ResultsByTime', []):
         for group in period_result.get('Groups', []):
             usage_type = group['Keys'][0] if group['Keys'] else 'Unknown'
@@ -1902,31 +1984,223 @@ def _fetch_usage_type_breakdown(ce_client, creds, service, start_date, end_date,
             if abs(cost) < 0.01:
                 continue
 
-            # Use usage type as a pseudo-resource
-            usage_types_list = [{
-                'type': usage_type,
-                'cost': round(cost, 2),
+            raw_items.append({
+                'usage_type': usage_type,
+                'cost': cost,
+                'quantity': quantity,
                 'unit': unit,
-                'quantity': round(quantity, 4),
-            }]
-
-            cost_explanation = generate_cost_explanation(usage_types_list)
-
-            # Parse usage type into a friendly name and type
-            friendly_name, friendly_type = _parse_usage_type(usage_type, service)
-
-            records.append({
-                'resourceId': usage_type,
-                'resourceName': friendly_name,
-                'resourceType': friendly_type,
-                'amount': round(cost, 2),
-                'costExplanation': cost_explanation,
-                'aiExplanation': None,
-                'usageTypes': usage_types_list,
             })
+
+    # For EC2 services, resolve individual instance names
+    is_ec2 = 'elastic compute' in service.lower() or 'ec2' in service.lower()
+    instance_map = {}  # {instance_type: [{id, name, region}]}
+
+    if is_ec2 and raw_items:
+        instance_map = _resolve_ec2_instances(creds, raw_items)
+
+    records = []
+    for item in raw_items:
+        usage_type = item['usage_type']
+        cost = item['cost']
+        quantity = item['quantity']
+        unit = item['unit']
+
+        # Check if this is a BoxUsage/SpotUsage type that we can split into individual instances
+        instance_type_key = _extract_instance_type_from_usage(usage_type)
+
+        if is_ec2 and instance_type_key and instance_type_key in instance_map:
+            instances = instance_map[instance_type_key]
+            if len(instances) > 0:
+                # Split cost proportionally across instances (equal split)
+                per_instance_cost = round(cost / len(instances), 2)
+                per_instance_qty = round(quantity / len(instances), 4)
+
+                for inst in instances:
+                    inst_name = inst.get('name', inst.get('id', 'Unknown'))
+                    inst_id = inst.get('id', usage_type)
+                    inst_type = inst.get('type', instance_type_key)
+
+                    usage_types_list = [{
+                        'type': usage_type,
+                        'cost': per_instance_cost,
+                        'unit': unit,
+                        'quantity': per_instance_qty,
+                    }]
+
+                    hourly_rate = round(cost / quantity, 4) if quantity > 0 else 0
+                    hours = round(per_instance_qty, 1)
+                    cost_explanation = f"{hours} Hrs × ${hourly_rate:.4f}/hr"
+
+                    records.append({
+                        'resourceId': inst_id,
+                        'resourceName': inst_name,
+                        'resourceType': f'EC2 Instance ({inst_type})',
+                        'amount': per_instance_cost,
+                        'costExplanation': cost_explanation,
+                        'aiExplanation': None,
+                        'usageTypes': usage_types_list,
+                    })
+                continue  # Skip the default record creation
+
+        # Default: use usage type as a pseudo-resource (non-EC2 or unresolved)
+        usage_types_list = [{
+            'type': usage_type,
+            'cost': round(cost, 2),
+            'unit': unit,
+            'quantity': round(quantity, 4),
+        }]
+
+        cost_explanation = generate_cost_explanation(usage_types_list)
+
+        # Parse usage type into a friendly name and type
+        friendly_name, friendly_type = _parse_usage_type(usage_type, service)
+
+        records.append({
+            'resourceId': usage_type,
+            'resourceName': friendly_name,
+            'resourceType': friendly_type,
+            'amount': round(cost, 2),
+            'costExplanation': cost_explanation,
+            'aiExplanation': None,
+            'usageTypes': usage_types_list,
+        })
 
     records.sort(key=lambda x: x['amount'], reverse=True)
     return records, warnings
+
+
+def _extract_instance_type_from_usage(usage_type):
+    """Extract the EC2 instance type from a BoxUsage or SpotUsage usage type string.
+
+    Examples:
+        "EUC1-BoxUsage:r5.xlarge" → "r5.xlarge"
+        "USW2-SpotUsage:c5.large" → "c5.large"
+        "BoxUsage:t3.medium" → "t3.medium"
+        "EUC1-EBS:VolumeUsage.gp3" → None (not an instance type)
+
+    Returns:
+        str or None: The instance type if found, else None.
+    """
+    if 'BoxUsage:' in usage_type:
+        return usage_type.split('BoxUsage:')[-1]
+    if 'SpotUsage:' in usage_type:
+        return usage_type.split('SpotUsage:')[-1]
+    return None
+
+
+def _extract_region_from_usage(usage_type):
+    """Extract the AWS region from a usage type prefix.
+
+    Examples:
+        "EUC1-BoxUsage:r5.xlarge" → "eu-central-1"
+        "USW2-SpotUsage:c5.large" → "us-west-2"
+        "BoxUsage:t3.medium" → None (no region prefix)
+
+    Returns:
+        str or None: The AWS region if a known prefix is found, else None.
+    """
+    PREFIX_TO_REGION = {
+        'USE1': 'us-east-1', 'USE2': 'us-east-2', 'USW1': 'us-west-1', 'USW2': 'us-west-2',
+        'EUC1': 'eu-central-1', 'EUW1': 'eu-west-1', 'EUW2': 'eu-west-2', 'EUW3': 'eu-west-3',
+        'EUN1': 'eu-north-1', 'APS1': 'ap-southeast-1', 'APS2': 'ap-southeast-2',
+        'APN1': 'ap-northeast-1', 'APN2': 'ap-northeast-2', 'APN3': 'ap-northeast-3',
+        'SAE1': 'sa-east-1', 'CAN1': 'ca-central-1', 'MES1': 'me-south-1', 'MEC1': 'me-central-1',
+        'AFS1': 'af-south-1', 'APS3': 'ap-south-1',
+    }
+    if '-' in usage_type:
+        prefix = usage_type.split('-')[0]
+        if prefix in PREFIX_TO_REGION:
+            return PREFIX_TO_REGION[prefix]
+    return None
+
+
+def _resolve_ec2_instances(creds, raw_items):
+    """Resolve EC2 instance names for BoxUsage/SpotUsage usage types.
+
+    Calls DescribeInstances in the appropriate region(s) to find instances
+    matching each instance type, then returns a map of instance_type → instances.
+
+    Args:
+        creds: STS credentials dict for cross-account access.
+        raw_items: List of raw usage-type dicts with 'usage_type' key.
+
+    Returns:
+        dict: {instance_type: [{'id': str, 'name': str, 'type': str}]}
+    """
+    from botocore.config import Config
+
+    # Collect all instance types and their regions
+    type_regions = {}  # {instance_type: set(regions)}
+    for item in raw_items:
+        ut = item['usage_type']
+        inst_type = _extract_instance_type_from_usage(ut)
+        if inst_type:
+            region = _extract_region_from_usage(ut) or 'eu-central-1'
+            if inst_type not in type_regions:
+                type_regions[inst_type] = set()
+            type_regions[inst_type].add(region)
+
+    if not type_regions:
+        return {}
+
+    timeout_config = Config(
+        read_timeout=RESOURCE_TIMEOUT,
+        connect_timeout=RESOURCE_TIMEOUT,
+        retries={'max_attempts': 1},
+    )
+
+    result = {}  # {instance_type: [{id, name, type}]}
+
+    # Group by region to minimize API calls
+    region_types = {}  # {region: [instance_types]}
+    for inst_type, regions in type_regions.items():
+        for region in regions:
+            if region not in region_types:
+                region_types[region] = []
+            region_types[region].append(inst_type)
+
+    for region, instance_types in region_types.items():
+        try:
+            ec2_client = boto3.client(
+                'ec2',
+                aws_access_key_id=creds['AccessKeyId'],
+                aws_secret_access_key=creds['SecretAccessKey'],
+                aws_session_token=creds['SessionToken'],
+                region_name=region,
+                config=timeout_config,
+            )
+
+            # Query all instances of these types (running + stopped — they still incur costs if reserved)
+            resp = ec2_client.describe_instances(
+                Filters=[
+                    {'Name': 'instance-type', 'Values': instance_types},
+                    {'Name': 'instance-state-name', 'Values': ['running', 'stopped']},
+                ],
+            )
+
+            for reservation in resp.get('Reservations', []):
+                for instance in reservation.get('Instances', []):
+                    iid = instance['InstanceId']
+                    itype = instance.get('InstanceType', '')
+                    name = iid  # default to instance ID
+                    for tag in instance.get('Tags', []):
+                        if tag['Key'] == 'Name':
+                            name = tag['Value']
+                            break
+
+                    if itype not in result:
+                        result[itype] = []
+                    result[itype].append({
+                        'id': iid,
+                        'name': name,
+                        'type': itype,
+                    })
+
+        except Exception as e:
+            logger.warning(f"EC2 instance resolution failed for region {region}: {e}")
+            # Continue with other regions — partial data is better than none
+
+    return result
 
 
 def _fetch_invoices_from_cost_explorer(creds, account_id):
@@ -1957,18 +2231,26 @@ def _fetch_invoices_from_cost_explorer(creds, account_id):
 
     try:
         # Use SERVICE grouping to get totals consistent with the service breakdown
-        # Use ungrouped query to get the true total (matching Dashboard numbers)
-        # This includes credits, taxes, support — the real invoice amount
+        # Use ungrouped query but exclude Tax to match Dashboard numbers
+        # Tax is shown as a service line item but not included in the invoice total
         response = ce_client.get_cost_and_usage(
             TimePeriod={'Start': start_date, 'End': end_date},
             Granularity='MONTHLY',
             Metrics=['UnblendedCost'],
+            Filter={
+                'Not': {
+                    'Dimensions': {
+                        'Key': 'RECORD_TYPE',
+                        'Values': ['Tax']
+                    }
+                }
+            },
         )
     except ClientError as e:
         logger.error(f"Cost Explorer fallback failed for {account_id}: {e}")
         raise
 
-    # Extract monthly totals from ungrouped response
+    # Extract monthly totals (excluding Tax, matching Dashboard)
     monthly_totals = {}
     results_count = len(response.get('ResultsByTime', []))
     logger.info(f"Cost Explorer returned {results_count} periods for {account_id}")
