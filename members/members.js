@@ -3676,8 +3676,6 @@ function _renderMonthly(monthlyTrend) {
             allSvcs[e[0]] = (allSvcs[e[0]] || 0) + e[1];
         });
     });
-    // Remove Tax
-    delete allSvcs['Tax'];
     // Sort by total cost, take top 8
     var topSvcs = Object.entries(allSvcs).sort(function(a,b){return b[1]-a[1];}).slice(0, 8).map(function(e){return e[0];});
 
