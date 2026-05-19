@@ -14898,6 +14898,17 @@ def handle_server_analyze(event):
         return credit_err
 
     try:
+        return _handle_server_analyze_inner(event, member_email)
+    except Exception as e:
+        logger.error(f"handle_server_analyze CRASHED: {type(e).__name__}: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return create_error_response(500, 'ServerError', f'Analysis failed: {type(e).__name__}: {str(e)[:200]}')
+
+
+def _handle_server_analyze_inner(event, member_email):
+    """Inner implementation of server analyze — separated for error handling."""
+    try:
         body = json.loads(event.get('body', '{}'))
     except (json.JSONDecodeError, TypeError):
         return create_error_response(400, 'InvalidRequest', 'Invalid request body')
