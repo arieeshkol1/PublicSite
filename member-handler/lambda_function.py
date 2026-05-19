@@ -14778,6 +14778,14 @@ def _get_rightsizing_candidates(ec2_client, current_type, needed_vcpu, needed_me
             real_price = _get_instance_price(itype, region, operating_system, pre_installed_sw)
             if real_price <= 0 or real_price >= current_hourly:
                 continue
+            # Sanity check: Windows + SQL price must be higher than the Linux catalog price
+            # If the returned price is lower than the Linux price, the Pricing API returned wrong data
+            linux_catalog_price = hourly  # The catalog price is Linux
+            if real_price < linux_catalog_price * 1.5:
+                # Price is suspiciously low — likely returned Windows-only or Linux price
+                # Skip this candidate as we can't trust the pricing
+                logger.warning(f"Pricing sanity check failed for {itype}: got ${real_price:.4f}/hr but Linux catalog is ${linux_catalog_price:.4f}/hr (OS={operating_system}, SW={pre_installed_sw})")
+                continue
             hourly = real_price
 
         monthly = round(hourly * hours_in_month, 2)
