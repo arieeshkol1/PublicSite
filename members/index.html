@@ -998,20 +998,61 @@
             </div>
 
             <div id="dash-tab" class="member-tab-content">
+                <!-- Header -->
                 <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
-                    <h2 style="margin:0;">Dashboard</h2>
+                    <h2 style="margin:0;">Observe</h2>
                     <div style="display:flex;align-items:center;gap:8px;">
                         <label style="color:#6b7280;font-size:0.85em;">Accounts:</label>
                         <div id="dash-account-select" style="display:inline-block;"></div>
                         <button id="dash-refresh-btn" class="btn btn-outline btn-sm" style="font-size:0.8em;" onclick="dashDataCache=null;loadDashboardData();">Refresh</button>
                     </div>
                 </div>
+
+                <!-- KPI Bar (persistent, always visible) -->
                 <div id="dash-kpi-bar" style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px;"></div>
-                <div id="tag-cost-group" style="border:2px solid #f59e0b;border-radius:12px;padding:16px;margin-bottom:16px;">
-                    <div id="tag-filter-container" style="margin-bottom:12px;"></div>
-                    <div id="dash-cost-grid" style="display:grid;grid-template-columns:repeat(auto-fit, minmax(300px, 1fr));gap:16px;"></div>
+
+                <!-- Left-Nav + Content Area -->
+                <div style="display:flex;gap:0;min-height:460px;">
+                    <!-- Left Navigation -->
+                    <div id="observe-nav" style="width:180px;flex-shrink:0;border-right:1px solid #e5e7eb;padding:12px 0;">
+                        <button class="act-nav-btn active" data-section="observe-cost" onclick="_switchObserveSection('observe-cost')">
+                            <span style="font-size:1.2em;">📊</span> Cost Analysis
+                        </button>
+                        <button class="act-nav-btn" data-section="observe-commitments" onclick="_switchObserveSection('observe-commitments')">
+                            <span style="font-size:1.2em;">💰</span> Commitments
+                        </button>
+                        <button class="act-nav-btn" data-section="observe-metrics" onclick="_switchObserveSection('observe-metrics')">
+                            <span style="font-size:1.2em;">📈</span> Business Metrics
+                        </button>
+                        <button class="act-nav-btn" data-section="observe-health" onclick="_switchObserveSection('observe-health')">
+                            <span style="font-size:1.2em;">🏥</span> Health & Score
+                        </button>
+                    </div>
+
+                    <!-- Content Area -->
+                    <div style="flex:1;padding:20px 24px;overflow-y:auto;">
+                        <!-- Cost Analysis Section -->
+                        <div id="observe-section-observe-cost">
+                            <div id="tag-filter-container" style="margin-bottom:12px;"></div>
+                            <div class="observe-widget-grid" style="display:grid;grid-template-columns:repeat(auto-fit, minmax(380px, 1fr));gap:16px;"></div>
+                        </div>
+
+                        <!-- Commitments Section -->
+                        <div id="observe-section-observe-commitments" style="display:none;">
+                            <div class="observe-widget-grid" style="display:grid;grid-template-columns:repeat(auto-fit, minmax(380px, 1fr));gap:16px;"></div>
+                        </div>
+
+                        <!-- Business Metrics Section -->
+                        <div id="observe-section-observe-metrics" style="display:none;">
+                            <div class="observe-widget-grid" style="display:grid;grid-template-columns:repeat(auto-fit, minmax(380px, 1fr));gap:16px;"></div>
+                        </div>
+
+                        <!-- Health & Score Section -->
+                        <div id="observe-section-observe-health" style="display:none;">
+                            <div class="observe-widget-grid" style="display:grid;grid-template-columns:repeat(auto-fit, minmax(380px, 1fr));gap:16px;"></div>
+                        </div>
+                    </div>
                 </div>
-                <div id="dash-grid" style="display:grid;grid-template-columns:repeat(auto-fit, minmax(380px, 1fr));gap:16px;"></div>
             </div>
         </div>
     </div>

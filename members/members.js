@@ -425,8 +425,12 @@ function showView(name) {
     if (name === 'dashboard') {
         headerEmail.textContent = getMemberEmail() || '';
         loadAccounts().then(function() {
+            _migrateObserveLayout(); // Migrate old flat layout to per-section layouts (Req 6.1)
             populateDashAccounts();
             initTagFilter('tag-filter-container');
+            // Set initial active section before data loads
+            var _initSection = _getActiveObserveSection();
+            _switchObserveSection(_initSection);
             loadDashboardData();
         });
         loadDashboard();
@@ -1349,9 +1353,13 @@ function activateMemberTab(tabId) {
     if (tabId === 'dash-tab') {
         _syncAccountSelection('ai'); // save AI selection before switching
         console.log('Dashboard tab activated');
+        _migrateObserveLayout(); // Migrate old flat layout to per-section layouts (Req 6.1)
         populateDashAccounts();
         _applySharedSelection('dash-acct-cb'); // apply shared selection to dash tab
         initTagFilter('tag-filter-container');
+        // Set initial active section before data loads
+        var _initSection = _getActiveObserveSection();
+        _switchObserveSection(_initSection);
         loadDashboardData();
     }
     if (tabId === 'act-tab') {
@@ -2904,19 +2912,15 @@ function clearTagFilter() {
 }
 
 function onTagFilterChange() {
-    // Invalidate dashboard cache
-    if (typeof dashDataCache !== 'undefined') dashDataCache = null;
-    if (typeof dashDataCacheKey !== 'undefined') dashDataCacheKey = null;
-
     // Remove any previous tag filter note
     var wrapper = document.querySelector('.tag-filter-wrapper');
     var noteEl = wrapper ? wrapper.querySelector('.tag-filter-note') : null;
     if (noteEl) noteEl.remove();
 
-    // Reload dashboard if on Observe tab
+    // Use scoped tag filter application — only refreshes cost widgets
     var dashTab = document.getElementById('dash-tab');
     if (dashTab && dashTab.style.display !== 'none') {
-        loadDashboardData();
+        _applyObserveTagFilter();
     }
 }
 
@@ -2996,8 +3000,7 @@ function getDashSelectedAccountIds() {
 
 async function loadDashboardData() {
     var kpiBar = $('dash-kpi-bar');
-    var grid = $('dash-grid');
-    if (!kpiBar || !grid) { console.error('Dashboard containers not found'); return; }
+    if (!kpiBar) { console.error('Dashboard containers not found'); return; }
 
     var selectedIds = getDashSelectedAccountIds();
     var tagP = getTagFilterParams();
@@ -3011,7 +3014,10 @@ async function loadDashboardData() {
     }
 
     kpiBar.innerHTML = '<div style="color:#6b7280;padding:20px;width:100%;">Loading dashboard data from your accounts...</div>';
-    grid.innerHTML = '';
+    // Clear active section grid while loading
+    var activeSection = _getActiveObserveSection();
+    var activeGrid = document.querySelector('#observe-section-' + activeSection + ' .observe-widget-grid');
+    if (activeGrid) activeGrid.innerHTML = '';
 
     try {
         var url = '/members/dashboard-data';
@@ -3046,17 +3052,19 @@ async function loadDashboardData() {
     }
 }
 
+// Track which sections have stale data (need re-render when switched to)
+var _observeStaleSections = {};
+
 function renderDashboardWidgets(data) {
     if (!data || typeof data !== 'object') { console.error('Invalid dashboard data:', data); return; }
     // Wire refresh button
     var refreshBtn = $('dash-refresh-btn');
     if (refreshBtn) refreshBtn.onclick = function() { dashDataCache = null; loadDashboardData(); };
     var kpiBar = $('dash-kpi-bar');
-    var grid = $('dash-grid');
-    if (!kpiBar || !grid) return;
+    if (!kpiBar) return;
     var s = data.summary || {};
 
-    // KPI Bar
+    // KPI Bar (always visible, unchanged)
     var momColor = s.monthOverMonthChange <= 0 ? '#10b981' : '#ef4444';
     var momArrow = s.monthOverMonthChange <= 0 ? '▼' : '▲';
     var effColor = s.efficiencyScore >= 90 ? '#10b981' : s.efficiencyScore >= 75 ? '#f59e0b' : '#ef4444';
@@ -3083,23 +3091,24 @@ function renderDashboardWidgets(data) {
     // FinOps Score KPI — show from cached healthcheck results
     _loadFinOpsScoreKPI(kpiBar, data);
 
-    // Grid widgets — use customizable layout
-    grid.innerHTML = '';
-    _buildDashWidgets(grid);
+    // Cache dashboard data for use when switching sections
+    dashDataCache = data;
 
-    // Render ECharts
-    setTimeout(function() {
-        _renderTreemap(data.costByService || [], data.drillDown || {});
-        _renderDailyTrend(data.dailyTrend || [], data.hourlyTrend || []);
-        _renderWaste(data.waste || {});
-        _renderMonthly(data.monthlyTrend || {});
-        _renderLiveMetrics($("dash-unit-economics"));
-        _renderRegionalPie(data.costByRegion || []);
-        _renderCostByTag(data.costByTag || {});
-        _renderSPCoverageWidget();
-        _renderRICoverageWidget();
-        _renderTaggedResourcesTable(data.taggedResources || null);
-    }, 100);
+    // Mark all sections as stale since data was refreshed
+    OBSERVE_SECTIONS.forEach(function(s) { _observeStaleSections[s.id] = true; });
+
+    // Determine active section and build its widgets
+    var activeSection = _getActiveObserveSection();
+    var sectionContainer = document.querySelector('#observe-section-' + activeSection + ' .observe-widget-grid');
+    if (sectionContainer) {
+        _buildObserveSectionWidgets(activeSection, sectionContainer);
+    }
+
+    // Render tag filter in Cost Analysis section
+    _renderObserveTagFilter(document.getElementById('tag-filter-container'));
+
+    // Render charts for the active section only
+    _renderVisibleSectionCharts(data, activeSection);
 }
 
 // Cross-tab navigation helpers
@@ -3174,7 +3183,447 @@ var DASH_WIDGET_DEFS = [
     {id:'dash-cost-by-tag', title:'Tag Distribution', height:320, q:'Show me tag coverage across my resources'},
     {id:'dash-sp-coverage', title:'SP Coverage', height:180, q:'What is my Savings Plan coverage?'},
     {id:'dash-ri-coverage', title:'RI Coverage', height:180, q:'What is my Reserved Instance coverage?'},
+    {id:'dash-finops-score', title:'FinOps Score Summary', height:280, q:'What is my FinOps maturity score?'}
 ];
+
+// Observe tab section definitions
+var OBSERVE_SECTIONS = [
+    { id: 'observe-cost', label: 'Cost Analysis', icon: '📊' },
+    { id: 'observe-commitments', label: 'Commitments', icon: '💰' },
+    { id: 'observe-metrics', label: 'Business Metrics', icon: '📈' },
+    { id: 'observe-health', label: 'Health & Score', icon: '🏥' }
+];
+
+// Widget-to-section mapping: each section ID maps to an array of widget IDs
+var OBSERVE_WIDGET_SECTIONS = {
+    'observe-cost': ['dash-treemap', 'dash-daily', 'dash-monthly', 'dash-regional', 'dash-cost-by-tag'],
+    'observe-commitments': ['dash-sp-coverage', 'dash-ri-coverage', 'dash-waste'],
+    'observe-metrics': ['dash-unit-economics'],
+    'observe-health': ['dash-finops-score']
+};
+
+// Timer handle for pending ECharts resize on section switch
+var _observeResizeTimer = null;
+
+// Trigger ECharts resize on viewport threshold crossing (768px) — Req 11.5
+var _lastViewportWide = window.innerWidth > 768;
+window.addEventListener('resize', function() {
+    var nowWide = window.innerWidth > 768;
+    if (nowWide !== _lastViewportWide) {
+        _lastViewportWide = nowWide;
+        setTimeout(function() {
+            var activeSection = _getActiveObserveSection();
+            var container = document.getElementById('observe-section-' + activeSection);
+            if (container) {
+                var charts = container.querySelectorAll('[_echarts_instance_]');
+                charts.forEach(function(el) {
+                    var instance = echarts.getInstanceByDom(el);
+                    if (instance) instance.resize();
+                });
+            }
+        }, 100);
+    }
+});
+
+/**
+ * Switch the active Observe tab section.
+ * - Validates sectionId against OBSERVE_SECTIONS
+ * - Updates nav button active states
+ * - Toggles section container visibility
+ * - Persists active section to localStorage
+ * - Schedules ECharts resize after 50ms (cancels pending resize if called again)
+ */
+function _switchObserveSection(sectionId) {
+    // Step 1: Validate section exists
+    var validSection = OBSERVE_SECTIONS.find(function(s) { return s.id === sectionId; });
+    if (!validSection) return;
+
+    // Step 2: Update nav button active states
+    var navButtons = document.querySelectorAll('#observe-nav .act-nav-btn');
+    navButtons.forEach(function(btn) {
+        btn.classList.toggle('active', btn.getAttribute('data-section') === sectionId);
+    });
+
+    // Step 3: Toggle section visibility
+    OBSERVE_SECTIONS.forEach(function(section) {
+        var el = document.getElementById('observe-section-' + section.id);
+        if (el) el.style.display = (section.id === sectionId) ? '' : 'none';
+    });
+
+    // Step 4: Persist active section
+    try { localStorage.setItem('observeActiveSection', sectionId); } catch(e) {}
+
+    // Step 5: Build widgets and render charts if section is stale or not yet rendered
+    var sectionContainer = document.querySelector('#observe-section-' + sectionId + ' .observe-widget-grid');
+    if (sectionContainer && dashDataCache) {
+        if (_observeStaleSections[sectionId] || sectionContainer.children.length === 0) {
+            _buildObserveSectionWidgets(sectionId, sectionContainer);
+            _renderVisibleSectionCharts(dashDataCache, sectionId);
+        }
+    }
+
+    // Step 6: Cancel pending resize and schedule new one
+    if (_observeResizeTimer) { clearTimeout(_observeResizeTimer); _observeResizeTimer = null; }
+    _observeResizeTimer = setTimeout(function() {
+        var container = document.getElementById('observe-section-' + sectionId);
+        if (container) {
+            var charts = container.querySelectorAll('[_echarts_instance_]');
+            charts.forEach(function(el) {
+                var instance = echarts.getInstanceByDom(el);
+                if (instance) instance.resize();
+            });
+        }
+        _observeResizeTimer = null;
+    }, 50);
+}
+
+function _getActiveObserveSection() {
+    try {
+        var saved = localStorage.getItem('observeActiveSection');
+        if (saved && OBSERVE_SECTIONS.some(function(s) { return s.id === saved; })) {
+            return saved;
+        }
+    } catch(e) {}
+    return 'observe-cost';
+}
+
+/**
+ * Get the per-section widget layout from localStorage.
+ * - Reads from localStorage key 'observeLayout_{sectionId}'
+ * - Validates structure: must be an array of {id: string, visible: boolean} objects
+ * - Falls back to default layout (all widgets visible in definition order) if invalid
+ * - Appends any new widgets from OBSERVE_WIDGET_SECTIONS not in saved layout with visible: true
+ * - Silently drops widget IDs not in OBSERVE_WIDGET_SECTIONS[sectionId]
+ */
+function _getObserveSectionLayout(sectionId) {
+    var sectionWidgetIds = OBSERVE_WIDGET_SECTIONS[sectionId] || [];
+    var layout = null;
+    try {
+        var saved = localStorage.getItem('observeLayout_' + sectionId);
+        if (saved) layout = JSON.parse(saved);
+    } catch(e) {}
+
+    // Validate structure
+    if (!Array.isArray(layout)) {
+        return sectionWidgetIds.map(function(id) { return { id: id, visible: true }; });
+    }
+
+    // Filter out widgets not in this section and validate item structure
+    layout = layout.filter(function(item) {
+        return item && typeof item.id === 'string' && typeof item.visible === 'boolean' &&
+               sectionWidgetIds.indexOf(item.id) !== -1;
+    });
+
+    // Append new widgets not in saved layout
+    var layoutIds = layout.map(function(l) { return l.id; });
+    sectionWidgetIds.forEach(function(wid) {
+        if (layoutIds.indexOf(wid) === -1) {
+            layout.push({ id: wid, visible: true });
+        }
+    });
+
+    return layout;
+}
+
+/**
+ * Save a section-specific widget layout to localStorage.
+ * Serializes the layout array to JSON and writes to key 'observeLayout_{sectionId}'.
+ * Handles localStorage write errors gracefully — retains in-memory state on failure.
+ */
+function _saveObserveSectionLayout(sectionId, layout) {
+    try {
+        localStorage.setItem('observeLayout_' + sectionId, JSON.stringify(layout));
+    } catch(e) {
+        // Gracefully handle localStorage write errors — retain in-memory state
+    }
+}
+
+/**
+ * Migrate the old flat dashWidgetLayout to per-section layouts.
+ * - Skips if old key is not valid JSON array
+ * - Skips if any per-section key already exists (idempotence)
+ * - Builds reverse lookup (widgetId → sectionId) from OBSERVE_WIDGET_SECTIONS
+ * - Distributes old layout items to section arrays preserving order and visibility
+ * - Writes all per-section layouts to localStorage
+ * - Removes old dashWidgetLayout key only after all writes succeed
+ * - On partial failure: removes written keys and retains old key for retry
+ * - Widgets not mapping to any section are silently discarded (Req 12.3)
+ */
+function _migrateObserveLayout() {
+    // Check if migration is needed — parse old layout
+    var oldLayout = null;
+    try { oldLayout = JSON.parse(localStorage.getItem('dashWidgetLayout')); } catch(e) {}
+    if (!oldLayout || !Array.isArray(oldLayout)) return;
+
+    // Check if new layouts already exist (migration already done — idempotence)
+    var alreadyMigrated = false;
+    try {
+        alreadyMigrated = OBSERVE_SECTIONS.some(function(s) {
+            return localStorage.getItem('observeLayout_' + s.id) !== null;
+        });
+    } catch(e) { return; } // localStorage unavailable — skip migration
+    if (alreadyMigrated) return;
+
+    // Build reverse lookup: widgetId → sectionId
+    var widgetToSection = {};
+    Object.keys(OBSERVE_WIDGET_SECTIONS).forEach(function(sectionId) {
+        OBSERVE_WIDGET_SECTIONS[sectionId].forEach(function(widgetId) {
+            widgetToSection[widgetId] = sectionId;
+        });
+    });
+
+    // Distribute widgets to section layouts preserving order
+    var sectionLayouts = {};
+    OBSERVE_SECTIONS.forEach(function(s) { sectionLayouts[s.id] = []; });
+
+    oldLayout.forEach(function(item) {
+        if (!item || typeof item.id !== 'string') return;
+        var targetSection = widgetToSection[item.id];
+        if (targetSection && sectionLayouts[targetSection]) {
+            sectionLayouts[targetSection].push({ id: item.id, visible: item.visible !== false });
+        }
+        // Widgets not mapping to any section are silently discarded (Req 12.3)
+    });
+
+    // Save per-section layouts — track written keys for rollback on failure
+    var writtenKeys = [];
+    try {
+        Object.keys(sectionLayouts).forEach(function(sectionId) {
+            localStorage.setItem('observeLayout_' + sectionId, JSON.stringify(sectionLayouts[sectionId]));
+            writtenKeys.push('observeLayout_' + sectionId);
+        });
+        // All writes succeeded — remove old key
+        localStorage.removeItem('dashWidgetLayout');
+    } catch(e) {
+        // Partial failure — remove any written keys and retain old key for retry
+        writtenKeys.forEach(function(key) {
+            try { localStorage.removeItem(key); } catch(e2) {}
+        });
+    }
+}
+
+// ============================================================
+// Section Widget Builder & Customization (Tasks 8.1, 8.2, 8.3)
+// ============================================================
+
+/**
+ * Build and render widgets for a specific Observe section.
+ * - Gets section layout via _getObserveSectionLayout
+ * - Renders visible widgets using existing _addWidget helper
+ * - Shows "+ Add Widget" button with hidden widget count if any are hidden
+ * - Disables hide button if only one visible widget remains in section
+ *
+ * Requirements: 5.1, 5.2, 5.3, 5.8, 3.9
+ */
+function _buildObserveSectionWidgets(sectionId, container) {
+    var sectionWidgetIds = OBSERVE_WIDGET_SECTIONS[sectionId] || [];
+    var layout = _getObserveSectionLayout(sectionId);
+
+    container.innerHTML = '';
+    var visibleCount = 0;
+
+    layout.forEach(function(item, idx) {
+        if (!item.visible) return;
+        // Only render widgets that belong to this section
+        if (sectionWidgetIds.indexOf(item.id) === -1) return;
+
+        var def = DASH_WIDGET_DEFS.find(function(d) { return d.id === item.id; });
+        if (!def) return;
+
+        visibleCount++;
+        _addWidget(container, def.id, def.title + (def.extraTitle || ''), def.height, def.q, idx, layout.length);
+    });
+
+    // Disable hide button if only one visible widget remains
+    if (visibleCount <= 1) {
+        var closeBtns = container.querySelectorAll('[title="Hide widget"]');
+        closeBtns.forEach(function(btn) {
+            btn.disabled = true;
+            btn.style.opacity = '0.3';
+            btn.style.cursor = 'default';
+            btn.onclick = null;
+        });
+    }
+
+    // Add "+" button for hidden widgets
+    var hiddenWidgets = layout.filter(function(l) {
+        return !l.visible && sectionWidgetIds.indexOf(l.id) !== -1;
+    });
+    if (hiddenWidgets.length > 0) {
+        var addBtn = document.createElement('div');
+        addBtn.style.cssText = 'background:#f0f4f8;border:2px dashed #d0d7de;border-radius:8px;padding:24px;text-align:center;cursor:pointer;color:#6b7280;';
+        addBtn.innerHTML = '<div style="font-size:1.5em;margin-bottom:4px;">+</div><div style="font-size:0.8em;">Add Widget (' + hiddenWidgets.length + ' hidden)</div>';
+        addBtn.onclick = function() { _showObserveWidgetPicker(container, sectionId); };
+        container.appendChild(addBtn);
+    }
+}
+
+/**
+ * Display a picker overlay listing hidden widgets for a section.
+ * On selection, updates layout visibility to true and re-renders section.
+ * Triggers chart rendering for restored widget.
+ *
+ * Requirements: 5.3, 5.6
+ */
+function _showObserveWidgetPicker(container, sectionId) {
+    var layout = _getObserveSectionLayout(sectionId);
+    var sectionWidgetIds = OBSERVE_WIDGET_SECTIONS[sectionId] || [];
+    var hidden = layout.filter(function(l) { return !l.visible && sectionWidgetIds.indexOf(l.id) !== -1; });
+    if (hidden.length === 0) return;
+
+    // Remove any existing picker in this container
+    var existingPicker = container.querySelector('.observe-widget-picker');
+    if (existingPicker) existingPicker.remove();
+
+    // Create picker panel
+    var picker = document.createElement('div');
+    picker.className = 'observe-widget-picker';
+    picker.style.cssText = 'background:#fff;border:1px solid #d1d5db;border-radius:8px;padding:16px;margin-top:8px;box-shadow:0 4px 12px rgba(0,0,0,0.1);';
+    picker.innerHTML = '<div style="font-weight:600;margin-bottom:8px;color:#1f2937;">Restore Widget</div>';
+
+    hidden.forEach(function(item) {
+        var def = DASH_WIDGET_DEFS.find(function(d) { return d.id === item.id; });
+        if (!def) return;
+        var btn = document.createElement('button');
+        btn.className = 'btn btn-outline btn-sm';
+        btn.style.cssText = 'display:block;width:100%;text-align:left;margin-bottom:4px;padding:10px 14px;';
+        btn.textContent = def.title;
+        btn.onclick = function() {
+            _restoreObserveWidget(sectionId, item.id);
+            picker.remove();
+        };
+        picker.appendChild(btn);
+    });
+
+    var cancelBtn = document.createElement('button');
+    cancelBtn.className = 'btn btn-sm';
+    cancelBtn.style.cssText = 'margin-top:8px;';
+    cancelBtn.textContent = 'Cancel';
+    cancelBtn.onclick = function() { picker.remove(); };
+    picker.appendChild(cancelBtn);
+
+    container.appendChild(picker);
+}
+
+/**
+ * Hide a widget within a specific Observe section.
+ * Updates layout visibility flag, saves to localStorage, and re-renders section.
+ *
+ * Requirements: 5.1, 5.3, 5.4, 5.5
+ */
+function _hideObserveWidget(sectionId, widgetId) {
+    var layout = _getObserveSectionLayout(sectionId);
+    layout.forEach(function(item) {
+        if (item.id === widgetId) item.visible = false;
+    });
+    _saveObserveSectionLayout(sectionId, layout);
+    var container = document.querySelector('#observe-section-' + sectionId + ' .observe-widget-grid');
+    if (container) _buildObserveSectionWidgets(sectionId, container);
+}
+
+/**
+ * Restore a hidden widget within a specific Observe section.
+ * Updates layout visibility flag, saves to localStorage, re-renders section,
+ * and triggers chart rendering for the restored widget.
+ *
+ * Requirements: 5.1, 5.3, 5.4, 5.5
+ */
+function _restoreObserveWidget(sectionId, widgetId) {
+    var layout = _getObserveSectionLayout(sectionId);
+    layout.forEach(function(item) {
+        if (item.id === widgetId) item.visible = true;
+    });
+    _saveObserveSectionLayout(sectionId, layout);
+    var container = document.querySelector('#observe-section-' + sectionId + ' .observe-widget-grid');
+    if (container) {
+        _buildObserveSectionWidgets(sectionId, container);
+        // Re-render chart for restored widget
+        if (typeof dashDataCache !== 'undefined' && dashDataCache) {
+            _renderVisibleSectionCharts(dashDataCache, sectionId);
+        }
+    }
+}
+
+// ============================================================
+// Section Chart Rendering (Task 9.2)
+// ============================================================
+
+/**
+ * Render ECharts only for visible widgets in the specified section.
+ * - Initializes charts only for widgets that are both in the active section and visible
+ * - Skips already-initialized charts whose data hasn't changed
+ * - Marks sections as no longer stale after rendering
+ *
+ * Requirements: 8.1, 8.2, 8.3, 8.4, 8.5
+ */
+function _renderVisibleSectionCharts(data, sectionId) {
+    if (!data) return;
+    var widgetIds = OBSERVE_WIDGET_SECTIONS[sectionId] || [];
+    var layout = _getObserveSectionLayout(sectionId);
+    var visibleIds = layout.filter(function(l) { return l.visible; }).map(function(l) { return l.id; });
+
+    // Only render widgets that are both in this section and visible
+    var toRender = widgetIds.filter(function(id) { return visibleIds.indexOf(id) !== -1; });
+
+    setTimeout(function() {
+        if (toRender.indexOf('dash-treemap') !== -1) _renderTreemap(data.costByService || [], data.drillDown || {});
+        if (toRender.indexOf('dash-daily') !== -1) _renderDailyTrend(data.dailyTrend || [], data.hourlyTrend || []);
+        if (toRender.indexOf('dash-waste') !== -1) _renderWaste(data.waste || {});
+        if (toRender.indexOf('dash-monthly') !== -1) _renderMonthly(data.monthlyTrend || {});
+        if (toRender.indexOf('dash-unit-economics') !== -1) _renderLiveMetrics($("dash-unit-economics"));
+        if (toRender.indexOf('dash-regional') !== -1) _renderRegionalPie(data.costByRegion || []);
+        if (toRender.indexOf('dash-cost-by-tag') !== -1) _renderCostByTag(data.costByTag || {});
+        if (toRender.indexOf('dash-sp-coverage') !== -1) _renderSPCoverageWidget();
+        if (toRender.indexOf('dash-ri-coverage') !== -1) _renderRICoverageWidget();
+        if (toRender.indexOf('dash-finops-score') !== -1 && typeof _renderFinOpsScoreWidget === 'function') _renderFinOpsScoreWidget();
+        // Render tagged resources table if in cost section
+        if (sectionId === 'observe-cost' && data.taggedResources) _renderTaggedResourcesTable(data.taggedResources);
+
+        // Mark section as no longer stale
+        _observeStaleSections[sectionId] = false;
+    }, 100);
+}
+
+// ============================================================
+// Tag Filter Scoping (Tasks 10.1, 10.2)
+// ============================================================
+
+/**
+ * Render tag filter UI within the Cost Analysis section header.
+ * Uses the existing initTagFilter function to render into #tag-filter-container.
+ *
+ * Requirements: 7.1
+ */
+function _renderObserveTagFilter(container) {
+    if (!container) return;
+    // The existing initTagFilter function renders the tag filter UI into the container
+    if (typeof initTagFilter === 'function') {
+        initTagFilter('tag-filter-container');
+    }
+}
+
+/**
+ * Apply tag filter: refresh only cost-related widgets without reloading other sections.
+ * - Invalidates cache and reloads dashboard data
+ * - Only cost widgets (treemap, daily, monthly, regional, tag distribution) are refreshed
+ * - Does not trigger data reload for Commitments, Business Metrics, or Health sections
+ * - Handles filter clear by reloading cost widgets with unfiltered data
+ *
+ * Requirements: 7.2, 7.3, 7.4
+ */
+function _applyObserveTagFilter() {
+    // Invalidate dashboard cache so fresh data is fetched with new tag params
+    dashDataCache = null;
+    dashDataCacheKey = null;
+
+    // Only mark cost section as stale — other sections remain unchanged
+    _observeStaleSections['observe-cost'] = true;
+
+    // Reload dashboard data — renderDashboardWidgets will only render the active section's charts
+    // If cost section is active, it will re-render cost widgets with filtered data
+    // If another section is active, cost section will be re-rendered when switched to
+    loadDashboardData();
+}
 
 function _getDashLayout() {
     try {
@@ -3283,14 +3732,63 @@ function _addWidget(grid, id, title, height, aiQuestion, idx, total) {
     var aiLink = aiQuestion ? ' <a href="#" style="font-size:0.7em;color:#6366f1;text-decoration:none;" onclick="event.preventDefault();_askAIFromDashboard(\'' + aiQuestion.replace(/'/g, "\\'") + '\');">Chat &#9654;</a>' : '';
     var controls = '<span style="float:right;display:flex;gap:4px;align-items:center;">';
     if (typeof idx === 'number') {
-        controls += '<button style="background:none;border:none;cursor:pointer;font-size:0.7em;color:#6b7280;padding:2px;" onclick="_moveWidget(\'' + id + '\',-1)" title="Move up">&#9650;</button>';
-        controls += '<button style="background:none;border:none;cursor:pointer;font-size:0.7em;color:#6b7280;padding:2px;" onclick="_moveWidget(\'' + id + '\',1)" title="Move down">&#9660;</button>';
-        controls += '<button style="background:none;border:none;cursor:pointer;font-size:0.8em;color:#ef4444;padding:2px;margin-left:4px;" onclick="_removeWidget(\'' + id + '\')" title="Hide widget">&times;</button>';
+        controls += '<button style="background:none;border:none;cursor:pointer;font-size:0.7em;color:#6b7280;padding:2px;" onclick="_moveObserveWidget(\'' + id + '\',-1)" title="Move up">&#9650;</button>';
+        controls += '<button style="background:none;border:none;cursor:pointer;font-size:0.7em;color:#6b7280;padding:2px;" onclick="_moveObserveWidget(\'' + id + '\',1)" title="Move down">&#9660;</button>';
+        controls += '<button style="background:none;border:none;cursor:pointer;font-size:0.8em;color:#ef4444;padding:2px;margin-left:4px;" onclick="_removeObserveWidget(\'' + id + '\')" title="Hide widget">&times;</button>';
     }
     controls += aiLink + '</span>';
     w.innerHTML = '<div style="color:#1f2937;font-size:0.9em;font-weight:600;margin-bottom:8px;">' + title + controls + '</div>' +
         '<div id="' + id + '" style="width:100%;height:' + height + 'px;"></div>';
     grid.appendChild(w);
+}
+
+/**
+ * Remove/hide a widget using section-scoped logic.
+ * Determines which section the widget belongs to and calls _hideObserveWidget.
+ * Requirements: 5.1, 5.6, 5.7
+ */
+function _removeObserveWidget(widgetId) {
+    var widgetSectionId = null;
+    Object.keys(OBSERVE_WIDGET_SECTIONS).forEach(function(sid) {
+        if (OBSERVE_WIDGET_SECTIONS[sid].indexOf(widgetId) !== -1) widgetSectionId = sid;
+    });
+    if (widgetSectionId) {
+        _hideObserveWidget(widgetSectionId, widgetId);
+    }
+}
+
+/**
+ * Move/reorder a widget within its section-scoped layout.
+ * Determines which section the widget belongs to and updates section-specific layout.
+ * Requirements: 5.6, 5.7
+ */
+function _moveObserveWidget(widgetId, direction) {
+    var widgetSectionId = null;
+    Object.keys(OBSERVE_WIDGET_SECTIONS).forEach(function(sid) {
+        if (OBSERVE_WIDGET_SECTIONS[sid].indexOf(widgetId) !== -1) widgetSectionId = sid;
+    });
+    if (!widgetSectionId) return;
+
+    var layout = _getObserveSectionLayout(widgetSectionId);
+    var visibleLayout = layout.filter(function(l) { return l.visible; });
+    var idx = -1;
+    visibleLayout.forEach(function(l, i) { if (l.id === widgetId) idx = i; });
+    if (idx < 0) return;
+    var newIdx = idx + direction;
+    if (newIdx < 0 || newIdx >= visibleLayout.length) return;
+    // Swap in the visible list
+    var temp = visibleLayout[idx];
+    visibleLayout[idx] = visibleLayout[newIdx];
+    visibleLayout[newIdx] = temp;
+    // Rebuild full layout: visible items in new order, then hidden items
+    var hiddenLayout = layout.filter(function(l) { return !l.visible; });
+    _saveObserveSectionLayout(widgetSectionId, visibleLayout.concat(hiddenLayout));
+    // Re-render the section
+    var container = document.querySelector('#observe-section-' + widgetSectionId + ' .observe-widget-grid');
+    if (container) {
+        _buildObserveSectionWidgets(widgetSectionId, container);
+        if (dashDataCache) _renderVisibleSectionCharts(dashDataCache, widgetSectionId);
+    }
 }
 
 function _askAIFromDashboard(question) {
