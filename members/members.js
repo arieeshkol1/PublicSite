@@ -1376,23 +1376,9 @@ function activateMemberTab(tabId) {
         // Pre-load tag policy for tag scan
         if (!_tagPolicyCache) _loadTagPolicy();
     }
-    if (tabId === 'invoices-tab') {
-        _syncAccountSelection('dash');
-        _populateDrilldownAccounts();
-        // Reset refresh button state (in case it was stuck from a previous cooldown)
-        var ddRefBtn = document.getElementById('dd-refresh-btn');
-        if (ddRefBtn) { ddRefBtn.disabled = false; ddRefBtn.textContent = '🔄 Refresh'; }
-        var ddCooldown = document.getElementById('dd-refresh-cooldown');
-        if (ddCooldown) ddCooldown.style.display = 'none';
-        // Auto-load: read current dropdown value and trigger load
-        var ddSel = document.getElementById('dd-account-select');
-        if (ddSel && ddSel.value) {
-            _ddState.accountId = ddSel.value;
-            loadInvoiceDrilldown(ddSel.value);
-        }
-    }
-    // Clear drilldown cache when navigating away from invoices tab
-    if (tabId !== 'invoices-tab' && typeof _ddClearCache === 'function') {
+    // Invoices is now a sub-section of Observe (observe-invoices).
+    // Clear drilldown cache when navigating away from Observe tab
+    if (tabId !== 'dash-tab' && typeof _ddClearCache === 'function') {
         _ddClearCache();
     }
 }
@@ -10618,7 +10604,7 @@ function _populateInvoiceAccounts() {
             noAccountsMsg.hidden = false;
         } else {
             // Create the no-accounts message element dynamically
-            var container = sel.closest('#invoices-tab') || sel.parentElement.parentElement.parentElement;
+            var container = sel.closest('#observe-invoices') || sel.closest('#dash-tab') || sel.parentElement.parentElement.parentElement;
             var msgDiv = document.createElement('div');
             msgDiv.id = 'inv-no-accounts';
             msgDiv.style.cssText = 'text-align:center;padding:60px 20px;color:#6b7280;';
@@ -10632,7 +10618,7 @@ function _populateInvoiceAccounts() {
         // Hide the main content areas
         var summaryCards = $('inv-summary-cards');
         var filterBar = $('inv-filter-bar');
-        var tableWrapper = sel.closest('#invoices-tab') ? sel.closest('#invoices-tab').querySelector('.table-wrapper') : null;
+        var tableWrapper = sel.closest('#observe-invoices') ? sel.closest('#observe-invoices').querySelector('.table-wrapper') : null;
         var pagination = $('inv-pagination');
         if (summaryCards) summaryCards.style.display = 'none';
         if (filterBar) filterBar.style.display = 'none';
@@ -10645,8 +10631,8 @@ function _populateInvoiceAccounts() {
     if (noAccountsMsg) noAccountsMsg.hidden = true;
     var summaryCards = $('inv-summary-cards');
     var filterBar = $('inv-filter-bar');
-    var invoicesTab = $('invoices-tab');
-    var tableWrapper = invoicesTab ? invoicesTab.querySelector('.table-wrapper') : null;
+    var invoicesSection = $('observe-invoices') || $('dash-tab');
+    var tableWrapper = invoicesSection ? invoicesSection.querySelector('.table-wrapper') : null;
     var pagination = $('inv-pagination');
     if (summaryCards) summaryCards.style.display = '';
     if (filterBar) filterBar.style.display = '';

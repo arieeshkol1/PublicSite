@@ -20,12 +20,13 @@ var HELP_CONTENT = {
         content: `
           <p>SlashMyBill is an AI-powered AWS FinOps platform that helps you analyze, optimize,
           and reduce your cloud spending across multiple AWS accounts.</p>
-          <p>The platform has four main areas:</p>
+          <p>The platform has five main areas:</p>
           <ul>
-            <li><strong>Observe</strong> — FinOps dashboard with interactive charts and regional cost breakdown</li>
+            <li><strong>Configure</strong> — Connect and manage your AWS accounts</li>
+            <li><strong>Plan</strong> — Budget management and tag resources</li>
+            <li><strong>Observe</strong> — FinOps dashboard with sub-sections: Cost Analysis, Commitments, Business Metrics, Health & Score, Invoices</li>
             <li><strong>Chat</strong> — Ask natural language questions about your AWS costs (🪙 2 tokens per question)</li>
             <li><strong>Act</strong> — Scan for waste, clean up idle resources, automate stop/start schedules, resize servers, and optimize ASG clusters (🪙 10 per scan, 🪙 50 per action)</li>
-            <li><strong>Configure</strong> — Connect and manage your AWS accounts</li>
           </ul>
           <p><strong>Platform URL:</strong> <a href="https://slashmycloudbill.com/members/" target="_blank">slashmycloudbill.com/members</a></p>
         `
@@ -259,7 +260,7 @@ var HELP_CONTENT = {
 
   // ── Observe Tab ────────────────────────────────────────────────────────────
   'dash-tab': {
-    title: 'Observe — FinOps Dashboard',
+    title: 'Observe — FinOps Dashboard (Cost Analysis, Commitments, Business Metrics, Health & Score, Invoices)',
     sections: [
       {
         id: 'kpi-bar',
@@ -357,7 +358,7 @@ var HELP_CONTENT = {
           </ul>
           <h4>Prerequisites</h4>
           <p>Tag filtering requires <strong>cost allocation tags</strong> to be activated in your AWS management account (Billing → Cost Allocation Tags). Resource tags alone are not enough — they must be activated for cost tracking.</p>
-          <div class="help-tip">💡 Use the FinOps Healthcheck (Act tab) to check if cost allocation tags are activated and fix it with one click.</div>
+          <div class="help-tip">💡 Use the FinOps Healthcheck (Observe → Health & Score) to check if cost allocation tags are activated and fix it with one click.</div>
         `
       }
     ]
