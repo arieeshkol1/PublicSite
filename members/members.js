@@ -292,7 +292,7 @@ function _showUpgradeModal() {
             paypal.Buttons({
                 style: { shape: 'rect', color: 'blue', layout: 'horizontal', label: 'subscribe', height: 35 },
                 createSubscription: function(data, actions) {
-                    return actions.subscription.create({ plan_id: PAYPAL_PLANS.growth });
+                    return actions.subscription.create({ plan_id: PAYPAL_PLANS.growth, subscriber: { email_address: email } });
                 },
                 onApprove: function(data) {
                     notify('Welcome to Growth! Your plan is being activated...', 'success', 6000);
@@ -309,7 +309,7 @@ function _showUpgradeModal() {
             paypal.Buttons({
                 style: { shape: 'rect', color: 'gold', layout: 'horizontal', label: 'subscribe', height: 35 },
                 createSubscription: function(data, actions) {
-                    return actions.subscription.create({ plan_id: PAYPAL_PLANS.scale });
+                    return actions.subscription.create({ plan_id: PAYPAL_PLANS.scale, subscriber: { email_address: email } });
                 },
                 onApprove: function(data) {
                     notify('Welcome to Scale! Your plan is being activated...', 'success', 6000);
