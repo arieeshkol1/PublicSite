@@ -329,10 +329,48 @@ function _showUpgradeModal() {
         btn.onclick = function() {
             var tokensToAdd = parseInt(btn.getAttribute('data-tokens'));
             var price = btn.getAttribute('data-price');
-            // For token top-ups, use a simple PayPal payment link or manual flow
-            // Since PayPal Orders API requires server-side, we'll use a simpler approach:
-            // Direct the user to pay via PayPal.me link and then manually add tokens
-            notify('Token top-ups coming soon! Contact ariel@slashmycloudbill.com to purchase tokens.', 'info', 6000);
+            // Show a PayPal button container below the clicked button
+            var existingPopup = document.getElementById('topup-paypal-popup');
+            if (existingPopup) existingPopup.remove();
+            var popup = document.createElement('div');
+            popup.id = 'topup-paypal-popup';
+            popup.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:#fff;border-radius:12px;padding:24px;box-shadow:0 20px 60px rgba(0,0,0,0.3);z-index:1000;min-width:320px;text-align:center;';
+            popup.innerHTML = '<div style="margin-bottom:12px;font-weight:600;">Pay $' + price + ' for ' + tokensToAdd + ' tokens</div><div id="topup-paypal-btn"></div><button onclick="document.getElementById(\'topup-paypal-popup\').remove();" style="margin-top:12px;background:none;border:1px solid #d1d5db;border-radius:6px;padding:6px 16px;cursor:pointer;font-size:0.85em;">Cancel</button>';
+            document.body.appendChild(popup);
+
+            if (typeof paypal !== 'undefined') {
+                paypal.Buttons({
+                    style: { shape: 'rect', color: 'gold', layout: 'vertical', label: 'pay', height: 40 },
+                    createOrder: function(data, actions) {
+                        return actions.order.create({
+                            purchase_units: [{
+                                description: tokensToAdd + ' SlashMyBill Tokens',
+                                amount: { currency_code: 'USD', value: price }
+                            }]
+                        });
+                    },
+                    onApprove: function(data, actions) {
+                        return actions.order.capture().then(function(details) {
+                            // Payment successful — add tokens to user account
+                            notify(tokensToAdd + ' tokens added to your account!', 'success', 5000);
+                            var storedTokens = JSON.parse(sessionStorage.getItem('memberTokens') || '{}');
+                            var newRemaining = (storedTokens.remaining || 0) + tokensToAdd;
+                            var newTotal = (storedTokens.total || 100) + tokensToAdd;
+                            var updated = {used: storedTokens.used || 0, total: newTotal, remaining: newRemaining, bonus: (storedTokens.bonus || 0) + tokensToAdd};
+                            _updateTokenDisplay(updated);
+                            // Persist to backend
+                            api('POST', '/member/add-tokens', {email: email, tokens: tokensToAdd, paypalOrderId: data.orderID || ''}).then(function(resp) {
+                                if (resp && resp.tokens) _updateTokenDisplay(resp.tokens);
+                            }).catch(function(e) { console.warn('Token sync failed:', e); });
+                            // Close popup
+                            document.getElementById('topup-paypal-popup').remove();
+                        });
+                    },
+                    onError: function(err) {
+                        notify('Payment failed: ' + (err.message || 'Unknown error'), 'error');
+                    }
+                }).render('#topup-paypal-btn');
+            }
         };
     });
 }
