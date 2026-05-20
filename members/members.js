@@ -11,76 +11,16 @@ var tagValuesCacheTime = {};
 var TAG_CACHE_TTL = 300000;
 
 // ============================================================
-// Paddle Payment Integration
+// PayPal Payment Integration
 // ============================================================
-var PADDLE_TOKEN = 'live_fe95f6bba28cac28ba97f8d0076';
-var PADDLE_PRICES = {
-    growth: 'pri_01kp2zns5ph1vpmh71f98wqzcq',
-    scale:  'pri_01kp2zs05ft013aezpprne5wvd',
-    topup5:  'pri_01kp2zv7h558s5289qvaw59whr',
-    topup15: 'pri_01kp2zyxwhppmx3ddqax5qmbcn',
-    topup30: 'pri_01kp30738d2d23fqpfyy2nj7aj'
+var PAYPAL_CLIENT_ID = 'AeSE_YsdvSkkiKXDOx77nnpCrqF21Xr6hjifypwzMtqMtzRd0UZrEAL53uboT_8kQ_4bmyAAq9kndI3G';
+var PAYPAL_PLANS = {
+    growth: 'P-6EX00960SF183721TNIG4P5Y',
+    scale:  'P-70P61632B3889241HNIG4SEA'
 };
 // Initialize Paddle
-if (typeof Paddle !== 'undefined') {
-    Paddle.Initialize({
-        token: PADDLE_TOKEN,
-        eventCallback: function(ev) {
-            if (ev.name === 'checkout.completed') {
-                console.log('Paddle checkout.completed:', JSON.stringify(ev));
-                var items = (ev.data && ev.data.items) || [];
-                var priceId = '';
-                if (items.length > 0) {
-                    // Paddle v2: price is nested as items[].price.id
-                    priceId = (items[0].price && items[0].price.id) || items[0].price_id || '';
-                }
-                // Determine what was purchased
-                if (priceId === PADDLE_PRICES.growth || priceId === PADDLE_PRICES.scale) {
-                    var plan = priceId === PADDLE_PRICES.growth ? 'Growth' : 'Scale';
-                    notify('Welcome to ' + plan + '! Your plan is being activated...', 'success', 6000);
-                    // Update tier in session immediately
-                    sessionStorage.setItem('memberTier', plan.toLowerCase());
-                    var badge = document.getElementById('header-tier-badge');
-                    if (badge) { badge.textContent = plan; badge.style.background = '#dbeafe'; badge.style.color = '#1e40af'; }
-                    // Persist to backend
-                    var memberEmail = getMemberEmail();
-                    if (memberEmail) {
-                        api('POST', '/member/update-tier', {email: memberEmail, tier: plan.toLowerCase(), paddleSubscriptionId: (ev.data && ev.data.id) || ''}).catch(function(e) { console.warn('Tier sync failed:', e); });
-                    }
-                } else {
-                    // Token top-up — update tokens immediately in UI
-                    var tokenMap = {};
-                    tokenMap[PADDLE_PRICES.topup5] = 50;
-                    tokenMap[PADDLE_PRICES.topup15] = 200;
-                    tokenMap[PADDLE_PRICES.topup30] = 500;
-                    var addedTokens = tokenMap[priceId] || 0;
-                    if (addedTokens > 0) {
-                        notify(addedTokens + ' tokens added to your account!', 'success', 5000);
-                        // Optimistically update token display
-                        var storedTokens = JSON.parse(sessionStorage.getItem('memberTokens') || '{}');
-                        var newBonus = (storedTokens.bonus || 0) + addedTokens;
-                        var newTotal = (storedTokens.total || 100) + addedTokens;
-                        var newRemaining = (storedTokens.remaining || 0) + addedTokens;
-                        var updated = {used: storedTokens.used || 0, total: newTotal, remaining: newRemaining, bonus: newBonus};
-                        _updateTokenDisplay(updated);
-                        // Persist to backend
-                        var memberEmail = getMemberEmail();
-                        if (memberEmail) {
-                            api('POST', '/member/add-tokens', {email: memberEmail, tokens: addedTokens, paddleTransactionId: (ev.data && ev.data.id) || ''}).then(function(resp) {
-                                if (resp && resp.tokens) _updateTokenDisplay(resp.tokens);
-                            }).catch(function(e) { console.warn('Token sync failed:', e); });
-                        }
-                    }
-                }
-                // Close upgrade modal if open
-                var modal = document.getElementById('upgrade-modal');
-                if (modal) modal.remove();
-                // Reload accounts data to sync with backend after a short delay
-                setTimeout(function() { if (typeof loadAccounts === 'function') loadAccounts(); }, 2000);
-            }
-        }
-    });
-}
+// PayPal SDK is loaded via script tag in HTML — no initialization needed
+// Subscription handling happens in the _showUpgradeModal function
 
 var $ = function(id) { return document.getElementById(id); };
 
@@ -288,7 +228,7 @@ function _showUpgradeModal() {
     overlay.onclick = function(e) { if (e.target === overlay) overlay.remove(); };
 
     var current = tierNames[currentTier] || 'Free';
-    var html = '<div style="background:#fff;border-radius:16px;padding:32px;max-width:700px;width:95%;max-height:90vh;overflow-y:auto;">';
+    var html = '<div style="background:#fff;border-radius:16px;padding:32px;max-width:600px;width:95%;max-height:90vh;overflow-y:auto;">';
     html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">';
     html += '<h2 style="margin:0;font-size:1.3em;">Manage Your Plan</h2>';
     html += '<button onclick="document.getElementById(\'upgrade-modal\').remove();" style="background:none;border:none;font-size:1.4em;cursor:pointer;color:#6b7280;">&times;</button></div>';
@@ -303,7 +243,7 @@ function _showUpgradeModal() {
     html += '<div style="font-size:2em;font-weight:800;margin:8px 0;">$0</div>';
     html += '<div style="color:#6b7280;font-size:0.8em;">100 tokens/mo</div>';
     html += '<div style="color:#6b7280;font-size:0.8em;">1 account</div>';
-    html += currentTier === 'free' ? '<div style="margin-top:12px;color:#10b981;font-weight:600;font-size:0.85em;">&#10003; Current Plan</div>' : '<button class="smb-upgrade-plan-btn" data-plan="free" style="margin-top:12px;background:#f3f4f6;color:#374151;border:1px solid #d1d5db;border-radius:8px;padding:8px 16px;font-size:0.8em;cursor:pointer;width:100%;">Downgrade</button>';
+    html += currentTier === 'free' ? '<div style="margin-top:12px;color:#10b981;font-weight:600;font-size:0.85em;">&#10003; Current Plan</div>' : '';
     html += '</div>';
 
     // Growth
@@ -312,8 +252,8 @@ function _showUpgradeModal() {
     html += '<div style="font-weight:700;font-size:1.1em;">Growth</div>';
     html += '<div style="font-size:2em;font-weight:800;margin:8px 0;">$50</div>';
     html += '<div style="color:#6b7280;font-size:0.8em;">300 tokens/mo</div>';
-    html += '<div style="color:#6b7280;font-size:0.8em;">5 accounts &middot; All features</div>';
-    html += currentTier === 'growth' ? '<div style="margin-top:12px;color:#10b981;font-weight:600;font-size:0.85em;">&#10003; Current Plan</div>' : '<button class="smb-upgrade-plan-btn" data-plan="growth" style="margin-top:12px;background:linear-gradient(135deg,#e8714a,#d4603a);color:#fff;border:none;border-radius:8px;padding:8px 16px;font-size:0.8em;font-weight:600;cursor:pointer;width:100%;">Upgrade to Growth</button>';
+    html += '<div style="color:#6b7280;font-size:0.8em;">5 accounts</div>';
+    html += currentTier === 'growth' ? '<div style="margin-top:12px;color:#10b981;font-weight:600;font-size:0.85em;">&#10003; Current Plan</div>' : '<div id="paypal-btn-growth" style="margin-top:12px;"></div>';
     html += '</div>';
 
     // Scale
@@ -321,8 +261,8 @@ function _showUpgradeModal() {
     html += '<div style="font-weight:700;font-size:1.1em;">Scale</div>';
     html += '<div style="font-size:2em;font-weight:800;margin:8px 0;">$200</div>';
     html += '<div style="color:#6b7280;font-size:0.8em;">1,500 tokens/mo</div>';
-    html += '<div style="color:#6b7280;font-size:0.8em;">20 accounts &middot; Priority</div>';
-    html += currentTier === 'scale' ? '<div style="margin-top:12px;color:#10b981;font-weight:600;font-size:0.85em;">&#10003; Current Plan</div>' : '<button class="smb-upgrade-plan-btn" data-plan="scale" style="margin-top:12px;background:#1a1a2e;color:#fff;border:none;border-radius:8px;padding:8px 16px;font-size:0.8em;font-weight:600;cursor:pointer;width:100%;">Upgrade to Scale</button>';
+    html += '<div style="color:#6b7280;font-size:0.8em;">20 accounts</div>';
+    html += currentTier === 'scale' ? '<div style="margin-top:12px;color:#10b981;font-weight:600;font-size:0.85em;">&#10003; Current Plan</div>' : '<div id="paypal-btn-scale" style="margin-top:12px;"></div>';
     html += '</div>';
     html += '</div>';
 
@@ -330,14 +270,14 @@ function _showUpgradeModal() {
     html += '<div style="border-top:1px solid #e5e7eb;padding-top:20px;">';
     html += '<h3 style="font-size:1em;margin-bottom:12px;">&#x1FA99; Top Up Tokens</h3>';
     html += '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;">';
-    html += '<button class="smb-topup-btn" data-tokens="50" data-price="5" data-paddle="topup5" style="border:1.5px solid #e5e7eb;border-radius:10px;padding:14px;text-align:center;background:#fff;cursor:pointer;"><div style="font-size:1.3em;font-weight:700;">&#x1FA99; 50</div><div style="color:#6b7280;font-size:0.8em;">$5</div></button>';
-    html += '<button class="smb-topup-btn" data-tokens="200" data-price="15" data-paddle="topup15" style="border:1.5px solid #3b82f6;border-radius:10px;padding:14px;text-align:center;background:#fff;cursor:pointer;"><div style="font-size:1.3em;font-weight:700;">&#x1FA99; 200</div><div style="color:#3b82f6;font-size:0.8em;font-weight:600;">$15 (25% off)</div></button>';
-    html += '<button class="smb-topup-btn" data-tokens="500" data-price="30" data-paddle="topup30" style="border:1.5px solid #10b981;border-radius:10px;padding:14px;text-align:center;background:#fff;cursor:pointer;"><div style="font-size:1.3em;font-weight:700;">&#x1FA99; 500</div><div style="color:#10b981;font-size:0.8em;font-weight:600;">$30 (40% off)</div></button>';
+    html += '<button class="smb-topup-btn" data-tokens="50" data-price="5" style="border:1.5px solid #e5e7eb;border-radius:10px;padding:14px;text-align:center;background:#fff;cursor:pointer;"><div style="font-size:1.3em;font-weight:700;">&#x1FA99; 50</div><div style="color:#6b7280;font-size:0.8em;">$5</div></button>';
+    html += '<button class="smb-topup-btn" data-tokens="200" data-price="15" style="border:1.5px solid #3b82f6;border-radius:10px;padding:14px;text-align:center;background:#fff;cursor:pointer;"><div style="font-size:1.3em;font-weight:700;">&#x1FA99; 200</div><div style="color:#3b82f6;font-size:0.8em;font-weight:600;">$15 (25% off)</div></button>';
+    html += '<button class="smb-topup-btn" data-tokens="500" data-price="30" style="border:1.5px solid #10b981;border-radius:10px;padding:14px;text-align:center;background:#fff;cursor:pointer;"><div style="font-size:1.3em;font-weight:700;">&#x1FA99; 500</div><div style="color:#10b981;font-size:0.8em;font-weight:600;">$30 (40% off)</div></button>';
     html += '</div></div>';
 
     // Legal links
     html += '<div style="margin-top:20px;padding-top:16px;border-top:1px solid #f3f4f6;text-align:center;font-size:0.75em;color:#9ca3af;">';
-    html += 'Payments processed by <a href="https://paddle.com" target="_blank" style="color:#9ca3af;text-decoration:underline;">Paddle</a> &middot; ';
+    html += 'Payments processed by <a href="https://paypal.com" target="_blank" style="color:#9ca3af;text-decoration:underline;">PayPal</a> &middot; ';
     html += '<a href="/terms-and-conditions/" target="_blank" style="color:#9ca3af;text-decoration:underline;">Terms</a> &middot; ';
     html += '<a href="/privacy/" target="_blank" style="color:#9ca3af;text-decoration:underline;">Privacy</a> &middot; ';
     html += '<a href="/refund/" target="_blank" style="color:#9ca3af;text-decoration:underline;">Refund Policy</a></div>';
@@ -346,49 +286,57 @@ function _showUpgradeModal() {
     overlay.innerHTML = html;
     document.body.appendChild(overlay);
 
-    // Wire up plan buttons — open Paddle checkout
-    overlay.querySelectorAll('.smb-upgrade-plan-btn').forEach(function(btn) {
-        btn.onclick = function() {
-            var plan = btn.getAttribute('data-plan');
-            if (plan === 'free') {
-                // Downgrade — just notify, backend handles via webhook on cancel
-                if (confirm('Downgrade to Free? Your paid features will remain active until the end of your billing period.')) {
-                    notify('To downgrade, cancel your subscription from the Paddle receipt email or contact ariel@slashmycloudbill.com', 'info', 8000);
+    // Render PayPal subscription buttons
+    if (typeof paypal !== 'undefined') {
+        if (currentTier !== 'growth' && document.getElementById('paypal-btn-growth')) {
+            paypal.Buttons({
+                style: { shape: 'rect', color: 'blue', layout: 'horizontal', label: 'subscribe', height: 35 },
+                createSubscription: function(data, actions) {
+                    return actions.subscription.create({ plan_id: PAYPAL_PLANS.growth });
+                },
+                onApprove: function(data) {
+                    notify('Welcome to Growth! Your plan is being activated...', 'success', 6000);
+                    sessionStorage.setItem('memberTier', 'growth');
+                    var badge = document.getElementById('header-tier-badge');
+                    if (badge) { badge.textContent = 'Growth'; badge.style.background = '#dbeafe'; badge.style.color = '#1e40af'; }
+                    api('POST', '/member/update-tier', {email: email, tier: 'growth', paypalSubscriptionId: data.subscriptionID || ''}).catch(function(e) { console.warn('Tier sync failed:', e); });
+                    document.getElementById('upgrade-modal').remove();
+                    setTimeout(function() { if (typeof loadAccounts === 'function') loadAccounts(); }, 2000);
                 }
-                return;
-            }
-            var priceId = PADDLE_PRICES[plan];
-            if (!priceId) return;
-            if (typeof Paddle !== 'undefined') {
-                Paddle.Checkout.open({
-                    items: [{priceId: priceId, quantity: 1}],
-                    settings: {displayMode: 'overlay', theme: 'light', locale: 'en'},
-                    customData: JSON.stringify({memberEmail: email, tier: plan})
-                });
-            } else {
-                notify('Payment system loading... please try again in a moment.', 'error', 4000);
-            }
-        };
-    });
+            }).render('#paypal-btn-growth');
+        }
+        if (currentTier !== 'scale' && document.getElementById('paypal-btn-scale')) {
+            paypal.Buttons({
+                style: { shape: 'rect', color: 'gold', layout: 'horizontal', label: 'subscribe', height: 35 },
+                createSubscription: function(data, actions) {
+                    return actions.subscription.create({ plan_id: PAYPAL_PLANS.scale });
+                },
+                onApprove: function(data) {
+                    notify('Welcome to Scale! Your plan is being activated...', 'success', 6000);
+                    sessionStorage.setItem('memberTier', 'scale');
+                    var badge = document.getElementById('header-tier-badge');
+                    if (badge) { badge.textContent = 'Scale'; badge.style.background = '#dbeafe'; badge.style.color = '#1e40af'; }
+                    api('POST', '/member/update-tier', {email: email, tier: 'scale', paypalSubscriptionId: data.subscriptionID || ''}).catch(function(e) { console.warn('Tier sync failed:', e); });
+                    document.getElementById('upgrade-modal').remove();
+                    setTimeout(function() { if (typeof loadAccounts === 'function') loadAccounts(); }, 2000);
+                }
+            }).render('#paypal-btn-scale');
+        }
+    }
 
-    // Wire up top-up buttons — open Paddle checkout
+    // Wire up top-up buttons — use PayPal Orders API for one-time payments
     overlay.querySelectorAll('.smb-topup-btn').forEach(function(btn) {
         btn.onclick = function() {
-            var paddleKey = btn.getAttribute('data-paddle');
-            var priceId = PADDLE_PRICES[paddleKey];
-            if (!priceId) return;
-            if (typeof Paddle !== 'undefined') {
-                Paddle.Checkout.open({
-                    items: [{priceId: priceId, quantity: 1}],
-                    settings: {displayMode: 'overlay', theme: 'light', locale: 'en'},
-                    customData: JSON.stringify({memberEmail: email, type: 'topup', tokens: btn.getAttribute('data-tokens')})
-                });
-            } else {
-                notify('Payment system loading... please try again in a moment.', 'error', 4000);
-            }
+            var tokensToAdd = parseInt(btn.getAttribute('data-tokens'));
+            var price = btn.getAttribute('data-price');
+            // For token top-ups, use a simple PayPal payment link or manual flow
+            // Since PayPal Orders API requires server-side, we'll use a simpler approach:
+            // Direct the user to pay via PayPal.me link and then manually add tokens
+            notify('Token top-ups coming soon! Contact ariel@slashmycloudbill.com to purchase tokens.', 'info', 6000);
         };
     });
 }
+    var html = '<div style="background:#fff;border-radius:16px;padding:32px;max-width:700px;width:95%;max-height:90vh;overflow-y:auto;">';
 
 
 // ============================================================
