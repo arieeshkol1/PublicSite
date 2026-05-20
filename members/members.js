@@ -3100,8 +3100,12 @@ function renderDashboardWidgets(data) {
     // Determine active section and build its widgets
     var activeSection = _getActiveObserveSection();
     var sectionContainer = document.querySelector('#observe-section-' + activeSection + ' .observe-widget-grid');
+    console.log('[Observe] Active section:', activeSection, 'Container found:', !!sectionContainer);
     if (sectionContainer) {
         _buildObserveSectionWidgets(activeSection, sectionContainer);
+        console.log('[Observe] Widgets built, children:', sectionContainer.children.length);
+    } else {
+        console.error('[Observe] Section container not found for:', activeSection);
     }
 
     // Render tag filter in Cost Analysis section
@@ -3191,7 +3195,8 @@ var OBSERVE_SECTIONS = [
     { id: 'observe-cost', label: 'Cost Analysis', icon: '📊' },
     { id: 'observe-commitments', label: 'Commitments', icon: '💰' },
     { id: 'observe-metrics', label: 'Business Metrics', icon: '📈' },
-    { id: 'observe-health', label: 'Health & Score', icon: '🏥' }
+    { id: 'observe-health', label: 'Health & Score', icon: '🏥' },
+    { id: 'observe-invoices', label: 'Invoices', icon: '🧾' }
 ];
 
 // Widget-to-section mapping: each section ID maps to an array of widget IDs
@@ -3255,10 +3260,25 @@ function _switchObserveSection(sectionId) {
 
     // Step 5: Build widgets and render charts if section is stale or not yet rendered
     var sectionContainer = document.querySelector('#observe-section-' + sectionId + ' .observe-widget-grid');
-    if (sectionContainer && dashDataCache) {
+    if (sectionContainer) {
         if (_observeStaleSections[sectionId] || sectionContainer.children.length === 0) {
             _buildObserveSectionWidgets(sectionId, sectionContainer);
-            _renderVisibleSectionCharts(dashDataCache, sectionId);
+            if (dashDataCache) {
+                _renderVisibleSectionCharts(dashDataCache, sectionId);
+            }
+        }
+    }
+
+    // Step 5b: Initialize Invoices section when switched to
+    if (sectionId === 'observe-invoices') {
+        if (typeof _populateDrilldownAccounts === 'function') _populateDrilldownAccounts();
+        var ddRefBtn = document.getElementById('dd-refresh-btn');
+        if (ddRefBtn) { ddRefBtn.disabled = false; ddRefBtn.textContent = '🔄 Refresh'; }
+        var ddCooldown = document.getElementById('dd-refresh-cooldown');
+        if (ddCooldown) ddCooldown.style.display = 'none';
+        var ddSel = document.getElementById('dd-account-select');
+        if (ddSel && ddSel.value && typeof loadInvoiceDrilldown === 'function') {
+            loadInvoiceDrilldown(ddSel.value);
         }
     }
 
@@ -3418,6 +3438,13 @@ function _migrateObserveLayout() {
 function _buildObserveSectionWidgets(sectionId, container) {
     var sectionWidgetIds = OBSERVE_WIDGET_SECTIONS[sectionId] || [];
     var layout = _getObserveSectionLayout(sectionId);
+
+    // Safety: if layout has no visible widgets, reset to all visible
+    var hasVisible = layout.some(function(l) { return l.visible && sectionWidgetIds.indexOf(l.id) !== -1; });
+    if (!hasVisible) {
+        layout = sectionWidgetIds.map(function(id) { return { id: id, visible: true }; });
+        _saveObserveSectionLayout(sectionId, layout);
+    }
 
     container.innerHTML = '';
     var visibleCount = 0;
