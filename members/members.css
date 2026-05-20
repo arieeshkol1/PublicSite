@@ -384,6 +384,7 @@
 .act-nav-btn{display:flex;align-items:center;gap:8px;width:100%;padding:10px 16px;border:none;background:none;color:#6b7280;font-size:0.9em;font-weight:500;cursor:pointer;text-align:left;border-left:3px solid transparent;transition:all .15s;}
 .act-nav-btn:hover{background:#f3f4f6;color:#1f2937;}
 .act-nav-btn.active{background:#eef2ff;color:#4f46e5;border-left-color:#6366f1;font-weight:600;}
+#act-tab .member-tab-content, #act-tab [id^="act-section-"] { max-width: 100%; overflow-x: auto; box-sizing: border-box; }
 @media(max-width:768px){
   #act-nav{width:60px !important;}
   .act-nav-btn span:last-child{display:none;}
