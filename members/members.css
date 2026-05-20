@@ -1220,3 +1220,59 @@
         margin: 4px 4px 8px 4px;
     }
 }
+
+
+/* ============================================================
+   Observe Tab — Left Navigation & Responsive Layout
+   ============================================================ */
+
+/* Observe Nav Panel */
+#observe-nav {
+    width: 180px;
+    min-width: 180px;
+    border-right: 1px solid #e5e7eb;
+    padding: 12px 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+/* Observe Widget Grid — responsive auto-fit grid */
+.observe-widget-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
+    gap: 16px;
+    padding: 16px;
+    width: 100%;
+    box-sizing: border-box;
+}
+
+/* Single-column fallback when content area is narrower than 380px */
+@container (max-width: 380px) {
+    .observe-widget-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* Fallback for browsers without container queries */
+@supports not (container-type: inline-size) {
+    .observe-widget-grid {
+        grid-template-columns: repeat(auto-fit, minmax(min(380px, 100%), 1fr));
+    }
+}
+
+/* Responsive: collapse observe nav on small viewports */
+@media (max-width: 768px) {
+    #observe-nav {
+        width: 60px !important;
+        min-width: 60px;
+    }
+    #observe-nav .act-nav-btn span:last-child {
+        display: none;
+    }
+    .observe-widget-grid {
+        grid-template-columns: 1fr;
+        padding: 12px;
+        gap: 12px;
+    }
+}
