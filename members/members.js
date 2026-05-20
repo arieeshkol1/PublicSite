@@ -2999,7 +2999,10 @@ async function loadDashboardData() {
         return;
     }
 
-    kpiBar.innerHTML = '<div style="color:#6b7280;padding:20px;width:100%;">Loading dashboard data from your accounts...</div>';
+    // Only show loading in KPI bar on initial load (not on tag filter changes)
+    if (!window._skipKpiBarRender) {
+        kpiBar.innerHTML = '<div style="color:#6b7280;padding:20px;width:100%;">Loading dashboard data from your accounts...</div>';
+    }
     // Clear active section grid while loading
     var activeSection = _getActiveObserveSection();
     var activeGrid = document.querySelector('#observe-section-' + activeSection + ' .observe-widget-grid');
@@ -3050,6 +3053,11 @@ function renderDashboardWidgets(data) {
     if (!kpiBar) return;
     var s = data.summary || {};
 
+    // Skip KPI bar re-render if this is just a tag filter change
+    var skipKpi = window._skipKpiBarRender;
+    window._skipKpiBarRender = false;
+
+    if (!skipKpi) {
     // KPI Bar (always visible, unchanged)
     var momColor = s.monthOverMonthChange <= 0 ? '#10b981' : '#ef4444';
     var momArrow = s.monthOverMonthChange <= 0 ? '▼' : '▲';
@@ -3076,6 +3084,7 @@ function renderDashboardWidgets(data) {
 
     // FinOps Score KPI — show from cached healthcheck results
     _loadFinOpsScoreKPI(kpiBar, data);
+    } // end if (!skipKpi)
 
     // Cache dashboard data for use when switching sections
     dashDataCache = data;
@@ -3631,6 +3640,9 @@ function _applyObserveTagFilter() {
 
     // Only mark cost section as stale — other sections remain unchanged
     _observeStaleSections['observe-cost'] = true;
+
+    // Set flag to skip KPI bar re-render (tag filter only affects cost widgets)
+    window._skipKpiBarRender = true;
 
     // Reload dashboard data — renderDashboardWidgets will only render the active section's charts
     // If cost section is active, it will re-render cost widgets with filtered data
@@ -9906,27 +9918,65 @@ function _renderSPCoverageWidget(container) {
     if (!container) container = document.getElementById('dash-sp-coverage');
     if (!container) return;
 
-    // Read committed discounts data from sessionStorage for selected dashboard accounts
     var accountIds = _getDashboardAccountIds();
-    var spCoverage = null, spUtilization = null;
+    var spCoverage = null, spUtilization = null, totalSP = 0;
     var hasData = false;
 
-    for (var i = 0; i < accountIds.length; i++) {
-        var cached = null;
-        try { cached = JSON.parse(sessionStorage.getItem('committedDiscounts_' + accountIds[i])); } catch(e) {}
-        if (cached && cached.data) {
-            hasData = true;
-            var cov = cached.data.spCoverage || cached.data.coverage || {};
-            if (cov.spCoveragePercentage != null) spCoverage = cov.spCoveragePercentage;
-            else if (cov.coveragePercentage != null) spCoverage = cov.coveragePercentage;
-            if (cov.spUtilizationPercentage != null) spUtilization = cov.spUtilizationPercentage;
-            else if (cov.utilizationPercentage != null) spUtilization = cov.utilizationPercentage;
-            if (spCoverage != null) break;
+    // Source 1: Dashboard API data (dashDataCache.commitments)
+    if (typeof dashDataCache !== 'undefined' && dashDataCache && dashDataCache.commitments) {
+        var c = dashDataCache.commitments;
+        // spCoverage is a dict keyed by account ID with coveragePct field
+        if (c.spCoverage && typeof c.spCoverage === 'object') {
+            var totalCovPct = 0, covCount = 0;
+            for (var aid in c.spCoverage) {
+                if (c.spCoverage.hasOwnProperty(aid)) {
+                    var entry = c.spCoverage[aid];
+                    if (entry.coveragePct != null) {
+                        totalCovPct += parseFloat(entry.coveragePct);
+                        covCount++;
+                    }
+                }
+            }
+            if (covCount > 0) {
+                spCoverage = totalCovPct / covCount;
+                hasData = true;
+            }
+            // Check for CoveragePercentage format (alternative API response shape)
+            if (!hasData && c.spCoverage.CoveragePercentage != null) {
+                spCoverage = parseFloat(c.spCoverage.CoveragePercentage);
+                hasData = true;
+            }
+            if (c.spCoverage.UtilizationPercentage != null) {
+                spUtilization = parseFloat(c.spCoverage.UtilizationPercentage);
+            }
+        }
+        if (c.totalSP != null) totalSP = c.totalSP;
+    }
+
+    // Source 2: sessionStorage scan data (fallback)
+    if (!hasData) {
+        for (var i = 0; i < accountIds.length; i++) {
+            var cached = null;
+            try { cached = JSON.parse(sessionStorage.getItem('committedDiscounts_' + accountIds[i])); } catch(e) {}
+            if (cached && cached.data) {
+                hasData = true;
+                var cov = cached.data.spCoverage || cached.data.coverage || {};
+                if (cov.spCoveragePercentage != null) spCoverage = cov.spCoveragePercentage;
+                else if (cov.coveragePercentage != null) spCoverage = cov.coveragePercentage;
+                else if (cov.CoveragePercentage != null) spCoverage = parseFloat(cov.CoveragePercentage);
+                if (cov.spUtilizationPercentage != null) spUtilization = cov.spUtilizationPercentage;
+                else if (cov.utilizationPercentage != null) spUtilization = cov.utilizationPercentage;
+                else if (cov.UtilizationPercentage != null) spUtilization = parseFloat(cov.UtilizationPercentage);
+                if (spCoverage != null) break;
+            }
         }
     }
 
     if (!hasData || spCoverage == null) {
-        container.innerHTML = '<div class="cse-widget-empty">No scan data — run a Committed Discounts scan in the Act tab.<br><a class="cse-widget-link" onclick="_goToTab(\'act-tab\',\'committed\')">Go to Committed Discounts ▶</a></div>';
+        container.innerHTML = '<div class="cse-widget-metric-row"><span class="cse-widget-label">Coverage</span><span class="cse-widget-value" style="color:#6b7280;">0%</span></div>' +
+            '<div class="cse-widget-progress"><div class="cse-widget-progress-bar" style="width:0%;background:#e5e7eb;"></div></div>' +
+            '<div style="color:#6b7280;font-size:0.8em;margin-top:8px;">No active Savings Plans found.</div>' +
+            '<a class="cse-widget-link" onclick="document.querySelector(\'[data-tab=dash-tab]\').click();setTimeout(function(){_switchObserveSection(\'observe-commitments\');},200);">Explore Commitments ▶</a>';
         return;
     }
 
@@ -9941,6 +9991,9 @@ function _renderSPCoverageWidget(container) {
         html += '<div class="cse-widget-metric-row" style="margin-top:12px;"' + utilTooltip + '><span class="cse-widget-label">Utilization</span><span class="cse-widget-value" style="color:' + utilColor + ';">' + spUtilization.toFixed(0) + '%</span></div>';
         html += '<div class="cse-widget-progress"><div class="cse-widget-progress-bar" style="width:' + Math.min(spUtilization, 100) + '%;background:' + utilColor + ';"></div></div>';
     }
+    if (totalSP > 0) {
+        html += '<div style="color:#6b7280;font-size:0.8em;margin-top:8px;">' + totalSP + ' active Savings Plan' + (totalSP !== 1 ? 's' : '') + '</div>';
+    }
     html += '<a class="cse-widget-link" onclick="_goToTab(\'act-tab\',\'committed\')">View Details ▶</a>';
     container.innerHTML = html;
 }
@@ -9950,31 +10003,70 @@ function _renderRICoverageWidget(container) {
     if (!container) return;
 
     var accountIds = _getDashboardAccountIds();
-    var riCoverage = null, riUtilization = null, underutilizedCount = 0;
+    var riCoverage = null, riUtilization = null, underutilizedCount = 0, totalEC2RI = 0;
     var hasData = false;
 
-    for (var i = 0; i < accountIds.length; i++) {
-        var cached = null;
-        try { cached = JSON.parse(sessionStorage.getItem('committedDiscounts_' + accountIds[i])); } catch(e) {}
-        if (cached && cached.data) {
-            hasData = true;
-            var cov = cached.data.riCoverage || cached.data.coverage || {};
-            if (cov.riCoveragePercentage != null) riCoverage = cov.riCoveragePercentage;
-            else if (cov.coveragePercentage != null && riCoverage == null) riCoverage = cov.coveragePercentage;
-            if (cov.riUtilizationPercentage != null) riUtilization = cov.riUtilizationPercentage;
-            else if (cov.utilizationPercentage != null && riUtilization == null) riUtilization = cov.utilizationPercentage;
-            // Count underutilized RIs
-            var riRecs = cached.data.riRecommendations || [];
-            riRecs.forEach(function(r) {
-                if (r.utilization != null && r.utilization < 80) underutilizedCount++;
-            });
-            if (cov.underutilizedCount != null) underutilizedCount = cov.underutilizedCount;
-            if (riCoverage != null) break;
+    // Source 1: Dashboard API data (dashDataCache.commitments)
+    if (typeof dashDataCache !== 'undefined' && dashDataCache && dashDataCache.commitments) {
+        var c = dashDataCache.commitments;
+        // riCoverage is a dict keyed by account ID with coveragePct field
+        if (c.riCoverage && typeof c.riCoverage === 'object') {
+            var totalCovPct = 0, covCount = 0;
+            for (var aid in c.riCoverage) {
+                if (c.riCoverage.hasOwnProperty(aid)) {
+                    var entry = c.riCoverage[aid];
+                    if (entry.coveragePct != null) {
+                        totalCovPct += parseFloat(entry.coveragePct);
+                        covCount++;
+                    }
+                }
+            }
+            if (covCount > 0) {
+                riCoverage = totalCovPct / covCount;
+                hasData = true;
+            }
+            // Check for CoveragePercentage format (alternative API response shape)
+            if (!hasData && c.riCoverage.CoveragePercentage != null) {
+                riCoverage = parseFloat(c.riCoverage.CoveragePercentage);
+                hasData = true;
+            }
+            if (c.riCoverage.UtilizationPercentage != null) {
+                riUtilization = parseFloat(c.riCoverage.UtilizationPercentage);
+            }
+        }
+        if (c.totalEC2RI != null) totalEC2RI = c.totalEC2RI;
+    }
+
+    // Source 2: sessionStorage scan data (fallback)
+    if (!hasData) {
+        for (var i = 0; i < accountIds.length; i++) {
+            var cached = null;
+            try { cached = JSON.parse(sessionStorage.getItem('committedDiscounts_' + accountIds[i])); } catch(e) {}
+            if (cached && cached.data) {
+                hasData = true;
+                var cov = cached.data.riCoverage || cached.data.coverage || {};
+                if (cov.riCoveragePercentage != null) riCoverage = cov.riCoveragePercentage;
+                else if (cov.coveragePercentage != null && riCoverage == null) riCoverage = cov.coveragePercentage;
+                else if (cov.CoveragePercentage != null) riCoverage = parseFloat(cov.CoveragePercentage);
+                if (cov.riUtilizationPercentage != null) riUtilization = cov.riUtilizationPercentage;
+                else if (cov.utilizationPercentage != null && riUtilization == null) riUtilization = cov.utilizationPercentage;
+                else if (cov.UtilizationPercentage != null) riUtilization = parseFloat(cov.UtilizationPercentage);
+                // Count underutilized RIs
+                var riRecs = cached.data.riRecommendations || [];
+                riRecs.forEach(function(r) {
+                    if (r.utilization != null && r.utilization < 80) underutilizedCount++;
+                });
+                if (cov.underutilizedCount != null) underutilizedCount = cov.underutilizedCount;
+                if (riCoverage != null) break;
+            }
         }
     }
 
     if (!hasData || riCoverage == null) {
-        container.innerHTML = '<div class="cse-widget-empty">No scan data — run a Committed Discounts scan in the Act tab.<br><a class="cse-widget-link" onclick="_goToTab(\'act-tab\',\'committed\')">Go to Committed Discounts ▶</a></div>';
+        container.innerHTML = '<div class="cse-widget-metric-row"><span class="cse-widget-label">Coverage</span><span class="cse-widget-value" style="color:#6b7280;">0%</span></div>' +
+            '<div class="cse-widget-progress"><div class="cse-widget-progress-bar" style="width:0%;background:#e5e7eb;"></div></div>' +
+            '<div style="color:#6b7280;font-size:0.8em;margin-top:8px;">No active Reserved Instances found.</div>' +
+            '<a class="cse-widget-link" onclick="document.querySelector(\'[data-tab=dash-tab]\').click();setTimeout(function(){_switchObserveSection(\'observe-commitments\');},200);">Explore Commitments ▶</a>';
         return;
     }
 
@@ -9987,6 +10079,9 @@ function _renderRICoverageWidget(container) {
     if (riUtilization != null) {
         html += '<div class="cse-widget-metric-row" style="margin-top:12px;"><span class="cse-widget-label">Utilization</span><span class="cse-widget-value" style="color:' + utilColor + ';">' + riUtilization.toFixed(0) + '%</span></div>';
         html += '<div class="cse-widget-progress"><div class="cse-widget-progress-bar" style="width:' + Math.min(riUtilization, 100) + '%;background:' + utilColor + ';"></div></div>';
+    }
+    if (totalEC2RI > 0) {
+        html += '<div style="color:#6b7280;font-size:0.8em;margin-top:8px;">' + totalEC2RI + ' active Reserved Instance' + (totalEC2RI !== 1 ? 's' : '') + '</div>';
     }
     if (underutilizedCount > 0) {
         html += '<div style="margin-top:8px;"><span class="cse-underutilized-badge">' + underutilizedCount + ' underutilized</span></div>';
