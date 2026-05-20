@@ -6,7 +6,7 @@
     <title>Member Portal - SlashMyBill</title>
     <link rel="icon" type="image/png" href="../SlashMyBill.png">
     <link rel="stylesheet" href="../styles.css">
-    <link rel="stylesheet" href="members.css?v=42">
+    <link rel="stylesheet" href="members.css?v=43">
     <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
     <script src="https://www.paypal.com/sdk/js?client-id=AeSE_YsdvSkkiKXDOx77nnpCrqF21Xr6hjifypwzMtqMtzRd0UZrEAL53uboT_8kQ_4bmyAAq9kndI3G&vault=true&currency=USD" data-sdk-integration-source="button-factory"></script>
 </head>
@@ -167,7 +167,6 @@
                 <button class="member-tab" data-tab="accounts-tab">Configure</button>
                 <button class="member-tab" data-tab="plan-tab">Plan</button>
                 <button class="member-tab" data-tab="dash-tab">Observe</button>
-                <button class="member-tab" data-tab="invoices-tab">Invoices</button>
                 <button class="member-tab" data-tab="ai-tab">Chat</button>
                 <button class="member-tab" data-tab="act-tab">Act</button>
             </div>
@@ -940,63 +939,6 @@
             </div>
 
             <!-- Invoices Tab -->
-            <div id="invoices-tab" class="member-tab-content" hidden style="padding:20px;">
-                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
-                    <h2 style="margin:0;">Invoices</h2>
-                    <div style="display:flex;align-items:center;gap:8px;">
-                        <label style="color:#6b7280;font-size:0.85em;">Account:</label>
-                        <select id="dd-account-select" style="padding:6px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:0.9em;background:#fff;color:#1f2937;min-width:200px;">
-                            <option value="">Select an account...</option>
-                        </select>
-                        <button id="dd-refresh-btn" class="btn btn-outline btn-sm" title="Refresh drilldown data">🔄 Refresh</button>
-                        <span id="dd-refresh-cooldown" style="font-size:0.8em;color:#6b7280;display:none;"></span>
-                    </div>
-                </div>
-
-                <!-- Drilldown Table Container -->
-                <div id="dd-table-container" class="table-wrapper" style="margin:0;">
-                    <table class="data-table dd-table">
-                        <thead>
-                            <tr>
-                                <th style="width:30px;"></th>
-                                <th class="dd-sortable" data-sort="invoiceId">Invoice ID</th>
-                                <th class="dd-sortable" data-sort="issuer">Issued By</th>
-                                <th class="dd-sortable" data-sort="paymentDate">Payment Date ⇅</th>
-                                <th class="dd-sortable" data-sort="status">Status</th>
-                                <th class="dd-sortable" data-sort="amount">Total Amount ⇅</th>
-                            </tr>
-                        </thead>
-                        <tbody id="dd-tbody"></tbody>
-                    </table>
-                </div>
-
-                <!-- Empty State -->
-                <div id="dd-empty" class="empty-state" hidden>
-                    <p>Select an account to explore invoices with drill-down.</p>
-                </div>
-
-                <!-- Loading State -->
-                <div id="dd-loading" class="empty-state" hidden>
-                    <div class="loading-spinner" style="width:32px;height:32px;margin:0 auto 12px;"></div>
-                    <p>Loading invoices...</p>
-                </div>
-
-                <!-- Error State -->
-                <div id="dd-error" style="display:none;padding:16px;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;margin-top:12px;">
-                    <span id="dd-error-msg" style="color:#991b1b;font-size:0.9em;"></span>
-                    <button class="btn btn-outline btn-sm" style="margin-left:12px;" onclick="_ddRetryLoad()">Retry</button>
-                </div>
-
-                <!-- Pagination -->
-                <div id="dd-pagination" style="display:flex;align-items:center;justify-content:space-between;padding:12px 0;">
-                    <div id="dd-page-info" style="font-size:0.85em;color:#6b7280;">Page 1 of 1</div>
-                    <div style="display:flex;gap:8px;">
-                        <button id="dd-prev-btn" class="btn btn-outline btn-sm" disabled>← Previous</button>
-                        <button id="dd-next-btn" class="btn btn-outline btn-sm" disabled>Next →</button>
-                    </div>
-                </div>
-            </div>
-
             <div id="dash-tab" class="member-tab-content">
                 <!-- Header -->
                 <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
@@ -1027,6 +969,9 @@
                         <button class="act-nav-btn" data-section="observe-health" onclick="_switchObserveSection('observe-health')">
                             <span style="font-size:1.2em;">🏥</span> Health & Score
                         </button>
+                        <button class="act-nav-btn" data-section="observe-invoices" onclick="_switchObserveSection('observe-invoices')">
+                            <span style="font-size:1.2em;">🧾</span> Invoices
+                        </button>
                     </div>
 
                     <!-- Content Area -->
@@ -1050,6 +995,64 @@
                         <!-- Health & Score Section -->
                         <div id="observe-section-observe-health" style="display:none;">
                             <div class="observe-widget-grid" style="display:grid;grid-template-columns:repeat(auto-fit, minmax(380px, 1fr));gap:16px;"></div>
+                        </div>
+
+                        <!-- Invoices Section -->
+                        <div id="observe-section-observe-invoices" style="display:none;">
+                            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+                                <h3 style="margin:0;color:#1f2937;">Invoices</h3>
+                                <div style="display:flex;align-items:center;gap:8px;">
+                                    <label style="color:#6b7280;font-size:0.85em;">Account:</label>
+                                    <select id="dd-account-select" style="padding:6px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:0.9em;background:#fff;color:#1f2937;min-width:200px;">
+                                        <option value="">Select an account...</option>
+                                    </select>
+                                    <button id="dd-refresh-btn" class="btn btn-outline btn-sm" title="Refresh drilldown data">🔄 Refresh</button>
+                                    <span id="dd-refresh-cooldown" style="font-size:0.8em;color:#6b7280;display:none;"></span>
+                                </div>
+                            </div>
+
+                            <!-- Drilldown Table Container -->
+                            <div id="dd-table-container" class="table-wrapper" style="margin:0;">
+                                <table class="data-table dd-table">
+                                    <thead>
+                                        <tr>
+                                            <th style="width:30px;"></th>
+                                            <th class="dd-sortable" data-sort="invoiceId">Invoice ID</th>
+                                            <th class="dd-sortable" data-sort="issuer">Issued By</th>
+                                            <th class="dd-sortable" data-sort="paymentDate">Payment Date ⇅</th>
+                                            <th class="dd-sortable" data-sort="status">Status</th>
+                                            <th class="dd-sortable" data-sort="amount">Total Amount ⇅</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="dd-tbody"></tbody>
+                                </table>
+                            </div>
+
+                            <!-- Empty State -->
+                            <div id="dd-empty" class="empty-state" hidden>
+                                <p>Select an account to explore invoices with drill-down.</p>
+                            </div>
+
+                            <!-- Loading State -->
+                            <div id="dd-loading" class="empty-state" hidden>
+                                <div class="loading-spinner" style="width:32px;height:32px;margin:0 auto 12px;"></div>
+                                <p>Loading invoices...</p>
+                            </div>
+
+                            <!-- Error State -->
+                            <div id="dd-error" style="display:none;padding:16px;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;margin-top:12px;">
+                                <span id="dd-error-msg" style="color:#991b1b;font-size:0.9em;"></span>
+                                <button class="btn btn-outline btn-sm" style="margin-left:12px;" onclick="_ddRetryLoad()">Retry</button>
+                            </div>
+
+                            <!-- Pagination -->
+                            <div id="dd-pagination" style="display:flex;align-items:center;justify-content:space-between;padding:12px 0;">
+                                <div id="dd-page-info" style="font-size:0.85em;color:#6b7280;">Page 1 of 1</div>
+                                <div style="display:flex;gap:8px;">
+                                    <button id="dd-prev-btn" class="btn btn-outline btn-sm" disabled>← Previous</button>
+                                    <button id="dd-next-btn" class="btn btn-outline btn-sm" disabled>Next →</button>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -1267,7 +1270,7 @@
         <span id="notification-message"></span>
     </div>
 
-    <script src="members.js?v=93"></script>
+    <script src="members.js?v=94"></script>
     <script src="help.js?v=8"></script>
 </body>
 </html>
