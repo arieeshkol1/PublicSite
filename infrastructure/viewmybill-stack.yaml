@@ -1534,23 +1534,6 @@ Resources:
       RouteKey: 'GET /members/invoices/resources'
       Target: !Sub 'integrations/${MemberIntegration}'
 
-  # ============================================================
-  # API Gateway - License Conversion Optimizer Routes
-  # ============================================================
-  MemberLicenseConversionAnalyzeRoute:
-    Type: AWS::ApiGatewayV2::Route
-    Properties:
-      ApiId: !Ref ViewMyBillApi
-      RouteKey: 'POST /members/license-conversion/analyze'
-      Target: !Sub 'integrations/${MemberIntegration}'
-
-  MemberLicenseConversionPlanRoute:
-    Type: AWS::ApiGatewayV2::Route
-    Properties:
-      ApiId: !Ref ViewMyBillApi
-      RouteKey: 'POST /members/license-conversion/plan'
-      Target: !Sub 'integrations/${MemberIntegration}'
-
   MemberHandlerInvokePermission:
     Type: AWS::Lambda::Permission
     Properties:
