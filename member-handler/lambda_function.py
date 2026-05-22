@@ -19108,7 +19108,7 @@ def _validate_conversion_permissions(session):
     # Test ec2:DescribeReservedInstances
     try:
         ec2 = _client('ec2')
-        ec2.describe_reserved_instances(Filters=[{'Name': 'state', 'Values': ['active']}], MaxResults=5)
+        ec2.describe_reserved_instances(Filters=[{'Name': 'state', 'Values': ['active']}])
     except ClientError as e:
         if e.response['Error']['Code'] in ('AccessDeniedException', 'AccessDenied', 'UnauthorizedOperation'):
             missing_permissions.append('ec2:DescribeReservedInstances')
