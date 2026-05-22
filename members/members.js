@@ -5260,19 +5260,22 @@ function _switchActSection(section) {
     var budget = document.getElementById('act-section-budget');
     var optimization = document.getElementById('act-section-optimization');
     var committed = document.getElementById('act-section-committed');
+    var licenseConversion = document.getElementById('act-section-license-conversion');
     if (waste) waste.style.display = section === 'waste' ? 'block' : 'none';
     if (tagging) tagging.style.display = section === 'tagging' ? 'block' : 'none';
     if (scheduler) scheduler.style.display = section === 'scheduler' ? 'block' : 'none';
     if (budget) budget.style.display = section === 'budget' ? 'block' : 'none';
     if (optimization) optimization.style.display = section === 'optimization' ? 'block' : 'none';
     if (committed) committed.style.display = section === 'committed' ? 'block' : 'none';
-    // Hide the shared Act tab account selector when Committed Discounts is active (it has its own)
+    if (licenseConversion) licenseConversion.style.display = section === 'license-conversion' ? 'block' : 'none';
+    // Hide the shared Act tab account selector when Committed Discounts or License Conversion is active (they have their own)
     var actTopAccounts = document.getElementById('act-account-select');
-    if (actTopAccounts) actTopAccounts.parentElement.parentElement.style.display = section === 'committed' ? 'none' : 'flex';
+    if (actTopAccounts) actTopAccounts.parentElement.parentElement.style.display = (section === 'committed' || section === 'license-conversion') ? 'none' : 'flex';
     // Auto-load scheduler data when switching to scheduler section
     if (section === 'scheduler') _loadSchedulerData();
     if (section === 'optimization') { _populateSpotMigrateAccounts(); _resizePopulateAccounts(); _licensingPopulateAccounts(); }
     if (section === 'committed') _committedSectionLoad();
+    if (section === 'license-conversion') _lcPopulateAccounts();
 }
 
 // ============================================================
@@ -11746,3 +11749,460 @@ function _ddUpdatePagination(page, totalPages) {
         };
     });
 })();
+
+
+// ============================================================
+// License Conversion Optimizer — Act > License Conversion
+// ============================================================
+
+var _lcCache = {};
+var LC_CACHE_TTL = 3600000; // 1 hour
+
+function _lcPopulateAccounts() {
+    var select = document.getElementById('lc-account-select');
+    if (!select) return;
+    select.innerHTML = '<option value="">Select an account...</option>';
+    var connected = (typeof allAccounts !== 'undefined' ? allAccounts : []).filter(function(a) { return a.connectionStatus === 'connected'; });
+    if (connected.length === 0) {
+        select.innerHTML = '<option value="">No accounts connected</option>';
+        return;
+    }
+    connected.forEach(function(a) {
+        var opt = document.createElement('option');
+        opt.value = a.accountId;
+        opt.textContent = (a.accountName || a.accountId) + ' (' + a.accountId + ')';
+        select.appendChild(opt);
+    });
+}
+
+function _lcAccountChanged() {
+    var accountId = (document.getElementById('lc-account-select') || {}).value;
+    if (!accountId) return;
+    // Check sessionStorage cache
+    var cacheKey = 'licenseConversion_' + accountId;
+    var cached = sessionStorage.getItem(cacheKey);
+    if (cached) {
+        try {
+            var parsed = JSON.parse(cached);
+            if (parsed.timestamp && (Date.now() - parsed.timestamp < LC_CACHE_TTL)) {
+                _lcRenderResults(parsed.data);
+                document.getElementById('lc-reanalyze-btn').style.display = 'inline-flex';
+                return;
+            }
+        } catch (e) { /* ignore parse errors */ }
+    }
+}
+
+function _lcReanalyze() {
+    var accountId = (document.getElementById('lc-account-select') || {}).value;
+    if (accountId) {
+        sessionStorage.removeItem('licenseConversion_' + accountId);
+    }
+    _lcAnalyzePortfolio();
+}
+
+async function _lcAnalyzePortfolio() {
+    var accountId = (document.getElementById('lc-account-select') || {}).value;
+    if (!accountId) { alert('Please select an account'); return; }
+
+    var status = document.getElementById('lc-scan-status');
+    var emptyEl = document.getElementById('lc-empty');
+    var portfolioPanel = document.getElementById('lc-portfolio-panel');
+    var opportunitiesPanel = document.getElementById('lc-opportunities-panel');
+    var planPanel = document.getElementById('lc-plan-panel');
+    var reanalyzeBtn = document.getElementById('lc-reanalyze-btn');
+
+    if (emptyEl) emptyEl.style.display = 'none';
+    if (portfolioPanel) portfolioPanel.style.display = 'none';
+    if (opportunitiesPanel) opportunitiesPanel.style.display = 'none';
+    if (planPanel) planPanel.style.display = 'none';
+    if (status) status.innerHTML = '<span style="color:#6366f1;">⏳ Analyzing licensing portfolio... This may take 30-60 seconds.</span>';
+
+    try {
+        var data = await api('POST', '/members/license-conversion/analyze', { accountId: accountId });
+        if (status) status.textContent = '';
+
+        if (!data.success) {
+            if (status) status.textContent = '❌ ' + (data.message || 'Analysis failed');
+            if (emptyEl) emptyEl.style.display = 'block';
+            return;
+        }
+
+        // Cache results
+        var cacheKey = 'licenseConversion_' + accountId;
+        sessionStorage.setItem(cacheKey, JSON.stringify({ timestamp: Date.now(), data: data }));
+        if (reanalyzeBtn) reanalyzeBtn.style.display = 'inline-flex';
+
+        _lcRenderResults(data);
+    } catch (e) {
+        if (status) status.textContent = '❌ ' + (e.message || 'Analysis failed');
+        if (emptyEl) emptyEl.style.display = 'block';
+    }
+}
+
+function _lcRenderResults(data) {
+    var emptyEl = document.getElementById('lc-empty');
+    if (emptyEl) emptyEl.style.display = 'none';
+    _lcRenderPortfolio(data.portfolio);
+    _lcRenderOpportunities(data.conversionOpportunities || [], data.totalPotentialSavings);
+}
+
+// ============================================================
+// Task 11.2: Portfolio Overview Panel
+// ============================================================
+
+function _lcRenderPortfolio(portfolio) {
+    var panel = document.getElementById('lc-portfolio-panel');
+    if (!panel || !portfolio) return;
+    panel.style.display = 'block';
+
+    var summary = portfolio.summary || {};
+    var html = '';
+
+    // Summary cards
+    html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:16px;">';
+    html += '<div class="lc-stat-card"><div class="lc-stat-value">' + (summary.totalCommitments || 0) + '</div><div class="lc-stat-label">Total Commitments</div></div>';
+    html += '<div class="lc-stat-card"><div class="lc-stat-value">' + (summary.overallCoveragePercentage || 0).toFixed(1) + '%</div><div class="lc-stat-label">Coverage</div></div>';
+    html += '<div class="lc-stat-card"><div class="lc-stat-value">$' + (summary.totalMonthlyCommitmentCost || 0).toLocaleString() + '</div><div class="lc-stat-label">Monthly Committed</div></div>';
+    html += '<div class="lc-stat-card" style="border-color:#f59e0b;"><div class="lc-stat-value" style="color:#d97706;">$' + (summary.totalOnDemandSpend || 0).toLocaleString() + '</div><div class="lc-stat-label">On-Demand Spend</div></div>';
+    html += '</div>';
+
+    // Service breakdown bars
+    var breakdown = summary.serviceBreakdown || {};
+    var services = Object.keys(breakdown);
+    if (services.length > 0) {
+        html += '<div style="margin-bottom:16px;">';
+        html += '<div style="font-weight:600;margin-bottom:8px;color:#1f2937;">Service Breakdown</div>';
+        var maxTotal = 0;
+        services.forEach(function(s) { var t = (breakdown[s].committed || 0) + (breakdown[s].onDemand || 0); if (t > maxTotal) maxTotal = t; });
+        services.forEach(function(svc) {
+            var svcData = breakdown[svc];
+            var committed = svcData.committed || 0;
+            var onDemand = svcData.onDemand || 0;
+            var total = committed + onDemand;
+            var pctCommitted = maxTotal > 0 ? (committed / maxTotal * 100) : 0;
+            var pctOnDemand = maxTotal > 0 ? (onDemand / maxTotal * 100) : 0;
+            html += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">';
+            html += '<div style="width:80px;font-size:0.85em;color:#374151;font-weight:500;">' + svc + '</div>';
+            html += '<div style="flex:1;background:#e5e7eb;border-radius:4px;height:20px;overflow:hidden;display:flex;">';
+            html += '<div style="width:' + pctCommitted + '%;background:#10b981;height:100%;"></div>';
+            html += '<div style="width:' + pctOnDemand + '%;background:#f59e0b;height:100%;"></div>';
+            html += '</div>';
+            html += '<div style="width:140px;font-size:0.8em;color:#6b7280;">$' + total.toLocaleString() + ' (' + (svcData.coverage || 0).toFixed(0) + '% cov)</div>';
+            html += '</div>';
+        });
+        html += '<div style="display:flex;gap:16px;margin-top:6px;font-size:0.75em;color:#6b7280;">';
+        html += '<span><span style="display:inline-block;width:10px;height:10px;background:#10b981;border-radius:2px;margin-right:4px;"></span>Committed</span>';
+        html += '<span><span style="display:inline-block;width:10px;height:10px;background:#f59e0b;border-radius:2px;margin-right:4px;"></span>On-Demand</span>';
+        html += '</div>';
+        html += '</div>';
+    }
+
+    // Expiring commitments warning
+    var expiring = [];
+    (portfolio.ec2ReservedInstances || []).forEach(function(ri) { if (ri.expiryUrgency === 'expiring' || ri.expiryUrgency === 'expiring_soon') expiring.push(ri); });
+    (portfolio.rdsReservedInstances || []).forEach(function(ri) { if (ri.expiryUrgency === 'expiring' || ri.expiryUrgency === 'expiring_soon') expiring.push(ri); });
+    if (expiring.length > 0) {
+        html += '<div style="background:#fef3c7;border:1px solid #f59e0b;border-radius:8px;padding:12px;margin-bottom:12px;">';
+        html += '<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;"><span>⚠️</span><strong style="color:#92400e;">' + expiring.length + ' Expiring Commitment' + (expiring.length > 1 ? 's' : '') + '</strong></div>';
+        expiring.forEach(function(ri) {
+            html += '<div style="font-size:0.85em;color:#78350f;margin-left:24px;">• ' + (ri.instanceType || ri.dbInstanceClass || 'Unknown') + ' — ' + (ri.daysUntilExpiry || 0) + ' days remaining</div>';
+        });
+        html += '</div>';
+    }
+
+    // Underutilized commitments alert
+    var underutilized = [];
+    (portfolio.ec2ReservedInstances || []).forEach(function(ri) { if (ri.isUnderutilized) underutilized.push(ri); });
+    (portfolio.savingsPlans || []).forEach(function(sp) { if (sp.isUnderutilized) underutilized.push(sp); });
+    if (underutilized.length > 0) {
+        html += '<div style="background:#fef2f2;border:1px solid #fca5a5;border-radius:8px;padding:12px;margin-bottom:12px;">';
+        html += '<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;"><span>🔻</span><strong style="color:#991b1b;">' + underutilized.length + ' Underutilized Commitment' + (underutilized.length > 1 ? 's' : '') + '</strong></div>';
+        underutilized.slice(0, 5).forEach(function(item) {
+            var name = item.instanceType || item.planType || 'Unknown';
+            var util = (item.utilizationPct || 0).toFixed(0);
+            html += '<div style="font-size:0.85em;color:#991b1b;margin-left:24px;">• ' + name + ' — ' + util + '% utilized</div>';
+        });
+        if (underutilized.length > 5) html += '<div style="font-size:0.85em;color:#991b1b;margin-left:24px;">...and ' + (underutilized.length - 5) + ' more</div>';
+        html += '</div>';
+    }
+
+    panel.innerHTML = html;
+}
+
+// ============================================================
+// Task 11.3: Conversion Opportunities Panel
+// ============================================================
+
+var _lcSelectedOpportunities = {};
+var _lcOpportunitySortBy = 'score'; // score, savings, complexity
+
+function _lcRenderOpportunities(opportunities, totalSavings) {
+    var panel = document.getElementById('lc-opportunities-panel');
+    if (!panel) return;
+    if (!opportunities || opportunities.length === 0) {
+        panel.style.display = 'none';
+        return;
+    }
+    panel.style.display = 'block';
+    _lcSelectedOpportunities = {};
+
+    // Sort opportunities
+    var sorted = opportunities.slice().sort(function(a, b) {
+        if (_lcOpportunitySortBy === 'score') return (b.feasibilityScore || 0) - (a.feasibilityScore || 0);
+        if (_lcOpportunitySortBy === 'savings') return (b.estimatedMonthlySavings || 0) - (a.estimatedMonthlySavings || 0);
+        if (_lcOpportunitySortBy === 'complexity') {
+            var order = { low: 0, medium: 1, high: 2 };
+            return (order[a.complexity] || 0) - (order[b.complexity] || 0);
+        }
+        return 0;
+    });
+
+    var html = '';
+
+    // Total savings banner
+    if (totalSavings) {
+        html += '<div style="background:linear-gradient(135deg,#064e3b,#065f46);border-radius:10px;padding:14px 20px;margin-bottom:16px;display:flex;align-items:center;gap:12px;">';
+        html += '<span style="font-size:1.8em;">💰</span>';
+        html += '<div><div style="color:#6ee7b7;font-size:0.85em;text-transform:uppercase;letter-spacing:0.05em;">Total Potential Savings</div>';
+        html += '<div style="color:#fff;font-size:1.4em;font-weight:700;">$' + (totalSavings.monthly || 0).toLocaleString() + '/mo</div></div>';
+        html += '<div style="margin-left:auto;color:#6ee7b7;font-size:0.85em;">$' + (totalSavings.annual || 0).toLocaleString() + '/yr (' + (totalSavings.percentageOfCurrentSpend || 0).toFixed(1) + '% of spend)</div>';
+        html += '</div>';
+    }
+
+    // Sort controls and generate plan button
+    html += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">';
+    html += '<div style="font-weight:600;color:#1f2937;">' + sorted.length + ' Conversion Opportunit' + (sorted.length === 1 ? 'y' : 'ies') + '</div>';
+    html += '<div style="display:flex;align-items:center;gap:8px;">';
+    html += '<label style="font-size:0.8em;color:#6b7280;">Sort by:</label>';
+    html += '<select id="lc-sort-select" onchange="_lcSortChanged(this.value)" style="padding:4px 8px;border:1px solid #d1d5db;border-radius:4px;font-size:0.85em;">';
+    html += '<option value="score"' + (_lcOpportunitySortBy === 'score' ? ' selected' : '') + '>Feasibility Score</option>';
+    html += '<option value="savings"' + (_lcOpportunitySortBy === 'savings' ? ' selected' : '') + '>Monthly Savings</option>';
+    html += '<option value="complexity"' + (_lcOpportunitySortBy === 'complexity' ? ' selected' : '') + '>Complexity</option>';
+    html += '</select>';
+    html += '</div></div>';
+
+    // Opportunity cards
+    sorted.forEach(function(opp) {
+        var scoreColor = opp.feasibilityScore >= 80 ? '#10b981' : (opp.feasibilityScore >= 50 ? '#f59e0b' : '#ef4444');
+        var scoreBg = opp.feasibilityScore >= 80 ? '#ecfdf5' : (opp.feasibilityScore >= 50 ? '#fffbeb' : '#fef2f2');
+        var complexityBadge = opp.complexity === 'low' ? '🟢 Low' : (opp.complexity === 'medium' ? '🟡 Medium' : '🔴 High');
+        var timingLabel = opp.timing === 'immediate' ? '⚡ Immediate' : (opp.timing === 'at_expiry' ? '📅 At Expiry' + (opp.timingDate ? ' (' + opp.timingDate + ')' : '') : '🗓️ Scheduled');
+
+        html += '<div class="lc-opportunity-card" data-id="' + opp.id + '">';
+        html += '<div style="display:flex;align-items:flex-start;gap:12px;">';
+
+        // Checkbox
+        html += '<input type="checkbox" class="lc-opp-checkbox" data-id="' + opp.id + '" onchange="_lcToggleOpportunity(\'' + opp.id + '\', this.checked)" style="margin-top:4px;width:18px;height:18px;cursor:pointer;">';
+
+        // Score badge
+        html += '<div class="lc-score-badge" style="background:' + scoreBg + ';border-color:' + scoreColor + ';color:' + scoreColor + ';">' + opp.feasibilityScore + '</div>';
+
+        // Content
+        html += '<div style="flex:1;min-width:0;">';
+        html += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;flex-wrap:wrap;">';
+        html += '<span style="font-weight:600;color:#1f2937;font-size:0.95em;">' + _lcTypeLabel(opp.type) + '</span>';
+        html += '<span style="font-size:0.8em;color:#6b7280;">' + complexityBadge + '</span>';
+        html += '<span style="font-size:0.8em;color:#6b7280;">' + timingLabel + '</span>';
+        html += '</div>';
+        html += '<div style="font-size:0.85em;color:#374151;margin-bottom:4px;">' + (opp.sourceDescription || '') + '</div>';
+        html += '<div style="font-size:0.85em;color:#059669;font-weight:500;">→ ' + (opp.targetDescription || '') + '</div>';
+        html += '<div style="display:flex;gap:16px;margin-top:8px;font-size:0.82em;color:#6b7280;">';
+        html += '<span style="color:#059669;font-weight:600;">$' + (opp.estimatedMonthlySavings || 0).toLocaleString() + '/mo savings</span>';
+        html += '<span>' + (opp.savingsPercentage || 0).toFixed(1) + '% reduction</span>';
+        html += '</div>';
+
+        // Cross-reference link
+        if (opp.crossReference) {
+            html += '<div style="margin-top:6px;font-size:0.8em;"><a href="#" onclick="_switchActSection(\'optimization\');return false;" style="color:#6366f1;text-decoration:none;">🔗 ' + opp.crossReference + '</a></div>';
+        }
+
+        // Expandable details
+        html += '<details style="margin-top:8px;"><summary style="font-size:0.82em;color:#6366f1;cursor:pointer;">View Details</summary>';
+        html += '<div style="margin-top:8px;padding:10px;background:#f9fafb;border-radius:6px;font-size:0.82em;">';
+        if (opp.risks && opp.risks.length > 0) {
+            html += '<div style="margin-bottom:6px;"><strong style="color:#991b1b;">Risks:</strong></div>';
+            opp.risks.forEach(function(r) { html += '<div style="color:#991b1b;margin-left:12px;">• ' + r + '</div>'; });
+        }
+        if (opp.prerequisites && opp.prerequisites.length > 0) {
+            html += '<div style="margin-top:6px;margin-bottom:6px;"><strong style="color:#1e40af;">Prerequisites:</strong></div>';
+            opp.prerequisites.forEach(function(p) { html += '<div style="color:#1e40af;margin-left:12px;">• ' + p + '</div>'; });
+        }
+        html += '</div></details>';
+
+        html += '</div></div></div>';
+    });
+
+    // Generate plan button
+    html += '<div style="margin-top:16px;text-align:right;">';
+    html += '<button id="lc-generate-plan-btn" class="btn btn-primary" onclick="_lcGeneratePlan()" disabled style="background:#6366f1;border-color:#6366f1;">📋 Generate Execution Plan for Selected</button>';
+    html += '</div>';
+
+    panel.innerHTML = html;
+}
+
+function _lcTypeLabel(type) {
+    var labels = {
+        'ri_exchange': 'RI Exchange',
+        'ri_to_sp': 'RI → Savings Plan',
+        'license_model_change': 'License Model Change',
+        'ri_renewal': 'RI Renewal',
+        'on_demand_to_committed': 'On-Demand → Committed',
+        'sp_upgrade': 'SP Upgrade'
+    };
+    return labels[type] || type;
+}
+
+function _lcSortChanged(value) {
+    _lcOpportunitySortBy = value;
+    var accountId = (document.getElementById('lc-account-select') || {}).value;
+    var cacheKey = 'licenseConversion_' + accountId;
+    var cached = sessionStorage.getItem(cacheKey);
+    if (cached) {
+        try {
+            var parsed = JSON.parse(cached);
+            _lcRenderOpportunities(parsed.data.conversionOpportunities || [], parsed.data.totalPotentialSavings);
+        } catch (e) { /* ignore */ }
+    }
+}
+
+function _lcToggleOpportunity(id, checked) {
+    if (checked) {
+        _lcSelectedOpportunities[id] = true;
+    } else {
+        delete _lcSelectedOpportunities[id];
+    }
+    var btn = document.getElementById('lc-generate-plan-btn');
+    var count = Object.keys(_lcSelectedOpportunities).length;
+    if (btn) btn.disabled = count === 0;
+    if (btn && count > 0) btn.textContent = '📋 Generate Execution Plan (' + count + ' selected)';
+    if (btn && count === 0) btn.textContent = '📋 Generate Execution Plan for Selected';
+}
+
+// ============================================================
+// Task 11.4: Execution Plan View
+// ============================================================
+
+async function _lcGeneratePlan() {
+    var accountId = (document.getElementById('lc-account-select') || {}).value;
+    var selected = Object.keys(_lcSelectedOpportunities);
+    if (!accountId || selected.length === 0) return;
+
+    var status = document.getElementById('lc-scan-status');
+    var planPanel = document.getElementById('lc-plan-panel');
+    if (status) status.innerHTML = '<span style="color:#6366f1;">⏳ Generating execution plan...</span>';
+
+    try {
+        var data = await api('POST', '/members/license-conversion/plan', { accountId: accountId, selectedConversions: selected });
+        if (status) status.textContent = '';
+
+        if (!data.success) {
+            if (status) status.textContent = '❌ ' + (data.message || 'Plan generation failed');
+            return;
+        }
+
+        _lcRenderPlan(data);
+    } catch (e) {
+        if (status) status.textContent = '❌ ' + (e.message || 'Plan generation failed');
+    }
+}
+
+function _lcRenderPlan(plan) {
+    var panel = document.getElementById('lc-plan-panel');
+    if (!panel) return;
+    panel.style.display = 'block';
+
+    var html = '';
+
+    // Plan header with total savings
+    html += '<div style="background:linear-gradient(135deg,#1e3a5f,#1e40af);border-radius:10px;padding:16px 20px;margin-bottom:16px;">';
+    html += '<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">';
+    html += '<div><div style="color:#93c5fd;font-size:0.85em;text-transform:uppercase;letter-spacing:0.05em;">Execution Plan</div>';
+    html += '<div style="color:#fff;font-size:1.2em;font-weight:700;">Save $' + ((plan.totalEstimatedSavings || {}).monthly || 0).toLocaleString() + '/mo ($' + ((plan.totalEstimatedSavings || {}).annual || 0).toLocaleString() + '/yr)</div></div>';
+    if (plan.executionWindow) {
+        html += '<div style="color:#93c5fd;font-size:0.85em;">Window: ' + (plan.executionWindow.start || '') + ' → ' + (plan.executionWindow.end || '') + '</div>';
+    }
+    html += '</div></div>';
+
+    // Conflicts warning
+    if (plan.conflicts && plan.conflicts.length > 0) {
+        html += '<div style="background:#fef2f2;border:1px solid #fca5a5;border-radius:8px;padding:12px;margin-bottom:16px;">';
+        html += '<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;"><span>⚠️</span><strong style="color:#991b1b;">Conflicts Detected</strong></div>';
+        plan.conflicts.forEach(function(c) {
+            html += '<div style="font-size:0.85em;color:#991b1b;margin-left:24px;">• ' + (c.description || c) + '</div>';
+        });
+        html += '</div>';
+    }
+
+    // Timeline visualization
+    if (plan.timeline && plan.timeline.length > 0) {
+        html += '<div style="margin-bottom:20px;">';
+        html += '<div style="font-weight:600;margin-bottom:10px;color:#1f2937;">Timeline</div>';
+        html += '<div class="lc-timeline">';
+        plan.timeline.forEach(function(item, idx) {
+            var isLast = idx === plan.timeline.length - 1;
+            html += '<div class="lc-timeline-item">';
+            html += '<div class="lc-timeline-dot' + (item.step ? '' : ' lc-timeline-dot-event') + '"></div>';
+            if (!isLast) html += '<div class="lc-timeline-line"></div>';
+            html += '<div class="lc-timeline-content">';
+            html += '<div style="font-size:0.8em;color:#6b7280;">' + (item.date || '') + '</div>';
+            html += '<div style="font-size:0.9em;color:#1f2937;">' + (item.action || '') + '</div>';
+            html += '</div></div>';
+        });
+        html += '</div></div>';
+    }
+
+    // Steps checklist
+    if (plan.steps && plan.steps.length > 0) {
+        html += '<div style="font-weight:600;margin-bottom:10px;color:#1f2937;">Steps</div>';
+        plan.steps.forEach(function(step) {
+            html += '<div class="lc-plan-step">';
+            html += '<div class="lc-plan-step-number">' + step.stepNumber + '</div>';
+            html += '<div style="flex:1;">';
+            html += '<div style="font-weight:600;color:#1f2937;margin-bottom:4px;">' + (step.action || '') + '</div>';
+            html += '<div style="font-size:0.85em;color:#6b7280;margin-bottom:8px;">' + (step.description || '') + '</div>';
+
+            // Instructions
+            if (step.instructions && step.instructions.length > 0) {
+                html += '<ol style="margin:0 0 8px;padding-left:20px;font-size:0.82em;color:#374151;">';
+                step.instructions.forEach(function(instr) {
+                    html += '<li style="margin-bottom:4px;">' + instr + '</li>';
+                });
+                html += '</ol>';
+            }
+
+            // Scheduled date
+            if (step.scheduledDate) {
+                html += '<div style="font-size:0.82em;color:#6366f1;margin-bottom:6px;">📅 Scheduled: ' + step.scheduledDate + '</div>';
+            }
+
+            // Dependencies
+            if (step.dependsOn && step.dependsOn.length > 0) {
+                html += '<div style="font-size:0.8em;color:#6b7280;margin-bottom:6px;">Depends on: Step ' + step.dependsOn.join(', Step ') + '</div>';
+            }
+
+            // Warnings
+            if (step.warnings && step.warnings.length > 0) {
+                html += '<div style="background:#fef3c7;border:1px solid #f59e0b;border-radius:6px;padding:8px;margin-bottom:8px;">';
+                step.warnings.forEach(function(w) {
+                    html += '<div style="font-size:0.82em;color:#92400e;">⚠️ ' + w + '</div>';
+                });
+                html += '</div>';
+            }
+
+            // AWS Console link
+            if (step.awsConsoleLink) {
+                html += '<a href="' + step.awsConsoleLink + '" target="_blank" rel="noopener" style="font-size:0.82em;color:#6366f1;text-decoration:none;">🔗 Open in AWS Console →</a>';
+            }
+
+            // Savings on completion
+            if (step.savingsOnCompletion) {
+                html += '<div style="font-size:0.82em;color:#059669;font-weight:500;margin-top:6px;">💰 Saves $' + (step.savingsOnCompletion.monthly || 0).toLocaleString() + '/mo on completion</div>';
+            }
+
+            html += '</div></div>';
+        });
+    }
+
+    panel.innerHTML = html;
+}

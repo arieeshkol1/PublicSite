@@ -173,6 +173,8 @@ def lambda_handler(event, context):
         'GET /members/invoices/list': handle_invoice_list,
         'GET /members/invoices/services-breakdown': handle_service_breakdown,
         'GET /members/invoices/resources': handle_resource_breakdown,
+        'POST /members/license-conversion/analyze': handle_license_conversion_analyze,
+        'POST /members/license-conversion/plan': handle_license_conversion_plan,
     }
 
     handler = routes.get(route_key)
@@ -17404,3 +17406,2163 @@ def handle_resource_breakdown(event):
     except Exception as e:
         logger.error(f"Unexpected error in handle_resource_breakdown: {type(e).__name__}: {e}")
         return create_error_response(500, 'ServerError', f'Unexpected error: {type(e).__name__}: {str(e)}')
+
+
+# ============================================================
+# License Conversion Optimizer — Portfolio Builder
+# ============================================================
+
+
+def _build_licensing_portfolio(cross_account_session, account_id):
+    """Build complete licensing portfolio for an AWS account.
+
+    Discovers all active licensing commitments (EC2 RIs, RDS RIs, Savings Plans)
+    and on-demand instances, building a unified portfolio view with cost summaries.
+
+    Args:
+        cross_account_session: A dict of boto3 credentials (AccessKeyId, SecretAccessKey,
+            SessionToken) from STS AssumeRole for the target account.
+        account_id: The 12-digit AWS account ID being analyzed.
+
+    Returns:
+        dict with keys: ec2ReservedInstances, rdsReservedInstances, savingsPlans,
+        onDemandInstances, byolInstances, summary.
+    """
+    now = datetime.now(timezone.utc)
+
+    def _client(service, region=None):
+        return boto3.client(
+            service,
+            aws_access_key_id=cross_account_session['AccessKeyId'],
+            aws_secret_access_key=cross_account_session['SecretAccessKey'],
+            aws_session_token=cross_account_session['SessionToken'],
+            region_name=region or os.environ.get('AWS_REGION', 'us-east-1'),
+        )
+
+    # ── Phase 1: EC2 Reserved Instances (paginated) ──
+    ec2_ris = []
+    try:
+        ec2 = _client('ec2')
+        paginator = ec2.get_paginator('describe_reserved_instances')
+        for page in paginator.paginate(Filters=[{'Name': 'state', 'Values': ['active']}]):
+            for ri in page.get('ReservedInstances', []):
+                instance_type = ri.get('InstanceType', '')
+                instance_family = instance_type.split('.')[0] if '.' in instance_type else instance_type
+                offering_class = ri.get('OfferingClass', 'standard')
+                instance_count = ri.get('InstanceCount', 1)
+
+                # Calculate recurring hourly cost
+                recurring_charges = ri.get('RecurringCharges', [])
+                recurring_hourly = sum(float(r.get('Amount', 0)) for r in recurring_charges)
+                monthly_cost = round(recurring_hourly * 730 * instance_count, 2)
+
+                # Calculate days until expiry
+                end_dt = ri.get('End')
+                days_until_expiry = 0
+                if end_dt:
+                    if isinstance(end_dt, datetime):
+                        end_date = end_dt if end_dt.tzinfo else end_dt.replace(tzinfo=timezone.utc)
+                    else:
+                        end_date = datetime.fromisoformat(str(end_dt).replace('Z', '+00:00'))
+                    days_until_expiry = max(0, (end_date.date() - now.date()).days)
+
+                # Expiry urgency classification
+                if days_until_expiry < 30:
+                    expiry_urgency = 'expiring'
+                elif days_until_expiry < 60:
+                    expiry_urgency = 'expiring_soon'
+                else:
+                    expiry_urgency = 'active'
+
+                ec2_ris.append({
+                    'riId': ri.get('ReservedInstancesId', ''),
+                    'instanceType': instance_type,
+                    'instanceFamily': instance_family,
+                    'offeringClass': offering_class,
+                    'scope': ri.get('Scope', 'Region'),
+                    'availabilityZone': ri.get('AvailabilityZone'),
+                    'tenancy': ri.get('InstanceTenancy', 'default'),
+                    'platform': ri.get('ProductDescription', 'Linux/UNIX'),
+                    'instanceCount': instance_count,
+                    'state': ri.get('State', 'active'),
+                    'startDate': ri.get('Start', '').isoformat() if isinstance(ri.get('Start'), datetime) else str(ri.get('Start', '')),
+                    'endDate': end_dt.isoformat() if isinstance(end_dt, datetime) else str(end_dt or ''),
+                    'durationSeconds': ri.get('Duration', 0),
+                    'offeringType': ri.get('OfferingType', 'No Upfront'),
+                    'fixedPrice': float(ri.get('FixedPrice', 0)),
+                    'recurringHourly': recurring_hourly,
+                    'monthlyRecurringCost': monthly_cost,
+                    'daysUntilExpiry': days_until_expiry,
+                    'expiryUrgency': expiry_urgency,
+                    'exchangeEligible': offering_class == 'convertible',
+                    'utilizationPct': 0.0,  # populated later by utilization analyzer
+                    'isUnderutilized': False,  # populated later
+                })
+    except ClientError as e:
+        logger.warning(f"DescribeReservedInstances failed for {account_id}: {e}")
+    except Exception as e:
+        logger.warning(f"EC2 RI discovery error for {account_id}: {e}")
+
+    # ── Phase 2: RDS Reserved DB Instances (paginated) ──
+    rds_ris = []
+    try:
+        rds = _client('rds')
+        paginator = rds.get_paginator('describe_reserved_db_instances')
+        for page in paginator.paginate():
+            for ri in page.get('ReservedDBInstances', []):
+                if ri.get('State', '').lower() != 'active':
+                    continue
+
+                db_instance_class = ri.get('DBInstanceClass', '')
+                instance_count = ri.get('DBInstanceCount', 1)
+                duration_seconds = ri.get('Duration', 31536000)
+
+                # Calculate recurring hourly cost
+                recurring_charges = ri.get('RecurringCharges', [])
+                recurring_hourly = sum(float(r.get('Amount', 0)) for r in recurring_charges)
+                monthly_cost = round(recurring_hourly * 730 * instance_count, 2)
+
+                # Calculate end date from start + duration
+                start_time = ri.get('StartTime')
+                days_until_expiry = 0
+                end_date_str = ''
+                if start_time:
+                    if isinstance(start_time, datetime):
+                        start_dt = start_time if start_time.tzinfo else start_time.replace(tzinfo=timezone.utc)
+                    else:
+                        start_dt = datetime.fromisoformat(str(start_time).replace('Z', '+00:00'))
+                    end_date = start_dt + timedelta(seconds=duration_seconds)
+                    end_date_str = end_date.isoformat()
+                    days_until_expiry = max(0, (end_date.date() - now.date()).days)
+
+                # Expiry urgency classification
+                if days_until_expiry < 30:
+                    expiry_urgency = 'expiring'
+                elif days_until_expiry < 60:
+                    expiry_urgency = 'expiring_soon'
+                else:
+                    expiry_urgency = 'active'
+
+                rds_ris.append({
+                    'riId': ri.get('ReservedDBInstanceId', ''),
+                    'dbInstanceClass': db_instance_class,
+                    'engine': ri.get('ProductDescription', ''),
+                    'multiAz': ri.get('MultiAZ', False),
+                    'instanceCount': instance_count,
+                    'state': ri.get('State', 'active'),
+                    'startDate': start_time.isoformat() if isinstance(start_time, datetime) else str(start_time or ''),
+                    'endDate': end_date_str,
+                    'durationSeconds': duration_seconds,
+                    'offeringType': ri.get('OfferingType', 'No Upfront'),
+                    'fixedPrice': float(ri.get('FixedPrice', 0)),
+                    'recurringHourly': recurring_hourly,
+                    'monthlyRecurringCost': monthly_cost,
+                    'daysUntilExpiry': days_until_expiry,
+                    'expiryUrgency': expiry_urgency,
+                    'utilizationPct': 0.0,
+                    'isUnderutilized': False,
+                })
+    except ClientError as e:
+        logger.warning(f"DescribeReservedDBInstances failed for {account_id}: {e}")
+    except Exception as e:
+        logger.warning(f"RDS RI discovery error for {account_id}: {e}")
+
+    # ── Phase 3: Savings Plans (paginated) ──
+    savings_plans = []
+    try:
+        sp_client = _client('savingsplans')
+        next_token = None
+        while True:
+            kwargs = {'states': ['active']}
+            if next_token:
+                kwargs['nextToken'] = next_token
+            sp_response = sp_client.describe_savings_plans(**kwargs)
+
+            for sp in sp_response.get('savingsPlans', []):
+                hourly_commitment = float(sp.get('commitment', '0'))
+                monthly_cost = round(hourly_commitment * 730, 2)
+
+                # Calculate days until expiry
+                end_str = sp.get('end', '')
+                days_until_expiry = 0
+                if end_str:
+                    try:
+                        if 'T' in str(end_str):
+                            end_date = datetime.fromisoformat(str(end_str).replace('Z', '+00:00'))
+                        else:
+                            end_date = datetime.fromtimestamp(float(end_str), tz=timezone.utc)
+                        days_until_expiry = max(0, (end_date.date() - now.date()).days)
+                    except (ValueError, TypeError, OSError):
+                        pass
+
+                # Expiry urgency classification
+                if days_until_expiry < 30:
+                    expiry_urgency = 'expiring'
+                elif days_until_expiry < 60:
+                    expiry_urgency = 'expiring_soon'
+                else:
+                    expiry_urgency = 'active'
+
+                # Determine term in years from duration
+                term_seconds = sp.get('termDurationInSeconds', 31536000)
+                term_in_years = round(term_seconds / 31536000) if term_seconds else 1
+
+                savings_plans.append({
+                    'spId': sp.get('savingsPlanId', ''),
+                    'spArn': sp.get('savingsPlanArn', ''),
+                    'planType': sp.get('savingsPlanType', ''),
+                    'paymentOption': sp.get('paymentOption', 'No Upfront'),
+                    'termInYears': term_in_years,
+                    'hourlyCommitment': hourly_commitment,
+                    'monthlyCost': monthly_cost,
+                    'state': sp.get('state', 'active'),
+                    'startDate': sp.get('start', ''),
+                    'endDate': end_str,
+                    'daysUntilExpiry': days_until_expiry,
+                    'expiryUrgency': expiry_urgency,
+                    'utilizationPct': 0.0,
+                    'isUnderutilized': False,
+                    'instanceFamily': sp.get('ec2InstanceFamily'),
+                    'region': sp.get('region'),
+                })
+
+            next_token = sp_response.get('nextToken')
+            if not next_token:
+                break
+    except ClientError as e:
+        logger.warning(f"DescribeSavingsPlans failed for {account_id}: {e}")
+    except Exception as e:
+        logger.warning(f"Savings Plans discovery error for {account_id}: {e}")
+
+    # ── Phase 4: Running EC2 Instances (paginated) — detect license models ──
+    on_demand_instances = []
+    byol_instances = []
+    try:
+        ec2 = _client('ec2')
+        paginator = ec2.get_paginator('describe_instances')
+        for page in paginator.paginate(Filters=[
+            {'Name': 'instance-state-name', 'Values': ['running']}
+        ]):
+            for reservation in page.get('Reservations', []):
+                for inst in reservation.get('Instances', []):
+                    instance_id = inst.get('InstanceId', '')
+                    instance_type = inst.get('InstanceType', '')
+                    platform = inst.get('PlatformDetails', 'Linux/UNIX')
+
+                    # Detect license model from platform details and usage operation
+                    usage_operation = inst.get('UsageOperation', '')
+                    license_model = 'License Included'
+                    if 'BYOL' in usage_operation.upper() or 'byol' in platform.lower():
+                        license_model = 'BYOL'
+
+                    tags = {t['Key']: t['Value'] for t in inst.get('Tags', [])}
+                    instance_name = tags.get('Name', '')
+
+                    instance_data = {
+                        'instanceId': instance_id,
+                        'instanceType': instance_type,
+                        'platform': platform,
+                        'licenseModel': license_model,
+                        'usageOperation': usage_operation,
+                        'name': instance_name,
+                        'state': 'running',
+                        'launchTime': inst.get('LaunchTime', '').isoformat() if isinstance(inst.get('LaunchTime'), datetime) else str(inst.get('LaunchTime', '')),
+                        'hasCoverage': False,  # populated later by utilization analyzer
+                        'monthlyOnDemandCost': 0.0,  # populated later with pricing data
+                        'runningHoursLast30d': 0,  # populated later
+                        'isFullTime': False,  # populated later
+                    }
+
+                    if license_model == 'BYOL':
+                        byol_instances.append(instance_data)
+                    else:
+                        on_demand_instances.append(instance_data)
+    except ClientError as e:
+        logger.warning(f"DescribeInstances failed for {account_id}: {e}")
+    except Exception as e:
+        logger.warning(f"EC2 instance discovery error for {account_id}: {e}")
+
+    # ── Phase 5: Build Summary ──
+    total_commitments = len(ec2_ris) + len(rds_ris) + len(savings_plans)
+
+    total_monthly_commitment_cost = (
+        sum(ri['monthlyRecurringCost'] for ri in ec2_ris) +
+        sum(ri['monthlyRecurringCost'] for ri in rds_ris) +
+        sum(sp['monthlyCost'] for sp in savings_plans)
+    )
+    total_monthly_commitment_cost = round(total_monthly_commitment_cost, 2)
+
+    # On-demand spend is populated later by utilization analyzer; use 0 as placeholder
+    total_on_demand_spend = 0.0
+
+    # Coverage percentage: committed / (committed + on-demand) * 100
+    total_spend = total_monthly_commitment_cost + total_on_demand_spend
+    overall_coverage_percentage = round(
+        (total_monthly_commitment_cost / total_spend * 100) if total_spend > 0 else 0.0, 1
+    )
+
+    # Service breakdown
+    ec2_committed = round(sum(ri['monthlyRecurringCost'] for ri in ec2_ris), 2)
+    rds_committed = round(sum(ri['monthlyRecurringCost'] for ri in rds_ris), 2)
+    sp_committed = round(sum(sp['monthlyCost'] for sp in savings_plans), 2)
+
+    service_breakdown = {
+        'EC2': {
+            'committed': ec2_committed + sp_committed,  # SPs primarily cover EC2/compute
+            'onDemand': 0.0,  # populated later
+            'coverage': 0.0,  # populated later
+        },
+        'RDS': {
+            'committed': rds_committed,
+            'onDemand': 0.0,
+            'coverage': 0.0,
+        },
+    }
+
+    summary = {
+        'totalCommitments': total_commitments,
+        'totalMonthlyCommitmentCost': total_monthly_commitment_cost,
+        'totalOnDemandSpend': total_on_demand_spend,
+        'overallCoveragePercentage': overall_coverage_percentage,
+        'serviceBreakdown': service_breakdown,
+    }
+
+    return {
+        'ec2ReservedInstances': ec2_ris,
+        'rdsReservedInstances': rds_ris,
+        'savingsPlans': savings_plans,
+        'onDemandInstances': on_demand_instances,
+        'byolInstances': byol_instances,
+        'summary': summary,
+    }
+
+# ============================================================
+# License Conversion Optimizer — Feasibility Scorer
+# ============================================================
+
+
+def _calculate_feasibility_score(conversion_type, savings_percentage, utilization_current,
+                                 utilization_projected, complexity, remaining_term_days,
+                                 is_reversible):
+    """Calculate feasibility score for a conversion opportunity.
+
+    Scores a conversion opportunity from 0 (infeasible) to 100 (highly recommended)
+    using weighted factors: savings potential (35%), utilization improvement (25%),
+    execution complexity (20%), and risk level (20%).
+
+    Args:
+        conversion_type: One of 'ri_to_sp', 'ri_exchange', 'license_model_change',
+            'ri_renewal', 'on_demand_to_committed', 'sp_upgrade'.
+        savings_percentage: Expected savings as a percentage of current cost (0-100).
+        utilization_current: Current utilization percentage (0-100).
+        utilization_projected: Projected utilization after conversion (0-100).
+        complexity: Execution complexity — 'low', 'medium', or 'high'.
+        remaining_term_days: Days remaining on the current commitment (>= 0).
+        is_reversible: Whether the conversion can be undone.
+
+    Returns:
+        int: Feasibility score in range [0, 100].
+    """
+    # Factor 1: Savings potential (35% weight)
+    savings_score = min(savings_percentage * 2, 100)
+
+    # Factor 2: Utilization improvement (25% weight)
+    util_delta = utilization_projected - utilization_current
+    if util_delta >= 20:
+        util_score = 100
+    elif util_delta >= 0:
+        util_score = 50 + (util_delta * 2.5)
+    else:
+        util_score = max(0, 50 + (util_delta * 2.5))
+
+    # Factor 3: Complexity (20% weight)
+    complexity_scores = {'low': 100, 'medium': 60, 'high': 30}
+    complexity_score = complexity_scores.get(complexity, 50)
+
+    # Factor 4: Risk (20% weight)
+    risk_score = 80
+    if not is_reversible:
+        risk_score -= 20
+    if remaining_term_days > 365:
+        risk_score -= 15
+    elif remaining_term_days < 30:
+        risk_score += 10
+    risk_score = max(0, min(100, risk_score))
+
+    # Weighted sum
+    final = (
+        savings_score * 0.35 +
+        util_score * 0.25 +
+        complexity_score * 0.20 +
+        risk_score * 0.20
+    )
+    return max(0, min(100, round(final)))
+
+
+# ============================================================
+# License Conversion Optimizer — Utilization Analyzer
+# ============================================================
+
+
+def _get_utilization_data(cross_account_session, portfolio):
+    """Retrieve utilization data from Cost Explorer and map it back to portfolio items.
+
+    Queries Cost Explorer for RI utilization, Savings Plans utilization, and on-demand
+    spend by service over the last 30 days. Updates portfolio items in-place with
+    utilizationPct and isUnderutilized flags. Handles Cost Explorer not being activated
+    gracefully by returning partial results.
+
+    Args:
+        cross_account_session: A dict of boto3 credentials (AccessKeyId, SecretAccessKey,
+            SessionToken) from STS AssumeRole for the target account.
+        portfolio: The portfolio dict returned by _build_licensing_portfolio. Items are
+            updated in-place with utilization data.
+
+    Returns:
+        dict with keys: riUtilization, spUtilization, onDemandSpendByService,
+        totalOnDemandSpend, coveragePercentage, costExplorerAvailable.
+    """
+    now = datetime.now(timezone.utc)
+    end_date = now.strftime('%Y-%m-%d')
+    start_date = (now - timedelta(days=30)).strftime('%Y-%m-%d')
+
+    time_period = {'Start': start_date, 'End': end_date}
+
+    def _client(service, region=None):
+        return boto3.client(
+            service,
+            aws_access_key_id=cross_account_session['AccessKeyId'],
+            aws_secret_access_key=cross_account_session['SecretAccessKey'],
+            aws_session_token=cross_account_session['SessionToken'],
+            region_name=region or os.environ.get('AWS_REGION', 'us-east-1'),
+        )
+
+    utilization_result = {
+        'riUtilization': {},
+        'spUtilization': {},
+        'onDemandSpendByService': {},
+        'totalOnDemandSpend': 0.0,
+        'coveragePercentage': 0.0,
+        'costExplorerAvailable': True,
+    }
+
+    # ── Phase 1: RI Utilization (grouped by RI) ──
+    try:
+        ce = _client('ce')
+        ri_util_response = ce.get_reservation_utilization(
+            TimePeriod=time_period,
+            GroupBy=[{'Type': 'DIMENSION', 'Key': 'SUBSCRIPTION_ID'}],
+        )
+
+        ri_utilization_map = {}
+        for group in ri_util_response.get('UtilizationsByTime', []):
+            for item in group.get('Groups', []):
+                ri_id = item.get('Key', '')
+                utilization = item.get('Utilization', {})
+                util_pct = float(utilization.get('UtilizationPercentage', '0'))
+                # Keep the highest utilization seen across time periods for each RI
+                if ri_id not in ri_utilization_map or util_pct > ri_utilization_map[ri_id]:
+                    ri_utilization_map[ri_id] = util_pct
+
+        utilization_result['riUtilization'] = ri_utilization_map
+
+        # Map utilization back to EC2 RIs
+        for ri in portfolio.get('ec2ReservedInstances', []):
+            ri_id = ri.get('riId', '')
+            if ri_id in ri_utilization_map:
+                ri['utilizationPct'] = round(ri_utilization_map[ri_id], 1)
+                ri['isUnderutilized'] = ri['utilizationPct'] < 80
+
+        # Map utilization back to RDS RIs
+        for ri in portfolio.get('rdsReservedInstances', []):
+            ri_id = ri.get('riId', '')
+            if ri_id in ri_utilization_map:
+                ri['utilizationPct'] = round(ri_utilization_map[ri_id], 1)
+                ri['isUnderutilized'] = ri['utilizationPct'] < 80
+
+    except ClientError as e:
+        error_code = e.response.get('Error', {}).get('Code', '')
+        if error_code in ('OptInRequired', 'AccessDeniedException', 'DataUnavailableException'):
+            logger.warning(f"Cost Explorer not available for RI utilization: {error_code}")
+            utilization_result['costExplorerAvailable'] = False
+        else:
+            logger.warning(f"GetReservationUtilization failed: {e}")
+    except Exception as e:
+        logger.warning(f"RI utilization query error: {e}")
+
+    # ── Phase 2: Savings Plans Utilization ──
+    try:
+        ce = _client('ce')
+        sp_util_response = ce.get_savings_plans_utilization(
+            TimePeriod=time_period,
+        )
+
+        sp_utilization_map = {}
+        # Overall SP utilization from the total
+        total_sp_util = sp_util_response.get('Total', {})
+        overall_sp_util_pct = float(total_sp_util.get('Utilization', {}).get(
+            'UtilizationPercentage', '0'))
+
+        # Per-SP breakdown from SavingsPlansUtilizationsByTime
+        for time_entry in sp_util_response.get('SavingsPlansUtilizationsByTime', []):
+            for detail in time_entry.get('AmortizedCommitment', {}).get('SavingsPlansUtilizationDetails', []):
+                sp_arn = detail.get('SavingsPlanArn', '')
+                util_pct = float(detail.get('Utilization', {}).get(
+                    'UtilizationPercentage', '0'))
+                if sp_arn not in sp_utilization_map or util_pct > sp_utilization_map[sp_arn]:
+                    sp_utilization_map[sp_arn] = util_pct
+
+        # If no per-SP breakdown available, apply overall utilization to all SPs
+        if not sp_utilization_map and overall_sp_util_pct > 0:
+            for sp in portfolio.get('savingsPlans', []):
+                sp_arn = sp.get('spArn', '')
+                if sp_arn:
+                    sp_utilization_map[sp_arn] = overall_sp_util_pct
+
+        utilization_result['spUtilization'] = sp_utilization_map
+
+        # Map utilization back to Savings Plans
+        for sp in portfolio.get('savingsPlans', []):
+            sp_arn = sp.get('spArn', '')
+            if sp_arn in sp_utilization_map:
+                sp['utilizationPct'] = round(sp_utilization_map[sp_arn], 1)
+                sp['isUnderutilized'] = sp['utilizationPct'] < 80
+
+    except ClientError as e:
+        error_code = e.response.get('Error', {}).get('Code', '')
+        if error_code in ('OptInRequired', 'AccessDeniedException', 'DataUnavailableException'):
+            logger.warning(f"Cost Explorer not available for SP utilization: {error_code}")
+            utilization_result['costExplorerAvailable'] = False
+        else:
+            logger.warning(f"GetSavingsPlansUtilization failed: {e}")
+    except Exception as e:
+        logger.warning(f"SP utilization query error: {e}")
+
+    # ── Phase 3: On-Demand Spend by Service ──
+    try:
+        ce = _client('ce')
+        cost_response = ce.get_cost_and_usage(
+            TimePeriod=time_period,
+            Granularity='MONTHLY',
+            Metrics=['UnblendedCost'],
+            Filter={
+                'Dimensions': {
+                    'Key': 'PURCHASE_TYPE',
+                    'Values': ['On Demand Instances'],
+                }
+            },
+            GroupBy=[{'Type': 'DIMENSION', 'Key': 'SERVICE'}],
+        )
+
+        on_demand_by_service = {}
+        total_on_demand = 0.0
+
+        for time_entry in cost_response.get('ResultsByTime', []):
+            for group in time_entry.get('Groups', []):
+                service_name = group.get('Keys', [''])[0]
+                amount = float(group.get('Metrics', {}).get(
+                    'UnblendedCost', {}).get('Amount', '0'))
+                if service_name in on_demand_by_service:
+                    on_demand_by_service[service_name] += amount
+                else:
+                    on_demand_by_service[service_name] = amount
+                total_on_demand += amount
+
+        # Round values
+        on_demand_by_service = {k: round(v, 2) for k, v in on_demand_by_service.items()}
+        total_on_demand = round(total_on_demand, 2)
+
+        utilization_result['onDemandSpendByService'] = on_demand_by_service
+        utilization_result['totalOnDemandSpend'] = total_on_demand
+
+        # ── Phase 4: Update portfolio summary ──
+        summary = portfolio.get('summary', {})
+        summary['totalOnDemandSpend'] = total_on_demand
+
+        # Recalculate coverage percentage with actual on-demand data
+        total_committed = summary.get('totalMonthlyCommitmentCost', 0.0)
+        total_spend = total_committed + total_on_demand
+        coverage_pct = round(
+            (total_committed / total_spend * 100) if total_spend > 0 else 0.0, 1
+        )
+        summary['overallCoveragePercentage'] = coverage_pct
+        utilization_result['coveragePercentage'] = coverage_pct
+
+        # Update service breakdown with on-demand spend
+        service_breakdown = summary.get('serviceBreakdown', {})
+        for service_name, amount in on_demand_by_service.items():
+            # Normalize service names to match breakdown keys
+            normalized = service_name
+            if 'EC2' in service_name or 'Elastic Compute' in service_name:
+                normalized = 'EC2'
+            elif 'RDS' in service_name or 'Relational Database' in service_name:
+                normalized = 'RDS'
+            elif 'Lambda' in service_name:
+                normalized = 'Lambda'
+            elif 'ElastiCache' in service_name:
+                normalized = 'ElastiCache'
+            elif 'OpenSearch' in service_name or 'Elasticsearch' in service_name:
+                normalized = 'OpenSearch'
+            elif 'Redshift' in service_name:
+                normalized = 'Redshift'
+
+            if normalized not in service_breakdown:
+                service_breakdown[normalized] = {
+                    'committed': 0.0,
+                    'onDemand': 0.0,
+                    'coverage': 0.0,
+                }
+            service_breakdown[normalized]['onDemand'] = round(
+                service_breakdown[normalized].get('onDemand', 0.0) + amount, 2
+            )
+
+        # Recalculate per-service coverage
+        for svc, data in service_breakdown.items():
+            svc_total = data.get('committed', 0.0) + data.get('onDemand', 0.0)
+            data['coverage'] = round(
+                (data.get('committed', 0.0) / svc_total * 100) if svc_total > 0 else 0.0, 1
+            )
+
+        summary['serviceBreakdown'] = service_breakdown
+
+    except ClientError as e:
+        error_code = e.response.get('Error', {}).get('Code', '')
+        if error_code in ('OptInRequired', 'AccessDeniedException', 'DataUnavailableException'):
+            logger.warning(f"Cost Explorer not available for on-demand spend: {error_code}")
+            utilization_result['costExplorerAvailable'] = False
+        else:
+            logger.warning(f"GetCostAndUsage failed: {e}")
+    except Exception as e:
+        logger.warning(f"On-demand spend query error: {e}")
+
+    return utilization_result
+
+
+# ============================================================
+# License Conversion Optimizer — Conversion Engine
+# ============================================================
+
+
+def _calculate_ri_exchange_value(ri, remaining_term_days):
+    """Calculate the remaining value of a Reserved Instance for exchange purposes.
+
+    AWS RI exchanges require the target RI value to be >= the source remaining value.
+    This function computes the total remaining value combining recurring charges and
+    prorated upfront costs.
+
+    Args:
+        ri: A dict representing an EC2 Reserved Instance from the portfolio, containing
+            keys: recurringHourly, instanceCount, fixedPrice, durationSeconds.
+        remaining_term_days: Number of days remaining on the RI term (>= 0).
+
+    Returns:
+        float: Total remaining value in USD (recurring_value + remaining_upfront).
+    """
+    remaining_hours = remaining_term_days * 24
+
+    # Recurring value = remaining hours * hourly rate * instance count
+    hourly_rate = float(ri.get('recurringHourly', 0))
+    instance_count = int(ri.get('instanceCount', 1))
+    recurring_value = remaining_hours * hourly_rate * instance_count
+
+    # Remaining upfront = fixedPrice * (remaining_hours / total_term_hours)
+    fixed_price = float(ri.get('fixedPrice', 0))
+    duration_seconds = int(ri.get('durationSeconds', 31536000))
+    total_term_hours = duration_seconds / 3600 if duration_seconds > 0 else 8760
+
+    remaining_upfront = 0.0
+    if total_term_hours > 0:
+        remaining_upfront = fixed_price * (remaining_hours / total_term_hours)
+
+    return round(recurring_value + remaining_upfront, 2)
+
+
+def _identify_ri_exchange_opportunities(portfolio, utilization_data, pricing_cache):
+    """Identify viable RI exchange opportunities for underutilized Convertible RIs.
+
+    Filters the portfolio for Convertible RIs with utilization < 80%, calculates their
+    remaining value, queries the pricing cache for alternative instance types in the same
+    family, and verifies the AWS exchange rule (target value >= source remaining value).
+
+    Args:
+        portfolio: The portfolio dict from _build_licensing_portfolio.
+        utilization_data: The utilization dict from _get_utilization_data.
+        pricing_cache: A dict mapping instance types to hourly on-demand rates,
+            e.g. {'m5.xlarge': 0.192, 'm5.2xlarge': 0.384, ...}.
+
+    Returns:
+        list: A list of ConversionOpportunity dicts with type 'ri_exchange'.
+    """
+    opportunities = []
+    ec2_ris = portfolio.get('ec2ReservedInstances', [])
+
+    for ri in ec2_ris:
+        # Only consider Convertible RIs that are underutilized
+        if ri.get('offeringClass') != 'convertible':
+            continue
+        if not ri.get('isUnderutilized', False):
+            continue
+        if ri.get('utilizationPct', 100) >= 80:
+            continue
+
+        remaining_term_days = ri.get('daysUntilExpiry', 0)
+        if remaining_term_days <= 0:
+            continue
+
+        # Calculate source remaining value
+        source_remaining_value = _calculate_ri_exchange_value(ri, remaining_term_days)
+        if source_remaining_value <= 0:
+            continue
+
+        instance_family = ri.get('instanceFamily', '')
+        instance_type = ri.get('instanceType', '')
+        instance_count = ri.get('instanceCount', 1)
+        current_hourly = ri.get('recurringHourly', 0)
+        current_monthly = ri.get('monthlyRecurringCost', 0)
+
+        # Look for alternative instance types in the same family from pricing cache
+        candidates = []
+        for target_type, target_rate in pricing_cache.items():
+            # Must be in the same instance family
+            target_family = target_type.split('.')[0] if '.' in target_type else ''
+            if target_family != instance_family:
+                continue
+            # Skip the same instance type
+            if target_type == instance_type:
+                continue
+            candidates.append((target_type, target_rate))
+
+        # For each candidate, check if exchange is feasible
+        for target_type, target_on_demand_rate in candidates:
+            # Estimate target RI rate (typically ~60-75% of on-demand for convertible)
+            target_ri_rate = target_on_demand_rate * 0.65
+
+            # Calculate how many target instances we'd need to match utilization
+            # If current RI is underutilized, we might need fewer/smaller instances
+            utilization_pct = ri.get('utilizationPct', 0)
+            effective_usage = instance_count * (utilization_pct / 100.0)
+            # Determine target instance count (at least 1)
+            target_count = max(1, round(effective_usage))
+
+            # Calculate target remaining value
+            target_remaining_hours = remaining_term_days * 24
+            target_value = target_remaining_hours * target_ri_rate * target_count
+
+            # AWS exchange rule: target value must be >= source remaining value
+            if target_value < source_remaining_value:
+                continue
+
+            # Calculate savings estimate
+            target_monthly_cost = round(target_ri_rate * 730 * target_count, 2)
+            monthly_savings = round(current_monthly - target_monthly_cost, 2)
+
+            # Only recommend if there are actual savings
+            if monthly_savings <= 0:
+                continue
+
+            savings_percentage = round(
+                (monthly_savings / current_monthly * 100) if current_monthly > 0 else 0, 1
+            )
+
+            opportunity = {
+                'id': f"conv-{uuid.uuid4().hex[:8]}",
+                'type': 'ri_exchange',
+                'sourceId': ri.get('riId', ''),
+                'sourceType': 'ec2_ri',
+                'sourceDescription': (
+                    f"{instance_count}x {instance_type} Convertible RI "
+                    f"({utilization_pct:.0f}% utilized, expires in {remaining_term_days} days)"
+                ),
+                'targetDescription': (
+                    f"Exchange to {target_count}x {target_type} Convertible RI "
+                    f"(better match for workload)"
+                ),
+                'feasibilityScore': 0,  # scored later by _calculate_feasibility_score
+                'estimatedMonthlySavings': monthly_savings,
+                'estimatedAnnualSavings': round(monthly_savings * 12, 2),
+                'savingsPercentage': savings_percentage,
+                'complexity': 'low',
+                'timing': 'immediate',
+                'timingDate': None,
+                'risks': [
+                    f"New RI locks in for remaining term ({remaining_term_days} days)",
+                    "Exchange is irreversible once completed",
+                ],
+                'prerequisites': [
+                    "Convertible RI exchange requires equal or greater value",
+                    "Target instance type must be in the same instance family",
+                ],
+                'isReversible': False,
+                'utilizationCurrent': utilization_pct,
+                'utilizationProjected': min(100, utilization_pct * (instance_count / target_count) if target_count > 0 else utilization_pct),
+                'remainingTermDays': remaining_term_days,
+            }
+            opportunities.append(opportunity)
+            # Only generate one opportunity per source RI (best candidate)
+            break
+
+    return opportunities
+
+
+def _identify_ri_to_sp_migrations(portfolio, utilization_data, pricing_cache):
+    """Identify RIs expiring within 90 days that should migrate to Savings Plans.
+
+    For each expiring RI, calculates the equivalent SP hourly commitment, compares
+    RI effective rate vs SP rate, and only recommends migration when SP provides
+    equal or better coverage at lower cost.
+
+    Args:
+        portfolio: The portfolio dict from _build_licensing_portfolio.
+        utilization_data: The utilization dict from _get_utilization_data.
+        pricing_cache: A dict mapping instance types to hourly on-demand rates.
+
+    Returns:
+        list: A list of ConversionOpportunity dicts with type 'ri_to_sp'.
+    """
+    opportunities = []
+    now = datetime.now(timezone.utc)
+    ec2_ris = portfolio.get('ec2ReservedInstances', [])
+
+    for ri in ec2_ris:
+        days_until_expiry = ri.get('daysUntilExpiry', 999)
+
+        # Only consider RIs expiring within 90 days
+        if days_until_expiry > 90:
+            continue
+
+        instance_type = ri.get('instanceType', '')
+        instance_count = ri.get('instanceCount', 1)
+        current_hourly = ri.get('recurringHourly', 0)
+        current_monthly = ri.get('monthlyRecurringCost', 0)
+        utilization_pct = ri.get('utilizationPct', 0)
+
+        # Calculate equivalent SP hourly commitment to cover the same workload
+        # SP rate is typically ~66% of on-demand for Compute SP (No Upfront, 1yr)
+        on_demand_rate = pricing_cache.get(instance_type, 0)
+        if on_demand_rate <= 0:
+            # Estimate on-demand rate from RI rate (RI is typically 60-75% of OD)
+            on_demand_rate = current_hourly / 0.65 if current_hourly > 0 else 0
+        if on_demand_rate <= 0:
+            continue
+
+        sp_discount_rate = 0.66  # Compute SP typical discount
+        sp_hourly_rate = on_demand_rate * sp_discount_rate
+        sp_hourly_commitment = round(sp_hourly_rate * instance_count, 4)
+        sp_monthly_cost = round(sp_hourly_commitment * 730, 2)
+
+        # Compare RI effective rate vs SP rate
+        ri_effective_monthly = current_monthly
+        monthly_savings = round(ri_effective_monthly - sp_monthly_cost, 2)
+
+        # Only recommend if SP provides equal or better coverage at lower cost
+        if monthly_savings <= 0:
+            continue
+
+        savings_percentage = round(
+            (monthly_savings / ri_effective_monthly * 100) if ri_effective_monthly > 0 else 0, 1
+        )
+
+        # Determine timing
+        if days_until_expiry <= 3:
+            timing = 'immediate'
+            timing_date = now.strftime('%Y-%m-%d')
+        else:
+            timing = 'at_expiry'
+            # Set timing date 1-2 days before expiration
+            timing_date = (now + timedelta(days=days_until_expiry - 2)).strftime('%Y-%m-%d')
+
+        offering_class = ri.get('offeringClass', 'standard')
+
+        opportunity = {
+            'id': f"conv-{uuid.uuid4().hex[:8]}",
+            'type': 'ri_to_sp',
+            'sourceId': ri.get('riId', ''),
+            'sourceType': 'ec2_ri',
+            'sourceDescription': (
+                f"{instance_count}x {instance_type} {offering_class.capitalize()} RI "
+                f"expiring in {days_until_expiry} days"
+            ),
+            'targetDescription': (
+                f"Migrate to Compute Savings Plan "
+                f"(${sp_hourly_commitment:.2f}/hr, 1-year No Upfront)"
+            ),
+            'feasibilityScore': 0,  # scored later
+            'estimatedMonthlySavings': monthly_savings,
+            'estimatedAnnualSavings': round(monthly_savings * 12, 2),
+            'savingsPercentage': savings_percentage,
+            'complexity': 'low',
+            'timing': timing,
+            'timingDate': timing_date,
+            'risks': [
+                "Coverage gap if SP not purchased before RI expires",
+                "SP commitment is for 1 year regardless of usage changes",
+            ],
+            'prerequisites': [
+                "Purchase SP 1-2 days before RI expiration",
+                "Confirm workload will continue for at least 12 months",
+            ],
+            'isReversible': False,
+            'utilizationCurrent': utilization_pct,
+            'utilizationProjected': min(100, utilization_pct + 10),  # SP flexibility typically improves utilization
+            'remainingTermDays': days_until_expiry,
+        }
+        opportunities.append(opportunity)
+
+    return opportunities
+
+
+def _identify_on_demand_commitment_candidates(portfolio, utilization_data, pricing_cache):
+    """Identify on-demand instances that should be covered by commitments.
+
+    Filters for uncovered on-demand instances running >= 680 hours/month (93% uptime),
+    calculates savings for both SP and RI options, and sorts by estimated monthly
+    savings descending. Ensures no instance appears in multiple opportunities.
+
+    Args:
+        portfolio: The portfolio dict from _build_licensing_portfolio.
+        utilization_data: The utilization dict from _get_utilization_data.
+        pricing_cache: A dict mapping instance types to hourly on-demand rates.
+
+    Returns:
+        list: A list of ConversionOpportunity dicts with type 'on_demand_to_committed'.
+    """
+    opportunities = []
+    seen_instance_ids = set()
+    on_demand_instances = portfolio.get('onDemandInstances', [])
+
+    for instance in on_demand_instances:
+        # Only consider instances without existing coverage
+        if instance.get('hasCoverage', True):
+            continue
+
+        instance_id = instance.get('instanceId', '')
+        # Ensure no instance appears in multiple opportunities
+        if instance_id in seen_instance_ids:
+            continue
+
+        # Check running hours in last 30 days — only recommend >= 680 hours (93% uptime)
+        running_hours = instance.get('runningHoursLast30d', 0)
+        if running_hours < 680:
+            continue
+
+        instance_type = instance.get('instanceType', '')
+        platform = instance.get('platform', 'Linux/UNIX')
+
+        # Get on-demand rate from pricing cache or instance data
+        on_demand_rate = pricing_cache.get(instance_type, 0)
+        if on_demand_rate <= 0:
+            on_demand_rate = instance.get('monthlyOnDemandCost', 0) / 730 if instance.get('monthlyOnDemandCost', 0) > 0 else 0
+        if on_demand_rate <= 0:
+            continue
+
+        monthly_on_demand_cost = round(on_demand_rate * 730, 2)
+
+        # Calculate SP savings (Compute SP, 1yr No Upfront, ~34% discount)
+        sp_rate = on_demand_rate * 0.66
+        sp_monthly_cost = round(sp_rate * 730, 2)
+        sp_monthly_savings = round(monthly_on_demand_cost - sp_monthly_cost, 2)
+
+        # Calculate RI savings (Standard RI, 1yr No Upfront, ~40% discount)
+        ri_rate = on_demand_rate * 0.60
+        ri_monthly_cost = round(ri_rate * 730, 2)
+        ri_monthly_savings = round(monthly_on_demand_cost - ri_monthly_cost, 2)
+
+        # Use the better savings option (RI typically saves more but less flexible)
+        # Recommend SP for flexibility unless RI savings are significantly better
+        if ri_monthly_savings > sp_monthly_savings * 1.15:
+            # RI is >15% better, recommend RI
+            best_savings = ri_monthly_savings
+            target_desc = (
+                f"Purchase EC2 RI for {instance_type} "
+                f"(1-year No Upfront, ~40% savings)"
+            )
+        else:
+            # SP is close enough and more flexible
+            best_savings = sp_monthly_savings
+            target_desc = (
+                f"Purchase Compute Savings Plan "
+                f"(${sp_rate:.4f}/hr, 1-year No Upfront, ~34% savings)"
+            )
+
+        if best_savings <= 0:
+            continue
+
+        savings_percentage = round(
+            (best_savings / monthly_on_demand_cost * 100) if monthly_on_demand_cost > 0 else 0, 1
+        )
+
+        seen_instance_ids.add(instance_id)
+
+        opportunity = {
+            'id': f"conv-{uuid.uuid4().hex[:8]}",
+            'type': 'on_demand_to_committed',
+            'sourceId': instance_id,
+            'sourceType': 'on_demand_instance',
+            'sourceDescription': (
+                f"{instance_type} running 24/7 on-demand "
+                f"(${monthly_on_demand_cost:.0f}/mo, {running_hours}h last 30d)"
+            ),
+            'targetDescription': target_desc,
+            'feasibilityScore': 0,  # scored later
+            'estimatedMonthlySavings': best_savings,
+            'estimatedAnnualSavings': round(best_savings * 12, 2),
+            'savingsPercentage': savings_percentage,
+            'complexity': 'low',
+            'timing': 'immediate',
+            'timingDate': None,
+            'risks': [
+                "1-year commitment lock-in",
+                "Instance type change would require new commitment",
+            ],
+            'prerequisites': [
+                "Confirm instance will run for at least 12 months",
+                "Verify instance type is stable (no planned resizing)",
+            ],
+            'isReversible': False,
+            'utilizationCurrent': round(running_hours / 730 * 100, 1),
+            'utilizationProjected': 100.0,  # Commitment covers full usage
+            'remainingTermDays': 0,  # No existing commitment
+        }
+        opportunities.append(opportunity)
+
+    # Sort by estimated monthly savings descending
+    opportunities.sort(key=lambda x: x['estimatedMonthlySavings'], reverse=True)
+
+    return opportunities
+
+
+def _identify_license_model_changes(portfolio, utilization_data, pricing_cache):
+    """Identify instances using License Included that could switch to BYOL.
+
+    Cross-references with the Windows/SQL Licensing Optimizer for detailed analysis.
+    License model changes are always marked as high complexity due to the requirements
+    for Software Assurance verification and potential instance stop/start.
+
+    Args:
+        portfolio: The portfolio dict from _build_licensing_portfolio.
+        utilization_data: The utilization dict from _get_utilization_data.
+        pricing_cache: A dict mapping instance types to hourly on-demand rates.
+
+    Returns:
+        list: A list of ConversionOpportunity dicts with type 'license_model_change'.
+    """
+    opportunities = []
+    on_demand_instances = portfolio.get('onDemandInstances', [])
+
+    # Windows/SQL platforms that can potentially switch to BYOL
+    byol_eligible_platforms = [
+        'Windows', 'Windows with SQL Standard', 'Windows with SQL Enterprise',
+        'Windows with SQL Web', 'SQL Standard', 'SQL Enterprise', 'SQL Web',
+    ]
+
+    for instance in on_demand_instances:
+        platform = instance.get('platform', '')
+        license_model = instance.get('licenseModel', '')
+
+        # Only consider License Included instances on Windows/SQL platforms
+        if license_model != 'License Included':
+            continue
+
+        # Check if platform is eligible for BYOL conversion
+        is_eligible = any(bp.lower() in platform.lower() for bp in byol_eligible_platforms)
+        if not is_eligible:
+            continue
+
+        instance_id = instance.get('instanceId', '')
+        instance_type = instance.get('instanceType', '')
+
+        # Estimate savings from BYOL conversion
+        # Windows license cost is typically 30-50% of the instance cost
+        on_demand_rate = pricing_cache.get(instance_type, 0)
+        if on_demand_rate <= 0:
+            on_demand_rate = instance.get('monthlyOnDemandCost', 0) / 730 if instance.get('monthlyOnDemandCost', 0) > 0 else 0
+
+        monthly_on_demand_cost = round(on_demand_rate * 730, 2) if on_demand_rate > 0 else instance.get('monthlyOnDemandCost', 0)
+
+        # BYOL savings estimate: ~40% for Windows, ~50% for SQL
+        if 'sql' in platform.lower():
+            savings_factor = 0.50
+        else:
+            savings_factor = 0.40
+
+        monthly_savings = round(monthly_on_demand_cost * savings_factor, 2)
+        if monthly_savings <= 0:
+            continue
+
+        savings_percentage = round(
+            (monthly_savings / monthly_on_demand_cost * 100) if monthly_on_demand_cost > 0 else 0, 1
+        )
+
+        opportunity = {
+            'id': f"conv-{uuid.uuid4().hex[:8]}",
+            'type': 'license_model_change',
+            'sourceId': instance_id,
+            'sourceType': 'on_demand_instance',
+            'sourceDescription': (
+                f"{instance_type} using License Included ({platform})"
+            ),
+            'targetDescription': (
+                f"Convert to BYOL (requires Software Assurance)"
+            ),
+            'feasibilityScore': 0,  # scored later
+            'estimatedMonthlySavings': monthly_savings,
+            'estimatedAnnualSavings': round(monthly_savings * 12, 2),
+            'savingsPercentage': savings_percentage,
+            'complexity': 'high',
+            'timing': 'scheduled',
+            'timingDate': None,
+            'risks': [
+                "Requires active Software Assurance",
+                "Instance stop/start required for license model change",
+                "Downtime during conversion window",
+            ],
+            'prerequisites': [
+                "Verify Software Assurance coverage",
+                "Schedule maintenance window for instance stop/start",
+                "Confirm license mobility rights with Microsoft",
+            ],
+            'isReversible': True,
+            'utilizationCurrent': round(instance.get('runningHoursLast30d', 0) / 730 * 100, 1),
+            'utilizationProjected': round(instance.get('runningHoursLast30d', 0) / 730 * 100, 1),
+            'remainingTermDays': 0,
+            'crossReference': "See Windows/SQL Licensing Optimizer for detailed instance analysis",
+        }
+        opportunities.append(opportunity)
+
+    return opportunities
+
+
+def _identify_sp_upgrades(portfolio, utilization_data, pricing_cache):
+    """Identify Savings Plans that could be upgraded or right-sized.
+
+    Finds EC2 Instance SPs that could upgrade to Compute SPs for more flexibility,
+    and underutilized SPs that could be right-sized on renewal. Calculates the
+    savings or cost difference for each upgrade path.
+
+    Args:
+        portfolio: The portfolio dict from _build_licensing_portfolio.
+        utilization_data: The utilization dict from _get_utilization_data.
+        pricing_cache: A dict mapping instance types to hourly on-demand rates.
+
+    Returns:
+        list: A list of ConversionOpportunity dicts with type 'sp_upgrade'.
+    """
+    opportunities = []
+    savings_plans = portfolio.get('savingsPlans', [])
+
+    for sp in savings_plans:
+        sp_id = sp.get('spId', '')
+        plan_type = sp.get('planType', '')
+        hourly_commitment = sp.get('hourlyCommitment', 0)
+        monthly_cost = sp.get('monthlyCost', 0)
+        utilization_pct = sp.get('utilizationPct', 0)
+        days_until_expiry = sp.get('daysUntilExpiry', 999)
+
+        # ── Path 1: EC2 Instance SP → Compute SP upgrade for flexibility ──
+        if plan_type == 'EC2InstanceSavingsPlans':
+            # Compute SP is slightly more expensive (~5-10% less discount) but much more flexible
+            # It covers EC2, Lambda, and Fargate across all regions and instance families
+            compute_sp_premium = 1.08  # ~8% more expensive for same coverage
+            compute_sp_monthly = round(monthly_cost * compute_sp_premium, 2)
+            cost_difference = round(compute_sp_monthly - monthly_cost, 2)
+
+            # The "savings" here is negative (costs more) but provides flexibility value
+            # We frame it as the cost of flexibility
+            # Only recommend if the SP is well-utilized (otherwise right-size first)
+            if utilization_pct >= 70:
+                instance_family = sp.get('instanceFamily', 'unknown')
+                region = sp.get('region', 'us-east-1')
+
+                opportunity = {
+                    'id': f"conv-{uuid.uuid4().hex[:8]}",
+                    'type': 'sp_upgrade',
+                    'sourceId': sp_id,
+                    'sourceType': 'savings_plan',
+                    'sourceDescription': (
+                        f"EC2 Instance SP ({instance_family} family, {region}, "
+                        f"${hourly_commitment:.2f}/hr, {utilization_pct:.0f}% utilized)"
+                    ),
+                    'targetDescription': (
+                        f"Upgrade to Compute SP on renewal "
+                        f"(+${cost_difference:.2f}/mo for cross-region/family flexibility)"
+                    ),
+                    'feasibilityScore': 0,  # scored later
+                    'estimatedMonthlySavings': -cost_difference,  # Negative = costs more
+                    'estimatedAnnualSavings': round(-cost_difference * 12, 2),
+                    'savingsPercentage': 0.0,  # This is a flexibility upgrade, not a savings play
+                    'complexity': 'low',
+                    'timing': 'at_expiry',
+                    'timingDate': (
+                        (datetime.now(timezone.utc) + timedelta(days=max(0, days_until_expiry - 2))).strftime('%Y-%m-%d')
+                        if days_until_expiry < 9999 else None
+                    ),
+                    'risks': [
+                        "Slightly higher cost for same workload coverage",
+                        "New 1-year commitment at renewal",
+                    ],
+                    'prerequisites': [
+                        "Wait for current SP to expire before purchasing Compute SP",
+                        "Verify workload flexibility needs justify the premium",
+                    ],
+                    'isReversible': False,
+                    'utilizationCurrent': utilization_pct,
+                    'utilizationProjected': utilization_pct,  # Same utilization expected
+                    'remainingTermDays': days_until_expiry,
+                }
+                opportunities.append(opportunity)
+
+        # ── Path 2: Underutilized SP → Right-size on renewal ──
+        if sp.get('isUnderutilized', False) and utilization_pct < 80:
+            # Calculate right-sized commitment based on actual utilization
+            right_sized_commitment = round(hourly_commitment * (utilization_pct / 100.0), 4)
+            right_sized_monthly = round(right_sized_commitment * 730, 2)
+            monthly_savings = round(monthly_cost - right_sized_monthly, 2)
+
+            if monthly_savings <= 0:
+                continue
+
+            savings_percentage = round(
+                (monthly_savings / monthly_cost * 100) if monthly_cost > 0 else 0, 1
+            )
+
+            opportunity = {
+                'id': f"conv-{uuid.uuid4().hex[:8]}",
+                'type': 'sp_upgrade',
+                'sourceId': sp_id,
+                'sourceType': 'savings_plan',
+                'sourceDescription': (
+                    f"{plan_type} (${hourly_commitment:.2f}/hr, "
+                    f"{utilization_pct:.0f}% utilized — underutilized)"
+                ),
+                'targetDescription': (
+                    f"Right-size to ${right_sized_commitment:.4f}/hr on renewal "
+                    f"(match actual usage, save ${monthly_savings:.2f}/mo)"
+                ),
+                'feasibilityScore': 0,  # scored later
+                'estimatedMonthlySavings': monthly_savings,
+                'estimatedAnnualSavings': round(monthly_savings * 12, 2),
+                'savingsPercentage': savings_percentage,
+                'complexity': 'low',
+                'timing': 'at_expiry',
+                'timingDate': (
+                    (datetime.now(timezone.utc) + timedelta(days=max(0, days_until_expiry - 2))).strftime('%Y-%m-%d')
+                    if days_until_expiry < 9999 else None
+                ),
+                'risks': [
+                    "Reduced commitment may not cover usage spikes",
+                    "On-demand rates apply for usage above SP commitment",
+                ],
+                'prerequisites': [
+                    "Wait for current SP to expire",
+                    "Review usage trends to confirm right-sized commitment is adequate",
+                ],
+                'isReversible': False,
+                'utilizationCurrent': utilization_pct,
+                'utilizationProjected': min(100, utilization_pct + 15),  # Right-sizing improves utilization
+                'remainingTermDays': days_until_expiry,
+            }
+            opportunities.append(opportunity)
+
+    return opportunities
+
+
+# ============================================================
+# License Conversion Optimizer — Deduplication & Savings
+# ============================================================
+
+
+def _deduplicate_opportunities(opportunities):
+    """Remove duplicate conversion opportunities for the same source+type combination.
+
+    Ensures no source commitment appears in more than one opportunity of the same type.
+    When duplicates exist for the same source+type, keeps the one with the highest
+    estimatedMonthlySavings. The same source MAY appear in different types (e.g.,
+    ri_exchange AND ri_to_sp) since those represent alternative conversion paths.
+
+    Args:
+        opportunities: A list of ConversionOpportunity dicts, each containing at least
+            'sourceId', 'type', and 'estimatedMonthlySavings' keys.
+
+    Returns:
+        list: A deduplicated list of ConversionOpportunity dicts where each (sourceId, type)
+        pair appears at most once, retaining the opportunity with the highest savings.
+    """
+    # Group by (sourceId, type) — keep the best opportunity per group
+    best_by_source_type = {}
+
+    for opp in opportunities:
+        source_id = opp.get('sourceId', '')
+        opp_type = opp.get('type', '')
+        key = (source_id, opp_type)
+
+        if key not in best_by_source_type:
+            best_by_source_type[key] = opp
+        else:
+            # Keep the one with higher estimatedMonthlySavings
+            existing_savings = best_by_source_type[key].get('estimatedMonthlySavings', 0)
+            new_savings = opp.get('estimatedMonthlySavings', 0)
+            if new_savings > existing_savings:
+                best_by_source_type[key] = opp
+
+    return list(best_by_source_type.values())
+
+
+def _calculate_non_conflicting_savings(opportunities, portfolio):
+    """Calculate total potential savings from the best non-conflicting set of opportunities.
+
+    When two opportunities conflict (same sourceId), picks the one with the higher
+    feasibilityScore. Returns the aggregate savings from the non-conflicting set.
+
+    Args:
+        opportunities: A list of ConversionOpportunity dicts (already deduplicated per type).
+        portfolio: The portfolio dict from _build_licensing_portfolio, used to calculate
+            percentageOfCurrentSpend.
+
+    Returns:
+        dict: {
+            'monthly': float — total monthly savings from non-conflicting set,
+            'annual': float — monthly * 12,
+            'percentageOfCurrentSpend': float — monthly savings as % of total current spend
+        }
+    """
+    # Group opportunities by sourceId to detect conflicts
+    by_source = {}
+    for opp in opportunities:
+        source_id = opp.get('sourceId', '')
+        if source_id not in by_source:
+            by_source[source_id] = []
+        by_source[source_id].append(opp)
+
+    # For each source, pick the opportunity with the highest feasibilityScore
+    selected = []
+    for source_id, opps in by_source.items():
+        if len(opps) == 1:
+            selected.append(opps[0])
+        else:
+            # Pick the one with the highest feasibilityScore
+            best = max(opps, key=lambda o: o.get('feasibilityScore', 0))
+            selected.append(best)
+
+    # Sum up savings from the non-conflicting set
+    total_monthly = round(sum(o.get('estimatedMonthlySavings', 0) for o in selected), 2)
+    total_annual = round(total_monthly * 12, 2)
+
+    # Calculate percentage of current spend
+    summary = portfolio.get('summary', {})
+    total_commitment_cost = summary.get('totalMonthlyCommitmentCost', 0)
+    total_on_demand_spend = summary.get('totalOnDemandSpend', 0)
+    total_current_spend = total_commitment_cost + total_on_demand_spend
+
+    percentage_of_current_spend = round(
+        (total_monthly / total_current_spend * 100) if total_current_spend > 0 else 0.0, 1
+    )
+
+    return {
+        'monthly': total_monthly,
+        'annual': total_annual,
+        'percentageOfCurrentSpend': percentage_of_current_spend,
+    }
+
+
+# ============================================================
+# License Conversion Optimizer — Plan Generator
+# ============================================================
+
+
+def _generate_execution_plan(selected_conversion_ids, opportunities, portfolio):
+    """Generate a detailed execution plan for selected conversions.
+
+    Validates each conversion ID exists and is still feasible, detects conflicts
+    (two conversions targeting the same source), orders steps by dependency
+    (at_expiry timing comes after immediate), generates step-by-step instructions
+    with AWS Console deep links, calculates execution timeline, includes rollback
+    guidance for reversible conversions, and adds warnings for irreversible actions.
+
+    Args:
+        selected_conversion_ids: A list of conversion ID strings to include in the plan.
+        opportunities: The full list of ConversionOpportunity dicts from the analysis.
+        portfolio: The portfolio dict from _build_licensing_portfolio.
+
+    Returns:
+        dict: Execution plan matching the design's plan response format:
+            {
+                'planId': 'plan-{uuid}',
+                'generatedAt': 'ISO-8601',
+                'totalEstimatedSavings': {'monthly': float, 'annual': float},
+                'executionWindow': {'start': 'date', 'end': 'date'},
+                'steps': [...],
+                'conflicts': [...],
+                'timeline': [...]
+            }
+    """
+    now = datetime.now(timezone.utc)
+
+    # Build lookup of all opportunities by ID
+    opp_by_id = {opp.get('id', ''): opp for opp in opportunities}
+
+    # ── Phase 1: Validate selected conversions ──
+    valid_conversions = []
+    invalid_ids = []
+    for conv_id in selected_conversion_ids:
+        if conv_id in opp_by_id:
+            opp = opp_by_id[conv_id]
+            # Check feasibility — score of 0 means infeasible
+            if opp.get('feasibilityScore', 0) > 0:
+                valid_conversions.append(opp)
+            else:
+                invalid_ids.append({'id': conv_id, 'reason': 'Feasibility score is 0 (infeasible)'})
+        else:
+            invalid_ids.append({'id': conv_id, 'reason': 'Conversion ID not found in opportunities'})
+
+    # ── Phase 2: Detect conflicts (same source in multiple selected conversions) ──
+    conflicts = []
+    source_to_conversions = {}
+    for opp in valid_conversions:
+        source_id = opp.get('sourceId', '')
+        if source_id not in source_to_conversions:
+            source_to_conversions[source_id] = []
+        source_to_conversions[source_id].append(opp)
+
+    # Resolve conflicts — keep the higher-scoring one
+    non_conflicting = []
+    for source_id, opps in source_to_conversions.items():
+        if len(opps) > 1:
+            # Conflict detected
+            opps_sorted = sorted(opps, key=lambda o: o.get('feasibilityScore', 0), reverse=True)
+            winner = opps_sorted[0]
+            losers = opps_sorted[1:]
+            non_conflicting.append(winner)
+            for loser in losers:
+                conflicts.append({
+                    'sourceId': source_id,
+                    'sourceDescription': loser.get('sourceDescription', ''),
+                    'keptConversionId': winner.get('id', ''),
+                    'keptType': winner.get('type', ''),
+                    'removedConversionId': loser.get('id', ''),
+                    'removedType': loser.get('type', ''),
+                    'reason': (
+                        f"Both target the same source. Kept '{winner.get('type')}' "
+                        f"(score {winner.get('feasibilityScore', 0)}) over "
+                        f"'{loser.get('type')}' (score {loser.get('feasibilityScore', 0)})."
+                    ),
+                })
+        else:
+            non_conflicting.append(opps[0])
+
+    # ── Phase 3: Order by dependency (immediate first, then at_expiry, then scheduled) ──
+    timing_priority = {'immediate': 0, 'at_expiry': 1, 'scheduled': 2}
+    non_conflicting.sort(key=lambda o: (
+        timing_priority.get(o.get('timing', 'scheduled'), 2),
+        o.get('timingDate') or '9999-12-31',
+    ))
+
+    # ── Phase 4: Generate steps with instructions and console links ──
+    steps = []
+    step_number = 0
+
+    # Console link templates by conversion type
+    console_links = {
+        'ri_exchange': 'https://console.aws.amazon.com/ec2/home#ReservedInstances:',
+        'ri_to_sp': 'https://console.aws.amazon.com/cost-management/home#/savings-plans/purchase',
+        'on_demand_to_committed': 'https://console.aws.amazon.com/cost-management/home#/savings-plans/purchase',
+        'license_model_change': 'https://console.aws.amazon.com/ec2/home#Instances:',
+        'sp_upgrade': 'https://console.aws.amazon.com/cost-management/home#/savings-plans/purchase',
+        'ri_renewal': 'https://console.aws.amazon.com/ec2/home#ReservedInstances:',
+    }
+
+    for opp in non_conflicting:
+        step_number += 1
+        conv_type = opp.get('type', '')
+        timing = opp.get('timing', 'immediate')
+        timing_date = opp.get('timingDate')
+        source_desc = opp.get('sourceDescription', '')
+        target_desc = opp.get('targetDescription', '')
+        is_reversible = opp.get('isReversible', False)
+
+        # Generate instructions based on conversion type
+        instructions = _get_conversion_instructions(conv_type, opp)
+
+        # Build warnings
+        warnings = list(opp.get('risks', []))
+        if not is_reversible:
+            warnings.append('This action is IRREVERSIBLE once completed.')
+        if timing == 'at_expiry' and timing_date:
+            warnings.append(f'Do NOT execute before {timing_date} to avoid double-payment overlap.')
+
+        # Dependencies: at_expiry steps depend on no prior steps (they're time-gated)
+        # immediate steps have no dependencies on each other (can be parallel)
+        depends_on = []
+        if timing == 'scheduled':
+            # Scheduled steps depend on all immediate steps being done first
+            immediate_steps = [s['stepNumber'] for s in steps if s.get('timing') == 'immediate']
+            depends_on = immediate_steps
+
+        step = {
+            'stepNumber': step_number,
+            'conversionId': opp.get('id', ''),
+            'action': _get_step_action(conv_type, opp),
+            'description': f"{source_desc} → {target_desc}",
+            'instructions': instructions,
+            'awsConsoleLink': console_links.get(conv_type, 'https://console.aws.amazon.com/'),
+            'estimatedDuration': _get_estimated_duration(conv_type),
+            'dependsOn': depends_on,
+            'warnings': warnings,
+            'timing': timing,
+            'scheduledDate': timing_date,
+            'savingsOnCompletion': {
+                'monthly': opp.get('estimatedMonthlySavings', 0),
+            },
+        }
+
+        # Add rollback guidance for reversible conversions
+        if is_reversible:
+            step['rollbackGuidance'] = (
+                'This conversion is reversible. If issues arise, you can revert '
+                'by performing the inverse operation from the AWS Console.'
+            )
+
+        steps.append(step)
+
+    # ── Phase 5: Calculate total estimated savings ──
+    total_monthly_savings = round(
+        sum(s['savingsOnCompletion']['monthly'] for s in steps), 2
+    )
+    total_annual_savings = round(total_monthly_savings * 12, 2)
+
+    # ── Phase 6: Calculate execution window ──
+    start_date = now.strftime('%Y-%m-%d')
+    # End date is the latest timing date or 7 days from now for immediate-only plans
+    timing_dates = [
+        opp.get('timingDate') for opp in non_conflicting
+        if opp.get('timingDate')
+    ]
+    if timing_dates:
+        end_date = max(timing_dates)
+    else:
+        end_date = (now + timedelta(days=7)).strftime('%Y-%m-%d')
+
+    # ── Phase 7: Build timeline ──
+    timeline = []
+    for step in steps:
+        scheduled_date = step.get('scheduledDate') or start_date
+        timeline.append({
+            'date': scheduled_date,
+            'action': step['action'],
+            'step': step['stepNumber'],
+        })
+
+    # Sort timeline by date
+    timeline.sort(key=lambda t: t['date'])
+
+    # ── Build final plan ──
+    plan = {
+        'planId': f"plan-{uuid.uuid4().hex[:12]}",
+        'generatedAt': now.strftime('%Y-%m-%dT%H:%M:%SZ'),
+        'totalEstimatedSavings': {
+            'monthly': total_monthly_savings,
+            'annual': total_annual_savings,
+        },
+        'executionWindow': {
+            'start': start_date,
+            'end': end_date,
+        },
+        'steps': steps,
+        'conflicts': conflicts,
+        'timeline': timeline,
+    }
+
+    # Include invalid IDs info if any
+    if invalid_ids:
+        plan['invalidConversions'] = invalid_ids
+
+    return plan
+
+
+def _get_step_action(conv_type, opp):
+    """Generate a concise action title for a plan step based on conversion type."""
+    actions = {
+        'ri_exchange': 'Exchange Reserved Instance',
+        'ri_to_sp': 'Purchase replacement Savings Plan before RI expiry',
+        'on_demand_to_committed': 'Purchase Compute Savings Plan',
+        'license_model_change': 'Convert license model to BYOL',
+        'sp_upgrade': 'Upgrade/right-size Savings Plan on renewal',
+        'ri_renewal': 'Renew Reserved Instance',
+    }
+    return actions.get(conv_type, f"Execute {conv_type} conversion")
+
+
+def _get_conversion_instructions(conv_type, opp):
+    """Generate step-by-step instructions for a conversion based on its type."""
+    source_id = opp.get('sourceId', '')
+
+    if conv_type == 'ri_exchange':
+        return [
+            "Navigate to AWS EC2 Console > Reserved Instances",
+            f"Select the source RI: {source_id}",
+            "Click 'Actions' > 'Exchange Reserved Instance'",
+            "Select the target instance type and configuration",
+            "Review the exchange value comparison (target must be >= source)",
+            "Confirm the exchange",
+        ]
+    elif conv_type == 'ri_to_sp':
+        timing_date = opp.get('timingDate', 'before RI expiry')
+        hourly = ''
+        target_desc = opp.get('targetDescription', '')
+        return [
+            f"Wait until {timing_date} (1-2 days before RI expiry)",
+            "Navigate to AWS Cost Management > Savings Plans > Purchase",
+            "Select 'Compute Savings Plans' for maximum flexibility",
+            f"Set hourly commitment to match workload needs",
+            "Choose '1 Year' term with 'No Upfront' payment",
+            "Review and confirm purchase",
+        ]
+    elif conv_type == 'on_demand_to_committed':
+        return [
+            "Navigate to AWS Cost Management > Savings Plans > Purchase",
+            "Select 'Compute Savings Plans' for maximum flexibility",
+            "Set hourly commitment based on instance on-demand rate",
+            "Choose '1 Year' term with 'No Upfront' payment",
+            "Review coverage estimate to confirm instance will be covered",
+            "Confirm purchase",
+        ]
+    elif conv_type == 'license_model_change':
+        return [
+            "Verify active Software Assurance or License Mobility rights",
+            "Schedule a maintenance window for the conversion",
+            f"Navigate to EC2 Console > Instances > {source_id}",
+            "Stop the instance",
+            "Modify instance attribute to change license configuration",
+            "Start the instance and verify license model change",
+            "Confirm application functionality after restart",
+        ]
+    elif conv_type == 'sp_upgrade':
+        return [
+            "Wait for current Savings Plan to expire",
+            "Navigate to AWS Cost Management > Savings Plans > Purchase",
+            "Select the upgraded plan type (e.g., Compute SP)",
+            "Set the right-sized hourly commitment based on actual usage",
+            "Choose term and payment option",
+            "Review and confirm purchase",
+        ]
+    elif conv_type == 'ri_renewal':
+        return [
+            "Navigate to AWS EC2 Console > Reserved Instances",
+            "Click 'Purchase Reserved Instances'",
+            "Select the same or updated instance type and configuration",
+            "Choose term length and payment option",
+            "Review pricing and confirm purchase",
+        ]
+    else:
+        return [
+            f"Execute {conv_type} conversion for source: {source_id}",
+            "Refer to AWS documentation for specific steps",
+        ]
+
+
+def _get_estimated_duration(conv_type):
+    """Return estimated duration string for a conversion step."""
+    durations = {
+        'ri_exchange': '5-10 minutes',
+        'ri_to_sp': '5 minutes',
+        'on_demand_to_committed': '5 minutes',
+        'license_model_change': '15-30 minutes (includes instance restart)',
+        'sp_upgrade': '5 minutes',
+        'ri_renewal': '5 minutes',
+    }
+    return durations.get(conv_type, '10-15 minutes')
+
+
+# ============================================================
+# License Conversion Optimizer — Endpoint Handlers
+# ============================================================
+
+
+def _validate_conversion_permissions(session):
+    """Validate that the cross-account role has required permissions for license conversion analysis.
+
+    Tests required permissions by making lightweight dry-run or minimal API calls:
+    ec2:DescribeReservedInstances, rds:DescribeReservedDBInstances,
+    savingsplans:DescribeSavingsPlans, ce:GetReservationUtilization, ce:GetCostAndUsage.
+
+    Args:
+        session: A dict of boto3 credentials (AccessKeyId, SecretAccessKey, SessionToken).
+
+    Returns:
+        None if all permissions are valid, or an error response dict if permissions are missing.
+    """
+    missing_permissions = []
+
+    def _client(service, region=None):
+        return boto3.client(
+            service,
+            aws_access_key_id=session['AccessKeyId'],
+            aws_secret_access_key=session['SecretAccessKey'],
+            aws_session_token=session['SessionToken'],
+            region_name=region or os.environ.get('AWS_REGION', 'us-east-1'),
+        )
+
+    # Test ec2:DescribeReservedInstances
+    try:
+        ec2 = _client('ec2')
+        ec2.describe_reserved_instances(Filters=[{'Name': 'state', 'Values': ['active']}], MaxResults=5)
+    except ClientError as e:
+        if e.response['Error']['Code'] in ('AccessDeniedException', 'AccessDenied', 'UnauthorizedOperation'):
+            missing_permissions.append('ec2:DescribeReservedInstances')
+
+    # Test rds:DescribeReservedDBInstances
+    try:
+        rds = _client('rds')
+        rds.describe_reserved_db_instances(MaxRecords=20)
+    except ClientError as e:
+        if e.response['Error']['Code'] in ('AccessDeniedException', 'AccessDenied'):
+            missing_permissions.append('rds:DescribeReservedDBInstances')
+
+    # Test savingsplans:DescribeSavingsPlans
+    try:
+        sp = _client('savingsplans')
+        sp.describe_savings_plans(states=['active'], maxResults=1)
+    except ClientError as e:
+        if e.response['Error']['Code'] in ('AccessDeniedException', 'AccessDenied'):
+            missing_permissions.append('savingsplans:DescribeSavingsPlans')
+
+    # Test ce:GetReservationUtilization
+    try:
+        ce = _client('ce')
+        now = datetime.now(timezone.utc)
+        yesterday = now - timedelta(days=1)
+        ce.get_reservation_utilization(
+            TimePeriod={
+                'Start': yesterday.strftime('%Y-%m-%d'),
+                'End': now.strftime('%Y-%m-%d'),
+            },
+            Granularity='DAILY',
+        )
+    except ClientError as e:
+        if e.response['Error']['Code'] in ('AccessDeniedException', 'AccessDenied'):
+            missing_permissions.append('ce:GetReservationUtilization')
+
+    # Test ce:GetCostAndUsage
+    try:
+        ce = _client('ce')
+        now = datetime.now(timezone.utc)
+        yesterday = now - timedelta(days=1)
+        ce.get_cost_and_usage(
+            TimePeriod={
+                'Start': yesterday.strftime('%Y-%m-%d'),
+                'End': now.strftime('%Y-%m-%d'),
+            },
+            Granularity='DAILY',
+            Metrics=['UnblendedCost'],
+        )
+    except ClientError as e:
+        if e.response['Error']['Code'] in ('AccessDeniedException', 'AccessDenied'):
+            missing_permissions.append('ce:GetCostAndUsage')
+
+    if missing_permissions:
+        return create_error_response(
+            403, 'InsufficientPermissions',
+            'The cross-account role lacks required permissions for license conversion analysis. '
+            'Please update the CloudFormation template.',
+            extra={'missingPermissions': missing_permissions}
+        )
+
+    return None
+
+
+def _build_pricing_cache(portfolio, session):
+    """Query AWS Pricing API for instance types found in the portfolio.
+
+    Builds a dict mapping instance_type → hourly_rate (on-demand) for all instance
+    types discovered in the portfolio (EC2 RIs, on-demand instances, BYOL instances).
+
+    Args:
+        portfolio: The portfolio dict from _build_licensing_portfolio.
+        session: A dict of boto3 credentials (AccessKeyId, SecretAccessKey, SessionToken).
+
+    Returns:
+        dict: Mapping of instance_type (str) → hourly_rate (float).
+            Returns empty rates (0.0) for types where pricing lookup fails.
+    """
+    # Collect all unique instance types from the portfolio
+    instance_types = set()
+
+    for ri in portfolio.get('ec2ReservedInstances', []):
+        instance_types.add(ri.get('instanceType', ''))
+
+    for inst in portfolio.get('onDemandInstances', []):
+        instance_types.add(inst.get('instanceType', ''))
+
+    for inst in portfolio.get('byolInstances', []):
+        instance_types.add(inst.get('instanceType', ''))
+
+    # Remove empty strings
+    instance_types.discard('')
+
+    if not instance_types:
+        return {}
+
+    pricing_cache = {}
+
+    # Query Pricing API (always us-east-1 for global pricing data)
+    try:
+        pricing_client = boto3.client(
+            'pricing',
+            aws_access_key_id=session['AccessKeyId'],
+            aws_secret_access_key=session['SecretAccessKey'],
+            aws_session_token=session['SessionToken'],
+            region_name='us-east-1',
+        )
+
+        for instance_type in instance_types:
+            try:
+                response = pricing_client.get_products(
+                    ServiceCode='AmazonEC2',
+                    Filters=[
+                        {'Type': 'TERM_MATCH', 'Field': 'instanceType', 'Value': instance_type},
+                        {'Type': 'TERM_MATCH', 'Field': 'operatingSystem', 'Value': 'Linux'},
+                        {'Type': 'TERM_MATCH', 'Field': 'tenancy', 'Value': 'Shared'},
+                        {'Type': 'TERM_MATCH', 'Field': 'preInstalledSw', 'Value': 'NA'},
+                        {'Type': 'TERM_MATCH', 'Field': 'capacitystatus', 'Value': 'Used'},
+                    ],
+                    MaxResults=1,
+                )
+
+                price_list = response.get('PriceList', [])
+                if price_list:
+                    price_data = json.loads(price_list[0]) if isinstance(price_list[0], str) else price_list[0]
+                    on_demand_terms = price_data.get('terms', {}).get('OnDemand', {})
+                    for term_key, term_val in on_demand_terms.items():
+                        price_dimensions = term_val.get('priceDimensions', {})
+                        for dim_key, dim_val in price_dimensions.items():
+                            price_per_unit = dim_val.get('pricePerUnit', {}).get('USD', '0')
+                            hourly_rate = float(price_per_unit)
+                            if hourly_rate > 0:
+                                pricing_cache[instance_type] = hourly_rate
+                                break
+                        if instance_type in pricing_cache:
+                            break
+
+                # If not found, set to 0.0
+                if instance_type not in pricing_cache:
+                    pricing_cache[instance_type] = 0.0
+
+            except (ClientError, Exception) as e:
+                logger.warning(f"Pricing lookup failed for {instance_type}: {e}")
+                pricing_cache[instance_type] = 0.0
+
+    except Exception as e:
+        logger.warning(f"Pricing API initialization failed: {e}")
+        # Return all types with 0.0 rate
+        for instance_type in instance_types:
+            pricing_cache[instance_type] = 0.0
+
+    return pricing_cache
+
+
+def handle_license_conversion_analyze(event):
+    """POST /members/license-conversion/analyze — Full portfolio analysis and conversion opportunities.
+
+    Validates JWT token, parses accountId, verifies ownership, assumes cross-account role,
+    validates permissions, builds licensing portfolio, retrieves utilization data, builds
+    pricing cache, runs all 5 conversion identifiers in parallel, deduplicates opportunities,
+    scores and ranks them, calculates total potential savings, and returns the full response.
+
+    Handles timeout gracefully by returning partial results if approaching 120s.
+    """
+    scan_start = time.time()
+    TIMEOUT_THRESHOLD = 115  # Return partial results if approaching 120s Lambda timeout
+
+    # ── Auth & validation ──
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+    member_email = auth['sub']
+
+    try:
+        body = json.loads(event.get('body', '{}'))
+    except (json.JSONDecodeError, TypeError):
+        return create_error_response(400, 'InvalidRequest', 'Invalid request body')
+
+    account_id = (body.get('accountId') or '').strip()
+    if not account_id or not re.match(r'^\d{12}$', account_id):
+        return create_error_response(400, 'InvalidAccountId', 'accountId must be exactly 12 digits')
+
+    # ── Verify account ownership ──
+    ownership = _verify_account_ownership(member_email, [account_id])
+    if ownership is not True:
+        return ownership
+
+    # ── Assume cross-account role ──
+    try:
+        creds = _assume_role_for_account(member_email, account_id)
+    except ClientError as e:
+        code = e.response['Error']['Code']
+        if code in ('AccessDeniedException', 'AccessDenied'):
+            return create_error_response(403, 'AccessDenied',
+                                         'Cannot access account — please re-deploy the CloudFormation template')
+        return create_error_response(403, 'ConnectionFailed',
+                                     'Cross-account role not found — please deploy the CloudFormation template')
+    except Exception:
+        return create_error_response(403, 'ConnectionFailed',
+                                     'Cross-account role not found — please deploy the CloudFormation template')
+
+    # ── Validate required permissions ──
+    perm_error = _validate_conversion_permissions(creds)
+    if perm_error is not None:
+        return perm_error
+
+    # ── Build licensing portfolio ──
+    try:
+        portfolio = _build_licensing_portfolio(creds, account_id)
+    except Exception as e:
+        logger.error(f"Portfolio build failed for {account_id}: {e}")
+        return create_error_response(500, 'PortfolioBuildError',
+                                     f'Failed to build licensing portfolio: {str(e)}')
+
+    # ── Check timeout before utilization ──
+    if time.time() - scan_start > TIMEOUT_THRESHOLD:
+        return create_response(200, {
+            'success': True,
+            'partial': True,
+            'reason': 'Timeout approaching — returning portfolio without analysis',
+            'analyzedAt': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
+            'accountId': account_id,
+            'portfolio': portfolio,
+            'conversionOpportunities': [],
+            'totalPotentialSavings': {'monthly': 0, 'annual': 0, 'percentageOfCurrentSpend': 0},
+        })
+
+    # ── Get utilization data ──
+    try:
+        utilization_data = _get_utilization_data(creds, portfolio)
+    except Exception as e:
+        logger.warning(f"Utilization data retrieval failed for {account_id}: {e}")
+        utilization_data = {
+            'riUtilization': {},
+            'spUtilization': {},
+            'onDemandSpendByService': {},
+            'totalOnDemandSpend': 0.0,
+            'coveragePercentage': 0.0,
+            'costExplorerAvailable': False,
+        }
+
+    # ── Build pricing cache ──
+    try:
+        pricing_cache = _build_pricing_cache(portfolio, creds)
+    except Exception as e:
+        logger.warning(f"Pricing cache build failed for {account_id}: {e}")
+        pricing_cache = {}
+
+    # ── Check timeout before conversion analysis ──
+    if time.time() - scan_start > TIMEOUT_THRESHOLD:
+        return create_response(200, {
+            'success': True,
+            'partial': True,
+            'reason': 'Timeout approaching — returning portfolio with utilization but no conversion analysis',
+            'analyzedAt': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
+            'accountId': account_id,
+            'portfolio': portfolio,
+            'conversionOpportunities': [],
+            'totalPotentialSavings': {'monthly': 0, 'annual': 0, 'percentageOfCurrentSpend': 0},
+        })
+
+    # ── Run all 5 conversion identifiers in parallel ──
+    all_opportunities = []
+    identifier_functions = [
+        _identify_ri_exchange_opportunities,
+        _identify_ri_to_sp_migrations,
+        _identify_on_demand_commitment_candidates,
+        _identify_license_model_changes,
+        _identify_sp_upgrades,
+    ]
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+        futures = {
+            executor.submit(fn, portfolio, utilization_data, pricing_cache): fn.__name__
+            for fn in identifier_functions
+        }
+
+        for future in concurrent.futures.as_completed(futures):
+            fn_name = futures[future]
+            try:
+                # Check timeout for each completed future
+                if time.time() - scan_start > TIMEOUT_THRESHOLD:
+                    break
+                result = future.result(timeout=30)
+                if result:
+                    all_opportunities.extend(result)
+            except concurrent.futures.TimeoutError:
+                logger.warning(f"Conversion identifier {fn_name} timed out")
+            except Exception as e:
+                logger.warning(f"Conversion identifier {fn_name} failed: {e}")
+
+    # ── Check timeout before post-processing ──
+    if time.time() - scan_start > TIMEOUT_THRESHOLD:
+        return create_response(200, {
+            'success': True,
+            'partial': True,
+            'reason': 'Timeout approaching — returning partial conversion analysis',
+            'analyzedAt': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
+            'accountId': account_id,
+            'portfolio': portfolio,
+            'conversionOpportunities': all_opportunities,
+            'totalPotentialSavings': {'monthly': 0, 'annual': 0, 'percentageOfCurrentSpend': 0},
+        })
+
+    # ── Deduplicate opportunities ──
+    all_opportunities = _deduplicate_opportunities(all_opportunities)
+
+    # ── Score all opportunities using feasibility scorer ──
+    for opp in all_opportunities:
+        if opp.get('feasibilityScore') is None or opp.get('feasibilityScore') == 0:
+            opp['feasibilityScore'] = _calculate_feasibility_score(
+                conversion_type=opp.get('type', ''),
+                savings_percentage=opp.get('savingsPercentage', 0),
+                utilization_current=opp.get('utilizationCurrent', 50),
+                utilization_projected=opp.get('utilizationProjected', 80),
+                complexity=opp.get('complexity', 'medium'),
+                remaining_term_days=opp.get('remainingTermDays', 365),
+                is_reversible=opp.get('isReversible', False),
+            )
+
+    # ── Sort by feasibility score descending ──
+    all_opportunities.sort(key=lambda o: o.get('feasibilityScore', 0), reverse=True)
+
+    # ── Calculate total potential savings ──
+    total_potential_savings = _calculate_non_conflicting_savings(all_opportunities, portfolio)
+
+    # ── Build response ──
+    return create_response(200, {
+        'success': True,
+        'analyzedAt': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
+        'accountId': account_id,
+        'portfolio': portfolio,
+        'conversionOpportunities': all_opportunities,
+        'totalPotentialSavings': total_potential_savings,
+    })
+
+
+def handle_license_conversion_plan(event):
+    """POST /members/license-conversion/plan — Generate execution plan for selected conversions.
+
+    Validates JWT token, parses accountId and selectedConversions from request body,
+    verifies account ownership, re-runs analysis to get opportunities list, then
+    calls _generate_execution_plan with selected conversions.
+    """
+    # ── Auth & validation ──
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+    member_email = auth['sub']
+
+    try:
+        body = json.loads(event.get('body', '{}'))
+    except (json.JSONDecodeError, TypeError):
+        return create_error_response(400, 'InvalidRequest', 'Invalid request body')
+
+    account_id = (body.get('accountId') or '').strip()
+    if not account_id or not re.match(r'^\d{12}$', account_id):
+        return create_error_response(400, 'InvalidAccountId', 'accountId must be exactly 12 digits')
+
+    selected_conversions = body.get('selectedConversions', [])
+    if not selected_conversions or not isinstance(selected_conversions, list):
+        return create_error_response(400, 'InvalidRequest',
+                                     'selectedConversions must be a non-empty list of conversion IDs')
+
+    # ── Verify account ownership ──
+    ownership = _verify_account_ownership(member_email, [account_id])
+    if ownership is not True:
+        return ownership
+
+    # ── Assume cross-account role ──
+    try:
+        creds = _assume_role_for_account(member_email, account_id)
+    except ClientError as e:
+        code = e.response['Error']['Code']
+        if code in ('AccessDeniedException', 'AccessDenied'):
+            return create_error_response(403, 'AccessDenied',
+                                         'Cannot access account — please re-deploy the CloudFormation template')
+        return create_error_response(403, 'ConnectionFailed',
+                                     'Cross-account role not found — please deploy the CloudFormation template')
+    except Exception:
+        return create_error_response(403, 'ConnectionFailed',
+                                     'Cross-account role not found — please deploy the CloudFormation template')
+
+    # ── Re-run analysis to get current opportunities ──
+    try:
+        portfolio = _build_licensing_portfolio(creds, account_id)
+    except Exception as e:
+        logger.error(f"Portfolio build failed for plan generation ({account_id}): {e}")
+        return create_error_response(500, 'PortfolioBuildError',
+                                     f'Failed to build licensing portfolio: {str(e)}')
+
+    try:
+        utilization_data = _get_utilization_data(creds, portfolio)
+    except Exception as e:
+        logger.warning(f"Utilization data retrieval failed for plan ({account_id}): {e}")
+        utilization_data = {
+            'riUtilization': {},
+            'spUtilization': {},
+            'onDemandSpendByService': {},
+            'totalOnDemandSpend': 0.0,
+            'coveragePercentage': 0.0,
+            'costExplorerAvailable': False,
+        }
+
+    try:
+        pricing_cache = _build_pricing_cache(portfolio, creds)
+    except Exception as e:
+        logger.warning(f"Pricing cache build failed for plan ({account_id}): {e}")
+        pricing_cache = {}
+
+    # ── Run all 5 conversion identifiers to rebuild opportunities ──
+    all_opportunities = []
+    identifier_functions = [
+        _identify_ri_exchange_opportunities,
+        _identify_ri_to_sp_migrations,
+        _identify_on_demand_commitment_candidates,
+        _identify_license_model_changes,
+        _identify_sp_upgrades,
+    ]
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+        futures = {
+            executor.submit(fn, portfolio, utilization_data, pricing_cache): fn.__name__
+            for fn in identifier_functions
+        }
+        for future in concurrent.futures.as_completed(futures):
+            fn_name = futures[future]
+            try:
+                result = future.result(timeout=30)
+                if result:
+                    all_opportunities.extend(result)
+            except Exception as e:
+                logger.warning(f"Conversion identifier {fn_name} failed during plan: {e}")
+
+    # Deduplicate and score
+    all_opportunities = _deduplicate_opportunities(all_opportunities)
+    for opp in all_opportunities:
+        if opp.get('feasibilityScore') is None or opp.get('feasibilityScore') == 0:
+            opp['feasibilityScore'] = _calculate_feasibility_score(
+                conversion_type=opp.get('type', ''),
+                savings_percentage=opp.get('savingsPercentage', 0),
+                utilization_current=opp.get('utilizationCurrent', 50),
+                utilization_projected=opp.get('utilizationProjected', 80),
+                complexity=opp.get('complexity', 'medium'),
+                remaining_term_days=opp.get('remainingTermDays', 365),
+                is_reversible=opp.get('isReversible', False),
+            )
+
+    # ── Generate execution plan ──
+    try:
+        plan = _generate_execution_plan(selected_conversions, all_opportunities, portfolio)
+    except Exception as e:
+        logger.error(f"Execution plan generation failed for {account_id}: {e}")
+        return create_error_response(500, 'PlanGenerationError',
+                                     f'Failed to generate execution plan: {str(e)}')
+
+    # ── Build response ──
+    return create_response(200, {
+        'success': True,
+        **plan,
+    })

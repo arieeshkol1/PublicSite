@@ -526,6 +526,8 @@ jobs:
             "GET /members/invoices/list"
             "GET /members/invoices/services-breakdown"
             "GET /members/invoices/resources"
+            "POST /members/license-conversion/analyze"
+            "POST /members/license-conversion/plan"
           )
           for ROUTE in "${MEMBER_ROUTES[@]}"; do
             aws apigatewayv2 create-route --api-id $API_ID --route-key "$ROUTE" --target "integrations/$MEMBER_INT" 2>/dev/null || true

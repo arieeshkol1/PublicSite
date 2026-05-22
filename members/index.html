@@ -6,7 +6,7 @@
     <title>Member Portal - SlashMyBill</title>
     <link rel="icon" type="image/png" href="../SlashMyBill.png">
     <link rel="stylesheet" href="../styles.css">
-    <link rel="stylesheet" href="members.css?v=43">
+    <link rel="stylesheet" href="members.css?v=44">
     <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
     <script src="https://www.paypal.com/sdk/js?client-id=AeSE_YsdvSkkiKXDOx77nnpCrqF21Xr6hjifypwzMtqMtzRd0UZrEAL53uboT_8kQ_4bmyAAq9kndI3G&vault=true&currency=USD" data-sdk-integration-source="button-factory"></script>
 </head>
@@ -330,6 +330,9 @@
                         </button>
                         <button class="act-nav-btn" data-section="committed" onclick="_switchActSection('committed')">
                             <span style="font-size:1.2em;">💰</span> Committed Discounts
+                        </button>
+                        <button class="act-nav-btn" data-section="license-conversion" onclick="_switchActSection('license-conversion')">
+                            <span style="font-size:1.2em;">🔄</span> License Conversion
                         </button>
 
                     </div>
@@ -697,6 +700,38 @@
                                     <button onclick="document.getElementById('committed-ladder-modal').hidden=true;" class="btn btn-outline">Cancel</button>
                                     <button id="committed-ladder-submit" class="btn btn-primary" onclick="_committedLadderCustom()">Generate Strategy</button>
                                 </div>
+                            </div>
+                        </div>
+
+                        <!-- License Conversion Section -->
+                        <div id="act-section-license-conversion" style="display:none;">
+                            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+                                <h2 style="margin:0;color:#1f2937;">🔄 License Conversion</h2>
+                                <div style="display:flex;align-items:center;gap:8px;">
+                                    <select id="lc-account-select" style="padding:6px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:0.9em;background:#fff;color:#1f2937;" onchange="_lcAccountChanged()">
+                                        <option value="">Select an account...</option>
+                                    </select>
+                                    <button id="lc-analyze-btn" class="btn btn-primary btn-sm" onclick="_lcAnalyzePortfolio()">📊 Analyze Portfolio</button>
+                                    <button id="lc-reanalyze-btn" class="btn btn-outline btn-sm" onclick="_lcReanalyze()" style="display:none;">🔄 Re-analyze</button>
+                                </div>
+                            </div>
+                            <p style="color:#6b7280;font-size:0.9em;margin-bottom:16px;">Analyze your licensing portfolio and find conversion opportunities — RI exchanges, SP migrations, and model changes across all services.</p>
+                            <div id="lc-scan-status" style="padding:0 0 8px;color:#6b7280;font-size:0.9em;min-height:20px;"></div>
+
+                            <!-- Portfolio Overview Panel -->
+                            <div id="lc-portfolio-panel" style="display:none;margin-bottom:20px;"></div>
+
+                            <!-- Conversion Opportunities Panel -->
+                            <div id="lc-opportunities-panel" style="display:none;margin-bottom:20px;"></div>
+
+                            <!-- Execution Plan View -->
+                            <div id="lc-plan-panel" style="display:none;margin-bottom:20px;"></div>
+
+                            <!-- Empty State -->
+                            <div id="lc-empty" style="text-align:center;padding:60px 20px;color:#6b7280;">
+                                <div style="font-size:2.5em;margin-bottom:12px;">🔄</div>
+                                <div style="font-size:1em;margin-bottom:6px;color:#1f2937;">Analyze your licensing portfolio</div>
+                                <div style="font-size:0.9em;color:#6b7280;">Select an account and click "Analyze Portfolio" to discover<br>RI exchanges, SP migrations, and license model conversion opportunities.</div>
                             </div>
                         </div>
 
@@ -1270,7 +1305,7 @@
         <span id="notification-message"></span>
     </div>
 
-    <script src="members.js?v=95"></script>
+    <script src="members.js?v=96"></script>
     <script src="help.js?v=8"></script>
 </body>
 </html>
