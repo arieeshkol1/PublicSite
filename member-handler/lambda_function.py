@@ -181,7 +181,11 @@ def lambda_handler(event, context):
     if handler is None:
         return create_error_response(404, 'NotFound', 'Route not found')
 
-    return handler(event)
+    try:
+        return handler(event)
+    except Exception as e:
+        logger.error("UNHANDLED EXCEPTION in handler for %s: %s: %s", route_key, type(e).__name__, e, exc_info=True)
+        return create_error_response(500, 'ServerError', f'Unhandled error: {type(e).__name__}: {str(e)}')
 
 
 # ============================================================
@@ -19260,67 +19264,85 @@ def _build_pricing_cache(portfolio, session):
 
 
 def handle_license_conversion_analyze(event):
-    """POST /members/license-conversion/analyze — Full portfolio analysis and conversion opportunities.
-
-    Validates JWT token, parses accountId, verifies ownership, assumes cross-account role,
-    validates permissions, builds licensing portfolio, retrieves utilization data, builds
-    pricing cache, runs all 5 conversion identifiers in parallel, deduplicates opportunities,
-    scores and ranks them, calculates total potential savings, and returns the full response.
-
-    Handles timeout gracefully by returning partial results if approaching 120s.
-    """
+    """POST /members/license-conversion/analyze — Full portfolio analysis and conversion opportunities."""
+    logger.info("[LC-ANALYZE] === License Conversion Analyze START ===")
     scan_start = time.time()
-    TIMEOUT_THRESHOLD = 115  # Return partial results if approaching 120s Lambda timeout
+    TIMEOUT_THRESHOLD = 115
 
     # ── Auth & validation ──
+    logger.info("[LC-ANALYZE] Step 1: Validating token...")
     auth = validate_token(event)
     if isinstance(auth, dict) and 'statusCode' in auth:
+        logger.warning("[LC-ANALYZE] Auth failed: %s", auth.get('body', ''))
         return auth
     member_email = auth['sub']
+    logger.info("[LC-ANALYZE] Auth OK for: %s", member_email)
 
     try:
         body = json.loads(event.get('body', '{}'))
     except (json.JSONDecodeError, TypeError):
+        logger.error("[LC-ANALYZE] Invalid request body")
         return create_error_response(400, 'InvalidRequest', 'Invalid request body')
 
     account_id = (body.get('accountId') or '').strip()
+    logger.info("[LC-ANALYZE] Step 2: accountId=%s", account_id)
     if not account_id or not re.match(r'^\d{12}$', account_id):
+        logger.error("[LC-ANALYZE] Invalid accountId: '%s'", account_id)
         return create_error_response(400, 'InvalidAccountId', 'accountId must be exactly 12 digits')
 
     # ── Verify account ownership ──
+    logger.info("[LC-ANALYZE] Step 3: Verifying account ownership...")
     ownership = _verify_account_ownership(member_email, [account_id])
     if ownership is not True:
+        logger.warning("[LC-ANALYZE] Ownership check failed for %s / %s", member_email, account_id)
         return ownership
+    logger.info("[LC-ANALYZE] Ownership verified OK")
 
     # ── Assume cross-account role ──
+    logger.info("[LC-ANALYZE] Step 4: Assuming cross-account role for %s...", account_id)
     try:
         creds = _assume_role_for_account(member_email, account_id)
+        logger.info("[LC-ANALYZE] Role assumed OK")
     except ClientError as e:
         code = e.response['Error']['Code']
+        logger.error("[LC-ANALYZE] AssumeRole ClientError: %s - %s", code, e)
         if code in ('AccessDeniedException', 'AccessDenied'):
             return create_error_response(403, 'AccessDenied',
                                          'Cannot access account — please re-deploy the CloudFormation template')
         return create_error_response(403, 'ConnectionFailed',
                                      'Cross-account role not found — please deploy the CloudFormation template')
-    except Exception:
+    except Exception as e:
+        logger.error("[LC-ANALYZE] AssumeRole unexpected error: %s: %s", type(e).__name__, e)
         return create_error_response(403, 'ConnectionFailed',
                                      'Cross-account role not found — please deploy the CloudFormation template')
 
     # ── Validate required permissions ──
+    logger.info("[LC-ANALYZE] Step 5: Validating permissions...")
     perm_error = _validate_conversion_permissions(creds)
     if perm_error is not None:
+        logger.warning("[LC-ANALYZE] Permission validation failed")
         return perm_error
+    logger.info("[LC-ANALYZE] Permissions OK")
 
     # ── Build licensing portfolio ──
+    logger.info("[LC-ANALYZE] Step 6: Building licensing portfolio...")
     try:
         portfolio = _build_licensing_portfolio(creds, account_id)
+        logger.info("[LC-ANALYZE] Portfolio built: %d EC2 RIs, %d RDS RIs, %d SPs, %d on-demand",
+                    len(portfolio.get('ec2ReservedInstances', [])),
+                    len(portfolio.get('rdsReservedInstances', [])),
+                    len(portfolio.get('savingsPlans', [])),
+                    len(portfolio.get('onDemandInstances', [])))
     except Exception as e:
-        logger.error(f"Portfolio build failed for {account_id}: {e}")
+        logger.error("[LC-ANALYZE] Portfolio build FAILED: %s: %s", type(e).__name__, e, exc_info=True)
         return create_error_response(500, 'PortfolioBuildError',
                                      f'Failed to build licensing portfolio: {str(e)}')
 
     # ── Check timeout before utilization ──
-    if time.time() - scan_start > TIMEOUT_THRESHOLD:
+    elapsed = time.time() - scan_start
+    logger.info("[LC-ANALYZE] Elapsed so far: %.1fs", elapsed)
+    if elapsed > TIMEOUT_THRESHOLD:
+        logger.warning("[LC-ANALYZE] Timeout approaching after portfolio build (%.1fs)", elapsed)
         return create_response(200, {
             'success': True,
             'partial': True,
@@ -19333,10 +19355,12 @@ def handle_license_conversion_analyze(event):
         })
 
     # ── Get utilization data ──
+    logger.info("[LC-ANALYZE] Step 7: Getting utilization data...")
     try:
         utilization_data = _get_utilization_data(creds, portfolio)
+        logger.info("[LC-ANALYZE] Utilization data OK (CE available: %s)", utilization_data.get('costExplorerAvailable'))
     except Exception as e:
-        logger.warning(f"Utilization data retrieval failed for {account_id}: {e}")
+        logger.warning("[LC-ANALYZE] Utilization retrieval failed (non-fatal): %s: %s", type(e).__name__, e)
         utilization_data = {
             'riUtilization': {},
             'spUtilization': {},
@@ -19347,14 +19371,19 @@ def handle_license_conversion_analyze(event):
         }
 
     # ── Build pricing cache ──
+    logger.info("[LC-ANALYZE] Step 8: Building pricing cache...")
     try:
         pricing_cache = _build_pricing_cache(portfolio, creds)
+        logger.info("[LC-ANALYZE] Pricing cache built: %d instance types", len(pricing_cache))
     except Exception as e:
-        logger.warning(f"Pricing cache build failed for {account_id}: {e}")
+        logger.warning("[LC-ANALYZE] Pricing cache build failed (non-fatal): %s: %s", type(e).__name__, e)
         pricing_cache = {}
 
     # ── Check timeout before conversion analysis ──
-    if time.time() - scan_start > TIMEOUT_THRESHOLD:
+    elapsed = time.time() - scan_start
+    logger.info("[LC-ANALYZE] Elapsed before conversion analysis: %.1fs", elapsed)
+    if elapsed > TIMEOUT_THRESHOLD:
+        logger.warning("[LC-ANALYZE] Timeout before conversion analysis")
         return create_response(200, {
             'success': True,
             'partial': True,
@@ -19367,6 +19396,7 @@ def handle_license_conversion_analyze(event):
         })
 
     # ── Run all 5 conversion identifiers in parallel ──
+    logger.info("[LC-ANALYZE] Step 9: Running 5 conversion identifiers in parallel...")
     all_opportunities = []
     identifier_functions = [
         _identify_ri_exchange_opportunities,
@@ -19385,16 +19415,21 @@ def handle_license_conversion_analyze(event):
         for future in concurrent.futures.as_completed(futures):
             fn_name = futures[future]
             try:
-                # Check timeout for each completed future
                 if time.time() - scan_start > TIMEOUT_THRESHOLD:
+                    logger.warning("[LC-ANALYZE] Timeout during conversion analysis")
                     break
                 result = future.result(timeout=30)
                 if result:
+                    logger.info("[LC-ANALYZE] %s returned %d opportunities", fn_name, len(result))
                     all_opportunities.extend(result)
+                else:
+                    logger.info("[LC-ANALYZE] %s returned 0 opportunities", fn_name)
             except concurrent.futures.TimeoutError:
-                logger.warning(f"Conversion identifier {fn_name} timed out")
+                logger.warning("[LC-ANALYZE] %s TIMED OUT (30s)", fn_name)
             except Exception as e:
-                logger.warning(f"Conversion identifier {fn_name} failed: {e}")
+                logger.warning("[LC-ANALYZE] %s FAILED: %s: %s", fn_name, type(e).__name__, e)
+
+    logger.info("[LC-ANALYZE] Total opportunities found: %d", len(all_opportunities))
 
     # ── Check timeout before post-processing ──
     if time.time() - scan_start > TIMEOUT_THRESHOLD:
@@ -19410,6 +19445,7 @@ def handle_license_conversion_analyze(event):
         })
 
     # ── Deduplicate opportunities ──
+    logger.info("[LC-ANALYZE] Step 10: Deduplicating and scoring...")
     all_opportunities = _deduplicate_opportunities(all_opportunities)
 
     # ── Score all opportunities using feasibility scorer ──
@@ -19430,6 +19466,10 @@ def handle_license_conversion_analyze(event):
 
     # ── Calculate total potential savings ──
     total_potential_savings = _calculate_non_conflicting_savings(all_opportunities, portfolio)
+
+    total_elapsed = time.time() - scan_start
+    logger.info("[LC-ANALYZE] === COMPLETE in %.1fs — %d opportunities, $%.2f/mo savings ===",
+                total_elapsed, len(all_opportunities), total_potential_savings.get('monthly', 0))
 
     # ── Build response ──
     return create_response(200, {
