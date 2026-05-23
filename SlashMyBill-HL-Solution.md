@@ -199,6 +199,30 @@ SlashMyBill's Automated Scheduler lets members create recurring schedules to sto
 - Queried by service keyword matching from the question
 - AI-generated tips auto-saved back to the knowledge base
 
+### 5.10 SQL Platform Comparator (Act > SQL Compare)
+
+A side-by-side cost comparison wizard for SQL Server workloads that helps members find the cheapest deployment option and migrate with step-by-step guidance.
+
+- **Discovery**: Scans EC2 Windows+SQL instances (via AMI description detection) and RDS SQL Server instances across all charged regions
+- **4 deployment options compared per workload**:
+  - EC2 Windows + SQL License Included (self-managed, license bundled)
+  - EC2 Windows only + BYOL SQL (self-managed, bring your own license)
+  - RDS SQL Server Standard (managed)
+  - RDS SQL Server Enterprise (managed)
+- **Pricing**: Queries AWS Pricing API (us-east-1) for all 4 options per instance type
+- **Comparison table**: Shows monthly cost, savings vs current, highlights cheapest option
+- **Migrate button**: Generates step-by-step migration plan for each cheaper alternative
+- **7 migration templates**: EC2→BYOL, EC2→RDS Std, EC2→RDS Ent, RDS Std→EC2, RDS Std→BYOL, RDS Ent→BYOL, RDS Ent→RDS Std
+- **API endpoints**: `POST /members/sql/compare`, `POST /members/sql/migration-plan`
+
+### 5.11 Windows/SQL Licensing Optimizer (Act > Optimize > Optimize Licensing)
+
+Dedicated licensing scan that discovers all Windows Server and SQL Server workloads, analyzes 30-day utilization, and generates a ranked report card of savings strategies:
+- **5 strategies**: BYOL, Optimize CPUs, Memory-Optimized Swap, Edition Downgrade, Dedicated Host
+- **Compute Optimizer integration**: ML-based rightsizing recommendations
+- **SQL Edition Downgrade assessment**: Enterprise-only feature checklist
+- **API endpoint**: `POST /members/licensing/scan`
+
 ---
 
 ## 6. Frontend Visualization Pipeline

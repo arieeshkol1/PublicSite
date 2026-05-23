@@ -17485,8 +17485,11 @@ def _discover_sql_workloads(creds, account_id):
     workloads = []
     scan_start = _time.time()
 
-    # Detect active regions
+    # Detect active regions — filter out invalid entries like "NoRegion", "global"
     scan_regions = _detect_charged_regions(creds)
+    scan_regions = [r for r in scan_regions if r and '-' in r and r != 'global']
+    if not scan_regions:
+        scan_regions = ['us-east-1']
 
     for scan_region in scan_regions:
         if _time.time() - scan_start > 80:
