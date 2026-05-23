@@ -5260,19 +5260,22 @@ function _switchActSection(section) {
     var budget = document.getElementById('act-section-budget');
     var optimization = document.getElementById('act-section-optimization');
     var committed = document.getElementById('act-section-committed');
+    var sqlCompare = document.getElementById('act-section-sql-compare');
     if (waste) waste.style.display = section === 'waste' ? 'block' : 'none';
     if (tagging) tagging.style.display = section === 'tagging' ? 'block' : 'none';
     if (scheduler) scheduler.style.display = section === 'scheduler' ? 'block' : 'none';
     if (budget) budget.style.display = section === 'budget' ? 'block' : 'none';
     if (optimization) optimization.style.display = section === 'optimization' ? 'block' : 'none';
     if (committed) committed.style.display = section === 'committed' ? 'block' : 'none';
-    // Hide the shared Act tab account selector when Committed Discounts is active (it has its own)
+    if (sqlCompare) sqlCompare.style.display = section === 'sql-compare' ? 'block' : 'none';
+    // Hide the shared Act tab account selector when Committed Discounts or SQL Compare is active (they have their own)
     var actTopAccounts = document.getElementById('act-account-select');
-    if (actTopAccounts) actTopAccounts.parentElement.parentElement.style.display = (section === 'committed') ? 'none' : 'flex';
+    if (actTopAccounts) actTopAccounts.parentElement.parentElement.style.display = (section === 'committed' || section === 'sql-compare') ? 'none' : 'flex';
     // Auto-load scheduler data when switching to scheduler section
     if (section === 'scheduler') _loadSchedulerData();
     if (section === 'optimization') { _populateSpotMigrateAccounts(); _resizePopulateAccounts(); _licensingPopulateAccounts(); }
     if (section === 'committed') _committedSectionLoad();
+    if (section === 'sql-compare') _sqlComparePopulateAccounts();
 }
 
 // ============================================================
@@ -11747,3 +11750,197 @@ function _ddUpdatePagination(page, totalPages) {
     });
 })();
 
+
+// ============================================================
+// SQL Platform Comparator
+// ============================================================
+
+function _sqlComparePopulateAccounts() {
+    var sel = document.getElementById('sql-compare-account-select');
+    if (!sel) return;
+    var accounts = allAccounts.filter(function(a) { return a.connectionStatus === 'connected'; });
+    var current = sel.value;
+    sel.innerHTML = '<option value="">Select an account...</option>';
+    accounts.forEach(function(a) {
+        var opt = document.createElement('option');
+        opt.value = a.accountId;
+        opt.textContent = (a.accountName || a.accountId) + ' (' + a.accountId + ')';
+        sel.appendChild(opt);
+    });
+    if (current && sel.querySelector('option[value="' + current + '"]')) {
+        sel.value = current;
+    }
+}
+
+async function _sqlCompareRun() {
+    var sel = document.getElementById('sql-compare-account-select');
+    var statusEl = document.getElementById('sql-compare-status');
+    var resultsEl = document.getElementById('sql-compare-results');
+    var emptyEl = document.getElementById('sql-compare-empty');
+    var planPanel = document.getElementById('sql-migration-plan-panel');
+
+    if (!sel || !sel.value) {
+        if (statusEl) statusEl.innerHTML = '<span style="color:#ef4444;">Please select an account first.</span>';
+        return;
+    }
+
+    var accountId = sel.value;
+    if (statusEl) statusEl.innerHTML = '<div style="display:flex;align-items:center;gap:8px;"><div class="spinner-sm"></div> Discovering SQL Server workloads and comparing platform costs...</div>';
+    if (resultsEl) resultsEl.innerHTML = '';
+    if (emptyEl) emptyEl.style.display = 'none';
+    if (planPanel) planPanel.style.display = 'none';
+
+    try {
+        var data = await api('POST', '/members/sql/compare', { accountId: accountId });
+        if (statusEl) statusEl.innerHTML = '';
+        if (data.workloads && data.workloads.length > 0) {
+            _sqlCompareRenderResults(data);
+        } else {
+            if (resultsEl) resultsEl.innerHTML = '';
+            if (statusEl) statusEl.innerHTML = '<span style="color:#6b7280;">No SQL Server workloads found in this account.</span>';
+        }
+    } catch (e) {
+        if (statusEl) statusEl.innerHTML = '<span style="color:#ef4444;">Error: ' + (e.message || 'Failed to compare platforms') + '</span>';
+    }
+}
+
+function _sqlCompareRenderResults(data) {
+    var resultsEl = document.getElementById('sql-compare-results');
+    if (!resultsEl) return;
+
+    var workloads = data.workloads;
+    var html = '<div class="sql-compare-table-wrapper" style="overflow-x:auto;margin-bottom:20px;">';
+    html += '<table class="sql-compare-table">';
+    html += '<thead><tr>';
+    html += '<th>Instance</th><th>Type</th><th>vCPUs</th><th>Memory</th><th>Current Platform</th>';
+    html += '<th>EC2 Win+SQL (LI)</th><th>EC2 Win (BYOL)</th><th>RDS SQL Standard</th><th>RDS SQL Enterprise</th>';
+    html += '</tr></thead><tbody>';
+
+    workloads.forEach(function(w) {
+        html += '<tr>';
+        html += '<td><strong>' + (w.name || w.instance_id) + '</strong><br><span style="font-size:0.8em;color:#6b7280;">' + w.instance_id + '</span></td>';
+        html += '<td>' + (w.instance_type || '') + '</td>';
+        html += '<td>' + (w.vcpus || '-') + '</td>';
+        html += '<td>' + (w.memory_gb ? w.memory_gb + ' GB' : '-') + '</td>';
+        html += '<td>' + (w.platform || w.current_platform_key || '') + '</td>';
+
+        var options = w.options || [];
+        options.forEach(function(opt) {
+            html += '<td style="text-align:center;">';
+            var cost = opt.monthly_cost != null ? '$' + opt.monthly_cost.toFixed(0) + '/mo' : 'N/A';
+
+            if (opt.is_cheapest) {
+                html += '<span class="sql-cheapest-badge">' + cost + '</span>';
+            } else {
+                html += cost;
+            }
+
+            if (opt.is_current) {
+                html += '<br><span style="font-size:0.75em;color:#6b7280;">(current)</span>';
+            } else if (opt.savings_vs_current != null && opt.savings_vs_current > 0) {
+                html += '<br><span class="sql-savings-positive">Save $' + opt.savings_vs_current.toFixed(0) + '/mo</span>';
+                html += '<br><button class="sql-migrate-btn" onclick="_sqlMigrate(\'' + w.account_id + '\',\'' + w.instance_id + '\',\'' + w.current_platform_key + '\',\'' + opt.platform + '\',' + opt.savings_vs_current.toFixed(2) + ',\'' + (w.instance_type || '') + '\',\'' + (w.region || '') + '\',\'' + (w.ec2_equivalent_type || '') + '\')">Migrate</button>';
+            } else if (opt.savings_vs_current != null && opt.savings_vs_current < 0) {
+                html += '<br><span class="sql-savings-negative">+$' + Math.abs(opt.savings_vs_current).toFixed(0) + '/mo</span>';
+            }
+
+            html += '</td>';
+        });
+
+        html += '</tr>';
+    });
+
+    html += '</tbody></table></div>';
+    resultsEl.innerHTML = html;
+}
+
+async function _sqlMigrate(accountId, instanceId, sourcePlatform, targetPlatform, savingsVsCurrent, instanceType, region, ec2EquivalentType) {
+    var planPanel = document.getElementById('sql-migration-plan-panel');
+    if (!planPanel) return;
+
+    planPanel.style.display = 'block';
+    planPanel.innerHTML = '<div style="display:flex;align-items:center;gap:8px;padding:20px;"><div class="spinner-sm"></div> Generating migration plan...</div>';
+
+    try {
+        var data = await api('POST', '/members/sql/migration-plan', {
+            accountId: accountId,
+            instanceId: instanceId,
+            sourcePlatform: sourcePlatform,
+            targetPlatform: targetPlatform,
+            savingsVsCurrent: savingsVsCurrent,
+            instanceType: instanceType,
+            region: region,
+            ec2EquivalentType: ec2EquivalentType
+        });
+        if (data.plan) {
+            _sqlRenderMigrationPlan(data.plan);
+        } else {
+            planPanel.innerHTML = '<div style="color:#ef4444;padding:20px;">Failed to generate migration plan.</div>';
+        }
+    } catch (e) {
+        planPanel.innerHTML = '<div style="color:#ef4444;padding:20px;">Error: ' + (e.message || 'Failed to generate migration plan') + '</div>';
+    }
+}
+
+function _sqlRenderMigrationPlan(plan) {
+    var planPanel = document.getElementById('sql-migration-plan-panel');
+    if (!planPanel) return;
+
+    var complexityColors = { low: '#10b981', medium: '#f59e0b', high: '#ef4444' };
+    var complexityColor = complexityColors[plan.complexity] || '#6b7280';
+
+    var html = '<div class="sql-plan-panel">';
+    html += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:8px;">';
+    html += '<h3 style="margin:0;color:#1f2937;">' + (plan.title || 'Migration Plan') + '</h3>';
+    html += '<div style="display:flex;align-items:center;gap:10px;">';
+    html += '<span class="sql-complexity-badge" style="background:' + complexityColor + '20;color:' + complexityColor + ';border:1px solid ' + complexityColor + ';">' + (plan.complexity || 'medium').toUpperCase() + '</span>';
+    if (plan.estimated_duration) html += '<span style="font-size:0.85em;color:#6b7280;">⏱️ ' + plan.estimated_duration + '</span>';
+    html += '</div></div>';
+
+    // Savings summary
+    if (plan.estimated_savings_monthly) {
+        html += '<div style="background:linear-gradient(135deg,#064e3b,#065f46);border-radius:8px;padding:12px 16px;margin-bottom:16px;display:flex;align-items:center;gap:12px;">';
+        html += '<span style="font-size:1.4em;">💰</span>';
+        html += '<div><div style="color:#6ee7b7;font-size:0.8em;text-transform:uppercase;">Estimated Savings</div>';
+        html += '<div style="color:#fff;font-size:1.2em;font-weight:700;">$' + plan.estimated_savings_monthly.toFixed(0) + '/mo ($' + (plan.estimated_savings_annual || plan.estimated_savings_monthly * 12).toFixed(0) + '/yr)</div>';
+        html += '</div></div>';
+    }
+
+    // Prerequisites
+    if (plan.prerequisites && plan.prerequisites.length > 0) {
+        html += '<div style="background:#eff6ff;border:1px solid #93c5fd;border-radius:8px;padding:12px 16px;margin-bottom:16px;">';
+        html += '<strong style="color:#1e40af;font-size:0.9em;">Prerequisites</strong>';
+        html += '<ul style="margin:8px 0 0;padding-left:18px;color:#1e40af;font-size:0.85em;">';
+        plan.prerequisites.forEach(function(p) { html += '<li>' + p + '</li>'; });
+        html += '</ul></div>';
+    }
+
+    // Steps
+    if (plan.steps && plan.steps.length > 0) {
+        html += '<div style="margin-bottom:16px;">';
+        plan.steps.forEach(function(step) {
+            html += '<div class="sql-plan-step">';
+            html += '<div style="display:flex;align-items:flex-start;gap:10px;">';
+            html += '<div style="min-width:28px;height:28px;background:#6366f1;color:#fff;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:0.8em;font-weight:700;">' + step.step_number + '</div>';
+            html += '<div style="flex:1;">';
+            html += '<div style="font-weight:600;color:#1f2937;font-size:0.9em;">' + step.action + '</div>';
+            if (step.aws_console_link) {
+                html += '<a href="' + step.aws_console_link + '" target="_blank" rel="noopener" style="font-size:0.8em;color:#6366f1;text-decoration:none;">Open in AWS Console →</a>';
+            }
+            html += '</div></div></div>';
+        });
+        html += '</div>';
+    }
+
+    // Risks
+    if (plan.risks && plan.risks.length > 0) {
+        html += '<div style="background:#fef3c7;border:1px solid #f59e0b;border-radius:8px;padding:12px 16px;margin-bottom:16px;">';
+        html += '<strong style="color:#92400e;font-size:0.9em;">⚠️ Risks</strong>';
+        html += '<ul style="margin:8px 0 0;padding-left:18px;color:#78350f;font-size:0.85em;">';
+        plan.risks.forEach(function(r) { html += '<li>' + r + '</li>'; });
+        html += '</ul></div>';
+    }
+
+    html += '</div>';
+    planPanel.innerHTML = html;
+}

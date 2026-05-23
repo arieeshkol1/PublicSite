@@ -1278,3 +1278,103 @@
 }
 
 
+
+/* ============================================================
+   SQL Platform Comparator
+   ============================================================ */
+
+.sql-compare-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85em;
+    background: #fff;
+    border-radius: 8px;
+    overflow: hidden;
+    border: 1px solid #e5e7eb;
+}
+
+.sql-compare-table th {
+    background: #f9fafb;
+    color: #374151;
+    font-weight: 600;
+    padding: 10px 12px;
+    text-align: left;
+    border-bottom: 2px solid #e5e7eb;
+    white-space: nowrap;
+}
+
+.sql-compare-table td {
+    padding: 10px 12px;
+    border-bottom: 1px solid #f3f4f6;
+    vertical-align: middle;
+}
+
+.sql-compare-table tbody tr:hover {
+    background: #f9fafb;
+}
+
+.sql-cheapest-badge {
+    display: inline-block;
+    background: #d1fae5;
+    color: #065f46;
+    font-weight: 700;
+    padding: 3px 10px;
+    border-radius: 100px;
+    font-size: 0.95em;
+    border: 1px solid #6ee7b7;
+}
+
+.sql-savings-positive {
+    font-size: 0.8em;
+    color: #059669;
+    font-weight: 600;
+}
+
+.sql-savings-negative {
+    font-size: 0.8em;
+    color: #dc2626;
+    font-weight: 600;
+}
+
+.sql-migrate-btn {
+    margin-top: 4px;
+    padding: 3px 10px;
+    font-size: 0.8em;
+    font-weight: 600;
+    color: #fff;
+    background: #6366f1;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+
+.sql-migrate-btn:hover {
+    background: #4f46e5;
+}
+
+.sql-plan-panel {
+    background: #fff;
+    border: 1px solid #e5e7eb;
+    border-radius: 12px;
+    padding: 20px 24px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+}
+
+.sql-plan-step {
+    padding: 12px 0;
+    border-bottom: 1px solid #f3f4f6;
+}
+
+.sql-plan-step:last-child {
+    border-bottom: none;
+}
+
+.sql-complexity-badge {
+    display: inline-block;
+    padding: 2px 10px;
+    border-radius: 100px;
+    font-size: 0.75em;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+}
