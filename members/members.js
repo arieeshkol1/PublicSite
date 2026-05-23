@@ -11818,30 +11818,30 @@ function _sqlCompareRenderResults(data) {
 
     workloads.forEach(function(w) {
         html += '<tr>';
-        html += '<td><strong>' + (w.name || w.instance_id) + '</strong><br><span style="font-size:0.8em;color:#6b7280;">' + w.instance_id + '</span></td>';
-        html += '<td>' + (w.instance_type || '') + '</td>';
+        html += '<td><strong>' + (w.name || w.instanceId) + '</strong><br><span style="font-size:0.8em;color:#6b7280;">' + (w.instanceId || '') + '</span></td>';
+        html += '<td>' + (w.instanceType || '') + '</td>';
         html += '<td>' + (w.vcpus || '-') + '</td>';
-        html += '<td>' + (w.memory_gb ? w.memory_gb + ' GB' : '-') + '</td>';
-        html += '<td>' + (w.platform || w.current_platform_key || '') + '</td>';
+        html += '<td>' + (w.memoryGb ? w.memoryGb + ' GB' : '-') + '</td>';
+        html += '<td>' + (w.currentPlatform || w.currentPlatformKey || '') + '</td>';
 
         var options = w.options || [];
         options.forEach(function(opt) {
             html += '<td style="text-align:center;">';
-            var cost = opt.monthly_cost != null ? '$' + opt.monthly_cost.toFixed(0) + '/mo' : 'N/A';
+            var cost = opt.monthlyCost != null && opt.monthlyCost > 0 ? '$' + opt.monthlyCost.toFixed(0) + '/mo' : 'N/A';
 
-            if (opt.is_cheapest) {
+            if (opt.isCheapest && opt.monthlyCost > 0) {
                 html += '<span class="sql-cheapest-badge">' + cost + '</span>';
             } else {
                 html += cost;
             }
 
-            if (opt.is_current) {
+            if (opt.isCurrent) {
                 html += '<br><span style="font-size:0.75em;color:#6b7280;">(current)</span>';
-            } else if (opt.savings_vs_current != null && opt.savings_vs_current > 0) {
-                html += '<br><span class="sql-savings-positive">Save $' + opt.savings_vs_current.toFixed(0) + '/mo</span>';
-                html += '<br><button class="sql-migrate-btn" onclick="_sqlMigrate(\'' + w.account_id + '\',\'' + w.instance_id + '\',\'' + w.current_platform_key + '\',\'' + opt.platform + '\',' + opt.savings_vs_current.toFixed(2) + ',\'' + (w.instance_type || '') + '\',\'' + (w.region || '') + '\',\'' + (w.ec2_equivalent_type || '') + '\')">Migrate</button>';
-            } else if (opt.savings_vs_current != null && opt.savings_vs_current < 0) {
-                html += '<br><span class="sql-savings-negative">+$' + Math.abs(opt.savings_vs_current).toFixed(0) + '/mo</span>';
+            } else if (opt.savingsVsCurrent != null && opt.savingsVsCurrent > 0) {
+                html += '<br><span class="sql-savings-positive">Save $' + opt.savingsVsCurrent.toFixed(0) + '/mo</span>';
+                html += '<br><button class="sql-migrate-btn" onclick="_sqlMigrate(\'' + (w.accountId || '') + '\',\'' + (w.instanceId || '') + '\',\'' + (w.currentPlatformKey || '') + '\',\'' + opt.platform + '\',' + opt.savingsVsCurrent.toFixed(2) + ',\'' + (w.instanceType || '') + '\',\'' + (w.region || '') + '\',\'' + (w.ec2EquivalentType || w.instanceType || '') + '\')">Migrate</button>';
+            } else if (opt.savingsVsCurrent != null && opt.savingsVsCurrent < 0) {
+                html += '<br><span class="sql-savings-negative">+$' + Math.abs(opt.savingsVsCurrent).toFixed(0) + '/mo</span>';
             }
 
             html += '</td>';
