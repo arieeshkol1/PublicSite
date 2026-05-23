@@ -5273,7 +5273,7 @@ function _switchActSection(section) {
     if (actTopAccounts) actTopAccounts.parentElement.parentElement.style.display = (section === 'committed' || section === 'sql-compare') ? 'none' : 'flex';
     // Auto-load scheduler data when switching to scheduler section
     if (section === 'scheduler') _loadSchedulerData();
-    if (section === 'optimization') { _populateSpotMigrateAccounts(); _resizePopulateAccounts(); _licensingPopulateAccounts(); }
+    if (section === 'optimization') { _populateSpotMigrateAccounts(); _resizePopulateAccounts(); }
     if (section === 'committed') _committedSectionLoad();
     if (section === 'sql-compare') _sqlComparePopulateAccounts();
 }
@@ -8779,7 +8779,7 @@ async function _clusterAnalyze() {
     var origSwitch = _switchActSection;
     _switchActSection = function(section) {
         origSwitch(section);
-        if (section === 'optimization') { _clusterPopulateAccounts(); _licensingPopulateAccounts(); }
+        if (section === 'optimization') { _clusterPopulateAccounts(); }
     };
 })();
 
@@ -8977,7 +8977,6 @@ function _unifiedOptUpdateButton() {
     // Update button text
     if (optType === 'instance') btn.textContent = '\u{1F50D} Analyze Instance';
     else if (optType === 'cluster') btn.textContent = '\u{1F50D} Analyze Cluster';
-    else if (optType === 'licensing') btn.textContent = '\u{1F50D} Scan Licensing';
     else if (optType === 'rds') btn.textContent = '\u{1F50D} Analyze RDS';
     else if (optType === 'lambda') btn.textContent = '\u{1F50D} Analyze Lambda';
     else if (optType === 'ebs') btn.textContent = '\u{1F50D} Analyze EBS';
@@ -9027,7 +9026,7 @@ function _unifiedOptGo() {
     if (!optType || !accountId) return;
 
     // Clear previous results
-    var els = ['resize-step-2','resize-step-4','cluster-report','licensing-report','licensing-progress','rds-optimize-report','lambda-optimize-report','ebs-optimize-report'];
+    var els = ['resize-step-2','resize-step-4','cluster-report','rds-optimize-report','lambda-optimize-report','ebs-optimize-report'];
     els.forEach(function(id) { var el = document.getElementById(id); if (el) el.style.display = 'none'; });
     var statusEl = document.getElementById('unified-opt-status');
     if (statusEl) statusEl.textContent = '';
@@ -9040,8 +9039,6 @@ function _unifiedOptGo() {
         var clusterAcct = document.getElementById('cluster-account');
         if (clusterAcct) clusterAcct.value = accountId;
         _clusterAnalyze();
-    } else if (optType === 'licensing') {
-        _licensingScanUnified(accountId);
     } else if (optType === 'rds') {
         _rdsOptimize(accountId);
     } else if (optType === 'lambda') {

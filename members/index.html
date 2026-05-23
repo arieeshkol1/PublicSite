@@ -371,7 +371,7 @@
                                     <span style="font-size:1.5em;">&#9889;</span>
                                     <div>
                                         <div style="font-weight:700;color:#1f2937;font-size:1.05em;">Optimize a Service</div>
-                                        <div style="color:#6b7280;font-size:0.85em;">Rightsize instances, optimize clusters, or analyze licensing costs</div>
+                                        <div style="color:#6b7280;font-size:0.85em;">Rightsize instances, optimize clusters, or analyze database costs</div>
                                     </div>
                                 </div>
 
@@ -390,7 +390,6 @@
                                                 <option value="">Select type...</option>
                                                 <option value="instance">&#128202; Resize an Instance</option>
                                                 <option value="cluster">&#9889; Optimize a Cluster (ASG)</option>
-                                                <option value="licensing">&#128176; Optimize Licensing</option>
                                                 <option value="rds">&#128451; Optimize RDS Database</option>
                                                 <option value="lambda">&#9889; Optimize Lambda Functions</option>
                                                 <option value="ebs">&#128190; Optimize EBS Volumes</option>
@@ -426,13 +425,6 @@
                                     <div id="resize-progress"></div>
                                 </div>
                                 <div id="cluster-report" style="margin-top:16px;"></div>
-                                <div id="licensing-progress" style="display:none;margin-top:12px;">
-                                    <div style="display:flex;align-items:center;gap:8px;">
-                                        <div class="spinner-sm"></div>
-                                        <span id="licensing-progress-text" style="color:#6b7280;font-size:0.9em;">Scanning...</span>
-                                    </div>
-                                </div>
-                                <div id="licensing-report" style="display:none;margin-top:16px;"></div>
                                 <div id="rds-optimize-report" style="display:none;margin-top:16px;"></div>
                                 <div id="lambda-optimize-report" style="display:none;margin-top:16px;"></div>
                                 <div id="ebs-optimize-report" style="display:none;margin-top:16px;"></div>
@@ -440,7 +432,6 @@
                                 <!-- Hidden selects for backward compat with existing JS -->
                                 <select id="resize-account" style="display:none;"></select>
                                 <select id="cluster-account" style="display:none;"></select>
-                                <select id="licensing-account" style="display:none;"></select>
                             </div>
 
                             <div id="act-optimize-status" style="padding:0 0 12px;color:#6b7280;font-size:0.9em;min-height:20px;"></div>
@@ -1299,7 +1290,7 @@
         <span id="notification-message"></span>
     </div>
 
-    <script src="members.js?v=100"></script>
+    <script src="members.js?v=101"></script>
     <script src="help.js?v=8"></script>
 </body>
 </html>
