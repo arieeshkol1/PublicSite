@@ -617,7 +617,7 @@ jobs:
         continue-on-error: true
         run: |
           aws iam put-role-policy \
-            --role-name slashmybill-admin-handler-role \
+            --role-name aws-bill-analyzer-admin-handler-role \
             --policy-name "AdminInvokeTipsSync" \
             --policy-document '{
               "Version": "2012-10-17",
