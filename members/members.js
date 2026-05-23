@@ -11876,8 +11876,8 @@ async function _sqlMigrate(accountId, instanceId, sourcePlatform, targetPlatform
             region: region,
             ec2EquivalentType: ec2EquivalentType
         });
-        if (data.plan) {
-            _sqlRenderMigrationPlan(data.plan);
+        if (data.migrationPlan) {
+            _sqlRenderMigrationPlan(data.migrationPlan);
         } else {
             planPanel.innerHTML = '<div style="color:#ef4444;padding:20px;">Failed to generate migration plan.</div>';
         }
@@ -11898,15 +11898,16 @@ function _sqlRenderMigrationPlan(plan) {
     html += '<h3 style="margin:0;color:#1f2937;">' + (plan.title || 'Migration Plan') + '</h3>';
     html += '<div style="display:flex;align-items:center;gap:10px;">';
     html += '<span class="sql-complexity-badge" style="background:' + complexityColor + '20;color:' + complexityColor + ';border:1px solid ' + complexityColor + ';">' + (plan.complexity || 'medium').toUpperCase() + '</span>';
-    if (plan.estimated_duration) html += '<span style="font-size:0.85em;color:#6b7280;">⏱️ ' + plan.estimated_duration + '</span>';
+    if (plan.estimatedDuration) html += '<span style="font-size:0.85em;color:#6b7280;">⏱️ ' + plan.estimatedDuration + '</span>';
     html += '</div></div>';
 
     // Savings summary
-    if (plan.estimated_savings_monthly) {
+    var savings = plan.estimatedSavings || {};
+    if (savings.monthly) {
         html += '<div style="background:linear-gradient(135deg,#064e3b,#065f46);border-radius:8px;padding:12px 16px;margin-bottom:16px;display:flex;align-items:center;gap:12px;">';
         html += '<span style="font-size:1.4em;">💰</span>';
         html += '<div><div style="color:#6ee7b7;font-size:0.8em;text-transform:uppercase;">Estimated Savings</div>';
-        html += '<div style="color:#fff;font-size:1.2em;font-weight:700;">$' + plan.estimated_savings_monthly.toFixed(0) + '/mo ($' + (plan.estimated_savings_annual || plan.estimated_savings_monthly * 12).toFixed(0) + '/yr)</div>';
+        html += '<div style="color:#fff;font-size:1.2em;font-weight:700;">$' + savings.monthly.toFixed(0) + '/mo ($' + (savings.annual || savings.monthly * 12).toFixed(0) + '/yr)</div>';
         html += '</div></div>';
     }
 
@@ -11925,11 +11926,11 @@ function _sqlRenderMigrationPlan(plan) {
         plan.steps.forEach(function(step) {
             html += '<div class="sql-plan-step">';
             html += '<div style="display:flex;align-items:flex-start;gap:10px;">';
-            html += '<div style="min-width:28px;height:28px;background:#6366f1;color:#fff;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:0.8em;font-weight:700;">' + step.step_number + '</div>';
+            html += '<div style="min-width:28px;height:28px;background:#6366f1;color:#fff;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:0.8em;font-weight:700;">' + step.stepNumber + '</div>';
             html += '<div style="flex:1;">';
             html += '<div style="font-weight:600;color:#1f2937;font-size:0.9em;">' + step.action + '</div>';
-            if (step.aws_console_link) {
-                html += '<a href="' + step.aws_console_link + '" target="_blank" rel="noopener" style="font-size:0.8em;color:#6366f1;text-decoration:none;">Open in AWS Console →</a>';
+            if (step.awsConsoleLink) {
+                html += '<a href="' + step.awsConsoleLink + '" target="_blank" rel="noopener" style="font-size:0.8em;color:#6366f1;text-decoration:none;">Open in AWS Console →</a>';
             }
             html += '</div></div></div>';
         });
