@@ -597,9 +597,7 @@ def handle_get_schedules(event):
 
 
 def handle_get_sync_status(event):
-    auth = validate_token(event)
-    if isinstance(auth, dict) and 'statusCode' in auth:
-        return auth
+    """Return the current SYNC_METADATA record."""
     try:
         table = dynamodb.Table(TIPS_TABLE_NAME)
         response = table.get_item(Key={'service': 'SYSTEM', 'tipId': 'SYNC_METADATA'})
@@ -615,9 +613,7 @@ def handle_get_sync_status(event):
 
 
 def handle_get_sync_logs(event):
-    auth = validate_token(event)
-    if isinstance(auth, dict) and 'statusCode' in auth:
-        return auth
+    """Return sync log history and current metadata."""
     try:
         table = dynamodb.Table(TIPS_TABLE_NAME)
         response = table.query(
@@ -642,9 +638,7 @@ def handle_get_sync_logs(event):
 
 
 def handle_trigger_sync(event):
-    auth = validate_token(event)
-    if isinstance(auth, dict) and 'statusCode' in auth:
-        return auth
+    """Invoke the tips-sync Lambda asynchronously."""
     try:
         lambda_client = boto3.client('lambda', region_name='us-east-1')
         lambda_client.invoke(
