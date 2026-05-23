@@ -359,15 +359,21 @@ def _fetch_baseline_tips(sources_succeeded, sources_failed) -> list:
             os.path.dirname(__file__), "knowledge-base", "aws-cost-optimization-tips.json"
         )
         tips = load_baseline_tips(baseline_path)
-        # load_baseline_tips returns [] on error but doesn't raise
-        # Consider it a success if it returns any tips, or if the file was read
-        # (even if empty). Only mark as failed if an exception occurs.
-        sources_succeeded.append("baseline")
-        logger.info(json.dumps({
-            "action": "source_fetch_complete",
-            "source": "baseline",
-            "tipsCount": len(tips),
-        }))
+        if tips:
+            sources_succeeded.append("baseline")
+            logger.info(json.dumps({
+                "action": "source_fetch_complete",
+                "source": "baseline",
+                "tipsCount": len(tips),
+            }))
+        else:
+            sources_failed.append("baseline")
+            logger.warning(json.dumps({
+                "action": "source_fetch_empty",
+                "source": "baseline",
+                "tipsCount": 0,
+                "path": baseline_path,
+            }))
         return tips
     except Exception as e:
         logger.error(json.dumps({
