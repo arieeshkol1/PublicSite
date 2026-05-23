@@ -11794,7 +11794,7 @@ async function _sqlCompareRun() {
         var data = await api('POST', '/members/sql/compare', { accountId: accountId });
         if (statusEl) statusEl.innerHTML = '';
         if (data.workloads && data.workloads.length > 0) {
-            _sqlCompareRenderResults(data);
+            _sqlCompareRenderResults(data, accountId);
         } else {
             if (resultsEl) resultsEl.innerHTML = '';
             if (statusEl) statusEl.innerHTML = '<span style="color:#6b7280;">No SQL Server workloads found in this account.</span>';
@@ -11804,7 +11804,7 @@ async function _sqlCompareRun() {
     }
 }
 
-function _sqlCompareRenderResults(data) {
+function _sqlCompareRenderResults(data, accountId) {
     var resultsEl = document.getElementById('sql-compare-results');
     if (!resultsEl) return;
 
@@ -11835,11 +11835,15 @@ function _sqlCompareRenderResults(data) {
                 html += cost;
             }
 
+            if (opt.note) {
+                html += '<br><span style="font-size:0.7em;color:#8b5cf6;font-style:italic;">' + opt.equivalentClass + ' (right-sized)</span>';
+            }
+
             if (opt.isCurrent) {
                 html += '<br><span style="font-size:0.75em;color:#6b7280;">(current)</span>';
             } else if (opt.savingsVsCurrent != null && opt.savingsVsCurrent > 0) {
                 html += '<br><span class="sql-savings-positive">Save $' + opt.savingsVsCurrent.toFixed(0) + '/mo</span>';
-                html += '<br><button class="sql-migrate-btn" onclick="_sqlMigrate(\'' + (w.accountId || '') + '\',\'' + (w.instanceId || '') + '\',\'' + (w.currentPlatformKey || '') + '\',\'' + opt.platform + '\',' + opt.savingsVsCurrent.toFixed(2) + ',\'' + (w.instanceType || '') + '\',\'' + (w.region || '') + '\',\'' + (w.ec2EquivalentType || w.instanceType || '') + '\')">Migrate</button>';
+                html += '<br><button class="sql-migrate-btn" onclick="_sqlMigrate(\'' + accountId + '\',\'' + (w.instanceId || '') + '\',\'' + (w.currentPlatformKey || '') + '\',\'' + opt.platform + '\',' + opt.savingsVsCurrent.toFixed(2) + ',\'' + (w.instanceType || '') + '\',\'' + (w.region || '') + '\',\'' + (w.ec2EquivalentType || w.instanceType || '') + '\')">Migrate</button>';
             } else if (opt.savingsVsCurrent != null && opt.savingsVsCurrent < 0) {
                 html += '<br><span class="sql-savings-negative">+$' + Math.abs(opt.savingsVsCurrent).toFixed(0) + '/mo</span>';
             }
