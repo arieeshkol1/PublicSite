@@ -1,0 +1,16 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'YAML1 - ECR Repository only (me-central-1)'
+
+Resources:
+  TestECRRepo:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: slashmybill-test-billing
+      ImageScanningConfiguration:
+        ScanOnPush: false
+
+Outputs:
+  ECRRepoUri:
+    Value: !GetAtt TestECRRepo.RepositoryUri
+  ECRRepoArn:
+    Value: !GetAtt TestECRRepo.Arn

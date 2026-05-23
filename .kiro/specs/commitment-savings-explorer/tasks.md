@@ -6,7 +6,7 @@ Transform the existing static committed-discount results into an interactive exp
 
 ## Tasks
 
-- [-] 1. Implement SP Savings Explorer
+- [ ] 1. Implement SP Savings Explorer
   - [ ] 1.1 Create `_spExplorerRender(spRecommendations)` function in `members/members.js`
     - Replace the SP section of `_committedRenderRecommendations` with an interactive explorer UI
     - Render dropdowns for SP type (Compute SP, EC2 Instance SP), term (1yr, 3yr), and payment option (All Upfront, Partial Upfront, No Upfront)
@@ -39,7 +39,7 @@ Transform the existing static committed-discount results into an interactive exp
     - **Property 12: Compare table row count and highlighting**
     - **Validates: Requirements 1.2, 1.3, 1.5, 2.2, 2.3, 2.4, 2.5, 11.1, 11.3**
 
-- [~] 2. Implement RI Savings Explorer
+- [ ] 2. Implement RI Savings Explorer
   - [ ] 2.1 Create `_riExplorerRender(riRecommendations)` function in `members/members.js`
     - Replace the RI section of `_committedRenderRecommendations` with an interactive explorer UI
     - Render dropdowns for instance type (populated from unique values in data), offering class (Standard, Convertible), term (1yr, 3yr), payment option (All Upfront, Partial Upfront, No Upfront)
@@ -73,7 +73,7 @@ Transform the existing static committed-discount results into an interactive exp
     - **Property 12: Compare table row count and highlighting (RI variant)**
     - **Validates: Requirements 3.2, 3.3, 3.5, 4.2, 4.3, 4.5, 4.6, 12.1, 12.3, 12.5**
 
-- [~] 3. Wire SP/RI Explorers into existing committed discounts flow
+- [ ] 3. Wire SP/RI Explorers into existing committed discounts flow
   - [ ] 3.1 Modify `_committedRenderRecommendations(data)` to call the new explorer functions
     - Replace the static SP table with `_spExplorerRender(data.spRecommendations)`
     - Replace the static RI table with `_riExplorerRender(data.riRecommendations)`
@@ -89,7 +89,7 @@ Transform the existing static committed-discount results into an interactive exp
 - [ ] 4. Checkpoint — Ensure SP/RI Explorers render correctly
   - Ensure all tests pass, ask the user if questions arise.
 
-- [~] 5. Implement Dashboard Integration — SP and RI Coverage Widgets
+- [ ] 5. Implement Dashboard Integration — SP and RI Coverage Widgets
   - [ ] 5.1 Add SP Coverage and RI Coverage widget definitions to `DASH_WIDGET_DEFS`
     - Add `{ id: 'dash-sp-coverage', title: 'SP Coverage', height: 180, q: 'What is my Savings Plan coverage?' }`
     - Add `{ id: 'dash-ri-coverage', title: 'RI Coverage', height: 180, q: 'What is my Reserved Instance coverage?' }`
@@ -121,7 +121,7 @@ Transform the existing static committed-discount results into an interactive exp
     - **Property 9: Coverage and utilization threshold styling**
     - **Validates: Requirements 5.3, 5.4, 6.2, 6.3, 6.4**
 
-- [~] 6. Implement Dashboard Integration — KPI Bar Commitment Savings Line
+- [ ] 6. Implement Dashboard Integration — KPI Bar Commitment Savings Line
   - [ ] 6.1 Create `_getCommitmentSavingsForKPI(accountIds)` function
     - Iterate selected dashboard accounts, read sessionStorage cache for each
     - Sum `estimatedMonthlySavings` from all SP and RI recommendations
@@ -141,7 +141,7 @@ Transform the existing static committed-discount results into an interactive exp
 - [ ] 7. Checkpoint — Ensure dashboard widgets and KPI render correctly
   - Ensure all tests pass, ask the user if questions arise.
 
-- [~] 8. Implement Chat Integration — Savings Comparison Chart
+- [ ] 8. Implement Chat Integration — Savings Comparison Chart
   - [ ] 8.1 Create `_buildCommitmentChartData(answerText, existingChartData)` function
     - Detect commitment keywords (case-insensitive): "savings plan", "reserved instance", "commitment", "SP coverage", "RI coverage"
     - Read sessionStorage cache for the queried account(s)
@@ -162,14 +162,14 @@ Transform the existing static committed-discount results into an interactive exp
     - **Property 11: Chart injection keyword detection**
     - **Validates: Requirements 8.1**
 
-- [~] 9. Verify Chat Navigation Links (existing implementation)
+- [ ] 9. Verify Chat Navigation Links (existing implementation)
   - [ ] 9.1 Confirm `_addNavLinks` already handles "Go to Act → Committed Discounts" pattern
     - Verify the existing navMap in `_addNavLinks()` includes the committed discounts navigation
     - If not present, add the mapping: `{pattern: 'Go to Act → Committed Discounts', handler: "_goToTab('act-tab','committed')"}`
     - Ensure the link renders as a styled button consistent with other nav links
     - _Requirements: 9.1, 9.2, 9.3, 9.4_
 
-- [~] 10. Redesign Laddering Strategy Section
+- [ ] 10. Redesign Laddering Strategy Section
   - [ ] 10.1 Rewrite `_committedRenderLaddering(strategy, baseline)` with new UI
     - Display commitment amounts in monthly terms ($/month) as primary unit, hourly ($/hr) as secondary detail
     - Add plain-language explanation at top: "Instead of buying your full commitment at once, stagger multiple 1-year (or 3-year) purchases across different dates..."

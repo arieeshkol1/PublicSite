@@ -1,0 +1,205 @@
+
+
+
+# ============================================================
+# Spot Instance Management -- Dashboard and Savings Ledger
+# ============================================================
+
+def _record_savings_entry(member_email, account_id, instance_id, instance_type,
+                          on_demand_rate, spot_rate, hours, asg_name, event_type):
+    """Record a savings entry in the SpotSavingsLedger."""
+    if spot_rate > on_demand_rate:
+        logger.warning(f"Spot rate {spot_rate} > On-Demand rate {on_demand_rate} -- skipping")
+        return
+    if event_type not in ('running', 'interrupted', 'migrated', 'rolled-back'):
+        logger.warning(f"Invalid event type: {event_type}")
+        return
+
+    savings_per_hour = on_demand_rate - spot_rate
+    total_savings = savings_per_hour * hours
+    gainshare = total_savings * 0.30
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    try:
+        ledger_table = dynamodb.Table(SPOT_LEDGER_TABLE_NAME)
+        ledger_table.put_item(Item={
+            'pk': f'{member_email}#{account_id}',
+            'sk': f'{now_iso}#{instance_id}',
+            'memberEmail': member_email,
+            'instanceId': instance_id,
+            'instanceType': instance_type,
+            'onDemandRate': str(on_demand_rate),
+            'spotRate': str(spot_rate),
+            'savingsPerHour': str(round(savings_per_hour, 6)),
+            'hours': str(hours),
+            'totalSavings': str(round(total_savings, 4)),
+            'gainshareAmount': str(round(gainshare, 4)),
+            'eventType': event_type,
+            'asgName': asg_name,
+            'recordedAt': now_iso,
+            'ttl': int((datetime.now(timezone.utc) + timedelta(days=365)).timestamp()),
+        })
+    except Exception as e:
+        logger.warning(f"Failed to record savings entry: {e}")
+
+
+def _calculate_esr(member_email, account_ids=None, period_days=30):
+    """Calculate Effective Savings Rate from the SpotSavingsLedger."""
+    try:
+        ledger_table = dynamodb.Table(SPOT_LEDGER_TABLE_NAME)
+        start_date = (datetime.now(timezone.utc) - timedelta(days=period_days)).isoformat()
+
+        # Query by member using GSI
+        resp = ledger_table.query(
+            IndexName='MemberTimeIndex',
+            KeyConditionExpression=boto3.dynamodb.conditions.Key('memberEmail').eq(member_email)
+                & boto3.dynamodb.conditions.Key('recordedAt').gte(start_date),
+        )
+        records = resp.get('Items', [])
+
+        total_od_cost = 0.0
+        total_spot_cost = 0.0
+        for r in records:
+            if r.get('eventType') == 'running':
+                od_rate = float(r.get('onDemandRate', 0))
+                sp_rate = float(r.get('spotRate', 0))
+                hrs = float(r.get('hours', 0))
+                total_od_cost += od_rate * hrs
+                total_spot_cost += sp_rate * hrs
+
+        if total_od_cost == 0:
+            return {'actual': 0.0, 'maximum': 0.0, 'esr': 0.0, 'gainshareAmount': 0.0}
+
+        actual_savings = total_od_cost - total_spot_cost
+        max_savings = total_od_cost * 0.90
+        esr = min(actual_savings / max_savings, 1.0) if max_savings > 0 else 0.0
+        gainshare = actual_savings * 0.30
+
+        return {
+            'actual': round(actual_savings, 2),
+            'maximum': round(max_savings, 2),
+            'esr': round(esr, 4),
+            'gainshareAmount': round(gainshare, 2),
+        }
+    except Exception as e:
+        logger.warning(f"ESR calculation failed: {e}")
+        return {'actual': 0.0, 'maximum': 0.0, 'esr': 0.0, 'gainshareAmount': 0.0}
+
+
+def handle_spot_dashboard(event):
+    """GET /members/spot/dashboard -- Spot operations dashboard data."""
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+    member_email = auth['sub']
+
+    spot_config = _load_spot_config(member_email)
+    migrated_asgs = spot_config.get('migratedASGs', [])
+    enabled_accounts = spot_config.get('enabledAccounts', {})
+
+    if not migrated_asgs and not enabled_accounts:
+        return create_response(200, {
+            'capacityRatio': {'onDemand': 0, 'spot': 0, 'total': 0, 'spotPercentage': 0},
+            'effectiveSavingsRate': {'actual': 0, 'maximum': 0, 'esr': 0, 'gainshareAmount': 0},
+            'interruptions': {'last30Days': 0},
+            'migratedASGs': [],
+            'spotEnabled': False,
+        })
+
+    # Aggregate capacity across migrated ASGs
+    total_on_demand = 0
+    total_spot = 0
+    asg_summaries = []
+    interruption_count = 0
+
+    for migration in migrated_asgs:
+        acct_id = migration.get('accountId', '')
+        asg_name_m = migration.get('asgName', '')
+        try:
+            creds = _assume_role_for_account(member_email, acct_id)
+            asg_client = _make_client_from_creds('autoscaling', creds)
+            resp = asg_client.describe_auto_scaling_groups(AutoScalingGroupNames=[asg_name_m])
+            asgs = resp.get('AutoScalingGroups', [])
+            if asgs:
+                asg = asgs[0]
+                instances = asg.get('Instances', [])
+                od = 0
+                sp = 0
+                for inst in instances:
+                    lifecycle = inst.get('LifecycleState', '')
+                    if lifecycle != 'InService':
+                        continue
+                    # Check if Spot by looking at instance lifecycle
+                    # ASG instances don't directly expose Spot -- check via EC2
+                    od += 1  # Default to on-demand, will adjust below
+
+                # Try to get actual Spot count via EC2
+                try:
+                    ec2 = _make_client_from_creds('ec2', creds)
+                    instance_ids = [i['InstanceId'] for i in instances if i.get('LifecycleState') == 'InService']
+                    if instance_ids:
+                        ec2_resp = ec2.describe_instances(InstanceIds=instance_ids[:50])
+                        od = 0
+                        sp = 0
+                        for res in ec2_resp.get('Reservations', []):
+                            for inst in res.get('Instances', []):
+                                if inst.get('InstanceLifecycle') == 'spot':
+                                    sp += 1
+                                else:
+                                    od += 1
+                except Exception:
+                    pass
+
+                total_on_demand += od
+                total_spot += sp
+
+                asg_summaries.append({
+                    'asgName': asg_name_m,
+                    'accountId': acct_id,
+                    'onDemand': od,
+                    'spot': sp,
+                    'total': od + sp,
+                    'spotPercentage': round(sp / (od + sp) * 100) if (od + sp) > 0 else 0,
+                    'migratedAt': migration.get('migratedAt', ''),
+                    'rollbackExpiresAt': migration.get('rollbackExpiresAt', ''),
+                    'status': 'active',
+                })
+        except Exception as e:
+            logger.warning(f"Failed to get ASG data for {asg_name_m}: {e}")
+            asg_summaries.append({
+                'asgName': asg_name_m,
+                'accountId': acct_id,
+                'status': 'error',
+                'error': str(e),
+            })
+
+    # Get interruption count from ledger
+    try:
+        ledger_table = dynamodb.Table(SPOT_LEDGER_TABLE_NAME)
+        start_date = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+        resp = ledger_table.query(
+            IndexName='MemberTimeIndex',
+            KeyConditionExpression=boto3.dynamodb.conditions.Key('memberEmail').eq(member_email)
+                & boto3.dynamodb.conditions.Key('recordedAt').gte(start_date),
+            FilterExpression=boto3.dynamodb.conditions.Attr('eventType').eq('interrupted'),
+        )
+        interruption_count = len(resp.get('Items', []))
+    except Exception:
+        pass
+
+    total = total_on_demand + total_spot
+    esr_data = _calculate_esr(member_email)
+
+    return create_response(200, {
+        'capacityRatio': {
+            'onDemand': total_on_demand,
+            'spot': total_spot,
+            'total': total,
+            'spotPercentage': round(total_spot / total * 100) if total > 0 else 0,
+        },
+        'effectiveSavingsRate': esr_data,
+        'interruptions': {'last30Days': interruption_count},
+        'migratedASGs': asg_summaries,
+        'spotEnabled': True,
+        'enabledAccounts': list(enabled_accounts.keys()),
+    })

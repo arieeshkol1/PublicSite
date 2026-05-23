@@ -1,0 +1,129 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'YAML2 - ECS Cluster + Fargate Service (me-central-1). Deploy after YAML1.'
+
+Resources:
+  TestECSCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: slashmybill-billing-test
+
+  TaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: slashmybill-test-ecs-execution-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+
+  TestLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /ecs/slashmybill-billing-test
+      RetentionInDays: 3
+
+  TestTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: slashmybill-billing-test
+      Cpu: '1024'
+      Memory: '2048'
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      ExecutionRoleArn: !GetAtt TaskExecutionRole.Arn
+      ContainerDefinitions:
+        - Name: nginx-test
+          Image: public.ecr.aws/nginx/nginx:latest
+          Essential: true
+          PortMappings:
+            - ContainerPort: 80
+              Protocol: tcp
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref TestLogGroup
+              awslogs-region: !Ref 'AWS::Region'
+              awslogs-stream-prefix: ecs
+
+  TestVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.99.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+
+  TestSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref TestVPC
+      CidrBlock: 10.99.1.0/24
+      MapPublicIpOnLaunch: true
+
+  TestIGW:
+    Type: AWS::EC2::InternetGateway
+
+  TestIGWAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref TestVPC
+      InternetGatewayId: !Ref TestIGW
+
+  TestRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref TestVPC
+
+  TestRoute:
+    Type: AWS::EC2::Route
+    DependsOn: TestIGWAttachment
+    Properties:
+      RouteTableId: !Ref TestRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref TestIGW
+
+  TestSubnetRouteAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref TestSubnet
+      RouteTableId: !Ref TestRouteTable
+
+  TestSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow outbound for Fargate billing test
+      VpcId: !Ref TestVPC
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+
+  TestECSService:
+    Type: AWS::ECS::Service
+    Properties:
+      ServiceName: slashmybill-billing-test-svc
+      Cluster: !Ref TestECSCluster
+      TaskDefinition: !Ref TestTaskDefinition
+      DesiredCount: 1
+      LaunchType: FARGATE
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          Subnets:
+            - !Ref TestSubnet
+          SecurityGroups:
+            - !Ref TestSecurityGroup
+
+Outputs:
+  ClusterName:
+    Value: !Ref TestECSCluster
+  ServiceName:
+    Value: !GetAtt TestECSService.Name
+  VpcId:
+    Value: !Ref TestVPC
+  HowToDelete:
+    Value: 'aws cloudformation delete-stack --stack-name slashmybill-billing-test-ecs --region me-central-1'

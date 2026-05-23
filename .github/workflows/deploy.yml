@@ -526,8 +526,6 @@ jobs:
             "GET /members/invoices/list"
             "GET /members/invoices/services-breakdown"
             "GET /members/invoices/resources"
-            "POST /members/license-conversion/analyze"
-            "POST /members/license-conversion/plan"
             "POST /members/sql/compare"
             "POST /members/sql/migration-plan"
           )

@@ -1,0 +1,326 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""Step 2: Add Spot Config handler, EventBridge deployment, email helper, SNS handler."""
+
+HANDLERS = r'''
+
+# ============================================================
+# Spot Instance Management — Configuration, Notifications, EventBridge
+# ============================================================
+
+def _send_spot_email(member_email, subject, body_html):
+    """Send a Spot-related email notification via SES."""
+    try:
+        ses_client.send_email(
+            Source=f'SlashMyBill <{SES_SENDER_EMAIL}>',
+            Destination={'ToAddresses': [member_email]},
+            Message={
+                'Subject': {'Data': subject, 'Charset': 'UTF-8'},
+                'Body': {'Html': {'Data': body_html, 'Charset': 'UTF-8'}}
+            }
+        )
+        logger.info(f"Spot email sent to {member_email}: {subject}")
+    except Exception as e:
+        logger.warning(f"Failed to send Spot email to {member_email}: {e}")
+
+
+def _build_spot_email(title, rows, footer=''):
+    """Build a styled HTML email for Spot notifications."""
+    row_html = ''.join(f'<tr><td style="padding:6px 12px;border-bottom:1px solid #e5e7eb;color:#6b7280;font-size:0.9em;">{k}</td><td style="padding:6px 12px;border-bottom:1px solid #e5e7eb;font-weight:600;">{v}</td></tr>' for k, v in rows)
+    return f'''<div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;background:#fff;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden;">
+<div style="background:linear-gradient(135deg,#6366f1,#8b5cf6);padding:20px 24px;color:#fff;">
+<h2 style="margin:0;font-size:1.2em;">⚡ {title}</h2>
+</div>
+<div style="padding:20px 24px;">
+<table style="width:100%;border-collapse:collapse;">{row_html}</table>
+{f'<p style="margin-top:16px;color:#6b7280;font-size:0.85em;">{footer}</p>' if footer else ''}
+</div>
+<div style="padding:12px 24px;background:#f9fafb;text-align:center;color:#9ca3af;font-size:0.8em;">
+SlashMyBill — Autonomous Spot Instance Management
+</div>
+</div>'''
+
+
+def _deploy_interruption_rule(member_email, account_id, enable):
+    """Deploy or remove EventBridge rule for Spot interruption notifications in customer account."""
+    rule_name = f'SlashMyBill-SpotInterruption-{account_id}'
+    try:
+        creds = _assume_role_for_account(member_email, account_id)
+        events_client = _make_client_from_creds('events', creds)
+    except Exception as e:
+        logger.warning(f"Cannot assume role for EventBridge in {account_id}: {e}")
+        return None
+
+    if enable:
+        try:
+            resp = events_client.put_rule(
+                Name=rule_name,
+                EventPattern=json.dumps({
+                    "source": ["aws.ec2"],
+                    "detail-type": [
+                        "EC2 Instance Rebalance Recommendation",
+                        "EC2 Spot Instance Interruption Warning"
+                    ]
+                }),
+                State='ENABLED',
+                Description='SlashMyBill Spot interruption notification pipeline'
+            )
+            rule_arn = resp.get('RuleArn', '')
+            # Set target to platform SNS topic
+            if SPOT_SNS_TOPIC_ARN:
+                events_client.put_targets(
+                    Rule=rule_name,
+                    Targets=[{'Id': 'SlashMyBillPlatform', 'Arn': SPOT_SNS_TOPIC_ARN}]
+                )
+            logger.info(f"EventBridge rule deployed in {account_id}: {rule_arn}")
+            return rule_arn
+        except Exception as e:
+            logger.warning(f"Failed to deploy EventBridge rule in {account_id}: {e}")
+            return None
+    else:
+        try:
+            events_client.remove_targets(Rule=rule_name, Ids=['SlashMyBillPlatform'])
+        except Exception:
+            pass
+        try:
+            events_client.delete_rule(Name=rule_name)
+        except Exception:
+            pass
+        logger.info(f"EventBridge rule removed from {account_id}")
+        return None
+
+
+def _load_spot_config(member_email):
+    """Load spotConfig from member DynamoDB item."""
+    try:
+        members_table = dynamodb.Table(MEMBERS_TABLE_NAME)
+        result = members_table.get_item(Key={'email': member_email})
+        item = result.get('Item', {})
+        return item.get('spotConfig', {})
+    except Exception:
+        return {}
+
+
+def _save_spot_config(member_email, spot_config):
+    """Save spotConfig to member DynamoDB item."""
+    try:
+        members_table = dynamodb.Table(MEMBERS_TABLE_NAME)
+        members_table.update_item(
+            Key={'email': member_email},
+            UpdateExpression='SET spotConfig = :sc',
+            ExpressionAttributeValues={':sc': spot_config},
+        )
+    except Exception as e:
+        logger.warning(f"Failed to save spotConfig for {member_email}: {e}")
+
+
+def handle_spot_config(event):
+    """POST /members/spot/config — Enable/disable Spot management per account."""
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+    member_email = auth['sub']
+
+    try:
+        body = json.loads(event.get('body', '{}'))
+    except (json.JSONDecodeError, TypeError):
+        return create_error_response(400, 'InvalidRequest', 'Invalid request body')
+
+    account_id = body.get('accountId', '')
+    if not account_id or len(account_id) != 12 or not account_id.isdigit():
+        return create_error_response(400, 'InvalidAccountId', 'Account ID must be 12 digits')
+
+    ownership = _verify_account_ownership(member_email, [account_id])
+    if isinstance(ownership, dict):
+        return ownership
+
+    spot_enabled = body.get('spotEnabled', False)
+    qualified_asgs = body.get('qualifiedASGs', [])
+    excluded_asgs = body.get('excludedASGs', [])
+
+    # Validate disjoint
+    overlap = set(qualified_asgs) & set(excluded_asgs)
+    if overlap:
+        return create_error_response(400, 'OverlappingASGs', f'ASGs appear in both qualified and excluded: {list(overlap)}')
+
+    # Validate ASGs exist in customer account
+    if qualified_asgs or excluded_asgs:
+        try:
+            creds = _assume_role_for_account(member_email, account_id)
+            asg_client = _make_client_from_creds('autoscaling', creds)
+            all_names = list(set(qualified_asgs + excluded_asgs))
+            resp = asg_client.describe_auto_scaling_groups(AutoScalingGroupNames=all_names[:50])
+            found_names = {a['AutoScalingGroupName'] for a in resp.get('AutoScalingGroups', [])}
+            missing = [n for n in all_names if n not in found_names]
+            if missing:
+                return create_error_response(404, 'ASGNotFound', f'ASGs not found in account: {missing}')
+        except ClientError as e:
+            if 'AccessDenied' in str(e) or 'not authorized' in str(e):
+                return create_error_response(403, 'InsufficientPermissions', 'Cross-account role lacks autoscaling:DescribeAutoScalingGroups. Please update the CloudFormation template.')
+            return create_error_response(500, 'ServerError', f'Failed to validate ASGs: {e}')
+
+    # Load existing config
+    spot_config = _load_spot_config(member_email)
+    enabled_accounts = spot_config.get('enabledAccounts', {})
+
+    if spot_enabled:
+        # Deploy EventBridge rule
+        rule_arn = _deploy_interruption_rule(member_email, account_id, True)
+        enabled_accounts[account_id] = {
+            'spotEnabled': True,
+            'qualifiedASGs': qualified_asgs,
+            'excludedASGs': excluded_asgs,
+            'eventBridgeRuleArn': rule_arn or '',
+            'enabledAt': datetime.now(timezone.utc).isoformat(),
+        }
+    else:
+        # Remove EventBridge rule
+        _deploy_interruption_rule(member_email, account_id, False)
+        enabled_accounts.pop(account_id, None)
+
+    spot_config['enabledAccounts'] = enabled_accounts
+    _save_spot_config(member_email, spot_config)
+
+    return create_response(200, {
+        'spotEnabled': spot_enabled,
+        'accountId': account_id,
+        'qualifiedASGs': qualified_asgs,
+        'excludedASGs': excluded_asgs,
+        'eventBridgeRuleArn': enabled_accounts.get(account_id, {}).get('eventBridgeRuleArn', ''),
+    })
+
+
+def _handle_spot_interruption_sns(record):
+    """Handle SNS event from EventBridge Spot interruption pipeline — send email immediately."""
+    try:
+        sns_message = json.loads(record.get('Sns', {}).get('Message', '{}'))
+        detail = sns_message.get('detail', {})
+        instance_id = detail.get('instance-id', 'unknown')
+        account_id = sns_message.get('account', '')
+        event_type = sns_message.get('detail-type', 'Spot Interruption')
+        event_time = sns_message.get('time', datetime.now(timezone.utc).isoformat())
+
+        if not account_id:
+            logger.warning("Spot interruption event missing account ID")
+            return create_response(200, {'message': 'No account ID'})
+
+        # Lookup member by account
+        accounts_table = dynamodb.Table(ACCOUNTS_TABLE_NAME)
+        # Scan for the account (accounts table has memberEmail as PK, accountId as SK)
+        resp = accounts_table.scan(
+            FilterExpression=boto3.dynamodb.conditions.Attr('accountId').eq(account_id),
+            Limit=10
+        )
+        items = resp.get('Items', [])
+        if not items:
+            logger.warning(f"No member found for account {account_id}")
+            return create_response(200, {'message': 'Unknown account'})
+
+        member_email = items[0].get('memberEmail', '')
+        if not member_email:
+            return create_response(200, {'message': 'No member email'})
+
+        # Dedup: check lastNotifiedInterruption
+        spot_config = _load_spot_config(member_email)
+        last_notified = spot_config.get('lastNotifiedInterruption', {})
+        last_instance = last_notified.get('instanceId', '')
+        last_time = last_notified.get('timestamp', '')
+        if last_instance == instance_id and last_time:
+            try:
+                delta = (datetime.now(timezone.utc) - datetime.fromisoformat(last_time.replace('Z', '+00:00'))).total_seconds()
+                if delta < 300:  # 5-minute dedup window
+                    logger.info(f"Dedup: skipping duplicate notification for {instance_id}")
+                    return create_response(200, {'message': 'Deduplicated'})
+            except Exception:
+                pass
+
+        # Get instance details via cross-account role
+        instance_type = 'unknown'
+        asg_name = 'unknown'
+        try:
+            creds = _assume_role_for_account(member_email, account_id)
+            ec2 = _make_client_from_creds('ec2', creds)
+            desc = ec2.describe_instances(InstanceIds=[instance_id])
+            reservations = desc.get('Reservations', [])
+            if reservations and reservations[0].get('Instances'):
+                inst = reservations[0]['Instances'][0]
+                instance_type = inst.get('InstanceType', 'unknown')
+                tags = {t['Key']: t['Value'] for t in inst.get('Tags', [])}
+                asg_name = tags.get('aws:autoscaling:groupName', 'N/A')
+        except Exception as e:
+            logger.warning(f"Could not describe instance {instance_id}: {e}")
+
+        # Determine interruption reason
+        action = detail.get('instance-action', '')
+        if 'Rebalance' in event_type:
+            reason = 'Rebalance recommendation (early warning)'
+        elif action == 'terminate':
+            reason = 'Capacity reclaimed by AWS (2-minute warning)'
+        else:
+            reason = event_type
+
+        # Send email
+        email_html = _build_spot_email(
+            'Spot Instance Interruption Detected',
+            [
+                ('Account', account_id),
+                ('ASG', asg_name),
+                ('Instance', instance_id),
+                ('Type', instance_type),
+                ('Reason', reason),
+                ('Time', event_time),
+                ('Status', '✅ ASG is automatically launching a replacement instance'),
+            ],
+            footer='The ASG price-capacity-optimized strategy handles replacement automatically. No action is required from you.'
+        )
+        _send_spot_email(member_email, f'⚡ Spot Interruption: {instance_id} in {asg_name}', email_html)
+
+        # Record in SpotSavingsLedger
+        try:
+            ledger_table = dynamodb.Table(SPOT_LEDGER_TABLE_NAME)
+            now_iso = datetime.now(timezone.utc).isoformat()
+            ledger_table.put_item(Item={
+                'pk': f'{member_email}#{account_id}',
+                'sk': f'{now_iso}#{instance_id}#interruption',
+                'memberEmail': member_email,
+                'instanceId': instance_id,
+                'instanceType': instance_type,
+                'eventType': 'interrupted',
+                'interruptionType': 'rebalance' if 'Rebalance' in event_type else 'termination',
+                'asgName': asg_name,
+                'recordedAt': now_iso,
+                'ttl': int((datetime.now(timezone.utc) + timedelta(days=365)).timestamp()),
+            })
+        except Exception as e:
+            logger.warning(f"Failed to record interruption in ledger: {e}")
+
+        # Update lastNotifiedInterruption
+        spot_config['lastNotifiedInterruption'] = {
+            'instanceId': instance_id,
+            'timestamp': datetime.now(timezone.utc).isoformat(),
+        }
+        _save_spot_config(member_email, spot_config)
+
+        return create_response(200, {'message': 'Interruption notification sent', 'instanceId': instance_id})
+
+    except Exception as e:
+        logger.error(f"Error handling Spot interruption SNS event: {e}")
+        return create_response(200, {'message': f'Error: {e}'})
+'''
+
+# Append to member-handler
+with open('member-handler/lambda_function.py', 'r', encoding='utf-8') as f:
+    content = f.read()
+
+# Check if already appended
+if 'def handle_spot_config(event):' in content:
+    print("⚠️  Step 2 handlers already present — skipping")
+else:
+    content += HANDLERS
+    with open('member-handler/lambda_function.py', 'w', encoding='utf-8') as f:
+        f.write(content)
+    print("✅ Step 2: Spot Config handler added")
+    print("✅ Step 2: EventBridge rule deployment added")
+    print("✅ Step 2: Email notification helper added")
+    print("✅ Step 2: SNS interruption handler added")
+    print("✅ Step 2: Savings ledger interruption recording added")

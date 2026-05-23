@@ -1,0 +1,263 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'SlashMyBill billing test - API GW + Lambda + DynamoDB in me-central-1'
+
+Resources:
+
+  # ============================================================
+  # DynamoDB Table (provisioned capacity = costs money)
+  # ============================================================
+  BillingTestTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: SlashMyBill-BillingTest
+      BillingMode: PROVISIONED
+      ProvisionedThroughput:
+        ReadCapacityUnits: 5
+        WriteCapacityUnits: 5
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+
+  # ============================================================
+  # Lambda Execution Role
+  # ============================================================
+  BillingTestLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: slashmybill-billing-test-lambda-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: DynamoDBAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                  - dynamodb:GetItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                  - dynamodb:DeleteItem
+                Resource: !GetAtt BillingTestTable.Arn
+        - PolicyName: LambdaSelfInvoke
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource: '*'
+
+  # ============================================================
+  # Lambda Function - Billing Test (inline code)
+  # ============================================================
+  BillingTestFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: slashmybill-billing-test-api
+      Runtime: python3.12
+      Handler: index.handler
+      MemorySize: 256
+      Timeout: 30
+      Role: !GetAtt BillingTestLambdaRole.Arn
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref BillingTestTable
+      Code:
+        ZipFile: |
+          import json, os, time, uuid, boto3
+          from datetime import datetime, timezone, timedelta
+
+          dynamodb = boto3.resource('dynamodb')
+          table = dynamodb.Table(os.environ['TABLE_NAME'])
+
+          def handler(event, context):
+              # Check if this is a bombardment invocation
+              body = {}
+              if event.get('source') == 'bombardment':
+                  return run_bombardment(event.get('count', 100))
+
+              # Normal API request
+              route = event.get('routeKey', '')
+              if route == 'GET /billing-test':
+                  return get_stats()
+              elif route == 'POST /billing-test':
+                  try:
+                      body = json.loads(event.get('body', '{}'))
+                  except:
+                      body = {}
+                  return write_record(body)
+              elif route == 'POST /billing-test/bombard':
+                  try:
+                      body = json.loads(event.get('body', '{}'))
+                  except:
+                      body = {}
+                  count = body.get('count', 100)
+                  return run_bombardment(count)
+              else:
+                  return response(200, {'message': 'SlashMyBill Billing Test API', 'region': os.environ.get('AWS_REGION', 'unknown'), 'routes': ['GET /billing-test', 'POST /billing-test', 'POST /billing-test/bombard']})
+
+          def write_record(body):
+              item = {
+                  'pk': f'test#{datetime.now(timezone.utc).strftime("%Y-%m-%d")}',
+                  'sk': str(uuid.uuid4()),
+                  'timestamp': datetime.now(timezone.utc).isoformat(),
+                  'data': body.get('data', 'billing-test-record'),
+                  'ttl': int((datetime.now(timezone.utc) + timedelta(days=7)).timestamp()),
+              }
+              table.put_item(Item=item)
+              return response(200, {'written': True, 'id': item['sk']})
+
+          def get_stats():
+              today = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+              resp = table.query(
+                  KeyConditionExpression=boto3.dynamodb.conditions.Key('pk').eq(f'test#{today}'),
+                  Select='COUNT'
+              )
+              return response(200, {
+                  'date': today,
+                  'recordCount': resp.get('Count', 0),
+                  'region': os.environ.get('AWS_REGION', 'unknown'),
+              })
+
+          def run_bombardment(count):
+              """Write many records to generate DynamoDB + Lambda billing."""
+              start = time.time()
+              written = 0
+              today = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+              ttl_val = int((datetime.now(timezone.utc) + timedelta(days=7)).timestamp())
+              with table.batch_writer() as batch:
+                  for i in range(min(count, 1000)):
+                      batch.put_item(Item={
+                          'pk': f'test#{today}',
+                          'sk': f'bomb-{uuid.uuid4()}',
+                          'timestamp': datetime.now(timezone.utc).isoformat(),
+                          'data': f'bombardment-record-{i}',
+                          'ttl': ttl_val,
+                      })
+                      written += 1
+              elapsed = round(time.time() - start, 2)
+              return response(200, {
+                  'bombardment': True,
+                  'written': written,
+                  'elapsedSeconds': elapsed,
+                  'region': os.environ.get('AWS_REGION', 'unknown'),
+              })
+
+          def response(code, body):
+              return {
+                  'statusCode': code,
+                  'headers': {'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*'},
+                  'body': json.dumps(body, default=str),
+              }
+
+  # ============================================================
+  # API Gateway - HTTP API
+  # ============================================================
+  BillingTestApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: SlashMyBill-BillingTest-API
+      ProtocolType: HTTP
+      CorsConfiguration:
+        AllowOrigins:
+          - '*'
+        AllowMethods:
+          - GET
+          - POST
+          - OPTIONS
+        AllowHeaders:
+          - Content-Type
+        MaxAge: 3600
+
+  BillingTestStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref BillingTestApi
+      StageName: '$default'
+      AutoDeploy: true
+
+  BillingTestIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref BillingTestApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !GetAtt BillingTestFunction.Arn
+      PayloadFormatVersion: '2.0'
+
+  BillingTestGetRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref BillingTestApi
+      RouteKey: 'GET /billing-test'
+      Target: !Sub 'integrations/${BillingTestIntegration}'
+
+  BillingTestPostRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref BillingTestApi
+      RouteKey: 'POST /billing-test'
+      Target: !Sub 'integrations/${BillingTestIntegration}'
+
+  BillingTestBombardRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref BillingTestApi
+      RouteKey: 'POST /billing-test/bombard'
+      Target: !Sub 'integrations/${BillingTestIntegration}'
+
+  BillingTestCatchAllRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref BillingTestApi
+      RouteKey: '$default'
+      Target: !Sub 'integrations/${BillingTestIntegration}'
+
+  BillingTestLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref BillingTestFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${BillingTestApi}/*'
+
+  # Log group already exists from previous attempt - Lambda uses it automatically
+
+Outputs:
+  ApiEndpoint:
+    Description: API Gateway endpoint URL
+    Value: !GetAtt BillingTestApi.ApiEndpoint
+
+  BombardCommand:
+    Description: Run this to generate billing traffic
+    Value: !Sub 'curl -X POST ${BillingTestApi.ApiEndpoint}/billing-test/bombard -d "{\"count\":500}"'
+
+  StatsCommand:
+    Description: Check how many records were written today
+    Value: !Sub 'curl ${BillingTestApi.ApiEndpoint}/billing-test'
+
+  TableName:
+    Description: DynamoDB table name
+    Value: !Ref BillingTestTable
+
+  HowToDelete:
+    Description: Delete everything when done
+    Value: 'aws cloudformation delete-stack --stack-name slashmybill-billing-test-api --region me-central-1'

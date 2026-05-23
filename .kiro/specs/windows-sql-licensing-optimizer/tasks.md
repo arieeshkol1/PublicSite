@@ -1,7 +1,7 @@
 # Tasks: Windows/SQL Server Licensing Optimizer
 
 ## Task 1: Backend — Licensing Scan Endpoint
-- [ ] 1.1 Add route handler for `POST /members/licensing/scan` in `member-handler/lambda_function.py`
+- [x] 1.1 Add route handler for `POST /members/licensing/scan` in `member-handler/lambda_function.py`
 - [ ] 1.2 Implement permission pre-validation (STS AssumeRole + test calls for ec2:DescribeInstances, rds:DescribeDBInstances, cloudwatch:GetMetricStatistics)
 - [ ] 1.3 Implement EC2 Windows instance discovery (filter platform=windows, retrieve instance specs via DescribeInstanceTypes)
 - [ ] 1.4 Implement RDS SQL Server discovery (filter engine starts with sqlserver-, classify Enterprise vs Standard)
@@ -18,8 +18,8 @@
 - [ ] 1.15 Implement timeout guard (return partial results if approaching 110s)
 
 ## Task 2: API Gateway Route
-- [ ] 2.1 Add `POST /members/licensing/scan` to the CI/CD route creation in `.github/workflows/deploy.yml` (MEMBER_ROUTES array)
-- [ ] 2.2 Add route to `infrastructure/viewmybill-stack-me-central-1.yaml` CI/CD routes (UAE deployment)
+- [x] 2.1 Add `POST /members/licensing/scan` to the CI/CD route creation in `.github/workflows/deploy.yml` (MEMBER_ROUTES array)
+- [x] 2.2 Add route to `infrastructure/viewmybill-stack-me-central-1.yaml` CI/CD routes (UAE deployment)
 
 ## Task 3: Frontend — Optimize Licensing Wizard Card
 - [ ] 3.1 Add "Optimize Licensing" card to the Act > Optimize section in `members/members.js` (alongside Resize and Cluster cards)

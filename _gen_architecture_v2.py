@@ -208,6 +208,7 @@ def build():
         ("ddb_accounts", "MemberPortal\n-Accounts",           520, 900, 100, 50),
         ("ddb_feedback", "MemberPortal\n-AgentFeedback",      640, 900, 110, 50),
         ("ddb_metrics",  "MemberPortal\n-BusinessMetrics",    770, 900, 110, 50),
+        ("ddb_spot",     "SpotSavings\nLedger\n(Gainshare)",  900, 900, 100, 50),
     ]
     for name, label, x, y, w, h in tables:
         add_node(name, label, x, y, w, h,
@@ -247,6 +248,27 @@ def build():
     add_node("pipeline", "Package → Deploy Stack\n→ Update Lambdas\n→ Deploy Frontend\n→ Invalidate Cache",
              1060, 720, 240, 60,
              _rect_style("#555555"))
+
+    # ── Spot Management zone ────────────────────────────────────────────────
+    add_node("sns_spot", "SNS Topic\nSlashMyBill\n-SpotInterruptions",
+             700, 550, 78, 60,
+             _aws_style(CLR_APP, "resourceIcon;resIcon=mxgraph.aws4.sns"))
+
+    add_node("cust_eb", "EventBridge Rule\nSpot Interruption\nMonitor",
+             1200, 440, 78, 60,
+             _aws_style(CLR_APP, "resourceIcon;resIcon=mxgraph.aws4.eventbridge"))
+
+    add_node("cust_asg", "Auto Scaling\nGroups\n(Spot Migration)",
+             1270, 280, 60, 50,
+             _aws_style(CLR_COMPUTE, "resourceIcon;resIcon=mxgraph.aws4.auto_scaling2"))
+
+    add_node("sched_exec", "Scheduler\nExecutor Lambda\n(Stop/Start)",
+             lx + 480, ly + 90, 130, 55,
+             _aws_style(CLR_COMPUTE, "resourceIcon;resIcon=mxgraph.aws4.lambda_function"))
+
+    add_node("eb_sched", "EventBridge\nScheduler\n(Cron jobs)",
+             lx + 480, ly, 130, 55,
+             _aws_style(CLR_APP, "resourceIcon;resIcon=mxgraph.aws4.eventbridge"))
 
     # ── Edges ───────────────────────────────────────────────────────────────
     edge_style_base = (
@@ -320,6 +342,17 @@ def build():
     add_edge("github", "s3_site",  "Deploy frontend",   es_green)
     add_edge("github", "lam_bill", "Update Lambdas",    es_orange)
     add_edge("github", "cf_smb",   "Invalidate cache",  es_blue)
+
+    # Spot Management
+    add_edge("lam_member", "sns_spot",   "Interruption emails", es_purple)
+    add_edge("cust_eb",    "sns_spot",   "Push interruption events", es_red)
+    add_edge("lam_member", "ddb_spot",   "Savings ledger",     es_gray)
+    add_edge("sts",        "cust_asg",   "Migrate to Spot",    es_orange)
+    add_edge("sts",        "cust_eb",    "Deploy rule",        es_red)
+
+    # Scheduler
+    add_edge("eb_sched",   "sched_exec", "Trigger",            es_orange)
+    add_edge("sched_exec", "sts",        "Cross-account",      es_red)
 
     return root
 

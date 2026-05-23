@@ -86,7 +86,7 @@ run2.font.color.rgb = RGBColor(99, 102, 241)
 
 meta = doc.add_paragraph()
 meta.alignment = WD_ALIGN_PARAGRAPH.CENTER
-meta.add_run(f'Version 12  |  {datetime.date.today().strftime("%B %Y")}  |  AWS FinOps Platform').font.size = Pt(10)
+meta.add_run(f'Version 13  |  {datetime.date.today().strftime("%B %Y")}  |  AWS FinOps Platform').font.size = Pt(10)
 
 doc.add_paragraph()
 
@@ -133,7 +133,7 @@ doc.add_paragraph(
     '             scan engine, agent actions, bill analysis, scheduling, admin, and OTP\n\n'
     '  AI:        Amazon Bedrock Nova Lite model for chat analysis\n'
     '             Bedrock Agent (IDG5VJGUOZ5W) with 12 action tools for autonomous queries\n\n'
-    '  Storage:   DynamoDB (8 tables, single-table design for member data)\n'
+    '  Storage:   DynamoDB (9 tables, single-table design for member data)\n'
     '             S3 for static assets and bill uploads\n\n'
     '  Auth:      Cognito User Pool for member authentication (JWT tokens)\n\n'
     '  Scheduler: Amazon EventBridge Scheduler for automated stop/start actions'
@@ -151,7 +151,7 @@ add_table(doc,
         ['Scheduler Executor', 'Python 3.12 Lambda (512 MB, 300s)', 'EventBridge-triggered cross-account stop/start/scale'],
         ['AI Engine', 'Amazon Bedrock Nova Lite v1', 'Natural language analysis + recommendations'],
         ['Bedrock Agent', 'Agent IDG5VJGUOZ5W (12 tools)', 'Autonomous multi-step data retrieval + analysis'],
-        ['Storage', 'DynamoDB (8 tables) + S3', 'Members, accounts, tips, OTP, feedback, metrics, scans'],
+        ['Storage', 'DynamoDB (9 tables) + S3', 'Members, accounts, tips, OTP, feedback, metrics, scans, invoices'],
         ['CDN', 'CloudFront + Route 53', 'HTTPS delivery, DNS, caching'],
         ['CI/CD', 'GitHub Actions + OIDC', 'Automated deployment on push to main'],
     ],
@@ -635,6 +635,91 @@ doc.add_paragraph(
 )
 
 
+# ── 3.7 Invoice Explorer Flow ────────────────────────────────────────────────
+
+add_heading(doc, '3.7 Invoice Explorer Flow', 2)
+doc.add_paragraph(
+    'The Invoice Explorer provides a structured, tabular interface for browsing AWS invoices '
+    'across all connected accounts. It uses a cache-first architecture with DynamoDB to avoid '
+    'repeated cross-account API calls and supports filtering, sorting, pagination, and CSV export.'
+)
+
+add_heading(doc, '3.7.1 Data Sync and Caching', 3)
+doc.add_paragraph(
+    'Step 1 — Cache Check\n'
+    '  When a member opens the Invoices tab and selects an account, the system queries\n'
+    '  the MemberPortal-Invoices DynamoDB table for cached invoice records.\n'
+    '  Key structure: pk = {memberEmail}#{accountId}, sk = {YYYY-MM}#{serviceName}\n\n'
+    'Step 2 — Cache Miss: Cross-Account Sync\n'
+    '  If no cached data exists for the requested month, the Invoice Sync Service:\n'
+    '    a. Assumes the cross-account role (SlashMyBill-{AccountID})\n'
+    '    b. Calls Cost Explorer GetCostAndUsage with SERVICE granularity\n'
+    '    c. Calls GetCostAndUsage with DAILY granularity for daily breakdown\n'
+    '    d. Calls GetCostAndUsage grouped by SERVICE + USAGE_TYPE for usage details\n'
+    '    e. Normalizes responses into flat DynamoDB records\n'
+    '    f. Writes records with BatchWriteItem (TTL = 90 days)\n\n'
+    'Step 3 — Cache Hit: Direct Return\n'
+    '  Cached records are returned directly from DynamoDB without any cross-account calls.\n'
+    '  This provides single-digit millisecond latency for repeat queries.\n\n'
+    'Step 4 — Manual Refresh\n'
+    '  Members can force a data refresh (rate-limited to 1 per account per 5 minutes).\n'
+    '  The refresh deletes old records for the specified months and re-syncs from Cost Explorer.'
+)
+
+add_heading(doc, '3.7.2 API Endpoints', 3)
+add_table(doc,
+    ['Endpoint', 'Method', 'Purpose'],
+    [
+        ['/members/invoices', 'GET', 'List invoices with filters, sorting, and pagination'],
+        ['/members/invoices/summary', 'GET', 'Spending totals, month-over-month change, top services'],
+        ['/members/invoices/services', 'GET', 'Distinct service names for filter dropdown'],
+        ['/members/invoices/refresh', 'POST', 'Force re-sync from Cost Explorer (rate-limited)'],
+    ],
+    [2.5, 1.0, 4.5]
+)
+
+add_heading(doc, '3.7.3 Server-Side Processing', 3)
+doc.add_paragraph(
+    'Filtering:\n'
+    '  \u2022 Service: case-insensitive exact match\n'
+    '  \u2022 Month: exact match on YYYY-MM\n'
+    '  \u2022 Cost range: inclusive min/max with 2 decimal precision\n'
+    '  \u2022 Search: case-insensitive substring on service name or usage type\n'
+    '  \u2022 All filters combined with AND logic\n\n'
+    'Sorting:\n'
+    '  \u2022 By cost (numeric), service (alphabetical), or date (chronological)\n'
+    '  \u2022 Secondary sort by cost descending for equal values\n'
+    '  \u2022 Default: cost descending\n\n'
+    'Pagination:\n'
+    '  \u2022 Server-side with configurable page size (1-200, default 50)\n'
+    '  \u2022 Returns metadata: page, pageSize, totalItems, totalPages\n\n'
+    'Summary:\n'
+    '  \u2022 Total cost for current month (sum of all items)\n'
+    '  \u2022 Month-over-month percentage change\n'
+    '  \u2022 Top 5 services by spend with percentage of total'
+)
+
+add_heading(doc, '3.7.4 DynamoDB Table: MemberPortal-Invoices', 3)
+add_table(doc,
+    ['Attribute', 'Type', 'Key', 'Description'],
+    [
+        ['pk', 'String', 'Partition Key', '{memberEmail}#{accountId}'],
+        ['sk', 'String', 'Sort Key', '{YYYY-MM}#{serviceName}'],
+        ['month', 'String', 'GSI Sort Key', 'Billing month (YYYY-MM)'],
+        ['service', 'String', '\u2014', 'AWS service name'],
+        ['cost', 'Number', '\u2014', 'Total cost in USD (2 decimal places)'],
+        ['dailyCosts', 'Map', '\u2014', 'Daily breakdown {day: cost}'],
+        ['usageTypes', 'List', '\u2014', 'Usage type details [{type, cost, unit, quantity}]'],
+        ['ttl', 'Number', '\u2014', 'TTL epoch (90 days from sync)'],
+        ['lastSyncedAt', 'String', '\u2014', 'ISO 8601 timestamp of last refresh'],
+    ],
+    [1.5, 1.0, 1.5, 4.0]
+)
+
+note_box(doc, 'Invoice data is automatically cleaned up after 90 days via DynamoDB TTL. '
+    'Rate limiting uses a special record (pk=REFRESH#{accountId}, sk=RATE_LIMIT) with a short TTL.')
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # 4. Security Model
 # ══════════════════════════════════════════════════════════════════════════════
@@ -830,5 +915,5 @@ note_box(doc, 'Tips are seeded on every deployment. New tips or schema changes a
 
 # ── Save Document ─────────────────────────────────────────────────────────────
 
-doc.save('SlashMyBill-HLD-v12.docx')
-print('HLD saved: SlashMyBill-HLD-v12.docx')
+doc.save('SlashMyBill-HLD-v13.docx')
+print('HLD saved: SlashMyBill-HLD-v13.docx')

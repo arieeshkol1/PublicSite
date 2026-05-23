@@ -1,4 +1,4 @@
-"""
+﻿"""
 Member Handler Lambda v2 - Registration, login, account management, Console, AI Agent.
 Includes Invoice Explorer (invoice_sync.py, invoice_validation.py).
 Routes: POST /members/register, POST /members/login, GET /members/accounts,
@@ -79,12 +79,12 @@ def _decimal_to_native(obj):
 # ============================================================
 
 def lambda_handler(event, context):
-    """Main entry point — dispatches to handler based on routeKey."""
-    # ── Async scan execution (bypasses API Gateway routing) ──
+    """Main entry point â€” dispatches to handler based on routeKey."""
+    # â”€â”€ Async scan execution (bypasses API Gateway routing) â”€â”€
     if event.get('_asyncScan'):
         return _execute_async_scan(event)
 
-    # ── SNS event detection (Spot interruption push pipeline) ──
+    # â”€â”€ SNS event detection (Spot interruption push pipeline) â”€â”€
     records = event.get('Records', [])
     if records and records[0].get('EventSource') == 'aws:sns':
         topic_arn = records[0].get('Sns', {}).get('TopicArn', '')
@@ -173,8 +173,6 @@ def lambda_handler(event, context):
         'GET /members/invoices/list': handle_invoice_list,
         'GET /members/invoices/services-breakdown': handle_service_breakdown,
         'GET /members/invoices/resources': handle_resource_breakdown,
-        'POST /members/license-conversion/analyze': handle_license_conversion_analyze,
-        'POST /members/license-conversion/plan': handle_license_conversion_plan,
         'POST /members/sql/compare': handle_sql_platform_compare,
         'POST /members/sql/migration-plan': handle_sql_migration_plan,
     }
@@ -208,7 +206,7 @@ def validate_token(event):
 
     token = auth_header[7:]
 
-    # ── Cognito path (new) ────────────────────────────────────────────────
+    # â”€â”€ Cognito path (new) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     if COGNITO_USER_POOL_ID:
         try:
             user_resp = cognito_client.get_user(AccessToken=token)
@@ -222,7 +220,7 @@ def validate_token(event):
             )
             return {'sub': email, 'role': 'member', 'displayName': display_name, 'username': user_resp.get('Username', '')}
         except cognito_client.exceptions.NotAuthorizedException:
-            # Could be a legacy JWT token — try fallback
+            # Could be a legacy JWT token â€” try fallback
             pass
         except cognito_client.exceptions.UserNotFoundException:
             return create_error_response(401, 'AuthError', 'Authentication required')
@@ -230,7 +228,7 @@ def validate_token(event):
             logger.warning(f"Cognito token validation error: {e}")
             # Fall through to legacy JWT validation
 
-    # ── Legacy JWT path (fallback / migration period) ─────────────────────
+    # â”€â”€ Legacy JWT path (fallback / migration period) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     if JWT_SECRET:
         try:
             decoded = jwt.decode(token, JWT_SECRET, algorithms=['HS256'])
@@ -288,7 +286,7 @@ def handle_register(event):
             return create_error_response(400, "InvalidEmail", "Please provide a valid email address")
         password = body.get("password") or ""
         if not password:
-            # Temporary password for sign-up initiation — will be set properly in create-account
+            # Temporary password for sign-up initiation â€” will be set properly in create-account
             # For the 3-step flow, we use AdminCreateUser with SUPPRESS message first
             # then send verification code
             try:
@@ -298,7 +296,7 @@ def handle_register(event):
                     return create_error_response(409, "ConflictError", "An account with this email already exists")
                 except cognito_client.exceptions.UserNotFoundException:
                     pass
-                # Initiate sign-up with a placeholder — we will use AdminCreateUser flow
+                # Initiate sign-up with a placeholder â€” we will use AdminCreateUser flow
                 # Send OTP via Cognito ResendConfirmationCode after AdminCreateUser
                 return create_response(200, {"message": "OTP sent successfully", "email": email})
             except ClientError as e:
@@ -315,7 +313,7 @@ def handle_register(event):
                 pass
 
             if pre_verified:
-                # Email already verified via OTP on bill upload — skip Cognito verification
+                # Email already verified via OTP on bill upload â€” skip Cognito verification
                 cognito_client.admin_create_user(
                     UserPoolId=COGNITO_USER_POOL_ID,
                     Username=email,
@@ -385,7 +383,7 @@ def handle_register(event):
             return create_error_response(500, "ServerError", "An unexpected error occurred.")
 
     elif action == "create-account":
-        # Step 3: Account already created in step 1 — just create the profile record
+        # Step 3: Account already created in step 1 â€” just create the profile record
         otp_token = (body.get("otpToken") or "").strip()
         if not otp_token:
             return create_error_response(400, "InvalidToken", "Email verification token is invalid or expired")
@@ -445,7 +443,7 @@ def handle_login(event):
     if not email or not password:
         return create_error_response(400, "InvalidRequest", "Email and password are required")
 
-    # ── Cognito login (new) ──────────────────────────────────────────────────
+    # â”€â”€ Cognito login (new) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     if COGNITO_CLIENT_ID:
         try:
             auth_resp = cognito_client.initiate_auth(
@@ -492,7 +490,7 @@ def handle_login(event):
             logger.error(f"Cognito login error: {e}")
             return create_error_response(500, "ServerError", "An unexpected error occurred.")
 
-    # ── Legacy DynamoDB login (fallback during migration) ─────────────────
+    # â”€â”€ Legacy DynamoDB login (fallback during migration) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     members_table = dynamodb.Table(MEMBERS_TABLE_NAME)
     try:
         result = members_table.get_item(Key={"email": email})
@@ -784,7 +782,7 @@ def handle_add_account(event):
                 )
     except ClientError as e:
         logger.error(f"Tier limit check error: {e}")
-        # Non-blocking — allow the add if check fails
+        # Non-blocking â€” allow the add if check fails
 
     now_iso = datetime.now(timezone.utc).isoformat()
     role_name = f'SlashMyBill-{account_id}'
@@ -1008,7 +1006,7 @@ def handle_delete_account(event):
         if code == 'ValidationError' and 'does not exist' in msg:
             logger.info(f"Stack {stack_name} not found in account {account_id}, continuing with account delete")
         elif 'not authorized' in msg.lower() or code == 'AccessDenied':
-            # Old role template — missing cloudformation:DeleteStack permission.
+            # Old role template â€” missing cloudformation:DeleteStack permission.
             # Don't block the disconnect; warn the user to clean up manually.
             stack_delete_warning = (
                 f'The connection has been removed from SlashMyBill. '
@@ -1279,7 +1277,7 @@ def handle_generate_template(event):
                                     {
                                         'Effect': 'Allow',
                                         'Action': [
-                                            # Cost Explorer — core FinOps data
+                                            # Cost Explorer â€” core FinOps data
                                             'ce:GetCostAndUsage',
                                             'ce:GetCostForecast',
                                             'ce:GetReservationUtilization',
@@ -1367,7 +1365,7 @@ def handle_generate_template(event):
                                             'tag:GetTagValues',
                                             'tag:TagResources',
                                             'tag:UntagResources',
-                                            # Per-service tagging — covers all AWS services
+                                            # Per-service tagging â€” covers all AWS services
                                             'ec2:CreateTags',
                                             'ec2:DeleteTags',
                                             'rds:AddTagsToResource',
@@ -1505,7 +1503,7 @@ def handle_generate_template(event):
             stack_exists = True
             stack_status = stacks['Stacks'][0].get('StackStatus', '')
     except ClientError as e:
-        # Stack doesn't exist or role not yet deployed — that's fine
+        # Stack doesn't exist or role not yet deployed â€” that's fine
         pass
     except Exception as e:
         logger.warning(f"Stack existence check failed: {e}")
@@ -1539,7 +1537,7 @@ def handle_generate_template(event):
         'stackStatus': stack_status,
         'instructions': (
             f'If you see "role already exists" when deploying, the stack needs to be UPDATED not created. '
-            f'Go to CloudFormation → Stacks → {stack_name} → Update, and use the template URL above.'
+            f'Go to CloudFormation â†’ Stacks â†’ {stack_name} â†’ Update, and use the template URL above.'
         ),
     })
 
@@ -1659,9 +1657,9 @@ def handle_test_connection(event):
     logger.info(f"Connection test successful for account {account_id}, member {member_email}, hourly={hourly_enabled}")
     msg = 'Connection verified. Cost data is accessible.'
     if hourly_enabled:
-        msg += ' Hourly granularity is enabled ✓'
+        msg += ' Hourly granularity is enabled âœ“'
     else:
-        msg += ' Hourly granularity is NOT enabled — enable it in Cost Explorer Settings for real-time tracking.'
+        msg += ' Hourly granularity is NOT enabled â€” enable it in Cost Explorer Settings for real-time tracking.'
     return create_response(200, {'status': 'connected', 'hourlyEnabled': hourly_enabled, 'message': msg})
 
 
@@ -1673,7 +1671,7 @@ def handle_test_connection(event):
 
 def _estimate_instance_hourly_cost(instance_type, region='us-east-1', platform='Linux'):
     """Estimate EC2 on-demand hourly cost based on instance type and platform."""
-    # Pricing approximations (Linux on-demand, USD/hr) — covers most common types
+    # Pricing approximations (Linux on-demand, USD/hr) â€” covers most common types
     _pricing = {
         't2.nano': 0.0058, 't2.micro': 0.0116, 't2.small': 0.023, 't2.medium': 0.0464,
         't2.large': 0.0928, 't2.xlarge': 0.1856, 't2.2xlarge': 0.3712,
@@ -1764,7 +1762,7 @@ def _apply_filter_to_ce_call(base_params, tag_key, tag_value):
 
 def _apply_tag_groupby_to_ce_call(base_params, tag_key):
     """Alternative approach: group by tag to see cost distribution per tag value.
-    Use this when Tags filter returns empty — it can reveal if the tag has any cost data.
+    Use this when Tags filter returns empty â€” it can reveal if the tag has any cost data.
     """
     if not tag_key:
         return base_params
@@ -1821,7 +1819,7 @@ def handle_get_tag_keys(event):
                 ExternalId=external_id
             )['Credentials']
 
-            # Use Cost Explorer GetTags — only returns activated cost allocation tags
+            # Use Cost Explorer GetTags â€” only returns activated cost allocation tags
             ce = boto3.client('ce',
                 aws_access_key_id=creds['AccessKeyId'],
                 aws_secret_access_key=creds['SecretAccessKey'],
@@ -1951,7 +1949,7 @@ def handle_dashboard_data(event):
         return auth
     member_email = auth['sub']
 
-    # Get accountIds from query string (optional — if not provided, use all connected)
+    # Get accountIds from query string (optional â€” if not provided, use all connected)
     qs = event.get('queryStringParameters') or {}
     requested_ids = (qs.get('accountIds') or '').split(',')
     requested_ids = [a.strip() for a in requested_ids if a.strip()]
@@ -2045,7 +2043,7 @@ def handle_dashboard_data(event):
                     if not tag_activation_status:
                         tag_activation_status = 'check_failed'
 
-            # Gather data WITHOUT tag filter — ensures waste, rightsizing, EBS, etc. are always populated
+            # Gather data WITHOUT tag filter â€” ensures waste, rightsizing, EBS, etc. are always populated
             acct_data, _ = _gather_account_data('how efficient is my account? rightsizing savings compare last 3 months', creds)
 
             acct_total = sum(s['cost_usd'] for s in acct_data.get('cost_by_service', []))
@@ -2235,7 +2233,7 @@ def handle_dashboard_data(event):
                 merged_daily[d['date']] = merged_daily.get(d['date'], 0) + d['cost_usd']
 
             # Fetch 30-day daily trend for dashboard (the standard gather only does 7 days)
-            # Note: daily trend is NOT filtered by tag here — the per-instance fallback
+            # Note: daily trend is NOT filtered by tag here â€” the per-instance fallback
             # already provides filtered daily data in acct_data['daily_cost_trend']
             try:
                 ce_30d = boto3.client('ce',
@@ -2255,7 +2253,7 @@ def handle_dashboard_data(event):
             except Exception:
                 pass  # Fall back to 7-day data from _gather_account_data
 
-            # Fetch cost by region (last 30 days) — ALWAYS unfiltered (not affected by tag filter)
+            # Fetch cost by region (last 30 days) â€” ALWAYS unfiltered (not affected by tag filter)
             try:
                 _region_params = {'TimePeriod': {'Start': start_30d, 'End': end_date}, 'Granularity': 'MONTHLY', 'Metrics': ['UnblendedCost'], 'GroupBy': [{'Type': 'DIMENSION', 'Key': 'REGION'}]}
                 region_resp = ce_30d.get_cost_and_usage(**_region_params)
@@ -2512,7 +2510,7 @@ def handle_dashboard_data(event):
         'tagFilterWarning': (
             'Tag "' + tag_key + '" was just activated for cost allocation on this account. AWS needs up to 24 hours to start tracking costs by this tag.'
             if (tag_key and tag_value and tag_activation_status == 'just_activated')
-            else 'No resources found with tag ' + tag_key + '=' + tag_value + '. Please verify the tag was applied to resources in Plan → Tag Resources.'
+            else 'No resources found with tag ' + tag_key + '=' + tag_value + '. Please verify the tag was applied to resources in Plan â†’ Tag Resources.'
             if (tag_key and tag_value and tag_filter_empty)
             else None
         ),
@@ -2797,11 +2795,11 @@ def _calculate_p10_baseline(ce_client, account_id):
     #   because committing at P10 would be too aggressive
     if average > 0:
         if p10 < average * 0.70:
-            # Variable usage — P10 is the safe floor
+            # Variable usage â€” P10 is the safe floor
             range_min = p10
             range_max = min(p10 * 1.1, average * 0.70)
         else:
-            # Stable usage — P10 is close to average, use 60-70% of average
+            # Stable usage â€” P10 is close to average, use 60-70% of average
             range_min = average * 0.60
             range_max = average * 0.70
     else:
@@ -3323,7 +3321,7 @@ def _generate_laddering_strategy(total_hourly_commitment, average_hourly_spend, 
             f"Your commitment of ${total_hourly_commitment:.2f}/hr exceeds 70% of your "
             f"average hourly spend (${average_hourly_spend:.2f}/hr). "
             f"We recommend committing to 60-70% of your average "
-            f"(${average_hourly_spend * 0.60:.2f}–${average_hourly_spend * 0.70:.2f}/hr) "
+            f"(${average_hourly_spend * 0.60:.2f}â€“${average_hourly_spend * 0.70:.2f}/hr) "
             f"to avoid over-commitment during usage dips."
         )
 
@@ -3378,7 +3376,7 @@ def _generate_laddering_strategy(total_hourly_commitment, average_hourly_spend, 
         cumulative_commitment = round(cumulative_commitment + this_tranche, 2)
 
         # Estimated monthly savings: hourly commitment * hours/month * savings rate
-        # hours/month ≈ 730 (365.25 * 24 / 12)
+        # hours/month â‰ˆ 730 (365.25 * 24 / 12)
         tranche_monthly_savings = round(this_tranche * 730 * config['savingsRate'], 2)
         cumulative_monthly_savings = round(cumulative_monthly_savings + tranche_monthly_savings, 2)
 
@@ -3954,7 +3952,7 @@ def handle_committed_discount_scan(event):
     """
     scan_start = time.time()
 
-    # ── Auth & validation ──
+    # â”€â”€ Auth & validation â”€â”€
     auth = validate_token(event)
     if isinstance(auth, dict) and 'statusCode' in auth:
         return auth
@@ -3974,27 +3972,27 @@ def handle_committed_discount_scan(event):
     if ownership is not True:
         return ownership
 
-    # ── Assume cross-account role ──
+    # â”€â”€ Assume cross-account role â”€â”€
     try:
         creds = _assume_role_for_account(member_email, account_id)
     except ClientError as e:
         code = e.response['Error']['Code']
         if code in ('AccessDeniedException', 'AccessDenied'):
             return create_error_response(403, 'AccessDenied',
-                                         'Cannot access account — please re-deploy the CloudFormation template')
+                                         'Cannot access account â€” please re-deploy the CloudFormation template')
         return create_error_response(403, 'ConnectionFailed',
-                                     'Cross-account role not found — please deploy the CloudFormation template')
+                                     'Cross-account role not found â€” please deploy the CloudFormation template')
     except Exception:
         return create_error_response(403, 'ConnectionFailed',
-                                     'Cross-account role not found — please deploy the CloudFormation template')
+                                     'Cross-account role not found â€” please deploy the CloudFormation template')
 
-    # ── Create service clients ──
+    # â”€â”€ Create service clients â”€â”€
     ce_client = _make_client_from_creds('ce', creds)
     savingsplans_client = _make_client_from_creds('savingsplans', creds)
     ec2_client = _make_client_from_creds('ec2', creds)
     rds_client = _make_client_from_creds('rds', creds)
 
-    # ── Permission pre-check: lightweight 1-day coverage call ──
+    # â”€â”€ Permission pre-check: lightweight 1-day coverage call â”€â”€
     try:
         now = datetime.now(timezone.utc)
         yesterday = now - timedelta(days=1)
@@ -4022,10 +4020,10 @@ def handle_committed_discount_scan(event):
                                          'The cross-account role lacks required Cost Explorer permissions. '
                                          'Please update the CloudFormation template.',
                                          extra={'requiredActions': required_actions})
-        # Other errors (throttling, etc.) — let the scan proceed and handle per-module
+        # Other errors (throttling, etc.) â€” let the scan proceed and handle per-module
         logger.warning(f"Permission pre-check non-fatal error: {e}")
 
-    # ── Parallel data retrieval ──
+    # â”€â”€ Parallel data retrieval â”€â”€
     results = {}
     errors = {}
 
@@ -4045,7 +4043,7 @@ def handle_committed_discount_scan(event):
         return _get_expiring_commitments(ce_client, savingsplans_client, ec2_client, rds_client)
 
     # Phase 1: coverage/utilization and P10 baseline (needed for SP recommendations)
-    timeout_budget = 25  # seconds — leave 5s buffer before Lambda timeout
+    timeout_budget = 25  # seconds â€” leave 5s buffer before Lambda timeout
     remaining = timeout_budget - (time.time() - scan_start)
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
@@ -4127,11 +4125,11 @@ def handle_committed_discount_scan(event):
             errors['expiringCommitments'] = f'Failed to retrieve expiring commitments: {str(e)}'
             results['expiring_commitments'] = None
 
-    # ── Check timeout before additional processing ──
+    # â”€â”€ Check timeout before additional processing â”€â”€
     elapsed = time.time() - scan_start
     incomplete = elapsed >= timeout_budget
 
-    # ── Cross-reference rightsizing recommendations ──
+    # â”€â”€ Cross-reference rightsizing recommendations â”€â”€
     rightsize_warning = {'hasRightsizingPending': False, 'flaggedInstances': []}
     if not incomplete:
         try:
@@ -4172,7 +4170,7 @@ def handle_committed_discount_scan(event):
         except Exception as e:
             logger.warning(f"Rightsizing cross-reference failed (non-fatal): {e}")
 
-    # ── Generate default laddering strategy ──
+    # â”€â”€ Generate default laddering strategy â”€â”€
     laddering_strategy = None
     if not incomplete and results.get('baseline') and avg_hourly_spend > 0:
         try:
@@ -4192,7 +4190,7 @@ def handle_committed_discount_scan(event):
             logger.warning(f"Laddering strategy generation failed (non-fatal): {e}")
             errors['ladderingStrategy'] = f'Failed to generate laddering strategy: {str(e)}'
 
-    # ── Detect organization sharing context ──
+    # â”€â”€ Detect organization sharing context â”€â”€
     organization_sharing = {
         'isManagementAccount': False,
         'multipleAccountsConnected': False,
@@ -4225,7 +4223,7 @@ def handle_committed_discount_scan(event):
                 'Consider purchasing from the management (payer) account for maximum flexibility.'
             )
 
-    # ── Assemble response ──
+    # â”€â”€ Assemble response â”€â”€
     # Coverage and utilization
     coverage_data = results.get('coverage_utilization') or {}
     coverage = coverage_data.get('coverage', {
@@ -4245,7 +4243,7 @@ def handle_committed_discount_scan(event):
     ri_recs_data = results.get('ri_recommendations') or {}
     ri_recommendations = ri_recs_data.get('recommendations', [])
 
-    # ── Database SP threshold check ──
+    # â”€â”€ Database SP threshold check â”€â”€
     # Include Database SP recommendations only if RDS + ElastiCache monthly spend > $50
     database_sp_eligible = False
     database_sp_recommendations = []
@@ -4316,7 +4314,7 @@ def handle_committed_discount_ladder(event):
     and generates a laddering strategy. Returns an aggressive warning if the commitment
     exceeds 70% of average hourly spend.
     """
-    # ── Auth & validation ──
+    # â”€â”€ Auth & validation â”€â”€
     auth = validate_token(event)
     if isinstance(auth, dict) and 'statusCode' in auth:
         return auth
@@ -4353,21 +4351,21 @@ def handle_committed_discount_ladder(event):
     if ownership is not True:
         return ownership
 
-    # ── Assume cross-account role ──
+    # â”€â”€ Assume cross-account role â”€â”€
     try:
         creds = _assume_role_for_account(member_email, account_id)
     except ClientError as e:
         code = e.response['Error']['Code']
         if code in ('AccessDeniedException', 'AccessDenied'):
             return create_error_response(403, 'AccessDenied',
-                                         'Cannot access account — please re-deploy the CloudFormation template')
+                                         'Cannot access account â€” please re-deploy the CloudFormation template')
         return create_error_response(403, 'ConnectionFailed',
-                                     'Cross-account role not found — please deploy the CloudFormation template')
+                                     'Cross-account role not found â€” please deploy the CloudFormation template')
     except Exception:
         return create_error_response(403, 'ConnectionFailed',
-                                     'Cross-account role not found — please deploy the CloudFormation template')
+                                     'Cross-account role not found â€” please deploy the CloudFormation template')
 
-    # ── Retrieve average hourly spend via P10 baseline ──
+    # â”€â”€ Retrieve average hourly spend via P10 baseline â”€â”€
     ce_client = _make_client_from_creds('ce', creds)
     try:
         baseline = _calculate_p10_baseline(ce_client, account_id)
@@ -4382,7 +4380,7 @@ def handle_committed_discount_ladder(event):
                                      'No spend data available for this account. '
                                      'Ensure the account has at least 7 days of usage history.')
 
-    # ── Generate laddering strategy ──
+    # â”€â”€ Generate laddering strategy â”€â”€
     current_date = datetime.now(timezone.utc).date()
     strategy = _generate_laddering_strategy(total_hourly_commitment, average_hourly_spend, current_date)
 
@@ -4458,7 +4456,7 @@ def _get_cost_by_tag(accounts, external_id):
     if not tag_distribution and not all_tag_keys:
         return {}
 
-    # Build response — prioritize required tags
+    # Build response â€” prioritize required tags
     result = {}
     priority_keys = [k for k in required_tags if k in tag_distribution]
     other_keys = [k for k in tag_distribution if k not in required_tags]
@@ -4754,7 +4752,7 @@ def handle_save_business_metrics(event):
 
 
 # ============================================================
-# Act Tab — Level 1 Resource Hygiene Scan & Execute
+# Act Tab â€” Level 1 Resource Hygiene Scan & Execute
 # ============================================================
 
 def _assume_role_for_account(member_email, account_id):
@@ -4825,14 +4823,14 @@ def _detect_charged_regions(creds_or_client):
                     prefix = ut.split('-')[0] if '-' in ut else ''
                     if prefix in PREFIX_TO_REGION:
                         regions[PREFIX_TO_REGION[prefix]] = regions.get(PREFIX_TO_REGION[prefix], 0) + 1
-        # Sort by cost descending — highest-cost region first
+        # Sort by cost descending â€” highest-cost region first
         sorted_regions = sorted(regions.keys(), key=lambda r: regions[r], reverse=True)
         return sorted_regions if sorted_regions else ['us-east-1']
     except Exception:
         return ['us-east-1']
 
 def handle_actions_scan(event):
-    """Async waste scan kickoff — returns scanId immediately, invokes Lambda asynchronously."""
+    """Async waste scan kickoff â€” returns scanId immediately, invokes Lambda asynchronously."""
     auth = validate_token(event)
     if isinstance(auth, dict) and 'statusCode' in auth:
         return auth
@@ -4943,7 +4941,7 @@ def _execute_async_scan(event):
     members_table = dynamodb.Table(MEMBERS_TABLE_NAME)
 
     try:
-        # ── Step 1: Load tips from DynamoDB (ground truth) ────────────────────
+        # â”€â”€ Step 1: Load tips from DynamoDB (ground truth) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         tips = _load_tips_from_db()
 
         all_cards = []
@@ -4959,13 +4957,13 @@ def _execute_async_scan(event):
 
             acct_label = f'Account {account_id[-4:]}'
 
-            # ── Step 2: Collect service data ──────────────────────────────────
+            # â”€â”€ Step 2: Collect service data â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             svc_data = _collect_service_data(account_id, creds)
 
-            # ── Step 3: Determine active services from CE cost data ───────────
+            # â”€â”€ Step 3: Determine active services from CE cost data â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             active_services = _get_active_services(svc_data.get('cost_by_service', []))
 
-            # ── Step 4: Evaluate each tip against collected data ──────────────
+            # â”€â”€ Step 4: Evaluate each tip against collected data â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             for tip in tips:
                 svc_key = tip.get('serviceKey', tip.get('service', 'General'))
                 # Gate: only evaluate if service is present (General always runs)
@@ -5006,7 +5004,7 @@ def _execute_async_scan(event):
                         'service': tip.get('service', ''),
                         'status': 'pending',
                         'accountId': account_id,
-                        'note': 'Check not yet implemented — will be added in a future update',
+                        'note': 'Check not yet implemented â€” will be added in a future update',
                     })
 
         # Deduplicate cards
@@ -5151,7 +5149,7 @@ def _collect_service_data(account_id, creds):
         ec2 = _make_client_from_creds('ec2', creds)
         cw = _make_client_from_creds('cloudwatch', creds)
 
-        # CE: cost by service (last 30 days) — determines active services
+        # CE: cost by service (last 30 days) â€” determines active services
         try:
             ce = _make_client_from_creds('ce', creds)
             end_date = now_dt.strftime('%Y-%m-%d')
@@ -5339,7 +5337,7 @@ def _collect_service_data(account_id, creds):
 
 
 # ============================================================
-# Scan Check Registry — maps tip.id → check function
+# Scan Check Registry â€” maps tip.id â†’ check function
 # Each function returns a finding dict or None (no issue found)
 # finding dict: {status, savingsUsd, cardData (optional), evidence}
 # ============================================================
@@ -5355,7 +5353,7 @@ def _check_ebs_unattached(tip, data, account_id, acct_label, creds):
         'evidence': f'{len(vols)} unattached volumes, {total_gb} GB',
         'cardData': {
             'cardId': f'ebs-{account_id}', 'type': 'ebs-volume',
-            'title': 'Unattached EBS Volumes', 'icon': '💾',
+            'title': 'Unattached EBS Volumes', 'icon': 'ðŸ’¾',
             'count': len(vols), 'risk': 'low',
             'description': f'{len(vols)} volume(s) totalling {total_gb} GB not attached to any instance',
             'monthlySavings': round(savings, 2),
@@ -5384,9 +5382,9 @@ def _check_ebs_snapshots(tip, data, account_id, acct_label, creds):
         'evidence': f'{len(stale)} snapshots >180d, {total_gb} GB',
         'cardData': {
             'cardId': f'snap-{account_id}', 'type': 'ebs-snapshot',
-            'title': 'Stale EBS Snapshots', 'icon': '📸',
+            'title': 'Stale EBS Snapshots', 'icon': 'ðŸ“¸',
             'count': len(stale), 'risk': 'low',
-            'description': f'{len(stale)} snapshot(s) older than 180 days — {total_gb} GB total',
+            'description': f'{len(stale)} snapshot(s) older than 180 days â€” {total_gb} GB total',
             'monthlySavings': round(savings, 2),
             'resources': stale[:20],
         }
@@ -5403,7 +5401,7 @@ def _check_eip_unattached(tip, data, account_id, acct_label, creds):
         'evidence': f'{len(unattached)} unassociated EIPs',
         'cardData': {
             'cardId': f'eip-{account_id}', 'type': 'elastic-ip',
-            'title': 'Unassociated Elastic IPs', 'icon': '🌐',
+            'title': 'Unassociated Elastic IPs', 'icon': 'ðŸŒ',
             'count': len(unattached), 'risk': 'low',
             'description': f'{len(unattached)} Elastic IP(s) not attached to any instance',
             'monthlySavings': round(savings, 2),
@@ -5433,11 +5431,11 @@ def _check_s3_lifecycle(tip, data, account_id, acct_label, creds):
         'evidence': f'{len(flagged)} S3 buckets flagged',
         'cardData': {
             'cardId': f's3-{account_id}', 'type': 's3-lifecycle',
-            'title': 'S3 Buckets Needing Attention', 'icon': '🪣',
+            'title': 'S3 Buckets Needing Attention', 'icon': 'ðŸª£',
             'count': len(flagged), 'risk': 'low',
-            'description': f'{len(flagged)} bucket(s) flagged — no lifecycle policy or inactive 90+ days',
+            'description': f'{len(flagged)} bucket(s) flagged â€” no lifecycle policy or inactive 90+ days',
             'monthlySavings': None,
-            'resources': [{'name': b['name'], 'created': b['created'], 'sizeGb': 0, 'objectCount': 0, 'estimatedMonthlyCost': 0, 'lastModifiedDays': b.get('lastModifiedDays'), 'reasons': b['reasons'], 'reasonLabel': ' · '.join(b['reasons'])} for b in flagged[:15]],
+            'resources': [{'name': b['name'], 'created': b['created'], 'sizeGb': 0, 'objectCount': 0, 'estimatedMonthlyCost': 0, 'lastModifiedDays': b.get('lastModifiedDays'), 'reasons': b['reasons'], 'reasonLabel': ' Â· '.join(b['reasons'])} for b in flagged[:15]],
         }
     }
 
@@ -5470,7 +5468,7 @@ def _check_elb_idle(tip, data, account_id, acct_label, creds):
         'evidence': f'{len(idle)} idle load balancers',
         'cardData': {
             'cardId': f'lb-{account_id}', 'type': 'load-balancer',
-            'title': 'Idle Load Balancers', 'icon': '⚖️',
+            'title': 'Idle Load Balancers', 'icon': 'âš–ï¸',
             'count': len(idle), 'risk': 'medium',
             'description': f'{len(idle)} load balancer(s) with 0 healthy targets',
             'monthlySavings': round(savings, 2),
@@ -5496,7 +5494,7 @@ def _check_ec2_idle(tip, data, account_id, acct_label, creds):
         'evidence': f'{len(idle)} EC2 instances with avg CPU < 5% over 14 days',
         'cardData': {
             'cardId': f'ec2-idle-{account_id}', 'type': 'ec2-idle',
-            'title': 'Idle EC2 Instances', 'icon': '🖥️',
+            'title': 'Idle EC2 Instances', 'icon': 'ðŸ–¥ï¸',
             'count': len(idle), 'risk': 'high',
             'description': f'{len(idle)} running instance(s) with avg CPU < 5% over 14 days',
             'monthlySavings': round(savings, 2),
@@ -5524,7 +5522,7 @@ def _check_rds_idle(tip, data, account_id, acct_label, creds):
         'evidence': f'{len(idle)} RDS instances with avg CPU < 5% and < 2 connections',
         'cardData': {
             'cardId': f'rds-idle-{account_id}', 'type': 'rds-idle',
-            'title': 'Idle RDS Instances', 'icon': '🗄️',
+            'title': 'Idle RDS Instances', 'icon': 'ðŸ—„ï¸',
             'count': len(idle), 'risk': 'high',
             'description': f'{len(idle)} RDS instance(s) with avg CPU < 5% and < 2 connections over 14 days',
             'monthlySavings': round(savings, 2),
@@ -5544,9 +5542,9 @@ def _check_kms_unused(tip, data, account_id, acct_label, creds):
         'evidence': f'{len(cmks)} customer-managed KMS keys at $1/month each',
         'cardData': {
             'cardId': f'kms-{account_id}', 'type': 'advisory',
-            'title': 'Customer-Managed KMS Keys', 'icon': '🔑',
+            'title': 'Customer-Managed KMS Keys', 'icon': 'ðŸ”‘',
             'count': len(cmks), 'risk': 'low',
-            'description': f'{len(cmks)} customer-managed KMS key(s) at $1/month each — audit for unused keys',
+            'description': f'{len(cmks)} customer-managed KMS key(s) at $1/month each â€” audit for unused keys',
             'monthlySavings': round(savings, 2),
             'resources': [{'id': k['KeyId']} for k in cmks[:10]],
         }
@@ -5561,9 +5559,9 @@ def _check_budgets(tip, data, account_id, acct_label, creds):
         'evidence': 'No AWS Budgets configured',
         'cardData': {
             'cardId': f'budgets-{account_id}', 'type': 'advisory',
-            'title': 'No AWS Budgets Configured', 'icon': '💰',
+            'title': 'No AWS Budgets Configured', 'icon': 'ðŸ’°',
             'count': 0, 'risk': 'medium',
-            'description': 'No budgets found — set up cost alerts to catch unexpected spend early',
+            'description': 'No budgets found â€” set up cost alerts to catch unexpected spend early',
             'monthlySavings': None,
             'resources': [],
         }
@@ -5591,9 +5589,9 @@ def _check_spot_candidates(tip, data, account_id, acct_label, creds):
         'evidence': f'{len(candidates)} EC2 instances are Spot candidates',
         'cardData': {
             'cardId': f'spot-{account_id}', 'type': 'advisory',
-            'title': 'Spot Instance Candidates', 'icon': '⚡',
+            'title': 'Spot Instance Candidates', 'icon': 'âš¡',
             'count': len(candidates), 'risk': 'medium',
-            'description': f'{len(candidates)} instance(s) could use Spot pricing — save up to 70%',
+            'description': f'{len(candidates)} instance(s) could use Spot pricing â€” save up to 70%',
             'monthlySavings': round(savings, 2),
             'resources': candidates[:10],
             'actionUrl': 'https://console.aws.amazon.com/ec2/v2/home#SpotInstances',
@@ -5618,12 +5616,12 @@ def _check_ri_marketplace(tip, data, account_id, acct_label, creds):
             return None
         return {
             'status': 'found', 'savingsUsd': round(unused_cost, 2),
-            'evidence': f'RI utilization {util_pct:.0f}% — ${unused_cost:.2f}/mo wasted',
+            'evidence': f'RI utilization {util_pct:.0f}% â€” ${unused_cost:.2f}/mo wasted',
             'cardData': {
                 'cardId': f'ri-{account_id}', 'type': 'advisory',
-                'title': 'Underutilized Reserved Instances', 'icon': '🏪',
+                'title': 'Underutilized Reserved Instances', 'icon': 'ðŸª',
                 'count': 1, 'risk': 'medium',
-                'description': f'RI utilization is {util_pct:.0f}% — ${unused_cost:.2f}/month in unused commitments. Consider selling on RI Marketplace.',
+                'description': f'RI utilization is {util_pct:.0f}% â€” ${unused_cost:.2f}/month in unused commitments. Consider selling on RI Marketplace.',
                 'monthlySavings': round(unused_cost, 2),
                 'resources': [],
                 'actionUrl': 'https://console.aws.amazon.com/ec2/v2/home#ReservedInstances',
@@ -5643,9 +5641,9 @@ def _check_rds_commercial_engine(tip, data, account_id, acct_label, creds):
         'evidence': f'{len(commercial)} commercial-engine RDS instances',
         'cardData': {
             'cardId': f'rds-commercial-{account_id}', 'type': 'advisory',
-            'title': 'Commercial DB Engine Migration', 'icon': '🗄️',
+            'title': 'Commercial DB Engine Migration', 'icon': 'ðŸ—„ï¸',
             'count': len(commercial), 'risk': 'low',
-            'description': f'{len(commercial)} Oracle/SQL Server instance(s) — migrating to PostgreSQL/MySQL could save 30-60%',
+            'description': f'{len(commercial)} Oracle/SQL Server instance(s) â€” migrating to PostgreSQL/MySQL could save 30-60%',
             'monthlySavings': None,
             'resources': [{'id': db['DBInstanceIdentifier'], 'engine': db.get('Engine', ''), 'class': db.get('DBInstanceClass', '')} for db in commercial],
         }
@@ -5670,16 +5668,16 @@ def _check_graviton_candidates(tip, data, account_id, acct_label, creds):
         'evidence': f'{len(candidates)} x86 instances with Graviton equivalents',
         'cardData': {
             'cardId': f'graviton-{account_id}', 'type': 'advisory',
-            'title': 'Graviton Migration Candidates', 'icon': '⚡',
+            'title': 'Graviton Migration Candidates', 'icon': 'âš¡',
             'count': len(candidates), 'risk': 'low',
-            'description': f'{len(candidates)} x86 instance(s) have Graviton equivalents — save 20-40% with better performance',
+            'description': f'{len(candidates)} x86 instance(s) have Graviton equivalents â€” save 20-40% with better performance',
             'monthlySavings': None,
             'resources': candidates[:10],
         }
     }
 
 
-# ── Registry: tip.id → check function ────────────────────────────────────────
+# â”€â”€ Registry: tip.id â†’ check function â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 
 def _check_ebs_gp2(tip, data, account_id, acct_label, creds):
@@ -5875,7 +5873,7 @@ def _check_rds_scheduling(tip, data, account_id, acct_label, creds):
 
 
 _SCAN_REGISTRY = {
-    # Level 1 — Resource Hygiene
+    # Level 1 â€” Resource Hygiene
     'ebs-004':     _check_ebs_unattached,
     'ebs-002':     _check_ebs_snapshots,
     'ebs-003':     _check_ebs_snapshots,   # archive = same detection as delete
@@ -5885,17 +5883,17 @@ _SCAN_REGISTRY = {
     'elb-001':     _check_elb_idle,
     'kms-001':     _check_kms_unused,
     'general-002': _check_budgets,
-    'general-004': _check_ebs_unattached,  # general audit → EBS check
-    # Level 2 — Optimization
+    'general-004': _check_ebs_unattached,  # general audit â†’ EBS check
+    # Level 2 â€” Optimization
     'ec2-001':     _check_ec2_idle,        # rightsizing uses idle detection
     'ec2-003':     _check_spot_candidates,
     'ec2-009':     _check_spot_candidates,
     'ec2-006':     _check_graviton_candidates,
     'rds-001':     _check_rds_idle,
     'rds-006':     _check_rds_commercial_engine,
-    # Level 3 — Architecture / Commitment
+    # Level 3 â€” Architecture / Commitment
     'general-014': _check_ri_marketplace,
-    # New checks — gp2 migration, scheduling, S3 optimization, Lambda memory
+    # New checks â€” gp2 migration, scheduling, S3 optimization, Lambda memory
     'ebs-001':     _check_ebs_gp2,
     'ec2-004':     _check_ec2_scheduling,
     'ec2-011':     _check_ec2_scheduling,     # Instance Scheduler = same check
@@ -5991,7 +5989,7 @@ def handle_actions_execute(event):
                 check = ec2.describe_addresses(AllocationIds=[alloc_id])
                 addr = check.get('Addresses', [{}])[0]
                 if addr.get('AssociationId'):
-                    errors.append({'id': alloc_id, 'error': 'EIP is now associated — skipped for safety'})
+                    errors.append({'id': alloc_id, 'error': 'EIP is now associated â€” skipped for safety'})
                     continue
                 ec2.release_address(AllocationId=alloc_id)
                 results.append({'id': alloc_id, 'status': 'released', 'ip': addr.get('PublicIp', '')})
@@ -6007,7 +6005,7 @@ def handle_actions_execute(event):
                 check = ec2.describe_volumes(VolumeIds=[vol_id])
                 vol = check.get('Volumes', [{}])[0]
                 if vol.get('State') != 'available':
-                    errors.append({'id': vol_id, 'error': f'Volume state is now "{vol.get("State")}" — skipped for safety'})
+                    errors.append({'id': vol_id, 'error': f'Volume state is now "{vol.get("State")}" â€” skipped for safety'})
                     continue
                 ec2.delete_volume(VolumeId=vol_id)
                 results.append({'id': vol_id, 'status': 'deleted', 'size': vol.get('Size', 0)})
@@ -6026,7 +6024,7 @@ def handle_actions_execute(event):
                     health = elbv2.describe_target_health(TargetGroupArn=tg['TargetGroupArn'])
                     healthy += sum(1 for t in health.get('TargetHealthDescriptions', []) if t.get('TargetHealth', {}).get('State') == 'healthy')
                 if healthy > 0:
-                    errors.append({'id': lb_arn, 'error': f'Load balancer now has {healthy} healthy target(s) — skipped for safety'})
+                    errors.append({'id': lb_arn, 'error': f'Load balancer now has {healthy} healthy target(s) â€” skipped for safety'})
                     continue
                 elbv2.delete_load_balancer(LoadBalancerArn=lb_arn)
                 results.append({'id': lb_arn, 'status': 'deleted'})
@@ -6100,10 +6098,10 @@ def handle_actions_execute(event):
                     continue
                 inst = reservations[0]['Instances'][0]
                 if inst.get('State', {}).get('Name') != 'running':
-                    errors.append({'id': inst_id, 'error': f'Instance state is now "{inst["State"]["Name"]}" — skipped'})
+                    errors.append({'id': inst_id, 'error': f'Instance state is now "{inst["State"]["Name"]}" â€” skipped'})
                     continue
 
-                # ASG check — detach from ASG before stopping
+                # ASG check â€” detach from ASG before stopping
                 tags = {t['Key']: t['Value'] for t in inst.get('Tags', [])}
                 asg_name = tags.get('aws:autoscaling:groupName', '')
                 if asg_name:
@@ -6116,10 +6114,10 @@ def handle_actions_execute(event):
                         )
                         logger.info(f"Detached {inst_id} from ASG {asg_name}")
                     except Exception as asg_err:
-                        errors.append({'id': inst_id, 'error': f'ASG detach failed: {str(asg_err)} — skipped for safety'})
+                        errors.append({'id': inst_id, 'error': f'ASG detach failed: {str(asg_err)} â€” skipped for safety'})
                         continue
 
-                # Stop (not terminate) — safer default, user can terminate manually
+                # Stop (not terminate) â€” safer default, user can terminate manually
                 ec2.stop_instances(InstanceIds=[inst_id])
                 results.append({'id': inst_id, 'status': 'stopped', 'asgDetached': bool(asg_name)})
                 logger.info(f"Stopped EC2 {inst_id} in account {account_id} by {member_email}")
@@ -6134,9 +6132,9 @@ def handle_actions_execute(event):
                 check = rds.describe_db_instances(DBInstanceIdentifier=db_id)
                 db = check['DBInstances'][0]
                 if db.get('DBInstanceStatus') != 'available':
-                    errors.append({'id': db_id, 'error': f'RDS status is now "{db["DBInstanceStatus"]}" — skipped'})
+                    errors.append({'id': db_id, 'error': f'RDS status is now "{db["DBInstanceStatus"]}" â€” skipped'})
                     continue
-                # Delete with final snapshot (safety guardrail — always keep a backup)
+                # Delete with final snapshot (safety guardrail â€” always keep a backup)
                 snapshot_id = f'slashmybill-final-{db_id}-{int(datetime.now(timezone.utc).timestamp())}'
                 rds.delete_db_instance(
                     DBInstanceIdentifier=db_id,
@@ -6161,7 +6159,7 @@ def handle_actions_execute(event):
                 snap = snaps[0]
                 age_days = (datetime.now(timezone.utc) - snap['StartTime'].replace(tzinfo=timezone.utc)).days
                 if age_days < 180:
-                    errors.append({'id': snap_id, 'error': f'Snapshot is now only {age_days} days old — skipped for safety'})
+                    errors.append({'id': snap_id, 'error': f'Snapshot is now only {age_days} days old â€” skipped for safety'})
                     continue
                 ec2.delete_snapshot(SnapshotId=snap_id)
                 results.append({'id': snap_id, 'status': 'deleted', 'ageDays': age_days, 'sizeGb': snap.get('VolumeSize', 0)})
@@ -6413,7 +6411,7 @@ def _apply_allocation_rules(cost_by_service, per_account, alloc_config):
 
     # Support both old format (list of rules) and new format (config object)
     if isinstance(alloc_config, list):
-        # Legacy format — convert
+        # Legacy format â€” convert
         business_units = []
         for r in alloc_config:
             business_units.append({
@@ -6550,7 +6548,7 @@ def handle_execute_command(event):
     if not command:
         return create_error_response(400, 'InvalidRequest', 'Command is required')
 
-    # Verify account ownership — prevent lateral access
+    # Verify account ownership â€” prevent lateral access
     ownership = _verify_account_ownership(member_email, [account_id])
     if isinstance(ownership, dict):
         return ownership
@@ -6732,7 +6730,7 @@ def _derive_related_service(question):
 
 
 def handle_ai_feedback(event):
-    """Handle AI feedback submissions — store feedback and optionally save tip."""
+    """Handle AI feedback submissions â€” store feedback and optionally save tip."""
     auth = validate_token(event)
     if isinstance(auth, dict) and 'statusCode' in auth:
         return auth
@@ -6814,7 +6812,7 @@ def handle_ai_feedback(event):
             )
         except ClientError as e:
             if e.response.get('Error', {}).get('Code') == 'ConditionalCheckFailedException':
-                # Tip already exists — increment its positiveCount and ensure high-confidence
+                # Tip already exists â€” increment its positiveCount and ensure high-confidence
                 try:
                     tips_table.update_item(
                         Key={'service': related_service, 'tipId': tip_id},
@@ -6849,7 +6847,7 @@ def handle_ai_feedback(event):
             except Exception:
                 pass
         except ClientError:
-            pass  # Tip doesn't exist — nothing to decrement
+            pass  # Tip doesn't exist â€” nothing to decrement
 
     return create_response(200, {'success': True})
 
@@ -6859,7 +6857,7 @@ def handle_ai_feedback(event):
 # ============================================================
 
 def handle_ai_query(event):
-    """Handle natural language questions — uses Bedrock Agent or falls back to direct model API."""
+    """Handle natural language questions â€” uses Bedrock Agent or falls back to direct model API."""
     auth = validate_token(event)
     if isinstance(auth, dict) and 'statusCode' in auth:
         return auth
@@ -6897,7 +6895,7 @@ def handle_ai_query(event):
     # Generate unique interactionId for feedback tracking
     interaction_id = datetime.now(timezone.utc).isoformat() + '-' + secrets.token_hex(4)
 
-    # Verify account ownership — prevent lateral access
+    # Verify account ownership â€” prevent lateral access
     ownership = _verify_account_ownership(member_email, account_ids)
     if isinstance(ownership, dict):
         return ownership
@@ -7241,43 +7239,43 @@ def _ask_bedrock_multi_account(question, tips_context, aggregate, all_account_da
 
 SLASHMYBILL PLATFORM FEATURES (ALWAYS recommend these instead of AWS Console):
 - Portal tabs: Configure | Plan | Observe (Cost Analysis, Commitments, Business Metrics, Health & Score, Invoices) | Chat | Act
-- Plan → Budget: Create/edit/delete AWS Budgets with alerts directly from SlashMyBill (no AWS Console needed)
-- Plan → Tag Resources: Scan and bulk-tag all resources from SlashMyBill
-- Act → Waste Cleanup: Scan and clean up idle resources (EBS, EIPs, ELBs, EC2, RDS, snapshots)
-- Act → Scheduler: Create stop/start schedules for EC2, RDS, ASG, EKS, SageMaker, Redshift, WorkSpaces
-- Configure → FinOps Settings: Check and fix AWS billing best practices (cost allocation tags, anomaly detection, rightsizing, hourly granularity)
-- Observe → Cost Analysis: View cost trends, waste detection, rightsizing, cost by region, tag distribution
-- Observe → Commitments: Savings Plans and Reserved Instance coverage and utilization
-- Observe → Business Metrics: Auto-discovered operational KPIs with cost-per-unit economics
-- Observe → Health & Score: FinOps maturity score and healthcheck results
-- Observe → Invoices: Invoice explorer with drill-down by period, service, and resource
-- When recommending actions, ALWAYS say "Go to Plan → Budget" or "Go to Act → Waste Cleanup" instead of "Go to AWS Console"
+- Plan â†’ Budget: Create/edit/delete AWS Budgets with alerts directly from SlashMyBill (no AWS Console needed)
+- Plan â†’ Tag Resources: Scan and bulk-tag all resources from SlashMyBill
+- Act â†’ Waste Cleanup: Scan and clean up idle resources (EBS, EIPs, ELBs, EC2, RDS, snapshots)
+- Act â†’ Scheduler: Create stop/start schedules for EC2, RDS, ASG, EKS, SageMaker, Redshift, WorkSpaces
+- Configure â†’ FinOps Settings: Check and fix AWS billing best practices (cost allocation tags, anomaly detection, rightsizing, hourly granularity)
+- Observe â†’ Cost Analysis: View cost trends, waste detection, rightsizing, cost by region, tag distribution
+- Observe â†’ Commitments: Savings Plans and Reserved Instance coverage and utilization
+- Observe â†’ Business Metrics: Auto-discovered operational KPIs with cost-per-unit economics
+- Observe â†’ Health & Score: FinOps maturity score and healthcheck results
+- Observe â†’ Invoices: Invoice explorer with drill-down by period, service, and resource
+- When recommending actions, ALWAYS say "Go to Plan â†’ Budget" or "Go to Act â†’ Waste Cleanup" instead of "Go to AWS Console"
 - NEVER tell users to open the AWS Management Console
-- NEVER show AWS CLI commands (aws lambda, aws s3, etc.) — users interact through SlashMyBill only
-- NEVER say "Not specified in the data" — if data is unavailable, omit the row
-- NEVER say "Let me know if you'd like..." — just provide the answer directly
+- NEVER show AWS CLI commands (aws lambda, aws s3, etc.) â€” users interact through SlashMyBill only
+- NEVER say "Not specified in the data" â€” if data is unavailable, omit the row
+- NEVER say "Let me know if you'd like..." â€” just provide the answer directly
 - When explaining AWS Cost Explorer costs: state the pricing model ($0.01 per API request), calculate implied request count (total/$0.01), explain what generates requests (dashboards, budgets, anomaly detection, forecasts). Do NOT call it a "platform fee" or say it "cannot be reduced".
-- NEVER recommend reducing "Amazon Registrar" costs — that is a fixed annual domain registration fee
-- When a user asks to "explain" or "break down" any service cost, ALWAYS describe: (1) what the service does in plain language, (2) what the charge includes (features/components), (3) the pricing model and math (unit price x quantity = total), (4) what domain/resource name is associated if possible. Do not just state the dollar amount — educate the user about what they are paying for.
+- NEVER recommend reducing "Amazon Registrar" costs â€” that is a fixed annual domain registration fee
+- When a user asks to "explain" or "break down" any service cost, ALWAYS describe: (1) what the service does in plain language, (2) what the charge includes (features/components), (3) the pricing model and math (unit price x quantity = total), (4) what domain/resource name is associated if possible. Do not just state the dollar amount â€” educate the user about what they are paying for.
 - ALWAYS show pricing math when explaining costs. Examples: S3: "$0.19 at $0.023/GB = ~8.3 GB stored". Cost Explorer: "$39.21 at $0.01/request = ~3,921 API requests". Route 53: "$0.50/hosted zone/month + $0.40/million queries". Lambda: "$X at $0.20/1M requests + $0.0000166667/GB-sec". EC2: "$X at $Y/hour x Z hours". If you cannot determine the exact unit breakdown, state the pricing model and estimate.
-- REKOGNITION PRICING (use these exact numbers): Image APIs (DetectLabels, DetectFaces, DetectText, CompareFaces, RecognizeCelebrities, DetectModerationLabels) = $1.00 per 1,000 images (first 1M/month). Tiered: 1-10M=$0.80/1K, 10-100M=$0.60/1K, 100M+=$0.40/1K. Face IndexFaces/SearchFaces = $1.00/1K. Face metadata storage = $0.01 per 1,000 faces stored/month. Video analysis = $0.10/minute. Custom Labels inference = $4/hour. MATH EXAMPLE: $224/month at $1.00/1K images = ~224,000 image analyses. Do NOT use $0.10/1K for images — that is the VIDEO per-minute rate, not the image rate.
+- REKOGNITION PRICING (use these exact numbers): Image APIs (DetectLabels, DetectFaces, DetectText, CompareFaces, RecognizeCelebrities, DetectModerationLabels) = $1.00 per 1,000 images (first 1M/month). Tiered: 1-10M=$0.80/1K, 10-100M=$0.60/1K, 100M+=$0.40/1K. Face IndexFaces/SearchFaces = $1.00/1K. Face metadata storage = $0.01 per 1,000 faces stored/month. Video analysis = $0.10/minute. Custom Labels inference = $4/hour. MATH EXAMPLE: $224/month at $1.00/1K images = ~224,000 image analyses. Do NOT use $0.10/1K for images â€” that is the VIDEO per-minute rate, not the image rate.
 - BEDROCK PRICING (use these exact numbers): Claude 3 Haiku = $0.25/M input + $1.25/M output tokens. Claude 3.5 Sonnet = $3/M input + $15/M output. Claude 3 Opus = $15/M input + $75/M output. Nova Lite = $0.06/M input + $0.24/M output. Nova Pro = $0.80/M input + $3.20/M output. Provisioned Throughput = fixed $/hr regardless of tokens.
-- NEVER say "potential savings" or "maybe" or "might" — only state verified facts from the data
-- NEVER ask the user to check something — YOU already have the data, just report it
-- Be direct and factual — every number must come from the actual data provided — everything can be done from SlashMyBill
+- NEVER say "potential savings" or "maybe" or "might" â€” only state verified facts from the data
+- NEVER ask the user to check something â€” YOU already have the data, just report it
+- Be direct and factual â€” every number must come from the actual data provided â€” everything can be done from SlashMyBill
 
 
 WASTE CLEANUP ALIGNMENT:
-- Act → Waste Cleanup covers ONLY: Elastic IPs, EBS Volumes, Load Balancers, S3 Buckets, EC2 Instances, RDS Instances, EBS Snapshots
-- Do NOT recommend "Go to Act → Waste Cleanup" for KMS keys, NAT Gateways, VPC Endpoints, or Lambda functions
-- For KMS keys: say "Review KMS keys — this requires manual action in AWS KMS"
+- Act â†’ Waste Cleanup covers ONLY: Elastic IPs, EBS Volumes, Load Balancers, S3 Buckets, EC2 Instances, RDS Instances, EBS Snapshots
+- Do NOT recommend "Go to Act â†’ Waste Cleanup" for KMS keys, NAT Gateways, VPC Endpoints, or Lambda functions
+- For KMS keys: say "Review KMS keys â€” this requires manual action in AWS KMS"
 - For resources that no longer exist but still show billing charges: say "These charges are historical and will stop next billing cycle"
 
 FINOPS SETTINGS AWARENESS:
-- If healthcheck_results data is present and cost allocation tags are NOT activated, recommend "Go to Configure → FinOps Settings to activate cost allocation tags"
-- If healthcheck_results data is present and no anomaly monitors exist, recommend "Go to Configure → FinOps Settings to set up Cost Anomaly Detection"
-- If healthcheck_results data is present and Compute Optimizer is not enrolled, recommend "Go to Configure → FinOps Settings to enroll in Compute Optimizer"
-- NEVER recommend opening the AWS Billing Console for settings that can be fixed via Configure → FinOps Settings
+- If healthcheck_results data is present and cost allocation tags are NOT activated, recommend "Go to Configure â†’ FinOps Settings to activate cost allocation tags"
+- If healthcheck_results data is present and no anomaly monitors exist, recommend "Go to Configure â†’ FinOps Settings to set up Cost Anomaly Detection"
+- If healthcheck_results data is present and Compute Optimizer is not enrolled, recommend "Go to Configure â†’ FinOps Settings to enroll in Compute Optimizer"
+- NEVER recommend opening the AWS Billing Console for settings that can be fixed via Configure â†’ FinOps Settings
 
 CRITICAL RULE: NEVER recommend "potential" savings without verifying the data first. Every recommendation must be backed by actual resource data. If billing shows charges for resources that no longer exist, explain that charges are historical and will stop next billing cycle.
 
@@ -7287,13 +7285,13 @@ SPECIFIC QUESTION HANDLING:
 - If the user asks about Lambda invocations/transactions: use lambda_metrics (invocations_30d per function) and monthly_trend (Lambda cost per month). Show per-function breakdown per account.
 - If the user asks about EC2: use ec2_instances and ec2_cpu_metrics. Show instance IDs, types, CPU utilization.
 - If the user asks about RDS: use rds_instances and rds_cpu_metrics. Show DB identifiers, instance class, CPU, connections.
-- If the user asks about S3: use s3_buckets (per account). Show bucket names and count **per account separately** — never merge accounts or report only one. List ALL buckets without lifecycle policies from ALL accounts. Count must match the list length exactly.
+- If the user asks about S3: use s3_buckets (per account). Show bucket names and count **per account separately** â€” never merge accounts or report only one. List ALL buckets without lifecycle policies from ALL accounts. Count must match the list length exactly.
 - If the user asks about NAT Gateway: use nat_gateways and nat_gateway_metrics. Show gateway IDs, state, bytes transferred.
 - If the user asks about EBS: use ebs_summary. Show total volumes, unattached count, gp2 vs gp3 breakdown.
 - If the user asks about VPC/endpoints: use vpc_endpoints and elastic_ips. Show endpoint types, unattached EIPs.
 - If the user asks about KMS: use kms_summary. Show total keys, customer-managed key count.
 - If the user asks about Route 53: use route53_hosted_zones. Show zone names and record counts.
-- If the user asks for a monthly comparison (Jan/Feb/March): use monthly_trend data — each key is YYYY-MM with service→cost dict. Show a table per account.
+- If the user asks for a monthly comparison (Jan/Feb/March): use monthly_trend data â€” each key is YYYY-MM with serviceâ†’cost dict. Show a table per account.
 - If the user asks about a specific service: show ONLY that service's data across all accounts with exact numbers.
 - Only after answering the specific question, add a brief cross-account summary if relevant.
 
@@ -7447,7 +7445,7 @@ def _build_chart_data(account_data):
             'color': '#6366f1',
         })
 
-        # Top services across all months — pass full monthly data for multi-column table
+        # Top services across all months â€” pass full monthly data for multi-column table
         all_svcs = {}
         for m in trend_months:
             for svc, cost in monthly_trend[m].items():
@@ -7583,7 +7581,7 @@ def _gather_account_data(question, credentials, tag_key=None, tag_value=None):
             region_name=region,
         )
 
-    # Always get cost data — it's the most common question
+    # Always get cost data â€” it's the most common question
     try:
         ce = _make_client('ce')
         _now = datetime.now(timezone.utc)
@@ -7606,7 +7604,7 @@ def _gather_account_data(question, credentials, tag_key=None, tag_value=None):
             'oct': 10, 'october': 10, 'nov': 11, 'november': 11, 'dec': 12, 'december': 12,
         }
         is_comparison = any(kw in question_lower for kw in ['compare', 'vs', 'versus', 'between', 'difference']) or \
-                       any(kw in question for kw in ['השווה', 'תשווה', 'השוואה', 'לעומת'])
+                       any(kw in question for kw in ['×”×©×•×•×”', '×ª×©×•×•×”', '×”×©×•×•××”', '×œ×¢×•×ž×ª'])
         mentioned_months = []
         for name, num in month_names.items():
             if name in question_lower:
@@ -7617,8 +7615,8 @@ def _gather_account_data(question, credentials, tag_key=None, tag_value=None):
         # Detect "this month" / "last month" / "previous month" patterns
         now_dt = datetime.now(timezone.utc)
         if is_comparison and len(mentioned_months) < 2:
-            has_this = any(kw in question_lower for kw in ['this month', 'current month', 'החודש הזה'])
-            has_last = any(kw in question_lower for kw in ['last month', 'previous month', 'prior month', 'החודש שעבר', 'החודש הקודם'])
+            has_this = any(kw in question_lower for kw in ['this month', 'current month', '×”×—×•×“×© ×”×–×”'])
+            has_last = any(kw in question_lower for kw in ['last month', 'previous month', 'prior month', '×”×—×•×“×© ×©×¢×‘×¨', '×”×—×•×“×© ×”×§×•×“×'])
             if has_this and has_last:
                 cur_m = now_dt.month
                 prev_m = cur_m - 1 if cur_m > 1 else 12
@@ -7626,7 +7624,7 @@ def _gather_account_data(question, credentials, tag_key=None, tag_value=None):
                 prev_name = list(month_names.keys())[list(month_names.values()).index(prev_m)]
                 mentioned_months = [(prev_name, prev_m), (cur_name, cur_m)]
             elif has_last and not has_this:
-                # "compare last month" alone — compare last month vs this month
+                # "compare last month" alone â€” compare last month vs this month
                 cur_m = now_dt.month
                 prev_m = cur_m - 1 if cur_m > 1 else 12
                 cur_name = list(month_names.keys())[list(month_names.values()).index(cur_m)]
@@ -7690,17 +7688,17 @@ def _gather_account_data(question, credentials, tag_key=None, tag_value=None):
                 }
 
         # Detect relative time comparisons: "last 3 months", "past 6 months", "last quarter"
-        # Also support Hebrew: "3 חודשים", "חודשים אחרונים"
+        # Also support Hebrew: "3 ×—×•×“×©×™×", "×—×•×“×©×™× ××—×¨×•× ×™×"
         import re as _re2
         relative_match = _re2.search(r'last\s+(\d+)\s+month', question_lower) or \
                          _re2.search(r'past\s+(\d+)\s+month', question_lower) or \
                          _re2.search(r'(\d+)\s+month', question_lower)
-        # Hebrew: "3 חודשים" or "חודשים"
+        # Hebrew: "3 ×—×•×“×©×™×" or "×—×•×“×©×™×"
         if not relative_match:
-            hebrew_match = _re2.search(r'(\d+)\s*חודש', question)
+            hebrew_match = _re2.search(r'(\d+)\s*×—×•×“×©', question)
             if hebrew_match:
                 relative_match = hebrew_match
-        if not relative_match and ('last quarter' in question_lower or 'past quarter' in question_lower or 'רבעון' in question):
+        if not relative_match and ('last quarter' in question_lower or 'past quarter' in question_lower or '×¨×‘×¢×•×Ÿ' in question):
             class _FakeMatch:
                 def group(self, n): return '3'
             relative_match = _FakeMatch()
@@ -7753,7 +7751,7 @@ def _gather_account_data(question, credentials, tag_key=None, tag_value=None):
             data['monthly_trend_months'] = sorted(monthly_data.keys())
             actions.append(f'ce:GetCostAndUsage (monthly trend, {range_start} to {range_end})')
 
-        # Monthly cost by service — cost only (no UsageQuantity to avoid unit confusion)
+        # Monthly cost by service â€” cost only (no UsageQuantity to avoid unit confusion)
         _cbs_params = {
             'TimePeriod': {'Start': start_30d, 'End': end_date},
             'Granularity': 'MONTHLY',
@@ -7778,7 +7776,7 @@ def _gather_account_data(question, credentials, tag_key=None, tag_value=None):
         data['cost_by_service'] = service_costs
         actions.append('ce:GetCostAndUsage (monthly by service, last 30 days)')
 
-        # Daily cost trend — cost only
+        # Daily cost trend â€” cost only
         start_7d = (datetime.now(timezone.utc) - timedelta(days=7)).strftime('%Y-%m-%d')
         _daily_params = {
             'TimePeriod': {'Start': start_7d, 'End': end_date},
@@ -7836,7 +7834,7 @@ def _gather_account_data(question, credentials, tag_key=None, tag_value=None):
         data['cost_error'] = str(e)
         logger.warning(f"Cost Explorer error: {e}")
 
-    # EC2 instances — fetch ONLY when question specifically asks about EC2 instances
+    # EC2 instances â€” fetch ONLY when question specifically asks about EC2 instances
     # Skip for broad questions like "how efficient" or "optimize" to avoid timeout
     _ec2_specific_keywords = ['ec2', 'instance', 'server', 'running', 'ri', 'reserved', 'list', 'cost', 'ebs', 'volume', 'eip', 'elastic ip', 'nat', 'vpc', 'network', 'load balancer', 'elb', 'alb']
     _broad_keywords = ['efficient', 'optimize', 'saving', 'save', 'overview', 'summary', 'breakdown']
@@ -7878,8 +7876,8 @@ def _gather_account_data(question, credentials, tag_key=None, tag_value=None):
         except Exception as e:
             data['ec2_error'] = str(e)
 
-    # NAT Gateways — always fetch when EC2-Other or VPC are top costs (they drive those bills)
-    # SKIP if question is specifically about a single service — irrelevant data wastes tokens
+    # NAT Gateways â€” always fetch when EC2-Other or VPC are top costs (they drive those bills)
+    # SKIP if question is specifically about a single service â€” irrelevant data wastes tokens
     _specific_service_question = any(kw in question_lower for kw in [
         'lifecycle', 'bucket', 's3 bucket', 'intelligent-tier', 'glacier', 'storage class',  # S3
         'kms', 'key management', 'encryption key', 'customer-managed key',                    # KMS
@@ -7920,7 +7918,7 @@ def _gather_account_data(question, credentials, tag_key=None, tag_value=None):
             data['nat_gateway_count'] = len(nat_list)
             actions.append('ec2:DescribeNatGateways')
 
-            # Elastic IPs — unattached ones cost $0.005/hr (~$3.65/month each)
+            # Elastic IPs â€” unattached ones cost $0.005/hr (~$3.65/month each)
             eips = ec2.describe_addresses()
             unattached_eips = [
                 {'allocationId': e.get('AllocationId', ''), 'publicIp': e.get('PublicIp', '')}
@@ -7935,7 +7933,7 @@ def _gather_account_data(question, credentials, tag_key=None, tag_value=None):
             }
             actions.append('ec2:DescribeAddresses')
 
-            # VPC Endpoints — each interface endpoint costs ~$7.20/month
+            # VPC Endpoints â€” each interface endpoint costs ~$7.20/month
             endpoints = ec2.describe_vpc_endpoints(
                 Filters=[{'Name': 'vpc-endpoint-state', 'Values': ['available', 'pending']}]
             )
@@ -7998,7 +7996,7 @@ def _gather_account_data(question, credentials, tag_key=None, tag_value=None):
         except Exception as e:
             data['s3_error'] = str(e)
 
-    # RDS — fetch when it's a top cost or question mentions database
+    # RDS â€” fetch when it's a top cost or question mentions database
     top_service_names_rds = [s['service'] for s in data.get('cost_by_service', [])[:8]]
     if 'Amazon Relational Database Service' in top_service_names_rds or \
        any(kw in question_lower for kw in ['rds', 'database', 'db']):
@@ -8013,7 +8011,7 @@ def _gather_account_data(question, credentials, tag_key=None, tag_value=None):
         except Exception as e:
             data['rds_error'] = str(e)
 
-    # KMS — fetch key count when KMS is a top cost
+    # KMS â€” fetch key count when KMS is a top cost
     top_service_names_kms = [s['service'] for s in data.get('cost_by_service', [])[:8]]
     if 'AWS Key Management Service' in top_service_names_kms or \
        any(kw in question_lower for kw in ['kms', 'key management', 'encryption key']):
@@ -8046,11 +8044,11 @@ def _gather_account_data(question, credentials, tag_key=None, tag_value=None):
         except Exception as e:
             data['lambda_error'] = str(e)
 
-    # Budgets — fetch when question mentions budgets/alerts/cost alerts
+    # Budgets â€” fetch when question mentions budgets/alerts/cost alerts
     if any(kw in question_lower for kw in ['budget', 'alert', 'cost alert', 'billing alarm', 'spend limit']):
         try:
             budgets_client = _make_client('budgets')
-            # Need account_id for describe_budgets — derive from STS
+            # Need account_id for describe_budgets â€” derive from STS
             sts = boto3.client('sts',
                 aws_access_key_id=credentials['AccessKeyId'],
                 aws_secret_access_key=credentials['SecretAccessKey'],
@@ -8078,7 +8076,7 @@ def _gather_account_data(question, credentials, tag_key=None, tag_value=None):
             logger.warning(f"Budgets fetch failed: {e}")
 
     # ============================================================
-    # CloudWatch Rightsizing Metrics — auto-fetch for ALL top-cost services
+    # CloudWatch Rightsizing Metrics â€” auto-fetch for ALL top-cost services
     # For each paid service, get peak + average usage over 30 days
     # ============================================================
     top_svc_names_cw = [s['service'] for s in data.get('cost_by_service', [])[:8]]
@@ -8170,11 +8168,11 @@ def _gather_account_data(question, credentials, tag_key=None, tag_value=None):
                     is_non_prod = env_tag in ('dev', 'development', 'test', 'testing', 'staging', 'qa', 'sandbox')
                     if avg_cpu < 10 and max_cpu < 30:
                         if is_non_prod:
-                            note = 'NON-PROD + LOW CPU — consider Instance Scheduler (stop nights/weekends for ~65% savings)'
+                            note = 'NON-PROD + LOW CPU â€” consider Instance Scheduler (stop nights/weekends for ~65% savings)'
                         else:
-                            note = 'OVER-PROVISIONED — avg CPU very low, consider downsizing'
+                            note = 'OVER-PROVISIONED â€” avg CPU very low, consider downsizing'
                     elif avg_cpu < 20:
-                        note = 'Potentially over-provisioned — monitor before committing'
+                        note = 'Potentially over-provisioned â€” monitor before committing'
                     # Check if Graviton migration candidate (x86 instance families)
                     itype = inst.get('type', '')
                     is_x86 = any(itype.startswith(f) for f in ['t3.', 'm5.', 'c5.', 'r5.', 'm6i.', 'c6i.', 'r6i.'])
@@ -8251,9 +8249,9 @@ def _gather_account_data(question, credentials, tag_key=None, tag_value=None):
 
                     note = ''
                     if avg_cpu < 10 and max_cpu < 30:
-                        note = 'OVER-PROVISIONED — avg CPU very low, downsize instance class'
+                        note = 'OVER-PROVISIONED â€” avg CPU very low, downsize instance class'
                     elif avg_cpu > 80:
-                        note = 'HIGH CPU — consider upsizing or read replicas'
+                        note = 'HIGH CPU â€” consider upsizing or read replicas'
 
                     rds_metrics.append({
                         'dbInstanceId': db_id, 'instanceClass': db.get('class', ''),
@@ -8273,7 +8271,7 @@ def _gather_account_data(question, credentials, tag_key=None, tag_value=None):
                 data['rds_cpu_metrics'] = rds_metrics
                 actions.append('cloudwatch:GetMetricStatistics (RDS CPU, connections, memory, IOPS)')
 
-        # ELB metrics — request count, active connections
+        # ELB metrics â€” request count, active connections
         if 'Amazon Elastic Load Balancing' in top_svc_names_cw:
             try:
                 elbv2 = _make_client('elbv2')
@@ -8297,9 +8295,9 @@ def _gather_account_data(question, credentials, tag_key=None, tag_value=None):
                         total_requests = sum(dp['Sum'] for dp in req_resp.get('Datapoints', []))
                         note = ''
                         if total_requests == 0:
-                            note = 'ZERO TRAFFIC — candidate for deletion'
+                            note = 'ZERO TRAFFIC â€” candidate for deletion'
                         elif total_requests < 1000:
-                            note = 'Very low traffic — consider consolidating'
+                            note = 'Very low traffic â€” consider consolidating'
                         elb_metrics.append({
                             'name': lb_name, 'type': lb_type,
                             'total_requests_30d': int(total_requests),
@@ -8313,7 +8311,7 @@ def _gather_account_data(question, credentials, tag_key=None, tag_value=None):
             except Exception as e:
                 logger.warning(f"ELB metrics error: {e}")
 
-        # NAT Gateway metrics — bytes processed, active connections
+        # NAT Gateway metrics â€” bytes processed, active connections
         if data.get('nat_gateways'):
             try:
                 nat_metrics = []
@@ -8337,7 +8335,7 @@ def _gather_account_data(question, credentials, tag_key=None, tag_value=None):
                         max_conn = next((dp['Maximum'] for dp in active_conn.get('Datapoints', [])), 0)
                         note = ''
                         if total_bytes < 1024 * 1024:
-                            note = 'VERY LOW TRAFFIC — candidate for deletion'
+                            note = 'VERY LOW TRAFFIC â€” candidate for deletion'
                         nat_metrics.append({
                             'natGatewayId': gw_id, 'vpcId': gw.get('vpcId', ''),
                             'name': gw.get('name', ''),
@@ -8354,7 +8352,7 @@ def _gather_account_data(question, credentials, tag_key=None, tag_value=None):
             except Exception as e:
                 logger.warning(f"NAT Gateway metrics error: {e}")
 
-        # EBS Volume IOPS — identify over-provisioned io1/io2 or underused volumes
+        # EBS Volume IOPS â€” identify over-provisioned io1/io2 or underused volumes
         ebs_data = data.get('ebs_summary', {})
         if ebs_data.get('total_gb', 0) > 0:
             try:
@@ -8392,7 +8390,7 @@ def _gather_account_data(question, credentials, tag_key=None, tag_value=None):
                         avg_write_iops = round(total_writes / (30 * 86400), 1) if total_writes else 0
                         note = ''
                         if vtype in ('io1', 'io2') and avg_read_iops + avg_write_iops < 100:
-                            note = 'LOW IOPS on provisioned volume — consider switching to gp3'
+                            note = 'LOW IOPS on provisioned volume â€” consider switching to gp3'
                         ebs_metrics.append({
                             'volumeId': vid, 'type': vtype, 'size_gb': v.get('Size', 0),
                             'provisioned_iops': v.get('Iops', 0),
@@ -8411,7 +8409,7 @@ def _gather_account_data(question, credentials, tag_key=None, tag_value=None):
         data['cloudwatch_error'] = str(e)
         logger.warning(f"CloudWatch metrics error: {e}")
 
-        # Route 53 — fetch when it's a top cost or question mentions DNS/Route53
+        # Route 53 â€” fetch when it's a top cost or question mentions DNS/Route53
     top_service_names_r53 = [s['service'] for s in data.get('cost_by_service', [])[:8]]
     if 'Amazon Route 53' in top_service_names_r53 or \
        any(kw in question_lower for kw in ['route53', 'route 53', 'dns', 'hosted zone']):
@@ -8521,7 +8519,7 @@ def _gather_account_data(question, credentials, tag_key=None, tag_value=None):
                                         max_mem = next((dp['Maximum'] for dp in mem_resp.get('Datapoints', [])), 0)
                                         note = ''
                                         if avg_cpu < 10 and avg_mem < 20:
-                                            note = 'OVER-PROVISIONED — low CPU and memory, reduce task size or count'
+                                            note = 'OVER-PROVISIONED â€” low CPU and memory, reduce task size or count'
                                         ecs_svc_metrics.append({
                                             'cluster': cname, 'service': svc_name,
                                             'desiredCount': svc.get('desiredCount', 0),
@@ -8543,7 +8541,7 @@ def _gather_account_data(question, credentials, tag_key=None, tag_value=None):
             data['ecs_error'] = str(e)
 
     # ============================================================
-    # S3 Storage Optimization — check for lifecycle policies and Intelligent-Tiering
+    # S3 Storage Optimization â€” check for lifecycle policies and Intelligent-Tiering
     # ============================================================
     if any(kw in question_lower for kw in ['s3', 'storage', 'bucket', 'lifecycle', 'tiering', 'glacier', 'archive']) or \
        'Amazon Simple Storage Service' in [s['service'] for s in data.get('cost_by_service', [])[:8]]:
@@ -8589,7 +8587,7 @@ def _gather_account_data(question, credentials, tag_key=None, tag_value=None):
             data['s3_analysis_error'] = str(e)
 
     # ============================================================
-    # AWS Compute Optimizer — rightsizing recommendations
+    # AWS Compute Optimizer â€” rightsizing recommendations
     # ============================================================
     if any(kw in question_lower for kw in ['rightsize', 'rightsizing', 'optimize', 'oversized', 'underutilized',
                                             'compute optimizer', 'instance type', 'downsize']) or \
@@ -8629,7 +8627,7 @@ def _gather_account_data(question, credentials, tag_key=None, tag_value=None):
             data['compute_optimizer_error'] = str(e)
 
     # ============================================================
-    # Cost Anomaly Detection — flag daily spikes > 2x the 7-day average
+    # Cost Anomaly Detection â€” flag daily spikes > 2x the 7-day average
     # ============================================================
     daily_trend = data.get('daily_cost_trend', [])
     if len(daily_trend) >= 3:
@@ -8649,8 +8647,8 @@ def _gather_account_data(question, credentials, tag_key=None, tag_value=None):
             data['cost_anomaly_count'] = len(anomalies)
 
     # ============================================================
-    # Cost Efficiency Score — based on identified savings opportunities
-    # Formula: [1 - (Potential Savings / Total Optimizable Spend)] × 100%
+    # Cost Efficiency Score â€” based on identified savings opportunities
+    # Formula: [1 - (Potential Savings / Total Optimizable Spend)] Ã— 100%
     # ============================================================
     total_spend = sum(s['cost_usd'] for s in data.get('cost_by_service', [])
                       if s.get('service', '') != 'Tax')
@@ -8666,7 +8664,7 @@ def _gather_account_data(question, credentials, tag_key=None, tag_value=None):
         potential_savings += ebs['gp2_to_gp3_savings_usd']
         savings_breakdown['gp2 to gp3 migration'] = ebs['gp2_to_gp3_savings_usd']
 
-    # Idle Elastic IPs — from ec2:DescribeAddresses AND from VPC usage breakdown
+    # Idle Elastic IPs â€” from ec2:DescribeAddresses AND from VPC usage breakdown
     eips = data.get('elastic_ips', {})
     idle_eip_savings = eips.get('unattached_monthly_cost_usd', 0)
     # Also check VPC usage breakdown for IdleAddress charges (may not show in DescribeAddresses)
@@ -8942,7 +8940,7 @@ def _fetch_pricing_context(service_costs, account_data=None):
                 'note': (
                     'RIGHTSIZE FIRST: Always rightsize via Compute Optimizer before purchasing commitments. '
                     'Buying Savings Plans on oversized instances locks in waste for 1-3 years. '
-                    'Recommended workflow: Analyze utilization → Rightsize → Then commit.'
+                    'Recommended workflow: Analyze utilization â†’ Rightsize â†’ Then commit.'
                 ),
             }
 
@@ -8968,47 +8966,47 @@ def _ask_bedrock_analyze(question, tips_context, account_data, account_id):
 
 SLASHMYBILL PLATFORM FEATURES (ALWAYS recommend these instead of AWS Console):
 - Portal tabs: Configure | Plan | Observe (Cost Analysis, Commitments, Business Metrics, Health & Score, Invoices) | Chat | Act
-- Plan → Budget: Create/edit/delete AWS Budgets with alerts directly from SlashMyBill
-- Plan → Tag Resources: Scan and bulk-tag all resources from SlashMyBill
-- Act → Waste Cleanup: Scan and clean up idle resources (EBS, EIPs, ELBs, EC2, RDS, snapshots)
-- Act → Scheduler: Create stop/start schedules for EC2, RDS, ASG, EKS, SageMaker, Redshift
-- Configure → FinOps Settings: Check and fix AWS billing best practices (cost allocation tags, anomaly detection, rightsizing, hourly granularity)
-- Observe → Cost Analysis: View cost trends, waste detection, rightsizing, cost by region
-- Observe → Commitments: Savings Plans and Reserved Instance coverage and utilization
-- Observe → Business Metrics: Auto-discovered operational KPIs with cost-per-unit economics
-- Observe → Health & Score: FinOps maturity score and healthcheck results
-- Observe → Invoices: Invoice explorer with drill-down by period, service, and resource
-- ALWAYS say "Go to Plan → Budget" or "Go to Act → Waste Cleanup" instead of "Go to AWS Console"
+- Plan â†’ Budget: Create/edit/delete AWS Budgets with alerts directly from SlashMyBill
+- Plan â†’ Tag Resources: Scan and bulk-tag all resources from SlashMyBill
+- Act â†’ Waste Cleanup: Scan and clean up idle resources (EBS, EIPs, ELBs, EC2, RDS, snapshots)
+- Act â†’ Scheduler: Create stop/start schedules for EC2, RDS, ASG, EKS, SageMaker, Redshift
+- Configure â†’ FinOps Settings: Check and fix AWS billing best practices (cost allocation tags, anomaly detection, rightsizing, hourly granularity)
+- Observe â†’ Cost Analysis: View cost trends, waste detection, rightsizing, cost by region
+- Observe â†’ Commitments: Savings Plans and Reserved Instance coverage and utilization
+- Observe â†’ Business Metrics: Auto-discovered operational KPIs with cost-per-unit economics
+- Observe â†’ Health & Score: FinOps maturity score and healthcheck results
+- Observe â†’ Invoices: Invoice explorer with drill-down by period, service, and resource
+- ALWAYS say "Go to Plan â†’ Budget" or "Go to Act â†’ Waste Cleanup" instead of "Go to AWS Console"
 - NEVER tell users to open the AWS Management Console
-- NEVER show AWS CLI commands (aws lambda, aws s3, etc.) — users interact through SlashMyBill only
-- NEVER say "Not specified in the data" — if data is unavailable, omit the row
-- NEVER say "Let me know if you'd like..." — just provide the answer directly
+- NEVER show AWS CLI commands (aws lambda, aws s3, etc.) â€” users interact through SlashMyBill only
+- NEVER say "Not specified in the data" â€” if data is unavailable, omit the row
+- NEVER say "Let me know if you'd like..." â€” just provide the answer directly
 - When explaining AWS Cost Explorer costs: state the pricing model ($0.01 per API request), calculate implied request count (total/$0.01), explain what generates requests (dashboards, budgets, anomaly detection, forecasts). Do NOT call it a "platform fee" or say it "cannot be reduced".
-- NEVER recommend reducing "Amazon Registrar" costs — that is a fixed annual domain registration fee
-- When a user asks to "explain" or "break down" any service cost, ALWAYS describe: (1) what the service does in plain language, (2) what the charge includes (features/components), (3) the pricing model and math (unit price x quantity = total), (4) what domain/resource name is associated if possible. Do not just state the dollar amount — educate the user about what they are paying for.
+- NEVER recommend reducing "Amazon Registrar" costs â€” that is a fixed annual domain registration fee
+- When a user asks to "explain" or "break down" any service cost, ALWAYS describe: (1) what the service does in plain language, (2) what the charge includes (features/components), (3) the pricing model and math (unit price x quantity = total), (4) what domain/resource name is associated if possible. Do not just state the dollar amount â€” educate the user about what they are paying for.
 - ALWAYS show pricing math when explaining costs. Examples: S3: "$0.19 at $0.023/GB = ~8.3 GB stored". Cost Explorer: "$39.21 at $0.01/request = ~3,921 API requests". Route 53: "$0.50/hosted zone/month + $0.40/million queries". Lambda: "$X at $0.20/1M requests + $0.0000166667/GB-sec". EC2: "$X at $Y/hour x Z hours". If you cannot determine the exact unit breakdown, state the pricing model and estimate.
-- REKOGNITION PRICING (use these exact numbers): Image APIs (DetectLabels, DetectFaces, DetectText, CompareFaces, RecognizeCelebrities, DetectModerationLabels) = $1.00 per 1,000 images (first 1M/month). Tiered: 1-10M=$0.80/1K, 10-100M=$0.60/1K, 100M+=$0.40/1K. Face IndexFaces/SearchFaces = $1.00/1K. Face metadata storage = $0.01 per 1,000 faces stored/month. Video analysis = $0.10/minute. Custom Labels inference = $4/hour. MATH EXAMPLE: $224/month at $1.00/1K images = ~224,000 image analyses. Do NOT use $0.10/1K for images — that is the VIDEO per-minute rate, not the image rate.
+- REKOGNITION PRICING (use these exact numbers): Image APIs (DetectLabels, DetectFaces, DetectText, CompareFaces, RecognizeCelebrities, DetectModerationLabels) = $1.00 per 1,000 images (first 1M/month). Tiered: 1-10M=$0.80/1K, 10-100M=$0.60/1K, 100M+=$0.40/1K. Face IndexFaces/SearchFaces = $1.00/1K. Face metadata storage = $0.01 per 1,000 faces stored/month. Video analysis = $0.10/minute. Custom Labels inference = $4/hour. MATH EXAMPLE: $224/month at $1.00/1K images = ~224,000 image analyses. Do NOT use $0.10/1K for images â€” that is the VIDEO per-minute rate, not the image rate.
 - BEDROCK PRICING (use these exact numbers): Claude 3 Haiku = $0.25/M input + $1.25/M output tokens. Claude 3.5 Sonnet = $3/M input + $15/M output. Claude 3 Opus = $15/M input + $75/M output. Nova Lite = $0.06/M input + $0.24/M output. Nova Pro = $0.80/M input + $3.20/M output. Provisioned Throughput = fixed $/hr regardless of tokens.
 
 
 WASTE CLEANUP ALIGNMENT:
-- Act → Waste Cleanup covers ONLY: Elastic IPs, EBS Volumes, Load Balancers, S3 Buckets, EC2 Instances, RDS Instances, EBS Snapshots
-- Do NOT recommend "Go to Act → Waste Cleanup" for KMS keys, NAT Gateways, VPC Endpoints, or Lambda functions
-- For KMS keys: say "Review KMS keys — this requires manual action in AWS KMS"
+- Act â†’ Waste Cleanup covers ONLY: Elastic IPs, EBS Volumes, Load Balancers, S3 Buckets, EC2 Instances, RDS Instances, EBS Snapshots
+- Do NOT recommend "Go to Act â†’ Waste Cleanup" for KMS keys, NAT Gateways, VPC Endpoints, or Lambda functions
+- For KMS keys: say "Review KMS keys â€” this requires manual action in AWS KMS"
 - For resources that no longer exist but still show billing charges: say "These charges are historical and will stop next billing cycle"
 
 FINOPS SETTINGS AWARENESS:
-- If healthcheck_results data is present and cost allocation tags are NOT activated, recommend "Go to Configure → FinOps Settings to activate cost allocation tags"
-- If healthcheck_results data is present and no anomaly monitors exist, recommend "Go to Configure → FinOps Settings to set up Cost Anomaly Detection"
-- If healthcheck_results data is present and Compute Optimizer is not enrolled, recommend "Go to Configure → FinOps Settings to enroll in Compute Optimizer"
-- NEVER recommend opening the AWS Billing Console for settings that can be fixed via Configure → FinOps Settings
+- If healthcheck_results data is present and cost allocation tags are NOT activated, recommend "Go to Configure â†’ FinOps Settings to activate cost allocation tags"
+- If healthcheck_results data is present and no anomaly monitors exist, recommend "Go to Configure â†’ FinOps Settings to set up Cost Anomaly Detection"
+- If healthcheck_results data is present and Compute Optimizer is not enrolled, recommend "Go to Configure â†’ FinOps Settings to enroll in Compute Optimizer"
+- NEVER recommend opening the AWS Billing Console for settings that can be fixed via Configure â†’ FinOps Settings
 
 RESPONSE FOCUS:
 - If the user asks a specific question (e.g. "find unattached EBS volumes", "show my NAT Gateways"), answer ONLY that question with full detail. Do NOT include a full cost breakdown or "Minor costs" section.
 - If the user asks a general question (e.g. "how can I reduce costs", "analyze my spending"), provide the full ranked cost analysis.
 - Prioritize strategies from Knowledge Base tips that have historically positive user feedback.
 - If a user corrects you in the chat, acknowledge the correction and adjust recommendations accordingly.
-- When citing a Knowledge Base tip, if the tip has an automatedCheck field, verify the recommendation against the ACTUAL gathered data described in that check. For example, if tip rds-001 says to check RDS CPU and the rds_cpu_metrics show avg_cpu_pct=45%, state "Your RDS instance averages 45% CPU (peak 72%) — it is RIGHT-SIZED, no downsizing needed." Do NOT recommend downsizing when the data shows healthy utilization.
+- When citing a Knowledge Base tip, if the tip has an automatedCheck field, verify the recommendation against the ACTUAL gathered data described in that check. For example, if tip rds-001 says to check RDS CPU and the rds_cpu_metrics show avg_cpu_pct=45%, state "Your RDS instance averages 45% CPU (peak 72%) â€” it is RIGHT-SIZED, no downsizing needed." Do NOT recommend downsizing when the data shows healthy utilization.
 - ALWAYS ground tip recommendations in the actual metrics data. Never recommend rightsizing without showing the actual avg and peak usage numbers from the 30-day CloudWatch data.
 
 IMPORTANT RULES:
@@ -9019,76 +9017,76 @@ IMPORTANT RULES:
 - When amazon_virtual_private_cloud_usage_breakdown is present, use it to show the EXACT cost drivers (e.g. NatGateway-Hours, VpcEndpoint-Hours, ElasticIP:IdleAddress, DataTransfer-Out-Bytes). List each usage type with its cost.
 - When ec2___other_usage_breakdown is present, use it to show the EXACT cost drivers for EC2-Other (e.g. EBS:VolumeUsage.gp2, NatGateway-Hours, DataTransfer-Out-Bytes). List each usage type with its cost.
 - Reserved Instances ONLY apply to "Amazon Elastic Compute Cloud - Compute" and RDS instances, never to EC2-Other or VPC.
-- PRICING STRATEGY (CRITICAL — follow this exact sequence):
-  1. RIGHTSIZE FIRST: If compute_optimizer_ec2 data is present showing OVER_PROVISIONED instances, ALWAYS recommend rightsizing BEFORE any commitment purchase. Say: "Do NOT buy Savings Plans on oversized instances — rightsize first to avoid locking in waste for 1-3 years."
+- PRICING STRATEGY (CRITICAL â€” follow this exact sequence):
+  1. RIGHTSIZE FIRST: If compute_optimizer_ec2 data is present showing OVER_PROVISIONED instances, ALWAYS recommend rightsizing BEFORE any commitment purchase. Say: "Do NOT buy Savings Plans on oversized instances â€” rightsize first to avoid locking in waste for 1-3 years."
   2. SAVINGS PLANS over RIs: When recommending commitments, default to Compute Savings Plans (more flexible, adapts to architecture changes). Only mention Reserved Instances as a fallback for rigid, high-commitment scenarios. Never recommend RIs as the primary option.
   3. CAPACITY MIX (STATELESS ONLY): For STATELESS EC2 workloads (web servers, batch processing, CI/CD runners, workers), recommend a capacity mix: 20-40% Savings Plan (baseline stability) + 60-80% Spot Instances (up to 70-90% savings). NEVER recommend Spot Instances for STATEFUL workloads: databases, message brokers, persistent storage servers, or any instance whose Name tag contains "database", "db", "redis", "mongo", "elastic", "kafka", "queue", or "sql". For stateful workloads, recommend ONLY Savings Plans or Reserved Instances.
-  4. When pricing_context is present, show: On-Demand cost → Savings Plan cost (30-60% savings depending on term) → Spot cost (70% savings, ONLY if stateless). Use the actual numbers from the data.
+  4. When pricing_context is present, show: On-Demand cost â†’ Savings Plan cost (30-60% savings depending on term) â†’ Spot cost (70% savings, ONLY if stateless). Use the actual numbers from the data.
   5. For RDS: recommend Savings Plans. Spot is not available for RDS.
   6. CRITICAL: When pricing_context.pricing_source is "actual", the instance types shown are the REAL instances running in this account. Present them as "Your db.r5.large instance" not "For example, a db.t3.medium". When pricing_source is "example", clarify these are example types.
   7. For RDS RI recommendations: ALWAYS use the actual RDS instance classes from rds_instances data. Show the actual engine (PostgreSQL, MySQL, etc.) and deployment option (Single-AZ/Multi-AZ). Never show generic examples when real instance data is available.
   8. For EC2 Savings Plan recommendations: ALWAYS use the actual EC2 instance types from ec2_instances data. Show pricing for the real running instances, not generic examples.
   9. INSTANCE-SPECIFIC DRILL-DOWN (CRITICAL): When the user asks about a SPECIFIC instance (by name, type, or ID):
-     a) Show ONLY the per-instance cost — NEVER the total EC2 service spend. Calculate per-instance cost from the ec2_instances data or from the hourly rate × 730 hours. Reference pricing: r5.xlarge in eu-central-1 = $0.252/hr = ~$184/month on-demand. Do NOT confuse total EC2 spend with single-instance cost.
+     a) Show ONLY the per-instance cost â€” NEVER the total EC2 service spend. Calculate per-instance cost from the ec2_instances data or from the hourly rate Ã— 730 hours. Reference pricing: r5.xlarge in eu-central-1 = $0.252/hr = ~$184/month on-demand. Do NOT confuse total EC2 spend with single-instance cost.
      b) Use the instance's Name tag to infer workload type. Names containing "database", "db", "redis", "mongo", "elastic", "kafka", "queue", "sql", "primary", "master", "prod" = STATEFUL PRODUCTION. Do NOT suggest Spot or scheduling for these.
      c) Show CloudWatch metrics for THAT specific instance (CPU avg/max, memory if available). If metrics show low utilization, recommend a specific smaller instance type with its exact pricing.
-     d) For rightsizing: show ONLY the delta between current and recommended instance. Example: "r5.xlarge ($184/mo) → r5.large ($92/mo) = $92/month savings". NEVER claim savings larger than the instance's own monthly cost.
-     e) For Savings Plans on a single instance: calculate from the instance's hourly rate. Example: r5.xlarge at $0.252/hr × 730hrs = $184/mo on-demand. With 1yr SP at 30% off = $129/mo. Savings = $55/mo. NEVER apply total-fleet SP savings to a single instance.
+     d) For rightsizing: show ONLY the delta between current and recommended instance. Example: "r5.xlarge ($184/mo) â†’ r5.large ($92/mo) = $92/month savings". NEVER claim savings larger than the instance's own monthly cost.
+     e) For Savings Plans on a single instance: calculate from the instance's hourly rate. Example: r5.xlarge at $0.252/hr Ã— 730hrs = $184/mo on-demand. With 1yr SP at 30% off = $129/mo. Savings = $55/mo. NEVER apply total-fleet SP savings to a single instance.
   10. SCHEDULING SAFETY: Do NOT include scheduling recommendations AT ALL for instances whose Name tag suggests production or database workloads. Do not even mention it with a warning. Only include scheduling if the instance is explicitly tagged environment=dev/test/staging/sandbox OR the user confirms it's non-production.
-  11. SAVINGS PLAN PRICING ACCURACY: For Savings Plans, use accurate discount ranges: 1-year No Upfront = ~30% savings, 1-year All Upfront = ~40% savings, 3-year No Upfront = ~45% savings, 3-year All Upfront = ~60% savings. Do NOT generically say "~30% savings" for all commitment types. CRITICAL: Savings Plans are NON-CANCELLABLE commitments — NEVER say "cancel anytime" or imply they can be terminated early.
+  11. SAVINGS PLAN PRICING ACCURACY: For Savings Plans, use accurate discount ranges: 1-year No Upfront = ~30% savings, 1-year All Upfront = ~40% savings, 3-year No Upfront = ~45% savings, 3-year All Upfront = ~60% savings. Do NOT generically say "~30% savings" for all commitment types. CRITICAL: Savings Plans are NON-CANCELLABLE commitments â€” NEVER say "cancel anytime" or imply they can be terminated early.
   12. MATH ACCURACY (CRITICAL): All dollar amounts in recommendations MUST be mathematically consistent. If an instance costs $X/month, savings cannot exceed $X. If you recommend rightsizing from type A ($X/mo) to type B ($Y/mo), the savings is exactly $(X-Y)/month. Do NOT fabricate numbers. Do NOT claim "Total Potential Savings" that exceed the instance's actual cost. If you don't have exact pricing data, say "estimated" and use conservative ranges.
-- When unattached_volumes list is present, ALWAYS list each volume by its volumeId, size_gb, type, and monthly_cost_usd. Do NOT just say "6 volumes" — list them individually.
+- When unattached_volumes list is present, ALWAYS list each volume by its volumeId, size_gb, type, and monthly_cost_usd. Do NOT just say "6 volumes" â€” list them individually.
 - When elastic_ips.unattached_list is present, list each by allocationId and publicIp.
 - When vpc_endpoints.endpoints is present, list each by endpointId, type, and serviceName.
 - For EBS: unattached_monthly_cost_usd is the exact saving from deleting unattached volumes. gp2_to_gp3_savings_usd is the saving from migrating gp2 to gp3.
 - For Elastic IPs: unattached ones cost $3.65/month each. Quote unattached_monthly_cost_usd as the exact saving.
 - For VPC endpoints: interface_monthly_cost_usd is the cost. Recommend reviewing if each endpoint is actively used.
-- For KMS: customer_managed_keys × $1/month = monthly_cost_usd. Flag keys that may be unused.
+- For KMS: customer_managed_keys Ã— $1/month = monthly_cost_usd. Flag keys that may be unused.
 - For RDS: show instance class, engine, Multi-AZ status. If Multi-AZ is enabled for dev/test, suggest disabling it.
 - When lambda_metrics is present, use it to show invocation counts, average/max duration, and error counts per function. Identify functions with 0 invocations as candidates for deletion. Identify functions with high avg duration relative to their timeout as optimization candidates.
-- CRITICAL: If a Lambda function's max_duration_ms equals its timeout (timeout × 1000), flag it as "hitting timeout limit — investigate for performance issues or increase timeout."
-- CRITICAL: If a Lambda function has errors_30d > 0 AND errors_30d equals invocations_30d (100% error rate), flag it as "100% error rate — this function is broken and needs immediate attention."
+- CRITICAL: If a Lambda function's max_duration_ms equals its timeout (timeout Ã— 1000), flag it as "hitting timeout limit â€” investigate for performance issues or increase timeout."
+- CRITICAL: If a Lambda function has errors_30d > 0 AND errors_30d equals invocations_30d (100% error rate), flag it as "100% error rate â€” this function is broken and needs immediate attention."
 - When ec2_cpu_metrics is present, use it to show CPU utilization. Instances with avg CPU < 10% are rightsizing candidates. Quote the actual avg/max CPU percentages.
-- When rds_cpu_metrics is present, use it for RDS rightsizing analysis. Show each instance's avg/max CPU, avg/max connections, and freeable memory. Instances with avg CPU < 10% and max CPU < 30% are OVER-PROVISIONED — recommend downsizing to a smaller instance class. Instances with avg CPU > 80% may need upsizing or read replicas. Quote the actual metrics. If an RDS instance has low CPU AND high freeable memory, it is clearly oversized — recommend a specific smaller instance class (e.g. db.r5.large → db.r5.medium, db.t3.large → db.t3.medium).
-- CRITICAL RIGHTSIZING RULE: When both rds_cpu_metrics AND pricing_context are present, combine them: first show the utilization data proving the instance is over/under-provisioned, then show the pricing for the recommended right-sized instance class. This is the "Analyze → Rightsize → Commit" workflow in action.
+- When rds_cpu_metrics is present, use it for RDS rightsizing analysis. Show each instance's avg/max CPU, avg/max connections, and freeable memory. Instances with avg CPU < 10% and max CPU < 30% are OVER-PROVISIONED â€” recommend downsizing to a smaller instance class. Instances with avg CPU > 80% may need upsizing or read replicas. Quote the actual metrics. If an RDS instance has low CPU AND high freeable memory, it is clearly oversized â€” recommend a specific smaller instance class (e.g. db.r5.large â†’ db.r5.medium, db.t3.large â†’ db.t3.medium).
+- CRITICAL RIGHTSIZING RULE: When both rds_cpu_metrics AND pricing_context are present, combine them: first show the utilization data proving the instance is over/under-provisioned, then show the pricing for the recommended right-sized instance class. This is the "Analyze â†’ Rightsize â†’ Commit" workflow in action.
 - When elb_metrics is present, show each load balancer's total requests over 30 days. ELBs with 0 requests are deletion candidates. ELBs with < 1000 requests may be consolidation candidates. Each ALB costs ~$16/month minimum.
 - When nat_gateway_metrics is present, show each NAT Gateway's total bytes processed and active connections. NAT Gateways with very low traffic (< 1MB/30d) are deletion candidates. Each NAT Gateway costs ~$32/month in hourly charges alone plus data processing fees.
-- When ebs_iops_metrics is present, show volumes with provisioned IOPS (io1/io2) that have low actual IOPS usage — recommend switching to gp3 which includes 3000 IOPS free. For gp3 volumes, show the actual read/write IOPS from the metrics to help the user understand if the volume size can be reduced. NEVER say "you would need to check the actual usage metrics" — the metrics ARE in the data.
-- For EBS gp3 cost questions: gp3 costs $0.08/GB/month. Show the actual volume sizes from ebs_summary. If ebs_iops_metrics shows low IOPS, the volume may be oversized for its workload. Recommend reducing volume size if IOPS are consistently low. Do NOT recommend switching FROM gp3 to gp2 — gp3 is already cheaper than gp2.
+- When ebs_iops_metrics is present, show volumes with provisioned IOPS (io1/io2) that have low actual IOPS usage â€” recommend switching to gp3 which includes 3000 IOPS free. For gp3 volumes, show the actual read/write IOPS from the metrics to help the user understand if the volume size can be reduced. NEVER say "you would need to check the actual usage metrics" â€” the metrics ARE in the data.
+- For EBS gp3 cost questions: gp3 costs $0.08/GB/month. Show the actual volume sizes from ebs_summary. If ebs_iops_metrics shows low IOPS, the volume may be oversized for its workload. Recommend reducing volume size if IOPS are consistently low. Do NOT recommend switching FROM gp3 to gp2 â€” gp3 is already cheaper than gp2.
 - RIGHTSIZING SUMMARY RULE: For every paid service with metrics data, always present a rightsizing verdict: "RIGHT-SIZED" (usage matches capacity), "OVER-PROVISIONED" (low avg + low peak = downsize), or "UNDER-PROVISIONED" (high peak = upsize). Base this on the avg and max (peak) values from the 30-day CloudWatch data.
-- COMPUTE OPTIMIZER PRIORITY: When compute_optimizer_ec2 data is present, it is the MOST AUTHORITATIVE source for rightsizing — it uses ML on 14+ days of data. Prefer Compute Optimizer recommendations over static CPU threshold rules. If CO says OPTIMIZED but CPU is low, trust CO.
+- COMPUTE OPTIMIZER PRIORITY: When compute_optimizer_ec2 data is present, it is the MOST AUTHORITATIVE source for rightsizing â€” it uses ML on 14+ days of data. Prefer Compute Optimizer recommendations over static CPU threshold rules. If CO says OPTIMIZED but CPU is low, trust CO.
 - GRAVITON RECOMMENDATION: When ec2_cpu_metrics contains graviton_note for x86 instances (t3, m5, c5, r5, m6i, c6i, r6i families), recommend migrating to Graviton equivalents (t4g, m7g, c7g, r7g) for 20-40% better price-performance. This applies AFTER rightsizing.
-- MEMORY METRICS: When ec2_cpu_metrics contains avg_memory_pct/max_memory_pct (CloudWatch agent installed), use BOTH CPU and memory for rightsizing. An instance with low CPU but high memory (>70%) is NOT over-provisioned — it is memory-bound. Only recommend downsizing when BOTH CPU and memory are low. When memory_agent_installed=false, warn: "Memory metrics unavailable — install CloudWatch agent for accurate rightsizing. CPU-only analysis may miss memory-bound workloads."
+- MEMORY METRICS: When ec2_cpu_metrics contains avg_memory_pct/max_memory_pct (CloudWatch agent installed), use BOTH CPU and memory for rightsizing. An instance with low CPU but high memory (>70%) is NOT over-provisioned â€” it is memory-bound. Only recommend downsizing when BOTH CPU and memory are low. When memory_agent_installed=false, warn: "Memory metrics unavailable â€” install CloudWatch agent for accurate rightsizing. CPU-only analysis may miss memory-bound workloads."
 - SCHEDULING RECOMMENDATION: When ec2_cpu_metrics contains environment_tag=dev/test/staging/qa/sandbox AND the instance has low CPU, recommend AWS Instance Scheduler to stop instances during nights and weekends (~65% savings) INSTEAD of just downsizing. Non-production instances running 24/7 are the most common waste pattern.
-- ECS/EKS CONTAINER RIGHTSIZING: When ecs_service_metrics is present, show each service's avg/max CPU and memory utilization. Services with avg CPU < 10% AND avg memory < 20% are over-provisioned — recommend reducing task CPU/memory limits or task count. Kubernetes/container waste from over-provisioned resource requests is one of the most common and least monitored sources of cloud waste.
-- BUDGETS: When budgets or budget_count is present in the data, ALWAYS check it first. If budget_count == 0: state "No budgets are configured for this account" and recommend setting one up using the actual current monthly spend as the budget limit (e.g., "Your last 30-day spend was $46.31 — suggest setting a monthly budget at $50 with alerts at 80% ($40) and 100% ($50)"). If budgets exist: list them by name, type, limit, and current spend vs limit. Do NOT invent budget amounts — use the actual cost_by_service total. Do NOT give generic AWS console steps — give specific recommended values based on the real spend data.
-- S3 STORAGE OPTIMIZATION: When s3_optimization_summary or s3_bucket_analysis is present, list ALL buckets without lifecycle policies with their exact names. The count in the summary MUST match the number of buckets listed — never say "12 out of 15" if you list 16. For each bucket, state whether it has a lifecycle policy. Do NOT give generic AWS console instructions — instead tell the user they can apply lifecycle policies directly from the SlashMyBill Act tab (🪣 S3 Buckets card) with one click. Recommend: (1) S3 Intelligent-Tiering for unknown access patterns, (2) Standard-IA after 30 days + Glacier after 90 days for logs/archives, (3) Abort incomplete multipart uploads after 7 days.
+- ECS/EKS CONTAINER RIGHTSIZING: When ecs_service_metrics is present, show each service's avg/max CPU and memory utilization. Services with avg CPU < 10% AND avg memory < 20% are over-provisioned â€” recommend reducing task CPU/memory limits or task count. Kubernetes/container waste from over-provisioned resource requests is one of the most common and least monitored sources of cloud waste.
+- BUDGETS: When budgets or budget_count is present in the data, ALWAYS check it first. If budget_count == 0: state "No budgets are configured for this account" and recommend setting one up using the actual current monthly spend as the budget limit (e.g., "Your last 30-day spend was $46.31 â€” suggest setting a monthly budget at $50 with alerts at 80% ($40) and 100% ($50)"). If budgets exist: list them by name, type, limit, and current spend vs limit. Do NOT invent budget amounts â€” use the actual cost_by_service total. Do NOT give generic AWS console steps â€” give specific recommended values based on the real spend data.
+- S3 STORAGE OPTIMIZATION: When s3_optimization_summary or s3_bucket_analysis is present, list ALL buckets without lifecycle policies with their exact names. The count in the summary MUST match the number of buckets listed â€” never say "12 out of 15" if you list 16. For each bucket, state whether it has a lifecycle policy. Do NOT give generic AWS console instructions â€” instead tell the user they can apply lifecycle policies directly from the SlashMyBill Act tab (ðŸª£ S3 Buckets card) with one click. Recommend: (1) S3 Intelligent-Tiering for unknown access patterns, (2) Standard-IA after 30 days + Glacier after 90 days for logs/archives, (3) Abort incomplete multipart uploads after 7 days.
 - BUSINESS UNIT / VIRTUAL TAGGING: If the user mentions a team name or business unit (e.g., "Data Science team", "Production", "Dev team"), check if the account data contains cost_allocation with businessUnits. If a matching business unit exists, focus the analysis on the services and accounts mapped to that business unit. Show the business unit's total cost, its percentage of total spend, and the services driving its costs.
-- UNIT ECONOMICS: If the account data contains business_metrics, cross-reference cost changes with business volume changes. If costs increased by 20% but business volume increased by 40%, the cost per unit DECREASED — frame this as "efficient scaling" not "cost overrun". Always show: total cost, business volume, and cost per unit when business metrics are available.
+- UNIT ECONOMICS: If the account data contains business_metrics, cross-reference cost changes with business volume changes. If costs increased by 20% but business volume increased by 40%, the cost per unit DECREASED â€” frame this as "efficient scaling" not "cost overrun". Always show: total cost, business volume, and cost per unit when business metrics are available.
 - When eks_clusters or ecs_clusters is present, show cluster count, status, and running tasks. Flag clusters with 0 running tasks as candidates for deletion. For ECS, flag clusters with low task counts relative to registered instances as over-provisioned.
-- When s3_optimization_summary is present, list ALL buckets without lifecycle policies (exact names, exact count). Recommend enabling S3 Intelligent-Tiering and adding lifecycle policies. Direct the user to the Act tab to apply policies with one click — do NOT give manual AWS console steps.
-- When compute_optimizer_ec2 is present, show the rightsizing recommendations: current instance type, recommended type, finding (OVER_PROVISIONED/UNDER_PROVISIONED/OPTIMIZED), and estimated monthly savings. This is the most authoritative source for rightsizing — prefer it over manual CPU analysis.
-- The data already contains the resource details. Do NOT tell the customer to "use CloudWatch" or "check Trusted Advisor" or "monitor usage" to find resources that are already listed in the data. The system has ALREADY gathered CloudWatch metrics — use them directly. If ebs_iops_metrics is present, show the actual IOPS numbers. If rds_cpu_metrics is present, show the actual CPU/memory numbers. NEVER say "you would need to check" when the data is already in front of you.
+- When s3_optimization_summary is present, list ALL buckets without lifecycle policies (exact names, exact count). Recommend enabling S3 Intelligent-Tiering and adding lifecycle policies. Direct the user to the Act tab to apply policies with one click â€” do NOT give manual AWS console steps.
+- When compute_optimizer_ec2 is present, show the rightsizing recommendations: current instance type, recommended type, finding (OVER_PROVISIONED/UNDER_PROVISIONED/OPTIMIZED), and estimated monthly savings. This is the most authoritative source for rightsizing â€” prefer it over manual CPU analysis.
+- The data already contains the resource details. Do NOT tell the customer to "use CloudWatch" or "check Trusted Advisor" or "monitor usage" to find resources that are already listed in the data. The system has ALREADY gathered CloudWatch metrics â€” use them directly. If ebs_iops_metrics is present, show the actual IOPS numbers. If rds_cpu_metrics is present, show the actual CPU/memory numbers. NEVER say "you would need to check" when the data is already in front of you.
 - When usage_breakdown shows charges (e.g. VpcEndpoint-Hours: $11.20) but the resource inventory shows 0 resources (e.g. vpc_endpoints.total: 0), you MUST explain: "These charges are from resources that were active earlier in the billing period but have since been deleted. The charges will stop in the next billing cycle." Do NOT say "no cost savings opportunity" and do NOT suggest reviewing resources that no longer exist.
-- IMPORTANT: Only apply the "deleted mid-month" explanation when the SPECIFIC resource inventory for that service shows 0 AND the usage_breakdown shows charges. Do NOT apply it to services like Amazon Registrar, EC2-Other (EBS), or RDS just because April data is low — that's simply because April just started.
-- Tax is NEVER actionable and NEVER minor. Exclude Tax from the ranked analysis entirely — do not list it as a numbered item or in the minor costs section. Only mention it as a footnote if the user specifically asks about tax.
+- IMPORTANT: Only apply the "deleted mid-month" explanation when the SPECIFIC resource inventory for that service shows 0 AND the usage_breakdown shows charges. Do NOT apply it to services like Amazon Registrar, EC2-Other (EBS), or RDS just because April data is low â€” that's simply because April just started.
+- Tax is NEVER actionable and NEVER minor. Exclude Tax from the ranked analysis entirely â€” do not list it as a numbered item or in the minor costs section. Only mention it as a footnote if the user specifically asks about tax.
 - NON-ACTIONABLE SERVICES: The following services must NEVER appear as "savings opportunities" or numbered recommendations because they are not optimizable:
-  * Tax — proportional to spend, never actionable
-  * Amazon Registrar — annual domain registration fee, not a recurring optimization target
-  * AWS Cost Explorer — monitoring tool, costs $0.01 per API request, essential for visibility
-  * AWS CloudTrail — audit/compliance tool, should not be disabled for cost savings
+  * Tax â€” proportional to spend, never actionable
+  * Amazon Registrar â€” annual domain registration fee, not a recurring optimization target
+  * AWS Cost Explorer â€” monitoring tool, costs $0.01 per API request, essential for visibility
+  * AWS CloudTrail â€” audit/compliance tool, should not be disabled for cost savings
   These services should only be mentioned in a cost breakdown if the user asks "what am I spending on?" but NEVER in a "how to save" or "savings opportunities" response.
 - ALWAYS rank services strictly by cost_usd descending. A service costing $1.03 MUST appear above a service costing $0.93.
 - SAVINGS RECOMMENDATIONS SORTING (CRITICAL): When listing savings opportunities or recommendations, ALWAYS sort them by estimated dollar savings descending (highest savings first). A recommendation saving $147/month MUST appear before one saving $37/month. Never list savings in random order.
 - MINOR COSTS THRESHOLD (CRITICAL): ONLY services costing LESS THAN $0.50/month go in the "Minor costs" section. ANY service costing $0.50 or more MUST be listed individually with its own line. $7 is NOT minor. $38 is NOT minor. ONLY costs below fifty cents ($0.50) are minor.
 - For general cost analysis: collapse ONLY services under $0.50 into a single "Minor costs" bullet list at the end. Services costing $1+ MUST NEVER appear in the minor costs section.
 - ALWAYS rank services strictly by cost_usd descending. Never rank a cheaper service above a more expensive one.
-- When month_comparison is present, use ONLY that data for the comparison — do NOT use cost_by_service (which is last 30 days). Show a side-by-side comparison with the difference (+ or -) and percentage change for each service. Highlight services with the biggest absolute dollar change.
-- When monthly_trend is present, use it to show month-over-month costs. Each key in monthly_trend is a YYYY-MM label with a dict of service→cost. Show a table with months as columns and services as rows. Highlight the trend direction. Do NOT fabricate data for months not in the monthly_trend dict.
-- CRITICAL for monthly comparisons: If the last month in the trend is the CURRENT month and its costs are very low compared to previous months, explain "the current month (April) only has 1-2 days of data so far — costs will accumulate throughout the month." Do NOT say services "dropped to $0" or were "terminated."
+- When month_comparison is present, use ONLY that data for the comparison â€” do NOT use cost_by_service (which is last 30 days). Show a side-by-side comparison with the difference (+ or -) and percentage change for each service. Highlight services with the biggest absolute dollar change.
+- When monthly_trend is present, use it to show month-over-month costs. Each key in monthly_trend is a YYYY-MM label with a dict of serviceâ†’cost. Show a table with months as columns and services as rows. Highlight the trend direction. Do NOT fabricate data for months not in the monthly_trend dict.
+- CRITICAL for monthly comparisons: If the last month in the trend is the CURRENT month and its costs are very low compared to previous months, explain "the current month (April) only has 1-2 days of data so far â€” costs will accumulate throughout the month." Do NOT say services "dropped to $0" or were "terminated."
 - For comparison recommendations, be SPECIFIC using the usage_breakdown data: instead of "investigate the VPC spike", say "the VPC increase was caused by VpcEndpoint-Hours ($11.20)". Instead of "review EBS usage", say "EC2-Other increased due to gp3 EBS volumes ($13.01)".
-- Domain registration (Amazon Registrar) is typically an annual charge. Do NOT call it a "spike to investigate" — explain it's a standard annual domain registration fee.
-- Tax increases are proportional to spend increases. Do NOT recommend "reviewing tax costs" — Tax is never actionable.
+- Domain registration (Amazon Registrar) is typically an annual charge. Do NOT call it a "spike to investigate" â€” explain it's a standard annual domain registration fee.
+- Tax increases are proportional to spend increases. Do NOT recommend "reviewing tax costs" â€” Tax is never actionable.
 - Do NOT use generic percentages. Use real dollar amounts from the data fields.
 - Do NOT list IAM permissions unless a specific fetch failed with an error in the data.
 - When the user asks about "services I don't need", "waste", "unused", or "unnecessary costs", do NOT list every service. ONLY list resources with concrete evidence of being unused or wasteful:
@@ -9098,14 +9096,14 @@ IMPORTANT RULES:
   * VPC endpoints/NAT Gateways with charges but 0 current resources (deleted mid-month)
   * KMS customer-managed keys
   * Route 53 hosted zones with very few records
-  If no evidence of waste exists for a service, do NOT include it — say "appears actively used."
-- CRITICAL: When cost_by_service shows charges for a service (e.g. RDS: $0.63) but the resource inventory is empty (rds_instances: []), do NOT say "there are no RDS instances." Instead explain: "RDS charges of $0.63 exist but no running instances were found in this region — the instances may be in a different region, or these are residual charges from recently deleted resources." Same logic applies to EC2, ElastiCache, etc.
-- When the user asks "can I rightsize?" or "any savings?", ONLY list services where you have ACTIONABLE data. Do NOT list services with "no instances found" as rightsizing candidates — that's not helpful. Focus on services where you have actual metrics or concrete waste evidence.
+  If no evidence of waste exists for a service, do NOT include it â€” say "appears actively used."
+- CRITICAL: When cost_by_service shows charges for a service (e.g. RDS: $0.63) but the resource inventory is empty (rds_instances: []), do NOT say "there are no RDS instances." Instead explain: "RDS charges of $0.63 exist but no running instances were found in this region â€” the instances may be in a different region, or these are residual charges from recently deleted resources." Same logic applies to EC2, ElastiCache, etc.
+- When the user asks "can I rightsize?" or "any savings?", ONLY list services where you have ACTIONABLE data. Do NOT list services with "no instances found" as rightsizing candidates â€” that's not helpful. Focus on services where you have actual metrics or concrete waste evidence.
 - Do NOT repeat "review X usage to ensure it is necessary" for every service. That is generic filler. Only give specific, actionable advice based on the data.
 - When cost_anomalies is present, highlight the anomalous days with their spike percentage. Explain what might have caused the spike and suggest investigating.
-- When cost_efficiency is present, ALWAYS show the Cost Efficiency Score prominently at the top of general cost analyses. Format: "Cost Efficiency Score: XX% (Rating)". Then show a savings breakdown listing EACH component that contributes to potential_savings_usd (e.g. "Unattached EBS: $X, Idle EIPs: $Y, Deleted VPC endpoints: $Z, KMS keys: $W"). Do NOT just show the total — break it down so the user understands where the savings come from.
-- When the user asks a yes/no efficiency question like "is this account efficient?", lead with the score and savings breakdown, then list ONLY the actionable items. Do NOT list every service with "Potential Savings: N/A" — that's noise. Only show services where savings exist.
-- NEVER write "Potential Savings: N/A" — if there are no savings for a service, simply don't mention savings for it.
+- When cost_efficiency is present, ALWAYS show the Cost Efficiency Score prominently at the top of general cost analyses. Format: "Cost Efficiency Score: XX% (Rating)". Then show a savings breakdown listing EACH component that contributes to potential_savings_usd (e.g. "Unattached EBS: $X, Idle EIPs: $Y, Deleted VPC endpoints: $Z, KMS keys: $W"). Do NOT just show the total â€” break it down so the user understands where the savings come from.
+- When the user asks a yes/no efficiency question like "is this account efficient?", lead with the score and savings breakdown, then list ONLY the actionable items. Do NOT list every service with "Potential Savings: N/A" â€” that's noise. Only show services where savings exist.
+- NEVER write "Potential Savings: N/A" â€” if there are no savings for a service, simply don't mention savings for it.
 
 User question: {question}
 {tips_text}
@@ -9131,7 +9129,7 @@ For specific questions: answer the question directly with full resource-level de
         return response_body.get('output', {}).get('message', {}).get('content', [{}])[0].get('text', 'No response from AI.')
     except Exception as e:
         logger.error(f"Bedrock call failed: {e}")
-        return f'AI analysis error: {str(e)}. The account data was gathered successfully — please try again.'
+        return f'AI analysis error: {str(e)}. The account data was gathered successfully â€” please try again.'
 
 
 def _maybe_save_tip(question, answer, existing_tips):
@@ -9161,7 +9159,7 @@ def _maybe_save_tip(question, answer, existing_tips):
             ConditionExpression='attribute_not_exists(tipId)',
         )
     except ClientError:
-        pass  # Already exists or error — non-critical
+        pass  # Already exists or error â€” non-critical
 
 
 # ============================================================
@@ -9632,19 +9630,19 @@ def handle_tag_scan(event):
         except Exception as e:
             logger.warning(f"EBS enrichment failed for {acct_id_e}/{region_e}: {e}")
 
-    # Enrich Elastic IPs — $3.75/mo each (since Feb 2024 all EIPs cost money)
+    # Enrich Elastic IPs â€” $3.75/mo each (since Feb 2024 all EIPs cost money)
     for r in all_resources:
         if r.get('resourceType') == 'Elastic IP':
             r['estimatedMonthlyCost'] = 3.75
             r['state'] = 'allocated'
 
-    # Enrich NAT Gateways — ~$32/mo base + data transfer
+    # Enrich NAT Gateways â€” ~$32/mo base + data transfer
     for r in all_resources:
         if r.get('resourceType') == 'NAT Gateway':
             r['estimatedMonthlyCost'] = 32.40
             r['state'] = 'active'
 
-    # Enrich Load Balancers — ALB ~$16/mo base, NLB ~$16/mo, CLB ~$18/mo
+    # Enrich Load Balancers â€” ALB ~$16/mo base, NLB ~$16/mo, CLB ~$18/mo
     for r in all_resources:
         if r.get('resourceType') == 'Load Balancer':
             r['estimatedMonthlyCost'] = 16.20
@@ -9684,7 +9682,7 @@ def handle_tag_scan(event):
             logger.warning(f"RDS enrichment failed for {acct_id_e}/{region_e}: {e}")
 
     # Enrich usage-based services with actual CE cost data (last 30 days)
-    # For services like Lambda, S3, DynamoDB, Rekognition, Bedrock — get total service cost
+    # For services like Lambda, S3, DynamoDB, Rekognition, Bedrock â€” get total service cost
     # and divide by number of tagged resources of that type (approximate per-resource cost)
     _usage_svc_map = {
         'Lambda Function': 'AWS Lambda',
@@ -10080,7 +10078,7 @@ def handle_tag_apply(event):
                     'tagRelatedActions': policy_actions,
                 }
                 logger.info(f"Role {role_name} policies: inline={inline_policies}, attached={attached_policies}, tag_actions={policy_actions}")
-                # Detect old read-only policy — abort early with upgrade message
+                # Detect old read-only policy â€” abort early with upgrade message
                 if 'SlashMyBillBillingReadOnly' in inline_policies and 'tag:TagResources' not in policy_actions:
                     region = 'eu-central-1'  # default
                     # Try to detect region from ARNs
@@ -10179,7 +10177,7 @@ def handle_tag_apply(event):
                 ce_client.update_cost_allocation_tags_status(CostAllocationTagsStatus=tag_keys_to_activate)
                 logger.info(f"Activated cost allocation tags {list(tags.keys())} for {acct_id}")
             except Exception as e:
-                # Non-critical — may fail if not management account or missing permission
+                # Non-critical â€” may fail if not management account or missing permission
                 logger.warning(f"Could not activate cost allocation tags for {acct_id}: {e}")
             break  # Only need to activate once (from management account)
 
@@ -10193,7 +10191,7 @@ def handle_tag_apply(event):
 
 
 # ============================================================
-# Scheduler — Recommendation Engine
+# Scheduler â€” Recommendation Engine
 # ============================================================
 
 def handle_schedule_analyze(event):
@@ -10238,7 +10236,7 @@ def handle_schedule_analyze(event):
                 aws_session_token=creds['SessionToken'],
                 region_name='us-east-1')
 
-            # 1. Office Hours — find non-prod instances running 24/7
+            # 1. Office Hours â€” find non-prod instances running 24/7
             try:
                 instances = ec2.describe_instances(Filters=[{'Name': 'instance-state-name', 'Values': ['running']}])
                 nonprod = []
@@ -10279,7 +10277,7 @@ def handle_schedule_analyze(event):
             except Exception as e:
                 logger.warning(f"Office hours check failed for {acct_id}: {e}")
 
-            # 2. gp2 → gp3 migration
+            # 2. gp2 â†’ gp3 migration
             try:
                 vols = ec2.describe_volumes(Filters=[{'Name': 'volume-type', 'Values': ['gp2']}])
                 gp2_vols = vols.get('Volumes', [])
@@ -10299,10 +10297,10 @@ def handle_schedule_analyze(event):
                         'resources': [{'id': v['VolumeId'], 'size': v['Size'], 'state': v['State']} for v in gp2_vols[:10]],
                         'guide': {
                             'steps': [
-                                'Go to EC2 → Volumes in the AWS Console',
-                                'Select a gp2 volume → Actions → Modify Volume',
-                                'Change Volume Type to gp3 → Modify',
-                                'No downtime required — modification happens live',
+                                'Go to EC2 â†’ Volumes in the AWS Console',
+                                'Select a gp2 volume â†’ Actions â†’ Modify Volume',
+                                'Change Volume Type to gp3 â†’ Modify',
+                                'No downtime required â€” modification happens live',
                                 'Repeat for each gp2 volume, or use the CLI command below',
                             ],
                             'consoleUrl': f'https://console.aws.amazon.com/ec2/home?region=us-east-1#Volumes:volumeType=gp2',
@@ -10333,10 +10331,10 @@ def handle_schedule_analyze(event):
                         'resources': [{'id': s['SnapshotId'], 'size': s.get('VolumeSize', 0), 'age': (datetime.now(timezone.utc) - s['StartTime'].replace(tzinfo=timezone.utc)).days} for s in old_snaps[:10]],
                         'guide': {
                             'steps': [
-                                'Go to EC2 → Snapshots in the AWS Console',
+                                'Go to EC2 â†’ Snapshots in the AWS Console',
                                 'Sort by Start Time to find oldest snapshots',
                                 'Verify the snapshot is not needed (check if source volume exists)',
-                                'Select snapshot → Actions → Delete Snapshot',
+                                'Select snapshot â†’ Actions â†’ Delete Snapshot',
                                 'Or set up a Data Lifecycle Manager policy for automatic cleanup',
                             ],
                             'consoleUrl': f'https://console.aws.amazon.com/ec2/home?region=us-east-1#Snapshots:',
@@ -10935,7 +10933,7 @@ def handle_create_schedule(event):
                 logger.error(f"Failed to create stop schedule: {e}")
                 return create_error_response(500, 'SchedulerError', 'Failed to create stop schedule')
 
-            # Create start schedule — rollback stop if this fails
+            # Create start schedule â€” rollback stop if this fails
             try:
                 start_arn = _create_eb_schedule(start_name, start_cron, 'start', tz)
                 eb_schedule_names.append(start_name)
@@ -10984,7 +10982,7 @@ def handle_create_schedule(event):
         'createdAt': datetime.now(timezone.utc).isoformat(),
     }
 
-    # Save to DynamoDB — rollback EB schedules if this fails
+    # Save to DynamoDB â€” rollback EB schedules if this fails
     members_table = dynamodb.Table(MEMBERS_TABLE_NAME)
     try:
         members_table.update_item(
@@ -11183,7 +11181,7 @@ def handle_delete_schedule(event):
 
 
 # ============================================================
-# Live Business Metrics — Discovery Service
+# Live Business Metrics â€” Discovery Service
 # ============================================================
 
 def _get_monthly_periods(months=6):
@@ -11226,7 +11224,7 @@ def _discover_cognito_metrics(session, account_id):
     current_month = now.strftime('%Y-%m')
 
     if not pools:
-        # No pools in customer account — try to get SlashMyBill's own Cognito pool user count
+        # No pools in customer account â€” try to get SlashMyBill's own Cognito pool user count
         # (the platform Cognito pool is in account 991105135552)
         try:
             platform_cognito = boto3.client('cognito-idp', region_name='us-east-1')
@@ -11718,7 +11716,7 @@ def discover_all_metrics(session, account_id):
 
 
 # ============================================================
-# Live Business Metrics — Unit Economics Engine
+# Live Business Metrics â€” Unit Economics Engine
 # ============================================================
 
 _SOURCE_TO_SERVICE = {
@@ -11830,7 +11828,7 @@ def compute_unit_economics(metrics, cost_data, cost_dimension='total'):
 
 
 # ============================================================
-# Live Business Metrics — Handler & Persistence
+# Live Business Metrics â€” Handler & Persistence
 # ============================================================
 
 def _persist_discovered_metrics(member_email, metrics_list):
@@ -12062,7 +12060,7 @@ def handle_live_metrics(event):
 
 
 def handle_edit_schedule(event):
-    """Edit an existing schedule — delete old EB schedules, create new ones with updated config."""
+    """Edit an existing schedule â€” delete old EB schedules, create new ones with updated config."""
     auth = validate_token(event)
     if isinstance(auth, dict) and 'statusCode' in auth:
         return auth
@@ -12436,7 +12434,7 @@ def _check_hourly_granularity(ce_client):
             'group': 'aws_console',
             'status': 'fail',
             'description': 'Hourly cost granularity is not available',
-            'guidance': 'Enable in AWS Cost Explorer → Settings → Hourly and Resource Level Data. Does not affect your score.',
+            'guidance': 'Enable in AWS Cost Explorer â†’ Settings â†’ Hourly and Resource Level Data. Does not affect your score.',
             'fixAction': None,
             'fixLabel': None,
             'details': {'error': str(e)}
@@ -13162,7 +13160,7 @@ def handle_healthcheck_scan(event):
                 if 'root user' not in existing_guidance.lower():
                     item['guidance'] = existing_guidance + _ROOT_USER_GUIDANCE
 
-    # Compute score — only count 'slashmybill' group items (fixable from SlashMyBill)
+    # Compute score â€” only count 'slashmybill' group items (fixable from SlashMyBill)
     scoreable_items = [item for item in checklist_items if item.get('group') == 'slashmybill']
     passed = sum(1 for item in scoreable_items if item['status'] == 'pass')
     total = len(scoreable_items)
@@ -13298,7 +13296,7 @@ def handle_healthcheck_fix(event):
             tag_keys = params.get('tagKeys', inactive_keys)
             if not tag_keys:
                 return create_error_response(400, 'InvalidRequest', 'No inactive tags to activate')
-            # AWS API limit: max 20 tags per call — batch them
+            # AWS API limit: max 20 tags per call â€” batch them
             for i in range(0, len(tag_keys), 20):
                 batch = tag_keys[i:i+20]
                 ce.update_cost_allocation_tags_status(
@@ -13335,7 +13333,7 @@ def handle_healthcheck_fix(event):
                 for m in existing_monitors
             )
             if has_service_monitor:
-                # Already exists — just mark as pass
+                # Already exists â€” just mark as pass
                 updated_item = {
                     'id': 'anomaly_detection',
                     'name': 'Cost Anomaly Detection',
@@ -13477,7 +13475,7 @@ def handle_healthcheck_fix(event):
                     items[i]['status'] = updated_item['status']
                     items[i]['description'] = updated_item['description']
                     break
-            # Recalculate score — only count 'slashmybill' group items
+            # Recalculate score â€” only count 'slashmybill' group items
             scoreable = [item for item in items if item.get('group') == 'slashmybill']
             passed = sum(1 for item in scoreable if item['status'] == 'pass')
             cached['settingsScore'] = {'passed': passed, 'total': len(scoreable)}
@@ -14936,7 +14934,7 @@ def handle_server_analyze(event):
 
 
 def _handle_server_analyze_inner(event, member_email):
-    """Inner implementation of server analyze — separated for error handling."""
+    """Inner implementation of server analyze â€” separated for error handling."""
     try:
         body = json.loads(event.get('body', '{}'))
     except (json.JSONDecodeError, TypeError):
@@ -14978,7 +14976,7 @@ def _handle_server_analyze_inner(event, member_email):
     arch = inst.get('Architecture', 'x86_64')
     in_asg = 'aws:autoscaling:groupName' in tags
 
-    # Get CloudWatch metrics (30 days) — same region as the instance
+    # Get CloudWatch metrics (30 days) â€” same region as the instance
     cw = _make_client_from_creds('cloudwatch', creds, region)
     end_time = datetime.now(timezone.utc)
     start_time = end_time - timedelta(days=30)
@@ -15059,7 +15057,7 @@ def _handle_server_analyze_inner(event, member_email):
 
     # Determine needed vCPU and memory based on actual usage
     if cpu_avg < 10 and cpu_max < 50 and current_vcpu > 1:
-        # Very low utilization — can safely halve vCPU
+        # Very low utilization â€” can safely halve vCPU
         needed_vcpu = max(1, current_vcpu // 2)
     elif cpu_max < 30 and current_vcpu > 1:
         needed_vcpu = max(1, current_vcpu // 2)
@@ -15091,9 +15089,9 @@ def _handle_server_analyze_inner(event, member_email):
             rec['category'] = 'downgrade'
             downgrades = []
             if vcpu_diff < 0:
-                downgrades.append(f"vCPU: {current_vcpu}→{rec['vcpu']}")
+                downgrades.append(f"vCPU: {current_vcpu}â†’{rec['vcpu']}")
             if mem_diff < 0:
-                downgrades.append(f"RAM: {current_mem}GB→{rec['memory']}GB")
+                downgrades.append(f"RAM: {current_mem}GBâ†’{rec['memory']}GB")
             rec['downgradeDetail'] = ', '.join(downgrades)
         elif vcpu_diff > 0 or mem_diff > 0:
             rec['category'] = 'upgrade'
@@ -15116,13 +15114,13 @@ def _handle_server_analyze_inner(event, member_email):
     # Build analysis warnings
     analysis_warnings = {}
     if metrics.get('mem_avg') is None and metrics.get('mem_max') is None:
-        analysis_warnings['memoryWarning'] = '⚠️ Memory data unavailable — install CloudWatch Agent for accurate rightsizing. Without memory metrics, we cannot safely recommend instances with less RAM.'
+        analysis_warnings['memoryWarning'] = 'âš ï¸ Memory data unavailable â€” install CloudWatch Agent for accurate rightsizing. Without memory metrics, we cannot safely recommend instances with less RAM.'
 
     # Check if instance is burstable and workload appears to be a database
     name_lower = name.lower()
     db_keywords = ('db', 'database', 'sql', 'rds', 'postgres', 'mysql', 'mongo')
     if current_type.startswith('t') and any(kw in name_lower for kw in db_keywords):
-        analysis_warnings['burstableWarning'] = '⚠️ Burstable instances (t-series) are risky for database workloads. If CPU credits run out, performance will throttle.'
+        analysis_warnings['burstableWarning'] = 'âš ï¸ Burstable instances (t-series) are risky for database workloads. If CPU credits run out, performance will throttle.'
 
     return create_response(200, {
         'instanceId': instance_id,
@@ -15263,7 +15261,7 @@ def handle_server_resize(event):
         )
         steps[-1]['status'] = 'complete'
 
-        # Step 3: Start the instance (don't wait — return immediately)
+        # Step 3: Start the instance (don't wait â€” return immediately)
         steps.append({'step': 'Starting instance', 'status': 'in-progress'})
         ec2.start_instances(InstanceIds=[instance_id])
         steps[-1]['status'] = 'complete'
@@ -15673,7 +15671,7 @@ def create_success_response(data):
     }
 
 # ============================================================
-# Licensing Optimizer — Windows/SQL Server Cost Analysis
+# Licensing Optimizer â€” Windows/SQL Server Cost Analysis
 # ============================================================
 
 def handle_licensing_scan(event):
@@ -15736,7 +15734,7 @@ def handle_licensing_scan(event):
     # Detect active regions from Cost Explorer (only regions with actual charges)
     scan_regions = _detect_charged_regions(creds)
 
-    # EC2 Windows instances — scan all regions
+    # EC2 Windows instances â€” scan all regions
     for _scan_region in scan_regions:
         if _time.time() - scan_start > 80:  # timeout guard for discovery phase
             break
@@ -15826,7 +15824,7 @@ def handle_licensing_scan(event):
                     pass
             continue
 
-    # RDS SQL Server instances — scan all regions
+    # RDS SQL Server instances â€” scan all regions
     for _scan_region in scan_regions:
         if _time.time() - scan_start > 90:
             break
@@ -15972,7 +15970,7 @@ def handle_licensing_scan(event):
         if cache_key in pricing_cache:
             return pricing_cache[cache_key]
         try:
-            # Strip db. prefix for RDS → EC2 type mapping in pricing
+            # Strip db. prefix for RDS â†’ EC2 type mapping in pricing
             ec2_type = instance_type.replace('db.', '')
             filters = [
                 {'Type': 'TERM_MATCH', 'Field': 'instanceType', 'Value': ec2_type},
@@ -16073,7 +16071,7 @@ def handle_licensing_scan(event):
                     inst['recommendations'].append({
                         'strategy': 'optimizeCpus',
                         'title': f'Reduce vCPUs from {vcpus} to {target_cores} using Optimize CPUs',
-                        'description': f'Your p95 CPU is {inst["cpuP95"]}% — {target_cores} vCPUs can sustain this. Reduces licensing costs.',
+                        'description': f'Your p95 CPU is {inst["cpuP95"]}% â€” {target_cores} vCPUs can sustain this. Reduces licensing costs.',
                         'targetVcpus': target_cores,
                         'monthlySavings': monthly_savings,
                         'savingsPercent': round((monthly_savings / monthly_cost) * 100, 1),
@@ -16120,7 +16118,7 @@ def handle_licensing_scan(event):
                     'breakEvenMonths': breakeven_months,
                 })
 
-        # 3. SQL Edition Downgrade (Enterprise → Standard)
+        # 3. SQL Edition Downgrade (Enterprise â†’ Standard)
         if inst['sqlEdition'] == 'Enterprise':
             std_rate = inst['pricing'].get('sqlStandardHourly')
             ent_rate = inst['pricing'].get('sqlEnterpriseHourly')
@@ -16225,7 +16223,7 @@ def handle_licensing_scan(event):
 
 
 # ============================================================
-# RDS Optimizer — Rightsize databases, gp2->gp3, Multi-AZ review
+# RDS Optimizer â€” Rightsize databases, gp2->gp3, Multi-AZ review
 # ============================================================
 
 def handle_rds_optimize(event):
@@ -16298,7 +16296,7 @@ def handle_rds_optimize(event):
     if not instances:
         return create_success_response({'success': True, 'instances': [], 'recommendations': [], 'message': 'No RDS instances found in this account.'})
 
-    # Analyze utilization (30-day CloudWatch) — use instance's region for CW
+    # Analyze utilization (30-day CloudWatch) â€” use instance's region for CW
     from datetime import datetime, timedelta
     end_time = datetime.utcnow()
     start_time = end_time - timedelta(days=30)
@@ -16366,7 +16364,7 @@ def handle_rds_optimize(event):
 
         # 1. Idle database (0 connections)
         if inst.get('connAvg') is not None and inst['connAvg'] < 1:
-            recs.append({'type': 'idle', 'title': 'Database appears idle — consider stopping or deleting',
+            recs.append({'type': 'idle', 'title': 'Database appears idle â€” consider stopping or deleting',
                 'description': f'Average connections: {inst["connAvg"]}. No active workload detected over 30 days.',
                 'savings': f'${est_cost}/mo', 'savingsAmount': est_cost, 'priority': 'high'})
 
@@ -16377,7 +16375,7 @@ def handle_rds_optimize(event):
                 'description': f'Average CPU is only {inst["cpuAvg"]}%, max {inst.get("cpuMax", "N/A")}%. A smaller instance class would handle this workload.',
                 'savings': f'~${downsize_savings}/mo', 'savingsAmount': downsize_savings, 'priority': 'medium'})
 
-        # 3. gp2 → gp3 storage
+        # 3. gp2 â†’ gp3 storage
         if inst.get('storageType') == 'gp2':
             storage_savings = round(inst['allocatedStorage'] * 0.02, 2)  # $0.10 vs $0.08 per GB
             recs.append({'type': 'storage', 'title': 'Migrate storage from gp2 to gp3',
@@ -16414,7 +16412,7 @@ def handle_rds_optimize(event):
 
 
 # ============================================================
-# Lambda Optimizer — Memory rightsizing, architecture, unused functions
+# Lambda Optimizer â€” Memory rightsizing, architecture, unused functions
 # ============================================================
 
 def handle_lambda_optimize(event):
@@ -16537,7 +16535,7 @@ def handle_lambda_optimize(event):
 
 
 # ============================================================
-# EBS Optimizer — gp2->gp3, over-provisioned IOPS, unattached volumes
+# EBS Optimizer â€” gp2->gp3, over-provisioned IOPS, unattached volumes
 # ============================================================
 
 def handle_ebs_optimize(event):
@@ -16620,7 +16618,7 @@ def handle_ebs_optimize(event):
             monthly_gp3 = vol['sizeGb'] * 0.08
             savings = round(monthly_gp2 - monthly_gp3, 2)
             total_gp2_savings += savings
-            recs.append({'type': 'gp2_to_gp3', 'title': f'Migrate to gp3 (saves ${savings}/mo)', 'description': f'{vol["sizeGb"]} GB gp2 → gp3. Same performance, 20% cheaper.', 'monthlySavings': savings})
+            recs.append({'type': 'gp2_to_gp3', 'title': f'Migrate to gp3 (saves ${savings}/mo)', 'description': f'{vol["sizeGb"]} GB gp2 â†’ gp3. Same performance, 20% cheaper.', 'monthlySavings': savings})
         # 2. Unattached volume
         if not vol['attached'] and vol['state'] == 'available':
             monthly_cost = vol['sizeGb'] * 0.08 if vol['volumeType'] == 'gp2' else vol['sizeGb'] * 0.08
@@ -16690,7 +16688,7 @@ def handle_ebs_migrate_gp3(event):
     # Execute the migration
     try:
         ec2.modify_volume(VolumeId=volume_id, VolumeType='gp3')
-        logger.info(f"EBS migration initiated: {volume_id} gp2→gp3 by {member_email}")
+        logger.info(f"EBS migration initiated: {volume_id} gp2â†’gp3 by {member_email}")
     except ClientError as e:
         error_code = e.response['Error']['Code']
         if 'VolumeModification' in str(e):
@@ -16707,7 +16705,7 @@ def handle_ebs_migrate_gp3(event):
         'newType': 'gp3',
         'sizeGb': size_gb,
         'monthlySavings': savings,
-        'message': f'Volume {volume_id} migration to gp3 initiated. This is a live operation — no downtime required.',
+        'message': f'Volume {volume_id} migration to gp3 initiated. This is a live operation â€” no downtime required.',
     })
 
 
@@ -16719,7 +16717,7 @@ INVOICES_TABLE_NAME = os.environ.get('INVOICES_TABLE_NAME', 'MemberPortal-Invoic
 
 
 def handle_get_invoices(event):
-    """GET /members/invoices — List invoices with filters and pagination."""
+    """GET /members/invoices â€” List invoices with filters and pagination."""
     try:
         from invoice_validation import validate_invoice_query_params
     except Exception as import_err:
@@ -17044,7 +17042,7 @@ def _apply_invoice_filters(items, validated):
 
 
 def handle_refresh_invoices(event):
-    """POST /members/invoices/refresh — Force re-sync invoice data from AWS."""
+    """POST /members/invoices/refresh â€” Force re-sync invoice data from AWS."""
     from invoice_sync import sync_invoice_data, InvoiceSyncError
 
     auth = validate_token(event)
@@ -17149,7 +17147,7 @@ def handle_refresh_invoices(event):
     try:
         result = sync_invoice_data(member_email, account_id, months)
     except InvoiceSyncError as e:
-        # Preserve existing cache on failure (already deleted — but sync failed)
+        # Preserve existing cache on failure (already deleted â€” but sync failed)
         logger.error(f"Invoice sync failed during refresh: {e.message}")
         return create_error_response(e.status_code, e.error_type, e.message)
     except Exception as e:
@@ -17177,7 +17175,7 @@ def handle_refresh_invoices(event):
 
 
 def handle_get_invoices_summary(event):
-    """GET /members/invoices/summary — Get spending summary (totals, trends)."""
+    """GET /members/invoices/summary â€” Get spending summary (totals, trends)."""
     auth = validate_token(event)
     if isinstance(auth, dict) and 'statusCode' in auth:
         return auth
@@ -17294,7 +17292,7 @@ def handle_get_invoices_summary(event):
 
 
 def handle_get_invoices_services(event):
-    """GET /members/invoices/services — Get distinct services for filter dropdown."""
+    """GET /members/invoices/services â€” Get distinct services for filter dropdown."""
     auth = validate_token(event)
     if isinstance(auth, dict) and 'statusCode' in auth:
         return auth
@@ -17358,7 +17356,7 @@ def handle_get_invoices_services(event):
 
 
 def handle_invoice_list(event):
-    """GET /members/invoices/list — Paginated invoice-level records for drill-down."""
+    """GET /members/invoices/list â€” Paginated invoice-level records for drill-down."""
     auth = validate_token(event)
     if isinstance(auth, dict) and 'statusCode' in auth:
         return auth
@@ -17377,7 +17375,7 @@ def handle_invoice_list(event):
 
 
 def handle_service_breakdown(event):
-    """GET /members/invoices/services-breakdown — Service-level breakdown for a period."""
+    """GET /members/invoices/services-breakdown â€” Service-level breakdown for a period."""
     auth = validate_token(event)
     if isinstance(auth, dict) and 'statusCode' in auth:
         return auth
@@ -17396,7 +17394,7 @@ def handle_service_breakdown(event):
 
 
 def handle_resource_breakdown(event):
-    """GET /members/invoices/resources — Resource-level breakdown for a service+period."""
+    """GET /members/invoices/resources â€” Resource-level breakdown for a service+period."""
     auth = validate_token(event)
     if isinstance(auth, dict) and 'statusCode' in auth:
         return auth
@@ -17414,2200 +17412,6 @@ def handle_resource_breakdown(event):
         return create_error_response(500, 'ServerError', f'Unexpected error: {type(e).__name__}: {str(e)}')
 
 
-# ============================================================
-# License Conversion Optimizer — Portfolio Builder
-# ============================================================
-
-
-def _build_licensing_portfolio(cross_account_session, account_id):
-    """Build complete licensing portfolio for an AWS account.
-
-    Discovers all active licensing commitments (EC2 RIs, RDS RIs, Savings Plans)
-    and on-demand instances, building a unified portfolio view with cost summaries.
-
-    Args:
-        cross_account_session: A dict of boto3 credentials (AccessKeyId, SecretAccessKey,
-            SessionToken) from STS AssumeRole for the target account.
-        account_id: The 12-digit AWS account ID being analyzed.
-
-    Returns:
-        dict with keys: ec2ReservedInstances, rdsReservedInstances, savingsPlans,
-        onDemandInstances, byolInstances, summary.
-    """
-    now = datetime.now(timezone.utc)
-
-    def _client(service, region=None):
-        return boto3.client(
-            service,
-            aws_access_key_id=cross_account_session['AccessKeyId'],
-            aws_secret_access_key=cross_account_session['SecretAccessKey'],
-            aws_session_token=cross_account_session['SessionToken'],
-            region_name=region or os.environ.get('AWS_REGION', 'us-east-1'),
-        )
-
-    # ── Phase 1: EC2 Reserved Instances (paginated) ──
-    ec2_ris = []
-    try:
-        ec2 = _client('ec2')
-        paginator = ec2.get_paginator('describe_reserved_instances')
-        for page in paginator.paginate(Filters=[{'Name': 'state', 'Values': ['active']}]):
-            for ri in page.get('ReservedInstances', []):
-                instance_type = ri.get('InstanceType', '')
-                instance_family = instance_type.split('.')[0] if '.' in instance_type else instance_type
-                offering_class = ri.get('OfferingClass', 'standard')
-                instance_count = ri.get('InstanceCount', 1)
-
-                # Calculate recurring hourly cost
-                recurring_charges = ri.get('RecurringCharges', [])
-                recurring_hourly = sum(float(r.get('Amount', 0)) for r in recurring_charges)
-                monthly_cost = round(recurring_hourly * 730 * instance_count, 2)
-
-                # Calculate days until expiry
-                end_dt = ri.get('End')
-                days_until_expiry = 0
-                if end_dt:
-                    if isinstance(end_dt, datetime):
-                        end_date = end_dt if end_dt.tzinfo else end_dt.replace(tzinfo=timezone.utc)
-                    else:
-                        end_date = datetime.fromisoformat(str(end_dt).replace('Z', '+00:00'))
-                    days_until_expiry = max(0, (end_date.date() - now.date()).days)
-
-                # Expiry urgency classification
-                if days_until_expiry < 30:
-                    expiry_urgency = 'expiring'
-                elif days_until_expiry < 60:
-                    expiry_urgency = 'expiring_soon'
-                else:
-                    expiry_urgency = 'active'
-
-                ec2_ris.append({
-                    'riId': ri.get('ReservedInstancesId', ''),
-                    'instanceType': instance_type,
-                    'instanceFamily': instance_family,
-                    'offeringClass': offering_class,
-                    'scope': ri.get('Scope', 'Region'),
-                    'availabilityZone': ri.get('AvailabilityZone'),
-                    'tenancy': ri.get('InstanceTenancy', 'default'),
-                    'platform': ri.get('ProductDescription', 'Linux/UNIX'),
-                    'instanceCount': instance_count,
-                    'state': ri.get('State', 'active'),
-                    'startDate': ri.get('Start', '').isoformat() if isinstance(ri.get('Start'), datetime) else str(ri.get('Start', '')),
-                    'endDate': end_dt.isoformat() if isinstance(end_dt, datetime) else str(end_dt or ''),
-                    'durationSeconds': ri.get('Duration', 0),
-                    'offeringType': ri.get('OfferingType', 'No Upfront'),
-                    'fixedPrice': float(ri.get('FixedPrice', 0)),
-                    'recurringHourly': recurring_hourly,
-                    'monthlyRecurringCost': monthly_cost,
-                    'daysUntilExpiry': days_until_expiry,
-                    'expiryUrgency': expiry_urgency,
-                    'exchangeEligible': offering_class == 'convertible',
-                    'utilizationPct': 0.0,  # populated later by utilization analyzer
-                    'isUnderutilized': False,  # populated later
-                })
-    except ClientError as e:
-        logger.warning(f"DescribeReservedInstances failed for {account_id}: {e}")
-    except Exception as e:
-        logger.warning(f"EC2 RI discovery error for {account_id}: {e}")
-
-    # ── Phase 2: RDS Reserved DB Instances (paginated) ──
-    rds_ris = []
-    try:
-        rds = _client('rds')
-        paginator = rds.get_paginator('describe_reserved_db_instances')
-        for page in paginator.paginate():
-            for ri in page.get('ReservedDBInstances', []):
-                if ri.get('State', '').lower() != 'active':
-                    continue
-
-                db_instance_class = ri.get('DBInstanceClass', '')
-                instance_count = ri.get('DBInstanceCount', 1)
-                duration_seconds = ri.get('Duration', 31536000)
-
-                # Calculate recurring hourly cost
-                recurring_charges = ri.get('RecurringCharges', [])
-                recurring_hourly = sum(float(r.get('Amount', 0)) for r in recurring_charges)
-                monthly_cost = round(recurring_hourly * 730 * instance_count, 2)
-
-                # Calculate end date from start + duration
-                start_time = ri.get('StartTime')
-                days_until_expiry = 0
-                end_date_str = ''
-                if start_time:
-                    if isinstance(start_time, datetime):
-                        start_dt = start_time if start_time.tzinfo else start_time.replace(tzinfo=timezone.utc)
-                    else:
-                        start_dt = datetime.fromisoformat(str(start_time).replace('Z', '+00:00'))
-                    end_date = start_dt + timedelta(seconds=duration_seconds)
-                    end_date_str = end_date.isoformat()
-                    days_until_expiry = max(0, (end_date.date() - now.date()).days)
-
-                # Expiry urgency classification
-                if days_until_expiry < 30:
-                    expiry_urgency = 'expiring'
-                elif days_until_expiry < 60:
-                    expiry_urgency = 'expiring_soon'
-                else:
-                    expiry_urgency = 'active'
-
-                rds_ris.append({
-                    'riId': ri.get('ReservedDBInstanceId', ''),
-                    'dbInstanceClass': db_instance_class,
-                    'engine': ri.get('ProductDescription', ''),
-                    'multiAz': ri.get('MultiAZ', False),
-                    'instanceCount': instance_count,
-                    'state': ri.get('State', 'active'),
-                    'startDate': start_time.isoformat() if isinstance(start_time, datetime) else str(start_time or ''),
-                    'endDate': end_date_str,
-                    'durationSeconds': duration_seconds,
-                    'offeringType': ri.get('OfferingType', 'No Upfront'),
-                    'fixedPrice': float(ri.get('FixedPrice', 0)),
-                    'recurringHourly': recurring_hourly,
-                    'monthlyRecurringCost': monthly_cost,
-                    'daysUntilExpiry': days_until_expiry,
-                    'expiryUrgency': expiry_urgency,
-                    'utilizationPct': 0.0,
-                    'isUnderutilized': False,
-                })
-    except ClientError as e:
-        logger.warning(f"DescribeReservedDBInstances failed for {account_id}: {e}")
-    except Exception as e:
-        logger.warning(f"RDS RI discovery error for {account_id}: {e}")
-
-    # ── Phase 3: Savings Plans (paginated) ──
-    savings_plans = []
-    try:
-        sp_client = _client('savingsplans')
-        next_token = None
-        while True:
-            kwargs = {'states': ['active']}
-            if next_token:
-                kwargs['nextToken'] = next_token
-            sp_response = sp_client.describe_savings_plans(**kwargs)
-
-            for sp in sp_response.get('savingsPlans', []):
-                hourly_commitment = float(sp.get('commitment', '0'))
-                monthly_cost = round(hourly_commitment * 730, 2)
-
-                # Calculate days until expiry
-                end_str = sp.get('end', '')
-                days_until_expiry = 0
-                if end_str:
-                    try:
-                        if 'T' in str(end_str):
-                            end_date = datetime.fromisoformat(str(end_str).replace('Z', '+00:00'))
-                        else:
-                            end_date = datetime.fromtimestamp(float(end_str), tz=timezone.utc)
-                        days_until_expiry = max(0, (end_date.date() - now.date()).days)
-                    except (ValueError, TypeError, OSError):
-                        pass
-
-                # Expiry urgency classification
-                if days_until_expiry < 30:
-                    expiry_urgency = 'expiring'
-                elif days_until_expiry < 60:
-                    expiry_urgency = 'expiring_soon'
-                else:
-                    expiry_urgency = 'active'
-
-                # Determine term in years from duration
-                term_seconds = sp.get('termDurationInSeconds', 31536000)
-                term_in_years = round(term_seconds / 31536000) if term_seconds else 1
-
-                savings_plans.append({
-                    'spId': sp.get('savingsPlanId', ''),
-                    'spArn': sp.get('savingsPlanArn', ''),
-                    'planType': sp.get('savingsPlanType', ''),
-                    'paymentOption': sp.get('paymentOption', 'No Upfront'),
-                    'termInYears': term_in_years,
-                    'hourlyCommitment': hourly_commitment,
-                    'monthlyCost': monthly_cost,
-                    'state': sp.get('state', 'active'),
-                    'startDate': sp.get('start', ''),
-                    'endDate': end_str,
-                    'daysUntilExpiry': days_until_expiry,
-                    'expiryUrgency': expiry_urgency,
-                    'utilizationPct': 0.0,
-                    'isUnderutilized': False,
-                    'instanceFamily': sp.get('ec2InstanceFamily'),
-                    'region': sp.get('region'),
-                })
-
-            next_token = sp_response.get('nextToken')
-            if not next_token:
-                break
-    except ClientError as e:
-        logger.warning(f"DescribeSavingsPlans failed for {account_id}: {e}")
-    except Exception as e:
-        logger.warning(f"Savings Plans discovery error for {account_id}: {e}")
-
-    # ── Phase 4: Running EC2 Instances (paginated) — detect license models ──
-    on_demand_instances = []
-    byol_instances = []
-    try:
-        ec2 = _client('ec2')
-        paginator = ec2.get_paginator('describe_instances')
-        for page in paginator.paginate(Filters=[
-            {'Name': 'instance-state-name', 'Values': ['running']}
-        ]):
-            for reservation in page.get('Reservations', []):
-                for inst in reservation.get('Instances', []):
-                    instance_id = inst.get('InstanceId', '')
-                    instance_type = inst.get('InstanceType', '')
-                    platform = inst.get('PlatformDetails', 'Linux/UNIX')
-
-                    # Detect license model from platform details and usage operation
-                    usage_operation = inst.get('UsageOperation', '')
-                    license_model = 'License Included'
-                    if 'BYOL' in usage_operation.upper() or 'byol' in platform.lower():
-                        license_model = 'BYOL'
-
-                    tags = {t['Key']: t['Value'] for t in inst.get('Tags', [])}
-                    instance_name = tags.get('Name', '')
-
-                    instance_data = {
-                        'instanceId': instance_id,
-                        'instanceType': instance_type,
-                        'platform': platform,
-                        'licenseModel': license_model,
-                        'usageOperation': usage_operation,
-                        'name': instance_name,
-                        'state': 'running',
-                        'launchTime': inst.get('LaunchTime', '').isoformat() if isinstance(inst.get('LaunchTime'), datetime) else str(inst.get('LaunchTime', '')),
-                        'hasCoverage': False,  # populated later by utilization analyzer
-                        'monthlyOnDemandCost': 0.0,  # populated later with pricing data
-                        'runningHoursLast30d': 0,  # populated later
-                        'isFullTime': False,  # populated later
-                    }
-
-                    if license_model == 'BYOL':
-                        byol_instances.append(instance_data)
-                    else:
-                        on_demand_instances.append(instance_data)
-    except ClientError as e:
-        logger.warning(f"DescribeInstances failed for {account_id}: {e}")
-    except Exception as e:
-        logger.warning(f"EC2 instance discovery error for {account_id}: {e}")
-
-    # ── Phase 5: Build Summary ──
-    total_commitments = len(ec2_ris) + len(rds_ris) + len(savings_plans)
-
-    total_monthly_commitment_cost = (
-        sum(ri['monthlyRecurringCost'] for ri in ec2_ris) +
-        sum(ri['monthlyRecurringCost'] for ri in rds_ris) +
-        sum(sp['monthlyCost'] for sp in savings_plans)
-    )
-    total_monthly_commitment_cost = round(total_monthly_commitment_cost, 2)
-
-    # On-demand spend is populated later by utilization analyzer; use 0 as placeholder
-    total_on_demand_spend = 0.0
-
-    # Coverage percentage: committed / (committed + on-demand) * 100
-    total_spend = total_monthly_commitment_cost + total_on_demand_spend
-    overall_coverage_percentage = round(
-        (total_monthly_commitment_cost / total_spend * 100) if total_spend > 0 else 0.0, 1
-    )
-
-    # Service breakdown
-    ec2_committed = round(sum(ri['monthlyRecurringCost'] for ri in ec2_ris), 2)
-    rds_committed = round(sum(ri['monthlyRecurringCost'] for ri in rds_ris), 2)
-    sp_committed = round(sum(sp['monthlyCost'] for sp in savings_plans), 2)
-
-    service_breakdown = {
-        'EC2': {
-            'committed': ec2_committed + sp_committed,  # SPs primarily cover EC2/compute
-            'onDemand': 0.0,  # populated later
-            'coverage': 0.0,  # populated later
-        },
-        'RDS': {
-            'committed': rds_committed,
-            'onDemand': 0.0,
-            'coverage': 0.0,
-        },
-    }
-
-    summary = {
-        'totalCommitments': total_commitments,
-        'totalMonthlyCommitmentCost': total_monthly_commitment_cost,
-        'totalOnDemandSpend': total_on_demand_spend,
-        'overallCoveragePercentage': overall_coverage_percentage,
-        'serviceBreakdown': service_breakdown,
-    }
-
-    return {
-        'ec2ReservedInstances': ec2_ris,
-        'rdsReservedInstances': rds_ris,
-        'savingsPlans': savings_plans,
-        'onDemandInstances': on_demand_instances,
-        'byolInstances': byol_instances,
-        'summary': summary,
-    }
-
-# ============================================================
-# License Conversion Optimizer — Feasibility Scorer
-# ============================================================
-
-
-def _calculate_feasibility_score(conversion_type, savings_percentage, utilization_current,
-                                 utilization_projected, complexity, remaining_term_days,
-                                 is_reversible):
-    """Calculate feasibility score for a conversion opportunity.
-
-    Scores a conversion opportunity from 0 (infeasible) to 100 (highly recommended)
-    using weighted factors: savings potential (35%), utilization improvement (25%),
-    execution complexity (20%), and risk level (20%).
-
-    Args:
-        conversion_type: One of 'ri_to_sp', 'ri_exchange', 'license_model_change',
-            'ri_renewal', 'on_demand_to_committed', 'sp_upgrade'.
-        savings_percentage: Expected savings as a percentage of current cost (0-100).
-        utilization_current: Current utilization percentage (0-100).
-        utilization_projected: Projected utilization after conversion (0-100).
-        complexity: Execution complexity — 'low', 'medium', or 'high'.
-        remaining_term_days: Days remaining on the current commitment (>= 0).
-        is_reversible: Whether the conversion can be undone.
-
-    Returns:
-        int: Feasibility score in range [0, 100].
-    """
-    # Factor 1: Savings potential (35% weight)
-    savings_score = min(savings_percentage * 2, 100)
-
-    # Factor 2: Utilization improvement (25% weight)
-    util_delta = utilization_projected - utilization_current
-    if util_delta >= 20:
-        util_score = 100
-    elif util_delta >= 0:
-        util_score = 50 + (util_delta * 2.5)
-    else:
-        util_score = max(0, 50 + (util_delta * 2.5))
-
-    # Factor 3: Complexity (20% weight)
-    complexity_scores = {'low': 100, 'medium': 60, 'high': 30}
-    complexity_score = complexity_scores.get(complexity, 50)
-
-    # Factor 4: Risk (20% weight)
-    risk_score = 80
-    if not is_reversible:
-        risk_score -= 20
-    if remaining_term_days > 365:
-        risk_score -= 15
-    elif remaining_term_days < 30:
-        risk_score += 10
-    risk_score = max(0, min(100, risk_score))
-
-    # Weighted sum
-    final = (
-        savings_score * 0.35 +
-        util_score * 0.25 +
-        complexity_score * 0.20 +
-        risk_score * 0.20
-    )
-    return max(0, min(100, round(final)))
-
-
-# ============================================================
-# License Conversion Optimizer — Utilization Analyzer
-# ============================================================
-
-
-def _get_utilization_data(cross_account_session, portfolio):
-    """Retrieve utilization data from Cost Explorer and map it back to portfolio items.
-
-    Queries Cost Explorer for RI utilization, Savings Plans utilization, and on-demand
-    spend by service over the last 30 days. Updates portfolio items in-place with
-    utilizationPct and isUnderutilized flags. Handles Cost Explorer not being activated
-    gracefully by returning partial results.
-
-    Args:
-        cross_account_session: A dict of boto3 credentials (AccessKeyId, SecretAccessKey,
-            SessionToken) from STS AssumeRole for the target account.
-        portfolio: The portfolio dict returned by _build_licensing_portfolio. Items are
-            updated in-place with utilization data.
-
-    Returns:
-        dict with keys: riUtilization, spUtilization, onDemandSpendByService,
-        totalOnDemandSpend, coveragePercentage, costExplorerAvailable.
-    """
-    now = datetime.now(timezone.utc)
-    end_date = now.strftime('%Y-%m-%d')
-    start_date = (now - timedelta(days=30)).strftime('%Y-%m-%d')
-
-    time_period = {'Start': start_date, 'End': end_date}
-
-    def _client(service, region=None):
-        return boto3.client(
-            service,
-            aws_access_key_id=cross_account_session['AccessKeyId'],
-            aws_secret_access_key=cross_account_session['SecretAccessKey'],
-            aws_session_token=cross_account_session['SessionToken'],
-            region_name=region or os.environ.get('AWS_REGION', 'us-east-1'),
-        )
-
-    utilization_result = {
-        'riUtilization': {},
-        'spUtilization': {},
-        'onDemandSpendByService': {},
-        'totalOnDemandSpend': 0.0,
-        'coveragePercentage': 0.0,
-        'costExplorerAvailable': True,
-    }
-
-    # ── Phase 1: RI Utilization (grouped by RI) ──
-    try:
-        ce = _client('ce')
-        ri_util_response = ce.get_reservation_utilization(
-            TimePeriod=time_period,
-            GroupBy=[{'Type': 'DIMENSION', 'Key': 'SUBSCRIPTION_ID'}],
-        )
-
-        ri_utilization_map = {}
-        for group in ri_util_response.get('UtilizationsByTime', []):
-            for item in group.get('Groups', []):
-                ri_id = item.get('Key', '')
-                utilization = item.get('Utilization', {})
-                util_pct = float(utilization.get('UtilizationPercentage', '0'))
-                # Keep the highest utilization seen across time periods for each RI
-                if ri_id not in ri_utilization_map or util_pct > ri_utilization_map[ri_id]:
-                    ri_utilization_map[ri_id] = util_pct
-
-        utilization_result['riUtilization'] = ri_utilization_map
-
-        # Map utilization back to EC2 RIs
-        for ri in portfolio.get('ec2ReservedInstances', []):
-            ri_id = ri.get('riId', '')
-            if ri_id in ri_utilization_map:
-                ri['utilizationPct'] = round(ri_utilization_map[ri_id], 1)
-                ri['isUnderutilized'] = ri['utilizationPct'] < 80
-
-        # Map utilization back to RDS RIs
-        for ri in portfolio.get('rdsReservedInstances', []):
-            ri_id = ri.get('riId', '')
-            if ri_id in ri_utilization_map:
-                ri['utilizationPct'] = round(ri_utilization_map[ri_id], 1)
-                ri['isUnderutilized'] = ri['utilizationPct'] < 80
-
-    except ClientError as e:
-        error_code = e.response.get('Error', {}).get('Code', '')
-        if error_code in ('OptInRequired', 'AccessDeniedException', 'DataUnavailableException'):
-            logger.warning(f"Cost Explorer not available for RI utilization: {error_code}")
-            utilization_result['costExplorerAvailable'] = False
-        else:
-            logger.warning(f"GetReservationUtilization failed: {e}")
-    except Exception as e:
-        logger.warning(f"RI utilization query error: {e}")
-
-    # ── Phase 2: Savings Plans Utilization ──
-    try:
-        ce = _client('ce')
-        sp_util_response = ce.get_savings_plans_utilization(
-            TimePeriod=time_period,
-        )
-
-        sp_utilization_map = {}
-        # Overall SP utilization from the total
-        total_sp_util = sp_util_response.get('Total', {})
-        overall_sp_util_pct = float(total_sp_util.get('Utilization', {}).get(
-            'UtilizationPercentage', '0'))
-
-        # Per-SP breakdown from SavingsPlansUtilizationsByTime
-        for time_entry in sp_util_response.get('SavingsPlansUtilizationsByTime', []):
-            for detail in time_entry.get('AmortizedCommitment', {}).get('SavingsPlansUtilizationDetails', []):
-                sp_arn = detail.get('SavingsPlanArn', '')
-                util_pct = float(detail.get('Utilization', {}).get(
-                    'UtilizationPercentage', '0'))
-                if sp_arn not in sp_utilization_map or util_pct > sp_utilization_map[sp_arn]:
-                    sp_utilization_map[sp_arn] = util_pct
-
-        # If no per-SP breakdown available, apply overall utilization to all SPs
-        if not sp_utilization_map and overall_sp_util_pct > 0:
-            for sp in portfolio.get('savingsPlans', []):
-                sp_arn = sp.get('spArn', '')
-                if sp_arn:
-                    sp_utilization_map[sp_arn] = overall_sp_util_pct
-
-        utilization_result['spUtilization'] = sp_utilization_map
-
-        # Map utilization back to Savings Plans
-        for sp in portfolio.get('savingsPlans', []):
-            sp_arn = sp.get('spArn', '')
-            if sp_arn in sp_utilization_map:
-                sp['utilizationPct'] = round(sp_utilization_map[sp_arn], 1)
-                sp['isUnderutilized'] = sp['utilizationPct'] < 80
-
-    except ClientError as e:
-        error_code = e.response.get('Error', {}).get('Code', '')
-        if error_code in ('OptInRequired', 'AccessDeniedException', 'DataUnavailableException'):
-            logger.warning(f"Cost Explorer not available for SP utilization: {error_code}")
-            utilization_result['costExplorerAvailable'] = False
-        else:
-            logger.warning(f"GetSavingsPlansUtilization failed: {e}")
-    except Exception as e:
-        logger.warning(f"SP utilization query error: {e}")
-
-    # ── Phase 3: On-Demand Spend by Service ──
-    try:
-        ce = _client('ce')
-        cost_response = ce.get_cost_and_usage(
-            TimePeriod=time_period,
-            Granularity='MONTHLY',
-            Metrics=['UnblendedCost'],
-            Filter={
-                'Dimensions': {
-                    'Key': 'PURCHASE_TYPE',
-                    'Values': ['On Demand Instances'],
-                }
-            },
-            GroupBy=[{'Type': 'DIMENSION', 'Key': 'SERVICE'}],
-        )
-
-        on_demand_by_service = {}
-        total_on_demand = 0.0
-
-        for time_entry in cost_response.get('ResultsByTime', []):
-            for group in time_entry.get('Groups', []):
-                service_name = group.get('Keys', [''])[0]
-                amount = float(group.get('Metrics', {}).get(
-                    'UnblendedCost', {}).get('Amount', '0'))
-                if service_name in on_demand_by_service:
-                    on_demand_by_service[service_name] += amount
-                else:
-                    on_demand_by_service[service_name] = amount
-                total_on_demand += amount
-
-        # Round values
-        on_demand_by_service = {k: round(v, 2) for k, v in on_demand_by_service.items()}
-        total_on_demand = round(total_on_demand, 2)
-
-        utilization_result['onDemandSpendByService'] = on_demand_by_service
-        utilization_result['totalOnDemandSpend'] = total_on_demand
-
-        # ── Phase 4: Update portfolio summary ──
-        summary = portfolio.get('summary', {})
-        summary['totalOnDemandSpend'] = total_on_demand
-
-        # Recalculate coverage percentage with actual on-demand data
-        total_committed = summary.get('totalMonthlyCommitmentCost', 0.0)
-        total_spend = total_committed + total_on_demand
-        coverage_pct = round(
-            (total_committed / total_spend * 100) if total_spend > 0 else 0.0, 1
-        )
-        summary['overallCoveragePercentage'] = coverage_pct
-        utilization_result['coveragePercentage'] = coverage_pct
-
-        # Update service breakdown with on-demand spend
-        service_breakdown = summary.get('serviceBreakdown', {})
-        for service_name, amount in on_demand_by_service.items():
-            # Normalize service names to match breakdown keys
-            normalized = service_name
-            if 'EC2' in service_name or 'Elastic Compute' in service_name:
-                normalized = 'EC2'
-            elif 'RDS' in service_name or 'Relational Database' in service_name:
-                normalized = 'RDS'
-            elif 'Lambda' in service_name:
-                normalized = 'Lambda'
-            elif 'ElastiCache' in service_name:
-                normalized = 'ElastiCache'
-            elif 'OpenSearch' in service_name or 'Elasticsearch' in service_name:
-                normalized = 'OpenSearch'
-            elif 'Redshift' in service_name:
-                normalized = 'Redshift'
-
-            if normalized not in service_breakdown:
-                service_breakdown[normalized] = {
-                    'committed': 0.0,
-                    'onDemand': 0.0,
-                    'coverage': 0.0,
-                }
-            service_breakdown[normalized]['onDemand'] = round(
-                service_breakdown[normalized].get('onDemand', 0.0) + amount, 2
-            )
-
-        # Recalculate per-service coverage
-        for svc, data in service_breakdown.items():
-            svc_total = data.get('committed', 0.0) + data.get('onDemand', 0.0)
-            data['coverage'] = round(
-                (data.get('committed', 0.0) / svc_total * 100) if svc_total > 0 else 0.0, 1
-            )
-
-        summary['serviceBreakdown'] = service_breakdown
-
-    except ClientError as e:
-        error_code = e.response.get('Error', {}).get('Code', '')
-        if error_code in ('OptInRequired', 'AccessDeniedException', 'DataUnavailableException'):
-            logger.warning(f"Cost Explorer not available for on-demand spend: {error_code}")
-            utilization_result['costExplorerAvailable'] = False
-        else:
-            logger.warning(f"GetCostAndUsage failed: {e}")
-    except Exception as e:
-        logger.warning(f"On-demand spend query error: {e}")
-
-    return utilization_result
-
-
-# ============================================================
-# License Conversion Optimizer — Conversion Engine
-# ============================================================
-
-
-def _calculate_ri_exchange_value(ri, remaining_term_days):
-    """Calculate the remaining value of a Reserved Instance for exchange purposes.
-
-    AWS RI exchanges require the target RI value to be >= the source remaining value.
-    This function computes the total remaining value combining recurring charges and
-    prorated upfront costs.
-
-    Args:
-        ri: A dict representing an EC2 Reserved Instance from the portfolio, containing
-            keys: recurringHourly, instanceCount, fixedPrice, durationSeconds.
-        remaining_term_days: Number of days remaining on the RI term (>= 0).
-
-    Returns:
-        float: Total remaining value in USD (recurring_value + remaining_upfront).
-    """
-    remaining_hours = remaining_term_days * 24
-
-    # Recurring value = remaining hours * hourly rate * instance count
-    hourly_rate = float(ri.get('recurringHourly', 0))
-    instance_count = int(ri.get('instanceCount', 1))
-    recurring_value = remaining_hours * hourly_rate * instance_count
-
-    # Remaining upfront = fixedPrice * (remaining_hours / total_term_hours)
-    fixed_price = float(ri.get('fixedPrice', 0))
-    duration_seconds = int(ri.get('durationSeconds', 31536000))
-    total_term_hours = duration_seconds / 3600 if duration_seconds > 0 else 8760
-
-    remaining_upfront = 0.0
-    if total_term_hours > 0:
-        remaining_upfront = fixed_price * (remaining_hours / total_term_hours)
-
-    return round(recurring_value + remaining_upfront, 2)
-
-
-def _identify_ri_exchange_opportunities(portfolio, utilization_data, pricing_cache):
-    """Identify viable RI exchange opportunities for underutilized Convertible RIs.
-
-    Filters the portfolio for Convertible RIs with utilization < 80%, calculates their
-    remaining value, queries the pricing cache for alternative instance types in the same
-    family, and verifies the AWS exchange rule (target value >= source remaining value).
-
-    Args:
-        portfolio: The portfolio dict from _build_licensing_portfolio.
-        utilization_data: The utilization dict from _get_utilization_data.
-        pricing_cache: A dict mapping instance types to hourly on-demand rates,
-            e.g. {'m5.xlarge': 0.192, 'm5.2xlarge': 0.384, ...}.
-
-    Returns:
-        list: A list of ConversionOpportunity dicts with type 'ri_exchange'.
-    """
-    opportunities = []
-    ec2_ris = portfolio.get('ec2ReservedInstances', [])
-
-    for ri in ec2_ris:
-        # Only consider Convertible RIs that are underutilized
-        if ri.get('offeringClass') != 'convertible':
-            continue
-        if not ri.get('isUnderutilized', False):
-            continue
-        if ri.get('utilizationPct', 100) >= 80:
-            continue
-
-        remaining_term_days = ri.get('daysUntilExpiry', 0)
-        if remaining_term_days <= 0:
-            continue
-
-        # Calculate source remaining value
-        source_remaining_value = _calculate_ri_exchange_value(ri, remaining_term_days)
-        if source_remaining_value <= 0:
-            continue
-
-        instance_family = ri.get('instanceFamily', '')
-        instance_type = ri.get('instanceType', '')
-        instance_count = ri.get('instanceCount', 1)
-        current_hourly = ri.get('recurringHourly', 0)
-        current_monthly = ri.get('monthlyRecurringCost', 0)
-
-        # Look for alternative instance types in the same family from pricing cache
-        candidates = []
-        for target_type, target_rate in pricing_cache.items():
-            # Must be in the same instance family
-            target_family = target_type.split('.')[0] if '.' in target_type else ''
-            if target_family != instance_family:
-                continue
-            # Skip the same instance type
-            if target_type == instance_type:
-                continue
-            candidates.append((target_type, target_rate))
-
-        # For each candidate, check if exchange is feasible
-        for target_type, target_on_demand_rate in candidates:
-            # Estimate target RI rate (typically ~60-75% of on-demand for convertible)
-            target_ri_rate = target_on_demand_rate * 0.65
-
-            # Calculate how many target instances we'd need to match utilization
-            # If current RI is underutilized, we might need fewer/smaller instances
-            utilization_pct = ri.get('utilizationPct', 0)
-            effective_usage = instance_count * (utilization_pct / 100.0)
-            # Determine target instance count (at least 1)
-            target_count = max(1, round(effective_usage))
-
-            # Calculate target remaining value
-            target_remaining_hours = remaining_term_days * 24
-            target_value = target_remaining_hours * target_ri_rate * target_count
-
-            # AWS exchange rule: target value must be >= source remaining value
-            if target_value < source_remaining_value:
-                continue
-
-            # Calculate savings estimate
-            target_monthly_cost = round(target_ri_rate * 730 * target_count, 2)
-            monthly_savings = round(current_monthly - target_monthly_cost, 2)
-
-            # Only recommend if there are actual savings
-            if monthly_savings <= 0:
-                continue
-
-            savings_percentage = round(
-                (monthly_savings / current_monthly * 100) if current_monthly > 0 else 0, 1
-            )
-
-            opportunity = {
-                'id': f"conv-{uuid.uuid4().hex[:8]}",
-                'type': 'ri_exchange',
-                'sourceId': ri.get('riId', ''),
-                'sourceType': 'ec2_ri',
-                'sourceDescription': (
-                    f"{instance_count}x {instance_type} Convertible RI "
-                    f"({utilization_pct:.0f}% utilized, expires in {remaining_term_days} days)"
-                ),
-                'targetDescription': (
-                    f"Exchange to {target_count}x {target_type} Convertible RI "
-                    f"(better match for workload)"
-                ),
-                'feasibilityScore': 0,  # scored later by _calculate_feasibility_score
-                'estimatedMonthlySavings': monthly_savings,
-                'estimatedAnnualSavings': round(monthly_savings * 12, 2),
-                'savingsPercentage': savings_percentage,
-                'complexity': 'low',
-                'timing': 'immediate',
-                'timingDate': None,
-                'risks': [
-                    f"New RI locks in for remaining term ({remaining_term_days} days)",
-                    "Exchange is irreversible once completed",
-                ],
-                'prerequisites': [
-                    "Convertible RI exchange requires equal or greater value",
-                    "Target instance type must be in the same instance family",
-                ],
-                'isReversible': False,
-                'utilizationCurrent': utilization_pct,
-                'utilizationProjected': min(100, utilization_pct * (instance_count / target_count) if target_count > 0 else utilization_pct),
-                'remainingTermDays': remaining_term_days,
-            }
-            opportunities.append(opportunity)
-            # Only generate one opportunity per source RI (best candidate)
-            break
-
-    return opportunities
-
-
-def _identify_ri_to_sp_migrations(portfolio, utilization_data, pricing_cache):
-    """Identify RIs expiring within 90 days that should migrate to Savings Plans.
-
-    For each expiring RI, calculates the equivalent SP hourly commitment, compares
-    RI effective rate vs SP rate, and only recommends migration when SP provides
-    equal or better coverage at lower cost.
-
-    Args:
-        portfolio: The portfolio dict from _build_licensing_portfolio.
-        utilization_data: The utilization dict from _get_utilization_data.
-        pricing_cache: A dict mapping instance types to hourly on-demand rates.
-
-    Returns:
-        list: A list of ConversionOpportunity dicts with type 'ri_to_sp'.
-    """
-    opportunities = []
-    now = datetime.now(timezone.utc)
-    ec2_ris = portfolio.get('ec2ReservedInstances', [])
-
-    for ri in ec2_ris:
-        days_until_expiry = ri.get('daysUntilExpiry', 999)
-
-        # Only consider RIs expiring within 90 days
-        if days_until_expiry > 90:
-            continue
-
-        instance_type = ri.get('instanceType', '')
-        instance_count = ri.get('instanceCount', 1)
-        current_hourly = ri.get('recurringHourly', 0)
-        current_monthly = ri.get('monthlyRecurringCost', 0)
-        utilization_pct = ri.get('utilizationPct', 0)
-
-        # Calculate equivalent SP hourly commitment to cover the same workload
-        # SP rate is typically ~66% of on-demand for Compute SP (No Upfront, 1yr)
-        on_demand_rate = pricing_cache.get(instance_type, 0)
-        if on_demand_rate <= 0:
-            # Estimate on-demand rate from RI rate (RI is typically 60-75% of OD)
-            on_demand_rate = current_hourly / 0.65 if current_hourly > 0 else 0
-        if on_demand_rate <= 0:
-            continue
-
-        sp_discount_rate = 0.66  # Compute SP typical discount
-        sp_hourly_rate = on_demand_rate * sp_discount_rate
-        sp_hourly_commitment = round(sp_hourly_rate * instance_count, 4)
-        sp_monthly_cost = round(sp_hourly_commitment * 730, 2)
-
-        # Compare RI effective rate vs SP rate
-        ri_effective_monthly = current_monthly
-        monthly_savings = round(ri_effective_monthly - sp_monthly_cost, 2)
-
-        # Only recommend if SP provides equal or better coverage at lower cost
-        if monthly_savings <= 0:
-            continue
-
-        savings_percentage = round(
-            (monthly_savings / ri_effective_monthly * 100) if ri_effective_monthly > 0 else 0, 1
-        )
-
-        # Determine timing
-        if days_until_expiry <= 3:
-            timing = 'immediate'
-            timing_date = now.strftime('%Y-%m-%d')
-        else:
-            timing = 'at_expiry'
-            # Set timing date 1-2 days before expiration
-            timing_date = (now + timedelta(days=days_until_expiry - 2)).strftime('%Y-%m-%d')
-
-        offering_class = ri.get('offeringClass', 'standard')
-
-        opportunity = {
-            'id': f"conv-{uuid.uuid4().hex[:8]}",
-            'type': 'ri_to_sp',
-            'sourceId': ri.get('riId', ''),
-            'sourceType': 'ec2_ri',
-            'sourceDescription': (
-                f"{instance_count}x {instance_type} {offering_class.capitalize()} RI "
-                f"expiring in {days_until_expiry} days"
-            ),
-            'targetDescription': (
-                f"Migrate to Compute Savings Plan "
-                f"(${sp_hourly_commitment:.2f}/hr, 1-year No Upfront)"
-            ),
-            'feasibilityScore': 0,  # scored later
-            'estimatedMonthlySavings': monthly_savings,
-            'estimatedAnnualSavings': round(monthly_savings * 12, 2),
-            'savingsPercentage': savings_percentage,
-            'complexity': 'low',
-            'timing': timing,
-            'timingDate': timing_date,
-            'risks': [
-                "Coverage gap if SP not purchased before RI expires",
-                "SP commitment is for 1 year regardless of usage changes",
-            ],
-            'prerequisites': [
-                "Purchase SP 1-2 days before RI expiration",
-                "Confirm workload will continue for at least 12 months",
-            ],
-            'isReversible': False,
-            'utilizationCurrent': utilization_pct,
-            'utilizationProjected': min(100, utilization_pct + 10),  # SP flexibility typically improves utilization
-            'remainingTermDays': days_until_expiry,
-        }
-        opportunities.append(opportunity)
-
-    return opportunities
-
-
-def _identify_on_demand_commitment_candidates(portfolio, utilization_data, pricing_cache):
-    """Identify on-demand instances that should be covered by commitments.
-
-    Filters for uncovered on-demand instances running >= 680 hours/month (93% uptime),
-    calculates savings for both SP and RI options, and sorts by estimated monthly
-    savings descending. Ensures no instance appears in multiple opportunities.
-
-    Args:
-        portfolio: The portfolio dict from _build_licensing_portfolio.
-        utilization_data: The utilization dict from _get_utilization_data.
-        pricing_cache: A dict mapping instance types to hourly on-demand rates.
-
-    Returns:
-        list: A list of ConversionOpportunity dicts with type 'on_demand_to_committed'.
-    """
-    opportunities = []
-    seen_instance_ids = set()
-    on_demand_instances = portfolio.get('onDemandInstances', [])
-
-    for instance in on_demand_instances:
-        # Only consider instances without existing coverage
-        if instance.get('hasCoverage', True):
-            continue
-
-        instance_id = instance.get('instanceId', '')
-        # Ensure no instance appears in multiple opportunities
-        if instance_id in seen_instance_ids:
-            continue
-
-        # Check running hours in last 30 days — only recommend >= 680 hours (93% uptime)
-        running_hours = instance.get('runningHoursLast30d', 0)
-        if running_hours < 680:
-            continue
-
-        instance_type = instance.get('instanceType', '')
-        platform = instance.get('platform', 'Linux/UNIX')
-
-        # Get on-demand rate from pricing cache or instance data
-        on_demand_rate = pricing_cache.get(instance_type, 0)
-        if on_demand_rate <= 0:
-            on_demand_rate = instance.get('monthlyOnDemandCost', 0) / 730 if instance.get('monthlyOnDemandCost', 0) > 0 else 0
-        if on_demand_rate <= 0:
-            continue
-
-        monthly_on_demand_cost = round(on_demand_rate * 730, 2)
-
-        # Calculate SP savings (Compute SP, 1yr No Upfront, ~34% discount)
-        sp_rate = on_demand_rate * 0.66
-        sp_monthly_cost = round(sp_rate * 730, 2)
-        sp_monthly_savings = round(monthly_on_demand_cost - sp_monthly_cost, 2)
-
-        # Calculate RI savings (Standard RI, 1yr No Upfront, ~40% discount)
-        ri_rate = on_demand_rate * 0.60
-        ri_monthly_cost = round(ri_rate * 730, 2)
-        ri_monthly_savings = round(monthly_on_demand_cost - ri_monthly_cost, 2)
-
-        # Use the better savings option (RI typically saves more but less flexible)
-        # Recommend SP for flexibility unless RI savings are significantly better
-        if ri_monthly_savings > sp_monthly_savings * 1.15:
-            # RI is >15% better, recommend RI
-            best_savings = ri_monthly_savings
-            target_desc = (
-                f"Purchase EC2 RI for {instance_type} "
-                f"(1-year No Upfront, ~40% savings)"
-            )
-        else:
-            # SP is close enough and more flexible
-            best_savings = sp_monthly_savings
-            target_desc = (
-                f"Purchase Compute Savings Plan "
-                f"(${sp_rate:.4f}/hr, 1-year No Upfront, ~34% savings)"
-            )
-
-        if best_savings <= 0:
-            continue
-
-        savings_percentage = round(
-            (best_savings / monthly_on_demand_cost * 100) if monthly_on_demand_cost > 0 else 0, 1
-        )
-
-        seen_instance_ids.add(instance_id)
-
-        opportunity = {
-            'id': f"conv-{uuid.uuid4().hex[:8]}",
-            'type': 'on_demand_to_committed',
-            'sourceId': instance_id,
-            'sourceType': 'on_demand_instance',
-            'sourceDescription': (
-                f"{instance_type} running 24/7 on-demand "
-                f"(${monthly_on_demand_cost:.0f}/mo, {running_hours}h last 30d)"
-            ),
-            'targetDescription': target_desc,
-            'feasibilityScore': 0,  # scored later
-            'estimatedMonthlySavings': best_savings,
-            'estimatedAnnualSavings': round(best_savings * 12, 2),
-            'savingsPercentage': savings_percentage,
-            'complexity': 'low',
-            'timing': 'immediate',
-            'timingDate': None,
-            'risks': [
-                "1-year commitment lock-in",
-                "Instance type change would require new commitment",
-            ],
-            'prerequisites': [
-                "Confirm instance will run for at least 12 months",
-                "Verify instance type is stable (no planned resizing)",
-            ],
-            'isReversible': False,
-            'utilizationCurrent': round(running_hours / 730 * 100, 1),
-            'utilizationProjected': 100.0,  # Commitment covers full usage
-            'remainingTermDays': 0,  # No existing commitment
-        }
-        opportunities.append(opportunity)
-
-    # Sort by estimated monthly savings descending
-    opportunities.sort(key=lambda x: x['estimatedMonthlySavings'], reverse=True)
-
-    return opportunities
-
-
-def _identify_license_model_changes(portfolio, utilization_data, pricing_cache):
-    """Identify instances using License Included that could switch to BYOL.
-
-    Cross-references with the Windows/SQL Licensing Optimizer for detailed analysis.
-    License model changes are always marked as high complexity due to the requirements
-    for Software Assurance verification and potential instance stop/start.
-
-    Args:
-        portfolio: The portfolio dict from _build_licensing_portfolio.
-        utilization_data: The utilization dict from _get_utilization_data.
-        pricing_cache: A dict mapping instance types to hourly on-demand rates.
-
-    Returns:
-        list: A list of ConversionOpportunity dicts with type 'license_model_change'.
-    """
-    opportunities = []
-    on_demand_instances = portfolio.get('onDemandInstances', [])
-
-    # Windows/SQL platforms that can potentially switch to BYOL
-    byol_eligible_platforms = [
-        'Windows', 'Windows with SQL Standard', 'Windows with SQL Enterprise',
-        'Windows with SQL Web', 'SQL Standard', 'SQL Enterprise', 'SQL Web',
-    ]
-
-    for instance in on_demand_instances:
-        platform = instance.get('platform', '')
-        license_model = instance.get('licenseModel', '')
-
-        # Only consider License Included instances on Windows/SQL platforms
-        if license_model != 'License Included':
-            continue
-
-        # Check if platform is eligible for BYOL conversion
-        is_eligible = any(bp.lower() in platform.lower() for bp in byol_eligible_platforms)
-        if not is_eligible:
-            continue
-
-        instance_id = instance.get('instanceId', '')
-        instance_type = instance.get('instanceType', '')
-
-        # Estimate savings from BYOL conversion
-        # Windows license cost is typically 30-50% of the instance cost
-        on_demand_rate = pricing_cache.get(instance_type, 0)
-        if on_demand_rate <= 0:
-            on_demand_rate = instance.get('monthlyOnDemandCost', 0) / 730 if instance.get('monthlyOnDemandCost', 0) > 0 else 0
-
-        monthly_on_demand_cost = round(on_demand_rate * 730, 2) if on_demand_rate > 0 else instance.get('monthlyOnDemandCost', 0)
-
-        # BYOL savings estimate: ~40% for Windows, ~50% for SQL
-        if 'sql' in platform.lower():
-            savings_factor = 0.50
-        else:
-            savings_factor = 0.40
-
-        monthly_savings = round(monthly_on_demand_cost * savings_factor, 2)
-        if monthly_savings <= 0:
-            continue
-
-        savings_percentage = round(
-            (monthly_savings / monthly_on_demand_cost * 100) if monthly_on_demand_cost > 0 else 0, 1
-        )
-
-        opportunity = {
-            'id': f"conv-{uuid.uuid4().hex[:8]}",
-            'type': 'license_model_change',
-            'sourceId': instance_id,
-            'sourceType': 'on_demand_instance',
-            'sourceDescription': (
-                f"{instance_type} using License Included ({platform})"
-            ),
-            'targetDescription': (
-                f"Convert to BYOL (requires Software Assurance)"
-            ),
-            'feasibilityScore': 0,  # scored later
-            'estimatedMonthlySavings': monthly_savings,
-            'estimatedAnnualSavings': round(monthly_savings * 12, 2),
-            'savingsPercentage': savings_percentage,
-            'complexity': 'high',
-            'timing': 'scheduled',
-            'timingDate': None,
-            'risks': [
-                "Requires active Software Assurance",
-                "Instance stop/start required for license model change",
-                "Downtime during conversion window",
-            ],
-            'prerequisites': [
-                "Verify Software Assurance coverage",
-                "Schedule maintenance window for instance stop/start",
-                "Confirm license mobility rights with Microsoft",
-            ],
-            'isReversible': True,
-            'utilizationCurrent': round(instance.get('runningHoursLast30d', 0) / 730 * 100, 1),
-            'utilizationProjected': round(instance.get('runningHoursLast30d', 0) / 730 * 100, 1),
-            'remainingTermDays': 0,
-            'crossReference': "See Windows/SQL Licensing Optimizer for detailed instance analysis",
-        }
-        opportunities.append(opportunity)
-
-    return opportunities
-
-
-def _identify_sp_upgrades(portfolio, utilization_data, pricing_cache):
-    """Identify Savings Plans that could be upgraded or right-sized.
-
-    Finds EC2 Instance SPs that could upgrade to Compute SPs for more flexibility,
-    and underutilized SPs that could be right-sized on renewal. Calculates the
-    savings or cost difference for each upgrade path.
-
-    Args:
-        portfolio: The portfolio dict from _build_licensing_portfolio.
-        utilization_data: The utilization dict from _get_utilization_data.
-        pricing_cache: A dict mapping instance types to hourly on-demand rates.
-
-    Returns:
-        list: A list of ConversionOpportunity dicts with type 'sp_upgrade'.
-    """
-    opportunities = []
-    savings_plans = portfolio.get('savingsPlans', [])
-
-    for sp in savings_plans:
-        sp_id = sp.get('spId', '')
-        plan_type = sp.get('planType', '')
-        hourly_commitment = sp.get('hourlyCommitment', 0)
-        monthly_cost = sp.get('monthlyCost', 0)
-        utilization_pct = sp.get('utilizationPct', 0)
-        days_until_expiry = sp.get('daysUntilExpiry', 999)
-
-        # ── Path 1: EC2 Instance SP → Compute SP upgrade for flexibility ──
-        if plan_type == 'EC2InstanceSavingsPlans':
-            # Compute SP is slightly more expensive (~5-10% less discount) but much more flexible
-            # It covers EC2, Lambda, and Fargate across all regions and instance families
-            compute_sp_premium = 1.08  # ~8% more expensive for same coverage
-            compute_sp_monthly = round(monthly_cost * compute_sp_premium, 2)
-            cost_difference = round(compute_sp_monthly - monthly_cost, 2)
-
-            # The "savings" here is negative (costs more) but provides flexibility value
-            # We frame it as the cost of flexibility
-            # Only recommend if the SP is well-utilized (otherwise right-size first)
-            if utilization_pct >= 70:
-                instance_family = sp.get('instanceFamily', 'unknown')
-                region = sp.get('region', 'us-east-1')
-
-                opportunity = {
-                    'id': f"conv-{uuid.uuid4().hex[:8]}",
-                    'type': 'sp_upgrade',
-                    'sourceId': sp_id,
-                    'sourceType': 'savings_plan',
-                    'sourceDescription': (
-                        f"EC2 Instance SP ({instance_family} family, {region}, "
-                        f"${hourly_commitment:.2f}/hr, {utilization_pct:.0f}% utilized)"
-                    ),
-                    'targetDescription': (
-                        f"Upgrade to Compute SP on renewal "
-                        f"(+${cost_difference:.2f}/mo for cross-region/family flexibility)"
-                    ),
-                    'feasibilityScore': 0,  # scored later
-                    'estimatedMonthlySavings': -cost_difference,  # Negative = costs more
-                    'estimatedAnnualSavings': round(-cost_difference * 12, 2),
-                    'savingsPercentage': 0.0,  # This is a flexibility upgrade, not a savings play
-                    'complexity': 'low',
-                    'timing': 'at_expiry',
-                    'timingDate': (
-                        (datetime.now(timezone.utc) + timedelta(days=max(0, days_until_expiry - 2))).strftime('%Y-%m-%d')
-                        if days_until_expiry < 9999 else None
-                    ),
-                    'risks': [
-                        "Slightly higher cost for same workload coverage",
-                        "New 1-year commitment at renewal",
-                    ],
-                    'prerequisites': [
-                        "Wait for current SP to expire before purchasing Compute SP",
-                        "Verify workload flexibility needs justify the premium",
-                    ],
-                    'isReversible': False,
-                    'utilizationCurrent': utilization_pct,
-                    'utilizationProjected': utilization_pct,  # Same utilization expected
-                    'remainingTermDays': days_until_expiry,
-                }
-                opportunities.append(opportunity)
-
-        # ── Path 2: Underutilized SP → Right-size on renewal ──
-        if sp.get('isUnderutilized', False) and utilization_pct < 80:
-            # Calculate right-sized commitment based on actual utilization
-            right_sized_commitment = round(hourly_commitment * (utilization_pct / 100.0), 4)
-            right_sized_monthly = round(right_sized_commitment * 730, 2)
-            monthly_savings = round(monthly_cost - right_sized_monthly, 2)
-
-            if monthly_savings <= 0:
-                continue
-
-            savings_percentage = round(
-                (monthly_savings / monthly_cost * 100) if monthly_cost > 0 else 0, 1
-            )
-
-            opportunity = {
-                'id': f"conv-{uuid.uuid4().hex[:8]}",
-                'type': 'sp_upgrade',
-                'sourceId': sp_id,
-                'sourceType': 'savings_plan',
-                'sourceDescription': (
-                    f"{plan_type} (${hourly_commitment:.2f}/hr, "
-                    f"{utilization_pct:.0f}% utilized — underutilized)"
-                ),
-                'targetDescription': (
-                    f"Right-size to ${right_sized_commitment:.4f}/hr on renewal "
-                    f"(match actual usage, save ${monthly_savings:.2f}/mo)"
-                ),
-                'feasibilityScore': 0,  # scored later
-                'estimatedMonthlySavings': monthly_savings,
-                'estimatedAnnualSavings': round(monthly_savings * 12, 2),
-                'savingsPercentage': savings_percentage,
-                'complexity': 'low',
-                'timing': 'at_expiry',
-                'timingDate': (
-                    (datetime.now(timezone.utc) + timedelta(days=max(0, days_until_expiry - 2))).strftime('%Y-%m-%d')
-                    if days_until_expiry < 9999 else None
-                ),
-                'risks': [
-                    "Reduced commitment may not cover usage spikes",
-                    "On-demand rates apply for usage above SP commitment",
-                ],
-                'prerequisites': [
-                    "Wait for current SP to expire",
-                    "Review usage trends to confirm right-sized commitment is adequate",
-                ],
-                'isReversible': False,
-                'utilizationCurrent': utilization_pct,
-                'utilizationProjected': min(100, utilization_pct + 15),  # Right-sizing improves utilization
-                'remainingTermDays': days_until_expiry,
-            }
-            opportunities.append(opportunity)
-
-    return opportunities
-
-
-# ============================================================
-# License Conversion Optimizer — Deduplication & Savings
-# ============================================================
-
-
-def _deduplicate_opportunities(opportunities):
-    """Remove duplicate conversion opportunities for the same source+type combination.
-
-    Ensures no source commitment appears in more than one opportunity of the same type.
-    When duplicates exist for the same source+type, keeps the one with the highest
-    estimatedMonthlySavings. The same source MAY appear in different types (e.g.,
-    ri_exchange AND ri_to_sp) since those represent alternative conversion paths.
-
-    Args:
-        opportunities: A list of ConversionOpportunity dicts, each containing at least
-            'sourceId', 'type', and 'estimatedMonthlySavings' keys.
-
-    Returns:
-        list: A deduplicated list of ConversionOpportunity dicts where each (sourceId, type)
-        pair appears at most once, retaining the opportunity with the highest savings.
-    """
-    # Group by (sourceId, type) — keep the best opportunity per group
-    best_by_source_type = {}
-
-    for opp in opportunities:
-        source_id = opp.get('sourceId', '')
-        opp_type = opp.get('type', '')
-        key = (source_id, opp_type)
-
-        if key not in best_by_source_type:
-            best_by_source_type[key] = opp
-        else:
-            # Keep the one with higher estimatedMonthlySavings
-            existing_savings = best_by_source_type[key].get('estimatedMonthlySavings', 0)
-            new_savings = opp.get('estimatedMonthlySavings', 0)
-            if new_savings > existing_savings:
-                best_by_source_type[key] = opp
-
-    return list(best_by_source_type.values())
-
-
-def _calculate_non_conflicting_savings(opportunities, portfolio):
-    """Calculate total potential savings from the best non-conflicting set of opportunities.
-
-    When two opportunities conflict (same sourceId), picks the one with the higher
-    feasibilityScore. Returns the aggregate savings from the non-conflicting set.
-
-    Args:
-        opportunities: A list of ConversionOpportunity dicts (already deduplicated per type).
-        portfolio: The portfolio dict from _build_licensing_portfolio, used to calculate
-            percentageOfCurrentSpend.
-
-    Returns:
-        dict: {
-            'monthly': float — total monthly savings from non-conflicting set,
-            'annual': float — monthly * 12,
-            'percentageOfCurrentSpend': float — monthly savings as % of total current spend
-        }
-    """
-    # Group opportunities by sourceId to detect conflicts
-    by_source = {}
-    for opp in opportunities:
-        source_id = opp.get('sourceId', '')
-        if source_id not in by_source:
-            by_source[source_id] = []
-        by_source[source_id].append(opp)
-
-    # For each source, pick the opportunity with the highest feasibilityScore
-    selected = []
-    for source_id, opps in by_source.items():
-        if len(opps) == 1:
-            selected.append(opps[0])
-        else:
-            # Pick the one with the highest feasibilityScore
-            best = max(opps, key=lambda o: o.get('feasibilityScore', 0))
-            selected.append(best)
-
-    # Sum up savings from the non-conflicting set
-    total_monthly = round(sum(o.get('estimatedMonthlySavings', 0) for o in selected), 2)
-    total_annual = round(total_monthly * 12, 2)
-
-    # Calculate percentage of current spend
-    summary = portfolio.get('summary', {})
-    total_commitment_cost = summary.get('totalMonthlyCommitmentCost', 0)
-    total_on_demand_spend = summary.get('totalOnDemandSpend', 0)
-    total_current_spend = total_commitment_cost + total_on_demand_spend
-
-    percentage_of_current_spend = round(
-        (total_monthly / total_current_spend * 100) if total_current_spend > 0 else 0.0, 1
-    )
-
-    return {
-        'monthly': total_monthly,
-        'annual': total_annual,
-        'percentageOfCurrentSpend': percentage_of_current_spend,
-    }
-
-
-# ============================================================
-# License Conversion Optimizer — Plan Generator
-# ============================================================
-
-
-def _generate_execution_plan(selected_conversion_ids, opportunities, portfolio):
-    """Generate a detailed execution plan for selected conversions.
-
-    Validates each conversion ID exists and is still feasible, detects conflicts
-    (two conversions targeting the same source), orders steps by dependency
-    (at_expiry timing comes after immediate), generates step-by-step instructions
-    with AWS Console deep links, calculates execution timeline, includes rollback
-    guidance for reversible conversions, and adds warnings for irreversible actions.
-
-    Args:
-        selected_conversion_ids: A list of conversion ID strings to include in the plan.
-        opportunities: The full list of ConversionOpportunity dicts from the analysis.
-        portfolio: The portfolio dict from _build_licensing_portfolio.
-
-    Returns:
-        dict: Execution plan matching the design's plan response format:
-            {
-                'planId': 'plan-{uuid}',
-                'generatedAt': 'ISO-8601',
-                'totalEstimatedSavings': {'monthly': float, 'annual': float},
-                'executionWindow': {'start': 'date', 'end': 'date'},
-                'steps': [...],
-                'conflicts': [...],
-                'timeline': [...]
-            }
-    """
-    now = datetime.now(timezone.utc)
-
-    # Build lookup of all opportunities by ID
-    opp_by_id = {opp.get('id', ''): opp for opp in opportunities}
-
-    # ── Phase 1: Validate selected conversions ──
-    valid_conversions = []
-    invalid_ids = []
-    for conv_id in selected_conversion_ids:
-        if conv_id in opp_by_id:
-            opp = opp_by_id[conv_id]
-            # Check feasibility — score of 0 means infeasible
-            if opp.get('feasibilityScore', 0) > 0:
-                valid_conversions.append(opp)
-            else:
-                invalid_ids.append({'id': conv_id, 'reason': 'Feasibility score is 0 (infeasible)'})
-        else:
-            invalid_ids.append({'id': conv_id, 'reason': 'Conversion ID not found in opportunities'})
-
-    # ── Phase 2: Detect conflicts (same source in multiple selected conversions) ──
-    conflicts = []
-    source_to_conversions = {}
-    for opp in valid_conversions:
-        source_id = opp.get('sourceId', '')
-        if source_id not in source_to_conversions:
-            source_to_conversions[source_id] = []
-        source_to_conversions[source_id].append(opp)
-
-    # Resolve conflicts — keep the higher-scoring one
-    non_conflicting = []
-    for source_id, opps in source_to_conversions.items():
-        if len(opps) > 1:
-            # Conflict detected
-            opps_sorted = sorted(opps, key=lambda o: o.get('feasibilityScore', 0), reverse=True)
-            winner = opps_sorted[0]
-            losers = opps_sorted[1:]
-            non_conflicting.append(winner)
-            for loser in losers:
-                conflicts.append({
-                    'sourceId': source_id,
-                    'sourceDescription': loser.get('sourceDescription', ''),
-                    'keptConversionId': winner.get('id', ''),
-                    'keptType': winner.get('type', ''),
-                    'removedConversionId': loser.get('id', ''),
-                    'removedType': loser.get('type', ''),
-                    'reason': (
-                        f"Both target the same source. Kept '{winner.get('type')}' "
-                        f"(score {winner.get('feasibilityScore', 0)}) over "
-                        f"'{loser.get('type')}' (score {loser.get('feasibilityScore', 0)})."
-                    ),
-                })
-        else:
-            non_conflicting.append(opps[0])
-
-    # ── Phase 3: Order by dependency (immediate first, then at_expiry, then scheduled) ──
-    timing_priority = {'immediate': 0, 'at_expiry': 1, 'scheduled': 2}
-    non_conflicting.sort(key=lambda o: (
-        timing_priority.get(o.get('timing', 'scheduled'), 2),
-        o.get('timingDate') or '9999-12-31',
-    ))
-
-    # ── Phase 4: Generate steps with instructions and console links ──
-    steps = []
-    step_number = 0
-
-    # Console link templates by conversion type
-    console_links = {
-        'ri_exchange': 'https://console.aws.amazon.com/ec2/home#ReservedInstances:',
-        'ri_to_sp': 'https://console.aws.amazon.com/cost-management/home#/savings-plans/purchase',
-        'on_demand_to_committed': 'https://console.aws.amazon.com/cost-management/home#/savings-plans/purchase',
-        'license_model_change': 'https://console.aws.amazon.com/ec2/home#Instances:',
-        'sp_upgrade': 'https://console.aws.amazon.com/cost-management/home#/savings-plans/purchase',
-        'ri_renewal': 'https://console.aws.amazon.com/ec2/home#ReservedInstances:',
-    }
-
-    for opp in non_conflicting:
-        step_number += 1
-        conv_type = opp.get('type', '')
-        timing = opp.get('timing', 'immediate')
-        timing_date = opp.get('timingDate')
-        source_desc = opp.get('sourceDescription', '')
-        target_desc = opp.get('targetDescription', '')
-        is_reversible = opp.get('isReversible', False)
-
-        # Generate instructions based on conversion type
-        instructions = _get_conversion_instructions(conv_type, opp)
-
-        # Build warnings
-        warnings = list(opp.get('risks', []))
-        if not is_reversible:
-            warnings.append('This action is IRREVERSIBLE once completed.')
-        if timing == 'at_expiry' and timing_date:
-            warnings.append(f'Do NOT execute before {timing_date} to avoid double-payment overlap.')
-
-        # Dependencies: at_expiry steps depend on no prior steps (they're time-gated)
-        # immediate steps have no dependencies on each other (can be parallel)
-        depends_on = []
-        if timing == 'scheduled':
-            # Scheduled steps depend on all immediate steps being done first
-            immediate_steps = [s['stepNumber'] for s in steps if s.get('timing') == 'immediate']
-            depends_on = immediate_steps
-
-        step = {
-            'stepNumber': step_number,
-            'conversionId': opp.get('id', ''),
-            'action': _get_step_action(conv_type, opp),
-            'description': f"{source_desc} → {target_desc}",
-            'instructions': instructions,
-            'awsConsoleLink': console_links.get(conv_type, 'https://console.aws.amazon.com/'),
-            'estimatedDuration': _get_estimated_duration(conv_type),
-            'dependsOn': depends_on,
-            'warnings': warnings,
-            'timing': timing,
-            'scheduledDate': timing_date,
-            'savingsOnCompletion': {
-                'monthly': opp.get('estimatedMonthlySavings', 0),
-            },
-        }
-
-        # Add rollback guidance for reversible conversions
-        if is_reversible:
-            step['rollbackGuidance'] = (
-                'This conversion is reversible. If issues arise, you can revert '
-                'by performing the inverse operation from the AWS Console.'
-            )
-
-        steps.append(step)
-
-    # ── Phase 5: Calculate total estimated savings ──
-    total_monthly_savings = round(
-        sum(s['savingsOnCompletion']['monthly'] for s in steps), 2
-    )
-    total_annual_savings = round(total_monthly_savings * 12, 2)
-
-    # ── Phase 6: Calculate execution window ──
-    start_date = now.strftime('%Y-%m-%d')
-    # End date is the latest timing date or 7 days from now for immediate-only plans
-    timing_dates = [
-        opp.get('timingDate') for opp in non_conflicting
-        if opp.get('timingDate')
-    ]
-    if timing_dates:
-        end_date = max(timing_dates)
-    else:
-        end_date = (now + timedelta(days=7)).strftime('%Y-%m-%d')
-
-    # ── Phase 7: Build timeline ──
-    timeline = []
-    for step in steps:
-        scheduled_date = step.get('scheduledDate') or start_date
-        timeline.append({
-            'date': scheduled_date,
-            'action': step['action'],
-            'step': step['stepNumber'],
-        })
-
-    # Sort timeline by date
-    timeline.sort(key=lambda t: t['date'])
-
-    # ── Build final plan ──
-    plan = {
-        'planId': f"plan-{uuid.uuid4().hex[:12]}",
-        'generatedAt': now.strftime('%Y-%m-%dT%H:%M:%SZ'),
-        'totalEstimatedSavings': {
-            'monthly': total_monthly_savings,
-            'annual': total_annual_savings,
-        },
-        'executionWindow': {
-            'start': start_date,
-            'end': end_date,
-        },
-        'steps': steps,
-        'conflicts': conflicts,
-        'timeline': timeline,
-    }
-
-    # Include invalid IDs info if any
-    if invalid_ids:
-        plan['invalidConversions'] = invalid_ids
-
-    return plan
-
-
-def _get_step_action(conv_type, opp):
-    """Generate a concise action title for a plan step based on conversion type."""
-    actions = {
-        'ri_exchange': 'Exchange Reserved Instance',
-        'ri_to_sp': 'Purchase replacement Savings Plan before RI expiry',
-        'on_demand_to_committed': 'Purchase Compute Savings Plan',
-        'license_model_change': 'Convert license model to BYOL',
-        'sp_upgrade': 'Upgrade/right-size Savings Plan on renewal',
-        'ri_renewal': 'Renew Reserved Instance',
-    }
-    return actions.get(conv_type, f"Execute {conv_type} conversion")
-
-
-def _get_conversion_instructions(conv_type, opp):
-    """Generate step-by-step instructions for a conversion based on its type."""
-    source_id = opp.get('sourceId', '')
-
-    if conv_type == 'ri_exchange':
-        return [
-            "Navigate to AWS EC2 Console > Reserved Instances",
-            f"Select the source RI: {source_id}",
-            "Click 'Actions' > 'Exchange Reserved Instance'",
-            "Select the target instance type and configuration",
-            "Review the exchange value comparison (target must be >= source)",
-            "Confirm the exchange",
-        ]
-    elif conv_type == 'ri_to_sp':
-        timing_date = opp.get('timingDate', 'before RI expiry')
-        hourly = ''
-        target_desc = opp.get('targetDescription', '')
-        return [
-            f"Wait until {timing_date} (1-2 days before RI expiry)",
-            "Navigate to AWS Cost Management > Savings Plans > Purchase",
-            "Select 'Compute Savings Plans' for maximum flexibility",
-            f"Set hourly commitment to match workload needs",
-            "Choose '1 Year' term with 'No Upfront' payment",
-            "Review and confirm purchase",
-        ]
-    elif conv_type == 'on_demand_to_committed':
-        return [
-            "Navigate to AWS Cost Management > Savings Plans > Purchase",
-            "Select 'Compute Savings Plans' for maximum flexibility",
-            "Set hourly commitment based on instance on-demand rate",
-            "Choose '1 Year' term with 'No Upfront' payment",
-            "Review coverage estimate to confirm instance will be covered",
-            "Confirm purchase",
-        ]
-    elif conv_type == 'license_model_change':
-        return [
-            "Verify active Software Assurance or License Mobility rights",
-            "Schedule a maintenance window for the conversion",
-            f"Navigate to EC2 Console > Instances > {source_id}",
-            "Stop the instance",
-            "Modify instance attribute to change license configuration",
-            "Start the instance and verify license model change",
-            "Confirm application functionality after restart",
-        ]
-    elif conv_type == 'sp_upgrade':
-        return [
-            "Wait for current Savings Plan to expire",
-            "Navigate to AWS Cost Management > Savings Plans > Purchase",
-            "Select the upgraded plan type (e.g., Compute SP)",
-            "Set the right-sized hourly commitment based on actual usage",
-            "Choose term and payment option",
-            "Review and confirm purchase",
-        ]
-    elif conv_type == 'ri_renewal':
-        return [
-            "Navigate to AWS EC2 Console > Reserved Instances",
-            "Click 'Purchase Reserved Instances'",
-            "Select the same or updated instance type and configuration",
-            "Choose term length and payment option",
-            "Review pricing and confirm purchase",
-        ]
-    else:
-        return [
-            f"Execute {conv_type} conversion for source: {source_id}",
-            "Refer to AWS documentation for specific steps",
-        ]
-
-
-def _get_estimated_duration(conv_type):
-    """Return estimated duration string for a conversion step."""
-    durations = {
-        'ri_exchange': '5-10 minutes',
-        'ri_to_sp': '5 minutes',
-        'on_demand_to_committed': '5 minutes',
-        'license_model_change': '15-30 minutes (includes instance restart)',
-        'sp_upgrade': '5 minutes',
-        'ri_renewal': '5 minutes',
-    }
-    return durations.get(conv_type, '10-15 minutes')
-
-
-# ============================================================
-# License Conversion Optimizer — Endpoint Handlers
-# ============================================================
-
-
-def _validate_conversion_permissions(session):
-    """Validate that the cross-account role has required permissions for license conversion analysis.
-
-    Tests required permissions by making lightweight dry-run or minimal API calls:
-    ec2:DescribeReservedInstances, rds:DescribeReservedDBInstances,
-    savingsplans:DescribeSavingsPlans, ce:GetReservationUtilization, ce:GetCostAndUsage.
-
-    Args:
-        session: A dict of boto3 credentials (AccessKeyId, SecretAccessKey, SessionToken).
-
-    Returns:
-        None if all permissions are valid, or an error response dict if permissions are missing.
-    """
-    missing_permissions = []
-
-    def _client(service, region=None):
-        return boto3.client(
-            service,
-            aws_access_key_id=session['AccessKeyId'],
-            aws_secret_access_key=session['SecretAccessKey'],
-            aws_session_token=session['SessionToken'],
-            region_name=region or os.environ.get('AWS_REGION', 'us-east-1'),
-        )
-
-    # Test ec2:DescribeReservedInstances
-    try:
-        ec2 = _client('ec2')
-        ec2.describe_reserved_instances(Filters=[{'Name': 'state', 'Values': ['active']}])
-    except ClientError as e:
-        if e.response['Error']['Code'] in ('AccessDeniedException', 'AccessDenied', 'UnauthorizedOperation'):
-            missing_permissions.append('ec2:DescribeReservedInstances')
-
-    # Test rds:DescribeReservedDBInstances
-    try:
-        rds = _client('rds')
-        rds.describe_reserved_db_instances(MaxRecords=20)
-    except ClientError as e:
-        if e.response['Error']['Code'] in ('AccessDeniedException', 'AccessDenied'):
-            missing_permissions.append('rds:DescribeReservedDBInstances')
-
-    # Test savingsplans:DescribeSavingsPlans
-    try:
-        sp = _client('savingsplans')
-        sp.describe_savings_plans(states=['active'], maxResults=1)
-    except ClientError as e:
-        if e.response['Error']['Code'] in ('AccessDeniedException', 'AccessDenied'):
-            missing_permissions.append('savingsplans:DescribeSavingsPlans')
-
-    # Test ce:GetReservationUtilization
-    try:
-        ce = _client('ce')
-        now = datetime.now(timezone.utc)
-        yesterday = now - timedelta(days=1)
-        ce.get_reservation_utilization(
-            TimePeriod={
-                'Start': yesterday.strftime('%Y-%m-%d'),
-                'End': now.strftime('%Y-%m-%d'),
-            },
-            Granularity='DAILY',
-        )
-    except ClientError as e:
-        if e.response['Error']['Code'] in ('AccessDeniedException', 'AccessDenied'):
-            missing_permissions.append('ce:GetReservationUtilization')
-
-    # Test ce:GetCostAndUsage
-    try:
-        ce = _client('ce')
-        now = datetime.now(timezone.utc)
-        yesterday = now - timedelta(days=1)
-        ce.get_cost_and_usage(
-            TimePeriod={
-                'Start': yesterday.strftime('%Y-%m-%d'),
-                'End': now.strftime('%Y-%m-%d'),
-            },
-            Granularity='DAILY',
-            Metrics=['UnblendedCost'],
-        )
-    except ClientError as e:
-        if e.response['Error']['Code'] in ('AccessDeniedException', 'AccessDenied'):
-            missing_permissions.append('ce:GetCostAndUsage')
-
-    if missing_permissions:
-        return create_error_response(
-            403, 'InsufficientPermissions',
-            'The cross-account role lacks required permissions for license conversion analysis. '
-            'Please update the CloudFormation template.',
-            extra={'missingPermissions': missing_permissions}
-        )
-
-    return None
-
-
-def _build_pricing_cache(portfolio, session):
-    """Query AWS Pricing API for instance types found in the portfolio.
-
-    Builds a dict mapping instance_type → hourly_rate (on-demand) for all instance
-    types discovered in the portfolio (EC2 RIs, on-demand instances, BYOL instances).
-
-    Args:
-        portfolio: The portfolio dict from _build_licensing_portfolio.
-        session: A dict of boto3 credentials (AccessKeyId, SecretAccessKey, SessionToken).
-
-    Returns:
-        dict: Mapping of instance_type (str) → hourly_rate (float).
-            Returns empty rates (0.0) for types where pricing lookup fails.
-    """
-    # Collect all unique instance types from the portfolio
-    instance_types = set()
-
-    for ri in portfolio.get('ec2ReservedInstances', []):
-        instance_types.add(ri.get('instanceType', ''))
-
-    for inst in portfolio.get('onDemandInstances', []):
-        instance_types.add(inst.get('instanceType', ''))
-
-    for inst in portfolio.get('byolInstances', []):
-        instance_types.add(inst.get('instanceType', ''))
-
-    # Remove empty strings
-    instance_types.discard('')
-
-    if not instance_types:
-        return {}
-
-    pricing_cache = {}
-
-    # Query Pricing API (always us-east-1 for global pricing data)
-    try:
-        pricing_client = boto3.client(
-            'pricing',
-            aws_access_key_id=session['AccessKeyId'],
-            aws_secret_access_key=session['SecretAccessKey'],
-            aws_session_token=session['SessionToken'],
-            region_name='us-east-1',
-        )
-
-        for instance_type in instance_types:
-            try:
-                response = pricing_client.get_products(
-                    ServiceCode='AmazonEC2',
-                    Filters=[
-                        {'Type': 'TERM_MATCH', 'Field': 'instanceType', 'Value': instance_type},
-                        {'Type': 'TERM_MATCH', 'Field': 'operatingSystem', 'Value': 'Linux'},
-                        {'Type': 'TERM_MATCH', 'Field': 'tenancy', 'Value': 'Shared'},
-                        {'Type': 'TERM_MATCH', 'Field': 'preInstalledSw', 'Value': 'NA'},
-                        {'Type': 'TERM_MATCH', 'Field': 'capacitystatus', 'Value': 'Used'},
-                    ],
-                    MaxResults=1,
-                )
-
-                price_list = response.get('PriceList', [])
-                if price_list:
-                    price_data = json.loads(price_list[0]) if isinstance(price_list[0], str) else price_list[0]
-                    on_demand_terms = price_data.get('terms', {}).get('OnDemand', {})
-                    for term_key, term_val in on_demand_terms.items():
-                        price_dimensions = term_val.get('priceDimensions', {})
-                        for dim_key, dim_val in price_dimensions.items():
-                            price_per_unit = dim_val.get('pricePerUnit', {}).get('USD', '0')
-                            hourly_rate = float(price_per_unit)
-                            if hourly_rate > 0:
-                                pricing_cache[instance_type] = hourly_rate
-                                break
-                        if instance_type in pricing_cache:
-                            break
-
-                # If not found, set to 0.0
-                if instance_type not in pricing_cache:
-                    pricing_cache[instance_type] = 0.0
-
-            except (ClientError, Exception) as e:
-                logger.warning(f"Pricing lookup failed for {instance_type}: {e}")
-                pricing_cache[instance_type] = 0.0
-
-    except Exception as e:
-        logger.warning(f"Pricing API initialization failed: {e}")
-        # Return all types with 0.0 rate
-        for instance_type in instance_types:
-            pricing_cache[instance_type] = 0.0
-
-    return pricing_cache
-
-
-def handle_license_conversion_analyze(event):
-    """POST /members/license-conversion/analyze — Full portfolio analysis and conversion opportunities."""
-    logger.info("[LC-ANALYZE] === License Conversion Analyze START ===")
-    scan_start = time.time()
-    TIMEOUT_THRESHOLD = 115
-
-    # ── Auth & validation ──
-    logger.info("[LC-ANALYZE] Step 1: Validating token...")
-    auth = validate_token(event)
-    if isinstance(auth, dict) and 'statusCode' in auth:
-        logger.warning("[LC-ANALYZE] Auth failed: %s", auth.get('body', ''))
-        return auth
-    member_email = auth['sub']
-    logger.info("[LC-ANALYZE] Auth OK for: %s", member_email)
-
-    try:
-        body = json.loads(event.get('body', '{}'))
-    except (json.JSONDecodeError, TypeError):
-        logger.error("[LC-ANALYZE] Invalid request body")
-        return create_error_response(400, 'InvalidRequest', 'Invalid request body')
-
-    account_id = (body.get('accountId') or '').strip()
-    logger.info("[LC-ANALYZE] Step 2: accountId=%s", account_id)
-    if not account_id or not re.match(r'^\d{12}$', account_id):
-        logger.error("[LC-ANALYZE] Invalid accountId: '%s'", account_id)
-        return create_error_response(400, 'InvalidAccountId', 'accountId must be exactly 12 digits')
-
-    # ── Verify account ownership ──
-    logger.info("[LC-ANALYZE] Step 3: Verifying account ownership...")
-    ownership = _verify_account_ownership(member_email, [account_id])
-    if ownership is not True:
-        logger.warning("[LC-ANALYZE] Ownership check failed for %s / %s", member_email, account_id)
-        return ownership
-    logger.info("[LC-ANALYZE] Ownership verified OK")
-
-    # ── Assume cross-account role ──
-    logger.info("[LC-ANALYZE] Step 4: Assuming cross-account role for %s...", account_id)
-    try:
-        creds = _assume_role_for_account(member_email, account_id)
-        logger.info("[LC-ANALYZE] Role assumed OK")
-    except ClientError as e:
-        code = e.response['Error']['Code']
-        logger.error("[LC-ANALYZE] AssumeRole ClientError: %s - %s", code, e)
-        if code in ('AccessDeniedException', 'AccessDenied'):
-            return create_error_response(403, 'AccessDenied',
-                                         'Cannot access account — please re-deploy the CloudFormation template')
-        return create_error_response(403, 'ConnectionFailed',
-                                     'Cross-account role not found — please deploy the CloudFormation template')
-    except Exception as e:
-        logger.error("[LC-ANALYZE] AssumeRole unexpected error: %s: %s", type(e).__name__, e)
-        return create_error_response(403, 'ConnectionFailed',
-                                     'Cross-account role not found — please deploy the CloudFormation template')
-
-    # ── Validate required permissions ──
-    logger.info("[LC-ANALYZE] Step 5: Validating permissions...")
-    perm_error = _validate_conversion_permissions(creds)
-    if perm_error is not None:
-        logger.warning("[LC-ANALYZE] Permission validation failed")
-        return perm_error
-    logger.info("[LC-ANALYZE] Permissions OK")
-
-    # ── Build licensing portfolio ──
-    logger.info("[LC-ANALYZE] Step 6: Building licensing portfolio...")
-    try:
-        portfolio = _build_licensing_portfolio(creds, account_id)
-        logger.info("[LC-ANALYZE] Portfolio built: %d EC2 RIs, %d RDS RIs, %d SPs, %d on-demand",
-                    len(portfolio.get('ec2ReservedInstances', [])),
-                    len(portfolio.get('rdsReservedInstances', [])),
-                    len(portfolio.get('savingsPlans', [])),
-                    len(portfolio.get('onDemandInstances', [])))
-    except Exception as e:
-        logger.error("[LC-ANALYZE] Portfolio build FAILED: %s: %s", type(e).__name__, e, exc_info=True)
-        return create_error_response(500, 'PortfolioBuildError',
-                                     f'Failed to build licensing portfolio: {str(e)}')
-
-    # ── Check timeout before utilization ──
-    elapsed = time.time() - scan_start
-    logger.info("[LC-ANALYZE] Elapsed so far: %.1fs", elapsed)
-    if elapsed > TIMEOUT_THRESHOLD:
-        logger.warning("[LC-ANALYZE] Timeout approaching after portfolio build (%.1fs)", elapsed)
-        return create_response(200, {
-            'success': True,
-            'partial': True,
-            'reason': 'Timeout approaching — returning portfolio without analysis',
-            'analyzedAt': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
-            'accountId': account_id,
-            'portfolio': portfolio,
-            'conversionOpportunities': [],
-            'totalPotentialSavings': {'monthly': 0, 'annual': 0, 'percentageOfCurrentSpend': 0},
-        })
-
-    # ── Get utilization data ──
-    logger.info("[LC-ANALYZE] Step 7: Getting utilization data...")
-    try:
-        utilization_data = _get_utilization_data(creds, portfolio)
-        logger.info("[LC-ANALYZE] Utilization data OK (CE available: %s)", utilization_data.get('costExplorerAvailable'))
-    except Exception as e:
-        logger.warning("[LC-ANALYZE] Utilization retrieval failed (non-fatal): %s: %s", type(e).__name__, e)
-        utilization_data = {
-            'riUtilization': {},
-            'spUtilization': {},
-            'onDemandSpendByService': {},
-            'totalOnDemandSpend': 0.0,
-            'coveragePercentage': 0.0,
-            'costExplorerAvailable': False,
-        }
-
-    # ── Build pricing cache ──
-    logger.info("[LC-ANALYZE] Step 8: Building pricing cache...")
-    try:
-        pricing_cache = _build_pricing_cache(portfolio, creds)
-        logger.info("[LC-ANALYZE] Pricing cache built: %d instance types", len(pricing_cache))
-    except Exception as e:
-        logger.warning("[LC-ANALYZE] Pricing cache build failed (non-fatal): %s: %s", type(e).__name__, e)
-        pricing_cache = {}
-
-    # ── Check timeout before conversion analysis ──
-    elapsed = time.time() - scan_start
-    logger.info("[LC-ANALYZE] Elapsed before conversion analysis: %.1fs", elapsed)
-    if elapsed > TIMEOUT_THRESHOLD:
-        logger.warning("[LC-ANALYZE] Timeout before conversion analysis")
-        return create_response(200, {
-            'success': True,
-            'partial': True,
-            'reason': 'Timeout approaching — returning portfolio with utilization but no conversion analysis',
-            'analyzedAt': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
-            'accountId': account_id,
-            'portfolio': portfolio,
-            'conversionOpportunities': [],
-            'totalPotentialSavings': {'monthly': 0, 'annual': 0, 'percentageOfCurrentSpend': 0},
-        })
-
-    # ── Run all 5 conversion identifiers in parallel ──
-    logger.info("[LC-ANALYZE] Step 9: Running 5 conversion identifiers in parallel...")
-    all_opportunities = []
-    identifier_functions = [
-        _identify_ri_exchange_opportunities,
-        _identify_ri_to_sp_migrations,
-        _identify_on_demand_commitment_candidates,
-        _identify_license_model_changes,
-        _identify_sp_upgrades,
-    ]
-
-    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
-        futures = {
-            executor.submit(fn, portfolio, utilization_data, pricing_cache): fn.__name__
-            for fn in identifier_functions
-        }
-
-        for future in concurrent.futures.as_completed(futures):
-            fn_name = futures[future]
-            try:
-                if time.time() - scan_start > TIMEOUT_THRESHOLD:
-                    logger.warning("[LC-ANALYZE] Timeout during conversion analysis")
-                    break
-                result = future.result(timeout=30)
-                if result:
-                    logger.info("[LC-ANALYZE] %s returned %d opportunities", fn_name, len(result))
-                    all_opportunities.extend(result)
-                else:
-                    logger.info("[LC-ANALYZE] %s returned 0 opportunities", fn_name)
-            except concurrent.futures.TimeoutError:
-                logger.warning("[LC-ANALYZE] %s TIMED OUT (30s)", fn_name)
-            except Exception as e:
-                logger.warning("[LC-ANALYZE] %s FAILED: %s: %s", fn_name, type(e).__name__, e)
-
-    logger.info("[LC-ANALYZE] Total opportunities found: %d", len(all_opportunities))
-
-    # ── Check timeout before post-processing ──
-    if time.time() - scan_start > TIMEOUT_THRESHOLD:
-        return create_response(200, {
-            'success': True,
-            'partial': True,
-            'reason': 'Timeout approaching — returning partial conversion analysis',
-            'analyzedAt': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
-            'accountId': account_id,
-            'portfolio': portfolio,
-            'conversionOpportunities': all_opportunities,
-            'totalPotentialSavings': {'monthly': 0, 'annual': 0, 'percentageOfCurrentSpend': 0},
-        })
-
-    # ── Deduplicate opportunities ──
-    logger.info("[LC-ANALYZE] Step 10: Deduplicating and scoring...")
-    all_opportunities = _deduplicate_opportunities(all_opportunities)
-
-    # ── Score all opportunities using feasibility scorer ──
-    for opp in all_opportunities:
-        if opp.get('feasibilityScore') is None or opp.get('feasibilityScore') == 0:
-            opp['feasibilityScore'] = _calculate_feasibility_score(
-                conversion_type=opp.get('type', ''),
-                savings_percentage=opp.get('savingsPercentage', 0),
-                utilization_current=opp.get('utilizationCurrent', 50),
-                utilization_projected=opp.get('utilizationProjected', 80),
-                complexity=opp.get('complexity', 'medium'),
-                remaining_term_days=opp.get('remainingTermDays', 365),
-                is_reversible=opp.get('isReversible', False),
-            )
-
-    # ── Sort by feasibility score descending ──
-    all_opportunities.sort(key=lambda o: o.get('feasibilityScore', 0), reverse=True)
-
-    # ── Calculate total potential savings ──
-    total_potential_savings = _calculate_non_conflicting_savings(all_opportunities, portfolio)
-
-    total_elapsed = time.time() - scan_start
-    logger.info("[LC-ANALYZE] === COMPLETE in %.1fs — %d opportunities, $%.2f/mo savings ===",
-                total_elapsed, len(all_opportunities), total_potential_savings.get('monthly', 0))
-
-    # ── Build response ──
-    return create_response(200, {
-        'success': True,
-        'analyzedAt': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
-        'accountId': account_id,
-        'portfolio': portfolio,
-        'conversionOpportunities': all_opportunities,
-        'totalPotentialSavings': total_potential_savings,
-    })
-
-
-def handle_license_conversion_plan(event):
-    """POST /members/license-conversion/plan — Generate execution plan for selected conversions.
-
-    Validates JWT token, parses accountId and selectedConversions from request body,
-    verifies account ownership, re-runs analysis to get opportunities list, then
-    calls _generate_execution_plan with selected conversions.
-    """
-    # ── Auth & validation ──
-    auth = validate_token(event)
-    if isinstance(auth, dict) and 'statusCode' in auth:
-        return auth
-    member_email = auth['sub']
-
-    try:
-        body = json.loads(event.get('body', '{}'))
-    except (json.JSONDecodeError, TypeError):
-        return create_error_response(400, 'InvalidRequest', 'Invalid request body')
-
-    account_id = (body.get('accountId') or '').strip()
-    if not account_id or not re.match(r'^\d{12}$', account_id):
-        return create_error_response(400, 'InvalidAccountId', 'accountId must be exactly 12 digits')
-
-    selected_conversions = body.get('selectedConversions', [])
-    if not selected_conversions or not isinstance(selected_conversions, list):
-        return create_error_response(400, 'InvalidRequest',
-                                     'selectedConversions must be a non-empty list of conversion IDs')
-
-    # ── Verify account ownership ──
-    ownership = _verify_account_ownership(member_email, [account_id])
-    if ownership is not True:
-        return ownership
-
-    # ── Assume cross-account role ──
-    try:
-        creds = _assume_role_for_account(member_email, account_id)
-    except ClientError as e:
-        code = e.response['Error']['Code']
-        if code in ('AccessDeniedException', 'AccessDenied'):
-            return create_error_response(403, 'AccessDenied',
-                                         'Cannot access account — please re-deploy the CloudFormation template')
-        return create_error_response(403, 'ConnectionFailed',
-                                     'Cross-account role not found — please deploy the CloudFormation template')
-    except Exception:
-        return create_error_response(403, 'ConnectionFailed',
-                                     'Cross-account role not found — please deploy the CloudFormation template')
-
-    # ── Re-run analysis to get current opportunities ──
-    try:
-        portfolio = _build_licensing_portfolio(creds, account_id)
-    except Exception as e:
-        logger.error(f"Portfolio build failed for plan generation ({account_id}): {e}")
-        return create_error_response(500, 'PortfolioBuildError',
-                                     f'Failed to build licensing portfolio: {str(e)}')
-
-    try:
-        utilization_data = _get_utilization_data(creds, portfolio)
-    except Exception as e:
-        logger.warning(f"Utilization data retrieval failed for plan ({account_id}): {e}")
-        utilization_data = {
-            'riUtilization': {},
-            'spUtilization': {},
-            'onDemandSpendByService': {},
-            'totalOnDemandSpend': 0.0,
-            'coveragePercentage': 0.0,
-            'costExplorerAvailable': False,
-        }
-
-    try:
-        pricing_cache = _build_pricing_cache(portfolio, creds)
-    except Exception as e:
-        logger.warning(f"Pricing cache build failed for plan ({account_id}): {e}")
-        pricing_cache = {}
-
-    # ── Run all 5 conversion identifiers to rebuild opportunities ──
-    all_opportunities = []
-    identifier_functions = [
-        _identify_ri_exchange_opportunities,
-        _identify_ri_to_sp_migrations,
-        _identify_on_demand_commitment_candidates,
-        _identify_license_model_changes,
-        _identify_sp_upgrades,
-    ]
-
-    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
-        futures = {
-            executor.submit(fn, portfolio, utilization_data, pricing_cache): fn.__name__
-            for fn in identifier_functions
-        }
-        for future in concurrent.futures.as_completed(futures):
-            fn_name = futures[future]
-            try:
-                result = future.result(timeout=30)
-                if result:
-                    all_opportunities.extend(result)
-            except Exception as e:
-                logger.warning(f"Conversion identifier {fn_name} failed during plan: {e}")
-
-    # Deduplicate and score
-    all_opportunities = _deduplicate_opportunities(all_opportunities)
-    for opp in all_opportunities:
-        if opp.get('feasibilityScore') is None or opp.get('feasibilityScore') == 0:
-            opp['feasibilityScore'] = _calculate_feasibility_score(
-                conversion_type=opp.get('type', ''),
-                savings_percentage=opp.get('savingsPercentage', 0),
-                utilization_current=opp.get('utilizationCurrent', 50),
-                utilization_projected=opp.get('utilizationProjected', 80),
-                complexity=opp.get('complexity', 'medium'),
-                remaining_term_days=opp.get('remainingTermDays', 365),
-                is_reversible=opp.get('isReversible', False),
-            )
-
-    # ── Generate execution plan ──
-    try:
-        plan = _generate_execution_plan(selected_conversions, all_opportunities, portfolio)
-    except Exception as e:
-        logger.error(f"Execution plan generation failed for {account_id}: {e}")
-        return create_error_response(500, 'PlanGenerationError',
-                                     f'Failed to generate execution plan: {str(e)}')
-
-    # ── Build response ──
-    return create_response(200, {
-        'success': True,
-        **plan,
-    })
 
 # ============================================================
 # SQL Platform Comparator
@@ -19821,7 +17625,7 @@ def _calculate_sql_platform_pricing(instance_types, creds):
         creds: Cross-account STS credentials dict.
 
     Returns:
-        Dict mapping instance_type → pricing dict with all option hourly rates.
+        Dict mapping instance_type â†’ pricing dict with all option hourly rates.
     """
     pricing_client = boto3.client('pricing', region_name='us-east-1')
     pricing_cache = {}
@@ -19913,12 +17717,12 @@ def _calculate_sql_platform_pricing(instance_types, creds):
 def _build_sql_comparison_matrix(workloads, pricing):
     """Build side-by-side comparison matrix for each SQL workload.
 
-    Calculates monthly cost (hourly × 730) for each of 4 options per workload.
+    Calculates monthly cost (hourly Ã— 730) for each of 4 options per workload.
     Marks current option, calculates savings vs current, flags cheapest option.
 
     Args:
         workloads: List of workload dicts from _discover_sql_workloads.
-        pricing: Dict mapping instance_type → pricing dict from _calculate_sql_platform_pricing.
+        pricing: Dict mapping instance_type â†’ pricing dict from _calculate_sql_platform_pricing.
 
     Returns:
         List of workload comparison dicts with options[], savings, cheapest flag.
@@ -20018,7 +17822,7 @@ def _build_sql_comparison_matrix(workloads, pricing):
 
 
 def handle_sql_platform_compare(event):
-    """POST /members/sql/compare — Compare SQL Server platform costs.
+    """POST /members/sql/compare â€” Compare SQL Server platform costs.
 
     Discovers SQL workloads in the customer account, queries pricing for 4 deployment
     options per workload, and returns a comparison matrix with savings calculations.
@@ -20099,7 +17903,7 @@ def handle_sql_platform_compare(event):
 
 
 # ============================================================
-# SQL Platform Comparator — Migration Plan Templates
+# SQL Platform Comparator â€” Migration Plan Templates
 # ============================================================
 
 SQL_MIGRATION_TEMPLATES = {
@@ -20146,7 +17950,7 @@ SQL_MIGRATION_TEMPLATES = {
         'risks': [
             'Application downtime during connection string cutover',
             'RDS does not support all SQL Server features (CLR, linked servers, SSIS)',
-            'Storage IOPS may differ — performance testing required',
+            'Storage IOPS may differ â€” performance testing required',
             'Larger databases may take hours to restore from S3',
         ],
     },
@@ -20170,7 +17974,7 @@ SQL_MIGRATION_TEMPLATES = {
         'risks': [
             'Application downtime during connection string cutover',
             'RDS does not support all SQL Server features (CLR, linked servers)',
-            'Storage IOPS may differ — performance testing required',
+            'Storage IOPS may differ â€” performance testing required',
         ],
     },
     (PLATFORM_RDS_SQL_STANDARD, PLATFORM_EC2_WIN_SQL_LI): {
@@ -20255,7 +18059,7 @@ SQL_MIGRATION_TEMPLATES = {
             {'action': 'Create new RDS SQL Server Standard instance ({rds_class})', 'type': 'provision'},
             {'action': 'Restore database from S3 on new Standard instance', 'type': 'migrate'},
             {'action': 'Update application connection strings to new endpoint', 'type': 'migrate'},
-            {'action': 'Test application — verify no Enterprise feature errors', 'type': 'validate'},
+            {'action': 'Test application â€” verify no Enterprise feature errors', 'type': 'validate'},
             {'action': 'Delete original Enterprise RDS instance after validation', 'type': 'cleanup'},
         ],
         'risks': [
@@ -20337,7 +18141,7 @@ def _generate_sql_migration_plan(instance_id, source_platform, target_platform, 
 
 
 def handle_sql_migration_plan(event):
-    """POST /members/sql/migration-plan — Generate migration plan for SQL platform conversion.
+    """POST /members/sql/migration-plan â€” Generate migration plan for SQL platform conversion.
 
     Validates inputs, rejects same source/target, generates step-by-step migration plan.
     """
@@ -20394,7 +18198,7 @@ def handle_sql_migration_plan(event):
 
     if not plan:
         return create_error_response(400, 'InvalidMigrationPair',
-                                     f'No migration template available for {source_platform} → {target_platform}')
+                                     f'No migration template available for {source_platform} â†’ {target_platform}')
 
     logger.info(f"SQL migration plan generated: {instance_id} from {source_platform} to {target_platform}")
     return create_response(200, {
