@@ -607,18 +607,18 @@ def handle_get_sync_status(event):
         item.pop('service', None)
         item.pop('tipId', None)
         return create_response(200, {'status': _decimal_to_native(item)})
-    except ClientError as e:
+    except Exception as e:
         logger.error(f"DynamoDB error getting sync status: {e}")
-        return create_error_response(500, 'ServerError', 'Failed to retrieve sync status')
+        return create_error_response(500, 'ServerError', f'Failed to retrieve sync status: {str(e)}')
 
 
 def handle_get_sync_logs(event):
     """Return sync log history and current metadata."""
     try:
+        from boto3.dynamodb.conditions import Key
         table = dynamodb.Table(TIPS_TABLE_NAME)
         response = table.query(
-            KeyConditionExpression='service = :sys AND begins_with(tipId, :prefix)',
-            ExpressionAttributeValues={':sys': 'SYSTEM', ':prefix': 'SYNC_LOG#'},
+            KeyConditionExpression=Key('service').eq('SYSTEM') & Key('tipId').begins_with('SYNC_LOG#'),
             ScanIndexForward=False,
         )
         logs = _decimal_to_native(response.get('Items', []))
@@ -632,9 +632,9 @@ def handle_get_sync_logs(event):
             metadata.pop('tipId', None)
             metadata = _decimal_to_native(metadata)
         return create_response(200, {'logs': logs, 'metadata': metadata})
-    except ClientError as e:
+    except Exception as e:
         logger.error(f"DynamoDB error getting sync logs: {e}")
-        return create_error_response(500, 'ServerError', 'Failed to retrieve sync logs')
+        return create_error_response(500, 'ServerError', f'Failed to retrieve sync logs: {str(e)}')
 
 
 def handle_trigger_sync(event):
