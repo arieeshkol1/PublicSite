@@ -165,6 +165,8 @@ def lambda_handler(event, context):
         # (9) Publish CloudWatch success metrics
         publish_success_metrics(duration_ms)
 
+        _write_sync_log(table=table, trigger_type=trigger_type, sources_queried=sources_queried, sources_succeeded=sources_succeeded, sources_failed=sources_failed, tips_inserted=inserted_count, tips_updated=updated_count, tips_unchanged=unchanged_count, duration_ms=duration_ms, status="success")
+
         logger.info(json.dumps({
             "action": "sync_completed",
             "triggerType": trigger_type,
@@ -193,6 +195,11 @@ def lambda_handler(event, context):
             "errorType": type(e).__name__,
         }))
         publish_failure_metric()
+        try:
+            duration_ms = int((time.time() - start_time) * 1000)
+            _write_sync_log(table=table, trigger_type=trigger_type, sources_queried=sources_queried if 'sources_queried' in dir() else [], sources_succeeded=sources_succeeded if 'sources_succeeded' in dir() else [], sources_failed=sources_failed if 'sources_failed' in dir() else [], tips_inserted=0, tips_updated=0, tips_unchanged=0, duration_ms=duration_ms, status="failed", error_message=str(e))
+        except Exception:
+            pass
         return {
             "statusCode": 500,
             "body": json.dumps({
@@ -476,3 +483,28 @@ def _write_sync_metadata(
             "error": str(e),
             "errorType": type(e).__name__,
         }))
+
+
+def _write_sync_log(table, trigger_type, sources_queried, sources_succeeded, sources_failed, tips_inserted, tips_updated, tips_unchanged, duration_ms, status, error_message=None):
+    now = datetime.now(timezone.utc).isoformat()
+    log_item = {
+        "service": "SYSTEM",
+        "tipId": f"SYNC_LOG#{now}",
+        "timestamp": now,
+        "triggerType": trigger_type,
+        "sourcesQueried": sources_queried,
+        "sourcesSucceeded": sources_succeeded,
+        "sourcesFailed": sources_failed,
+        "tipsInserted": tips_inserted,
+        "tipsUpdated": tips_updated,
+        "tipsUnchanged": tips_unchanged,
+        "durationMs": duration_ms,
+        "status": status,
+    }
+    if error_message:
+        log_item["errorMessage"] = error_message
+    try:
+        table.put_item(Item=log_item)
+        logger.info(json.dumps({"action": "sync_log_written", "status": status, "timestamp": now}))
+    except Exception as e:
+        logger.error(json.dumps({"action": "sync_log_write_error", "error": str(e)}))

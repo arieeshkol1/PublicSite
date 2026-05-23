@@ -613,6 +613,21 @@ jobs:
             echo "✓ Lambda function $FUNCTION_NAME created (python3.12, 300s timeout, 256MB)"
           fi
 
+      - name: Grant admin-handler Lambda invoke permission
+        continue-on-error: true
+        run: |
+          aws iam put-role-policy \
+            --role-name slashmybill-admin-handler-role \
+            --policy-name "AdminInvokeTipsSync" \
+            --policy-document '{
+              "Version": "2012-10-17",
+              "Statement": [{
+                "Effect": "Allow",
+                "Action": "lambda:InvokeFunction",
+                "Resource": "arn:aws:lambda:us-east-1:991105135552:function:slashmybill-tips-sync"
+              }]
+            }' --no-cli-pager
+
       - name: Setup Tips Sync Schedule
         continue-on-error: true
         run: |
@@ -760,6 +775,9 @@ jobs:
             "PUT /admin/subscribers/tier"
             "POST /admin/subscribers/tokens"
             "GET /admin/schedules"
+            "GET /admin/tips-sync/status"
+            "GET /admin/tips-sync/logs"
+            "POST /admin/tips-sync/trigger"
           )
           for ROUTE in "${ADMIN_ROUTES[@]}"; do
             aws apigatewayv2 create-route --api-id $API_ID --route-key "$ROUTE" --target "integrations/$ADMIN_INT" 2>/dev/null || true

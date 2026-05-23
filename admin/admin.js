@@ -27,7 +27,7 @@ function fmtD(ts){if(!ts)return'';try{var d=new Date(ts);return isNaN(d)?ts:d.to
 function fmtM(v){if(v==null||v==='')return'-';var n=Number(v);return isNaN(n)?String(v):'$'+n.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});}
 function esc(s){var d=document.createElement('div');d.textContent=s;return d.innerHTML;}
 function ea(s){return String(s||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/'/g,'&#39;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
-function switchTab(n){document.querySelectorAll('.tab-btn').forEach(function(b){b.classList.toggle('active',b.dataset.tab===n);});leadsPanel.hidden=n!=='leads';tipsPanel.hidden=n!=='tips';feedbackPanel.hidden=n!=='feedback';var subsPanel=$('subscribers-tab');if(subsPanel)subsPanel.hidden=n!=='subscribers';var schedPanel=$('schedules-tab');if(schedPanel)schedPanel.hidden=n!=='schedules';if(n==='feedback'&&!allFeedback.length)loadFeedback();if(n==='subscribers'&&!allSubs.length)loadSubscribers();if(n==='schedules'&&!allScheds.length)loadSchedules();}
+function switchTab(n){document.querySelectorAll('.tab-btn').forEach(function(b){b.classList.toggle('active',b.dataset.tab===n);});leadsPanel.hidden=n!=='leads';tipsPanel.hidden=n!=='tips';feedbackPanel.hidden=n!=='feedback';var subsPanel=$('subscribers-tab');if(subsPanel)subsPanel.hidden=n!=='subscribers';var schedPanel=$('schedules-tab');if(schedPanel)schedPanel.hidden=n!=='schedules';var syncPanel=$('sync-tab');if(syncPanel)syncPanel.hidden=n!=='sync';if(n==='feedback'&&!allFeedback.length)loadFeedback();if(n==='subscribers'&&!allSubs.length)loadSubscribers();if(n==='schedules'&&!allScheds.length)loadSchedules();if(n==='sync'&&!syncLoaded)loadSyncData();}
 
 async function api(method,path,body){var o={method:method,headers:{'Content-Type':'application/json'}};if(body)o.body=JSON.stringify(body);var r=await fetch(API+path,o);var d=await r.json();if(!r.ok)throw{status:r.status,message:d.message||'Error'};return d;}
 
@@ -323,3 +323,71 @@ document.querySelectorAll('#sched-table th.sortable').forEach(function(h){
     h.style.cursor='pointer';
     h.onclick=function(){var c=h.dataset.col;if(schsc===c)schsa=!schsa;else{schsc=c;schsa=true;}schp=1;applyScheds();};
 });
+
+
+// ============================================================
+// Tips Sync Tab
+// ============================================================
+var syncLogs=[];var syncMeta=null;var syncp=1;var syncLoaded=false;
+
+async function loadSyncData(){
+    try{showL();var d=await api('GET','/admin/tips-sync/logs');syncLogs=d.logs||[];syncMeta=d.metadata||null;syncLoaded=true;syncp=1;renderSyncStatus();renderSyncTable();}
+    catch(e){notify('Failed to load sync data.','error');}
+    finally{hideL();}
+}
+
+function renderSyncStatus(){
+    var el=$('sync-status-cards');if(!el)return;
+    if(!syncMeta){el.innerHTML='<p style="color:#8b949e;">No sync has been executed yet.</p>';return;}
+    var m=syncMeta;
+    var srcOk=(m.sourcesSucceeded||[]).length;
+    var srcFail=(m.sourcesFailed||[]).length;
+    var statusColor=srcFail===0?'#10b981':'#f59e0b';
+    var statusText=srcFail===0?'✅ All Sources OK':'⚠️ '+srcFail+' Source(s) Failed';
+    el.innerHTML='<div style="background:#161b22;border:1px solid #30363d;border-radius:8px;padding:12px 16px;flex:1;min-width:140px;"><div style="color:#8b949e;font-size:0.8em;">Last Sync</div><div style="color:#e2e8f0;font-size:1.1em;font-weight:600;">'+fmtD(m.lastSyncTimestamp)+'</div></div>'
+        +'<div style="background:#161b22;border:1px solid #30363d;border-radius:8px;padding:12px 16px;flex:1;min-width:120px;"><div style="color:#8b949e;font-size:0.8em;">Status</div><div style="color:'+statusColor+';font-size:1.1em;font-weight:600;">'+statusText+'</div></div>'
+        +'<div style="background:#161b22;border:1px solid #30363d;border-radius:8px;padding:12px 16px;flex:1;min-width:100px;"><div style="color:#8b949e;font-size:0.8em;">Duration</div><div style="color:#e2e8f0;font-size:1.1em;font-weight:600;">'+(m.durationMs||0)+'ms</div></div>'
+        +'<div style="background:#161b22;border:1px solid #30363d;border-radius:8px;padding:12px 16px;flex:1;min-width:100px;"><div style="color:#8b949e;font-size:0.8em;">Trigger</div><div style="color:#e2e8f0;font-size:1.1em;font-weight:600;">'+esc(m.triggerType||'-')+'</div></div>'
+        +'<div style="background:#161b22;border:1px solid #30363d;border-radius:8px;padding:12px 16px;flex:1;min-width:100px;"><div style="color:#8b949e;font-size:0.8em;">Tips Changed</div><div style="color:#e2e8f0;font-size:1.1em;font-weight:600;"><span style="color:#10b981;">+'+(m.tipsInserted||0)+'</span> / <span style="color:#3b82f6;">~'+(m.tipsUpdated||0)+'</span> / <span style="color:#8b949e;">='+(m.tipsUnchanged||0)+'</span></div></div>';
+}
+
+function renderSyncTable(){
+    var tbody=$('sync-tbody');var empty=$('sync-empty');
+    if(!syncLogs.length){empty.hidden=false;tbody.innerHTML='';return;}
+    empty.hidden=true;
+    var p=pg(syncLogs,syncp);var off=(syncp-1)*PS;
+    tbody.innerHTML='';
+    p.forEach(function(log,idx){
+        var r=document.createElement('tr');
+        var st=log.status||'unknown';
+        var stColor=st==='success'?'#10b981':'#ef4444';
+        var stText=st==='success'?'✅ Success':'❌ Failed';
+        var srcOk=(log.sourcesSucceeded||[]).join(', ')||'-';
+        var srcFail=(log.sourcesFailed||[]).length;
+        var srcHtml=srcFail>0?esc(srcOk)+' <span style="color:#ef4444;">('+srcFail+' failed)</span>':esc(srcOk);
+        r.innerHTML='<td style="color:#999;font-size:12px">'+(off+idx+1)+'</td>'
+            +'<td>'+fmtD(log.timestamp)+'</td>'
+            +'<td>'+esc(log.triggerType||'-')+'</td>'
+            +'<td style="color:#10b981;font-weight:600;">'+(log.tipsInserted||0)+'</td>'
+            +'<td style="color:#3b82f6;font-weight:600;">'+(log.tipsUpdated||0)+'</td>'
+            +'<td style="color:#8b949e;">'+(log.tipsUnchanged||0)+'</td>'
+            +'<td>'+(log.durationMs||0)+'ms</td>'
+            +'<td>'+srcHtml+'</td>'
+            +'<td><span style="color:'+stColor+';font-weight:600;">'+stText+'</span></td>';
+        tbody.appendChild(r);
+    });
+    pgNav('sync-pagination',syncLogs.length,syncp,function(x){syncp=x;renderSyncTable();});
+}
+
+async function triggerSync(){
+    var btn=$('trigger-sync-btn');
+    if(!btn||btn.disabled)return;
+    btn.disabled=true;btn.textContent='Triggering...';
+    try{await api('POST','/admin/tips-sync/trigger');notify('Sync triggered! It will run in the background.','success');}
+    catch(e){notify('Failed to trigger sync: '+(e.message||'Unknown error'),'error');}
+    finally{btn.disabled=false;btn.textContent='⚡ Trigger Manual Sync';}
+}
+
+// Wire trigger button
+var trigBtn=$('trigger-sync-btn');
+if(trigBtn)trigBtn.onclick=triggerSync;
