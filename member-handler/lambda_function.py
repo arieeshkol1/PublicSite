@@ -17891,6 +17891,7 @@ def _build_sql_comparison_matrix(workloads, pricing):
             'instanceId': workload['instanceId'],
             'instanceType': workload['instanceType'],
             'currentPlatform': workload['platform'],
+            'currentPlatformKey': workload['currentPlatformKey'],
             'currentMonthlyCost': round(current_monthly, 2),
             'vcpus': workload['vcpus'],
             'memoryGb': workload['memoryGb'],
