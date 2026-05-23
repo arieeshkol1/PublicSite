@@ -17526,14 +17526,29 @@ def _discover_sql_workloads(creds, account_id):
                 tags = {t['Key']: t['Value'] for t in inst.get('Tags', [])}
                 name = tags.get('Name', inst.get('InstanceId', ''))
 
-                # Detect SQL Server edition from AMI description
+                # Detect SQL Server edition from AMI description OR platform details
                 sql_edition = None
-                if 'sql server enterprise' in ami_desc or 'sql_server_enterprise' in ami_desc:
+                platform_details = (inst.get('PlatformDetails', '') or '').lower()
+                usage_operation = (inst.get('UsageOperation', '') or '').lower()
+
+                # Check PlatformDetails first (most reliable)
+                if 'sql server enterprise' in platform_details or 'sql enterprise' in platform_details:
                     sql_edition = 'Enterprise'
-                elif 'sql server standard' in ami_desc or 'sql_server_standard' in ami_desc:
+                elif 'sql server standard' in platform_details or 'sql standard' in platform_details:
                     sql_edition = 'Standard'
-                elif 'sql server' in ami_desc or 'sql_server' in ami_desc:
-                    sql_edition = 'Standard'  # Default to Standard if edition unclear
+                elif 'sql server web' in platform_details or 'sql web' in platform_details:
+                    sql_edition = 'Standard'
+                elif 'sql server' in platform_details or 'sql' in usage_operation:
+                    sql_edition = 'Standard'
+
+                # Fallback to AMI description
+                if sql_edition is None:
+                    if 'sql server enterprise' in ami_desc or 'sql_server_enterprise' in ami_desc:
+                        sql_edition = 'Enterprise'
+                    elif 'sql server standard' in ami_desc or 'sql_server_standard' in ami_desc:
+                        sql_edition = 'Standard'
+                    elif 'sql server' in ami_desc or 'sql_server' in ami_desc or 'mssql' in ami_desc:
+                        sql_edition = 'Standard'
 
                 if sql_edition is None:
                     continue  # Not a SQL Server instance
@@ -17616,7 +17631,7 @@ def _discover_sql_workloads(creds, account_id):
     return workloads
 
 
-def _calculate_sql_platform_pricing(instance_types, creds):
+def _calculate_sql_platform_pricing(instance_types, creds, region='us-east-1'):
     """Query AWS Pricing API for all 4 deployment options per unique instance type.
 
     Queries Pricing API (us-east-1) for EC2 Windows + SQL Standard LI,
@@ -17686,7 +17701,8 @@ def _calculate_sql_platform_pricing(instance_types, creds):
             continue
 
         # Determine location from first workload's region (default us-east-1)
-        location = SQL_REGION_TO_LOCATION.get('us-east-1', 'US East (N. Virginia)')
+        self_region = region
+        location = SQL_REGION_TO_LOCATION.get(self_region or 'us-east-1', 'US East (N. Virginia)')
         rds_class = f"db.{instance_type}"
 
         # Query 1: EC2 Windows + SQL Standard (License Included)
@@ -17889,8 +17905,10 @@ def handle_sql_platform_compare(event):
 
     # --- Phase 3: Get pricing for all 4 options ---
     unique_types = set(w['ec2EquivalentType'] for w in workloads)
+    # Use the region from the first workload for pricing lookups
+    pricing_region = workloads[0]['region'] if workloads else 'us-east-1'
     try:
-        pricing = _calculate_sql_platform_pricing(unique_types, creds)
+        pricing = _calculate_sql_platform_pricing(unique_types, creds, region=pricing_region)
     except Exception as e:
         logger.error(f"SQL pricing failed for {account_id}: {e}")
         return create_error_response(500, 'PricingError', f'Pricing lookup failed: {str(e)[:200]}')
