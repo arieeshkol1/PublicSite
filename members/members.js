@@ -11946,6 +11946,34 @@ function _sqlRenderMigrationPlan(plan) {
         html += '</ul></div>';
     }
 
+    // CloudShell Script (side by side)
+    if (plan.script) {
+        html += '<div style="margin-top:20px;border-top:1px solid #e5e7eb;padding-top:16px;">';
+        html += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">';
+        html += '<h4 style="margin:0;color:#1f2937;font-size:0.95em;">☁️ AWS CloudShell Script</h4>';
+        html += '<button onclick="_sqlCopyScript()" style="background:#6366f1;color:#fff;border:none;border-radius:6px;padding:6px 14px;font-size:0.8em;cursor:pointer;font-weight:600;">📋 Copy Script</button>';
+        html += '</div>';
+        html += '<pre id="sql-migration-script" style="background:#1e1e2e;color:#cdd6f4;border-radius:8px;padding:14px;font-size:0.78em;line-height:1.5;overflow-x:auto;max-height:400px;overflow-y:auto;white-space:pre-wrap;word-break:break-all;">' + plan.script.replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</pre>';
+        html += '</div>';
+    }
+
     html += '</div>';
     planPanel.innerHTML = html;
+}
+
+function _sqlCopyScript() {
+    var el = document.getElementById('sql-migration-script');
+    if (!el) return;
+    navigator.clipboard.writeText(el.textContent).then(function() {
+        notify('Script copied to clipboard! Paste in AWS CloudShell.', 'success', 3000);
+    }).catch(function() {
+        // Fallback
+        var range = document.createRange();
+        range.selectNodeContents(el);
+        var sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+        document.execCommand('copy');
+        notify('Script copied!', 'success', 3000);
+    });
 }

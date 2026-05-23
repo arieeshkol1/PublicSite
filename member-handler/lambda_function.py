@@ -18156,6 +18156,147 @@ SQL_MIGRATION_TEMPLATES = {
 }
 
 
+def _generate_migration_script(instance_id, source_platform, target_platform, workload_details, region, instance_type, ec2_equiv, rds_class):
+    """Generate an executable bash script for AWS CloudShell to perform the migration."""
+    header = (
+        "#!/bin/bash\n"
+        "# =============================================================\n"
+        "# SQL Platform Migration Script - SlashMyBill\n"
+        "# =============================================================\n"
+        f"# Source: {_sql_platform_label(source_platform)}\n"
+        f"# Target: {_sql_platform_label(target_platform)}\n"
+        f"# Instance: {instance_id}\n"
+        f"# Region: {region} | Type: {instance_type}\n"
+        "# =============================================================\n"
+        "# Run in AWS CloudShell. Pauses before destructive steps.\n"
+        "# =============================================================\n\n"
+        "set -e\n"
+        f'REGION="{region}"\n'
+        f'INSTANCE_ID="{instance_id}"\n'
+        f'INSTANCE_TYPE="{instance_type}"\n'
+        f'RDS_CLASS="{rds_class}"\n'
+        'TIMESTAMP=$(date +%Y%m%d-%H%M%S)\n\n'
+        'confirm() {\n'
+        '    read -p "$1 [y/N]: " response\n'
+        '    case "$response" in [yY][eE][sS]|[yY]) return 0 ;; *) echo "Aborted."; exit 1 ;; esac\n'
+        '}\n\n'
+    )
+
+    if (source_platform, target_platform) == (PLATFORM_EC2_WIN_SQL_LI, PLATFORM_EC2_WIN_BYOL):
+        body = (
+            'echo "Step 1/4: Create AMI backup"\n'
+            'AMI_ID=$(aws ec2 create-image --instance-id $INSTANCE_ID --name "backup-$INSTANCE_ID-$TIMESTAMP" --no-reboot --region $REGION --query \'ImageId\' --output text)\n'
+            'echo "AMI: $AMI_ID - waiting..."\n'
+            'aws ec2 wait image-available --image-ids $AMI_ID --region $REGION\n'
+            'echo "AMI ready."\n\n'
+            'echo "Step 2/4: Find Windows Base AMI"\n'
+            'WIN_AMI=$(aws ec2 describe-images --owners amazon --filters "Name=name,Values=Windows_Server-2022-English-Full-Base-*" "Name=state,Values=available" --query \'Images | sort_by(@, &CreationDate) | [-1].ImageId\' --output text --region $REGION)\n'
+            'echo "Windows AMI: $WIN_AMI"\n\n'
+            'confirm "Step 3/4: Launch new EC2 ($INSTANCE_TYPE) from Windows-only AMI?"\n'
+            'SUBNET=$(aws ec2 describe-instances --instance-ids $INSTANCE_ID --region $REGION --query \'Reservations[0].Instances[0].SubnetId\' --output text)\n'
+            'SGS=$(aws ec2 describe-instances --instance-ids $INSTANCE_ID --region $REGION --query \'Reservations[0].Instances[0].SecurityGroups[*].GroupId\' --output text)\n'
+            'NEW_ID=$(aws ec2 run-instances --image-id $WIN_AMI --instance-type $INSTANCE_TYPE --subnet-id $SUBNET --security-group-ids $SGS --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=BYOL-$INSTANCE_ID}]" --region $REGION --query \'Instances[0].InstanceId\' --output text)\n'
+            'echo "Launched: $NEW_ID"\n'
+            'aws ec2 wait instance-running --instance-ids $NEW_ID --region $REGION\n'
+            'echo "Running. Now RDP in and install SQL Server (BYOL), migrate data, update DNS."\n\n'
+            'confirm "Step 4/4: Terminate original $INSTANCE_ID?"\n'
+            'aws ec2 terminate-instances --instance-ids $INSTANCE_ID --region $REGION\n'
+            'echo "Done! New BYOL instance: $NEW_ID"\n'
+        )
+
+    elif source_platform == PLATFORM_EC2_WIN_SQL_LI and target_platform in (PLATFORM_RDS_SQL_STANDARD, PLATFORM_RDS_SQL_ENTERPRISE):
+        edition = 'se' if target_platform == PLATFORM_RDS_SQL_STANDARD else 'ee'
+        body = (
+            'BUCKET="slashmybill-mig-$TIMESTAMP"\n'
+            'DB_ID="mig-sql-$TIMESTAMP"\n\n'
+            'echo "Step 1/4: Create S3 bucket for backup"\n'
+            'aws s3 mb s3://$BUCKET --region $REGION\n'
+            'echo "Created: $BUCKET"\n'
+            'echo ">> RDP into $INSTANCE_ID, backup DB, upload to s3://$BUCKET/mydb.bak"\n\n'
+            'confirm "Step 2/4: Backup uploaded to S3?"\n\n'
+            f'echo "Step 3/4: Create RDS sqlserver-{edition} ($RDS_CLASS)"\n'
+            'read -sp "RDS master password: " PWD; echo ""\n'
+            f'aws rds create-db-instance --db-instance-identifier $DB_ID --db-instance-class $RDS_CLASS --engine sqlserver-{edition} --master-username admin --master-user-password "$PWD" --allocated-storage 100 --region $REGION --no-multi-az\n'
+            'echo "Waiting for RDS (10-15 min)..."\n'
+            'aws rds wait db-instance-available --db-instance-identifier $DB_ID --region $REGION\n'
+            'EP=$(aws rds describe-db-instances --db-instance-identifier $DB_ID --region $REGION --query \'DBInstances[0].Endpoint.Address\' --output text)\n'
+            'echo "RDS Endpoint: $EP"\n'
+            'echo ">> Restore DB from S3, update connection strings, validate."\n\n'
+            'confirm "Step 4/4: Terminate EC2 $INSTANCE_ID?"\n'
+            'aws ec2 terminate-instances --instance-ids $INSTANCE_ID --region $REGION\n'
+            'echo "Done! RDS: $EP | Cleanup: aws s3 rb s3://$BUCKET --force"\n'
+        )
+
+    elif source_platform in (PLATFORM_RDS_SQL_STANDARD, PLATFORM_RDS_SQL_ENTERPRISE) and target_platform == PLATFORM_EC2_WIN_SQL_LI:
+        src_ed = 'Standard' if source_platform == PLATFORM_RDS_SQL_STANDARD else 'Enterprise'
+        body = (
+            'BUCKET="slashmybill-mig-$TIMESTAMP"\n\n'
+            'echo "Step 1/5: Snapshot RDS"\n'
+            'aws rds create-db-snapshot --db-instance-identifier $INSTANCE_ID --db-snapshot-identifier pre-mig-$TIMESTAMP --region $REGION\n'
+            'aws rds wait db-snapshot-available --db-snapshot-identifier pre-mig-$TIMESTAMP --region $REGION\n\n'
+            'echo "Step 2/5: Create S3 bucket"\n'
+            'aws s3 mb s3://$BUCKET --region $REGION\n'
+            'echo ">> Export DB: EXEC msdb.dbo.rds_backup_database @source_db_name=DB, @s3_arn_to_backup_to=arn:aws:s3:::$BUCKET/backup.bak, @type=FULL"\n\n'
+            'confirm "Step 3/5: Backup exported to S3?"\n\n'
+            f'echo "Step 4/5: Launch EC2 with SQL {src_ed} AMI"\n'
+            f'SQL_AMI=$(aws ec2 describe-images --owners amazon --filters "Name=name,Values=Windows_Server-2022-English-Full-SQL_*_{src_ed}*" "Name=state,Values=available" --query \'Images | sort_by(@, &CreationDate) | [-1].ImageId\' --output text --region $REGION)\n'
+            'echo "AMI: $SQL_AMI"\n'
+            'NEW_ID=$(aws ec2 run-instances --image-id $SQL_AMI --instance-type $INSTANCE_TYPE --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=sql-from-rds-$TIMESTAMP}]" --region $REGION --query \'Instances[0].InstanceId\' --output text)\n'
+            'aws ec2 wait instance-running --instance-ids $NEW_ID --region $REGION\n'
+            'echo "EC2: $NEW_ID - RDP in, restore DB from S3, update connections."\n\n'
+            'confirm "Step 5/5: Delete RDS $INSTANCE_ID?"\n'
+            'aws rds delete-db-instance --db-instance-identifier $INSTANCE_ID --skip-final-snapshot --region $REGION\n'
+            'echo "Done! EC2: $NEW_ID"\n'
+        )
+
+    elif source_platform in (PLATFORM_RDS_SQL_STANDARD, PLATFORM_RDS_SQL_ENTERPRISE) and target_platform == PLATFORM_EC2_WIN_BYOL:
+        body = (
+            'BUCKET="slashmybill-mig-$TIMESTAMP"\n\n'
+            'echo "Step 1/5: Snapshot RDS"\n'
+            'aws rds create-db-snapshot --db-instance-identifier $INSTANCE_ID --db-snapshot-identifier pre-mig-$TIMESTAMP --region $REGION\n'
+            'aws rds wait db-snapshot-available --db-snapshot-identifier pre-mig-$TIMESTAMP --region $REGION\n\n'
+            'aws s3 mb s3://$BUCKET --region $REGION\n'
+            'echo ">> Export DB to s3://$BUCKET/backup.bak"\n\n'
+            'confirm "Backup exported to S3?"\n\n'
+            'echo "Step 2/5: Launch Windows-only EC2"\n'
+            'WIN_AMI=$(aws ec2 describe-images --owners amazon --filters "Name=name,Values=Windows_Server-2022-English-Full-Base-*" "Name=state,Values=available" --query \'Images | sort_by(@, &CreationDate) | [-1].ImageId\' --output text --region $REGION)\n'
+            'NEW_ID=$(aws ec2 run-instances --image-id $WIN_AMI --instance-type $INSTANCE_TYPE --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=byol-from-rds-$TIMESTAMP}]" --region $REGION --query \'Instances[0].InstanceId\' --output text)\n'
+            'aws ec2 wait instance-running --instance-ids $NEW_ID --region $REGION\n'
+            'echo "EC2: $NEW_ID - RDP in, install SQL (BYOL), restore DB, update connections."\n\n'
+            'confirm "Step 5/5: Delete RDS $INSTANCE_ID?"\n'
+            'aws rds delete-db-instance --db-instance-identifier $INSTANCE_ID --skip-final-snapshot --region $REGION\n'
+            'echo "Done! BYOL EC2: $NEW_ID"\n'
+        )
+
+    elif (source_platform, target_platform) == (PLATFORM_RDS_SQL_ENTERPRISE, PLATFORM_RDS_SQL_STANDARD):
+        body = (
+            'BUCKET="slashmybill-mig-$TIMESTAMP"\n'
+            'NEW_DB="sql-std-$TIMESTAMP"\n\n'
+            'echo "Step 1/4: Snapshot Enterprise RDS"\n'
+            'aws rds create-db-snapshot --db-instance-identifier $INSTANCE_ID --db-snapshot-identifier pre-mig-$TIMESTAMP --region $REGION\n'
+            'aws rds wait db-snapshot-available --db-snapshot-identifier pre-mig-$TIMESTAMP --region $REGION\n\n'
+            'aws s3 mb s3://$BUCKET --region $REGION\n'
+            'echo ">> Export DB to s3://$BUCKET/backup.bak"\n\n'
+            'confirm "Step 2/4: Backup exported?"\n\n'
+            'echo "Step 3/4: Create RDS Standard"\n'
+            'read -sp "Master password: " PWD; echo ""\n'
+            'aws rds create-db-instance --db-instance-identifier $NEW_DB --db-instance-class $RDS_CLASS --engine sqlserver-se --master-username admin --master-user-password "$PWD" --allocated-storage 100 --region $REGION --no-multi-az\n'
+            'echo "Waiting (10-15 min)..."\n'
+            'aws rds wait db-instance-available --db-instance-identifier $NEW_DB --region $REGION\n'
+            'EP=$(aws rds describe-db-instances --db-instance-identifier $NEW_DB --region $REGION --query \'DBInstances[0].Endpoint.Address\' --output text)\n'
+            'echo "New endpoint: $EP - restore DB, update connections, verify."\n\n'
+            'confirm "Step 4/4: Delete Enterprise $INSTANCE_ID?"\n'
+            'aws rds delete-db-instance --db-instance-identifier $INSTANCE_ID --skip-final-snapshot --region $REGION\n'
+            'echo "Done! Standard: $EP"\n'
+        )
+
+    else:
+        body = 'echo "No automated script for this path. Follow the steps above."\n'
+
+    return header + body
+
+
+
 def _generate_sql_migration_plan(instance_id, source_platform, target_platform, workload_details):
     """Generate a step-by-step migration plan for converting between SQL platforms.
 
@@ -18211,6 +18352,9 @@ def _generate_sql_migration_plan(instance_id, source_platform, target_platform, 
 
     monthly_savings = workload_details.get('savings_vs_current', 0)
 
+    # Generate CloudShell script
+    script = _generate_migration_script(instance_id, source_platform, target_platform, workload_details, region, instance_type, ec2_equiv, rds_class)
+
     return {
         'title': f"Migrate {_sql_platform_label(source_platform)} \u2192 {_sql_platform_label(target_platform)}",
         'estimatedSavings': {
@@ -18222,6 +18366,7 @@ def _generate_sql_migration_plan(instance_id, source_platform, target_platform, 
         'steps': customized_steps,
         'risks': template['risks'],
         'prerequisites': template['prerequisites'],
+        'script': script,
     }
 
 
