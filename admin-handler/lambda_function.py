@@ -69,6 +69,9 @@ def lambda_handler(event, context):
         'PUT /admin/subscribers/tier': handle_update_subscriber_tier,
         'POST /admin/subscribers/tokens': handle_add_subscriber_tokens,
         'GET /admin/schedules': handle_get_schedules,
+        'GET /admin/tips-sync/status': handle_get_sync_status,
+        'GET /admin/tips-sync/logs': handle_get_sync_logs,
+        'POST /admin/tips-sync/trigger': handle_trigger_sync,
     }
 
     handler = routes.get(route_key)
@@ -591,6 +594,68 @@ def handle_get_schedules(event):
     except ClientError as e:
         logger.error(f"DynamoDB error scanning schedules: {e}")
         return create_error_response(500, 'ServerError', 'Failed to retrieve schedules')
+
+
+def handle_get_sync_status(event):
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+    try:
+        table = dynamodb.Table(TIPS_TABLE_NAME)
+        response = table.get_item(Key={'service': 'SYSTEM', 'tipId': 'SYNC_METADATA'})
+        item = response.get('Item')
+        if not item:
+            return create_response(200, {'status': None, 'message': 'No sync has been executed yet'})
+        item.pop('service', None)
+        item.pop('tipId', None)
+        return create_response(200, {'status': _decimal_to_native(item)})
+    except ClientError as e:
+        logger.error(f"DynamoDB error getting sync status: {e}")
+        return create_error_response(500, 'ServerError', 'Failed to retrieve sync status')
+
+
+def handle_get_sync_logs(event):
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+    try:
+        table = dynamodb.Table(TIPS_TABLE_NAME)
+        response = table.query(
+            KeyConditionExpression='service = :sys AND begins_with(tipId, :prefix)',
+            ExpressionAttributeValues={':sys': 'SYSTEM', ':prefix': 'SYNC_LOG#'},
+            ScanIndexForward=False,
+        )
+        logs = _decimal_to_native(response.get('Items', []))
+        for log in logs:
+            log.pop('service', None)
+            log.pop('tipId', None)
+        meta_response = table.get_item(Key={'service': 'SYSTEM', 'tipId': 'SYNC_METADATA'})
+        metadata = meta_response.get('Item')
+        if metadata:
+            metadata.pop('service', None)
+            metadata.pop('tipId', None)
+            metadata = _decimal_to_native(metadata)
+        return create_response(200, {'logs': logs, 'metadata': metadata})
+    except ClientError as e:
+        logger.error(f"DynamoDB error getting sync logs: {e}")
+        return create_error_response(500, 'ServerError', 'Failed to retrieve sync logs')
+
+
+def handle_trigger_sync(event):
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+    try:
+        lambda_client = boto3.client('lambda', region_name='us-east-1')
+        lambda_client.invoke(
+            FunctionName='slashmybill-tips-sync',
+            InvocationType='Event',
+            Payload=json.dumps({'manual': True}),
+        )
+        return create_response(202, {'message': 'Sync triggered successfully. It will run in the background.'})
+    except Exception as e:
+        logger.error(f"Failed to trigger sync: {e}")
+        return create_error_response(500, 'ServerError', f'Failed to trigger sync: {str(e)}')
 
 
 # ============================================================

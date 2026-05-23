@@ -48,6 +48,7 @@
             <button class="tab-btn" data-tab="feedback">Feedback</button>
             <button class="tab-btn" data-tab="subscribers">Subscribers</button>
             <button class="tab-btn" data-tab="schedules">Schedules</button>
+            <button class="tab-btn" data-tab="sync">Tips Sync</button>
         </nav>
 
         <!-- Leads Tab -->
@@ -194,6 +195,35 @@
                 </table>
                 <div id="sched-empty" class="empty-state" hidden>
                     <p>No schedules found across any members.</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tips Sync Tab -->
+        <div id="sync-tab" class="tab-content" hidden>
+            <div id="sync-status-cards" style="display:flex;gap:16px;margin-bottom:12px;flex-wrap:wrap;"></div>
+            <div class="tab-toolbar">
+                <button id="trigger-sync-btn" class="btn btn-primary btn-sm">⚡ Trigger Manual Sync</button>
+            </div>
+            <div class="table-wrapper">
+                <table id="sync-table" class="data-table">
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>Timestamp</th>
+                            <th>Trigger</th>
+                            <th>Inserted</th>
+                            <th>Updated</th>
+                            <th>Unchanged</th>
+                            <th>Duration</th>
+                            <th>Sources</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody id="sync-tbody"></tbody>
+                </table>
+                <div id="sync-empty" class="empty-state" hidden>
+                    <p>No sync history available yet. Trigger a manual sync or wait for the daily schedule.</p>
                 </div>
             </div>
         </div>
