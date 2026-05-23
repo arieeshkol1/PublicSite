@@ -17631,6 +17631,36 @@ def _discover_sql_workloads(creds, account_id):
     return workloads
 
 
+# Size-down mapping: RDS doesn't need Windows OS overhead (~15-20% CPU),
+# so a smaller instance can handle the same SQL workload.
+_RDS_SIZE_DOWN_MAP = {
+    '16xlarge': '12xlarge', '12xlarge': '8xlarge', '8xlarge': '4xlarge',
+    '4xlarge': '2xlarge', '2xlarge': 'xlarge', 'xlarge': 'large',
+    'large': 'large', 'medium': 'medium', 'small': 'small', 'micro': 'micro',
+}
+
+
+def _get_rightsized_rds_class(ec2_type):
+    """Return the recommended right-sized RDS instance class for a given EC2 type.
+
+    RDS doesn't run Windows OS overhead (~15-20% CPU), so a smaller instance
+    can handle the same SQL workload. Maps one size down for xlarge and above,
+    keeps same size for large and below (can't go smaller practically).
+
+    Args:
+        ec2_type: EC2 instance type string, e.g. 'r5.xlarge', 'm5.2xlarge'.
+
+    Returns:
+        RDS instance class string, e.g. 'db.r5.large', 'db.m5.xlarge'.
+    """
+    parts = ec2_type.rsplit('.', 1)
+    if len(parts) == 2:
+        family, size = parts
+        right_sized = _RDS_SIZE_DOWN_MAP.get(size, size)
+        return f"db.{family}.{right_sized}"
+    return f"db.{ec2_type}"
+
+
 def _calculate_sql_platform_pricing(instance_types, creds, region='us-east-1'):
     """Query AWS Pricing API for all 4 deployment options per unique instance type.
 
@@ -17725,6 +17755,11 @@ def _calculate_sql_platform_pricing(instance_types, creds, region='us-east-1'):
         location = SQL_REGION_TO_LOCATION.get(self_region or 'us-east-1', 'US East (N. Virginia)')
         rds_class = f"db.{instance_type}"
 
+        # Right-sized RDS: one size smaller since RDS doesn't have Windows OS overhead
+        # EC2 r5.xlarge (4 vCPU, 32GB) → RDS db.r5.large (2 vCPU, 16GB) is fair for DB-only workload
+        # The OS + SQL engine on EC2 consumes ~30-40% of resources
+        rds_right_sized_class = _get_rightsized_rds_class(instance_type)
+
         # Query 1: EC2 Windows + SQL Standard (License Included)
         ec2_sql_std = _query_ec2_price(instance_type, 'SQL Std', location)
 
@@ -17734,11 +17769,17 @@ def _calculate_sql_platform_pricing(instance_types, creds, region='us-east-1'):
         # Query 3: EC2 Windows only (BYOL scenario, preInstalledSw=NA)
         ec2_win_only = _query_ec2_price(instance_type, 'NA', location)
 
-        # Query 4: RDS SQL Server Standard
-        rds_sql_std = _query_rds_price(rds_class, 'Standard', location)
+        # Query 4: RDS SQL Server Standard (right-sized — one size smaller)
+        rds_sql_std = _query_rds_price(rds_right_sized_class, 'Standard', location)
+        # Fallback to same-size if right-sized not available
+        if rds_sql_std == 0:
+            rds_sql_std = _query_rds_price(rds_class, 'Standard', location)
+            rds_right_sized_class = rds_class  # Reset to same size
 
-        # Query 5: RDS SQL Server Enterprise
-        rds_sql_ent = _query_rds_price(rds_class, 'Enterprise', location)
+        # Query 5: RDS SQL Server Enterprise (right-sized)
+        rds_sql_ent = _query_rds_price(rds_right_sized_class, 'Enterprise', location)
+        if rds_sql_ent == 0:
+            rds_sql_ent = _query_rds_price(rds_class, 'Enterprise', location)
 
         pricing_cache[instance_type] = {
             'instanceType': instance_type,
@@ -17747,7 +17788,7 @@ def _calculate_sql_platform_pricing(instance_types, creds, region='us-east-1'):
             'ec2WindowsByolHourly': ec2_win_only,
             'rdsSqlStandardHourly': rds_sql_std,
             'rdsSqlEnterpriseHourly': rds_sql_ent,
-            'rdsInstanceClass': rds_class,
+            'rdsInstanceClass': rds_right_sized_class,
         }
 
     return pricing_cache
@@ -17810,18 +17851,20 @@ def _build_sql_comparison_matrix(workloads, pricing):
                 'monthlyCost': round(p['ec2WindowsByolHourly'] * 730, 2),
             },
             {
-                'label': 'RDS SQL Server Standard',
+                'label': f"RDS SQL Std ({p['rdsInstanceClass']})",
                 'platform': PLATFORM_RDS_SQL_STANDARD,
                 'equivalentClass': p['rdsInstanceClass'],
                 'hourlyRate': p['rdsSqlStandardHourly'],
                 'monthlyCost': round(p['rdsSqlStandardHourly'] * 730, 2),
+                'note': "Right-sized: RDS doesn't need Windows OS overhead, so a smaller instance handles the same SQL workload",
             },
             {
-                'label': 'RDS SQL Server Enterprise',
+                'label': f"RDS SQL Ent ({p['rdsInstanceClass']})",
                 'platform': PLATFORM_RDS_SQL_ENTERPRISE,
                 'equivalentClass': p['rdsInstanceClass'],
                 'hourlyRate': p['rdsSqlEnterpriseHourly'],
                 'monthlyCost': round(p['rdsSqlEnterpriseHourly'] * 730, 2),
+                'note': "Right-sized: RDS doesn't need Windows OS overhead, so a smaller instance handles the same SQL workload",
             },
         ]
 
