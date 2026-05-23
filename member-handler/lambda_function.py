@@ -175,6 +175,8 @@ def lambda_handler(event, context):
         'GET /members/invoices/resources': handle_resource_breakdown,
         'POST /members/license-conversion/analyze': handle_license_conversion_analyze,
         'POST /members/license-conversion/plan': handle_license_conversion_plan,
+        'POST /members/sql/compare': handle_sql_platform_compare,
+        'POST /members/sql/migration-plan': handle_sql_migration_plan,
     }
 
     handler = routes.get(route_key)
@@ -19605,4 +19607,797 @@ def handle_license_conversion_plan(event):
     return create_response(200, {
         'success': True,
         **plan,
+    })
+
+# ============================================================
+# SQL Platform Comparator
+# ============================================================
+
+# Platform identifier constants
+PLATFORM_EC2_WIN_SQL_LI = "ec2_windows_sql_li"
+PLATFORM_EC2_WIN_BYOL = "ec2_windows_byol"
+PLATFORM_RDS_SQL_STANDARD = "rds_sql_standard"
+PLATFORM_RDS_SQL_ENTERPRISE = "rds_sql_enterprise"
+
+VALID_PLATFORMS = {
+    PLATFORM_EC2_WIN_SQL_LI,
+    PLATFORM_EC2_WIN_BYOL,
+    PLATFORM_RDS_SQL_STANDARD,
+    PLATFORM_RDS_SQL_ENTERPRISE,
+}
+
+SQL_REGION_TO_LOCATION = {
+    'us-east-1': 'US East (N. Virginia)', 'us-east-2': 'US East (Ohio)',
+    'us-west-1': 'US West (N. California)', 'us-west-2': 'US West (Oregon)',
+    'eu-west-1': 'EU (Ireland)', 'eu-west-2': 'EU (London)', 'eu-west-3': 'EU (Paris)',
+    'eu-central-1': 'EU (Frankfurt)', 'eu-central-2': 'EU (Zurich)',
+    'eu-north-1': 'EU (Stockholm)', 'eu-south-1': 'EU (Milan)',
+    'ap-southeast-1': 'Asia Pacific (Singapore)', 'ap-southeast-2': 'Asia Pacific (Sydney)',
+    'ap-northeast-1': 'Asia Pacific (Tokyo)', 'ap-northeast-2': 'Asia Pacific (Seoul)',
+    'ap-south-1': 'Asia Pacific (Mumbai)', 'ca-central-1': 'Canada (Central)',
+    'sa-east-1': 'South America (Sao Paulo)', 'me-south-1': 'Middle East (Bahrain)',
+    'me-central-1': 'Middle East (UAE)', 'il-central-1': 'Israel (Tel Aviv)',
+    'af-south-1': 'Africa (Cape Town)',
+}
+
+SQL_PLATFORM_LABELS = {
+    PLATFORM_EC2_WIN_SQL_LI: 'EC2 Windows+SQL (LI)',
+    PLATFORM_EC2_WIN_BYOL: 'EC2 Windows only (BYOL SQL)',
+    PLATFORM_RDS_SQL_STANDARD: 'RDS SQL Server Standard',
+    PLATFORM_RDS_SQL_ENTERPRISE: 'RDS SQL Server Enterprise',
+}
+
+
+def _sql_platform_label(platform_key):
+    """Return human-readable label for a platform key."""
+    return SQL_PLATFORM_LABELS.get(platform_key, platform_key)
+
+
+def _discover_sql_workloads(creds, account_id):
+    """Discover all SQL Server workloads (EC2 Windows+SQL and RDS SQL) in the customer account.
+
+    Scans EC2 instances filtered by platform=windows, state=running, detects SQL Server
+    via AMI descriptions. Scans RDS instances filtered by engine prefix sqlserver-*.
+    Resolves instance type specs (vCPUs, memory) via DescribeInstanceTypes.
+
+    Args:
+        creds: Cross-account STS credentials dict (AccessKeyId, SecretAccessKey, SessionToken).
+        account_id: The 12-digit AWS account ID.
+
+    Returns:
+        List of workload dicts representing each discovered SQL instance.
+    """
+    import time as _time
+
+    def _client(service, region=None):
+        return boto3.client(
+            service,
+            aws_access_key_id=creds['AccessKeyId'],
+            aws_secret_access_key=creds['SecretAccessKey'],
+            aws_session_token=creds['SessionToken'],
+            region_name=region or os.environ.get('AWS_REGION', 'us-east-1'),
+        )
+
+    workloads = []
+    scan_start = _time.time()
+
+    # Detect active regions
+    scan_regions = _detect_charged_regions(creds)
+
+    for scan_region in scan_regions:
+        if _time.time() - scan_start > 80:
+            logger.warning("SQL discovery timeout guard triggered after 80s")
+            break
+
+        # --- EC2 Windows instances with SQL Server ---
+        try:
+            ec2 = _client('ec2', scan_region)
+            ec2_resp = ec2.describe_instances(Filters=[
+                {'Name': 'platform', 'Values': ['windows']},
+                {'Name': 'instance-state-name', 'Values': ['running']}
+            ])
+
+            ec2_instances_raw = []
+            ami_ids = set()
+            for res in ec2_resp.get('Reservations', []):
+                for inst in res.get('Instances', []):
+                    ec2_instances_raw.append(inst)
+                    ami_ids.add(inst.get('ImageId', ''))
+
+            # Batch AMI lookup for SQL detection
+            ami_descriptions = {}
+            if ami_ids:
+                try:
+                    ami_resp = ec2.describe_images(ImageIds=list(ami_ids)[:50])
+                    for img in ami_resp.get('Images', []):
+                        ami_descriptions[img['ImageId']] = img.get('Description', '') or img.get('Name', '')
+                except Exception:
+                    pass
+
+            for inst in ec2_instances_raw:
+                ami_desc = ami_descriptions.get(inst.get('ImageId', ''), '').lower()
+                tags = {t['Key']: t['Value'] for t in inst.get('Tags', [])}
+                name = tags.get('Name', inst.get('InstanceId', ''))
+
+                # Detect SQL Server edition from AMI description
+                sql_edition = None
+                if 'sql server enterprise' in ami_desc or 'sql_server_enterprise' in ami_desc:
+                    sql_edition = 'Enterprise'
+                elif 'sql server standard' in ami_desc or 'sql_server_standard' in ami_desc:
+                    sql_edition = 'Standard'
+                elif 'sql server' in ami_desc or 'sql_server' in ami_desc:
+                    sql_edition = 'Standard'  # Default to Standard if edition unclear
+
+                if sql_edition is None:
+                    continue  # Not a SQL Server instance
+
+                workloads.append({
+                    'instanceId': inst.get('InstanceId', ''),
+                    'accountId': account_id,
+                    'source': 'ec2',
+                    'instanceType': inst.get('InstanceType', ''),
+                    'ec2EquivalentType': inst.get('InstanceType', ''),
+                    'region': scan_region,
+                    'platform': f"Windows with SQL {sql_edition}",
+                    'sqlEdition': sql_edition,
+                    'currentPlatformKey': PLATFORM_EC2_WIN_SQL_LI,
+                    'tags': tags,
+                    'name': name,
+                    'vcpus': 0,
+                    'memoryGb': 0.0,
+                })
+
+        except ClientError as e:
+            logger.warning(f"SQL discovery EC2 scan failed in {scan_region}: {e}")
+            continue
+
+        # --- RDS SQL Server instances ---
+        try:
+            rds = _client('rds', scan_region)
+            rds_resp = rds.describe_db_instances()
+
+            for db in rds_resp.get('DBInstances', []):
+                engine = db.get('Engine', '')
+                if not engine.startswith('sqlserver-'):
+                    continue
+
+                edition = 'Enterprise' if engine == 'sqlserver-ee' else 'Standard'
+                instance_class = db.get('DBInstanceClass', '')
+                ec2_type = instance_class.replace('db.', '') if instance_class.startswith('db.') else instance_class
+                current_key = PLATFORM_RDS_SQL_ENTERPRISE if edition == 'Enterprise' else PLATFORM_RDS_SQL_STANDARD
+
+                workloads.append({
+                    'instanceId': db.get('DBInstanceIdentifier', ''),
+                    'accountId': account_id,
+                    'source': 'rds',
+                    'instanceType': instance_class,
+                    'ec2EquivalentType': ec2_type,
+                    'region': scan_region,
+                    'platform': f"RDS SQL Server {edition}",
+                    'sqlEdition': edition,
+                    'currentPlatformKey': current_key,
+                    'tags': {},
+                    'name': db.get('DBInstanceIdentifier', ''),
+                    'vcpus': 0,
+                    'memoryGb': 0.0,
+                })
+
+        except ClientError as e:
+            logger.warning(f"SQL discovery RDS scan failed in {scan_region}: {e}")
+            continue
+
+    # Resolve instance type specs (vCPUs, memory) in batch
+    unique_types = set(w['ec2EquivalentType'] for w in workloads)
+    type_specs = {}
+    if unique_types:
+        try:
+            ec2 = _client('ec2')
+            types_resp = ec2.describe_instance_types(InstanceTypes=list(unique_types)[:50])
+            for t in types_resp.get('InstanceTypes', []):
+                type_specs[t['InstanceType']] = {
+                    'vcpus': t['VCpuInfo']['DefaultVCpus'],
+                    'memoryGb': round(t['MemoryInfo']['SizeInMiB'] / 1024, 1),
+                }
+        except Exception as e:
+            logger.warning(f"SQL discovery DescribeInstanceTypes failed: {e}")
+
+    for w in workloads:
+        specs = type_specs.get(w['ec2EquivalentType'], {})
+        w['vcpus'] = specs.get('vcpus', 0)
+        w['memoryGb'] = specs.get('memoryGb', 0.0)
+
+    return workloads
+
+
+def _calculate_sql_platform_pricing(instance_types, creds):
+    """Query AWS Pricing API for all 4 deployment options per unique instance type.
+
+    Queries Pricing API (us-east-1) for EC2 Windows + SQL Standard LI,
+    EC2 Windows + SQL Enterprise LI, EC2 Windows only (BYOL), RDS SQL Standard,
+    and RDS SQL Enterprise. Caches per instance type within invocation.
+
+    Args:
+        instance_types: Set of unique EC2 instance types to price.
+        creds: Cross-account STS credentials dict.
+
+    Returns:
+        Dict mapping instance_type → pricing dict with all option hourly rates.
+    """
+    pricing_client = boto3.client('pricing', region_name='us-east-1')
+    pricing_cache = {}
+
+    def _query_ec2_price(instance_type, pre_installed_sw, location):
+        """Query EC2 pricing from AWS Pricing API."""
+        try:
+            filters = [
+                {'Type': 'TERM_MATCH', 'Field': 'instanceType', 'Value': instance_type},
+                {'Type': 'TERM_MATCH', 'Field': 'operatingSystem', 'Value': 'Windows'},
+                {'Type': 'TERM_MATCH', 'Field': 'licenseModel', 'Value': 'License Included'},
+                {'Type': 'TERM_MATCH', 'Field': 'preInstalledSw', 'Value': pre_installed_sw},
+                {'Type': 'TERM_MATCH', 'Field': 'location', 'Value': location},
+                {'Type': 'TERM_MATCH', 'Field': 'tenancy', 'Value': 'Shared'},
+                {'Type': 'TERM_MATCH', 'Field': 'capacitystatus', 'Value': 'Used'},
+            ]
+            resp = pricing_client.get_products(ServiceCode='AmazonEC2', Filters=filters, MaxResults=1)
+            price_list = resp.get('PriceList', [])
+            if price_list:
+                product = json.loads(price_list[0])
+                terms = product.get('terms', {}).get('OnDemand', {})
+                for term in terms.values():
+                    for dim in term.get('priceDimensions', {}).values():
+                        price_str = dim.get('pricePerUnit', {}).get('USD', '0')
+                        return float(price_str)
+        except Exception as e:
+            logger.warning(f"SQL pricing EC2 query failed for {instance_type}/{pre_installed_sw}: {e}")
+        return 0.0
+
+    def _query_rds_price(rds_class, db_edition, location):
+        """Query RDS pricing from AWS Pricing API."""
+        try:
+            filters = [
+                {'Type': 'TERM_MATCH', 'Field': 'instanceType', 'Value': rds_class},
+                {'Type': 'TERM_MATCH', 'Field': 'databaseEngine', 'Value': 'SQL Server'},
+                {'Type': 'TERM_MATCH', 'Field': 'databaseEdition', 'Value': db_edition},
+                {'Type': 'TERM_MATCH', 'Field': 'location', 'Value': location},
+                {'Type': 'TERM_MATCH', 'Field': 'deploymentOption', 'Value': 'Single-AZ'},
+            ]
+            resp = pricing_client.get_products(ServiceCode='AmazonRDS', Filters=filters, MaxResults=1)
+            price_list = resp.get('PriceList', [])
+            if price_list:
+                product = json.loads(price_list[0])
+                terms = product.get('terms', {}).get('OnDemand', {})
+                for term in terms.values():
+                    for dim in term.get('priceDimensions', {}).values():
+                        price_str = dim.get('pricePerUnit', {}).get('USD', '0')
+                        return float(price_str)
+        except Exception as e:
+            logger.warning(f"SQL pricing RDS query failed for {rds_class}/{db_edition}: {e}")
+        return 0.0
+
+    for instance_type in instance_types:
+        if instance_type in pricing_cache:
+            continue
+
+        # Determine location from first workload's region (default us-east-1)
+        location = SQL_REGION_TO_LOCATION.get('us-east-1', 'US East (N. Virginia)')
+        rds_class = f"db.{instance_type}"
+
+        # Query 1: EC2 Windows + SQL Standard (License Included)
+        ec2_sql_std = _query_ec2_price(instance_type, 'SQL Std', location)
+
+        # Query 2: EC2 Windows + SQL Enterprise (License Included)
+        ec2_sql_ent = _query_ec2_price(instance_type, 'SQL Ent', location)
+
+        # Query 3: EC2 Windows only (BYOL scenario, preInstalledSw=NA)
+        ec2_win_only = _query_ec2_price(instance_type, 'NA', location)
+
+        # Query 4: RDS SQL Server Standard
+        rds_sql_std = _query_rds_price(rds_class, 'Standard', location)
+
+        # Query 5: RDS SQL Server Enterprise
+        rds_sql_ent = _query_rds_price(rds_class, 'Enterprise', location)
+
+        pricing_cache[instance_type] = {
+            'instanceType': instance_type,
+            'ec2WindowsSqlStdHourly': ec2_sql_std,
+            'ec2WindowsSqlEntHourly': ec2_sql_ent,
+            'ec2WindowsByolHourly': ec2_win_only,
+            'rdsSqlStandardHourly': rds_sql_std,
+            'rdsSqlEnterpriseHourly': rds_sql_ent,
+            'rdsInstanceClass': rds_class,
+        }
+
+    return pricing_cache
+
+
+def _build_sql_comparison_matrix(workloads, pricing):
+    """Build side-by-side comparison matrix for each SQL workload.
+
+    Calculates monthly cost (hourly × 730) for each of 4 options per workload.
+    Marks current option, calculates savings vs current, flags cheapest option.
+
+    Args:
+        workloads: List of workload dicts from _discover_sql_workloads.
+        pricing: Dict mapping instance_type → pricing dict from _calculate_sql_platform_pricing.
+
+    Returns:
+        List of workload comparison dicts with options[], savings, cheapest flag.
+    """
+    results = []
+
+    for workload in workloads:
+        ec2_type = workload['ec2EquivalentType']
+        p = pricing.get(ec2_type)
+        if not p:
+            continue
+
+        # Determine current hourly rate based on workload's actual platform
+        current_key = workload['currentPlatformKey']
+        if current_key == PLATFORM_EC2_WIN_SQL_LI:
+            if workload['sqlEdition'] == 'Enterprise':
+                current_hourly = p['ec2WindowsSqlEntHourly']
+            else:
+                current_hourly = p['ec2WindowsSqlStdHourly']
+        elif current_key == PLATFORM_RDS_SQL_STANDARD:
+            current_hourly = p['rdsSqlStandardHourly']
+        elif current_key == PLATFORM_RDS_SQL_ENTERPRISE:
+            current_hourly = p['rdsSqlEnterpriseHourly']
+        else:
+            current_hourly = p['ec2WindowsByolHourly']
+
+        current_monthly = current_hourly * 730
+
+        # Build 4 options
+        # For EC2 LI option, use the edition matching the workload's SQL edition
+        ec2_li_hourly = p['ec2WindowsSqlEntHourly'] if workload['sqlEdition'] == 'Enterprise' else p['ec2WindowsSqlStdHourly']
+
+        options = [
+            {
+                'label': 'EC2 Windows + SQL (License Included)',
+                'platform': PLATFORM_EC2_WIN_SQL_LI,
+                'equivalentClass': ec2_type,
+                'hourlyRate': ec2_li_hourly,
+                'monthlyCost': round(ec2_li_hourly * 730, 2),
+            },
+            {
+                'label': 'EC2 Windows only (BYOL SQL)',
+                'platform': PLATFORM_EC2_WIN_BYOL,
+                'equivalentClass': ec2_type,
+                'hourlyRate': p['ec2WindowsByolHourly'],
+                'monthlyCost': round(p['ec2WindowsByolHourly'] * 730, 2),
+            },
+            {
+                'label': 'RDS SQL Server Standard',
+                'platform': PLATFORM_RDS_SQL_STANDARD,
+                'equivalentClass': p['rdsInstanceClass'],
+                'hourlyRate': p['rdsSqlStandardHourly'],
+                'monthlyCost': round(p['rdsSqlStandardHourly'] * 730, 2),
+            },
+            {
+                'label': 'RDS SQL Server Enterprise',
+                'platform': PLATFORM_RDS_SQL_ENTERPRISE,
+                'equivalentClass': p['rdsInstanceClass'],
+                'hourlyRate': p['rdsSqlEnterpriseHourly'],
+                'monthlyCost': round(p['rdsSqlEnterpriseHourly'] * 730, 2),
+            },
+        ]
+
+        # Find cheapest (ties broken by first match)
+        cheapest_cost = min(opt['monthlyCost'] for opt in options)
+
+        cheapest_found = False
+        for opt in options:
+            opt['isCurrent'] = (opt['platform'] == current_key)
+            if opt['isCurrent']:
+                opt['savingsVsCurrent'] = 0
+                opt['savingsPercent'] = 0
+            else:
+                opt['savingsVsCurrent'] = round(current_monthly - opt['monthlyCost'], 2)
+                opt['savingsPercent'] = round((opt['savingsVsCurrent'] / current_monthly) * 100, 1) if current_monthly > 0 else 0
+
+            if not cheapest_found and opt['monthlyCost'] == cheapest_cost:
+                opt['isCheapest'] = True
+                cheapest_found = True
+            else:
+                opt['isCheapest'] = False
+
+        results.append({
+            'instanceId': workload['instanceId'],
+            'instanceType': workload['instanceType'],
+            'currentPlatform': workload['platform'],
+            'currentMonthlyCost': round(current_monthly, 2),
+            'vcpus': workload['vcpus'],
+            'memoryGb': workload['memoryGb'],
+            'region': workload['region'],
+            'sqlEdition': workload['sqlEdition'],
+            'name': workload['name'],
+            'options': options,
+        })
+
+    return results
+
+
+def handle_sql_platform_compare(event):
+    """POST /members/sql/compare — Compare SQL Server platform costs.
+
+    Discovers SQL workloads in the customer account, queries pricing for 4 deployment
+    options per workload, and returns a comparison matrix with savings calculations.
+    """
+    import time as _time
+
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+    member_email = auth['sub'] if isinstance(auth, dict) else auth
+
+    # Token cost
+    tier = _get_member_tier(member_email)
+    credit_err = _check_and_consume_credits(member_email, tier, SCAN_CREDIT_COST)
+    if credit_err:
+        return credit_err
+
+    try:
+        body = json.loads(event.get('body', '{}'))
+    except (json.JSONDecodeError, TypeError):
+        return create_error_response(400, 'InvalidRequest', 'Invalid request body')
+
+    account_id = body.get('accountId', '')
+    if not account_id or not re.match(r'^\d{12}$', account_id):
+        return create_error_response(400, 'InvalidAccountId', 'Please provide a valid 12-digit account ID')
+
+    # Verify account belongs to member
+    accounts_table = dynamodb.Table(ACCOUNTS_TABLE_NAME)
+    acct_resp = accounts_table.get_item(Key={'memberEmail': member_email, 'accountId': account_id})
+    if 'Item' not in acct_resp:
+        return create_error_response(403, 'AccountNotFound', 'Account not connected')
+
+    external_id = hashlib.sha256(member_email.encode('utf-8')).hexdigest()
+    role_arn = f'arn:aws:iam::{account_id}:role/SlashMyBill-{account_id}'
+
+    # --- Phase 1: Assume Role ---
+    try:
+        sts_client = boto3.client('sts')
+        assume_resp = sts_client.assume_role(
+            RoleArn=role_arn, RoleSessionName='SlashMyBillSQLCompare', ExternalId=external_id,
+            DurationSeconds=900
+        )
+        creds = assume_resp['Credentials']
+    except Exception as e:
+        logger.error(f"SQL compare AssumeRole failed for {account_id}: {e}")
+        return create_error_response(403, 'AssumeRoleFailed', f'Cannot access account: {str(e)[:200]}')
+
+    # --- Phase 2: Discover SQL workloads ---
+    try:
+        workloads = _discover_sql_workloads(creds, account_id)
+    except Exception as e:
+        logger.error(f"SQL discovery failed for {account_id}: {e}")
+        return create_error_response(500, 'DiscoveryError', f'SQL workload discovery failed: {str(e)[:200]}')
+
+    if not workloads:
+        return create_response(200, {
+            'success': True,
+            'workloads': [],
+            'message': 'No SQL Server workloads found in this account.',
+        })
+
+    # --- Phase 3: Get pricing for all 4 options ---
+    unique_types = set(w['ec2EquivalentType'] for w in workloads)
+    try:
+        pricing = _calculate_sql_platform_pricing(unique_types, creds)
+    except Exception as e:
+        logger.error(f"SQL pricing failed for {account_id}: {e}")
+        return create_error_response(500, 'PricingError', f'Pricing lookup failed: {str(e)[:200]}')
+
+    # --- Phase 4: Build comparison matrix ---
+    comparison = _build_sql_comparison_matrix(workloads, pricing)
+
+    logger.info(f"SQL platform compare completed for {account_id}: {len(comparison)} workloads")
+    return create_response(200, {
+        'success': True,
+        'workloads': comparison,
+    })
+
+
+# ============================================================
+# SQL Platform Comparator — Migration Plan Templates
+# ============================================================
+
+SQL_MIGRATION_TEMPLATES = {
+    (PLATFORM_EC2_WIN_SQL_LI, PLATFORM_EC2_WIN_BYOL): {
+        'complexity': 'high',
+        'duration': '2-4 hours',
+        'prerequisites': [
+            'Active Software Assurance or License Mobility agreement',
+            'SQL Server license keys available for BYOL installation',
+        ],
+        'steps': [
+            {'action': 'Verify Software Assurance or License Mobility rights', 'type': 'prerequisite'},
+            {'action': 'Create AMI snapshot of {instance_id} for rollback', 'type': 'backup'},
+            {'action': 'Launch new EC2 instance from Windows-only AMI ({instance_type})', 'type': 'provision'},
+            {'action': 'Install SQL Server using your BYOL license on the new instance', 'type': 'provision'},
+            {'action': 'Migrate data: detach EBS data volumes and attach to new instance, or use SQL backup/restore', 'type': 'migrate'},
+            {'action': 'Update DNS records, Elastic IPs, or load balancer targets to new instance', 'type': 'migrate'},
+            {'action': 'Verify application functionality on new instance', 'type': 'validate'},
+            {'action': 'Terminate original instance {instance_id} after successful validation', 'type': 'cleanup'},
+        ],
+        'risks': [
+            'Application downtime during migration (plan maintenance window)',
+            'BYOL license compliance must be verified with Microsoft',
+            'Data loss if EBS volumes not properly detached/attached',
+        ],
+    },
+    (PLATFORM_EC2_WIN_SQL_LI, PLATFORM_RDS_SQL_STANDARD): {
+        'complexity': 'high',
+        'duration': '4-8 hours',
+        'prerequisites': [
+            'Application supports RDS connectivity (no local file system dependencies)',
+            'Database size within RDS storage limits',
+        ],
+        'steps': [
+            {'action': 'Create full SQL Server backup on source instance {instance_id}', 'type': 'backup'},
+            {'action': 'Upload backup to S3 bucket in same region ({region})', 'type': 'backup'},
+            {'action': 'Create RDS SQL Server Standard instance ({rds_class})', 'type': 'provision'},
+            {'action': 'Restore database from S3 using RDS native backup restore', 'type': 'migrate'},
+            {'action': 'Update application connection strings to RDS endpoint', 'type': 'migrate'},
+            {'action': 'Test application connectivity and query performance', 'type': 'validate'},
+            {'action': 'Run parallel validation period (24-48 hours recommended)', 'type': 'validate'},
+            {'action': 'Decommission EC2 SQL Server instance {instance_id}', 'type': 'cleanup'},
+        ],
+        'risks': [
+            'Application downtime during connection string cutover',
+            'RDS does not support all SQL Server features (CLR, linked servers, SSIS)',
+            'Storage IOPS may differ — performance testing required',
+            'Larger databases may take hours to restore from S3',
+        ],
+    },
+    (PLATFORM_EC2_WIN_SQL_LI, PLATFORM_RDS_SQL_ENTERPRISE): {
+        'complexity': 'high',
+        'duration': '4-8 hours',
+        'prerequisites': [
+            'Application supports RDS connectivity',
+            'Database size within RDS storage limits',
+        ],
+        'steps': [
+            {'action': 'Create full SQL Server backup on source instance {instance_id}', 'type': 'backup'},
+            {'action': 'Upload backup to S3 bucket in same region ({region})', 'type': 'backup'},
+            {'action': 'Create RDS SQL Server Enterprise instance ({rds_class})', 'type': 'provision'},
+            {'action': 'Restore database from S3 using RDS native backup restore', 'type': 'migrate'},
+            {'action': 'Update application connection strings to RDS endpoint', 'type': 'migrate'},
+            {'action': 'Test application connectivity and query performance', 'type': 'validate'},
+            {'action': 'Run parallel validation period (24-48 hours recommended)', 'type': 'validate'},
+            {'action': 'Decommission EC2 SQL Server instance {instance_id}', 'type': 'cleanup'},
+        ],
+        'risks': [
+            'Application downtime during connection string cutover',
+            'RDS does not support all SQL Server features (CLR, linked servers)',
+            'Storage IOPS may differ — performance testing required',
+        ],
+    },
+    (PLATFORM_RDS_SQL_STANDARD, PLATFORM_EC2_WIN_SQL_LI): {
+        'complexity': 'high',
+        'duration': '4-6 hours',
+        'prerequisites': [
+            'EC2 instance with SQL Server AMI available in target region',
+        ],
+        'steps': [
+            {'action': 'Create RDS snapshot of {instance_id} for rollback', 'type': 'backup'},
+            {'action': 'Export database using RDS native backup to S3', 'type': 'backup'},
+            {'action': 'Launch EC2 instance from Windows+SQL Server AMI ({instance_type})', 'type': 'provision'},
+            {'action': 'Restore database from S3 backup on EC2 instance', 'type': 'migrate'},
+            {'action': 'Update application connection strings to EC2 private IP/DNS', 'type': 'migrate'},
+            {'action': 'Test application connectivity and performance', 'type': 'validate'},
+            {'action': 'Delete RDS instance {instance_id} after validation period', 'type': 'cleanup'},
+        ],
+        'risks': [
+            'You become responsible for patching, backups, and HA on EC2',
+            'Application downtime during cutover',
+            'Must configure security groups for EC2 SQL access',
+        ],
+    },
+    (PLATFORM_RDS_SQL_STANDARD, PLATFORM_EC2_WIN_BYOL): {
+        'complexity': 'high',
+        'duration': '4-6 hours',
+        'prerequisites': [
+            'Active Software Assurance or License Mobility agreement',
+            'SQL Server Standard license keys available',
+        ],
+        'steps': [
+            {'action': 'Verify Software Assurance or License Mobility rights', 'type': 'prerequisite'},
+            {'action': 'Create RDS snapshot of {instance_id} for rollback', 'type': 'backup'},
+            {'action': 'Export database using RDS native backup to S3', 'type': 'backup'},
+            {'action': 'Launch EC2 instance from Windows-only AMI ({instance_type})', 'type': 'provision'},
+            {'action': 'Install SQL Server Standard using BYOL license', 'type': 'provision'},
+            {'action': 'Restore database from S3 backup', 'type': 'migrate'},
+            {'action': 'Update application connection strings', 'type': 'migrate'},
+            {'action': 'Test application connectivity and performance', 'type': 'validate'},
+            {'action': 'Delete RDS instance {instance_id} after validation', 'type': 'cleanup'},
+        ],
+        'risks': [
+            'You become responsible for patching, backups, and HA on EC2',
+            'BYOL license compliance must be verified with Microsoft',
+            'Application downtime during cutover',
+        ],
+    },
+    (PLATFORM_RDS_SQL_ENTERPRISE, PLATFORM_EC2_WIN_BYOL): {
+        'complexity': 'high',
+        'duration': '4-6 hours',
+        'prerequisites': [
+            'Active Software Assurance or License Mobility agreement',
+            'SQL Server Enterprise license keys available',
+        ],
+        'steps': [
+            {'action': 'Verify Software Assurance or License Mobility rights', 'type': 'prerequisite'},
+            {'action': 'Create RDS snapshot of {instance_id} for rollback', 'type': 'backup'},
+            {'action': 'Export database using RDS native backup to S3', 'type': 'backup'},
+            {'action': 'Launch EC2 instance from Windows-only AMI ({instance_type})', 'type': 'provision'},
+            {'action': 'Install SQL Server Enterprise using BYOL license', 'type': 'provision'},
+            {'action': 'Restore database from S3 backup', 'type': 'migrate'},
+            {'action': 'Update application connection strings', 'type': 'migrate'},
+            {'action': 'Test application connectivity and performance', 'type': 'validate'},
+            {'action': 'Delete RDS instance {instance_id} after validation', 'type': 'cleanup'},
+        ],
+        'risks': [
+            'You become responsible for patching, backups, and HA on EC2',
+            'BYOL license compliance must be verified with Microsoft',
+            'Application downtime during cutover',
+        ],
+    },
+    (PLATFORM_RDS_SQL_ENTERPRISE, PLATFORM_RDS_SQL_STANDARD): {
+        'complexity': 'medium',
+        'duration': '2-4 hours',
+        'prerequisites': [
+            'Application does not use Enterprise-only features (partitioning, compression, Always On)',
+        ],
+        'steps': [
+            {'action': 'Audit database for Enterprise-only feature usage', 'type': 'prerequisite'},
+            {'action': 'Create RDS snapshot of {instance_id} for rollback', 'type': 'backup'},
+            {'action': 'Export database using RDS native backup to S3', 'type': 'backup'},
+            {'action': 'Create new RDS SQL Server Standard instance ({rds_class})', 'type': 'provision'},
+            {'action': 'Restore database from S3 on new Standard instance', 'type': 'migrate'},
+            {'action': 'Update application connection strings to new endpoint', 'type': 'migrate'},
+            {'action': 'Test application — verify no Enterprise feature errors', 'type': 'validate'},
+            {'action': 'Delete original Enterprise RDS instance after validation', 'type': 'cleanup'},
+        ],
+        'risks': [
+            'Enterprise-only features will fail on Standard edition',
+            'Performance may differ for workloads using Enterprise optimizations',
+            'Brief downtime during connection string cutover',
+        ],
+    },
+}
+
+
+def _generate_sql_migration_plan(instance_id, source_platform, target_platform, workload_details):
+    """Generate a step-by-step migration plan for converting between SQL platforms.
+
+    Selects template based on (source, target) pair, customizes steps with instance details,
+    generates AWS Console deep links, and calculates savings.
+
+    Args:
+        instance_id: The source instance ID (i-xxx or db-xxx).
+        source_platform: Current platform identifier.
+        target_platform: Target platform identifier.
+        workload_details: Dict with instance_type, region, ec2_equivalent_type, savings_vs_current.
+
+    Returns:
+        Migration plan dict with steps[], risks[], complexity, duration, savings.
+    """
+    template_key = (source_platform, target_platform)
+    template = SQL_MIGRATION_TEMPLATES.get(template_key)
+
+    if not template:
+        return None
+
+    region = workload_details.get('region', 'us-east-1')
+    instance_type = workload_details.get('instance_type', '')
+    ec2_equiv = workload_details.get('ec2_equivalent_type', instance_type)
+    rds_class = f"db.{ec2_equiv}"
+
+    # Customize step actions with actual instance details
+    customized_steps = []
+    for i, step in enumerate(template['steps'], 1):
+        action = step['action'].format(
+            instance_id=instance_id,
+            instance_type=instance_type,
+            region=region,
+            rds_class=rds_class,
+        )
+
+        # Generate AWS Console link where applicable
+        console_link = None
+        if step['type'] in ('backup', 'provision', 'cleanup'):
+            if source_platform in (PLATFORM_EC2_WIN_SQL_LI, PLATFORM_EC2_WIN_BYOL) or \
+               target_platform in (PLATFORM_EC2_WIN_SQL_LI, PLATFORM_EC2_WIN_BYOL):
+                console_link = f"https://{region}.console.aws.amazon.com/ec2/home?region={region}#Instances:instanceId={instance_id}"
+            else:
+                console_link = f"https://{region}.console.aws.amazon.com/rds/home?region={region}#databases:"
+
+        customized_steps.append({
+            'stepNumber': i,
+            'action': action,
+            'type': step['type'],
+            'awsConsoleLink': console_link,
+            'isReversible': step['type'] != 'cleanup',
+        })
+
+    monthly_savings = workload_details.get('savings_vs_current', 0)
+
+    return {
+        'title': f"Migrate {_sql_platform_label(source_platform)} \u2192 {_sql_platform_label(target_platform)}",
+        'estimatedSavings': {
+            'monthly': round(monthly_savings, 2),
+            'annual': round(monthly_savings * 12, 2),
+        },
+        'complexity': template['complexity'],
+        'estimatedDuration': template['duration'],
+        'steps': customized_steps,
+        'risks': template['risks'],
+        'prerequisites': template['prerequisites'],
+    }
+
+
+def handle_sql_migration_plan(event):
+    """POST /members/sql/migration-plan — Generate migration plan for SQL platform conversion.
+
+    Validates inputs, rejects same source/target, generates step-by-step migration plan.
+    """
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+    member_email = auth['sub'] if isinstance(auth, dict) else auth
+
+    try:
+        body = json.loads(event.get('body', '{}'))
+    except (json.JSONDecodeError, TypeError):
+        return create_error_response(400, 'InvalidRequest', 'Invalid request body')
+
+    account_id = body.get('accountId', '')
+    instance_id = body.get('instanceId', '')
+    source_platform = body.get('sourcePlatform', '')
+    target_platform = body.get('targetPlatform', '')
+
+    # Validate required fields
+    if not account_id or not re.match(r'^\d{12}$', account_id):
+        return create_error_response(400, 'InvalidAccountId', 'Please provide a valid 12-digit account ID')
+
+    if not instance_id:
+        return create_error_response(400, 'InvalidRequest', 'instanceId is required')
+
+    if not source_platform or source_platform not in VALID_PLATFORMS:
+        return create_error_response(400, 'InvalidPlatform', f'Invalid sourcePlatform. Must be one of: {", ".join(sorted(VALID_PLATFORMS))}')
+
+    if not target_platform or target_platform not in VALID_PLATFORMS:
+        return create_error_response(400, 'InvalidPlatform', f'Invalid targetPlatform. Must be one of: {", ".join(sorted(VALID_PLATFORMS))}')
+
+    # Reject same source/target
+    if source_platform == target_platform:
+        return create_error_response(400, 'InvalidMigrationPair', 'Cannot generate migration plan: source and target platforms must be different.')
+
+    # Verify account belongs to member
+    accounts_table = dynamodb.Table(ACCOUNTS_TABLE_NAME)
+    acct_resp = accounts_table.get_item(Key={'memberEmail': member_email, 'accountId': account_id})
+    if 'Item' not in acct_resp:
+        return create_error_response(403, 'AccountNotFound', 'Account not connected')
+
+    # Build workload details from request body
+    workload_details = {
+        'instance_type': body.get('instanceType', ''),
+        'region': body.get('region', 'us-east-1'),
+        'ec2_equivalent_type': body.get('ec2EquivalentType', body.get('instanceType', '')),
+        'vcpus': body.get('vcpus', 0),
+        'memoryGb': body.get('memoryGb', 0),
+        'savings_vs_current': body.get('savingsVsCurrent', 0),
+    }
+
+    # Generate migration plan
+    plan = _generate_sql_migration_plan(instance_id, source_platform, target_platform, workload_details)
+
+    if not plan:
+        return create_error_response(400, 'InvalidMigrationPair',
+                                     f'No migration template available for {source_platform} → {target_platform}')
+
+    logger.info(f"SQL migration plan generated: {instance_id} from {source_platform} to {target_platform}")
+    return create_response(200, {
+        'success': True,
+        'migrationPlan': plan,
     })

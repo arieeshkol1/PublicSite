@@ -1,3 +1,4 @@
+
 # Design Document: Windows/SQL Server Licensing Optimizer
 
 ## Overview
@@ -418,6 +419,74 @@ New card alongside "Resize a Server" and "Optimize a Cluster":
 └─────────────────────────────────┘
 ```
 
+### SQL Platform Comparator Card (Act > Optimize)
+
+New card alongside the existing optimization wizards:
+
+```
+┌─────────────────────────────────┐
+│  🔀 SQL Platform Comparator     │
+│                                 │
+│  Compare SQL Server costs       │
+│  side-by-side: RDS SQL,         │
+│  EC2 Windows+SQL, and plain     │
+│  Windows (BYOL SQL) for         │
+│  equivalent capacity.           │
+│                                 │
+│  [Compare Platforms ▶]          │
+└─────────────────────────────────┘
+```
+
+The SQL Platform Comparator wizard:
+1. **Discovers** all existing SQL Server workloads (EC2 Windows+SQL and RDS SQL) in the selected account
+2. **Compares** each workload side-by-side across deployment options with equivalent capacity:
+   - Current configuration (baseline)
+   - RDS SQL Server (managed, same vCPU/memory class)
+   - EC2 Windows + SQL License Included (self-managed)
+   - EC2 Windows only + BYOL SQL (self-managed, bring your own license)
+3. **Highlights** the cheapest option per workload with a savings badge
+4. **Provides a "Migrate" button** for each cheaper option that generates a step-by-step migration plan
+
+### SQL Platform Comparator — Comparison Table Layout
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  SQL Platform Comparator                                                     │
+│  Account: 991105135552                                                       │
+├─────────────────────────────────────────────────────────────────────────────┤
+│  Workload: i-0abc123 (r5.2xlarge, Windows with SQL Enterprise)               │
+│  Current monthly cost: $890/mo                                               │
+├──────────────────────┬──────────────────┬──────────────────┬────────────────┤
+│  Option              │  Monthly Cost    │  vs Current      │  Action        │
+├──────────────────────┼──────────────────┼──────────────────┼────────────────┤
+│  ★ EC2 Win+SQL (LI)  │  $890/mo         │  (current)       │  —             │
+│  EC2 Win only (BYOL) │  $534/mo         │  -$356/mo (-40%) │  [Migrate ▶]   │
+│  RDS SQL Standard    │  $720/mo         │  -$170/mo (-19%) │  [Migrate ▶]   │
+│  RDS SQL Enterprise  │  $1,240/mo       │  +$350/mo (+39%) │  More expensive│
+└──────────────────────┴──────────────────┴──────────────────┴────────────────┘
+```
+
+### Migrate Button — Migration Plan
+
+Clicking "Migrate" for a cheaper option opens a step-by-step migration plan panel:
+
+**EC2 Windows+SQL → EC2 Windows only (BYOL SQL):**
+1. Verify active Software Assurance or License Mobility rights
+2. Create AMI snapshot of current instance for rollback
+3. Launch new EC2 instance from Windows-only AMI (same instance type)
+4. Install SQL Server using your BYOL license on the new instance
+5. Migrate data (detach/reattach EBS volumes or use SQL backup/restore)
+6. Update DNS, Elastic IPs, or load balancer targets
+7. Verify application functionality, then terminate original instance
+
+**EC2 Windows+SQL → RDS SQL:**
+1. Create RDS SQL Server instance (db.r5.xlarge equivalent)
+2. Export database using SQL Server backup or AWS DMS
+3. Import to RDS using S3 native backup restore or DMS
+4. Update application connection strings to RDS endpoint
+5. Test application connectivity and performance
+6. Decommission EC2 SQL Server instance after validation
+
 ### Wizard Flow
 
 1. **Account Selection** — dropdown of connected accounts (same as Resize wizard)
@@ -519,9 +588,115 @@ MemberLicensingScanRoute:
 | File | Change |
 |------|--------|
 | `member-handler/lambda_function.py` | Add `handle_licensing_scan()` function (~200 lines) |
+| `member-handler/lambda_function.py` | Add `handle_sql_platform_compare()` function — discovers SQL workloads, queries Pricing API for all 4 deployment options, returns comparison matrix per workload |
+| `member-handler/lambda_function.py` | Add `handle_sql_migration_plan()` function — generates step-by-step migration plan for a selected source→target platform pair |
 | `members/members.js` | Add licensing wizard UI (card + scan + report card) |
+| `members/members.js` | Add SQL Platform Comparator wizard UI (card + comparison table + migrate button + migration plan panel) |
 | `members/index.html` | Bump `members.js?v=XX` version |
-| `.github/workflows/deploy.yml` | Add `POST /members/licensing/scan` to API Gateway routes |
-| `infrastructure/viewmybill-stack.yaml` | Add route resource (optional — CI/CD handles it) |
-| `agent-action/agent-instructions.md` | Reference the new wizard in optimization section |
-| `members/help.js` | Add help topic for Optimize Licensing |
+| `.github/workflows/deploy.yml` | Add `POST /members/licensing/scan`, `POST /members/sql/compare`, `POST /members/sql/migration-plan` to API Gateway routes |
+| `infrastructure/viewmybill-stack.yaml` | Add route resources (optional — CI/CD handles it) |
+| `agent-action/agent-instructions.md` | Reference the new wizards in optimization section |
+| `members/help.js` | Add help topics for Optimize Licensing and SQL Platform Comparator |
+
+## SQL Platform Comparator — API Contract
+
+### Endpoint: `POST /members/sql/compare`
+
+**Request:**
+```json
+{ "accountId": "991105135552" }
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "workloads": [
+    {
+      "instanceId": "i-0abc123",
+      "instanceType": "r5.2xlarge",
+      "currentPlatform": "Windows with SQL Enterprise",
+      "currentMonthlyCost": 890.00,
+      "vcpus": 8,
+      "memoryGb": 64,
+      "options": [
+        {
+          "label": "EC2 Windows + SQL (License Included)",
+          "platform": "ec2_windows_sql_li",
+          "monthlyCost": 890.00,
+          "isCurrent": true,
+          "savingsVsCurrent": 0,
+          "savingsPercent": 0
+        },
+        {
+          "label": "EC2 Windows only (BYOL SQL)",
+          "platform": "ec2_windows_byol",
+          "monthlyCost": 534.00,
+          "isCurrent": false,
+          "savingsVsCurrent": 356.00,
+          "savingsPercent": 40.0,
+          "isCheapest": true
+        },
+        {
+          "label": "RDS SQL Server Standard",
+          "platform": "rds_sql_standard",
+          "equivalentClass": "db.r5.2xlarge",
+          "monthlyCost": 720.00,
+          "isCurrent": false,
+          "savingsVsCurrent": 170.00,
+          "savingsPercent": 19.1
+        },
+        {
+          "label": "RDS SQL Server Enterprise",
+          "platform": "rds_sql_enterprise",
+          "equivalentClass": "db.r5.2xlarge",
+          "monthlyCost": 1240.00,
+          "isCurrent": false,
+          "savingsVsCurrent": -350.00,
+          "savingsPercent": -39.3
+        }
+      ]
+    }
+  ]
+}
+```
+
+### Endpoint: `POST /members/sql/migration-plan`
+
+**Request:**
+```json
+{
+  "accountId": "991105135552",
+  "instanceId": "i-0abc123",
+  "sourcePlatform": "ec2_windows_sql_li",
+  "targetPlatform": "ec2_windows_byol"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "migrationPlan": {
+    "title": "Migrate EC2 Windows+SQL (LI) → EC2 Windows only (BYOL SQL)",
+    "estimatedSavings": { "monthly": 356.00, "annual": 4272.00 },
+    "complexity": "high",
+    "estimatedDuration": "2-4 hours",
+    "steps": [
+      { "stepNumber": 1, "action": "Verify Software Assurance or License Mobility rights", "type": "prerequisite" },
+      { "stepNumber": 2, "action": "Create AMI snapshot of i-0abc123 for rollback", "awsConsoleLink": "https://console.aws.amazon.com/ec2/home#Instances:instanceId=i-0abc123" },
+      { "stepNumber": 3, "action": "Launch new EC2 instance from Windows-only AMI (r5.2xlarge)", "awsConsoleLink": "https://console.aws.amazon.com/ec2/home#LaunchInstances:" },
+      { "stepNumber": 4, "action": "Install SQL Server using your BYOL license on the new instance" },
+      { "stepNumber": 5, "action": "Migrate data: detach EBS data volumes from original, attach to new instance" },
+      { "stepNumber": 6, "action": "Update DNS records, Elastic IPs, or load balancer targets to new instance" },
+      { "stepNumber": 7, "action": "Verify application functionality on new instance" },
+      { "stepNumber": 8, "action": "Terminate original instance i-0abc123 after successful validation" }
+    ],
+    "risks": [
+      "Application downtime during instance replacement",
+      "Requires active Software Assurance for BYOL eligibility",
+      "Data loss risk if EBS volumes are not properly migrated"
+    ]
+  }
+}
+```
