@@ -1,0 +1,6 @@
+# Production dependencies (boto3 is available in Lambda runtime, listed for local dev)
+boto3
+
+# Test dependencies
+hypothesis
+pytest

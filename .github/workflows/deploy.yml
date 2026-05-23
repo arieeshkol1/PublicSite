@@ -26,6 +26,7 @@ on:
       - 'members/**'
       - 'agent-action/**'
       - 'scheduler-executor/**'
+      - 'tips-sync/**'
       - '_gen_ug.py'
       - '_gen_hld.py'
       - 'knowledge-base/**'
@@ -290,6 +291,23 @@ jobs:
           aws s3 cp scheduler-executor-lambda.zip s3://${{ env.STORAGE_BUCKET }}/lambda-packages/scheduler-executor.zip
           echo "✓ Scheduler Executor packaged"
 
+      - name: Package Tips Sync Lambda
+        run: |
+          echo "Packaging Tips Sync Lambda..."
+          mkdir -p .build-tips-sync/sources
+          mkdir -p .build-tips-sync/knowledge-base
+          pip install -r tips-sync/requirements.txt -t .build-tips-sync/ --quiet
+          cp tips-sync/lambda_function.py .build-tips-sync/
+          cp tips-sync/models.py .build-tips-sync/
+          cp tips-sync/sync_engine.py .build-tips-sync/
+          cp tips-sync/metrics.py .build-tips-sync/
+          cp tips-sync/sources/*.py .build-tips-sync/sources/
+          cp knowledge-base/aws-cost-optimization-tips.json .build-tips-sync/knowledge-base/
+          cd .build-tips-sync && zip -r ../tips-sync-lambda.zip . -q
+          cd ..
+          aws s3 cp tips-sync-lambda.zip s3://${{ env.STORAGE_BUCKET }}/lambda-packages/tips-sync.zip
+          echo "✓ Tips Sync packaged"
+
       - name: Deploy SlashMyBill CloudFormation stack
         continue-on-error: true
         run: |
@@ -373,6 +391,11 @@ jobs:
             --function-name slashmybill-scheduler-executor \
             --s3-bucket ${{ env.STORAGE_BUCKET }} \
             --s3-key lambda-packages/scheduler-executor.zip > /dev/null 2>&1 || true
+          # Update Tips Sync Lambda (skip if not yet created)
+          aws lambda update-function-code \
+            --function-name slashmybill-tips-sync \
+            --s3-bucket ${{ env.STORAGE_BUCKET }} \
+            --s3-key lambda-packages/tips-sync.zip > /dev/null 2>&1 || true
           echo "✓ Lambda functions updated"
 
       - name: Update Lambda memory and timeout (CF stack may fail to apply these)
@@ -452,6 +475,204 @@ jobs:
               }]
             }'
           echo "✓ DynamoDB Invoices table permissions granted"
+
+      - name: Ensure Tips Sync Lambda exists
+        continue-on-error: true
+        run: |
+          FUNCTION_NAME="slashmybill-tips-sync"
+          ROLE_NAME="slashmybill-tips-sync-role"
+          ACCOUNT_ID="991105135552"
+          REGION="us-east-1"
+          TABLE_ARN="arn:aws:dynamodb:us-east-1:991105135552:table/ViewMyBill-CostOptimizationTips"
+          LOG_GROUP_ARN="arn:aws:logs:us-east-1:991105135552:log-group:/aws/lambda/slashmybill-tips-sync:*"
+
+          # Create IAM execution role if it doesn't exist
+          if aws iam get-role --role-name "$ROLE_NAME" > /dev/null 2>&1; then
+            echo "✓ Role $ROLE_NAME already exists"
+          else
+            echo "Creating IAM execution role $ROLE_NAME..."
+            aws iam create-role \
+              --role-name "$ROLE_NAME" \
+              --assume-role-policy-document '{
+                "Version": "2012-10-17",
+                "Statement": [{
+                  "Effect": "Allow",
+                  "Principal": {"Service": "lambda.amazonaws.com"},
+                  "Action": "sts:AssumeRole"
+                }]
+              }' \
+              --description "Execution role for slashmybill-tips-sync Lambda" \
+              --no-cli-pager
+            echo "✓ Role created, waiting for propagation..."
+            sleep 10
+          fi
+
+          # Attach DynamoDB policy
+          aws iam put-role-policy \
+            --role-name "$ROLE_NAME" \
+            --policy-name "TipsSyncDynamoDBAccess" \
+            --policy-document '{
+              "Version": "2012-10-17",
+              "Statement": [{
+                "Effect": "Allow",
+                "Action": [
+                  "dynamodb:GetItem",
+                  "dynamodb:PutItem",
+                  "dynamodb:UpdateItem",
+                  "dynamodb:Query",
+                  "dynamodb:Scan",
+                  "dynamodb:BatchWriteItem",
+                  "dynamodb:DeleteItem"
+                ],
+                "Resource": "'"$TABLE_ARN"'"
+              }]
+            }'
+
+          # Attach Trusted Advisor policy
+          aws iam put-role-policy \
+            --role-name "$ROLE_NAME" \
+            --policy-name "TipsSyncTrustedAdvisorAccess" \
+            --policy-document '{
+              "Version": "2012-10-17",
+              "Statement": [{
+                "Effect": "Allow",
+                "Action": [
+                  "support:DescribeTrustedAdvisorChecks",
+                  "support:DescribeTrustedAdvisorCheckResult"
+                ],
+                "Resource": "*"
+              }]
+            }'
+
+          # Attach Cost Optimization Hub policy
+          aws iam put-role-policy \
+            --role-name "$ROLE_NAME" \
+            --policy-name "TipsSyncCostOptimizationHubAccess" \
+            --policy-document '{
+              "Version": "2012-10-17",
+              "Statement": [{
+                "Effect": "Allow",
+                "Action": [
+                  "cost-optimization-hub:ListRecommendations",
+                  "cost-optimization-hub:GetRecommendation"
+                ],
+                "Resource": "*"
+              }]
+            }'
+
+          # Attach CloudWatch Metrics policy
+          aws iam put-role-policy \
+            --role-name "$ROLE_NAME" \
+            --policy-name "TipsSyncCloudWatchMetrics" \
+            --policy-document '{
+              "Version": "2012-10-17",
+              "Statement": [{
+                "Effect": "Allow",
+                "Action": [
+                  "cloudwatch:PutMetricData"
+                ],
+                "Resource": "*"
+              }]
+            }'
+
+          # Attach CloudWatch Logs policy
+          aws iam put-role-policy \
+            --role-name "$ROLE_NAME" \
+            --policy-name "TipsSyncCloudWatchLogs" \
+            --policy-document '{
+              "Version": "2012-10-17",
+              "Statement": [{
+                "Effect": "Allow",
+                "Action": [
+                  "logs:CreateLogGroup",
+                  "logs:CreateLogStream",
+                  "logs:PutLogEvents"
+                ],
+                "Resource": "'"$LOG_GROUP_ARN"'"
+              }]
+            }'
+
+          echo "✓ All IAM policies attached"
+
+          # Create Lambda function if it doesn't exist
+          if aws lambda get-function --function-name "$FUNCTION_NAME" --region "$REGION" > /dev/null 2>&1; then
+            echo "✓ Lambda function $FUNCTION_NAME already exists"
+          else
+            echo "Creating Lambda function $FUNCTION_NAME..."
+            aws lambda create-function \
+              --function-name "$FUNCTION_NAME" \
+              --runtime python3.12 \
+              --handler lambda_function.lambda_handler \
+              --role "arn:aws:iam::${ACCOUNT_ID}:role/${ROLE_NAME}" \
+              --code "S3Bucket=${{ env.STORAGE_BUCKET }},S3Key=lambda-packages/tips-sync.zip" \
+              --timeout 300 \
+              --memory-size 256 \
+              --region "$REGION" \
+              --description "Tips Auto-Sync: fetches cost optimization tips from AWS sources and syncs to DynamoDB" \
+              --no-cli-pager
+            echo "✓ Lambda function $FUNCTION_NAME created (python3.12, 300s timeout, 256MB)"
+          fi
+
+      - name: Setup Tips Sync Schedule
+        continue-on-error: true
+        run: |
+          LAMBDA_ARN="arn:aws:lambda:us-east-1:991105135552:function:slashmybill-tips-sync"
+          SCHEDULE_NAME="slashmybill-tips-sync-daily"
+          ROLE_NAME="slashmybill-tips-sync-scheduler-role"
+          ACCOUNT_ID="991105135552"
+
+          # Check if schedule already exists
+          if aws scheduler get-schedule --name "$SCHEDULE_NAME" --no-cli-pager > /dev/null 2>&1; then
+            echo "✓ Schedule $SCHEDULE_NAME already exists"
+          else
+            echo "Creating IAM role for EventBridge Scheduler..."
+            # Create the scheduler execution role
+            aws iam create-role \
+              --role-name "$ROLE_NAME" \
+              --assume-role-policy-document '{
+                "Version": "2012-10-17",
+                "Statement": [{
+                  "Effect": "Allow",
+                  "Principal": {"Service": "scheduler.amazonaws.com"},
+                  "Action": "sts:AssumeRole",
+                  "Condition": {
+                    "StringEquals": {
+                      "aws:SourceAccount": "'"$ACCOUNT_ID"'"
+                    }
+                  }
+                }]
+              }' --no-cli-pager 2>/dev/null || echo "Role already exists"
+
+            # Attach inline policy to allow invoking the Lambda
+            aws iam put-role-policy \
+              --role-name "$ROLE_NAME" \
+              --policy-name "InvokeTipsSyncLambda" \
+              --policy-document '{
+                "Version": "2012-10-17",
+                "Statement": [{
+                  "Effect": "Allow",
+                  "Action": "lambda:InvokeFunction",
+                  "Resource": "arn:aws:lambda:us-east-1:991105135552:function:slashmybill-tips-sync"
+                }]
+              }' --no-cli-pager
+
+            # Wait for role to propagate
+            sleep 10
+
+            echo "Creating EventBridge Scheduler schedule..."
+            aws scheduler create-schedule \
+              --name "$SCHEDULE_NAME" \
+              --schedule-expression "cron(0 2 * * ? *)" \
+              --flexible-time-window '{"Mode":"FLEXIBLE","MaximumWindowInMinutes":15}' \
+              --target '{
+                "Arn": "arn:aws:lambda:us-east-1:991105135552:function:slashmybill-tips-sync",
+                "RoleArn": "arn:aws:iam::991105135552:role/slashmybill-tips-sync-scheduler-role",
+                "Input": "{\"source\": \"scheduler\", \"manual\": false}"
+              }' \
+              --state ENABLED \
+              --no-cli-pager
+            echo "✓ Schedule $SCHEDULE_NAME created (daily at 02:00 UTC)"
+          fi
 
       - name: Configure Cognito email via SES (eshkolai.com)
         continue-on-error: true
