@@ -18182,6 +18182,65 @@ def _generate_migration_script(instance_id, source_platform, target_platform, wo
         '}\n\n'
     )
 
+    # Add instance-specific details to header
+    instance_name = workload_details.get('instanceName', instance_id)
+    volumes = workload_details.get('volumes', [])
+    sgs = workload_details.get('securityGroups', [])
+    eips = workload_details.get('elasticIps', [])
+    private_ip = workload_details.get('privateIp', '')
+    public_ip = workload_details.get('publicIp', '')
+    subnet_id = workload_details.get('subnetId', '')
+    vpc_id = workload_details.get('vpcId', '')
+    key_name = workload_details.get('keyName', '')
+
+    header += f'# Instance Name: {instance_name}\n'
+    if private_ip:
+        header += f'# Private IP: {private_ip}\n'
+    if public_ip:
+        header += f'# Public IP: {public_ip}\n'
+    if eips:
+        header += f'# Elastic IPs: {", ".join(eips)}\n'
+    if subnet_id:
+        header += f'# Subnet: {subnet_id} | VPC: {vpc_id}\n'
+    if key_name:
+        header += f'# Key Pair: {key_name}\n'
+    if sgs:
+        sg_parts = []
+        for s in sgs:
+            sg_name = s.get("name", "")
+            sg_id = s["id"]
+            sg_parts.append(f"{sg_name} ({sg_id})" if sg_name else sg_id)
+        header += f'# Security Groups: {", ".join(sg_parts)}\n'
+    if volumes:
+        header += '# EBS Volumes:\n'
+        for v in volumes:
+            header += f'#   {v["device"]}: {v["volumeId"]} ({v.get("sizeGb", "?")} GB, {v.get("volType", "?")})\n'
+    header += '# =============================================================\n\n'
+
+    # Add shell variables for specific resources
+    if subnet_id:
+        header += f'SUBNET_ID="{subnet_id}"\n'
+    if key_name:
+        header += f'KEY_NAME="{key_name}"\n'
+    if sgs:
+        sg_ids = " ".join([s["id"] for s in sgs])
+        header += f'SECURITY_GROUPS="{sg_ids}"\n'
+    if volumes:
+        data_vols = [v for v in volumes if "/dev/sda" not in v["device"] and "/dev/xvda" not in v["device"]]
+        if data_vols:
+            header += f'DATA_VOLUMES="{" ".join([v["volumeId"] for v in data_vols])}"\n'
+    if eips:
+        header += f'ELASTIC_IP="{eips[0]}"\n'
+    # RDS-specific
+    rds_endpoint = workload_details.get('rdsEndpoint', '')
+    if rds_endpoint:
+        header += f'# RDS Endpoint: {rds_endpoint}:{workload_details.get("rdsPort", 1433)}\n'
+        header += f'# Engine: {workload_details.get("engine", "")} {workload_details.get("engineVersion", "")}\n'
+        header += f'# Storage: {workload_details.get("allocatedStorage", 0)} GB\n'
+        header += f'RDS_ENDPOINT="{rds_endpoint}"\n'
+        header += f'RDS_PORT="{workload_details.get("rdsPort", 1433)}"\n'
+    header += '\n'
+
     if (source_platform, target_platform) == (PLATFORM_EC2_WIN_SQL_LI, PLATFORM_EC2_WIN_BYOL):
         body = (
             'echo "Step 1/4: Create AMI backup"\n'
@@ -18422,6 +18481,74 @@ def handle_sql_migration_plan(event):
         'memoryGb': body.get('memoryGb', 0),
         'savings_vs_current': body.get('savingsVsCurrent', 0),
     }
+
+    # Generate migration plan
+        # Enrich workload_details with actual instance metadata for specific script generation
+    try:
+        external_id = hashlib.sha256(member_email.encode('utf-8')).hexdigest()
+        role_arn = f'arn:aws:iam::{account_id}:role/SlashMyBill-{account_id}'
+        sts_client = boto3.client('sts')
+        assume_resp = sts_client.assume_role(
+            RoleArn=role_arn, RoleSessionName='SlashMyBillMigPlan', ExternalId=external_id, DurationSeconds=900)
+        creds = assume_resp['Credentials']
+        mig_region = workload_details.get('region', 'us-east-1')
+
+        if instance_id.startswith('i-'):
+            ec2c = boto3.client('ec2', region_name=mig_region,
+                aws_access_key_id=creds['AccessKeyId'],
+                aws_secret_access_key=creds['SecretAccessKey'],
+                aws_session_token=creds['SessionToken'])
+            inst_resp = ec2c.describe_instances(InstanceIds=[instance_id])
+            if inst_resp['Reservations']:
+                inst = inst_resp['Reservations'][0]['Instances'][0]
+                vols = []
+                for bdm in inst.get('BlockDeviceMappings', []):
+                    vid = bdm.get('Ebs', {}).get('VolumeId', '')
+                    dev = bdm.get('DeviceName', '')
+                    if vid:
+                        vols.append({'volumeId': vid, 'device': dev})
+                workload_details['volumes'] = vols
+                sgs = [{'id': sg['GroupId'], 'name': sg.get('GroupName', '')} for sg in inst.get('SecurityGroups', [])]
+                workload_details['securityGroups'] = sgs
+                tags = {t['Key']: t['Value'] for t in inst.get('Tags', [])}
+                workload_details['instanceName'] = tags.get('Name', instance_id)
+                workload_details['tags'] = tags
+                workload_details['subnetId'] = inst.get('SubnetId', '')
+                workload_details['vpcId'] = inst.get('VpcId', '')
+                workload_details['privateIp'] = inst.get('PrivateIpAddress', '')
+                workload_details['publicIp'] = inst.get('PublicIpAddress', '')
+                workload_details['keyName'] = inst.get('KeyName', '')
+                eip_resp = ec2c.describe_addresses(Filters=[{'Name': 'instance-id', 'Values': [instance_id]}])
+                workload_details['elasticIps'] = [a['PublicIp'] for a in eip_resp.get('Addresses', [])]
+                if vols:
+                    vol_ids = [v['volumeId'] for v in vols]
+                    vol_resp = ec2c.describe_volumes(VolumeIds=vol_ids)
+                    vol_map = {v['VolumeId']: {'sizeGb': v['Size'], 'volType': v['VolumeType']} for v in vol_resp.get('Volumes', [])}
+                    for v in workload_details['volumes']:
+                        info = vol_map.get(v['volumeId'], {})
+                        v['sizeGb'] = info.get('sizeGb', 0)
+                        v['volType'] = info.get('volType', '')
+        else:
+            rdsc = boto3.client('rds', region_name=mig_region,
+                aws_access_key_id=creds['AccessKeyId'],
+                aws_secret_access_key=creds['SecretAccessKey'],
+                aws_session_token=creds['SessionToken'])
+            try:
+                db_resp = rdsc.describe_db_instances(DBInstanceIdentifier=instance_id)
+                if db_resp['DBInstances']:
+                    db = db_resp['DBInstances'][0]
+                    workload_details['rdsEndpoint'] = db.get('Endpoint', {}).get('Address', '')
+                    workload_details['rdsPort'] = db.get('Endpoint', {}).get('Port', 1433)
+                    workload_details['allocatedStorage'] = db.get('AllocatedStorage', 0)
+                    workload_details['engine'] = db.get('Engine', '')
+                    workload_details['engineVersion'] = db.get('EngineVersion', '')
+                    workload_details['instanceName'] = instance_id
+                    sgs = [{'id': sg['VpcSecurityGroupId'], 'name': ''} for sg in db.get('VpcSecurityGroups', [])]
+                    workload_details['securityGroups'] = sgs
+            except Exception:
+                pass
+    except Exception as e:
+        logger.warning(f"Migration plan: could not enrich instance details: {e}")
 
     # Generate migration plan
     plan = _generate_sql_migration_plan(instance_id, source_platform, target_platform, workload_details)
