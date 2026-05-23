@@ -17651,10 +17651,13 @@ def _calculate_sql_platform_pricing(instance_types, creds, region='us-east-1'):
     def _query_ec2_price(instance_type, pre_installed_sw, location):
         """Query EC2 pricing from AWS Pricing API."""
         try:
+            # For Windows with SQL, licenseModel is "No License required" (the SQL license
+            # is indicated by preInstalledSw, not licenseModel)
+            license_model = 'No License required'
             filters = [
                 {'Type': 'TERM_MATCH', 'Field': 'instanceType', 'Value': instance_type},
                 {'Type': 'TERM_MATCH', 'Field': 'operatingSystem', 'Value': 'Windows'},
-                {'Type': 'TERM_MATCH', 'Field': 'licenseModel', 'Value': 'License Included'},
+                {'Type': 'TERM_MATCH', 'Field': 'licenseModel', 'Value': license_model},
                 {'Type': 'TERM_MATCH', 'Field': 'preInstalledSw', 'Value': pre_installed_sw},
                 {'Type': 'TERM_MATCH', 'Field': 'location', 'Value': location},
                 {'Type': 'TERM_MATCH', 'Field': 'tenancy', 'Value': 'Shared'},
@@ -17668,7 +17671,22 @@ def _calculate_sql_platform_pricing(instance_types, creds, region='us-east-1'):
                 for term in terms.values():
                     for dim in term.get('priceDimensions', {}).values():
                         price_str = dim.get('pricePerUnit', {}).get('USD', '0')
-                        return float(price_str)
+                        rate = float(price_str)
+                        if rate > 0:
+                            return rate
+            # Fallback: try with "License Included" (some older entries use this)
+            filters[2] = {'Type': 'TERM_MATCH', 'Field': 'licenseModel', 'Value': 'License Included'}
+            resp = pricing_client.get_products(ServiceCode='AmazonEC2', Filters=filters, MaxResults=1)
+            price_list = resp.get('PriceList', [])
+            if price_list:
+                product = json.loads(price_list[0])
+                terms = product.get('terms', {}).get('OnDemand', {})
+                for term in terms.values():
+                    for dim in term.get('priceDimensions', {}).values():
+                        price_str = dim.get('pricePerUnit', {}).get('USD', '0')
+                        rate = float(price_str)
+                        if rate > 0:
+                            return rate
         except Exception as e:
             logger.warning(f"SQL pricing EC2 query failed for {instance_type}/{pre_installed_sw}: {e}")
         return 0.0
@@ -17683,15 +17701,17 @@ def _calculate_sql_platform_pricing(instance_types, creds, region='us-east-1'):
                 {'Type': 'TERM_MATCH', 'Field': 'location', 'Value': location},
                 {'Type': 'TERM_MATCH', 'Field': 'deploymentOption', 'Value': 'Single-AZ'},
             ]
-            resp = pricing_client.get_products(ServiceCode='AmazonRDS', Filters=filters, MaxResults=1)
+            resp = pricing_client.get_products(ServiceCode='AmazonRDS', Filters=filters, MaxResults=5)
             price_list = resp.get('PriceList', [])
-            if price_list:
-                product = json.loads(price_list[0])
+            for price_item in price_list:
+                product = json.loads(price_item) if isinstance(price_item, str) else price_item
                 terms = product.get('terms', {}).get('OnDemand', {})
                 for term in terms.values():
                     for dim in term.get('priceDimensions', {}).values():
                         price_str = dim.get('pricePerUnit', {}).get('USD', '0')
-                        return float(price_str)
+                        rate = float(price_str)
+                        if rate > 0:
+                            return rate
         except Exception as e:
             logger.warning(f"SQL pricing RDS query failed for {rds_class}/{db_edition}: {e}")
         return 0.0
