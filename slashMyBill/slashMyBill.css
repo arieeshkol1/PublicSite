@@ -179,10 +179,12 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;ba
 
 /* FEATURE CARDS WITH SCREENSHOTS */
 .smb-feature-card-screenshot{padding:0;overflow:hidden}
-.smb-feature-card-screenshot .smb-feature-screenshot{width:100%;height:180px;object-fit:cover;object-position:top;border-bottom:1px solid #e5e7eb;display:block}
+.smb-feature-card-screenshot .smb-feature-screenshot{width:100%;height:220px;object-fit:cover;object-position:top left;border-bottom:1px solid #e5e7eb;display:block}
 .smb-feature-card-screenshot h4{padding:16px 24px 0}
 .smb-feature-card-screenshot p{padding:0 24px 20px}
 .smb-feature-card-screenshot .smb-feature-icon{margin:20px 0 0}
+.smb-features-grid-2col{grid-template-columns:repeat(2,1fr)}
+@media(max-width:768px){.smb-features-grid-2col{grid-template-columns:1fr}}
 
 /* HOW IT WORKS */
 .smb-how-it-works{background:#fff;padding:100px 0}
