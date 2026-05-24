@@ -1,4 +1,4 @@
-﻿/* Member Portal v1 - SlashMyBill */
+/* Member Portal v1 - SlashMyBill */
 /* Build: spot-ecs-trigger */
 var API = 'https://l2fd4h481h.execute-api.us-east-1.amazonaws.com';
 
