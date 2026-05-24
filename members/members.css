@@ -1,8 +1,8 @@
-﻿/* Member Portal Styles â€” extends main site styles.css */
+/* Member Portal Styles \00e2\20ac\201d extends main site styles.css */
 
 [hidden] { display: none !important; }
 
-/* Auth section (login/register) â€” sits below the navbar */
+/* Auth section (login/register) \00e2\20ac\201d sits below the navbar */
 .member-auth-section {
     min-height: calc(100vh - 200px);
     display: flex;
@@ -380,7 +380,7 @@
 .lab-hint { font-size: 11px; color: #484f58; margin-top: 6px; text-align: center; }
 
 
-/* Act Tab â€” Left Navigation */
+/* Act Tab \00e2\20ac\201d Left Navigation */
 .act-nav-btn{display:flex;align-items:center;gap:8px;width:100%;padding:10px 16px;border:none;background:none;color:#6b7280;font-size:0.9em;font-weight:500;cursor:pointer;text-align:left;border-left:3px solid transparent;transition:all .15s;}
 .act-nav-btn:hover{background:#f3f4f6;color:#1f2937;}
 .act-nav-btn.active{background:#eef2ff;color:#4f46e5;border-left-color:#6366f1;font-weight:600;}
@@ -391,7 +391,7 @@
 }
 
 
-/* FinOps Settings â€” Configure Tab */
+/* FinOps Settings \00e2\20ac\201d Configure Tab */
 .finops-checklist-item{transition:border-color .15s;}
 .finops-checklist-item:hover{border-color:#484f58 !important;}
 .finops-fix-btn{background:linear-gradient(135deg,#6366f1,#4f46e5);border:none;color:#fff;border-radius:6px;padding:6px 14px;cursor:pointer;font-weight:600;transition:opacity .15s;}
@@ -906,7 +906,7 @@
 
 
 /* ============================================================
-   Invoice Drilldown â€” Hierarchical 3-Level Drill-Down
+   Invoice Drilldown \00e2\20ac\201d Hierarchical 3-Level Drill-Down
    ============================================================ */
 
 /* Drilldown table base */
@@ -941,7 +941,7 @@
     font-weight: 600;
 }
 
-/* Service rows (Level 2 â€” indented 24px) */
+/* Service rows (Level 2 \00e2\20ac\201d indented 24px) */
 .dd-services-area {
     padding: 8px 0 8px 24px;
     background: #f9fafb;
@@ -978,7 +978,7 @@
     border-bottom: 1px solid #f0f0f0;
 }
 
-/* Resource rows (Level 3 â€” indented 48px) */
+/* Resource rows (Level 3 \00e2\20ac\201d indented 48px) */
 .dd-resources-area {
     padding: 8px 0 8px 48px;
     background: #fefefe;
@@ -1223,7 +1223,7 @@
 
 
 /* ============================================================
-   Observe Tab â€” Left Navigation & Responsive Layout
+   Observe Tab \00e2\20ac\201d Left Navigation & Responsive Layout
    ============================================================ */
 
 /* Observe Nav Panel */
@@ -1237,7 +1237,7 @@
     gap: 2px;
 }
 
-/* Observe Widget Grid â€” responsive auto-fit grid */
+/* Observe Widget Grid \00e2\20ac\201d responsive auto-fit grid */
 .observe-widget-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
