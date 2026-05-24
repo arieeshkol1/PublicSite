@@ -95,7 +95,7 @@ def generate_tips_with_bedrock(bedrock_client, existing_tips: list, num_tips: in
 
         # Call Bedrock Claude
         response = bedrock_client.invoke_model(
-            modelId="anthropic.claude-3-haiku-20240307-v1:0",
+            modelId="us.anthropic.claude-3-haiku-20240307-v1:0",
             contentType="application/json",
             accept="application/json",
             body=json.dumps({
