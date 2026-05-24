@@ -163,6 +163,10 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;ba
 .smb-feature-icon{width:52px;height:52px;background:linear-gradient(135deg,#fef3ee,#fde8dd);border-radius:14px;display:flex;align-items:center;justify-content:center;font-size:22px;color:#e8714a;margin-bottom:20px}
 .smb-feature-card h4{font-size:17px;font-weight:700;color:#1a1a2e;margin-bottom:10px}
 .smb-feature-card p{font-size:14px;color:#6b7280;line-height:1.7}
+.smb-feature-group{margin-bottom:56px}
+.smb-feature-group-header{margin-bottom:24px;text-align:center}
+.smb-feature-group-header h3{font-size:22px;font-weight:700;color:#1a1a2e;margin:8px 0 0}
+.smb-feature-group-tag{display:inline-block;background:linear-gradient(135deg,#e8714a,#ff8f6b);color:#fff;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;padding:5px 16px;border-radius:20px}
 
 /* HOW IT WORKS */
 .smb-how-it-works{background:#fff;padding:100px 0}
