@@ -168,6 +168,15 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;ba
 .smb-feature-group-header h3{font-size:22px;font-weight:700;color:#1a1a2e;margin:8px 0 0}
 .smb-feature-group-tag{display:inline-block;background:linear-gradient(135deg,#e8714a,#ff8f6b);color:#fff;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;padding:5px 16px;border-radius:20px}
 
+/* SCREENSHOT SHOWCASE */
+.smb-screenshot-showcase{margin-top:32px;text-align:center}
+.smb-screenshot-showcase img{max-width:100%;border-radius:12px;box-shadow:0 8px 32px rgba(0,0,0,0.12);border:1px solid #e5e7eb}
+.smb-screenshot-showcase.smb-screenshot-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:24px;text-align:center}
+.smb-screenshot-item{display:flex;flex-direction:column;align-items:center;gap:10px}
+.smb-screenshot-item img{width:100%;border-radius:10px;box-shadow:0 6px 24px rgba(0,0,0,0.1);border:1px solid #e5e7eb;transition:transform 0.2s ease,box-shadow 0.2s ease}
+.smb-screenshot-item img:hover{transform:translateY(-4px);box-shadow:0 12px 40px rgba(0,0,0,0.18)}
+.smb-screenshot-label{font-size:13px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:0.5px}
+
 /* HOW IT WORKS */
 .smb-how-it-works{background:#fff;padding:100px 0}
 .smb-steps{display:flex;flex-direction:column;gap:64px}
