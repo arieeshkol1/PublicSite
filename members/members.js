@@ -1,4 +1,4 @@
-/* Member Portal v1 - SlashMyBill */
+﻿/* Member Portal v1 - SlashMyBill */
 /* Build: spot-ecs-trigger */
 var API = 'https://l2fd4h481h.execute-api.us-east-1.amazonaws.com';
 
@@ -19,7 +19,7 @@ var PAYPAL_PLANS = {
     scale:  'P-70P61632B3889241HNIG4SEA'
 };
 // Initialize Paddle
-// PayPal SDK is loaded via script tag in HTML \u00E2\u20AC\u201D no initialization needed
+// PayPal SDK is loaded via script tag in HTML â€” no initialization needed
 // Subscription handling happens in the _showUpgradeModal function
 
 var $ = function(id) { return document.getElementById(id); };
@@ -324,7 +324,7 @@ function _showUpgradeModal() {
         }
     }
 
-    // Wire up top-up buttons \u00E2\u20AC\u201D use PayPal Orders API for one-time payments
+    // Wire up top-up buttons â€” use PayPal Orders API for one-time payments
     overlay.querySelectorAll('.smb-topup-btn').forEach(function(btn) {
         btn.onclick = function() {
             var tokensToAdd = parseInt(btn.getAttribute('data-tokens'));
@@ -351,7 +351,7 @@ function _showUpgradeModal() {
                     },
                     onApprove: function(data, actions) {
                         return actions.order.capture().then(function(details) {
-                            // Payment successful \u00E2\u20AC\u201D add tokens to user account
+                            // Payment successful â€” add tokens to user account
                             notify(tokensToAdd + ' tokens added to your account!', 'success', 5000);
                             var storedTokens = JSON.parse(sessionStorage.getItem('memberTokens') || '{}');
                             var newRemaining = (storedTokens.remaining || 0) + tokensToAdd;
@@ -570,7 +570,7 @@ function _startOtpCountdown() {
         expiry--;
         var mins = Math.floor(expiry / 60);
         var secs = expiry % 60;
-        if (expiryEl) expiryEl.textContent = expiry > 0 ? 'Code expires in ' + mins + ':' + (secs < 10 ? '0' : '') + secs : 'Code expired \u00E2\u20AC\u201D request a new one';
+        if (expiryEl) expiryEl.textContent = expiry > 0 ? 'Code expires in ' + mins + ':' + (secs < 10 ? '0' : '') + secs : 'Code expired â€” request a new one';
         if (expiry <= 0) clearInterval(expiryInterval);
         if (expiry <= 30 && expiryEl) expiryEl.style.color = '#ef4444';
     }, 1000);
@@ -709,8 +709,8 @@ function renderAccounts(accounts) {
         var statusClass = 'status-' + (a.connectionStatus || 'pending');
         var hourlyBadge = a.connectionStatus === 'connected'
             ? (a.hourlyEnabled
-                ? '<span title="Hourly granularity enabled" style="color:#16a34a;font-size:11px;margin-left:4px;">\u00E2\u008F\u00B1\u00E2\u0153\u201C</span>'
-                : '<span title="Hourly granularity not enabled \u00E2\u20AC\u201D click \u00E2\u008F\u00B1 to enable" style="color:#d97706;font-size:11px;margin-left:4px;">\u00E2\u008F\u00B1\u00E2\u0153\u2014</span>')
+                ? '<span title="Hourly granularity enabled" style="color:#16a34a;font-size:11px;margin-left:4px;">â±âœ“</span>'
+                : '<span title="Hourly granularity not enabled â€” click â± to enable" style="color:#d97706;font-size:11px;margin-left:4px;">â±âœ—</span>')
             : '';
         var tr = document.createElement('tr');
         tr.innerHTML =
@@ -722,8 +722,8 @@ function renderAccounts(accounts) {
             '<td>' + fmtDate(a.addedAt) + '</td>' +
             '<td>' + fmtDate(a.lastTestedAt) + '</td>' +
             '<td class="actions-cell">' +
-                (idx > 0 ? '<button class="btn btn-outline btn-sm" data-a="up" data-id="' + ea(a.accountId) + '" title="Move Up" style="padding:2px 6px;font-size:12px;min-width:28px;">\u00E2\u2013\u00B2</button> ' : '<span style="display:inline-block;width:32px;"></span> ') +
-                (idx < accounts.length - 1 ? '<button class="btn btn-outline btn-sm" data-a="down" data-id="' + ea(a.accountId) + '" title="Move Down" style="padding:2px 6px;font-size:12px;min-width:28px;">\u00E2\u2013\u00BC</button> ' : '<span style="display:inline-block;width:32px;"></span> ') +
+                (idx > 0 ? '<button class="btn btn-outline btn-sm" data-a="up" data-id="' + ea(a.accountId) + '" title="Move Up" style="padding:2px 6px;font-size:12px;min-width:28px;">â–²</button> ' : '<span style="display:inline-block;width:32px;"></span> ') +
+                (idx < accounts.length - 1 ? '<button class="btn btn-outline btn-sm" data-a="down" data-id="' + ea(a.accountId) + '" title="Move Down" style="padding:2px 6px;font-size:12px;min-width:28px;">â–¼</button> ' : '<span style="display:inline-block;width:32px;"></span> ') +
                 '<button class="btn-icon btn-icon-download" data-a="dl" data-id="' + ea(a.accountId) + '" title="Download CF Template">&#8681;</button> ' +
                 '<button class="btn-icon btn-icon-test" data-a="test" data-id="' + ea(a.accountId) + '" title="Test Connection">&#9889;</button> ' +
                 '<button class="btn-icon" data-a="update-perms" data-id="' + ea(a.accountId) + '" title="Update Permissions" style="font-size:11px;">&#128274;</button> ' +
@@ -861,7 +861,7 @@ deleteConfirmBtn.onclick = async function() {
         hideDeleteDialog();
         await loadAccounts();
         if (result.warning) {
-            // Stack couldn't be auto-deleted (old role template) \u00E2\u20AC\u201D show actionable message
+            // Stack couldn't be auto-deleted (old role template) â€” show actionable message
             notify(result.warning, 'warning', 12000);
         } else {
             notify('Account disconnected and AWS stack deleted.', 'success');
@@ -1159,8 +1159,8 @@ wizTestBtn.onclick = async function() {
         wizTestResult.hidden = false;
         wizTestResult.className = 'wizard-test-result test-success';
         var hourlyNote = data.hourlyEnabled
-            ? ' <span style="color:#16a34a;">\u00E2\u008F\u00B1\u00E2\u0153\u201C Hourly enabled</span>'
-            : ' <span style="color:#d97706;">\u00E2\u008F\u00B1\u00E2\u0153\u2014 Hourly not enabled</span>';
+            ? ' <span style="color:#16a34a;">â±âœ“ Hourly enabled</span>'
+            : ' <span style="color:#d97706;">â±âœ— Hourly not enabled</span>';
         wizTestResult.innerHTML = '<strong>&#10003; Connection Successful!</strong>' + hourlyNote + '<br>' + (data.message || 'Cost data is accessible.');
         // Update hourly status section
         _updateWizHourlyStatus(data.hourlyEnabled);
@@ -1182,9 +1182,9 @@ function _updateWizHourlyStatus(enabled) {
     var statusDiv = $('wiz-hourly-status');
     if (!statusDiv) return;
     if (enabled === true) {
-        statusDiv.innerHTML = '<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:6px;padding:8px 12px;color:#16a34a;font-size:0.85em;">\u00E2\u0153\u201C Hourly granularity is <strong>enabled</strong> on this account.</div>';
+        statusDiv.innerHTML = '<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:6px;padding:8px 12px;color:#16a34a;font-size:0.85em;">âœ“ Hourly granularity is <strong>enabled</strong> on this account.</div>';
     } else if (enabled === false) {
-        statusDiv.innerHTML = '<div style="background:#fff7ed;border:1px solid #fed7aa;border-radius:6px;padding:8px 12px;color:#92400e;font-size:0.85em;">\u00E2\u0153\u2014 Not enabled yet. Click "Open CE Settings" above, enable "Hourly and Resource Level Data", then check again after 24\u00E2\u20AC\u201C48 hours.</div>';
+        statusDiv.innerHTML = '<div style="background:#fff7ed;border:1px solid #fed7aa;border-radius:6px;padding:8px 12px;color:#92400e;font-size:0.85em;">âœ— Not enabled yet. Click "Open CE Settings" above, enable "Hourly and Resource Level Data", then check again after 24â€“48 hours.</div>';
     } else {
         statusDiv.innerHTML = '';
     }
@@ -1258,8 +1258,8 @@ renderAccounts = function(accounts) {
             : '';
         var hourlyBadge2 = a.connectionStatus === 'connected'
             ? (a.hourlyEnabled
-                ? '<span title="Hourly granularity enabled" style="color:#16a34a;font-size:11px;margin-left:4px;">\u00E2\u008F\u00B1\u00E2\u0153\u201C</span>'
-                : '<span title="Hourly granularity not enabled \u00E2\u20AC\u201D click \u00E2\u008F\u00B1 to enable" style="color:#d97706;font-size:11px;margin-left:4px;">\u00E2\u008F\u00B1\u00E2\u0153\u2014</span>')
+                ? '<span title="Hourly granularity enabled" style="color:#16a34a;font-size:11px;margin-left:4px;">â±âœ“</span>'
+                : '<span title="Hourly granularity not enabled â€” click â± to enable" style="color:#d97706;font-size:11px;margin-left:4px;">â±âœ—</span>')
             : '';
         var tr = document.createElement('tr');
         tr.innerHTML =
@@ -1316,10 +1316,10 @@ document.querySelectorAll('.member-tab').forEach(function(tab) {
     var savedTab = null;
     try { savedTab = sessionStorage.getItem('smb_active_tab'); } catch(e) {}
     if (savedTab) {
-        // Returning user with a saved tab \u00E2\u20AC\u201D restore it
+        // Returning user with a saved tab â€” restore it
         activateMemberTab(savedTab);
     } else {
-        // No saved tab \u00E2\u20AC\u201D check if user has connected accounts
+        // No saved tab â€” check if user has connected accounts
         // If no accounts, show Configure tab (first-time user)
         // Otherwise show Observe tab (default for returning users)
         api('GET', '/members/accounts').then(function(data) {
@@ -1449,7 +1449,7 @@ function renderDashboard() {
             : '<canvas id="' + chartId + '" height="180"></canvas>';
         card.innerHTML =
             '<h3>' + esc(item.title || 'Saved Query') + '</h3>' +
-            '<div class=\"dashboard-card-meta\">' + esc((item.viewType || 'graph').toUpperCase()) + ' \u00E2\u20AC\u00A2 ' + esc(fmtDate(item.createdAt)) + '</div>' +
+            '<div class=\"dashboard-card-meta\">' + esc((item.viewType || 'graph').toUpperCase()) + ' â€¢ ' + esc(fmtDate(item.createdAt)) + '</div>' +
             '<p><strong>Request:</strong> ' + esc(item.prompt || '') + '</p>' +
             '<p><strong>Response:</strong> ' + esc(item.answer || '-') + '</p>' +
             visual +
@@ -1686,7 +1686,7 @@ function populateAIAccounts() {
         if (checked.length === 0) toggleBtn.textContent = 'Select accounts...';
         else if (checked.length === 1) toggleBtn.textContent = checked[0].parentElement.dataset.label || checked[0].value;
         else toggleBtn.textContent = checked.length + ' accounts selected';
-        toggleBtn.textContent += ' \u00E2\u2013\u00BE';
+        toggleBtn.textContent += ' â–¾';
     }
 
     // Dropdown panel
@@ -1796,7 +1796,7 @@ function addAIMessage(type, content, topServices) {
         // Render markdown-like formatting
         var formatted = content
             .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-            .replace(/\n- /g, '\n\u00E2\u20AC\u00A2 ')
+            .replace(/\n- /g, '\nâ€¢ ')
             .replace(/\n/g, '<br>');
         // Convert navigation references to clickable hyperlinks
         formatted = _addNavLinks(formatted);
@@ -1810,7 +1810,7 @@ function addAIMessage(type, content, topServices) {
         // Detect if this was a comparison/trend question
         var isComparison = questionLower.indexOf('compare') !== -1 || questionLower.indexOf('month') !== -1 ||
             questionLower.indexOf('trend') !== -1 || questionLower.indexOf('last') !== -1 ||
-            questionLower.indexOf('\u00D7\u2014\u00D7\u2022\u00D7\u201C\u00D7\u00A9') !== -1 || questionLower.indexOf('\u00D7\u00AA\u00D7\u00A9\u00D7\u2022\u00D7\u2022\u00D7\u201D') !== -1;
+            questionLower.indexOf('×—×•×“×©') !== -1 || questionLower.indexOf('×ª×©×•×•×”') !== -1;
 
         // Detect if this was an efficiency/savings question
         var isEfficiency = questionLower.indexOf('efficient') !== -1 || questionLower.indexOf('save') !== -1 ||
@@ -1918,13 +1918,13 @@ function addAIMessage(type, content, topServices) {
 
         div.innerHTML =
             '<div class="lab-msg-output" style="color:#e2e8f0;border-color:#4c1d95;position:relative;">' +
-            '<button class="ai-copy-btn" title="Copy to clipboard" style="position:absolute;top:6px;right:6px;background:#21262d;border:1px solid #30363d;border-radius:4px;color:#8b949e;cursor:pointer;padding:3px 6px;font-size:0.75em;">\u00F0\u0178\u201C\u2039 Copy</button>' +
+            '<button class="ai-copy-btn" title="Copy to clipboard" style="position:absolute;top:6px;right:6px;background:#21262d;border:1px solid #30363d;border-radius:4px;color:#8b949e;cursor:pointer;padding:3px 6px;font-size:0.75em;">ðŸ“‹ Copy</button>' +
             formatted + '</div>' +
             followUpHtml +
             '<div class="ai-feedback-widget" style="margin-top:10px;padding:8px 0;border-top:1px solid #30363d;">' +
                 '<span style="color:#8b949e;font-size:0.85em;margin-right:8px;">Did this help you?</span>' +
-                '<button class="ai-fb-btn ai-fb-up" title="Helpful" style="background:#21262d;border:1px solid #30363d;border-radius:4px;color:#8b949e;cursor:pointer;padding:4px 10px;font-size:1em;margin-right:4px;">\u00F0\u0178\u2018\u008D</button>' +
-                '<button class="ai-fb-btn ai-fb-down" title="Not helpful" style="background:#21262d;border:1px solid #30363d;border-radius:4px;color:#8b949e;cursor:pointer;padding:4px 10px;font-size:1em;">\u00F0\u0178\u2018\u017D</button>' +
+                '<button class="ai-fb-btn ai-fb-up" title="Helpful" style="background:#21262d;border:1px solid #30363d;border-radius:4px;color:#8b949e;cursor:pointer;padding:4px 10px;font-size:1em;margin-right:4px;">ðŸ‘</button>' +
+                '<button class="ai-fb-btn ai-fb-down" title="Not helpful" style="background:#21262d;border:1px solid #30363d;border-radius:4px;color:#8b949e;cursor:pointer;padding:4px 10px;font-size:1em;">ðŸ‘Ž</button>' +
                 '<div class="ai-fb-correction" style="display:none;margin-top:8px;">' +
                     '<input type="text" class="ai-fb-correction-input" placeholder="What was missing or incorrect?" style="background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:8px 10px;color:#c9d1d9;font-size:0.85em;width:70%;margin-right:6px;">' +
                     '<button class="ai-fb-correction-submit btn btn-primary btn-sm" style="font-size:0.8em;">Submit</button>' +
@@ -1942,7 +1942,7 @@ function addAIMessage(type, content, topServices) {
     } else if (type === 'error') {
         div.innerHTML = '<div class="lab-msg-output lab-msg-error">' + esc(content) + '</div>';
     } else if (type === 'chartOptions') {
-        // Deprecated \u00E2\u20AC\u201D chart options are now part of the answer message
+        // Deprecated â€” chart options are now part of the answer message
         div.innerHTML = '';
     }
 
@@ -2086,7 +2086,7 @@ async function askAI() {
                                             };
                                             sortedCharts.unshift(compChart);
                                         } else {
-                                            // 3+ month comparison \u00E2\u20AC\u201D use monthColumns format
+                                            // 3+ month comparison â€” use monthColumns format
                                             var mcols = {};
                                             var mnames = [];
                                             monthCols.forEach(function(mc) {
@@ -2116,7 +2116,7 @@ async function askAI() {
                         : '';
                     sortedCharts.forEach(function(cd, idx) {
                         html += '<button class="btn btn-outline btn-sm ai-table-btn" style="margin:3px 4px 3px 0;font-size:0.85em;" data-chart-idx="' + idx + '">'
-                            + '\u00F0\u0178\u201C\u2039 ' + esc(cd.title) + '</button>';
+                            + 'ðŸ“‹ ' + esc(cd.title) + '</button>';
                     });                    html += '<div class="ai-table-render-area"></div>';
                     tableArea.innerHTML = html;
                 }
@@ -2124,7 +2124,7 @@ async function askAI() {
         }
 
         if (data.tipFound) {
-            addAIMessage('thinking', 'Tip found in knowledge base \u00E2\u0153\u201C');
+            addAIMessage('thinking', 'Tip found in knowledge base âœ“');
             var tipNote = $('ai-thinking');
             if (tipNote) tipNote.id = '';
         }
@@ -2174,10 +2174,10 @@ function renderSingleChart(container, cd, overrideType) {
     var _isBD = cd.id === 'vpc-breakdown' || cd.id === 'ec2other-breakdown';
     var _isMM = cd.monthColumns && cd.months && cd.months.length > 1;
     var types;
-    if (_isTS) types = [{key:'line',label:'\u00F0\u0178\u201C\u02C6 Line'},{key:'bar',label:'\u00F0\u0178\u201C\u0160 Bar'}];
-    else if (_isBD) types = [{key:'pie',label:'\u00F0\u0178\u00A5\u00A7 Pie'},{key:'bar',label:'\u00F0\u0178\u201C\u0160 Bar'},{key:'treemap',label:'\u00F0\u0178\u2014\u00BA\u00EF\u00B8\u008F Treemap'}];
-    else if (_isMM) types = [{key:'bar',label:'\u00F0\u0178\u201C\u0160 Grouped Bar'},{key:'line',label:'\u00F0\u0178\u201C\u02C6 Line'}];
-    else types = [{key:'bar',label:'\u00F0\u0178\u201C\u0160 Bar'},{key:'pie',label:'\u00F0\u0178\u00A5\u00A7 Pie'},{key:'line',label:'\u00F0\u0178\u201C\u02C6 Line'},{key:'treemap',label:'\u00F0\u0178\u2014\u00BA\u00EF\u00B8\u008F Treemap'}];
+    if (_isTS) types = [{key:'line',label:'ðŸ“ˆ Line'},{key:'bar',label:'ðŸ“Š Bar'}];
+    else if (_isBD) types = [{key:'pie',label:'ðŸ¥§ Pie'},{key:'bar',label:'ðŸ“Š Bar'},{key:'treemap',label:'ðŸ—ºï¸ Treemap'}];
+    else if (_isMM) types = [{key:'bar',label:'ðŸ“Š Grouped Bar'},{key:'line',label:'ðŸ“ˆ Line'}];
+    else types = [{key:'bar',label:'ðŸ“Š Bar'},{key:'pie',label:'ðŸ¥§ Pie'},{key:'line',label:'ðŸ“ˆ Line'},{key:'treemap',label:'ðŸ—ºï¸ Treemap'}];
     types.forEach(function(t) {
         var btn = document.createElement('button');
         btn.className = 'btn btn-outline btn-sm';
@@ -2307,7 +2307,7 @@ function renderTableWithChart(container, cd) {
     var table = document.createElement('table');
     table.style.cssText = 'width:100%;border-collapse:collapse;font-size:0.85em;color:#c9d1d9;';
 
-    // Header \u00E2\u20AC\u201D adapt for comparison or multi-month data
+    // Header â€” adapt for comparison or multi-month data
     var hasComparison = cd.data2 && cd.data2.length > 0;
     var hasMonthColumns = cd.monthColumns && cd.months && cd.months.length > 0;
     var thead = document.createElement('thead');
@@ -2454,25 +2454,25 @@ function renderTableWithChart(container, cd) {
 
     if (isTimeSeries) {
         chartTypes = [
-            { key: 'line', label: '\u00F0\u0178\u201C\u02C6 Line' },
-            { key: 'bar', label: '\u00F0\u0178\u201C\u0160 Bar' },
+            { key: 'line', label: 'ðŸ“ˆ Line' },
+            { key: 'bar', label: 'ðŸ“Š Bar' },
         ];
     } else if (isBreakdown) {
         chartTypes = [
-            { key: 'doughnut', label: '\u00F0\u0178\u008D\u00A9 Doughnut' },
-            { key: 'pie', label: '\u00F0\u0178\u00A5\u00A7 Pie' },
-            { key: 'bar', label: '\u00F0\u0178\u201C\u0160 Bar' },
+            { key: 'doughnut', label: 'ðŸ© Doughnut' },
+            { key: 'pie', label: 'ðŸ¥§ Pie' },
+            { key: 'bar', label: 'ðŸ“Š Bar' },
         ];
     } else if (hasMultiMonth) {
         chartTypes = [
-            { key: 'bar', label: '\u00F0\u0178\u201C\u0160 Grouped Bar' },
-            { key: 'line', label: '\u00F0\u0178\u201C\u02C6 Line' },
+            { key: 'bar', label: 'ðŸ“Š Grouped Bar' },
+            { key: 'line', label: 'ðŸ“ˆ Line' },
         ];
     } else {
         chartTypes = [
-            { key: 'bar', label: '\u00F0\u0178\u201C\u0160 Bar' },
-            { key: 'doughnut', label: '\u00F0\u0178\u008D\u00A9 Doughnut' },
-            { key: 'line', label: '\u00F0\u0178\u201C\u02C6 Line' },
+            { key: 'bar', label: 'ðŸ“Š Bar' },
+            { key: 'doughnut', label: 'ðŸ© Doughnut' },
+            { key: 'line', label: 'ðŸ“ˆ Line' },
         ];
     }
     var chartArea = document.createElement('div');
@@ -2510,12 +2510,12 @@ if (aiFontIncBtn) aiFontIncBtn.onclick = function() {
 };
 applyAIFontSize();
 
-// Refresh Findings button \u00E2\u20AC\u201D always visible in chat header
+// Refresh Findings button â€” always visible in chat header
 var aiRefreshFindingsBtn = $('ai-refresh-findings-btn');
 if (aiRefreshFindingsBtn) {
     aiRefreshFindingsBtn.onclick = async function() {
         aiRefreshFindingsBtn.disabled = true;
-        aiRefreshFindingsBtn.textContent = '\u00E2\u008F\u00B3 Scanning\u00E2\u20AC\u00A6';
+        aiRefreshFindingsBtn.textContent = 'â³ Scanningâ€¦';
         try {
             await _runScanFromChat();
         } finally {
@@ -2537,7 +2537,7 @@ if (aiChat) aiChat.onclick = function(e) {
             widget.querySelectorAll('.ai-fb-btn').forEach(function(b) { b.disabled = true; });
             var interactionId = msgDiv.getAttribute('data-interaction-id') || '';
             var answerEl = msgDiv.querySelector('.lab-msg-output');
-            var agentResponse = answerEl ? answerEl.textContent.replace('\u00F0\u0178\u201C\u2039 Copy', '').trim() : '';
+            var agentResponse = answerEl ? answerEl.textContent.replace('ðŸ“‹ Copy', '').trim() : '';
             var statusEl = widget.querySelector('.ai-fb-status');
             api('POST', '/members/accounts/ai-feedback', {
                 interactionId: interactionId,
@@ -2566,7 +2566,7 @@ if (aiChat) aiChat.onclick = function(e) {
             // Also send negative feedback immediately (without correction)
             var interactionId2 = msgDiv2.getAttribute('data-interaction-id') || '';
             var answerEl2 = msgDiv2.querySelector('.lab-msg-output');
-            var agentResponse2 = answerEl2 ? answerEl2.textContent.replace('\u00F0\u0178\u201C\u2039 Copy', '').trim() : '';
+            var agentResponse2 = answerEl2 ? answerEl2.textContent.replace('ðŸ“‹ Copy', '').trim() : '';
             widget2._fbPayload = {
                 interactionId: interactionId2,
                 feedbackScore: 'no',
@@ -2601,10 +2601,10 @@ if (aiChat) aiChat.onclick = function(e) {
     if (copyBtn) {
         var output = copyBtn.closest('.lab-msg-output');
         if (output) {
-            var text = output.textContent.replace('\u00F0\u0178\u201C\u2039 Copy', '').trim();
+            var text = output.textContent.replace('ðŸ“‹ Copy', '').trim();
             navigator.clipboard.writeText(text).then(function() {
-                copyBtn.textContent = '\u00E2\u0153\u201C Copied';
-                setTimeout(function() { copyBtn.textContent = '\u00F0\u0178\u201C\u2039 Copy'; }, 2000);
+                copyBtn.textContent = 'âœ“ Copied';
+                setTimeout(function() { copyBtn.textContent = 'ðŸ“‹ Copy'; }, 2000);
             });
         }
         return;
@@ -2619,7 +2619,7 @@ if (aiChat) aiChat.onclick = function(e) {
         }
         return;
     }
-    // Handle chart option buttons (legacy \u00E2\u20AC\u201D now handled via table flow)
+    // Handle chart option buttons (legacy â€” now handled via table flow)
     var chartBtn = e.target.closest('.ai-chart-btn');
     if (chartBtn) {
         var idx = parseInt(chartBtn.getAttribute('data-chart-idx'), 10);
@@ -2903,7 +2903,7 @@ function onTagFilterChange() {
     var noteEl = wrapper ? wrapper.querySelector('.tag-filter-note') : null;
     if (noteEl) noteEl.remove();
 
-    // Use scoped tag filter application \u00E2\u20AC\u201D only refreshes cost widgets
+    // Use scoped tag filter application â€” only refreshes cost widgets
     var dashTab = document.getElementById('dash-tab');
     if (dashTab && dashTab.style.display !== 'none') {
         _applyObserveTagFilter();
@@ -3030,7 +3030,7 @@ async function loadDashboardData() {
                 noteEl.style.cssText = 'font-size:0.7em;color:#d97706;margin-top:4px;width:100%;';
                 wrapper.appendChild(noteEl);
             }
-            if (noteEl) noteEl.textContent = '\u00E2\u0161\u00A0\u00EF\u00B8\u008F ' + data.tagFilterWarning;
+            if (noteEl) noteEl.textContent = 'âš ï¸ ' + data.tagFilterWarning;
         } else {
             // Clear any previous warning when filter is working
             if (noteEl) noteEl.remove();
@@ -3060,7 +3060,7 @@ function renderDashboardWidgets(data) {
     if (!skipKpi) {
     // KPI Bar (always visible, unchanged)
     var momColor = s.monthOverMonthChange <= 0 ? '#10b981' : '#ef4444';
-    var momArrow = s.monthOverMonthChange <= 0 ? '\u00E2\u2013\u00BC' : '\u00E2\u2013\u00B2';
+    var momArrow = s.monthOverMonthChange <= 0 ? 'â–¼' : 'â–²';
     var effColor = s.efficiencyScore >= 90 ? '#10b981' : s.efficiencyScore >= 75 ? '#f59e0b' : '#ef4444';
     // Build savings breakdown tooltip
     var savingsTooltip = '';
@@ -3079,10 +3079,10 @@ function renderDashboardWidgets(data) {
             '</div>' +
         _kpiCard('Accounts', (s.accountsAnalyzed || 0) + ' / ' + (s.totalAccounts || 0), '#6366f1');
 
-    // Budget KPI \u00E2\u20AC\u201D show budget status if budgets exist (loaded async)
+    // Budget KPI â€” show budget status if budgets exist (loaded async)
     _loadBudgetKPI(kpiBar);
 
-    // FinOps Score KPI \u00E2\u20AC\u201D show from cached healthcheck results
+    // FinOps Score KPI â€” show from cached healthcheck results
     _loadFinOpsScoreKPI(kpiBar, data);
     } // end if (!skipKpi)
 
@@ -3130,7 +3130,7 @@ function _goToTab(tabId, section) {
     }, 200);
 }
 
-// Budget KPI \u00E2\u20AC\u201D async load budget data and show in KPI bar
+// Budget KPI â€” async load budget data and show in KPI bar
 function _loadBudgetKPI(kpiBar) {
     // Remove existing budget KPI cards to prevent duplicates
     var existing = kpiBar.querySelectorAll('[data-kpi-type="budget"]');
@@ -3139,7 +3139,7 @@ function _loadBudgetKPI(kpiBar) {
     api('POST', '/members/budgets/list', {}).then(function(data) {
         var budgets = data.budgets || [];
         if (budgets.length === 0) {
-            // No budgets \u00E2\u20AC\u201D show "Set Budget" prompt
+            // No budgets â€” show "Set Budget" prompt
             var card = document.createElement('div');
             card.style.cssText = 'background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;padding:12px 16px;flex:1;min-width:130px;cursor:pointer;';
             card.title = 'Click to create a budget in the Plan tab';
@@ -3155,14 +3155,14 @@ function _loadBudgetKPI(kpiBar) {
         var budgetColor = pct >= 100 ? '#ef4444' : pct >= 75 ? '#f59e0b' : '#10b981';
         var card = document.createElement('div');
         card.style.cssText = 'background:#f0f4f8;border:1px solid #d0d7de;border-radius:8px;padding:12px 16px;flex:1;min-width:130px;cursor:pointer;';
-        card.title = 'Budget: ' + b.name + ' \u00E2\u20AC\u201D Click to manage budgets';
+        card.title = 'Budget: ' + b.name + ' â€” Click to manage budgets';
         card.setAttribute('data-kpi-type', 'budget');
         card.onclick = function() { _goToTab('plan-tab', 'plan-budget'); };
         card.innerHTML = '<div style="color:#6b7280;font-size:0.75em;">Budget (' + b.name.substring(0, 15) + ') \u25b6</div>'
             + '<div style="color:' + budgetColor + ';font-size:1.3em;font-weight:700;">$' + Math.round(b.actualSpend) + ' / $' + Math.round(b.limit) + '</div>'
             + '<div style="background:#e5e7eb;border-radius:3px;height:4px;margin-top:4px;"><div style="width:' + Math.min(pct, 100) + '%;height:100%;background:' + budgetColor + ';border-radius:3px;"></div></div>';
         kpiBar.appendChild(card);
-    }).catch(function() { /* silent \u00E2\u20AC\u201D budget KPI is optional */ });
+    }).catch(function() { /* silent â€” budget KPI is optional */ });
 }
 
 function _kpiCard(label, value, color) {
@@ -3187,11 +3187,11 @@ var DASH_WIDGET_DEFS = [
 
 // Observe tab section definitions
 var OBSERVE_SECTIONS = [
-    { id: 'observe-cost', label: 'Cost Analysis', icon: '\u00F0\u0178\u201C\u0160' },
-    { id: 'observe-commitments', label: 'Commitments', icon: '\u00F0\u0178\u2019\u00B0' },
-    { id: 'observe-metrics', label: 'Business Metrics', icon: '\u00F0\u0178\u201C\u02C6' },
-    { id: 'observe-health', label: 'Health & Score', icon: '\u00F0\u0178\u008F\u00A5' },
-    { id: 'observe-invoices', label: 'Invoices', icon: '\u00F0\u0178\u00A7\u00BE' }
+    { id: 'observe-cost', label: 'Cost Analysis', icon: 'ðŸ“Š' },
+    { id: 'observe-commitments', label: 'Commitments', icon: 'ðŸ’°' },
+    { id: 'observe-metrics', label: 'Business Metrics', icon: 'ðŸ“ˆ' },
+    { id: 'observe-health', label: 'Health & Score', icon: 'ðŸ¥' },
+    { id: 'observe-invoices', label: 'Invoices', icon: 'ðŸ§¾' }
 ];
 
 // Widget-to-section mapping: each section ID maps to an array of widget IDs
@@ -3205,7 +3205,7 @@ var OBSERVE_WIDGET_SECTIONS = {
 // Timer handle for pending ECharts resize on section switch
 var _observeResizeTimer = null;
 
-// Trigger ECharts resize on viewport threshold crossing (768px) \u00E2\u20AC\u201D Req 11.5
+// Trigger ECharts resize on viewport threshold crossing (768px) â€” Req 11.5
 var _lastViewportWide = window.innerWidth > 768;
 window.addEventListener('resize', function() {
     var nowWide = window.innerWidth > 768;
@@ -3268,7 +3268,7 @@ function _switchObserveSection(sectionId) {
     if (sectionId === 'observe-invoices') {
         if (typeof _populateDrilldownAccounts === 'function') _populateDrilldownAccounts();
         var ddRefBtn = document.getElementById('dd-refresh-btn');
-        if (ddRefBtn) { ddRefBtn.disabled = false; ddRefBtn.textContent = '\u00F0\u0178\u201D\u201E Refresh'; }
+        if (ddRefBtn) { ddRefBtn.disabled = false; ddRefBtn.textContent = 'ðŸ”„ Refresh'; }
         var ddCooldown = document.getElementById('dd-refresh-cooldown');
         if (ddCooldown) ddCooldown.style.display = 'none';
         var ddSel = document.getElementById('dd-account-select');
@@ -3343,13 +3343,13 @@ function _getObserveSectionLayout(sectionId) {
 /**
  * Save a section-specific widget layout to localStorage.
  * Serializes the layout array to JSON and writes to key 'observeLayout_{sectionId}'.
- * Handles localStorage write errors gracefully \u00E2\u20AC\u201D retains in-memory state on failure.
+ * Handles localStorage write errors gracefully â€” retains in-memory state on failure.
  */
 function _saveObserveSectionLayout(sectionId, layout) {
     try {
         localStorage.setItem('observeLayout_' + sectionId, JSON.stringify(layout));
     } catch(e) {
-        // Gracefully handle localStorage write errors \u00E2\u20AC\u201D retain in-memory state
+        // Gracefully handle localStorage write errors â€” retain in-memory state
     }
 }
 
@@ -3357,7 +3357,7 @@ function _saveObserveSectionLayout(sectionId, layout) {
  * Migrate the old flat dashWidgetLayout to per-section layouts.
  * - Skips if old key is not valid JSON array
  * - Skips if any per-section key already exists (idempotence)
- * - Builds reverse lookup (widgetId \u00E2\u2020\u2019 sectionId) from OBSERVE_WIDGET_SECTIONS
+ * - Builds reverse lookup (widgetId â†’ sectionId) from OBSERVE_WIDGET_SECTIONS
  * - Distributes old layout items to section arrays preserving order and visibility
  * - Writes all per-section layouts to localStorage
  * - Removes old dashWidgetLayout key only after all writes succeed
@@ -3365,21 +3365,21 @@ function _saveObserveSectionLayout(sectionId, layout) {
  * - Widgets not mapping to any section are silently discarded (Req 12.3)
  */
 function _migrateObserveLayout() {
-    // Check if migration is needed \u00E2\u20AC\u201D parse old layout
+    // Check if migration is needed â€” parse old layout
     var oldLayout = null;
     try { oldLayout = JSON.parse(localStorage.getItem('dashWidgetLayout')); } catch(e) {}
     if (!oldLayout || !Array.isArray(oldLayout)) return;
 
-    // Check if new layouts already exist (migration already done \u00E2\u20AC\u201D idempotence)
+    // Check if new layouts already exist (migration already done â€” idempotence)
     var alreadyMigrated = false;
     try {
         alreadyMigrated = OBSERVE_SECTIONS.some(function(s) {
             return localStorage.getItem('observeLayout_' + s.id) !== null;
         });
-    } catch(e) { return; } // localStorage unavailable \u00E2\u20AC\u201D skip migration
+    } catch(e) { return; } // localStorage unavailable â€” skip migration
     if (alreadyMigrated) return;
 
-    // Build reverse lookup: widgetId \u00E2\u2020\u2019 sectionId
+    // Build reverse lookup: widgetId â†’ sectionId
     var widgetToSection = {};
     Object.keys(OBSERVE_WIDGET_SECTIONS).forEach(function(sectionId) {
         OBSERVE_WIDGET_SECTIONS[sectionId].forEach(function(widgetId) {
@@ -3400,17 +3400,17 @@ function _migrateObserveLayout() {
         // Widgets not mapping to any section are silently discarded (Req 12.3)
     });
 
-    // Save per-section layouts \u00E2\u20AC\u201D track written keys for rollback on failure
+    // Save per-section layouts â€” track written keys for rollback on failure
     var writtenKeys = [];
     try {
         Object.keys(sectionLayouts).forEach(function(sectionId) {
             localStorage.setItem('observeLayout_' + sectionId, JSON.stringify(sectionLayouts[sectionId]));
             writtenKeys.push('observeLayout_' + sectionId);
         });
-        // All writes succeeded \u00E2\u20AC\u201D remove old key
+        // All writes succeeded â€” remove old key
         localStorage.removeItem('dashWidgetLayout');
     } catch(e) {
-        // Partial failure \u00E2\u20AC\u201D remove any written keys and retain old key for retry
+        // Partial failure â€” remove any written keys and retain old key for retry
         writtenKeys.forEach(function(key) {
             try { localStorage.removeItem(key); } catch(e2) {}
         });
@@ -3638,13 +3638,13 @@ function _applyObserveTagFilter() {
     dashDataCache = null;
     dashDataCacheKey = null;
 
-    // Only mark cost section as stale \u00E2\u20AC\u201D other sections remain unchanged
+    // Only mark cost section as stale â€” other sections remain unchanged
     _observeStaleSections['observe-cost'] = true;
 
     // Set flag to skip KPI bar re-render (tag filter only affects cost widgets)
     window._skipKpiBarRender = true;
 
-    // Reload dashboard data \u00E2\u20AC\u201D renderDashboardWidgets will only render the active section's charts
+    // Reload dashboard data â€” renderDashboardWidgets will only render the active section's charts
     // If cost section is active, it will re-render cost widgets with filtered data
     // If another section is active, cost section will be re-rendered when switched to
     loadDashboardData();
@@ -3845,7 +3845,7 @@ function _toggleTrendView(mode) {
 }
 
 // ============================================================
-// Cost by Service Treemap \u00E2\u20AC\u201D 2-phase drill-down
+// Cost by Service Treemap â€” 2-phase drill-down
 // ============================================================
 var _treemapChart = null;
 var _treemapLevel = 'services'; // 'services' | 'usageTypes'
@@ -3875,7 +3875,7 @@ function _renderTreemapServices() {
     if (old) old.remove();
 
     var treeData = _treemapServiceData.map(function(s, i) {
-        // Normalize service name \u00E2\u20AC\u201D strip Amazon/AWS prefix for display
+        // Normalize service name â€” strip Amazon/AWS prefix for display
         var displayName = s.service.replace(/^Amazon\s+/,'').replace(/^AWS\s+/,'');
         return {
             name: displayName,
@@ -3890,7 +3890,7 @@ function _renderTreemapServices() {
         tooltip: { formatter: function(p) {
             return '<b>' + (p.data.fullName || p.name) + '</b><br>$' + p.value.toFixed(2) +
                 (p.data.pct ? ' (' + p.data.pct + '%)' : '') +
-                '<br><span style="color:#aaa;font-size:11px;">Click to drill down \u00E2\u2013\u00BC</span>';
+                '<br><span style="color:#aaa;font-size:11px;">Click to drill down â–¼</span>';
         }},
         series: [{ type: 'treemap', data: treeData,
             label: { show: true, formatter: function(p) { return p.name + '\n$' + p.value.toFixed(2); }, fontSize: 11, color: '#fff' },
@@ -3916,7 +3916,7 @@ function _drillIntoService(serviceName, totalCost, pct, color) {
     var dd = _dashDrillDown[svcKey] || _dashDrillDown[svcKeyShort];
 
     if (!dd || !dd.usageTypes || dd.usageTypes.length === 0) {
-        // No usage type data \u00E2\u20AC\u201D show the side panel instead
+        // No usage type data â€” show the side panel instead
         _showServiceDrillPanel(serviceName, totalCost, pct, color);
         return;
     }
@@ -3930,11 +3930,11 @@ function _drillIntoService(serviceName, totalCost, pct, color) {
     breadcrumb.id = 'treemap-breadcrumb';
     breadcrumb.style.cssText = 'display:flex;align-items:center;gap:6px;padding:6px 0 4px;font-size:0.82em;';
     breadcrumb.innerHTML =
-        '<button onclick="_renderTreemapServices();" style="background:none;border:none;color:#6366f1;cursor:pointer;font-size:0.9em;padding:2px 6px;border-radius:4px;border:1px solid #6366f1;">\u00E2\u2020\u0090 All Services</button>' +
-        '<span style="color:#6b7280;">\u00E2\u20AC\u00BA</span>' +
+        '<button onclick="_renderTreemapServices();" style="background:none;border:none;color:#6366f1;cursor:pointer;font-size:0.9em;padding:2px 6px;border-radius:4px;border:1px solid #6366f1;">â† All Services</button>' +
+        '<span style="color:#6b7280;">â€º</span>' +
         '<span style="color:#e6edf3;font-weight:600;">' + esc(serviceName.replace(/^Amazon\s+/,'').replace(/^AWS\s+/,'')) + '</span>' +
         '<span style="color:#10b981;margin-left:4px;">$' + totalCost.toFixed(2) + '</span>' +
-        '<button onclick="_showServiceDrillPanel(' + JSON.stringify(serviceName) + ',' + totalCost + ',' + JSON.stringify(pct||'') + ',' + JSON.stringify(color||'#6366f1') + ');" style="background:none;border:none;color:#8b949e;cursor:pointer;font-size:0.85em;margin-left:auto;padding:2px 6px;border-radius:4px;border:1px solid #30363d;">Details \u00E2\u2020\u2014</button>';
+        '<button onclick="_showServiceDrillPanel(' + JSON.stringify(serviceName) + ',' + totalCost + ',' + JSON.stringify(pct||'') + ',' + JSON.stringify(color||'#6366f1') + ');" style="background:none;border:none;color:#8b949e;cursor:pointer;font-size:0.85em;margin-left:auto;padding:2px 6px;border-radius:4px;border:1px solid #30363d;">Details â†—</button>';
     el.parentNode.insertBefore(breadcrumb, el);
 
     // Build usage type treemap data
@@ -4004,7 +4004,7 @@ function _showServiceDrillPanel(serviceName, totalCost, pct, color) {
             '<div style="font-size:1.1em;font-weight:700;color:#e6edf3;">' + esc(serviceName.replace('Amazon ','').replace('AWS ','')) + '</div>' +
             '<div style="color:#10b981;font-size:1.3em;font-weight:700;">$' + (totalCost||0).toFixed(2) + (pct ? ' <span style="color:#6b7280;font-size:0.75em;">(' + pct + '%)</span>' : '') + '</div>' +
         '</div>' +
-        '<button onclick="document.getElementById(\'svc-drill-panel\').remove();" style="background:none;border:none;color:#8b949e;font-size:1.4em;cursor:pointer;padding:4px;">\u00E2\u0153\u2022</button>' +
+        '<button onclick="document.getElementById(\'svc-drill-panel\').remove();" style="background:none;border:none;color:#8b949e;font-size:1.4em;cursor:pointer;padding:4px;">âœ•</button>' +
     '</div>';
 
     var body = '<div style="padding:16px 20px;flex:1;">';
@@ -4044,7 +4044,7 @@ function _showServiceDrillPanel(serviceName, totalCost, pct, color) {
 
     // Chat link
     body += '<div style="margin-top:20px;padding-top:16px;border-top:1px solid #30363d;">' +
-        '<button onclick="_drillToChat(this);" data-svc="' + ea(serviceName) + '" class="btn btn-primary" style="width:100%;font-size:0.9em;">\u00F0\u0178\u2019\u00AC Ask AI about ' + esc(serviceName.replace('Amazon ','').replace('AWS ','')) + '</button>' +
+        '<button onclick="_drillToChat(this);" data-svc="' + ea(serviceName) + '" class="btn btn-primary" style="width:100%;font-size:0.9em;">ðŸ’¬ Ask AI about ' + esc(serviceName.replace('Amazon ','').replace('AWS ','')) + '</button>' +
     '</div>';
 
     body += '</div>';
@@ -4068,7 +4068,7 @@ function _drillToChat(btn) {
     _syncAccountSelection('dash');
     document.querySelector('[data-tab="ai-tab"]').click();
     setTimeout(function() {
-        var q = 'Break down my ' + serviceName + ' costs in detail \u00E2\u20AC\u201D what are the main usage types and how can I reduce them?';
+        var q = 'Break down my ' + serviceName + ' costs in detail â€” what are the main usage types and how can I reduce them?';
         if (aiQuestionInput) { aiQuestionInput.value = q; aiQuestionInput.focus(); }
     }, 300);
 }
@@ -4146,11 +4146,11 @@ function _renderRightsizing(rs, waste) {
         html += '<div style="font-size:0.8em;color:#8b949e;margin-bottom:4px;">Top Opportunities:</div>';
         rs.topOpportunities.slice(0, 4).forEach(function(o) {
             html += '<div style="font-size:0.8em;color:#c9d1d9;padding:3px 0;border-bottom:1px solid #21262d;">' +
-                '<span style="color:#f59e0b;">' + (o.currentType || '') + '</span> \u00E2\u2020\u2019 <span style="color:#10b981;">' + (o.recommendedType || '') + '</span>' +
+                '<span style="color:#f59e0b;">' + (o.currentType || '') + '</span> â†’ <span style="color:#10b981;">' + (o.recommendedType || '') + '</span>' +
                 ' <span style="color:#10b981;float:right;">-$' + (o.monthlySavings || 0).toFixed(2) + '/mo</span></div>';
         });
     } else {
-        html += '<div style="color:#10b981;font-size:0.85em;margin-top:8px;">No over-provisioned resources detected \u00E2\u0153\u201C</div>';
+        html += '<div style="color:#10b981;font-size:0.85em;margin-top:8px;">No over-provisioned resources detected âœ“</div>';
     }
     el.innerHTML = html;
 }
@@ -4164,7 +4164,7 @@ function _renderWaste(waste) {
                 esc(w.type) + ': ' + esc(w.resource) + ' <span style="color:#ef4444;float:right;">$' + (w.monthlyCost || 0).toFixed(2) + '</span></div>';
         });
     } else {
-        html += '<div style="color:#10b981;font-size:0.85em;">No waste detected \u00E2\u0153\u201C</div>';
+        html += '<div style="color:#10b981;font-size:0.85em;">No waste detected âœ“</div>';
     }
     // Add "Clean Up" navigation button if waste exists
     if (waste.items && waste.items.length > 0) {
@@ -4257,7 +4257,7 @@ function showAllocationRulesModal() {
         var config = allocRulesCache || {};
         var bus = (config.businessUnits || config || []);
         if (Array.isArray(bus) && bus.length > 0 && bus[0].matchType) {
-            // Legacy format \u00E2\u20AC\u201D convert
+            // Legacy format â€” convert
             var converted = {};
             bus.forEach(function(r) {
                 var bu = r.businessUnit || r.name || 'Default';
@@ -4917,7 +4917,7 @@ function _renderCostByTag(costByTag) {
         if (!_costByTagCurrentKey) _costByTagCurrentKey = tagKeysWithData[0];
     }
 
-    // Build tag key selector \u00E2\u20AC\u201D only tags with existing data
+    // Build tag key selector â€” only tags with existing data
     var html = '<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">';
     html += '<label style="font-size:12px;font-weight:600;color:#374151;">Tag Key:</label>';
     html += '<select id="dash-tag-key-select" style="padding:4px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;background:#fff;" onchange="_costByTagCurrentKey=this.value;_renderCostByTagChart();">';
@@ -5127,9 +5127,9 @@ function showEnableHourlyModal(accountId) {
             try {
                 var data = await api('POST', '/members/accounts/test', { accountId: accountId });
                 if (data.hourlyEnabled) {
-                    resultDiv.innerHTML = '<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:6px;padding:10px;color:#16a34a;font-size:0.9em;">\u00E2\u0153\u201C Hourly granularity is <strong>enabled</strong> on this account.</div>';
+                    resultDiv.innerHTML = '<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:6px;padding:10px;color:#16a34a;font-size:0.9em;">âœ“ Hourly granularity is <strong>enabled</strong> on this account.</div>';
                 } else {
-                    resultDiv.innerHTML = '<div style="background:#fff7ed;border:1px solid #fed7aa;border-radius:6px;padding:10px;color:#92400e;font-size:0.9em;">\u00E2\u0153\u2014 Hourly granularity is <strong>not yet enabled</strong>. After enabling in the console, wait 24\u201348 hours and check again.</div>';
+                    resultDiv.innerHTML = '<div style="background:#fff7ed;border:1px solid #fed7aa;border-radius:6px;padding:10px;color:#92400e;font-size:0.9em;">âœ— Hourly granularity is <strong>not yet enabled</strong>. After enabling in the console, wait 24\u201348 hours and check again.</div>';
                 }
                 await loadAccounts();
             } catch (err) {
@@ -5143,7 +5143,7 @@ function showEnableHourlyModal(accountId) {
 }
 
 // ============================================================
-// Act Tab \u00E2\u20AC\u201D Level 1 Resource Hygiene
+// Act Tab â€” Level 1 Resource Hygiene
 // ============================================================
 var _actScanData = null;
 var _actPendingCard = null;
@@ -5279,7 +5279,7 @@ function _switchActSection(section) {
 }
 
 // ============================================================
-// FinOps Settings Healthcheck \u00E2\u20AC\u201D Configure Tab
+// FinOps Settings Healthcheck â€” Configure Tab
 // ============================================================
 
 function _switchConfigSection(section) {
@@ -5378,8 +5378,8 @@ async function _scanFinOpsSettings() {
         if (typeBadge) {
             typeBadge.style.display = 'block';
             var badge = data.accountType === 'management'
-                ? '<span style="background:#fef3c7;color:#92400e;padding:4px 12px;border-radius:100px;font-size:0.85em;font-weight:600;">\u00F0\u0178\u2018\u2018 Management Account</span>'
-                : '<span style="background:#dbeafe;color:#1e40af;padding:4px 12px;border-radius:100px;font-size:0.85em;font-weight:600;">\u00F0\u0178\u201D\u2014 Linked Account</span>';
+                ? '<span style="background:#fef3c7;color:#92400e;padding:4px 12px;border-radius:100px;font-size:0.85em;font-weight:600;">ðŸ‘‘ Management Account</span>'
+                : '<span style="background:#dbeafe;color:#1e40af;padding:4px 12px;border-radius:100px;font-size:0.85em;font-weight:600;">ðŸ”— Linked Account</span>';
             typeBadge.innerHTML = badge;
             if (data.accountTypeNote) {
                 typeBadge.innerHTML += ' <span style="color:#6b7280;font-size:0.8em;margin-left:8px;">' + esc(data.accountTypeNote) + '</span>';
@@ -5390,12 +5390,12 @@ async function _scanFinOpsSettings() {
         if (errorBanner) {
             errorBanner.style.display = 'block';
             var errText = document.getElementById('finops-error-text');
-            if (errText) errText.textContent = '\u00E2\u009D\u0152 Scan failed: ' + (err.message || 'Unknown error');
+            if (errText) errText.textContent = 'âŒ Scan failed: ' + (err.message || 'Unknown error');
         }
         if (scoreBar) scoreBar.style.display = 'none';
         if (typeBadge) typeBadge.style.display = 'none';
     } finally {
-        if (scanBtn) { scanBtn.disabled = false; scanBtn.textContent = '\u00F0\u0178\u201D\u008D Scan Settings'; }
+        if (scanBtn) { scanBtn.disabled = false; scanBtn.textContent = 'ðŸ” Scan Settings'; }
     }
 }
 
@@ -5538,7 +5538,7 @@ async function _fixFinOpsSetting(accountId, fixAction, params) {
                             break;
                         }
                     }
-                    // Recalculate score \u00E2\u20AC\u201D only count slashmybill group
+                    // Recalculate score â€” only count slashmybill group
                     var scoreable = items.filter(function(it) { return it.group === 'slashmybill'; });
                     if (scoreable.length === 0) scoreable = items; // fallback for old data
                     var passed = scoreable.filter(function(it) { return it.status === 'pass'; }).length;
@@ -5562,7 +5562,7 @@ async function _fixFinOpsSetting(accountId, fixAction, params) {
         if (errorBanner) {
             errorBanner.style.display = 'block';
             var errText = document.getElementById('finops-error-text');
-            if (errText) errText.textContent = '\u00E2\u009D\u0152 Fix failed: ' + (err.message || 'Unknown error');
+            if (errText) errText.textContent = 'âŒ Fix failed: ' + (err.message || 'Unknown error');
         }
     }
 }
@@ -5609,7 +5609,7 @@ function _loadFinOpsScoreKPI(kpiBar, data) {
         kpiDiv.innerHTML =
             '<div style="color:#8b949e;font-size:0.75em;">FinOps Score</div>' +
             '<div style="color:#6b7280;font-size:1em;font-weight:600;">Not scanned</div>' +
-            '<div style="color:#6366f1;font-size:0.75em;margin-top:2px;cursor:pointer;" onclick="event.stopPropagation();switchToFinOpsSettings();">Scan \u00E2\u2020\u2019</div>';
+            '<div style="color:#6366f1;font-size:0.75em;margin-top:2px;cursor:pointer;" onclick="event.stopPropagation();switchToFinOpsSettings();">Scan â†’</div>';
     } else {
         // Aggregate scores across all accounts
         var totalPassed = 0, totalItems = 0;
@@ -5632,7 +5632,7 @@ function _loadFinOpsScoreKPI(kpiBar, data) {
 
 
 // ============================================================
-// Tag Policy \u00E2\u20AC\u201D Configure Tab
+// Tag Policy â€” Configure Tab
 // ============================================================
 
 var _tagPolicyCache = null;
@@ -5732,10 +5732,10 @@ function _injectFinOpsActCard(grid) {
     if (accountIds.length === 0) {
         card.innerHTML =
             '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">' +
-                '<span style="font-weight:600;color:#e6edf3;">\u00E2\u0161\u2122\u00EF\u00B8\u008F FinOps Settings</span>' +
+                '<span style="font-weight:600;color:#e6edf3;">âš™ï¸ FinOps Settings</span>' +
             '</div>' +
-            '<div style="color:#8b949e;font-size:0.88em;margin-bottom:12px;">Run a FinOps Settings scan in Configure \u00E2\u2020\u2019 FinOps Settings</div>' +
-            '<button onclick="switchToFinOpsSettings()" class="btn btn-outline btn-sm" style="font-size:0.82em;">Open Settings \u00E2\u2020\u2019</button>';
+            '<div style="color:#8b949e;font-size:0.88em;margin-bottom:12px;">Run a FinOps Settings scan in Configure â†’ FinOps Settings</div>' +
+            '<button onclick="switchToFinOpsSettings()" class="btn btn-outline btn-sm" style="font-size:0.82em;">Open Settings â†’</button>';
         grid.appendChild(card);
         return;
     }
@@ -5768,10 +5768,10 @@ function _injectFinOpsActCard(grid) {
     if (!isRecent && accountIds.length > 0) {
         card.innerHTML =
             '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">' +
-                '<span style="font-weight:600;color:#e6edf3;">\u00E2\u0161\u2122\u00EF\u00B8\u008F FinOps Settings</span>' +
+                '<span style="font-weight:600;color:#e6edf3;">âš™ï¸ FinOps Settings</span>' +
             '</div>' +
-            '<div style="color:#8b949e;font-size:0.88em;margin-bottom:12px;">Last scan is older than 24 hours. Run a new scan in Configure \u00E2\u2020\u2019 FinOps Settings.</div>' +
-            '<button onclick="switchToFinOpsSettings()" class="btn btn-outline btn-sm" style="font-size:0.82em;">Scan Settings \u00E2\u2020\u2019</button>';
+            '<div style="color:#8b949e;font-size:0.88em;margin-bottom:12px;">Last scan is older than 24 hours. Run a new scan in Configure â†’ FinOps Settings.</div>' +
+            '<button onclick="switchToFinOpsSettings()" class="btn btn-outline btn-sm" style="font-size:0.82em;">Scan Settings â†’</button>';
         grid.appendChild(card);
         return;
     }
@@ -5779,8 +5779,8 @@ function _injectFinOpsActCard(grid) {
     if (failingItems.length === 0) {
         card.innerHTML =
             '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">' +
-                '<span style="font-weight:600;color:#e6edf3;">\u00E2\u0161\u2122\u00EF\u00B8\u008F FinOps Settings</span>' +
-                '<span style="background:#064e3b;color:#6ee7b7;padding:2px 8px;border-radius:100px;font-size:0.75em;font-weight:600;">All Good \u00E2\u0153\u2026</span>' +
+                '<span style="font-weight:600;color:#e6edf3;">âš™ï¸ FinOps Settings</span>' +
+                '<span style="background:#064e3b;color:#6ee7b7;padding:2px 8px;border-radius:100px;font-size:0.75em;font-weight:600;">All Good âœ…</span>' +
             '</div>' +
             '<div style="color:#8b949e;font-size:0.88em;">All FinOps settings are configured. Score: ' + totalPassed + '/' + totalItems + '</div>';
         grid.appendChild(card);
@@ -5794,7 +5794,7 @@ function _injectFinOpsActCard(grid) {
 
     var itemsHtml = '<ul style="list-style:none;padding:0;margin:8px 0;">';
     failingItems.slice(0, 3).forEach(function(item) {
-        var icon = item.status === 'fail' ? '\u00E2\u009D\u0152' : '\u00E2\u0161\u2122\u00EF\u00B8\u008F';
+        var icon = item.status === 'fail' ? 'âŒ' : 'âš™ï¸';
         itemsHtml += '<li style="color:#c9d1d9;font-size:0.85em;padding:2px 0;">' + icon + ' ' + esc(item.name) + '</li>';
     });
     if (failingItems.length > 3) {
@@ -5804,12 +5804,12 @@ function _injectFinOpsActCard(grid) {
 
     card.innerHTML =
         '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">' +
-            '<span style="font-weight:600;color:#e6edf3;">\u00E2\u0161\u2122\u00EF\u00B8\u008F FinOps Settings</span>' +
+            '<span style="font-weight:600;color:#e6edf3;">âš™ï¸ FinOps Settings</span>' +
             '<span style="background:' + badgeColor + ';color:#fff;padding:2px 8px;border-radius:100px;font-size:0.75em;font-weight:600;">' + failingItems.length + ' issue' + (failingItems.length !== 1 ? 's' : '') + '</span>' +
         '</div>' +
         '<div style="color:#8b949e;font-size:0.88em;">Score: <span style="color:' + color + ';font-weight:600;">' + totalPassed + '/' + totalItems + '</span> configured</div>' +
         itemsHtml +
-        '<button onclick="switchToFinOpsSettings()" class="btn btn-primary btn-sm" style="font-size:0.82em;margin-top:4px;">Fix in Settings \u00E2\u2020\u2019</button>';
+        '<button onclick="switchToFinOpsSettings()" class="btn btn-primary btn-sm" style="font-size:0.82em;margin-top:4px;">Fix in Settings â†’</button>';
 
     grid.appendChild(card);
 }
@@ -5850,7 +5850,7 @@ async function _pollScanStatus(scanId, timeoutMs) {
             if (err.message === 'Scan failed') throw err;
         }
     }
-    throw { message: 'Scan timed out \u00E2\u20AC\u201D please try again' };
+    throw { message: 'Scan timed out â€” please try again' };
 }
 
 async function _actRunScan(accountIds) {
@@ -5860,28 +5860,28 @@ async function _actRunScan(accountIds) {
     var totalBanner = $('act-total-savings');
     var scanBtn = $('act-scan-btn');
 
-    if (status) status.textContent = '\u00F0\u0178\u201D\u008D Scanning accounts for idle resources\u00E2\u20AC\u00A6';
+    if (status) status.textContent = 'ðŸ” Scanning accounts for idle resourcesâ€¦';
     if (grid) grid.innerHTML = '';
     if (empty) empty.style.display = 'none';
     if (totalBanner) totalBanner.style.display = 'none';
-    if (scanBtn) { scanBtn.disabled = true; scanBtn.textContent = 'Scanning\u00E2\u20AC\u00A6'; }
+    if (scanBtn) { scanBtn.disabled = true; scanBtn.textContent = 'Scanningâ€¦'; }
 
-    // All 7 scan categories \u00E2\u20AC\u201D always shown regardless of findings
+    // All 7 scan categories â€” always shown regardless of findings
     var ALL_CATEGORIES = [
-        { type: 'elastic-ip',   icon: '\u00F0\u0178\u0152\u0090', title: 'Unassociated Elastic IPs',   cleanMsg: 'No unassociated Elastic IPs found' },
-        { type: 'ebs-volume',   icon: '\u00F0\u0178\u2019\u00BE', title: 'Unattached EBS Volumes',      cleanMsg: 'No unattached EBS volumes found' },
-        { type: 'load-balancer',icon: '\u00E2\u0161\u2013\u00EF\u00B8\u008F', title: 'Idle Load Balancers',         cleanMsg: 'No idle load balancers found' },
-        { type: 's3-lifecycle', icon: '\u00F0\u0178\u00AA\u00A3', title: 'S3 Buckets Needing Attention',cleanMsg: 'All S3 buckets have lifecycle policies' },
-        { type: 'ec2-idle',     icon: '\u00F0\u0178\u2013\u00A5\u00EF\u00B8\u008F', title: 'Idle EC2 Instances',          cleanMsg: 'No idle EC2 instances found (CPU \u00E2\u2030\u00A5 5%)' },
-        { type: 'rds-idle',     icon: '\u00F0\u0178\u2014\u201E\u00EF\u00B8\u008F', title: 'Idle RDS Instances',          cleanMsg: 'No idle RDS instances found' },
-        { type: 'ebs-snapshot', icon: '\u00F0\u0178\u201C\u00B8', title: 'Stale EBS Snapshots (180d+)', cleanMsg: 'No snapshots older than 180 days' },
+        { type: 'elastic-ip',   icon: 'ðŸŒ', title: 'Unassociated Elastic IPs',   cleanMsg: 'No unassociated Elastic IPs found' },
+        { type: 'ebs-volume',   icon: 'ðŸ’¾', title: 'Unattached EBS Volumes',      cleanMsg: 'No unattached EBS volumes found' },
+        { type: 'load-balancer',icon: 'âš–ï¸', title: 'Idle Load Balancers',         cleanMsg: 'No idle load balancers found' },
+        { type: 's3-lifecycle', icon: 'ðŸª£', title: 'S3 Buckets Needing Attention',cleanMsg: 'All S3 buckets have lifecycle policies' },
+        { type: 'ec2-idle',     icon: 'ðŸ–¥ï¸', title: 'Idle EC2 Instances',          cleanMsg: 'No idle EC2 instances found (CPU â‰¥ 5%)' },
+        { type: 'rds-idle',     icon: 'ðŸ—„ï¸', title: 'Idle RDS Instances',          cleanMsg: 'No idle RDS instances found' },
+        { type: 'ebs-snapshot', icon: 'ðŸ“¸', title: 'Stale EBS Snapshots (180d+)', cleanMsg: 'No snapshots older than 180 days' },
     ];
 
     try {
         var kickoff = await api('POST', '/members/actions/scan', { accountIds: accountIds });
         var data;
         if (kickoff.scanId) {
-            if (status) status.textContent = '\u00F0\u0178\u201D\u008D Scanning accounts (this may take up to 60s)\u00E2\u20AC\u00A6';
+            if (status) status.textContent = 'ðŸ” Scanning accounts (this may take up to 60s)â€¦';
             data = await _pollScanStatus(kickoff.scanId, 90000);
             data.cards = data.cards || [];
             data.findings = data.allFindings || data.findings || [];
@@ -5896,7 +5896,7 @@ async function _actRunScan(accountIds) {
         if (status) {
             var ts = new Date(data.scannedAt || Date.now()).toLocaleTimeString();
             status.textContent = 'Scanned ' + (data.scannedAccounts || 0) + ' account(s) at ' + ts +
-                (data.totalSavings > 0 ? ' \u00C2\u00B7 ' + (data.cards || []).filter(function(c){return c.count > 0;}).length + ' issue(s) found' : ' \u00C2\u00B7 All clean \u00E2\u0153\u2026');
+                (data.totalSavings > 0 ? ' Â· ' + (data.cards || []).filter(function(c){return c.count > 0;}).length + ' issue(s) found' : ' Â· All clean âœ…');
         }
 
         // Show total savings banner
@@ -5907,7 +5907,7 @@ async function _actRunScan(accountIds) {
         }
 
         // Build a map of returned cards by type (may have multiple accounts per type)
-        // Exclude optimization cards \u00E2\u20AC\u201D those render in the Optimize section
+        // Exclude optimization cards â€” those render in the Optimize section
         var cardsByType = {};
         (data.cards || []).forEach(function(card) {
             if (card.tipId && typeof OPTIMIZE_TIP_IDS !== 'undefined' && OPTIMIZE_TIP_IDS[card.tipId]) return;
@@ -5920,10 +5920,10 @@ async function _actRunScan(accountIds) {
             var found = cardsByType[cat.type] || [];
             if (found.length > 0) {
                 if (found.length === 1) {
-                    // Single account \u00E2\u20AC\u201D render as-is
+                    // Single account â€” render as-is
                     if (grid) grid.appendChild(_actBuildCard(found[0]));
                 } else {
-                    // Multiple accounts \u00E2\u20AC\u201D merge into one combined card
+                    // Multiple accounts â€” merge into one combined card
                     if (grid) grid.appendChild(_actBuildMergedCard(cat, found));
                 }
             } else {
@@ -5932,14 +5932,14 @@ async function _actRunScan(accountIds) {
             }
         });
 
-        // FinOps Settings card \u00E2\u20AC\u201D check for cached healthcheck results
+        // FinOps Settings card â€” check for cached healthcheck results
         _injectFinOpsActCard(grid);
 
     } catch (err) {
-        if (status) status.textContent = '\u00E2\u009D\u0152 Scan failed: ' + (err.message || 'Unknown error');
+        if (status) status.textContent = 'âŒ Scan failed: ' + (err.message || 'Unknown error');
         if (empty) empty.style.display = 'block';
     } finally {
-        if (scanBtn) { scanBtn.disabled = false; scanBtn.textContent = '\u00F0\u0178\u201D\u008D Scan for Waste'; }
+        if (scanBtn) { scanBtn.disabled = false; scanBtn.textContent = 'ðŸ” Scan for Waste'; }
     }
 }
 
@@ -5955,8 +5955,8 @@ function _actShowRedeployGuide(accountId) {
     card.style.cssText = 'background:#1c2128;border:1px solid #30363d;border-radius:12px;padding:24px;max-width:520px;width:95%;box-shadow:0 8px 32px rgba(0,0,0,0.5);';
     card.innerHTML =
         '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">' +
-            '<h3 style="margin:0;color:#e6edf3;">\u00F0\u0178\u201D\u0090 Update IAM Role Permissions</h3>' +
-            '<button onclick="document.getElementById(\'act-redeploy-modal\').remove();" style="background:none;border:none;color:#8b949e;font-size:1.3em;cursor:pointer;">\u00E2\u0153\u2022</button>' +
+            '<h3 style="margin:0;color:#e6edf3;">ðŸ” Update IAM Role Permissions</h3>' +
+            '<button onclick="document.getElementById(\'act-redeploy-modal\').remove();" style="background:none;border:none;color:#8b949e;font-size:1.3em;cursor:pointer;">âœ•</button>' +
         '</div>' +
         '<div style="background:#1e3a5f;border:1px solid #2563eb;border-radius:8px;padding:12px;margin-bottom:16px;font-size:0.85em;color:#93c5fd;">' +
             '<strong>Why is this needed?</strong> The SlashMyBill IAM role in your AWS account was deployed with read-only permissions. ' +
@@ -5966,20 +5966,20 @@ function _actShowRedeployGuide(accountId) {
             '<div style="font-weight:600;color:#e6edf3;margin-bottom:10px;">Steps to update:</div>' +
             '<ol style="color:#c9d1d9;font-size:0.85em;margin:0;padding-left:20px;line-height:1.8;">' +
                 '<li>Go to the <strong>Configure</strong> tab in SlashMyBill</li>' +
-                '<li>Click the <strong>\u00E2\u2020\u201C Download CF Template</strong> button for account <code style="background:#21262d;padding:1px 4px;border-radius:3px;">' + esc(accountId) + '</code></li>' +
-                '<li>In your AWS Console, go to <strong>CloudFormation \u00E2\u2020\u2019 Stacks</strong></li>' +
+                '<li>Click the <strong>â†“ Download CF Template</strong> button for account <code style="background:#21262d;padding:1px 4px;border-radius:3px;">' + esc(accountId) + '</code></li>' +
+                '<li>In your AWS Console, go to <strong>CloudFormation â†’ Stacks</strong></li>' +
                 '<li>Find the stack <code style="background:#21262d;padding:1px 4px;border-radius:3px;">SlashMyBill-Access-' + esc(accountId) + '</code></li>' +
-                '<li>Click <strong>Update</strong> \u00E2\u2020\u2019 <strong>Replace current template</strong> \u00E2\u2020\u2019 upload the new template</li>' +
+                '<li>Click <strong>Update</strong> â†’ <strong>Replace current template</strong> â†’ upload the new template</li>' +
                 '<li>Review the IAM permission changes and confirm the update</li>' +
             '</ol>' +
         '</div>' +
         '<div style="background:#3b1f1f;border:1px solid #7f1d1d;border-radius:8px;padding:10px;margin-bottom:16px;font-size:0.82em;color:#fca5a5;">' +
-            '\u00E2\u0161\u00A0 <strong>Important:</strong> The updated template adds write permissions for S3 (lifecycle + delete), EC2 (stop), RDS (delete), and EBS snapshots (delete). ' +
+            'âš  <strong>Important:</strong> The updated template adds write permissions for S3 (lifecycle + delete), EC2 (stop), RDS (delete), and EBS snapshots (delete). ' +
             'Only grant these if you trust SlashMyBill to perform cleanup actions on your behalf. All actions require explicit confirmation before execution.' +
         '</div>' +
         '<div style="display:flex;gap:8px;justify-content:flex-end;">' +
             '<button onclick="document.getElementById(\'act-redeploy-modal\').remove();" class="btn btn-outline">Close</button>' +
-            '<button onclick="document.getElementById(\'act-redeploy-modal\').remove();document.querySelector(\'[data-tab=accounts-tab]\').click();" class="btn btn-primary">Go to Configure Tab \u00E2\u2020\u2019</button>' +
+            '<button onclick="document.getElementById(\'act-redeploy-modal\').remove();document.querySelector(\'[data-tab=accounts-tab]\').click();" class="btn btn-primary">Go to Configure Tab â†’</button>' +
         '</div>';
 
     modal.appendChild(card);
@@ -5996,7 +5996,7 @@ function _actBuildCleanCard(cat) {
                 '<span style="font-size:1.6em;">' + cat.icon + '</span>' +
                 '<div style="font-weight:600;color:#8b949e;font-size:0.9em;">' + esc(cat.title) + '</div>' +
             '</div>' +
-            '<span style="color:#16a34a;font-size:1.1em;">\u00E2\u0153\u201C</span>' +
+            '<span style="color:#16a34a;font-size:1.1em;">âœ“</span>' +
         '</div>' +
         '<div style="color:#6b7280;font-size:0.82em;">' + esc(cat.cleanMsg) + '</div>';
     return div;
@@ -6048,7 +6048,7 @@ function _actBuildCard(card) {
     var headerHtml =
         '<div style="display:flex;justify-content:space-between;align-items:flex-start;">' +
             '<div style="display:flex;gap:10px;align-items:center;">' +
-                '<span style="font-size:1.8em;">' + (card.icon || '\u00F0\u0178\u201D\u00A7') + '</span>' +
+                '<span style="font-size:1.8em;">' + (card.icon || 'ðŸ”§') + '</span>' +
                 '<div>' +
                     '<div style="font-weight:700;color:#e6edf3;font-size:0.95em;">' + esc(card.title) + '</div>' +
                     '<div style="color:#6b7280;font-size:0.78em;">' + esc(card.accountLabel || '') + '</div>' +
@@ -6063,10 +6063,10 @@ function _actBuildCard(card) {
     if (card.type === 's3-lifecycle') {
         resourcesHtml = '<div style="display:flex;flex-direction:column;gap:4px;">';
         (card.resources || []).slice(0, 10).forEach(function(r) {
-            var sizeLabel = r.sizeGb > 0 ? (r.sizeGb >= 1 ? r.sizeGb.toFixed(2) + ' GB' : (r.sizeGb * 1024).toFixed(1) + ' MB') : '\u00E2\u20AC\u201D';
+            var sizeLabel = r.sizeGb > 0 ? (r.sizeGb >= 1 ? r.sizeGb.toFixed(2) + ' GB' : (r.sizeGb * 1024).toFixed(1) + ' MB') : 'â€”';
             var costLabel = r.estimatedMonthlyCost > 0 ? '$' + r.estimatedMonthlyCost.toFixed(3) + '/mo' : '';
             var activityLabel = r.lastModifiedDays != null
-                ? (r.lastModifiedDays >= 90 ? '<span style="color:#ef4444;">\u00E2\u0161\u00A0 ' + r.lastModifiedDays + 'd ago</span>' : '<span style="color:#6b7280;">' + r.lastModifiedDays + 'd ago</span>')
+                ? (r.lastModifiedDays >= 90 ? '<span style="color:#ef4444;">âš  ' + r.lastModifiedDays + 'd ago</span>' : '<span style="color:#6b7280;">' + r.lastModifiedDays + 'd ago</span>')
                 : '<span style="color:#6b7280;">empty</span>';
             var reasonBadges = (r.reasons || []).map(function(reason) {
                 if (reason === 'no_lifecycle') return '<span style="background:#1e3a5f;color:#60a5fa;font-size:0.7em;padding:1px 5px;border-radius:3px;margin-right:3px;">No lifecycle</span>';
@@ -6083,7 +6083,7 @@ function _actBuildCard(card) {
                             '<div style="font-size:0.75em;margin-top:2px;">' + reasonBadges + '</div>' +
                         '</div>' +
                         '<div style="text-align:right;white-space:nowrap;flex-shrink:0;">' +
-                            '<div style="font-size:0.78em;color:#e6edf3;">' + sizeLabel + (costLabel ? ' \u00C2\u00B7 <span style="color:#10b981;">' + costLabel + '</span>' : '') + '</div>' +
+                            '<div style="font-size:0.78em;color:#e6edf3;">' + sizeLabel + (costLabel ? ' Â· <span style="color:#10b981;">' + costLabel + '</span>' : '') + '</div>' +
                             '<div style="font-size:0.75em;margin-top:1px;">' + activityLabel + '</div>' +
                         '</div>' +
                         '<button class="btn btn-outline btn-sm act-browse-btn" data-bucket="' + ea(r.name) + '" data-account="' + ea(r._accountId || card.accountId) + '" style="font-size:0.75em;padding:2px 8px;flex-shrink:0;">Browse</button>' +
@@ -6102,34 +6102,34 @@ function _actBuildCard(card) {
                 var label = r.id || r.name || r.arn || '';
                 var sub = '';
                 if (card.type === 'ec2-idle') {
-                    sub = ' \u00C2\u00B7 ' + (r.type || '') + ' \u00C2\u00B7 CPU ' + (r.avgCpu != null ? r.avgCpu + '%' : '?');
-                    if (r.inAsg) sub += ' \u00C2\u00B7 \u00E2\u0161\u00A0 In ASG';
+                    sub = ' Â· ' + (r.type || '') + ' Â· CPU ' + (r.avgCpu != null ? r.avgCpu + '%' : '?');
+                    if (r.inAsg) sub += ' Â· âš  In ASG';
                 } else if (card.type === 'rds-idle') {
-                    sub = ' \u00C2\u00B7 ' + (r.class || '') + ' \u00C2\u00B7 ' + (r.engine || '') + ' \u00C2\u00B7 CPU ' + (r.avgCpu != null ? r.avgCpu + '%' : '?');
+                    sub = ' Â· ' + (r.class || '') + ' Â· ' + (r.engine || '') + ' Â· CPU ' + (r.avgCpu != null ? r.avgCpu + '%' : '?');
                 } else if (card.type === 'ebs-snapshot') {
-                    sub = ' \u00C2\u00B7 ' + (r.size || 0) + ' GB \u00C2\u00B7 ' + (r.ageDays || 0) + 'd old';
+                    sub = ' Â· ' + (r.size || 0) + ' GB Â· ' + (r.ageDays || 0) + 'd old';
                 } else {
-                    sub = r.ip ? ' \u00C2\u00B7 ' + r.ip : r.size ? ' \u00C2\u00B7 ' + r.size + ' GB ' + (r.type || '') : r.dns ? ' \u00C2\u00B7 ' + r.dns.substring(0, 28) : '';
+                    sub = r.ip ? ' Â· ' + r.ip : r.size ? ' Â· ' + r.size + ' GB ' + (r.type || '') : r.dns ? ' Â· ' + r.dns.substring(0, 28) : '';
                 }
                 return '<div style="font-size:0.78em;color:#c9d1d9;padding:2px 0;border-bottom:1px solid #21262d;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="' + ea(label) + '">' +
-                    '<span style="color:#6366f1;">\u00E2\u2013\u00B8</span> ' + esc(label.length > 42 ? label.substring(0, 42) + '\u00E2\u20AC\u00A6' : label) + '<span style="color:#6b7280;">' + esc(sub) + '</span></div>';
+                    '<span style="color:#6366f1;">â–¸</span> ' + esc(label.length > 42 ? label.substring(0, 42) + 'â€¦' : label) + '<span style="color:#6b7280;">' + esc(sub) + '</span></div>';
             }).join('') +
             (card.resources && card.resources.length > 8 ? '<div style="color:#6b7280;font-size:0.75em;padding-top:4px;">+' + (card.resources.length - 8) + ' more</div>' : '') +
             '</div>';
     }
 
-    var cleanupLabel = card.type === 's3-lifecycle' ? '\u00F0\u0178\u00A7\u00B9 Apply Lifecycle Rules'
-        : card.type === 'ec2-idle' ? '\u00E2\u008F\u00B9 Stop Instances'
-        : card.type === 'rds-idle' ? '\u00F0\u0178\u2014\u2018 Delete (with snapshot)'
-        : card.type === 'ebs-snapshot' ? '\u00F0\u0178\u2014\u2018 Delete Snapshots'
-        : '\u00F0\u0178\u00A7\u00B9 Clean Up Now';
+    var cleanupLabel = card.type === 's3-lifecycle' ? 'ðŸ§¹ Apply Lifecycle Rules'
+        : card.type === 'ec2-idle' ? 'â¹ Stop Instances'
+        : card.type === 'rds-idle' ? 'ðŸ—‘ Delete (with snapshot)'
+        : card.type === 'ebs-snapshot' ? 'ðŸ—‘ Delete Snapshots'
+        : 'ðŸ§¹ Clean Up Now';
 
     // Write-action types need the updated CF template
     var needsWritePerms = ['s3-lifecycle', 'ec2-idle', 'rds-idle', 'ebs-snapshot', 'ebs-volume', 'elastic-ip', 'load-balancer'].indexOf(card.type) !== -1;
     var permWarningHtml = needsWritePerms
         ? '<div style="background:#1e3a5f;border:1px solid #2563eb;border-radius:6px;padding:8px 10px;font-size:0.78em;color:#93c5fd;">' +
-            '\u00E2\u0161\u00A0 <strong>Requires updated IAM role.</strong> Write actions (delete/lifecycle) need the latest CloudFormation template deployed in your AWS account. ' +
-            '<button onclick="_actShowRedeployGuide(\'' + ea(card.accountId) + '\')" style="background:none;border:none;color:#60a5fa;cursor:pointer;text-decoration:underline;font-size:1em;padding:0;">How to update \u00E2\u2020\u2019</button>' +
+            'âš  <strong>Requires updated IAM role.</strong> Write actions (delete/lifecycle) need the latest CloudFormation template deployed in your AWS account. ' +
+            '<button onclick="_actShowRedeployGuide(\'' + ea(card.accountId) + '\')" style="background:none;border:none;color:#60a5fa;cursor:pointer;text-decoration:underline;font-size:1em;padding:0;">How to update â†’</button>' +
           '</div>'
         : '';
 
@@ -6171,11 +6171,11 @@ async function _actBrowseBucket(accountId, bucketName) {
     card.style.cssText = 'background:#1c2128;border:1px solid #30363d;border-radius:12px;width:700px;max-width:95vw;max-height:85vh;display:flex;flex-direction:column;box-shadow:0 8px 32px rgba(0,0,0,0.5);';
 
     card.innerHTML =
-        // \u00E2\u201D\u20AC\u00E2\u201D\u20AC Header \u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC
+        // â”€â”€ Header â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         '<div style="padding:16px 20px;border-bottom:1px solid #30363d;display:flex;justify-content:space-between;align-items:center;flex-shrink:0;">' +
             '<div>' +
-                '<div style="font-weight:700;color:#e6edf3;font-size:1em;">\u00F0\u0178\u00AA\u00A3 ' + esc(bucketName) + '</div>' +
-                '<div id="browse-summary" style="color:#6b7280;font-size:0.8em;margin-top:2px;">Loading\u00E2\u20AC\u00A6</div>' +
+                '<div style="font-weight:700;color:#e6edf3;font-size:1em;">ðŸª£ ' + esc(bucketName) + '</div>' +
+                '<div id="browse-summary" style="color:#6b7280;font-size:0.8em;margin-top:2px;">Loadingâ€¦</div>' +
             '</div>' +
             '<div style="display:flex;gap:8px;align-items:center;">' +
                 '<select id="browse-sort" style="background:#161b22;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:4px 8px;font-size:0.82em;">' +
@@ -6183,25 +6183,25 @@ async function _actBrowseBucket(accountId, bucketName) {
                     '<option value="largest">Largest first</option>' +
                     '<option value="newest">Newest first</option>' +
                 '</select>' +
-                '<button onclick="document.getElementById(\'act-browse-modal\').remove();" style="background:none;border:none;color:#8b949e;font-size:1.3em;cursor:pointer;padding:4px;">\u00E2\u0153\u2022</button>' +
+                '<button onclick="document.getElementById(\'act-browse-modal\').remove();" style="background:none;border:none;color:#8b949e;font-size:1.3em;cursor:pointer;padding:4px;">âœ•</button>' +
             '</div>' +
         '</div>' +
-        // \u00E2\u201D\u20AC\u00E2\u201D\u20AC Aged banner \u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC
+        // â”€â”€ Aged banner â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         '<div id="browse-aged-banner" style="display:none;background:#3b1f1f;border-bottom:1px solid #7f1d1d;padding:8px 20px;font-size:0.82em;color:#fca5a5;flex-shrink:0;"></div>' +
-        // \u00E2\u201D\u20AC\u00E2\u201D\u20AC Object list \u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC
+        // â”€â”€ Object list â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         '<div id="browse-body" style="flex:1;overflow-y:auto;padding:0;min-height:0;">' +
-            '<div style="padding:40px;text-align:center;color:#6b7280;">Loading bucket contents\u00E2\u20AC\u00A6</div>' +
+            '<div style="padding:40px;text-align:center;color:#6b7280;">Loading bucket contentsâ€¦</div>' +
         '</div>' +
-        // \u00E2\u201D\u20AC\u00E2\u201D\u20AC Action footer \u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC
+        // â”€â”€ Action footer â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         '<div style="padding:14px 20px;border-top:1px solid #30363d;display:flex;flex-direction:column;gap:8px;flex-shrink:0;background:#161b22;border-radius:0 0 12px 12px;">' +
             '<div style="background:#1e3a5f;border:1px solid #2563eb;border-radius:6px;padding:8px 10px;font-size:0.78em;color:#93c5fd;">' +
-                '\u00E2\u0161\u00A0 <strong>Write actions require the updated IAM role.</strong> If you get an "Access Denied" error, redeploy the CloudFormation template from the Configure tab. ' +
-                '<button onclick="_actShowRedeployGuide(\'' + ea(accountId) + '\')" style="background:none;border:none;color:#60a5fa;cursor:pointer;text-decoration:underline;font-size:1em;padding:0;">How to update \u00E2\u2020\u2019</button>' +
+                'âš  <strong>Write actions require the updated IAM role.</strong> If you get an "Access Denied" error, redeploy the CloudFormation template from the Configure tab. ' +
+                '<button onclick="_actShowRedeployGuide(\'' + ea(accountId) + '\')" style="background:none;border:none;color:#60a5fa;cursor:pointer;text-decoration:underline;font-size:1em;padding:0;">How to update â†’</button>' +
             '</div>' +
             '<div style="display:flex;gap:10px;align-items:center;">' +
                 '<div style="flex:1;font-size:0.8em;color:#6b7280;">Actions apply to the entire bucket</div>' +
-                '<button id="browse-lifecycle-btn" class="btn btn-outline btn-sm" style="font-size:0.82em;border-color:#6366f1;color:#6366f1;">\u00F0\u0178\u201C\u2039 Apply Lifecycle Policy</button>' +
-                '<button id="browse-delete-btn" class="btn btn-sm" style="font-size:0.82em;background:#7f1d1d;color:#fca5a5;border:1px solid #ef4444;">\u00F0\u0178\u2014\u2018 Delete All Objects</button>' +
+                '<button id="browse-lifecycle-btn" class="btn btn-outline btn-sm" style="font-size:0.82em;border-color:#6366f1;color:#6366f1;">ðŸ“‹ Apply Lifecycle Policy</button>' +
+                '<button id="browse-delete-btn" class="btn btn-sm" style="font-size:0.82em;background:#7f1d1d;color:#fca5a5;border:1px solid #ef4444;">ðŸ—‘ Delete All Objects</button>' +
             '</div>' +
         '</div>';
 
@@ -6216,7 +6216,7 @@ async function _actBrowseBucket(accountId, bucketName) {
         var bodyEl = document.getElementById('browse-body');
         var summaryEl = document.getElementById('browse-summary');
         var agedBanner = document.getElementById('browse-aged-banner');
-        if (bodyEl) bodyEl.innerHTML = '<div style="padding:40px;text-align:center;color:#6b7280;">Loading\u00E2\u20AC\u00A6</div>';
+        if (bodyEl) bodyEl.innerHTML = '<div style="padding:40px;text-align:center;color:#6b7280;">Loadingâ€¦</div>';
 
         try {
             var data = await api('POST', '/members/actions/browse-bucket', {
@@ -6229,16 +6229,16 @@ async function _actBrowseBucket(accountId, bucketName) {
             if (summaryEl) {
                 summaryEl.innerHTML =
                     '<span style="color:#e6edf3;">' + (data.totalObjects || 0).toLocaleString() + ' objects</span>' +
-                    ' \u00C2\u00B7 <span style="color:#e6edf3;">' + (data.totalSizeGb || 0).toFixed(3) + ' GB</span>' +
-                    ' \u00C2\u00B7 <span style="color:#10b981;">$' + (data.estimatedMonthlyCost || 0).toFixed(3) + '/mo</span>' +
+                    ' Â· <span style="color:#e6edf3;">' + (data.totalSizeGb || 0).toFixed(3) + ' GB</span>' +
+                    ' Â· <span style="color:#10b981;">$' + (data.estimatedMonthlyCost || 0).toFixed(3) + '/mo</span>' +
                     (data.truncated ? ' <span style="color:#f59e0b;">(showing first 500)</span>' : '');
             }
 
             if (agedBanner) {
                 if (data.agedObjects > 0) {
                     agedBanner.style.display = 'block';
-                    agedBanner.innerHTML = '\u00E2\u0161\u00A0 <strong>' + data.agedObjects + ' objects</strong> are 90+ days old (' +
-                        data.agedSizeGb.toFixed(3) + ' GB \u00C2\u00B7 $' + data.agedMonthlyCost.toFixed(3) + '/mo) \u00E2\u20AC\u201D candidates for Glacier Instant Retrieval';
+                    agedBanner.innerHTML = 'âš  <strong>' + data.agedObjects + ' objects</strong> are 90+ days old (' +
+                        data.agedSizeGb.toFixed(3) + ' GB Â· $' + data.agedMonthlyCost.toFixed(3) + '/mo) â€” candidates for Glacier Instant Retrieval';
                 } else {
                     agedBanner.style.display = 'none';
                 }
@@ -6266,13 +6266,13 @@ async function _actBrowseBucket(accountId, bucketName) {
                         ? (obj.sizeBytes / 1048576).toFixed(1) + ' MB'
                         : (obj.sizeBytes / 1024).toFixed(0) + ' KB';
                 var ageColor = obj.aged ? '#ef4444' : obj.ageDays > 30 ? '#f59e0b' : '#6b7280';
-                var keyShort = obj.key.length > 55 ? '\u00E2\u20AC\u00A6' + obj.key.slice(-52) : obj.key;
+                var keyShort = obj.key.length > 55 ? 'â€¦' + obj.key.slice(-52) : obj.key;
                 rows +=
                     '<tr style="border-bottom:1px solid #21262d;" onmouseenter="this.style.background=\'#21262d\'" onmouseleave="this.style.background=\'\'">' +
                         '<td style="padding:6px 12px;color:#c9d1d9;max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + ea(obj.key) + '">' + esc(keyShort) + '</td>' +
                         '<td style="padding:6px 12px;text-align:right;color:#e6edf3;white-space:nowrap;">' + sizeStr + '</td>' +
                         '<td style="padding:6px 12px;text-align:right;color:#6b7280;white-space:nowrap;">' + esc(obj.lastModified) + '</td>' +
-                        '<td style="padding:6px 12px;text-align:right;white-space:nowrap;color:' + ageColor + ';font-weight:' + (obj.aged ? '600' : '400') + ';">' + obj.ageDays + 'd' + (obj.aged ? ' \u00E2\u0161\u00A0' : '') + '</td>' +
+                        '<td style="padding:6px 12px;text-align:right;white-space:nowrap;color:' + ageColor + ';font-weight:' + (obj.aged ? '600' : '400') + ';">' + obj.ageDays + 'd' + (obj.aged ? ' âš ' : '') + '</td>' +
                         '<td style="padding:6px 12px;color:#6b7280;font-size:0.9em;">' + esc(obj.storageClass || 'STANDARD') + '</td>' +
                     '</tr>';
             });
@@ -6283,12 +6283,12 @@ async function _actBrowseBucket(accountId, bucketName) {
         }
     }
 
-    // \u00E2\u201D\u20AC\u00E2\u201D\u20AC Apply Lifecycle Policy button \u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC
+    // â”€â”€ Apply Lifecycle Policy button â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     var lifecycleBtn = document.getElementById('browse-lifecycle-btn');
     if (lifecycleBtn) {
         lifecycleBtn.onclick = async function() {
             if (!confirm('Apply S3 Intelligent-Tiering lifecycle policy to "' + bucketName + '"?\n\nThis will transition objects older than 90 days to Intelligent-Tiering automatically. This is safe and reversible.')) return;
-            lifecycleBtn.disabled = true; lifecycleBtn.textContent = '\u00E2\u008F\u00B3 Applying\u00E2\u20AC\u00A6';
+            lifecycleBtn.disabled = true; lifecycleBtn.textContent = 'â³ Applyingâ€¦';
             try {
                 var result = await api('POST', '/members/actions/execute', {
                     accountId: accountId,
@@ -6296,25 +6296,25 @@ async function _actBrowseBucket(accountId, bucketName) {
                     resourceIds: [bucketName],
                 });
                 var ok = (result.succeeded || []).length > 0;
-                lifecycleBtn.textContent = ok ? '\u00E2\u0153\u201C Policy Applied' : '\u00E2\u0161\u00A0 Failed';
+                lifecycleBtn.textContent = ok ? 'âœ“ Policy Applied' : 'âš  Failed';
                 lifecycleBtn.style.color = ok ? '#10b981' : '#ef4444';
                 lifecycleBtn.style.borderColor = ok ? '#10b981' : '#ef4444';
                 if (!ok && result.failed && result.failed[0]) notify('Lifecycle error: ' + result.failed[0].error, 'error');
             } catch (err) {
-                lifecycleBtn.disabled = false; lifecycleBtn.textContent = '\u00F0\u0178\u201C\u2039 Apply Lifecycle Policy';
+                lifecycleBtn.disabled = false; lifecycleBtn.textContent = 'ðŸ“‹ Apply Lifecycle Policy';
                 notify('Failed: ' + (err.message || 'Unknown error'), 'error');
             }
         };
     }
 
-    // \u00E2\u201D\u20AC\u00E2\u201D\u20AC Delete All Objects button \u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC\u00E2\u201D\u20AC
+    // â”€â”€ Delete All Objects button â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     var deleteBtn = document.getElementById('browse-delete-btn');
     if (deleteBtn) {
         deleteBtn.onclick = async function() {
             var objCount = _browseData ? _browseData.totalObjects : '?';
             var sizeGb = _browseData ? _browseData.totalSizeGb.toFixed(3) : '?';
-            if (!confirm('\u00E2\u0161\u00A0 DELETE ALL OBJECTS in "' + bucketName + '"?\n\n' + objCount + ' objects \u00C2\u00B7 ' + sizeGb + ' GB\n\nThis is IRREVERSIBLE. The bucket itself will remain but all contents will be permanently deleted.\n\nType OK to confirm.')) return;
-            deleteBtn.disabled = true; deleteBtn.textContent = '\u00E2\u008F\u00B3 Deleting\u00E2\u20AC\u00A6';
+            if (!confirm('âš  DELETE ALL OBJECTS in "' + bucketName + '"?\n\n' + objCount + ' objects Â· ' + sizeGb + ' GB\n\nThis is IRREVERSIBLE. The bucket itself will remain but all contents will be permanently deleted.\n\nType OK to confirm.')) return;
+            deleteBtn.disabled = true; deleteBtn.textContent = 'â³ Deletingâ€¦';
             try {
                 var result = await api('POST', '/members/actions/execute', {
                     accountId: accountId,
@@ -6322,14 +6322,14 @@ async function _actBrowseBucket(accountId, bucketName) {
                     resourceIds: [bucketName],
                 });
                 var deleted = (result.succeeded || []).length > 0 ? result.succeeded[0].deleted || 0 : 0;
-                deleteBtn.textContent = '\u00E2\u0153\u201C ' + deleted + ' objects deleted';
+                deleteBtn.textContent = 'âœ“ ' + deleted + ' objects deleted';
                 deleteBtn.style.background = '#14532d';
                 deleteBtn.style.color = '#6ee7b7';
                 deleteBtn.style.borderColor = '#16a34a';
                 // Reload the browse view
                 setTimeout(function() { loadBrowse(document.getElementById('browse-sort') ? document.getElementById('browse-sort').value : 'oldest'); }, 1000);
             } catch (err) {
-                deleteBtn.disabled = false; deleteBtn.textContent = '\u00F0\u0178\u2014\u2018 Delete All Objects';
+                deleteBtn.disabled = false; deleteBtn.textContent = 'ðŸ—‘ Delete All Objects';
                 notify('Delete failed: ' + (err.message || 'Unknown error'), 'error');
             }
         };
@@ -6353,9 +6353,9 @@ function _actShowConfirm(card) {
     if (!dialog) return;
 
     if (title) title.textContent = 'Confirm: ' + card.title;
-    if (body) body.textContent = card.description + ' \u00E2\u20AC\u201D ' + (card.resources || []).length + ' resource(s) will be affected in ' + (card.accountLabel || card.accountId) + '.';
+    if (body) body.textContent = card.description + ' â€” ' + (card.resources || []).length + ' resource(s) will be affected in ' + (card.accountLabel || card.accountId) + '.';
     if (resDiv) resDiv.innerHTML = (card.resources || []).map(function(r) {
-        return '<div style="padding:2px 0;">\u00E2\u2013\u00B8 ' + esc(r.id || r.name || r.arn || '') + (r.ip ? ' (' + r.ip + ')' : '') + (r.size ? ' \u00E2\u20AC\u201D ' + r.size + ' GB' : '') + '</div>';
+        return '<div style="padding:2px 0;">â–¸ ' + esc(r.id || r.name || r.arn || '') + (r.ip ? ' (' + r.ip + ')' : '') + (r.size ? ' â€” ' + r.size + ' GB' : '') + '</div>';
     }).join('');
 
     if (execBtn) {
@@ -6371,8 +6371,8 @@ async function _actExecute(card) {
     var status = $('act-scan-status');
     var cleanupBtn = document.querySelector('[data-card-id="' + card.cardId + '"]');
 
-    if (cleanupBtn) { cleanupBtn.disabled = true; cleanupBtn.textContent = '\u00E2\u008F\u00B3 Executing\u00E2\u20AC\u00A6'; }
-    if (status) status.textContent = '\u00E2\u0161\u00A1 Executing cleanup for ' + card.title + '\u00E2\u20AC\u00A6';
+    if (cleanupBtn) { cleanupBtn.disabled = true; cleanupBtn.textContent = 'â³ Executingâ€¦'; }
+    if (status) status.textContent = 'âš¡ Executing cleanup for ' + card.title + 'â€¦';
 
     // Build resource IDs list based on type
     var resourceIds = (card.resources || []).map(function(r) {
@@ -6395,8 +6395,8 @@ async function _actExecute(card) {
 
         var succeeded = (result.succeeded || []).length;
         var failed = (result.failed || []).length;
-        var msg = '\u00E2\u0153\u2026 ' + succeeded + ' resource(s) cleaned up';
-        if (failed > 0) msg += ', \u00E2\u0161\u00A0\u00EF\u00B8\u008F ' + failed + ' skipped (safety check or error)';
+        var msg = 'âœ… ' + succeeded + ' resource(s) cleaned up';
+        if (failed > 0) msg += ', âš ï¸ ' + failed + ' skipped (safety check or error)';
         if (status) status.textContent = msg;
         notify(msg, succeeded > 0 ? 'success' : 'error');
 
@@ -6415,16 +6415,16 @@ async function _actExecute(card) {
         }
 
     } catch (err) {
-        if (status) status.textContent = '\u00E2\u009D\u0152 Execution failed: ' + (err.message || 'Unknown error');
+        if (status) status.textContent = 'âŒ Execution failed: ' + (err.message || 'Unknown error');
         notify('Execution failed: ' + (err.message || 'Unknown error'), 'error');
-        if (cleanupBtn) { cleanupBtn.disabled = false; cleanupBtn.textContent = '\u00F0\u0178\u00A7\u00B9 Clean Up Now'; }
+        if (cleanupBtn) { cleanupBtn.disabled = false; cleanupBtn.textContent = 'ðŸ§¹ Clean Up Now'; }
     }
 }
 
-// Populate account select when Act tab is clicked \u00E2\u20AC\u201D handled by activateMemberTab
+// Populate account select when Act tab is clicked â€” handled by activateMemberTab
 
 // ============================================================
-// Phase 2 \u00E2\u20AC\u201D Chat Tab "Top Findings" Widget
+// Phase 2 â€” Chat Tab "Top Findings" Widget
 // ============================================================
 var _findingsWidgetOpen = true;
 var _lastScanData = null;
@@ -6487,7 +6487,7 @@ function _renderFindingsWidget(scan) {
     }).slice(0, 5);
     var totalSavings = parseFloat(scan.totalSavings || 0);
 
-    if (title) title.textContent = 'Top Findings  \u00C2\u00B7  $' + totalSavings.toFixed(2) + '/mo potential savings';
+    if (title) title.textContent = 'Top Findings  Â·  $' + totalSavings.toFixed(2) + '/mo potential savings';
     if (badge && findings.length > 0) { badge.style.display = 'inline'; badge.textContent = findings.length; }
     if (ts && scan.scannedAt) {
         var d = new Date(scan.scannedAt);
@@ -6498,11 +6498,11 @@ function _renderFindingsWidget(scan) {
     if (!_findingsWidgetOpen) {
         list.style.display = 'none';
         var chev = $('ai-findings-chevron');
-        if (chev) chev.textContent = '\u00E2\u2013\u00B6';
+        if (chev) chev.textContent = 'â–¶';
     }
 
     if (findings.length === 0) {
-        list.innerHTML = '<div style="padding:10px 14px;color:#10b981;font-size:0.82em;">\u00E2\u0153\u2026 No issues found \u00E2\u20AC\u201D your accounts look clean!</div>';
+        list.innerHTML = '<div style="padding:10px 14px;color:#10b981;font-size:0.82em;">âœ… No issues found â€” your accounts look clean!</div>';
         return;
     }
 
@@ -6512,9 +6512,9 @@ function _renderFindingsWidget(scan) {
         return '#10b981';
     };
     var severityDot = function(savings) {
-        if (savings >= 20) return '\u00F0\u0178\u201D\u00B4';
-        if (savings >= 5) return '\u00F0\u0178\u0178\u00A1';
-        return '\u00F0\u0178\u0178\u00A2';
+        if (savings >= 20) return 'ðŸ”´';
+        if (savings >= 5) return 'ðŸŸ¡';
+        return 'ðŸŸ¢';
     };
 
     var html = '';
@@ -6527,7 +6527,7 @@ function _renderFindingsWidget(scan) {
             'onmouseenter="this.style.background=\'rgba(99,102,241,0.07)\'" onmouseleave="this.style.background=\'\'">' +
                 // Severity dot
                 '<span style="font-size:1em;flex-shrink:0;">' + severityDot(savings) + '</span>' +
-                // Tip text \u00E2\u20AC\u201D clickable, fills input
+                // Tip text â€” clickable, fills input
                 '<div class="ai-finding-text" style="flex:1;min-width:0;cursor:pointer;">' +
                     '<div style="color:#c9d1d9;font-size:0.9em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' +
                         (savings > 0 ? '<span style="color:' + severityColor(savings) + ';font-weight:700;margin-right:6px;">$' + savings.toFixed(2) + '/mo</span>' : '') +
@@ -6537,10 +6537,10 @@ function _renderFindingsWidget(scan) {
                         esc(question) +
                     '</div>' +
                 '</div>' +
-                // Ask button \u00E2\u20AC\u201D larger, prominent
+                // Ask button â€” larger, prominent
                 '<button class="ai-finding-ask-btn" style="flex-shrink:0;background:#6366f1;color:#fff;border:none;border-radius:6px;' +
                 'padding:5px 12px;font-size:0.95em;font-weight:600;cursor:pointer;white-space:nowrap;" ' +
-                'onmouseenter="this.style.background=\'#4f46e5\'" onmouseleave="this.style.background=\'#6366f1\'">Ask \u00E2\u2013\u00B6</button>' +
+                'onmouseenter="this.style.background=\'#4f46e5\'" onmouseleave="this.style.background=\'#6366f1\'">Ask â–¶</button>' +
             '</div>';
     });
 
@@ -6551,12 +6551,12 @@ function _renderFindingsWidget(scan) {
             (moreCount > 0 ? moreCount + ' more finding(s)' : 'All findings shown') +
         '</span>' +
         '<button onclick="document.querySelector(\'[data-tab=act-tab]\').click();" ' +
-        'style="background:none;border:none;color:#6366f1;font-size:0.78em;cursor:pointer;text-decoration:underline;padding:0;">See all in Act \u00E2\u2013\u00B6</button>' +
+        'style="background:none;border:none;color:#6366f1;font-size:0.78em;cursor:pointer;text-decoration:underline;padding:0;">See all in Act â–¶</button>' +
     '</div>';
 
     list.innerHTML = html;
 
-    // Event delegation \u00E2\u20AC\u201D both tip text and Ask button fill the input
+    // Event delegation â€” both tip text and Ask button fill the input
     list.onclick = function(e) {
         var row = e.target.closest('.ai-finding-row');
         if (!row) return;
@@ -6604,18 +6604,18 @@ function _toggleFindingsWidget() {
     var list = $('ai-findings-list');
     var chev = $('ai-findings-chevron');
     if (list) list.style.display = _findingsWidgetOpen ? 'block' : 'none';
-    if (chev) chev.textContent = _findingsWidgetOpen ? '\u00E2\u2013\u00BC' : '\u00E2\u2013\u00B6';
+    if (chev) chev.textContent = _findingsWidgetOpen ? 'â–¼' : 'â–¶';
 }
 
 async function _runScanFromChat() {
     var status = $('ai-findings-title');
-    if (status) status.textContent = '\u00F0\u0178\u201D\u008D Scanning\u00E2\u20AC\u00A6';
+    if (status) status.textContent = 'ðŸ” Scanningâ€¦';
     try {
         var accountIds = getSelectedAccountIds();
         var kickoff = await api('POST', '/members/actions/scan', { accountIds: accountIds });
         var data;
         if (kickoff.scanId) {
-            if (status) status.textContent = '\u00F0\u0178\u201D\u008D Scanning (may take up to 60s)\u00E2\u20AC\u00A6';
+            if (status) status.textContent = 'ðŸ” Scanning (may take up to 60s)â€¦';
             data = await _pollScanStatus(kickoff.scanId, 90000);
             data.cards = data.cards || [];
             data.findings = data.allFindings || data.findings || [];
@@ -6632,14 +6632,14 @@ async function _runScanFromChat() {
         var list = $('ai-findings-list');
         var chev = $('ai-findings-chevron');
         if (list) list.style.display = 'block';
-        if (chev) chev.textContent = '\u00E2\u2013\u00BC';
+        if (chev) chev.textContent = 'â–¼';
     } catch (err) {
         if (status) status.textContent = 'Scan failed: ' + (err.message || 'error');
     }
 }
 
 // ============================================================
-// Pipeline Entry \u00E2\u20AC\u201D Pre-fill from Bill Check redirect
+// Pipeline Entry â€” Pre-fill from Bill Check redirect
 // ============================================================
 (function handlePipelineEntry() {
     var params = new URLSearchParams(window.location.search);
@@ -6664,7 +6664,7 @@ async function _runScanFromChat() {
         var banner = document.createElement('div');
         banner.style.cssText = 'background:linear-gradient(135deg,#064e3b,#065f46);border-radius:10px;padding:14px 18px;margin-bottom:16px;color:#fff;font-size:0.9em;';
         var savingsText = savings ? ' We found <strong>$' + parseInt(savings).toLocaleString() + '/month</strong> in potential savings.' : '';
-        banner.innerHTML = '\u00F0\u0178\u017D\u2030 <strong>Your bill analysis is complete!</strong>' + savingsText +
+        banner.innerHTML = 'ðŸŽ‰ <strong>Your bill analysis is complete!</strong>' + savingsText +
             '<br>Create a free account to connect your AWS account and start saving.';
         loginCard.insertBefore(banner, loginCard.firstChild);
     }
@@ -6740,7 +6740,7 @@ async function _runTagScan(accountIds) {
         });
         _tagScanResults = data.resources || [];
         _tagSelectedArns = new Set();
-        if (tagStatus) tagStatus.textContent = 'Tag scan complete \u00E2\u20AC\u201D ' + _tagScanResults.length + ' resources need tagging';
+        if (tagStatus) tagStatus.textContent = 'Tag scan complete â€” ' + _tagScanResults.length + ' resources need tagging';
         _renderTagStats(data);
         _renderTagList();
         _renderUntaggableServices(data.untaggableServices || null);
@@ -6816,7 +6816,7 @@ function _renderTagList() {
         return;
     }
     var html = '<table style="width:100%;border-collapse:collapse;font-size:0.9em;">';
-    var _sa = function(f) { return _tagSortField === f ? (_tagSortAsc ? ' \u00E2\u2013\u00B2' : ' \u00E2\u2013\u00BC') : ''; };
+    var _sa = function(f) { return _tagSortField === f ? (_tagSortAsc ? ' â–²' : ' â–¼') : ''; };
     var _th = 'padding:8px 10px;color:#374151;font-weight:600;position:sticky;top:0;background:#fff;z-index:1;cursor:pointer;user-select:none;';
     html += '<thead><tr style="border-bottom:2px solid #e5e7eb;">'
         + '<th style="padding:8px 10px;width:30px;position:sticky;top:0;background:#fff;z-index:1;"></th>'
@@ -6834,21 +6834,21 @@ function _renderTagList() {
             return '<span style="background:#7f1d1d;color:#fca5a5;padding:1px 6px;border-radius:3px;font-size:0.85em;margin-right:3px;">' + t + '</span>';
         }).join('');
         var rowBg = (r.missingTags && r.missingTags.length > 0) ? '' : 'background:#f0fdf4;';
-        var statusBadge = (r.missingTags && r.missingTags.length > 0) ? '' : '<span style="color:#10b981;font-weight:600;font-size:0.85em;">\u00E2\u0153\u201C Tagged</span>';
+        var statusBadge = (r.missingTags && r.missingTags.length > 0) ? '' : '<span style="color:#10b981;font-weight:600;font-size:0.85em;">âœ“ Tagged</span>';
         var displayName = r.name || r.resourceId || '';
         var subtitle = (r.name && r.name !== r.resourceId) ? '<div style="color:#9ca3af;font-size:0.78em;margin-top:1px;">' + esc(r.resourceId || '') + '</div>' : '';
         var region = r.region || 'global';
         // Cost and state columns
-        var costHtml = r.estimatedMonthlyCost != null ? '<span style="color:#059669;font-weight:600;">$' + r.estimatedMonthlyCost.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}) + '</span>' : '<span style="color:#9ca3af;">\u00E2\u20AC\u201D</span>';
+        var costHtml = r.estimatedMonthlyCost != null ? '<span style="color:#059669;font-weight:600;">$' + r.estimatedMonthlyCost.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}) + '</span>' : '<span style="color:#9ca3af;">â€”</span>';
         var stateHtml = '';
-        if (r.state === 'running') stateHtml = '<span style="color:#10b981;font-size:0.8em;">\u00E2\u2014\u008F running</span>';
-        else if (r.state === 'stopped') stateHtml = '<span style="color:#ef4444;font-size:0.8em;">\u00E2\u2014\u2039 stopped</span>';
-        else if (r.state === 'in-use') stateHtml = '<span style="color:#10b981;font-size:0.8em;">\u00E2\u2014\u008F in-use</span>';
-        else if (r.state === 'available') stateHtml = '<span style="color:#f59e0b;font-size:0.8em;">\u00E2\u2014\u2039 available</span>';
-        else if (r.state === 'allocated') stateHtml = '<span style="color:#6366f1;font-size:0.8em;">\u00E2\u2014\u008F allocated</span>';
-        else if (r.state === 'active') stateHtml = '<span style="color:#10b981;font-size:0.8em;">\u00E2\u2014\u008F active</span>';
+        if (r.state === 'running') stateHtml = '<span style="color:#10b981;font-size:0.8em;">â— running</span>';
+        else if (r.state === 'stopped') stateHtml = '<span style="color:#ef4444;font-size:0.8em;">â—‹ stopped</span>';
+        else if (r.state === 'in-use') stateHtml = '<span style="color:#10b981;font-size:0.8em;">â— in-use</span>';
+        else if (r.state === 'available') stateHtml = '<span style="color:#f59e0b;font-size:0.8em;">â—‹ available</span>';
+        else if (r.state === 'allocated') stateHtml = '<span style="color:#6366f1;font-size:0.8em;">â— allocated</span>';
+        else if (r.state === 'active') stateHtml = '<span style="color:#10b981;font-size:0.8em;">â— active</span>';
         else if (r.state) stateHtml = '<span style="color:#6b7280;font-size:0.8em;">' + r.state + '</span>';
-        else stateHtml = '<span style="color:#9ca3af;">\u00E2\u20AC\u201D</span>';
+        else stateHtml = '<span style="color:#9ca3af;">â€”</span>';
         // Existing tags column
         var tagsHtml = '';
         if (r.existingTags && typeof r.existingTags === 'object') {
@@ -6866,7 +6866,7 @@ function _renderTagList() {
             + '<td style="padding:8px 10px;color:#6b7280;font-size:0.85em;">' + (r.account || '').slice(-4) + '</td>'
             + '<td style="padding:8px 10px;text-align:right;">' + costHtml + '</td>'
             + '<td style="padding:8px 10px;text-align:center;">' + stateHtml + '</td>'
-            + '<td style="padding:8px 10px;">' + (tagsHtml || '<span style="color:#9ca3af;">\u00E2\u20AC\u201D</span>') + '</td>'
+            + '<td style="padding:8px 10px;">' + (tagsHtml || '<span style="color:#9ca3af;">â€”</span>') + '</td>'
             + '<td style="padding:8px 10px;">' + (missingHtml || statusBadge) + '</td></tr>';
     });
     html += '</tbody></table>';
@@ -6901,7 +6901,7 @@ function _renderUntaggableServices(services) {
     var totalCost = services.reduce(function(s, x) { return s + x.monthlyCost; }, 0);
     var html = '<div style="border:1px solid #fbbf24;border-radius:8px;padding:16px;background:#fffbeb;">';
     html += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">';
-    html += '<span style="font-size:1.1em;">\u00E2\u0161\u00A0\u00EF\u00B8\u008F</span>';
+    html += '<span style="font-size:1.1em;">âš ï¸</span>';
     html += '<span style="font-weight:600;color:#92400e;">Usage-Based Services (cannot be tagged)</span>';
     html += '<span style="color:#6b7280;font-size:0.8em;margin-left:auto;">Total: $' + totalCost.toFixed(2) + '/mo</span>';
     html += '</div>';
@@ -6935,7 +6935,7 @@ function _showTagApplyModal() {
     if (!modal) return;
     if (countEl) countEl.textContent = _tagSelectedArns.size;
     if (statusEl) statusEl.textContent = '';
-    if (confirmBtn) { confirmBtn.disabled = false; confirmBtn.textContent = '\u00F0\u0178\u008F\u00B7\u00EF\u00B8\u008F Apply Tags'; confirmBtn.style.background = '#6366f1'; confirmBtn.style.borderColor = '#6366f1';
+    if (confirmBtn) { confirmBtn.disabled = false; confirmBtn.textContent = 'ðŸ·ï¸ Apply Tags'; confirmBtn.style.background = '#6366f1'; confirmBtn.style.borderColor = '#6366f1';
         confirmBtn.onclick = async function() { await _applyTags(); };
     }
     if (inputs) inputs.innerHTML = '';
@@ -6963,7 +6963,7 @@ function _addTagInputRowWithKey(key) {
     row.style.cssText = 'display:flex;gap:8px;margin-bottom:8px;';
     row.innerHTML = '<input type="text" value="' + (key || '') + '" style="flex:1;padding:8px 12px;border:1px solid #d1d5db;border-radius:6px;background:#f9fafb;color:#1f2937;font-size:0.9em;font-weight:600;" class="tag-key-input" readonly>'
         + '<input type="text" placeholder="Enter value for ' + (key || 'tag') + '" style="flex:1;padding:8px 12px;border:1px solid #6366f1;border-radius:6px;background:#fff;color:#1f2937;font-size:0.9em;" class="tag-val-input" autofocus>'
-        + '<button onclick="this.parentElement.remove();" style="background:none;border:none;color:#ef4444;cursor:pointer;font-size:1.2em;">\u00E2\u0153\u2022</button>';
+        + '<button onclick="this.parentElement.remove();" style="background:none;border:none;color:#ef4444;cursor:pointer;font-size:1.2em;">âœ•</button>';
     inputs.appendChild(row);
 }
 
@@ -6974,7 +6974,7 @@ function _addTagInputRow() {
     row.style.cssText = 'display:flex;gap:8px;margin-bottom:8px;';
     row.innerHTML = '<input type="text" placeholder="Tag Key (e.g. Environment)" style="flex:1;padding:8px 12px;border:1px solid #d1d5db;border-radius:6px;background:#fff;color:#1f2937;font-size:0.9em;" class="tag-key-input">'
         + '<input type="text" placeholder="Tag Value (e.g. production)" style="flex:1;padding:8px 12px;border:1px solid #d1d5db;border-radius:6px;background:#fff;color:#1f2937;font-size:0.9em;" class="tag-val-input">'
-        + '<button onclick="this.parentElement.remove();" style="background:none;border:none;color:#ef4444;cursor:pointer;font-size:1.2em;">\u00E2\u0153\u2022</button>';
+        + '<button onclick="this.parentElement.remove();" style="background:none;border:none;color:#ef4444;cursor:pointer;font-size:1.2em;">âœ•</button>';
     inputs.appendChild(row);
 }
 
@@ -7025,7 +7025,7 @@ async function _applyTags() {
                     'and paste the latest template URL from the <strong>Configure</strong> tab.<br><br>' +
                     '<span style="color:#8b949e;font-size:0.85em">Current policy: SlashMyBillBillingReadOnly (read-only). Required: SlashMyBillBillingAccess (read+write).</span>';
             }
-            notify('Role upgrade required \u00E2\u20AC\u201D see instructions below', 'warning');
+            notify('Role upgrade required â€” see instructions below', 'warning');
         } else if (data.errors && data.errors.length > 0) {
             msg += ' | Errors: ' + data.errors.slice(0, 3).join('; ');
             if (statusEl) { statusEl.style.color = '#f59e0b'; statusEl.textContent = msg; }
@@ -7034,11 +7034,11 @@ async function _applyTags() {
             if (statusEl) { statusEl.style.color = '#10b981'; statusEl.textContent = msg; }
             notify(msg, 'success');
         }
-        if (confirmBtn) { confirmBtn.disabled = false; confirmBtn.textContent = '\u00E2\u0153\u201C Done \u00E2\u20AC\u201D Close'; confirmBtn.style.background = '#10b981'; confirmBtn.style.borderColor = '#10b981'; confirmBtn.style.opacity = '1';
+        if (confirmBtn) { confirmBtn.disabled = false; confirmBtn.textContent = 'âœ“ Done â€” Close'; confirmBtn.style.background = '#10b981'; confirmBtn.style.borderColor = '#10b981'; confirmBtn.style.opacity = '1';
             confirmBtn.onclick = function() {
                 document.getElementById('plan-tag-modal').hidden = true;
                 confirmBtn.style.background = '#6366f1'; confirmBtn.style.borderColor = '#6366f1';
-                confirmBtn.textContent = '\u00F0\u0178\u008F\u00B7\u00EF\u00B8\u008F Apply Tags';
+                confirmBtn.textContent = 'ðŸ·ï¸ Apply Tags';
                 confirmBtn.onclick = async function() { await _applyTags(); };
                 _syncActSelection();
                 _runTagScan(getActSelectedAccountIds());
@@ -7047,16 +7047,16 @@ async function _applyTags() {
     } catch (e) {
         var errMsg = e.message || 'Unknown error';
         if (errMsg.indexOf('AccessDenied') !== -1 || errMsg.indexOf('not authorized') !== -1) {
-            errMsg = 'Permission denied. Please update the CloudFormation template in your AWS account (Configure tab \u00E2\u2020\u2019 Download Template \u00E2\u2020\u2019 Update Stack).';
+            errMsg = 'Permission denied. Please update the CloudFormation template in your AWS account (Configure tab â†’ Download Template â†’ Update Stack).';
         }
         if (statusEl) { statusEl.style.color = '#ef4444'; statusEl.textContent = errMsg; }
-        if (confirmBtn) { confirmBtn.disabled = false; confirmBtn.textContent = '\u00F0\u0178\u008F\u00B7\u00EF\u00B8\u008F Apply Tags'; }
+        if (confirmBtn) { confirmBtn.disabled = false; confirmBtn.textContent = 'ðŸ·ï¸ Apply Tags'; }
     }
 }
 
 
 // ============================================================
-// Scheduler \u00E2\u20AC\u201D Recommendation Engine UI
+// Scheduler â€” Recommendation Engine UI
 // ============================================================
 var _schedRecommendations = [];
 
@@ -7080,7 +7080,7 @@ async function _runSchedulerAnalysis() {
     try {
         var data = await api('POST', '/members/schedules/analyze', {});
         _schedRecommendations = data.recommendations || [];
-        if (statusEl) statusEl.textContent = _schedRecommendations.length + ' recommendations found \u00E2\u20AC\u201D $' + (data.totalSavings || 0).toFixed(0) + '/mo potential savings';
+        if (statusEl) statusEl.textContent = _schedRecommendations.length + ' recommendations found â€” $' + (data.totalSavings || 0).toFixed(0) + '/mo potential savings';
         _renderSchedulerProgress(data);
         _renderSchedulerList();
     } catch (e) {
@@ -7107,16 +7107,16 @@ async function _loadSchedulerData() {
             // ebScheduleNames, ebScheduleArns, executionHistory, nextExecution, status
             // are kept as-is from the backend response
             if (s.ebScheduleNames && s.ebScheduleNames.length > 0) {
-                // Real EB-backed schedule \u00E2\u20AC\u201D build reason from config
+                // Real EB-backed schedule â€” build reason from config
                 var parts = [];
                 if (s.config) {
-                    if (s.config.startTime && s.config.stopTime) parts.push('Stop ' + s.config.stopTime + ' \u00E2\u2020\u2019 Start ' + s.config.startTime);
+                    if (s.config.startTime && s.config.stopTime) parts.push('Stop ' + s.config.stopTime + ' â†’ Start ' + s.config.startTime);
                     if (s.config.timezone) parts.push(s.config.timezone);
                     if (s.config.tagFilter) parts.push('Tag: ' + (s.config.tagFilter.Key || '') + '=' + (s.config.tagFilter.Value || ''));
                     var res = s.config.resources || s.config.selectedResources || [];
                     if (res.length > 0) parts.push(res.length + ' resource' + (res.length > 1 ? 's' : ''));
                 }
-                s.reason = parts.length > 0 ? parts.join(' \u00C2\u00B7 ') : 'Automated schedule';
+                s.reason = parts.length > 0 ? parts.join(' Â· ') : 'Automated schedule';
             } else {
                 // Legacy user schedule without EB backing
                 s.reason = 'User-created schedule';
@@ -7127,7 +7127,7 @@ async function _loadSchedulerData() {
                     if (s.config.timezone) parts.push('TZ: ' + s.config.timezone);
                     if (s.config.tagFilter) parts.push('Tag: ' + s.config.tagFilter);
                     if (s.config.selectedResources && s.config.selectedResources.length > 0) parts.push(s.config.selectedResources.length + ' resources');
-                    if (parts.length > 0) s.reason = parts.join(' \u00C2\u00B7 ');
+                    if (parts.length > 0) s.reason = parts.join(' Â· ');
                 }
             }
         });
@@ -7181,7 +7181,7 @@ function _renderSchedulerList() {
     var aiRecs = pending.filter(function(r) { return !r.createdAt || !r.id || r.id.indexOf('sched-') !== 0; });
 
     if (userScheds.length > 0) {
-        html += '<div style="font-size:0.85em;font-weight:600;color:#6366f1;text-transform:uppercase;letter-spacing:0.05em;margin:8px 0 8px;">\u00E2\u008F\u00B0 Your Schedules (' + userScheds.length + ')</div>';
+        html += '<div style="font-size:0.85em;font-weight:600;color:#6366f1;text-transform:uppercase;letter-spacing:0.05em;margin:8px 0 8px;">â° Your Schedules (' + userScheds.length + ')</div>';
         userScheds.forEach(function(r) {
             if (r.ebScheduleNames && r.ebScheduleNames.length > 0) {
                 html += _renderRealScheduleCard(r);
@@ -7197,21 +7197,21 @@ function _renderSchedulerList() {
         var medPri = aiRecs.filter(function(r) { return r.priority !== 'high'; });
 
         if (highPri.length > 0) {
-            html += '<div style="font-size:0.85em;font-weight:600;color:#dc2626;text-transform:uppercase;letter-spacing:0.05em;margin:16px 0 8px;">\u00F0\u0178\u2019\u00B0 High Savings</div>';
+            html += '<div style="font-size:0.85em;font-weight:600;color:#dc2626;text-transform:uppercase;letter-spacing:0.05em;margin:16px 0 8px;">ðŸ’° High Savings</div>';
             highPri.forEach(function(r) { html += _renderRecCard(r); });
         }
         if (medPri.length > 0) {
-            html += '<div style="font-size:0.85em;font-weight:600;color:#6366f1;text-transform:uppercase;letter-spacing:0.05em;margin:16px 0 8px;">\u00F0\u0178\u201D\u00A7 Optimization</div>';
+            html += '<div style="font-size:0.85em;font-weight:600;color:#6366f1;text-transform:uppercase;letter-spacing:0.05em;margin:16px 0 8px;">ðŸ”§ Optimization</div>';
             medPri.forEach(function(r) { html += _renderRecCard(r); });
         }
     }
 
     // Completed
     if (completed.length > 0) {
-        html += '<div style="font-size:0.85em;font-weight:600;color:#10b981;text-transform:uppercase;letter-spacing:0.05em;margin:20px 0 8px;">\u00E2\u0153\u2026 Completed (' + completed.length + ')</div>';
+        html += '<div style="font-size:0.85em;font-weight:600;color:#10b981;text-transform:uppercase;letter-spacing:0.05em;margin:20px 0 8px;">âœ… Completed (' + completed.length + ')</div>';
         completed.forEach(function(r) {
             html += '<div style="padding:8px 12px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;margin-bottom:6px;display:flex;align-items:center;justify-content:space-between;">'
-                + '<span style="color:#166534;font-size:0.9em;">\u00E2\u0153\u201C ' + r.title + '</span>'
+                + '<span style="color:#166534;font-size:0.9em;">âœ“ ' + r.title + '</span>'
                 + '<button onclick="_updateRecStatus(\'' + r.id + '\',\'pending\')" style="background:none;border:none;color:#6b7280;cursor:pointer;font-size:0.8em;">Undo</button></div>';
         });
     }
@@ -7241,10 +7241,10 @@ function _renderRecCard(rec) {
         stepsHtml += '</ol>';
     }
     var linksHtml = '';
-    if (guide.consoleUrl) linksHtml += '<a href="' + guide.consoleUrl + '" target="_blank" rel="noopener" style="color:#6366f1;font-size:0.85em;text-decoration:none;margin-right:12px;">Open AWS Console \u00E2\u2020\u2014</a>';
-    if (guide.solutionUrl) linksHtml += '<a href="' + guide.solutionUrl + '" target="_blank" rel="noopener" style="color:#6366f1;font-size:0.85em;text-decoration:none;margin-right:12px;">AWS Solution \u00E2\u2020\u2014</a>';
+    if (guide.consoleUrl) linksHtml += '<a href="' + guide.consoleUrl + '" target="_blank" rel="noopener" style="color:#6366f1;font-size:0.85em;text-decoration:none;margin-right:12px;">Open AWS Console â†—</a>';
+    if (guide.solutionUrl) linksHtml += '<a href="' + guide.solutionUrl + '" target="_blank" rel="noopener" style="color:#6366f1;font-size:0.85em;text-decoration:none;margin-right:12px;">AWS Solution â†—</a>';
     var cliHtml = '';
-    if (guide.cliCommand) cliHtml = '<div style="margin:8px 0;"><code style="background:#f3f4f6;padding:4px 8px;border-radius:4px;font-size:0.82em;color:#1f2937;display:inline-block;">' + guide.cliCommand + '</code> <button onclick="navigator.clipboard.writeText(\'' + guide.cliCommand.replace(/'/g, "\\'") + '\');notify(\'Copied!\',\'success\');" style="background:none;border:none;color:#6366f1;cursor:pointer;font-size:0.8em;">\u00F0\u0178\u201C\u2039 Copy</button></div>';
+    if (guide.cliCommand) cliHtml = '<div style="margin:8px 0;"><code style="background:#f3f4f6;padding:4px 8px;border-radius:4px;font-size:0.82em;color:#1f2937;display:inline-block;">' + guide.cliCommand + '</code> <button onclick="navigator.clipboard.writeText(\'' + guide.cliCommand.replace(/'/g, "\\'") + '\');notify(\'Copied!\',\'success\');" style="background:none;border:none;color:#6366f1;cursor:pointer;font-size:0.8em;">ðŸ“‹ Copy</button></div>';
 
     var resourcesHtml = '';
     if (rec.resources && rec.resources.length > 0) {
@@ -7263,10 +7263,10 @@ function _renderRecCard(rec) {
         + '<div style="color:#6b7280;font-size:0.88em;margin-bottom:8px;">' + rec.reason + '</div>'
         + (rec.accountName ? '<div style="font-size:0.8em;color:#9ca3af;margin-bottom:6px;">Account: ' + rec.accountName + '</div>' : '')
         + resourcesHtml
-        + '<details style="margin-top:8px;"><summary style="color:#6366f1;font-size:0.88em;cursor:pointer;font-weight:500;">\u00E2\u2013\u00B6 How to implement</summary>'
+        + '<details style="margin-top:8px;"><summary style="color:#6366f1;font-size:0.88em;cursor:pointer;font-weight:500;">â–¶ How to implement</summary>'
         + '<div style="padding:8px 0;">' + stepsHtml + linksHtml + cliHtml + '</div></details>'
         + '<div style="display:flex;gap:8px;margin-top:10px;padding-top:10px;border-top:1px solid #f3f4f6;">'
-        + '<button onclick="_updateRecStatus(\'' + rec.id + '\',\'completed\')" class="btn btn-primary btn-sm" style="font-size:0.8em;background:#10b981;border-color:#10b981;">\u00E2\u0153\u201C Mark as Done</button>'
+        + '<button onclick="_updateRecStatus(\'' + rec.id + '\',\'completed\')" class="btn btn-primary btn-sm" style="font-size:0.8em;background:#10b981;border-color:#10b981;">âœ“ Mark as Done</button>'
         + '<button onclick="_updateRecStatus(\'' + rec.id + '\',\'dismissed\')" class="btn btn-outline btn-sm" style="font-size:0.8em;">Dismiss</button>'
         + '</div></div>';
 }
@@ -7590,8 +7590,8 @@ async function _loadBudgets() {
                 + '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px;">'
                 + '<span style="font-size:0.8em;color:#6b7280;">' + pct + '% used</span>'
                 + '<div style="display:flex;gap:6px;">'
-                + '<button onclick="_editBudget(\'' + b.accountId + '\',\'' + b.name.replace(/'/g, "\\'") + '\',' + b.limit + ')" style="background:none;border:none;color:#6366f1;cursor:pointer;font-size:0.85em;">\u00E2\u0153\u008F\u00EF\u00B8\u008F Edit</button>'
-                + '<button onclick="_deleteBudget(\'' + b.accountId + '\',\'' + b.name.replace(/'/g, "\\'") + '\')" style="background:none;border:none;color:#ef4444;cursor:pointer;font-size:0.85em;">\u00F0\u0178\u2014\u2018\u00EF\u00B8\u008F Delete</button>'
+                + '<button onclick="_editBudget(\'' + b.accountId + '\',\'' + b.name.replace(/'/g, "\\'") + '\',' + b.limit + ')" style="background:none;border:none;color:#6366f1;cursor:pointer;font-size:0.85em;">âœï¸ Edit</button>'
+                + '<button onclick="_deleteBudget(\'' + b.accountId + '\',\'' + b.name.replace(/'/g, "\\'") + '\')" style="background:none;border:none;color:#ef4444;cursor:pointer;font-size:0.85em;">ðŸ—‘ï¸ Delete</button>'
                 + '</div></div></div>';
         });
         if (listEl) listEl.innerHTML = html;
@@ -7687,7 +7687,7 @@ function _showSchedWizard() {
     document.getElementById('sched-name').value = '';
     document.getElementById('sched-notes').value = '';
     document.getElementById('sched-wizard-error').textContent = '';
-    // Reset edit mode \u00E2\u20AC\u201D this is a NEW schedule
+    // Reset edit mode â€” this is a NEW schedule
     var submitBtn = document.getElementById('sched-wizard-submit');
     if (submitBtn) { submitBtn._editingScheduleId = null; submitBtn.textContent = 'Create Schedule'; }
     // Reset type to first option
@@ -7919,7 +7919,7 @@ async function _loadSchedResources() {
     var listEl = document.getElementById('sched-resource-list');
     var btn = document.getElementById('sched-load-resources-btn');
     if (!listEl) return;
-    if (btn) btn.textContent = '\u00E2\u008F\u00B3 Loading...';
+    if (btn) btn.textContent = 'â³ Loading...';
     listEl.innerHTML = '<div style="padding:8px;color:#6b7280;font-size:0.8em;text-align:center;">Loading resources...</div>';
 
     try {
@@ -7929,7 +7929,7 @@ async function _loadSchedResources() {
 
         // Filter by selected schedule type using ARN patterns for precision
         // The backend returns resourceType as the uppercase service from the ARN (e.g., 'EC2', 'RDS')
-        // But EC2 ARNs include instances, volumes, snapshots, VPCs, etc. \u00E2\u20AC\u201D we need to filter by ARN pattern
+        // But EC2 ARNs include instances, volumes, snapshots, VPCs, etc. â€” we need to filter by ARN pattern
         var arnFilterMap = {
             'ec2-stop-start': function(r) { return r.arn && r.arn.indexOf(':instance/') !== -1; },
             'rds-stop-start': function(r) { return r.arn && (r.arn.indexOf(':db:') !== -1 || r.arn.indexOf(':db/') !== -1); },
@@ -7951,7 +7951,7 @@ async function _loadSchedResources() {
     } catch (e) {
         listEl.innerHTML = '<div style="padding:8px;color:#ef4444;font-size:0.8em;text-align:center;">Failed to load: ' + (e.message || '') + '</div>';
     } finally {
-        if (btn) btn.textContent = '\u00F0\u0178\u201D\u201E Load';
+        if (btn) btn.textContent = 'ðŸ”„ Load';
     }
 }
 
@@ -8643,7 +8643,7 @@ function _renderResizeTable() {
         html += '<tr style="' + bg + '">';
         html += '<td style="padding:6px 8px;font-weight:600;border-bottom:1px solid #f3f4f6;">' + r.instanceType;
         if (r.isGraviton) html += ' <span style="background:#dbeafe;color:#1e40af;padding:0 4px;border-radius:3px;font-size:0.8em;">ARM</span>';
-        if (isDowngrade) html += ' <span style="background:#fbbf24;color:#78350f;padding:0 4px;border-radius:3px;font-size:0.7em;font-weight:700;">\u00E2\u0161\u00A0\u00EF\u00B8\u008F DOWNGRADE</span>';
+        if (isDowngrade) html += ' <span style="background:#fbbf24;color:#78350f;padding:0 4px;border-radius:3px;font-size:0.7em;font-weight:700;">âš ï¸ DOWNGRADE</span>';
         html += '</td>';
         html += '<td style="padding:6px 8px;border-bottom:1px solid #f3f4f6;">' + r.vcpu + '</td>';
         html += '<td style="padding:6px 8px;border-bottom:1px solid #f3f4f6;">' + r.memory + '</td>';
@@ -8656,7 +8656,7 @@ function _renderResizeTable() {
         html += '<td style="padding:6px 8px;border-bottom:1px solid #f3f4f6;"><button class="btn btn-primary btn-sm" style="font-size:0.75em;padding:3px 10px;" onclick="_resizeExecute(\'' + r.instanceType + '\')">Resize</button></td>';
         html += '</tr>';
         if (isDowngrade && r.downgradeDetail) {
-            html += '<tr style="' + bg + '"><td colspan="10" style="padding:2px 8px 6px;border-bottom:1px solid #f3f4f6;font-size:0.75em;color:#92400e;">\u00E2\u2020\u201C ' + r.downgradeDetail + '</td></tr>';
+            html += '<tr style="' + bg + '"><td colspan="10" style="padding:2px 8px 6px;border-bottom:1px solid #f3f4f6;font-size:0.75em;color:#92400e;">â†“ ' + r.downgradeDetail + '</td></tr>';
         }
     });
     html += '</tbody></table></div>';
@@ -8833,7 +8833,7 @@ async function _licensingScan() {
         if (progress) progress.style.display = 'none';
 
         if (!data.success) {
-            if (status) status.textContent = '\u00E2\u009D\u0152 ' + (data.message || 'Scan failed');
+            if (status) status.textContent = 'âŒ ' + (data.message || 'Scan failed');
             return;
         }
 
@@ -8841,7 +8841,7 @@ async function _licensingScan() {
     } catch (e) {
         clearInterval(phaseInterval);
         if (progress) progress.style.display = 'none';
-        if (status) status.textContent = '\u00E2\u009D\u0152 ' + (e.message || 'Scan failed');
+        if (status) status.textContent = 'âŒ ' + (e.message || 'Scan failed');
     }
 }
 
@@ -8851,7 +8851,7 @@ function _renderLicensingReport(rc) {
     el.style.display = 'block';
 
     if (rc.totalInstances === 0) {
-        el.innerHTML = '<div style="text-align:center;padding:30px;color:#6b7280;"><div style="font-size:2em;margin-bottom:8px;">\u00E2\u0153\u2026</div><div>No Windows or SQL Server instances found in this account.</div></div>';
+        el.innerHTML = '<div style="text-align:center;padding:30px;color:#6b7280;"><div style="font-size:2em;margin-bottom:8px;">âœ…</div><div>No Windows or SQL Server instances found in this account.</div></div>';
         return;
     }
 
@@ -9203,7 +9203,7 @@ function _renderEbsReport(data, accountId) {
         vol.recommendations.forEach(function(r) {
             var migrateBtn = '';
             if (r.type === 'gp2_to_gp3') {
-                migrateBtn = ' <button class="btn btn-primary btn-sm" style="margin-left:8px;padding:2px 10px;font-size:0.8em;cursor:pointer;border-radius:4px;background:#6366f1;color:#fff;border:none;" onclick="_executeEbsMigrate(\'' + accountId + '\', \'' + vol.volumeId + '\', \'' + vol.region + '\', this)">\u00E2\u0161\u00A1 Migrate Now</button>';
+                migrateBtn = ' <button class="btn btn-primary btn-sm" style="margin-left:8px;padding:2px 10px;font-size:0.8em;cursor:pointer;border-radius:4px;background:#6366f1;color:#fff;border:none;" onclick="_executeEbsMigrate(\'' + accountId + '\', \'' + vol.volumeId + '\', \'' + vol.region + '\', this)">âš¡ Migrate Now</button>';
             }
             html += '<div style="background:#fef3c7;border-radius:6px;padding:8px;margin-top:4px;"><strong>' + r.title + '</strong>' + migrateBtn + '<br><span style="font-size:0.85em;color:#6b7280;">' + r.description + '</span></div>';
         });
@@ -9215,21 +9215,21 @@ function _renderEbsReport(data, accountId) {
 async function _executeEbsMigrate(accountId, volumeId, region, btn) {
     if (!confirm('Migrate ' + volumeId + ' from gp2 to gp3? This is a live operation with no downtime.')) return;
     btn.disabled = true;
-    btn.textContent = '\u00E2\u008F\u00B3 Migrating...';
+    btn.textContent = 'â³ Migrating...';
     try {
         var resp = await api('POST', '/members/ebs/migrate-gp3', {accountId: accountId, volumeId: volumeId, region: region});
-        btn.textContent = '\u00E2\u0153\u2026 Done';
+        btn.textContent = 'âœ… Done';
         btn.style.background = '#10b981';
         notify('Volume ' + volumeId + ' migrated to gp3! Saves $' + resp.monthlySavings + '/mo', 'success', 5000);
     } catch (err) {
         btn.disabled = false;
-        btn.textContent = '\u00E2\u0161\u00A1 Migrate Now';
+        btn.textContent = 'âš¡ Migrate Now';
         notify('Migration failed: ' + (err.message || 'Unknown error'), 'error');
     }
 }
 
 // ============================================================
-// Committed Discounts Analyzer \u00E2\u20AC\u201D Act Tab
+// Committed Discounts Analyzer â€” Act Tab
 // ============================================================
 
 function _committedSectionLoad() {
@@ -9305,7 +9305,7 @@ async function _committedDiscountScan() {
 
     if (scanBtn) scanBtn.disabled = true;
     if (rescanBtn) rescanBtn.style.display = 'none';
-    if (status) status.innerHTML = '<span style="color:#6366f1;">\u00E2\u008F\u00B3 Scanning committed discounts... this may take up to 30 seconds.</span>';
+    if (status) status.innerHTML = '<span style="color:#6366f1;">â³ Scanning committed discounts... this may take up to 30 seconds.</span>';
 
     try {
         var data = await api('POST', '/members/committed-discounts/scan', { accountId: accountId });
@@ -9317,12 +9317,12 @@ async function _committedDiscountScan() {
     } catch (err) {
         if (status) {
             if (err.status === 403 && err.message && err.message.indexOf('ermission') !== -1) {
-                status.innerHTML = '<span style="color:#ef4444;">\u00E2\u009D\u0152 Permission error: Your cross-account role needs Cost Explorer permissions. </span>'
-                    + '<a href="#" onclick="switchToFinOpsSettings();return false;" style="color:#6366f1;font-weight:600;">Update CloudFormation template \u00E2\u2013\u00B6</a>';
+                status.innerHTML = '<span style="color:#ef4444;">âŒ Permission error: Your cross-account role needs Cost Explorer permissions. </span>'
+                    + '<a href="#" onclick="switchToFinOpsSettings();return false;" style="color:#6366f1;font-weight:600;">Update CloudFormation template â–¶</a>';
             } else if (err.status === 504 || (err.message && err.message.indexOf('imeout') !== -1)) {
-                status.innerHTML = '<span style="color:#ef4444;">\u00E2\u009D\u0152 Scan timed out. Please try again in a moment.</span>';
+                status.innerHTML = '<span style="color:#ef4444;">âŒ Scan timed out. Please try again in a moment.</span>';
             } else {
-                status.innerHTML = '<span style="color:#ef4444;">\u00E2\u009D\u0152 ' + (err.message || 'Scan failed') + '</span>';
+                status.innerHTML = '<span style="color:#ef4444;">âŒ ' + (err.message || 'Scan failed') + '</span>';
             }
         }
     } finally {
@@ -9347,7 +9347,7 @@ function _committedRenderResults(data, scannedAt) {
     var scannedEl = document.getElementById('committed-scanned-at');
     if (scannedEl && scannedAt) {
         scannedEl.style.display = 'block';
-        scannedEl.textContent = '\u00F0\u0178\u201C\u0160 Last scanned: ' + fmtDate(scannedAt);
+        scannedEl.textContent = 'ðŸ“Š Last scanned: ' + fmtDate(scannedAt);
     }
     var rescanBtn = document.getElementById('committed-rescan-btn');
     if (rescanBtn) rescanBtn.style.display = 'inline-flex';
@@ -9391,7 +9391,7 @@ function _committedRenderCoverage(data) {
     totalAnnualSavings = totalAnnualSavings * 12;
 
     var html = '<div style="background:linear-gradient(135deg,#f0f9ff,#e0f2fe);border:1px solid #7dd3fc;border-radius:12px;padding:20px;margin-bottom:16px;">';
-    html += '<div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;"><span style="font-size:1.5em;">\u00F0\u0178\u201C\u0160</span><div><div style="font-weight:700;color:#0c4a6e;font-size:1.05em;">Coverage & Utilization Summary</div></div></div>';
+    html += '<div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;"><span style="font-size:1.5em;">ðŸ“Š</span><div><div style="font-weight:700;color:#0c4a6e;font-size:1.05em;">Coverage & Utilization Summary</div></div></div>';
 
     // Top metrics row
     html += '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px;">';
@@ -9429,7 +9429,7 @@ function _committedRenderCoverage(data) {
     var riUnder = (utilization.reservedInstances && utilization.reservedInstances.underutilized) || [];
     if (spUnder.length > 0 || riUnder.length > 0) {
         html += '<div style="background:#fef3c7;border:1px solid #fbbf24;border-radius:8px;padding:10px 14px;margin-bottom:16px;">';
-        html += '<div style="font-weight:600;color:#92400e;font-size:0.85em;margin-bottom:6px;">\u00E2\u0161\u00A0\u00EF\u00B8\u008F Underutilized Commitments</div>';
+        html += '<div style="font-weight:600;color:#92400e;font-size:0.85em;margin-bottom:6px;">âš ï¸ Underutilized Commitments</div>';
         riUnder.forEach(function(item) {
             html += '<div style="font-size:0.8em;color:#78350f;">RI ' + (item.instanceType || item.id) + ' (' + item.service + '): <strong>' + item.utilization.toFixed(1) + '%</strong> utilization</div>';
         });
@@ -9442,19 +9442,19 @@ function _committedRenderCoverage(data) {
     // P10 Baseline and safe commitment zone
     if (baseline.p10HourlySpend != null) {
         html += '<div style="background:#fff;border:1px solid #e0f2fe;border-radius:8px;padding:12px 16px;margin-bottom:12px;">';
-        html += '<div style="font-weight:600;color:#0c4a6e;font-size:0.9em;margin-bottom:8px;">\u00F0\u0178\u2019\u00A1 Commitment Recommendation</div>';
+        html += '<div style="font-weight:600;color:#0c4a6e;font-size:0.9em;margin-bottom:8px;">ðŸ’¡ Commitment Recommendation</div>';
         html += '<div style="display:flex;gap:20px;flex-wrap:wrap;font-size:0.85em;color:#374151;">';
         html += '<div>P10 Baseline: <strong>$' + baseline.p10HourlySpend.toFixed(2) + '/hr</strong></div>';
         html += '<div>Average Spend: <strong>$' + baseline.averageHourlySpend.toFixed(2) + '/hr</strong></div>';
         if (baseline.safeCommitmentRange) {
-            html += '<div>Safe Zone: <strong style="color:#059669;">$' + baseline.safeCommitmentRange.min.toFixed(2) + ' \u00E2\u20AC\u201C $' + baseline.safeCommitmentRange.max.toFixed(2) + '/hr</strong></div>';
+            html += '<div>Safe Zone: <strong style="color:#059669;">$' + baseline.safeCommitmentRange.min.toFixed(2) + ' â€“ $' + baseline.safeCommitmentRange.max.toFixed(2) + '/hr</strong></div>';
         }
         html += '</div>';
         if (baseline.safeCommitmentRange) {
-            html += '<div style="margin-top:8px;font-size:0.8em;color:#6b7280;font-style:italic;">Safe zone is 60-70% of your average spend \u00E2\u20AC\u201D commit conservatively and add more later as usage stabilizes.</div>';
+            html += '<div style="margin-top:8px;font-size:0.8em;color:#6b7280;font-style:italic;">Safe zone is 60-70% of your average spend â€” commit conservatively and add more later as usage stabilizes.</div>';
         }
         if (baseline.variabilityWarning) {
-            html += '<div style="margin-top:8px;font-size:0.8em;color:#b45309;">\u00E2\u0161\u00A0\u00EF\u00B8\u008F High variability detected \u00E2\u20AC\u201D P10 is significantly below average. Consider a conservative commitment (60\u00E2\u20AC\u201C70% of baseline).</div>';
+            html += '<div style="margin-top:8px;font-size:0.8em;color:#b45309;">âš ï¸ High variability detected â€” P10 is significantly below average. Consider a conservative commitment (60â€“70% of baseline).</div>';
         }
         html += '</div>';
     }
@@ -9462,7 +9462,7 @@ function _committedRenderCoverage(data) {
     // Total annual savings
     if (totalAnnualSavings > 0) {
         html += '<div style="background:linear-gradient(135deg,#064e3b,#065f46);border-radius:8px;padding:10px 16px;display:flex;align-items:center;gap:10px;">';
-        html += '<span style="font-size:1.3em;">\u00F0\u0178\u2019\u00B0</span>';
+        html += '<span style="font-size:1.3em;">ðŸ’°</span>';
         html += '<div><div style="color:#6ee7b7;font-size:0.75em;text-transform:uppercase;">Estimated Annual Savings (all recommendations)</div>';
         html += '<div style="color:#fff;font-size:1.2em;font-weight:700;">$' + totalAnnualSavings.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',') + '</div></div>';
         html += '</div>';
@@ -9481,7 +9481,7 @@ function _committedMetricCard(label, value, color) {
 }
 
 // ============================================================
-// Commitment Savings Explorer \u00E2\u20AC\u201D SP/RI Explorer State
+// Commitment Savings Explorer â€” SP/RI Explorer State
 // ============================================================
 var _committedLadderSelectedTerm = 1;
 var _committedLadderLastStrategy = null;
@@ -9528,8 +9528,8 @@ function _spExplorerRender(spRecommendations) {
 
         html += '<div class="cse-explorer" id="cse-sp-explorer">';
         html += '<div class="cse-explorer-header">';
-        html += '<div class="cse-explorer-title"><span class="cse-icon">\u00F0\u0178\u2019\u00B3</span> Savings Plan Explorer</div>';
-        html += '<button class="cse-compare-toggle" onclick="_spExplorerToggleCompare()">' + (_spExplorerState.compareExpanded ? '\u00E2\u0153\u2022 Close Compare' : '\u00F0\u0178\u201C\u0160 Compare All Options') + '</button>';
+        html += '<div class="cse-explorer-title"><span class="cse-icon">ðŸ’³</span> Savings Plan Explorer</div>';
+        html += '<button class="cse-compare-toggle" onclick="_spExplorerToggleCompare()">' + (_spExplorerState.compareExpanded ? 'âœ• Close Compare' : 'ðŸ“Š Compare All Options') + '</button>';
         html += '</div>';
 
         // Controls
@@ -9605,7 +9605,7 @@ function _spExplorerBuildSavingsCard() {
 
     var html = '<div class="cse-savings-card">';
     if (isBestValue) {
-        html += '<div style="margin-bottom:8px;"><span class="cse-badge cse-badge-best">\u00E2\u00AD\u0090 Best Value</span></div>';
+        html += '<div style="margin-bottom:8px;"><span class="cse-badge cse-badge-best">â­ Best Value</span></div>';
     }
     html += '<div class="cse-savings-grid">';
     html += '<div class="cse-savings-metric"><div class="cse-metric-label">Hourly Commitment</div><div class="cse-metric-value cse-neutral">$' + (match.hourlyCommitment || 0).toFixed(2) + '/hr</div></div>';
@@ -9706,10 +9706,10 @@ function _riExplorerBuildHTML() {
 
     var html = '<div class="cse-explorer" id="cse-ri-explorer">';
     html += '<div class="cse-explorer-header">';
-    html += '<div class="cse-explorer-title"><span class="cse-icon">\u00F0\u0178\u008F\u00B7\u00EF\u00B8\u008F</span> Reserved Instance Explorer</div>';
+    html += '<div class="cse-explorer-title"><span class="cse-icon">ðŸ·ï¸</span> Reserved Instance Explorer</div>';
     var recsForInstance = _riExplorerData.filter(function(r) { return r.instanceType === _riExplorerState.selectedInstanceType; });
     if (recsForInstance.length >= 2) {
-        html += '<button class="cse-compare-toggle" onclick="_riExplorerToggleCompare()">' + (_riExplorerState.compareExpanded ? '\u00E2\u0153\u2022 Close Compare' : '\u00F0\u0178\u201C\u0160 Compare All Options') + '</button>';
+        html += '<button class="cse-compare-toggle" onclick="_riExplorerToggleCompare()">' + (_riExplorerState.compareExpanded ? 'âœ• Close Compare' : 'ðŸ“Š Compare All Options') + '</button>';
     }
     html += '</div>';
 
@@ -9785,7 +9785,7 @@ function _riExplorerBuildSavingsCard() {
 
     var html = '<div class="cse-savings-card">';
     if (isLowestTCO) {
-        html += '<div style="margin-bottom:8px;"><span class="cse-badge cse-badge-tco">\u00F0\u0178\u2019\u017D Lowest TCO</span></div>';
+        html += '<div style="margin-bottom:8px;"><span class="cse-badge cse-badge-tco">ðŸ’Ž Lowest TCO</span></div>';
     }
     html += '<div class="cse-savings-grid">';
     html += '<div class="cse-savings-metric"><div class="cse-metric-label">Monthly Savings</div><div class="cse-metric-value">$' + (match.estimatedMonthlySavings || 0).toFixed(0) + '/mo</div></div>';
@@ -9898,7 +9898,7 @@ function _committedRenderRecommendations(data) {
         var panel = document.getElementById('committed-recommendations-panel');
         if (panel) {
             panel.innerHTML = '<div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:12px;padding:32px 20px;text-align:center;">'
-                + '<div style="font-size:2em;margin-bottom:12px;">\u00F0\u0178\u201C\u2039</div>'
+                + '<div style="font-size:2em;margin-bottom:12px;">ðŸ“‹</div>'
                 + '<div style="font-size:1em;color:#1f2937;margin-bottom:8px;font-weight:600;">No SP/RI recommendations available from AWS</div>'
                 + '<div style="font-size:0.9em;color:#6b7280;">Your account needs at least 7 days of consistent usage history for AWS to generate recommendations.</div>'
                 + '</div>';
@@ -9911,7 +9911,7 @@ function _committedRenderRecommendations(data) {
 }
 
 // ============================================================
-// Task 5: Dashboard Integration \u00E2\u20AC\u201D SP and RI Coverage Widgets
+// Task 5: Dashboard Integration â€” SP and RI Coverage Widgets
 // ============================================================
 
 function _renderSPCoverageWidget(container) {
@@ -9976,13 +9976,13 @@ function _renderSPCoverageWidget(container) {
         container.innerHTML = '<div class="cse-widget-metric-row"><span class="cse-widget-label">Coverage</span><span class="cse-widget-value" style="color:#6b7280;">0%</span></div>' +
             '<div class="cse-widget-progress"><div class="cse-widget-progress-bar" style="width:0%;background:#e5e7eb;"></div></div>' +
             '<div style="color:#6b7280;font-size:0.8em;margin-top:8px;">No active Savings Plans found.</div>' +
-            '<a class="cse-widget-link" onclick="document.querySelector(\'[data-tab=dash-tab]\').click();setTimeout(function(){_switchObserveSection(\'observe-commitments\');},200);">Explore Commitments \u00E2\u2013\u00B6</a>';
+            '<a class="cse-widget-link" onclick="document.querySelector(\'[data-tab=dash-tab]\').click();setTimeout(function(){_switchObserveSection(\'observe-commitments\');},200);">Explore Commitments â–¶</a>';
         return;
     }
 
     var covColor = spCoverage < 50 ? '#f59e0b' : '#10b981';
     var utilColor = (spUtilization != null && spUtilization < 80) ? '#ef4444' : '#10b981';
-    var utilTooltip = (spUtilization != null && spUtilization < 80) ? ' title="Underutilized \u00E2\u20AC\u201D you are paying for unused commitment"' : '';
+    var utilTooltip = (spUtilization != null && spUtilization < 80) ? ' title="Underutilized â€” you are paying for unused commitment"' : '';
 
     var html = '';
     html += '<div class="cse-widget-metric-row"><span class="cse-widget-label">Coverage</span><span class="cse-widget-value" style="color:' + covColor + ';">' + (spCoverage || 0).toFixed(0) + '%</span></div>';
@@ -9994,7 +9994,7 @@ function _renderSPCoverageWidget(container) {
     if (totalSP > 0) {
         html += '<div style="color:#6b7280;font-size:0.8em;margin-top:8px;">' + totalSP + ' active Savings Plan' + (totalSP !== 1 ? 's' : '') + '</div>';
     }
-    html += '<a class="cse-widget-link" onclick="_goToTab(\'act-tab\',\'committed\')">View Details \u00E2\u2013\u00B6</a>';
+    html += '<a class="cse-widget-link" onclick="_goToTab(\'act-tab\',\'committed\')">View Details â–¶</a>';
     container.innerHTML = html;
 }
 
@@ -10066,7 +10066,7 @@ function _renderRICoverageWidget(container) {
         container.innerHTML = '<div class="cse-widget-metric-row"><span class="cse-widget-label">Coverage</span><span class="cse-widget-value" style="color:#6b7280;">0%</span></div>' +
             '<div class="cse-widget-progress"><div class="cse-widget-progress-bar" style="width:0%;background:#e5e7eb;"></div></div>' +
             '<div style="color:#6b7280;font-size:0.8em;margin-top:8px;">No active Reserved Instances found.</div>' +
-            '<a class="cse-widget-link" onclick="document.querySelector(\'[data-tab=dash-tab]\').click();setTimeout(function(){_switchObserveSection(\'observe-commitments\');},200);">Explore Commitments \u00E2\u2013\u00B6</a>';
+            '<a class="cse-widget-link" onclick="document.querySelector(\'[data-tab=dash-tab]\').click();setTimeout(function(){_switchObserveSection(\'observe-commitments\');},200);">Explore Commitments â–¶</a>';
         return;
     }
 
@@ -10086,7 +10086,7 @@ function _renderRICoverageWidget(container) {
     if (underutilizedCount > 0) {
         html += '<div style="margin-top:8px;"><span class="cse-underutilized-badge">' + underutilizedCount + ' underutilized</span></div>';
     }
-    html += '<a class="cse-widget-link" onclick="_goToTab(\'act-tab\',\'committed\')">View Details \u00E2\u2013\u00B6</a>';
+    html += '<a class="cse-widget-link" onclick="_goToTab(\'act-tab\',\'committed\')">View Details â–¶</a>';
     container.innerHTML = html;
 }
 
@@ -10115,7 +10115,7 @@ function _renderTaggedResourcesTable(resources) {
                 return '<span style="background:#e0e7ff;color:#3730a3;padding:1px 5px;border-radius:3px;margin-right:3px;white-space:nowrap;">' + esc(e[0]) + '=' + esc(e[1]) + '</span>';
             }).join(' ');
         }
-        var stateIcon = r.state === 'running' ? '<span style="color:#10b981;">\u00E2\u2014\u008F</span>' : '<span style="color:#6b7280;">\u00E2\u2014\u2039</span>';
+        var stateIcon = r.state === 'running' ? '<span style="color:#10b981;">â—</span>' : '<span style="color:#6b7280;">â—‹</span>';
         html += '<tr style="border-bottom:1px solid #f3f4f6;">';
         html += '<td style="padding:6px 8px;">' + stateIcon + ' ' + esc(r.name || '') + '</td>';
         html += '<td style="padding:6px 8px;color:#6b7280;">' + esc(r.type || '') + '</td>';
@@ -10149,7 +10149,7 @@ function _getDashboardAccountIds() {
 }
 
 // ============================================================
-// Task 6: Dashboard Integration \u00E2\u20AC\u201D KPI Bar Commitment Savings
+// Task 6: Dashboard Integration â€” KPI Bar Commitment Savings
 // ============================================================
 
 function _getCommitmentSavingsForKPI(accountIds) {
@@ -10173,7 +10173,7 @@ function _getCommitmentSavingsForKPI(accountIds) {
 }
 
 // ============================================================
-// Task 8: Chat Integration \u00E2\u20AC\u201D Savings Comparison Chart
+// Task 8: Chat Integration â€” Savings Comparison Chart
 // ============================================================
 
 function _buildCommitmentChartData(answerText, existingChartData) {
@@ -10235,7 +10235,7 @@ function _buildCommitmentChartData(answerText, existingChartData) {
 
             chartEntries.push({
                 id: 'commitment-sp-comparison',
-                title: 'Savings Plan Options \u00E2\u20AC\u201D Monthly Savings',
+                title: 'Savings Plan Options â€” Monthly Savings',
                 type: 'bar',
                 labels: labels,
                 data: data,
@@ -10268,7 +10268,7 @@ function _buildCommitmentChartData(answerText, existingChartData) {
 
             chartEntries.push({
                 id: 'commitment-ri-comparison',
-                title: 'Reserved Instance Options \u00E2\u20AC\u201D Monthly Savings (' + targetInstance + ')',
+                title: 'Reserved Instance Options â€” Monthly Savings (' + targetInstance + ')',
                 type: 'bar',
                 labels: labels,
                 data: data,
@@ -10300,23 +10300,23 @@ function _committedRenderLaddering(strategy, baseline) {
     var tranches = strategy.tranches || [];
     var html = '<div style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:20px;">';
     html += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">';
-    html += '<div style="display:flex;align-items:center;gap:10px;"><span style="font-size:1.3em;">\u00F0\u0178\u201C\u2026</span><strong style="color:#1f2937;">Laddering Strategy</strong></div>';
+    html += '<div style="display:flex;align-items:center;gap:10px;"><span style="font-size:1.3em;">ðŸ“…</span><strong style="color:#1f2937;">Laddering Strategy</strong></div>';
     html += '<div style="display:flex;align-items:center;gap:8px;">';
     html += '<select id="committed-ladder-term" onchange="_committedLadderTermChanged()" style="padding:4px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:0.85em;">';
     html += '<option value="1"' + ((_committedLadderSelectedTerm || 1) === 1 ? ' selected' : '') + '>1-year term</option>';
     html += '<option value="3"' + ((_committedLadderSelectedTerm || 1) === 3 ? ' selected' : '') + '>3-year term</option>';
     html += '</select>';
-    html += '<button onclick="document.getElementById(\'committed-ladder-modal\').hidden=false;_committedLadderUpdatePresetLabels();" class="btn btn-outline btn-sm">\u00E2\u0153\u008F\u00EF\u00B8\u008F Customize</button>';
+    html += '<button onclick="document.getElementById(\'committed-ladder-modal\').hidden=false;_committedLadderUpdatePresetLabels();" class="btn btn-outline btn-sm">âœï¸ Customize</button>';
     html += '</div></div>';
 
     // Plain-language explanation
     html += '<div class="cse-ladder-explanation">';
     html += 'Instead of buying your full commitment at once, stagger multiple 1-year (or 3-year) purchases across different dates. ';
-    html += 'This way they expire at different times \u00E2\u20AC\u201D giving you flexibility to adjust as your usage evolves. ';
-    html += '<strong>Each purchase is a full 1\u00E2\u20AC\u201C3 year commitment.</strong> The staggering is about <em>when</em> you buy, not how long each commitment lasts.';
+    html += 'This way they expire at different times â€” giving you flexibility to adjust as your usage evolves. ';
+    html += '<strong>Each purchase is a full 1â€“3 year commitment.</strong> The staggering is about <em>when</em> you buy, not how long each commitment lasts.';
     html += '</div>';
 
-    // Summary sentence \u00E2\u20AC\u201D use recalculated savings based on selected term
+    // Summary sentence â€” use recalculated savings based on selected term
     var perTrancheMonthly = tranches.length > 0 ? (tranches[0].hourlyCommitment || 0) * 730 : 0;
     var totalMonthlySavings = 0;
     tranches.forEach(function(t) {
@@ -10326,14 +10326,14 @@ function _committedRenderLaddering(strategy, baseline) {
     });
     html += '<div class="cse-ladder-summary">';
     html += '<strong>Recommended:</strong> Buy ' + tranches.length + ' separate commitments of ~$' + perTrancheMonthly.toFixed(0) + '/month each, ';
-    html += 'purchased 3 months apart \u00E2\u2020\u2019 total savings ~<strong>$' + totalMonthlySavings.toFixed(0) + '/month</strong> once all are active.';
+    html += 'purchased 3 months apart â†’ total savings ~<strong>$' + totalMonthlySavings.toFixed(0) + '/month</strong> once all are active.';
     html += '</div>';
 
     // Aggressive warning
     if (strategy.isAggressive) {
         html += '<div style="background:#fef2f2;border:1px solid #fca5a5;border-radius:8px;padding:10px 14px;margin-bottom:12px;font-size:0.85em;color:#991b1b;">';
-        html += '\u00E2\u0161\u00A0\u00EF\u00B8\u008F <strong>High commitment warning:</strong> This total commitment is high relative to your usage. ';
-        html += 'If your workloads decrease, you\'ll still pay for unused commitment for 1\u00E2\u20AC\u201C3 years. Consider the Moderate option.';
+        html += 'âš ï¸ <strong>High commitment warning:</strong> This total commitment is high relative to your usage. ';
+        html += 'If your workloads decrease, you\'ll still pay for unused commitment for 1â€“3 years. Consider the Moderate option.';
         html += '</div>';
     }
 
@@ -10508,10 +10508,10 @@ function _committedRenderExpiring(expiringData) {
     var expiring = expiringData.expiring || [];
 
     var html = '<div style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:20px;">';
-    html += '<div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;"><span style="font-size:1.3em;">\u00E2\u008F\u00B3</span><strong style="color:#1f2937;">Expiring Commitments</strong></div>';
+    html += '<div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;"><span style="font-size:1.3em;">â³</span><strong style="color:#1f2937;">Expiring Commitments</strong></div>';
 
     if (expiringData.noUpcomingExpirations || expiring.length === 0) {
-        html += '<div style="text-align:center;padding:20px;color:#6b7280;font-size:0.9em;">\u00E2\u0153\u2026 No upcoming expirations in the next 90 days.</div>';
+        html += '<div style="text-align:center;padding:20px;color:#6b7280;font-size:0.9em;">âœ… No upcoming expirations in the next 90 days.</div>';
     } else {
         expiring.forEach(function(item) {
             var isUrgent = item.urgency === 'expiring_soon' || item.daysUntilExpiry < 30;
@@ -10522,7 +10522,7 @@ function _committedRenderExpiring(expiringData) {
             html += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">';
             html += '<div style="display:flex;align-items:center;gap:8px;">';
             if (isUrgent) {
-                html += '<span style="background:#ef4444;color:#fff;font-size:0.7em;font-weight:700;padding:2px 8px;border-radius:100px;">\u00E2\u0161\u00A0\u00EF\u00B8\u008F Expiring Soon</span>';
+                html += '<span style="background:#ef4444;color:#fff;font-size:0.7em;font-weight:700;padding:2px 8px;border-radius:100px;">âš ï¸ Expiring Soon</span>';
             }
             html += '<strong style="color:#1f2937;font-size:0.9em;">' + (item.type || 'Commitment') + '</strong>';
             html += '</div>';
@@ -10558,9 +10558,9 @@ function _committedRenderRightsizeWarning(warning) {
     var instancesHtml = '';
     warning.flaggedInstances.forEach(function(inst) {
         instancesHtml += '<div style="display:flex;align-items:center;gap:8px;padding:4px 0;font-size:0.85em;">';
-        instancesHtml += '<span style="color:#92400e;">\u00E2\u20AC\u00A2</span>';
+        instancesHtml += '<span style="color:#92400e;">â€¢</span>';
         instancesHtml += '<span><strong>' + (inst.instanceId || '') + '</strong> (' + (inst.service || 'EC2') + '): ';
-        instancesHtml += inst.currentType + ' \u00E2\u2020\u2019 <strong style="color:#059669;">' + inst.recommendedType + '</strong></span>';
+        instancesHtml += inst.currentType + ' â†’ <strong style="color:#059669;">' + inst.recommendedType + '</strong></span>';
         instancesHtml += '</div>';
     });
 
@@ -10581,7 +10581,7 @@ function _committedRenderOrgSharing(orgData) {
 
     var text = orgData.sharingNote || 'Savings Plans and RIs can be shared across accounts in the same AWS Organization.';
     if (orgData.isManagementAccount === false) {
-        text += ' \u00F0\u0178\u2019\u00A1 Tip: For maximum sharing, purchase commitments from the management (payer) account.';
+        text += ' ðŸ’¡ Tip: For maximum sharing, purchase commitments from the management (payer) account.';
     }
 
     var textEl = document.getElementById('committed-org-sharing-text');
@@ -10608,7 +10608,7 @@ function _committedShowPurchaseGuide(type, subType) {
     if (type === 'sp') {
         var consoleUrl = 'https://' + region + '.console.aws.amazon.com/cost-management/home#/savings-plans/purchase';
         html += '<div style="margin-bottom:16px;">';
-        html += '<h3 style="color:#1e40af;font-size:1em;margin-bottom:12px;">\u00F0\u0178\u203A\u2019 How to Purchase a Savings Plan</h3>';
+        html += '<h3 style="color:#1e40af;font-size:1em;margin-bottom:12px;">ðŸ›’ How to Purchase a Savings Plan</h3>';
         html += '<ol style="padding-left:20px;font-size:0.9em;line-height:1.8;color:#374151;">';
         html += '<li>Go to <strong>AWS Cost Explorer</strong> in your AWS Console</li>';
         html += '<li>Navigate to <strong>Savings Plans</strong> in the left menu</li>';
@@ -10619,7 +10619,7 @@ function _committedShowPurchaseGuide(type, subType) {
         html += '<li>Review the estimated savings and click <strong>"Add to cart"</strong></li>';
         html += '<li>Complete the purchase in the cart</li>';
         html += '</ol>';
-        html += '<a href="' + consoleUrl + '" target="_blank" style="display:inline-block;margin-top:12px;background:#1e40af;color:#fff;padding:8px 16px;border-radius:6px;text-decoration:none;font-size:0.85em;font-weight:600;">Open AWS Savings Plans Console \u00E2\u2020\u2014</a>';
+        html += '<a href="' + consoleUrl + '" target="_blank" style="display:inline-block;margin-top:12px;background:#1e40af;color:#fff;padding:8px 16px;border-radius:6px;text-decoration:none;font-size:0.85em;font-weight:600;">Open AWS Savings Plans Console â†—</a>';
         html += '</div>';
     } else if (type === 'ri') {
         var service = (subType || 'EC2').toUpperCase();
@@ -10633,7 +10633,7 @@ function _committedShowPurchaseGuide(type, subType) {
         }
 
         html += '<div style="margin-bottom:16px;">';
-        html += '<h3 style="color:#7c3aed;font-size:1em;margin-bottom:12px;">\u00F0\u0178\u203A\u2019 How to Purchase a Reserved Instance (' + service + ')</h3>';
+        html += '<h3 style="color:#7c3aed;font-size:1em;margin-bottom:12px;">ðŸ›’ How to Purchase a Reserved Instance (' + service + ')</h3>';
         html += '<ol style="padding-left:20px;font-size:0.9em;line-height:1.8;color:#374151;">';
         if (service === 'RDS' || service === 'AMAZON RDS') {
             html += '<li>Go to the <strong>Amazon RDS Console</strong></li>';
@@ -10649,16 +10649,16 @@ function _committedShowPurchaseGuide(type, subType) {
         html += '<li>Set the quantity and review pricing</li>';
         html += '<li>Click <strong>"Purchase"</strong> to confirm</li>';
         html += '</ol>';
-        html += '<a href="' + consoleUrl + '" target="_blank" style="display:inline-block;margin-top:12px;background:#7c3aed;color:#fff;padding:8px 16px;border-radius:6px;text-decoration:none;font-size:0.85em;font-weight:600;">Open AWS ' + service + ' Reserved Instances \u00E2\u2020\u2014</a>';
+        html += '<a href="' + consoleUrl + '" target="_blank" style="display:inline-block;margin-top:12px;background:#7c3aed;color:#fff;padding:8px 16px;border-radius:6px;text-decoration:none;font-size:0.85em;font-weight:600;">Open AWS ' + service + ' Reserved Instances â†—</a>';
         html += '</div>';
     }
 
     // Warning about non-refundable
     html += '<div style="background:#fef3c7;border:1px solid #fbbf24;border-radius:8px;padding:12px 16px;margin-top:16px;">';
-    html += '<div style="font-weight:600;color:#92400e;font-size:0.85em;margin-bottom:4px;">\u00E2\u0161\u00A0\u00EF\u00B8\u008F Important</div>';
+    html += '<div style="font-weight:600;color:#92400e;font-size:0.85em;margin-bottom:4px;">âš ï¸ Important</div>';
     html += '<div style="font-size:0.8em;color:#78350f;line-height:1.6;">';
     html += 'Savings Plans and Reserved Instances are <strong>non-refundable</strong> commitments. ';
-    html += 'We recommend the <strong>laddering approach</strong> \u00E2\u20AC\u201D purchase in quarterly tranches rather than a single large commitment. ';
+    html += 'We recommend the <strong>laddering approach</strong> â€” purchase in quarterly tranches rather than a single large commitment. ';
     html += 'This reduces risk and allows you to adjust as your usage evolves.';
     html += '</div></div>';
 
@@ -10703,7 +10703,7 @@ function _populateInvoiceAccounts() {
             var msgDiv = document.createElement('div');
             msgDiv.id = 'inv-no-accounts';
             msgDiv.style.cssText = 'text-align:center;padding:60px 20px;color:#6b7280;';
-            msgDiv.innerHTML = '<div style="font-size:2.5em;margin-bottom:12px;">\u00F0\u0178\u201D\u2014</div>'
+            msgDiv.innerHTML = '<div style="font-size:2.5em;margin-bottom:12px;">ðŸ”—</div>'
                 + '<div style="font-size:1.1em;margin-bottom:8px;color:#1f2937;font-weight:600;">Connect an AWS account to explore invoices</div>'
                 + '<div style="font-size:0.9em;color:#6b7280;margin-bottom:16px;">Go to the Configure tab to add and connect your AWS accounts.</div>'
                 + '<button class="btn btn-primary btn-sm" onclick="document.querySelector(\'[data-tab=accounts-tab]\').click();">Go to Configure</button>';
@@ -10848,9 +10848,9 @@ function _clearInvoiceSummary() {
     var total = $('inv-total-spend');
     var mom = $('inv-mom-change');
     var top = $('inv-top-service');
-    if (total) total.textContent = '\u00E2\u20AC\u201D';
-    if (mom) { mom.textContent = '\u00E2\u20AC\u201D'; mom.className = 'inv-card-value'; }
-    if (top) top.textContent = '\u00E2\u20AC\u201D';
+    if (total) total.textContent = 'â€”';
+    if (mom) { mom.textContent = 'â€”'; mom.className = 'inv-card-value'; }
+    if (top) top.textContent = 'â€”';
 }
 
 function _showInvoiceLoading() {
@@ -10904,7 +10904,7 @@ async function _loadInvoiceData() {
         var empty = $('inv-empty');
         if (empty) {
             empty.hidden = false;
-            empty.innerHTML = '<p style="color:#ef4444;">\u00E2\u008F\u00B1\u00EF\u00B8\u008F Request timed out. The data is taking too long to load.</p>'
+            empty.innerHTML = '<p style="color:#ef4444;">â±ï¸ Request timed out. The data is taking too long to load.</p>'
                 + '<p style="color:#6b7280;font-size:0.85em;">Try selecting a smaller date range or fewer filters.</p>'
                 + '<button class="btn btn-outline btn-sm" onclick="_loadInvoiceData()">Retry</button>';
         }
@@ -10964,7 +10964,7 @@ function _renderInvoiceTable(data) {
         html += '<td>' + esc(item.service || '') + '</td>';
         html += '<td>$' + (item.cost != null ? Number(item.cost).toFixed(2) : '0.00') + '</td>';
         html += '<td>' + esc(item.month || '') + '</td>';
-        html += '<td>' + esc(item.region || '\u00E2\u20AC\u201D') + '</td>';
+        html += '<td>' + esc(item.region || 'â€”') + '</td>';
         html += '</tr>';
         // Expandable daily breakdown row (hidden by default)
         if (item.dailyCosts) {
@@ -11015,7 +11015,7 @@ async function _loadInvoiceSummary() {
         var data = await api('GET', '/members/invoices/summary?' + params);
         _renderInvoiceSummary(data);
     } catch (err) {
-        // Show dashes on summary failure \u00E2\u20AC\u201D table is more important
+        // Show dashes on summary failure â€” table is more important
         _clearInvoiceSummary();
         console.warn('Invoice summary failed:', err.message);
     }
@@ -11032,7 +11032,7 @@ function _renderInvoiceSummary(data) {
     }
     if (mom) {
         var change = data.monthOverMonthChange != null ? data.monthOverMonthChange : 0;
-        var arrow = change > 0 ? '\u00E2\u2020\u2018' : change < 0 ? '\u00E2\u2020\u201C' : '\u00E2\u2020\u2019';
+        var arrow = change > 0 ? 'â†‘' : change < 0 ? 'â†“' : 'â†’';
         mom.textContent = arrow + ' ' + Math.abs(change).toFixed(1) + '%';
         mom.className = 'inv-card-value' + (change > 0 ? ' inv-positive' : change < 0 ? ' inv-negative' : '');
     }
@@ -11040,7 +11040,7 @@ function _renderInvoiceSummary(data) {
         if (data.topService && data.topService.name) {
             top.textContent = data.topService.name + ' ($' + Number(data.topService.cost || 0).toFixed(2) + ')';
         } else {
-            top.textContent = '\u00E2\u20AC\u201D';
+            top.textContent = 'â€”';
         }
     }
 }
@@ -11070,7 +11070,7 @@ async function _refreshInvoiceData() {
         return;
     }
     var refreshBtn = $('inv-refresh-btn');
-    if (refreshBtn) { refreshBtn.disabled = true; refreshBtn.textContent = '\u00E2\u008F\u00B3 Refreshing...'; }
+    if (refreshBtn) { refreshBtn.disabled = true; refreshBtn.textContent = 'â³ Refreshing...'; }
 
     // Refresh current month and previous month
     var now = new Date();
@@ -11087,15 +11087,15 @@ async function _refreshInvoiceData() {
         _loadInvoiceSummary();
         _loadInvoiceData();
         _loadInvoiceServices();
-        if (refreshBtn) { refreshBtn.disabled = false; refreshBtn.textContent = '\u00F0\u0178\u201D\u201E Refresh'; }
+        if (refreshBtn) { refreshBtn.disabled = false; refreshBtn.textContent = 'ðŸ”„ Refresh'; }
     } catch (err) {
         if (err.status === 429) {
-            // Rate limited \u00E2\u20AC\u201D start countdown on refresh button
+            // Rate limited â€” start countdown on refresh button
             notify('Please wait before refreshing again. ' + (err.message || ''), 'warning');
             _startRefreshCooldown(refreshBtn, err.message);
         } else {
             notify('Refresh failed: ' + (err.message || 'Unknown error'), 'error');
-            if (refreshBtn) { refreshBtn.disabled = false; refreshBtn.textContent = '\u00F0\u0178\u201D\u201E Refresh'; }
+            if (refreshBtn) { refreshBtn.disabled = false; refreshBtn.textContent = 'ðŸ”„ Refresh'; }
         }
     }
 }
@@ -11113,7 +11113,7 @@ function _startRefreshCooldown(btn, message) {
 
     btn.disabled = true;
     var remaining = seconds;
-    btn.textContent = '\u00F0\u0178\u201D\u201E ' + Math.ceil(remaining / 60) + 'm';
+    btn.textContent = 'ðŸ”„ ' + Math.ceil(remaining / 60) + 'm';
 
     _invRefreshCooldown = setInterval(function() {
         remaining--;
@@ -11121,11 +11121,11 @@ function _startRefreshCooldown(btn, message) {
             clearInterval(_invRefreshCooldown);
             _invRefreshCooldown = null;
             btn.disabled = false;
-            btn.textContent = '\u00F0\u0178\u201D\u201E Refresh';
+            btn.textContent = 'ðŸ”„ Refresh';
         } else if (remaining > 60) {
-            btn.textContent = '\u00F0\u0178\u201D\u201E ' + Math.ceil(remaining / 60) + 'm';
+            btn.textContent = 'ðŸ”„ ' + Math.ceil(remaining / 60) + 'm';
         } else {
-            btn.textContent = '\u00F0\u0178\u201D\u201E ' + remaining + 's';
+            btn.textContent = 'ðŸ”„ ' + remaining + 's';
         }
     }, 1000);
 }
@@ -11173,7 +11173,7 @@ function _exportInvoiceCSV() {
 
 
 // ============================================================
-// Invoice Drilldown \u00E2\u20AC\u201D Hierarchical 3-Level Drill-Down
+// Invoice Drilldown â€” Hierarchical 3-Level Drill-Down
 // ============================================================
 
 var _drilldownCache = {};
@@ -11210,7 +11210,7 @@ function _ddFormatCurrency(amount) {
 }
 
 function _ddFormatDate(isoDate) {
-    if (!isoDate) return '\u00E2\u20AC\u201D';
+    if (!isoDate) return 'â€”';
     try {
         var parts = isoDate.split('-');
         var d = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2] || 1));
@@ -11309,7 +11309,7 @@ function _ddRenderInvoices(data) {
     items.forEach(function(inv) {
         var period = inv.period || '';
         var isExpanded = _ddExpandedInvoices[period];
-        var chevron = isExpanded ? '\u00E2\u2013\u00BC' : '\u00E2\u2013\u00B6';
+        var chevron = isExpanded ? 'â–¼' : 'â–¶';
         html += '<tr class="dd-invoice-row' + (isExpanded ? ' dd-expanded' : '') + '" data-period="' + ea(period) + '" data-invoice-id="' + ea(inv.invoiceId || '') + '">';
         html += '<td class="dd-chevron">' + chevron + '</td>';
         html += '<td>' + esc(inv.invoiceId || '') + '</td>';
@@ -11382,7 +11382,7 @@ async function _ddLoadServices(period) {
         _drilldownCache[cacheKey] = data;
         _ddRenderServices(area, period, data);
     } catch (err) {
-        area.innerHTML = '<div class="dd-inline-error"><span>\u00E2\u0161\u00A0\u00EF\u00B8\u008F ' + esc(err.message || 'Failed to load services.') + '</span> <button class="btn btn-outline btn-sm" onclick="_ddRetryServices(\'' + ea(period) + '\')">Retry</button></div>';
+        area.innerHTML = '<div class="dd-inline-error"><span>âš ï¸ ' + esc(err.message || 'Failed to load services.') + '</span> <button class="btn btn-outline btn-sm" onclick="_ddRetryServices(\'' + ea(period) + '\')">Retry</button></div>';
     }
 }
 
@@ -11410,7 +11410,7 @@ function _ddRenderServices(area, period, data) {
     services.forEach(function(svc) {
         var svcKey = period + '_' + (svc.serviceName || '');
         var isExpanded = _ddExpandedServices[svcKey];
-        var chevron = isExpanded ? '\u00E2\u2013\u00BC' : '\u00E2\u2013\u00B6';
+        var chevron = isExpanded ? 'â–¼' : 'â–¶';
         var pct = svc.percentage != null ? svc.percentage : 0;
 
         html += '<tr class="dd-service-row' + (isExpanded ? ' dd-expanded' : '') + '" data-period="' + ea(period) + '" data-service="' + ea(svc.serviceName || '') + '">';
@@ -11483,7 +11483,7 @@ async function _ddLoadResources(period, service) {
         _drilldownCache[cacheKey] = data;
         _ddRenderResources(area, data);
     } catch (err) {
-        area.innerHTML = '<div class="dd-inline-error"><span>\u00E2\u0161\u00A0\u00EF\u00B8\u008F ' + esc(err.message || 'Failed to load resources.') + '</span> <button class="btn btn-outline btn-sm" onclick="_ddRetryResources(\'' + ea(period) + '\',\'' + ea(service) + '\')">Retry</button></div>';
+        area.innerHTML = '<div class="dd-inline-error"><span>âš ï¸ ' + esc(err.message || 'Failed to load resources.') + '</span> <button class="btn btn-outline btn-sm" onclick="_ddRetryResources(\'' + ea(period) + '\',\'' + ea(service) + '\')">Retry</button></div>';
     }
 }
 
@@ -11519,7 +11519,7 @@ function _ddRenderResources(area, data) {
             tipHtml = '<span class="dd-savings-tip">' + esc(res.savingsTip) + '</span>';
             tipHtml += ' <a href="#" class="dd-chat-link" onclick="event.preventDefault();_ddOpenChatAbout(\'' + ea(res.resourceName || res.resourceId || '') + '\',\'' + ea(res.resourceType || '') + '\',' + (res.amount || 0) + ',\'' + ea(res.costExplanation || '') + '\')">\uD83D\uDCAC Discuss</a>';
         } else {
-            tipHtml = '<span class="dd-no-tip">\u00E2\u20AC\u201D</span>';
+            tipHtml = '<span class="dd-no-tip">â€”</span>';
         }
 
         html += '<tr class="dd-resource-row">';
@@ -11532,7 +11532,7 @@ function _ddRenderResources(area, data) {
         // AI explanation row
         if (res.aiExplanation) {
             html += '<tr class="dd-ai-row"><td colspan="4">';
-            html += '<div class="dd-ai-box">\u00F0\u0178\u00A4\u2013 ' + esc(res.aiExplanation) + '</div>';
+            html += '<div class="dd-ai-box">ðŸ¤– ' + esc(res.aiExplanation) + '</div>';
             html += '</td></tr>';
         }
     });
@@ -11542,7 +11542,7 @@ function _ddRenderResources(area, data) {
     // Warnings
     if (data.warnings && data.warnings.length) {
         html += '<div class="dd-inline-warning">';
-        data.warnings.forEach(function(w) { html += '<div>\u00E2\u0161\u00A0\u00EF\u00B8\u008F ' + esc(w) + '</div>'; });
+        data.warnings.forEach(function(w) { html += '<div>âš ï¸ ' + esc(w) + '</div>'; });
         html += '</div>';
     }
 
@@ -11557,7 +11557,7 @@ function _ddOpenChatAbout(resourceName, resourceType, monthlyCost, costExplanati
 
     // Build a specific question with cost context
     var costStr = monthlyCost ? ' (current cost: $' + monthlyCost.toFixed(2) + '/month' + (costExplanation ? ', ' + costExplanation : '') + ')' : '';
-    var question = 'Analyze this specific instance and recommend how to optimize it: "' + resourceName + '" \u00E2\u20AC\u201D ' + resourceType + costStr + '. Focus ONLY on this instance, show its per-instance cost, and give specific rightsizing or commitment options.';
+    var question = 'Analyze this specific instance and recommend how to optimize it: "' + resourceName + '" â€” ' + resourceType + costStr + '. Focus ONLY on this instance, show its per-instance cost, and give specific rightsizing or commitment options.';
 
     // Pre-fill the chat input with a savings question
     setTimeout(function() {
@@ -11579,7 +11579,7 @@ async function _ddRefresh() {
         return;
     }
     var btn = $('dd-refresh-btn');
-    if (btn) { btn.disabled = true; btn.textContent = '\u00E2\u008F\u00B3 Refreshing...'; }
+    if (btn) { btn.disabled = true; btn.textContent = 'â³ Refreshing...'; }
 
     try {
         await api('POST', '/members/invoices/refresh', { accountId: _ddState.accountId });
@@ -11587,10 +11587,10 @@ async function _ddRefresh() {
         _ddClearCache();
         _ddState.page = 1;
         loadInvoiceDrilldown(_ddState.accountId);
-        if (btn) { btn.disabled = false; btn.textContent = '\u00F0\u0178\u201D\u201E Refresh'; }
+        if (btn) { btn.disabled = false; btn.textContent = 'ðŸ”„ Refresh'; }
     } catch (err) {
         if (err.status === 429) {
-            // Rate limited \u00E2\u20AC\u201D show cooldown
+            // Rate limited â€” show cooldown
             var seconds = 300;
             try {
                 var parsed = JSON.parse(err.message || '{}');
@@ -11602,7 +11602,7 @@ async function _ddRefresh() {
             _ddStartCooldown(seconds);
         } else {
             notify('Refresh failed: ' + (err.message || 'Unknown error'), 'error');
-            if (btn) { btn.disabled = false; btn.textContent = '\u00F0\u0178\u201D\u201E Refresh'; }
+            if (btn) { btn.disabled = false; btn.textContent = 'ðŸ”„ Refresh'; }
         }
     }
 }
@@ -11613,7 +11613,7 @@ function _ddStartCooldown(seconds) {
     if (_ddRefreshCooldownInterval) clearInterval(_ddRefreshCooldownInterval);
 
     var remaining = seconds;
-    if (btn) { btn.disabled = true; btn.textContent = '\u00F0\u0178\u201D\u201E Refresh'; }
+    if (btn) { btn.disabled = true; btn.textContent = 'ðŸ”„ Refresh'; }
     if (cooldownEl) { cooldownEl.style.display = 'inline'; cooldownEl.textContent = remaining + 's'; }
 
     _ddRefreshCooldownInterval = setInterval(function() {
@@ -11621,7 +11621,7 @@ function _ddStartCooldown(seconds) {
         if (remaining <= 0) {
             clearInterval(_ddRefreshCooldownInterval);
             _ddRefreshCooldownInterval = null;
-            if (btn) { btn.disabled = false; btn.textContent = '\u00F0\u0178\u201D\u201E Refresh'; }
+            if (btn) { btn.disabled = false; btn.textContent = 'ðŸ”„ Refresh'; }
             if (cooldownEl) { cooldownEl.style.display = 'none'; }
         } else {
             if (cooldownEl) cooldownEl.textContent = remaining + 's';
@@ -11895,14 +11895,14 @@ function _sqlRenderMigrationPlan(plan) {
     html += '<h3 style="margin:0;color:#1f2937;">' + (plan.title || 'Migration Plan') + '</h3>';
     html += '<div style="display:flex;align-items:center;gap:10px;">';
     html += '<span class="sql-complexity-badge" style="background:' + complexityColor + '20;color:' + complexityColor + ';border:1px solid ' + complexityColor + ';">' + (plan.complexity || 'medium').toUpperCase() + '</span>';
-    if (plan.estimatedDuration) html += '<span style="font-size:0.85em;color:#6b7280;">\u23F1\uFE0F ' + plan.estimatedDuration + '</span>';
+    if (plan.estimatedDuration) html += '<span style="font-size:0.85em;color:#6b7280;">⏱️ ' + plan.estimatedDuration + '</span>';
     html += '</div></div>';
 
     // Savings summary
     var savings = plan.estimatedSavings || {};
     if (savings.monthly) {
         html += '<div style="background:linear-gradient(135deg,#064e3b,#065f46);border-radius:8px;padding:12px 16px;margin-bottom:16px;display:flex;align-items:center;gap:12px;">';
-        html += '<span style="font-size:1.4em;">\uD83D\uDCB0</span>';
+        html += '<span style="font-size:1.4em;">💰</span>';
         html += '<div><div style="color:#6ee7b7;font-size:0.8em;text-transform:uppercase;">Estimated Savings</div>';
         html += '<div style="color:#fff;font-size:1.2em;font-weight:700;">$' + savings.monthly.toFixed(0) + '/mo ($' + (savings.annual || savings.monthly * 12).toFixed(0) + '/yr)</div>';
         html += '</div></div>';
@@ -11927,7 +11927,7 @@ function _sqlRenderMigrationPlan(plan) {
             html += '<div style="flex:1;">';
             html += '<div style="font-weight:600;color:#1f2937;font-size:0.9em;">' + step.action + '</div>';
             if (step.awsConsoleLink) {
-                html += '<a href="' + step.awsConsoleLink + '" target="_blank" rel="noopener" style="font-size:0.8em;color:#6366f1;text-decoration:none;">Open in AWS Console \u2192</a>';
+                html += '<a href="' + step.awsConsoleLink + '" target="_blank" rel="noopener" style="font-size:0.8em;color:#6366f1;text-decoration:none;">Open in AWS Console →</a>';
             }
             html += '</div></div></div>';
         });
@@ -11937,7 +11937,7 @@ function _sqlRenderMigrationPlan(plan) {
     // Risks
     if (plan.risks && plan.risks.length > 0) {
         html += '<div style="background:#fef3c7;border:1px solid #f59e0b;border-radius:8px;padding:12px 16px;margin-bottom:16px;">';
-        html += '<strong style="color:#92400e;font-size:0.9em;">\u26A0\uFE0F Risks</strong>';
+        html += '<strong style="color:#92400e;font-size:0.9em;">⚠️ Risks</strong>';
         html += '<ul style="margin:8px 0 0;padding-left:18px;color:#78350f;font-size:0.85em;">';
         plan.risks.forEach(function(r) { html += '<li>' + r + '</li>'; });
         html += '</ul></div>';
@@ -11947,8 +11947,8 @@ function _sqlRenderMigrationPlan(plan) {
     if (plan.script) {
         html += '<div style="margin-top:20px;border-top:1px solid #e5e7eb;padding-top:16px;">';
         html += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">';
-        html += '<h4 style="margin:0;color:#1f2937;font-size:0.95em;">\u2601\uFE0F AWS CloudShell Script</h4>';
-        html += '<button onclick="_sqlCopyScript()" style="background:#6366f1;color:#fff;border:none;border-radius:6px;padding:6px 14px;font-size:0.8em;cursor:pointer;font-weight:600;">\uD83D\uDCCB Copy Script</button>';
+        html += '<h4 style="margin:0;color:#1f2937;font-size:0.95em;">☁️ AWS CloudShell Script</h4>';
+        html += '<button onclick="_sqlCopyScript()" style="background:#6366f1;color:#fff;border:none;border-radius:6px;padding:6px 14px;font-size:0.8em;cursor:pointer;font-weight:600;">📋 Copy Script</button>';
         html += '</div>';
         html += '<pre id="sql-migration-script" style="background:#1e1e2e;color:#cdd6f4;border-radius:8px;padding:14px;font-size:0.78em;line-height:1.5;overflow-x:auto;max-height:400px;overflow-y:auto;white-space:pre-wrap;word-break:break-all;">' + plan.script.replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</pre>';
         html += '</div>';
@@ -11974,4 +11974,3 @@ function _sqlCopyScript() {
         notify('Script copied!', 'success', 3000);
     });
 }
- 
