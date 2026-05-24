@@ -11974,3 +11974,4 @@ function _sqlCopyScript() {
         notify('Script copied!', 'success', 3000);
     });
 }
+ 
