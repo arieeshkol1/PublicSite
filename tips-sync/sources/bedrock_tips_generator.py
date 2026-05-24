@@ -93,23 +93,24 @@ def generate_tips_with_bedrock(bedrock_client, existing_tips: list, num_tips: in
             "num_tips_requested": num_tips,
         }))
 
-        # Call Bedrock Claude
+        # Call Bedrock - use Amazon Nova Lite (available in this account)
         response = bedrock_client.invoke_model(
-            modelId="us.anthropic.claude-3-haiku-20240307-v1:0",
+            modelId="us.amazon.nova-lite-v1:0",
             contentType="application/json",
             accept="application/json",
             body=json.dumps({
-                "anthropic_version": "bedrock-2023-05-31",
-                "max_tokens": 4096,
-                "temperature": 0.7,
+                "inferenceConfig": {
+                    "max_new_tokens": 4096,
+                    "temperature": 0.7,
+                },
                 "messages": [
-                    {"role": "user", "content": prompt}
+                    {"role": "user", "content": [{"text": prompt}]}
                 ],
             }),
         )
 
         response_body = json.loads(response["body"].read())
-        content = response_body.get("content", [{}])[0].get("text", "")
+        content = response_body.get("output", {}).get("message", {}).get("content", [{}])[0].get("text", "")
 
         # Parse the JSON response
         # Handle potential markdown wrapping
