@@ -9941,10 +9941,21 @@ function _committedRenderRecommendations(data) {
     if (spRecs.length === 0 && riRecs.length === 0) {
         var panel = document.getElementById('committed-recommendations-panel');
         if (panel) {
+            var errInfo = '';
+            if (data._errors) {
+                var errKeys = Object.keys(data._errors);
+                if (errKeys.length > 0) {
+                    errInfo = '<div style="font-size:0.8em;color:#ef4444;margin-top:12px;text-align:left;background:#fef2f2;padding:10px;border-radius:8px;">'
+                        + '<strong>Debug info:</strong><br>';
+                    errKeys.forEach(function(k) { errInfo += esc(k) + ': ' + esc(data._errors[k]) + '<br>'; });
+                    errInfo += '</div>';
+                }
+            }
             panel.innerHTML = '<div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:12px;padding:32px 20px;text-align:center;">'
                 + '<div style="font-size:2em;margin-bottom:12px;">\ud83d\udccb</div>'
                 + '<div style="font-size:1em;color:#1f2937;margin-bottom:8px;font-weight:600;">No SP/RI recommendations available from AWS</div>'
                 + '<div style="font-size:0.9em;color:#6b7280;">Your account needs at least 7 days of consistent usage history for AWS to generate recommendations.</div>'
+                + errInfo
                 + '</div>';
             panel.style.display = 'block';
         }

@@ -3974,7 +3974,7 @@ def handle_committed_discount_scan(event):
         return _get_expiring_commitments(ce_client, savingsplans_client, ec2_client, rds_client)
 
     # Phase 1: coverage/utilization and P10 baseline (needed for SP recommendations)
-    timeout_budget = 25  # seconds â€” leave 5s buffer before Lambda timeout
+    timeout_budget = 120  # seconds - RI/SP recommendations need time for many API calls
     remaining = timeout_budget - (time.time() - scan_start)
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
