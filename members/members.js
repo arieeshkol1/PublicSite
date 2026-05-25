@@ -9389,11 +9389,31 @@ function _committedRenderCoverage(data) {
     var spUtil = (utilization.savingsPlans && utilization.savingsPlans.overall) || 0;
     var riUtil = (utilization.reservedInstances && utilization.reservedInstances.overall) || 0;
 
-    // Calculate potential annual savings — use MAX of SP or RI (they cover the same usage, not additive)
-    var spTotalMonthly = 0, riTotalMonthly = 0;
-    (data.spRecommendations || []).forEach(function(r) { spTotalMonthly += (r.estimatedMonthlySavings || 0); });
-    (data.riRecommendations || []).forEach(function(r) { riTotalMonthly += (r.estimatedMonthlySavings || 0); });
+    // Calculate potential annual savings — pick best option per instance type, then sum across types
+    // For RI: group by instanceType, take the max savings per type
+    var riByInstance = {};
+    (data.riRecommendations || []).forEach(function(r) {
+        var key = r.instanceType || 'unknown';
+        if (!riByInstance[key] || (r.estimatedMonthlySavings || 0) > riByInstance[key]) {
+            riByInstance[key] = r.estimatedMonthlySavings || 0;
+        }
+    });
+    var riTotalMonthly = 0;
+    Object.keys(riByInstance).forEach(function(k) { riTotalMonthly += riByInstance[k]; });
+
+    // For SP: take the single best recommendation (SP is account-wide, not per-instance)
+    var spTotalMonthly = 0;
+    (data.spRecommendations || []).forEach(function(r) {
+        if ((r.estimatedMonthlySavings || 0) > spTotalMonthly) spTotalMonthly = r.estimatedMonthlySavings || 0;
+    });
+
+    // Use max of SP or RI approach (they overlap for EC2)
     var totalAnnualSavings = Math.max(spTotalMonthly, riTotalMonthly) * 12;
+    // Cap at reasonable % of annual spend
+    var annualSpend = (data.baseline && data.baseline.averageHourlySpend || 0) * 8760;
+    if (annualSpend > 0 && totalAnnualSavings > annualSpend * 0.4) {
+        totalAnnualSavings = Math.round(annualSpend * 0.3); // Cap at 30% — realistic max
+    }
 
     var html = '<div style="background:linear-gradient(135deg,#f0f9ff,#e0f2fe);border:1px solid #7dd3fc;border-radius:12px;padding:20px;margin-bottom:16px;">';
     html += '<div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;"><span style="font-size:1.5em;">\ud83d\udcca</span><div><div style="font-weight:700;color:#0c4a6e;font-size:1.05em;">Coverage & Utilization Summary</div></div></div>';
@@ -9468,7 +9488,7 @@ function _committedRenderCoverage(data) {
     if (totalAnnualSavings > 0) {
         html += '<div style="background:linear-gradient(135deg,#064e3b,#065f46);border-radius:8px;padding:10px 16px;display:flex;align-items:center;gap:10px;">';
         html += '<span style="font-size:1.3em;">\ud83d\udcb0</span>';
-        html += '<div><div style="color:#6ee7b7;font-size:0.75em;text-transform:uppercase;">Estimated Annual Savings (all recommendations)</div>';
+        html += '<div><div style="color:#6ee7b7;font-size:0.75em;text-transform:uppercase;">Potential Annual Savings (best option per workload)</div>';
         html += '<div style="color:#fff;font-size:1.2em;font-weight:700;">$' + totalAnnualSavings.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',') + '</div></div>';
         html += '</div>';
     }

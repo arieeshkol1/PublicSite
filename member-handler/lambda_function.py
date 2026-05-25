@@ -3055,8 +3055,9 @@ def _get_ri_recommendations(ce_client):
                                 tenancy = ec2_details.get('Tenancy', '')
                             elif 'RDSInstanceDetails' in instance_details:
                                 rds_details = instance_details['RDSInstanceDetails']
-                                instance_type = rds_details.get('DatabaseEngine', '') + '.' + rds_details.get('InstanceType', 'unknown')
+                                instance_type = rds_details.get('InstanceType', 'unknown')
                                 region = rds_details.get('Region', 'unknown')
+                                platform = rds_details.get('DatabaseEngine', '')
                             elif 'ElastiCacheInstanceDetails' in instance_details:
                                 details = instance_details['ElastiCacheInstanceDetails']
                                 instance_type = details.get('NodeType', 'unknown')
@@ -3281,7 +3282,7 @@ def _get_database_sp_recommendations(ce_client):
                         # Extract instance type and region based on service
                         if 'RDSInstanceDetails' in instance_details:
                             rds_details = instance_details['RDSInstanceDetails']
-                            instance_type = rds_details.get('DatabaseEngine', '') + '.' + rds_details.get('InstanceType', 'unknown')
+                            instance_type = rds_details.get('InstanceType', 'unknown')
                             region = rds_details.get('Region', 'unknown')
                         elif 'ElastiCacheInstanceDetails' in instance_details:
                             ec_details = instance_details['ElastiCacheInstanceDetails']
