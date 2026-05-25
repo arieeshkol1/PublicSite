@@ -9719,15 +9719,16 @@ function _spExplorerBuildCompareTable() {
     });
 
     var html = '<table class="cse-compare-table"><thead><tr>';
-    html += '<th>Term</th><th>Payment</th><th>$/hr</th><th>Monthly Savings</th><th>Savings %</th><th>Upfront</th><th>Break-Even</th><th>Total Cost</th>';
+    html += '<th>Term</th><th>Payment</th><th>$/hr</th><th>Monthly Savings</th><th>Savings %</th><th>Upfront</th><th>Break-Even</th><th>Total Savings</th>';
     html += '</tr></thead><tbody>';
 
     recsForType.forEach(function(r) {
-        var totalCost = Math.max(0, (r.upfrontCost || 0) + ((r.estimatedMonthlyOnDemandCost || 0) - (r.estimatedMonthlySavings || 0)) * (r.termInYears || 1) * 12);
+        var totalSavings = (r.estimatedMonthlySavings || 0) * (r.termInYears || 1) * 12 - (r.upfrontCost || 0);
         var breakEven = r.paymentOption === 'NoUpfront' ? 'Immediate' : (r.upfrontCost && r.estimatedMonthlySavings ? (r.upfrontCost / r.estimatedMonthlySavings).toFixed(1) + ' mo' : '-');
         var rowClass = '';
         if ((r.estimatedSavingsPercentage || 0) === bestSavingsPct) rowClass = 'cse-row-best-savings';
-        if (totalCost === lowestTotalCost) rowClass = 'cse-row-lowest-cost';
+        var bestTotalSavings = recsForType.reduce(function(best, x) { var s = (x.estimatedMonthlySavings||0)*(x.termInYears||1)*12-(x.upfrontCost||0); return s > best ? s : best; }, 0);
+        if (totalSavings >= bestTotalSavings - 1) rowClass = 'cse-row-lowest-cost';
 
         html += '<tr class="' + rowClass + '">';
         html += '<td>' + (r.termInYears || 1) + 'yr</td>';
@@ -9737,7 +9738,7 @@ function _spExplorerBuildCompareTable() {
         html += '<td>' + (r.estimatedSavingsPercentage || 0).toFixed(1) + '%</td>';
         html += '<td>' + (r.upfrontCost > 0 ? '$' + (r.upfrontCost || 0).toFixed(0) : '-') + '</td>';
         html += '<td>' + breakEven + '</td>';
-        html += '<td>$' + totalCost.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',') + '</td>';
+        html += '<td style="color:#059669;font-weight:600;">$' + Math.max(0, totalSavings).toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',') + '</td>';
         html += '</tr>';
     });
 
@@ -9870,14 +9871,14 @@ function _riExplorerBuildSavingsCard() {
 
     var html = '<div class="cse-savings-card">';
     if (isLowestTCO) {
-        html += '<div style="margin-bottom:8px;"><span class="cse-badge cse-badge-tco">\ud83d\udc8e Lowest TCO</span></div>';
+        html += '<div style="margin-bottom:8px;"><span class="cse-badge cse-badge-tco">\ud83d\udc8e Best Net Savings</span></div>';
     }
     html += '<div class="cse-savings-grid">';
     html += '<div class="cse-savings-metric"><div class="cse-metric-label">Monthly Savings</div><div class="cse-metric-value">$' + (match.estimatedMonthlySavings || 0).toFixed(0) + '/mo</div></div>';
     html += '<div class="cse-savings-metric"><div class="cse-metric-label">Savings %</div><div class="cse-metric-value">' + (match.estimatedSavingsPercentage || 0).toFixed(1) + '%</div></div>';
     html += '<div class="cse-savings-metric"><div class="cse-metric-label">Count</div><div class="cse-metric-value cse-neutral">' + (match.recommendedCount || 1) + 'x</div></div>';
     html += '<div class="cse-savings-metric"><div class="cse-metric-label">Region</div><div class="cse-metric-value cse-neutral">' + (match.region || '-') + '</div></div>';
-    html += '<div class="cse-savings-metric"><div class="cse-metric-label">TCO</div><div class="cse-metric-value cse-neutral">$' + tco.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',') + '</div></div>';
+    html += '<div class="cse-savings-metric"><div class="cse-metric-label">Total Savings</div><div class="cse-metric-value" style="color:#059669;">$' + Math.max(0, (match.estimatedMonthlySavings || 0) * (match.termInYears || 1) * 12 - (match.upfrontCost || 0)).toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',') + '</div></div>';
     if (match.upfrontCost > 0) {
         html += '<div class="cse-savings-metric"><div class="cse-metric-label">Upfront Cost</div><div class="cse-metric-value cse-warning">$' + (match.upfrontCost || 0).toFixed(0) + '</div></div>';
     }
@@ -9996,15 +9997,15 @@ function _riExplorerBuildCompareTable() {
     });
 
     var html = '<table class="cse-compare-table"><thead><tr>';
-    html += '<th>Service</th><th>Class</th><th>Term</th><th>Payment</th><th>Monthly Savings</th><th>Savings %</th><th>Upfront</th><th>Break-Even</th><th>TCO</th>';
+    html += '<th>Service</th><th>Class</th><th>Term</th><th>Payment</th><th>Monthly Savings</th><th>Savings %</th><th>Upfront</th><th>Break-Even</th><th>Total Savings</th>';
     html += '</tr></thead><tbody>';
 
     recsForInstance.forEach(function(r) {
-        var tco = Math.max(0, (r.upfrontCost || 0) + ((r.estimatedMonthlyOnDemandCost || 0) - (r.estimatedMonthlySavings || 0)) * (r.termInYears || 1) * 12);
+        var totalSavings = (r.estimatedMonthlySavings || 0) * (r.termInYears || 1) * 12 - (r.upfrontCost || 0);
         var breakEven = r.paymentOption === 'NoUpfront' ? 'Immediate' : (r.upfrontCost && r.estimatedMonthlySavings ? (r.upfrontCost / r.estimatedMonthlySavings).toFixed(1) + ' mo' : '-');
         var rowClass = '';
         if ((r.estimatedSavingsPercentage || 0) === bestSavingsPct) rowClass = 'cse-row-best-savings';
-        if (tco === lowestTCO) rowClass = 'cse-row-lowest-cost';
+        if (totalSavings >= (recsForInstance.reduce(function(best, x) { var s = (x.estimatedMonthlySavings||0)*(x.termInYears||1)*12-(x.upfrontCost||0); return s > best ? s : best; }, 0) - 1)) rowClass = 'cse-row-lowest-cost';
 
         html += '<tr class="' + rowClass + '">';
         html += '<td>' + (r.service || '-') + '</td>';
@@ -10015,7 +10016,7 @@ function _riExplorerBuildCompareTable() {
         html += '<td>' + (r.estimatedSavingsPercentage || 0).toFixed(1) + '%</td>';
         html += '<td>' + (r.upfrontCost > 0 ? '$' + (r.upfrontCost || 0).toFixed(0) : '-') + '</td>';
         html += '<td>' + breakEven + '</td>';
-        html += '<td>$' + tco.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',') + '</td>';
+        html += '<td style="color:#059669;font-weight:600;">$' + Math.max(0, totalSavings).toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',') + '</td>';
         html += '</tr>';
     });
 
