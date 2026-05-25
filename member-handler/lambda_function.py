@@ -2998,12 +2998,26 @@ def _get_ri_recommendations(ce_client):
             for term in terms:
                 for payment_option in payment_options:
                     try:
-                        response = ce_client.get_reservation_purchase_recommendation(
-                            Service=service,
-                            TermInYears=term,
-                            PaymentOption=payment_option,
-                            OfferingClass=offering_class,
-                        )
+                        # OfferingClass only applies to EC2 via ServiceSpecification
+                        call_params = {
+                            'Service': service,
+                            'TermInYears': term,
+                            'PaymentOption': payment_option,
+                            'LookbackPeriodInDays': 'THIRTY_DAYS',
+                        }
+                        if service == 'Amazon Elastic Compute Cloud - Compute':
+                            call_params['ServiceSpecification'] = {
+                                'EC2Specification': {
+                                    'OfferingClass': offering_class
+                                }
+                            }
+                        else:
+                            # Non-EC2 services don't support OfferingClass;
+                            # only query once (skip CONVERTIBLE to avoid duplicates)
+                            if offering_class == 'CONVERTIBLE':
+                                continue
+
+                        response = ce_client.get_reservation_purchase_recommendation(**call_params)
                     except ClientError as e:
                         logger.warning(
                             f"RI recommendation call failed for {service} {offering_class} "
