@@ -18723,13 +18723,46 @@ def handle_ri_marketplace(event):
         params = {
             'IncludeMarketplace': True,
             'MaxResults': 50,
-            'Filters': [{'Name': 'marketplace', 'Values': ['true']}],
+            'OfferingType': 'No Upfront',
         }
         if instance_type:
             params['InstanceType'] = instance_type
 
-        response = ec2.describe_reserved_instances_offerings(**params)
-        raw_offerings = response.get('ReservedInstancesOfferings', [])
+        # Try marketplace-only filter first
+        try:
+            response = ec2.describe_reserved_instances_offerings(**params)
+            raw_offerings = response.get('ReservedInstancesOfferings', [])
+            # Filter to only marketplace offerings (Marketplace=True in response)
+            raw_offerings = [o for o in raw_offerings if o.get('Marketplace', False)]
+        except ClientError:
+            # Fallback without filter
+            raw_offerings = []
+
+        # If no No Upfront results, try All Upfront and Partial Upfront too
+        if not raw_offerings:
+            for offering_type in ['Partial Upfront', 'All Upfront', 'No Upfront']:
+                try:
+                    params2 = {
+                        'IncludeMarketplace': True,
+                        'MaxResults': 50,
+                        'OfferingType': offering_type,
+                    }
+                    if instance_type:
+                        params2['InstanceType'] = instance_type
+                    resp2 = ec2.describe_reserved_instances_offerings(**params2)
+                    marketplace_only = [o for o in resp2.get('ReservedInstancesOfferings', []) if o.get('Marketplace', False)]
+                    raw_offerings.extend(marketplace_only)
+                except ClientError:
+                    continue
+            # Deduplicate by offering ID
+            seen = set()
+            deduped = []
+            for o in raw_offerings:
+                oid = o.get('ReservedInstancesOfferingId', '')
+                if oid not in seen:
+                    seen.add(oid)
+                    deduped.append(o)
+            raw_offerings = deduped
 
         # Normalize offerings
         offerings = []

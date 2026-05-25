@@ -9688,7 +9688,7 @@ function _spExplorerBuildCompareTable() {
     var bestSavingsPct = -1, lowestTotalCost = Infinity;
     recsForType.forEach(function(r) {
         if ((r.estimatedSavingsPercentage || 0) > bestSavingsPct) bestSavingsPct = r.estimatedSavingsPercentage;
-        var totalCost = (r.upfrontCost || 0) + ((r.estimatedMonthlyOnDemandCost || 0) - (r.estimatedMonthlySavings || 0)) * (r.termInYears || 1) * 12;
+        var totalCost = Math.max(0, (r.upfrontCost || 0) + ((r.estimatedMonthlyOnDemandCost || 0) - (r.estimatedMonthlySavings || 0)) * (r.termInYears || 1) * 12);
         if (totalCost < lowestTotalCost) lowestTotalCost = totalCost;
     });
 
@@ -9697,7 +9697,7 @@ function _spExplorerBuildCompareTable() {
     html += '</tr></thead><tbody>';
 
     recsForType.forEach(function(r) {
-        var totalCost = (r.upfrontCost || 0) + ((r.estimatedMonthlyOnDemandCost || 0) - (r.estimatedMonthlySavings || 0)) * (r.termInYears || 1) * 12;
+        var totalCost = Math.max(0, (r.upfrontCost || 0) + ((r.estimatedMonthlyOnDemandCost || 0) - (r.estimatedMonthlySavings || 0)) * (r.termInYears || 1) * 12);
         var breakEven = r.paymentOption === 'NoUpfront' ? 'Immediate' : (r.upfrontCost && r.estimatedMonthlySavings ? (r.upfrontCost / r.estimatedMonthlySavings).toFixed(1) + ' mo' : '-');
         var rowClass = '';
         if ((r.estimatedSavingsPercentage || 0) === bestSavingsPct) rowClass = 'cse-row-best-savings';
@@ -9827,13 +9827,13 @@ function _riExplorerBuildSavingsCard() {
     }
 
     // Calculate TCO (upfront + net monthly cost over term)
-    var tco = (match.upfrontCost || 0) + ((match.estimatedMonthlyOnDemandCost || 0) - (match.estimatedMonthlySavings || 0)) * (match.termInYears || 1) * 12;
+    var tco = Math.max(0, (match.upfrontCost || 0) + ((match.estimatedMonthlyOnDemandCost || 0) - (match.estimatedMonthlySavings || 0)) * (match.termInYears || 1) * 12);
     var breakEven = match.paymentOption === 'NoUpfront' ? null : (match.upfrontCost && match.estimatedMonthlySavings ? (match.upfrontCost / match.estimatedMonthlySavings) : null);
 
     // Determine lowest TCO for this instance type
     var recsForInstance = _riExplorerData.filter(function(r) { return r.instanceType === _riExplorerState.selectedInstanceType; });
     var lowestTCO = recsForInstance.reduce(function(best, r) {
-        var rTco = (r.upfrontCost || 0) + ((r.estimatedMonthlyOnDemandCost || 0) - (r.estimatedMonthlySavings || 0)) * (r.termInYears || 1) * 12;
+        var rTco = Math.max(0, (r.upfrontCost || 0) + ((r.estimatedMonthlyOnDemandCost || 0) - (r.estimatedMonthlySavings || 0)) * (r.termInYears || 1) * 12);
         return rTco < best.tco ? { rec: r, tco: rTco } : best;
     }, { rec: null, tco: Infinity });
 
@@ -9935,7 +9935,7 @@ function _riExplorerBuildCompareTable() {
     var bestSavingsPct = -1, lowestTCO = Infinity;
     recsForInstance.forEach(function(r) {
         if ((r.estimatedSavingsPercentage || 0) > bestSavingsPct) bestSavingsPct = r.estimatedSavingsPercentage;
-        var tco = (r.upfrontCost || 0) + ((r.estimatedMonthlyOnDemandCost || 0) - (r.estimatedMonthlySavings || 0)) * (r.termInYears || 1) * 12;
+        var tco = Math.max(0, (r.upfrontCost || 0) + ((r.estimatedMonthlyOnDemandCost || 0) - (r.estimatedMonthlySavings || 0)) * (r.termInYears || 1) * 12);
         if (tco < lowestTCO) lowestTCO = tco;
     });
 
@@ -9944,7 +9944,7 @@ function _riExplorerBuildCompareTable() {
     html += '</tr></thead><tbody>';
 
     recsForInstance.forEach(function(r) {
-        var tco = (r.upfrontCost || 0) + ((r.estimatedMonthlyOnDemandCost || 0) - (r.estimatedMonthlySavings || 0)) * (r.termInYears || 1) * 12;
+        var tco = Math.max(0, (r.upfrontCost || 0) + ((r.estimatedMonthlyOnDemandCost || 0) - (r.estimatedMonthlySavings || 0)) * (r.termInYears || 1) * 12);
         var breakEven = r.paymentOption === 'NoUpfront' ? 'Immediate' : (r.upfrontCost && r.estimatedMonthlySavings ? (r.upfrontCost / r.estimatedMonthlySavings).toFixed(1) + ' mo' : '-');
         var rowClass = '';
         if ((r.estimatedSavingsPercentage || 0) === bestSavingsPct) rowClass = 'cse-row-best-savings';
@@ -9982,8 +9982,14 @@ async function _riMarketplaceBrowse() {
     var accountId = sel.value;
     var instanceType = _riExplorerState.selectedInstanceType || '';
     var region = 'us-east-1';
-    // Try to get region from account data
-    if (sel.value) {
+    // Try to get region from the currently displayed RI recommendation
+    var riMatch = _riExplorerData.find(function(r) { return r.instanceType === instanceType; });
+    if (riMatch && riMatch.region) {
+        // Convert display region to AWS region code
+        var regionMap = {'EU (Frankfurt)':'eu-central-1','EU (Ireland)':'eu-west-1','EU (London)':'eu-west-2','EU (Paris)':'eu-west-3','US East (N. Virginia)':'us-east-1','US East (Ohio)':'us-east-2','US West (Oregon)':'us-west-2','US West (N. California)':'us-west-1','Asia Pacific (Tokyo)':'ap-northeast-1','Asia Pacific (Singapore)':'ap-southeast-1','Asia Pacific (Sydney)':'ap-southeast-2'};
+        region = regionMap[riMatch.region] || riMatch.region;
+    } else {
+        // Fallback to account region
         var acct = allAccounts.find(function(a) { return a.accountId === sel.value; });
         if (acct && acct.region) region = acct.region;
     }
