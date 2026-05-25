@@ -9795,14 +9795,14 @@ function _riExplorerBuildSavingsCard() {
         return '<div class="cse-not-available">Not available for this instance type. Try a different offering class, term, or payment option.</div>';
     }
 
-    // Calculate TCO
-    var tco = (match.upfrontCost || 0) + (match.monthlyRecurringCost || 0) * (match.termInYears || 1) * 12;
+    // Calculate TCO (upfront + net monthly cost over term)
+    var tco = (match.upfrontCost || 0) + ((match.estimatedMonthlyOnDemandCost || 0) - (match.estimatedMonthlySavings || 0)) * (match.termInYears || 1) * 12;
     var breakEven = match.paymentOption === 'NoUpfront' ? null : (match.upfrontCost && match.estimatedMonthlySavings ? (match.upfrontCost / match.estimatedMonthlySavings) : null);
 
     // Determine lowest TCO for this instance type
     var recsForInstance = _riExplorerData.filter(function(r) { return r.instanceType === _riExplorerState.selectedInstanceType; });
     var lowestTCO = recsForInstance.reduce(function(best, r) {
-        var rTco = (r.upfrontCost || 0) + (r.monthlyRecurringCost || 0) * (r.termInYears || 1) * 12;
+        var rTco = (r.upfrontCost || 0) + ((r.estimatedMonthlyOnDemandCost || 0) - (r.estimatedMonthlySavings || 0)) * (r.termInYears || 1) * 12;
         return rTco < best.tco ? { rec: r, tco: rTco } : best;
     }, { rec: null, tco: Infinity });
 
@@ -9897,7 +9897,7 @@ function _riExplorerBuildCompareTable() {
     var bestSavingsPct = -1, lowestTCO = Infinity;
     recsForInstance.forEach(function(r) {
         if ((r.estimatedSavingsPercentage || 0) > bestSavingsPct) bestSavingsPct = r.estimatedSavingsPercentage;
-        var tco = (r.upfrontCost || 0) + (r.monthlyRecurringCost || 0) * (r.termInYears || 1) * 12;
+        var tco = (r.upfrontCost || 0) + ((r.estimatedMonthlyOnDemandCost || 0) - (r.estimatedMonthlySavings || 0)) * (r.termInYears || 1) * 12;
         if (tco < lowestTCO) lowestTCO = tco;
     });
 
@@ -9906,7 +9906,7 @@ function _riExplorerBuildCompareTable() {
     html += '</tr></thead><tbody>';
 
     recsForInstance.forEach(function(r) {
-        var tco = (r.upfrontCost || 0) + (r.monthlyRecurringCost || 0) * (r.termInYears || 1) * 12;
+        var tco = (r.upfrontCost || 0) + ((r.estimatedMonthlyOnDemandCost || 0) - (r.estimatedMonthlySavings || 0)) * (r.termInYears || 1) * 12;
         var breakEven = r.paymentOption === 'NoUpfront' ? 'Immediate' : (r.upfrontCost && r.estimatedMonthlySavings ? (r.upfrontCost / r.estimatedMonthlySavings).toFixed(1) + ' mo' : '-');
         var rowClass = '';
         if ((r.estimatedSavingsPercentage || 0) === bestSavingsPct) rowClass = 'cse-row-best-savings';
