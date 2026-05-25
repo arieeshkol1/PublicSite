@@ -864,7 +864,7 @@ jobs:
             [ -f "$file" ] && aws s3 cp "$file" s3://${{ env.S3_BUCKET }}/ --cache-control "no-cache, no-store, must-revalidate"
           done
           for file in *.js; do
-            [ -f "$file" ] && aws s3 cp "$file" s3://${{ env.S3_BUCKET }}/ --cache-control "no-cache, no-store, must-revalidate" --content-type "application/javascript"
+            [ -f "$file" ] && aws s3 cp "$file" s3://${{ env.S3_BUCKET }}/ --cache-control "no-cache, no-store, must-revalidate" --content-type "application/javascript; charset=utf-8"
           done
           for file in *.png *.jpg *.jpeg *.gif *.svg *.ico; do
             [ -f "$file" ] && aws s3 cp "$file" s3://${{ env.S3_BUCKET }}/ --cache-control "max-age=2592000"
@@ -1018,16 +1018,33 @@ jobs:
           # SlashMyBill landing page
           aws s3 sync slashMyBill/ s3://${{ env.SMB_BUCKET }}/ \
             --cache-control "no-cache, no-store, must-revalidate" \
-            --exclude "*.py" --exclude "*.md"
+            --exclude "*.py" --exclude "*.md" --exclude "*.js"
+          for jsfile in slashMyBill/*.js; do
+            [ -f "$jsfile" ] && aws s3 cp "$jsfile" "s3://${{ env.SMB_BUCKET }}/$(basename $jsfile)" \
+              --cache-control "no-cache, no-store, must-revalidate" \
+              --content-type "application/javascript; charset=utf-8"
+          done
 
           # Member Portal
           aws s3 sync members/ s3://${{ env.SMB_BUCKET }}/members/ \
             --cache-control "no-cache, no-store, must-revalidate" \
-            --exclude "*.py"
+            --exclude "*.py" --exclude "*.js"
+          # Upload JS files with explicit UTF-8 charset
+          for jsfile in members/*.js; do
+            [ -f "$jsfile" ] && aws s3 cp "$jsfile" "s3://${{ env.SMB_BUCKET }}/$jsfile" \
+              --cache-control "no-cache, no-store, must-revalidate" \
+              --content-type "application/javascript; charset=utf-8"
+          done
 
           # Admin Panel
           aws s3 sync admin/ s3://${{ env.SMB_BUCKET }}/admin/ \
-            --cache-control "no-cache, no-store, must-revalidate"
+            --cache-control "no-cache, no-store, must-revalidate" \
+            --exclude "*.js"
+          for jsfile in admin/*.js; do
+            [ -f "$jsfile" ] && aws s3 cp "$jsfile" "s3://${{ env.SMB_BUCKET }}/$jsfile" \
+              --cache-control "no-cache, no-store, must-revalidate" \
+              --content-type "application/javascript; charset=utf-8"
+          done
 
           # Legal Pages
           aws s3 sync terms-and-conditions/ s3://${{ env.SMB_BUCKET }}/terms-and-conditions/ \

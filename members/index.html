@@ -627,17 +627,17 @@
                             <!-- SP and RI Recommendations Table -->
                             <div id="committed-recommendations-panel" style="display:none;margin-bottom:20px;"></div>
 
-                            <!-- Laddering Strategy Timeline -->
-                            <div id="committed-laddering-panel" style="display:none;margin-bottom:20px;"></div>
-
                             <!-- Expiring Commitments -->
                             <div id="committed-expiring-panel" style="display:none;margin-bottom:20px;"></div>
+
+                            <!-- Free Tier Tracker Panel -->
+                            <div id="committed-free-tier-panel" style="display:none;margin-bottom:20px;"></div>
 
                             <!-- Empty State -->
                             <div id="committed-empty" style="text-align:center;padding:60px 20px;color:#6b7280;">
                                 <div style="font-size:2.5em;margin-bottom:12px;">💰</div>
                                 <div style="font-size:1em;margin-bottom:6px;color:#1f2937;">Analyze your Savings Plans & Reserved Instances</div>
-                                <div style="font-size:0.9em;color:#6b7280;">Select an account and click "Scan" to analyze coverage, utilization,<br>and get purchase recommendations with a laddering strategy.</div>
+                                <div style="font-size:0.9em;color:#6b7280;">Select an account and click "Scan" to analyze coverage, utilization,<br>and get purchase recommendations.</div>
                             </div>
                         </div>
 
@@ -652,42 +652,6 @@
                                 </div>
                                 <div class="modal-footer">
                                     <button onclick="document.getElementById('committed-purchase-modal').hidden=true;" class="btn btn-outline">Close</button>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- Custom Ladder Modal -->
-                        <div id="committed-ladder-modal" class="modal-overlay" hidden>
-                            <div class="modal-card modal-card-sm">
-                                <div class="modal-header">
-                                    <h2 style="font-size:1.1em;">Customize Laddering Strategy</h2>
-                                    <button onclick="document.getElementById('committed-ladder-modal').hidden=true;" class="modal-close">&times;</button>
-                                </div>
-                                <div class="modal-body">
-                                    <p style="color:#6b7280;font-size:0.9em;">Enter your desired total monthly commitment. We'll divide it into 4 purchases, staggered 3 months apart.</p>
-                                    <div class="form-group">
-                                        <label>Total Monthly Commitment ($/month)</label>
-                                        <input type="number" id="committed-ladder-input" min="1" step="1" placeholder="e.g. 500" style="width:100%;padding:8px;border:1px solid #d1d5db;border-radius:6px;font-size:0.9em;">
-                                    </div>
-                                    <div style="display:flex;gap:8px;margin-bottom:12px;">
-                                        <button class="cse-preset-btn" onclick="_committedLadderPreset('conservative')" style="flex:1;">
-                                            <div class="cse-preset-btn-label">Conservative</div>
-                                            <div class="cse-preset-btn-value" id="preset-conservative-val">P10 floor</div>
-                                        </button>
-                                        <button class="cse-preset-btn" onclick="_committedLadderPreset('moderate')" style="flex:1;">
-                                            <div class="cse-preset-btn-label">Moderate</div>
-                                            <div class="cse-preset-btn-value" id="preset-moderate-val">60% avg</div>
-                                        </button>
-                                        <button class="cse-preset-btn" onclick="_committedLadderPreset('aggressive')" style="flex:1;">
-                                            <div class="cse-preset-btn-label">Aggressive</div>
-                                            <div class="cse-preset-btn-value" id="preset-aggressive-val">70% avg</div>
-                                        </button>
-                                    </div>
-                                    <div id="committed-ladder-error" style="color:#ef4444;font-size:0.85em;min-height:20px;"></div>
-                                </div>
-                                <div class="modal-footer">
-                                    <button onclick="document.getElementById('committed-ladder-modal').hidden=true;" class="btn btn-outline">Cancel</button>
-                                    <button id="committed-ladder-submit" class="btn btn-primary" onclick="_committedLadderCustom()">Generate Strategy</button>
                                 </div>
                             </div>
                         </div>

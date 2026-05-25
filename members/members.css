@@ -652,156 +652,189 @@
     margin-left: 6px;
 }
 
-/* Laddering Timeline */
-.cse-ladder-explanation {
-    background: #f0f9ff;
-    border: 1px solid #bae6fd;
-    border-radius: 8px;
-    padding: 12px 16px;
-    margin-bottom: 16px;
-    font-size: 0.88em;
-    color: #0c4a6e;
-    line-height: 1.6;
-}
-.cse-ladder-summary {
-    background: linear-gradient(135deg, #064e3b, #065f46);
-    border-radius: 10px;
-    padding: 14px 20px;
-    margin-bottom: 16px;
-    color: #fff;
-    font-size: 0.9em;
-}
-.cse-ladder-summary strong {
-    color: #6ee7b7;
-}
-.cse-ladder-timeline {
-    display: flex;
-    align-items: flex-start;
-    gap: 0;
-    margin-bottom: 20px;
-    position: relative;
-    padding: 20px 0;
-}
-.cse-ladder-timeline::before {
-    content: '';
-    position: absolute;
-    top: 50%;
-    left: 0;
-    right: 0;
-    height: 4px;
-    background: #e5e7eb;
-    border-radius: 2px;
-    transform: translateY(-50%);
-}
-.cse-ladder-milestone {
-    flex: 1;
-    text-align: center;
-    position: relative;
-    z-index: 1;
-}
-.cse-ladder-dot {
-    width: 20px;
-    height: 20px;
-    border-radius: 50%;
-    margin: 0 auto 8px;
-    border: 3px solid #fff;
-    box-shadow: 0 0 0 2px currentColor;
-}
-.cse-ladder-dot.cse-past { background: #10b981; color: #10b981; }
-.cse-ladder-dot.cse-next { background: #3b82f6; color: #3b82f6; box-shadow: 0 0 0 3px rgba(59,130,246,0.3); }
-.cse-ladder-dot.cse-future { background: #9ca3af; color: #9ca3af; }
-.cse-ladder-milestone-label {
-    font-size: 0.72em;
-    color: #6b7280;
-    margin-bottom: 2px;
-}
-.cse-ladder-milestone-amount {
-    font-size: 0.85em;
-    font-weight: 700;
-    color: #1f2937;
-}
-.cse-ladder-milestone-term {
-    font-size: 0.68em;
-    color: #6366f1;
-    font-weight: 500;
-}
 
-/* Laddering Summary Table */
-.cse-ladder-table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 0.8em;
-}
-.cse-ladder-table thead th {
-    padding: 8px 10px;
-    text-align: left;
-    font-weight: 600;
+
+/* ============================================================
+   Free Tier Tracker Styles
+   ============================================================ */
+.cse-ft-summary {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+    font-size: 0.82em;
     color: #374151;
-    background: #f8fafc;
-    border-bottom: 2px solid #e5e7eb;
+    margin-bottom: 16px;
+    padding: 8px 12px;
+    background: #f9fafb;
+    border-radius: 6px;
+}
+.cse-ft-sep {
+    color: #d1d5db;
+}
+.cse-ft-benefits {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-bottom: 16px;
+}
+.cse-ft-benefit-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 8px 12px;
+    background: #fff;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+}
+.cse-ft-benefit-info {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 180px;
+}
+.cse-ft-service {
+    font-size: 0.75em;
+    font-weight: 600;
+    color: #6b7280;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+.cse-ft-desc {
+    font-size: 0.82em;
+    color: #374151;
+}
+.cse-ft-benefit-usage {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex: 1;
+}
+.cse-ft-progress {
+    flex: 1;
+    height: 8px;
+    background: #e5e7eb;
+    border-radius: 4px;
+    overflow: hidden;
+    min-width: 80px;
+}
+.cse-ft-progress-bar {
+    height: 100%;
+    border-radius: 4px;
+    transition: width 0.3s;
+}
+.cse-ft-bar-green { background: #10b981; }
+.cse-ft-bar-amber { background: #f59e0b; }
+.cse-ft-bar-red { background: #ef4444; }
+.cse-ft-usage-text {
+    font-size: 0.75em;
+    color: #6b7280;
+    white-space: nowrap;
+    min-width: 90px;
+}
+.cse-ft-badge {
+    font-size: 0.7em;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 100px;
     white-space: nowrap;
 }
-.cse-ladder-table tbody tr {
-    border-bottom: 1px solid #f0f0f0;
+.cse-ft-badge-warning {
+    background: #fef3c7;
+    color: #92400e;
 }
-.cse-ladder-table tbody td {
-    padding: 8px 10px;
+.cse-ft-badge-danger {
+    background: #fee2e2;
+    color: #991b1b;
 }
-
-/* Laddering Preset Buttons */
-.cse-preset-btn {
-    padding: 8px 14px;
-    border: 1px solid #d1d5db;
-    border-radius: 6px;
-    background: #fff;
-    cursor: pointer;
-    font-size: 0.82em;
-    transition: all 0.15s;
-    text-align: center;
+.cse-ft-opportunities {
+    background: #f0fdf4;
+    border: 1px solid #86efac;
+    border-radius: 8px;
+    padding: 12px 16px;
 }
-.cse-preset-btn:hover {
-    border-color: #6366f1;
-    background: #eef2ff;
-}
-.cse-preset-btn-label {
+.cse-ft-opportunities-header {
     font-weight: 600;
-    color: #1f2937;
-    margin-bottom: 2px;
+    color: #065f46;
+    font-size: 0.88em;
+    margin-bottom: 6px;
 }
-.cse-preset-btn-value {
-    font-size: 0.9em;
+.cse-ft-opportunities-note {
+    font-size: 0.8em;
+    color: #047857;
+    margin-bottom: 10px;
+}
+.cse-ft-opportunity-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 0;
+    font-size: 0.82em;
+}
+.cse-ft-limit {
+    margin-left: auto;
+    font-size: 0.85em;
     color: #059669;
-    font-weight: 700;
+    font-weight: 600;
 }
 
-/* Responsive: stack timeline vertically on narrow screens */
 @media (max-width: 600px) {
-    .cse-ladder-timeline {
+    .cse-ft-benefit-row {
         flex-direction: column;
         align-items: stretch;
-        gap: 12px;
     }
-    .cse-ladder-timeline::before {
-        top: 0;
-        bottom: 0;
-        left: 10px;
-        right: auto;
-        width: 4px;
-        height: auto;
-        transform: none;
+    .cse-ft-benefit-usage {
+        flex-wrap: wrap;
     }
-    .cse-ladder-milestone {
-        text-align: left;
-        padding-left: 36px;
-    }
-    .cse-ladder-dot {
-        position: absolute;
-        left: 0;
-        margin: 0;
-    }
-    .cse-controls {
-        flex-direction: column;
-    }
+}
+
+/* Free Tier Alternative Callout */
+.cse-ft-callout {
+    background: #eff6ff;
+    border: 1px solid #93c5fd;
+    border-radius: 8px;
+    padding: 12px 16px;
+    margin-top: 10px;
+}
+.cse-ft-callout-header {
+    font-weight: 600;
+    color: #1e40af;
+    font-size: 0.88em;
+    margin-bottom: 6px;
+}
+.cse-ft-callout-body {
+    font-size: 0.82em;
+    color: #374151;
+}
+.cse-ft-callout-comparison {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-bottom: 8px;
+}
+.cse-ft-callout-detail {
+    margin-bottom: 6px;
+    color: #6b7280;
+}
+.cse-ft-callout-expiry {
+    color: #d97706;
+    font-size: 0.9em;
+    margin-bottom: 6px;
+}
+.cse-ft-callout-caveat {
+    color: #6b7280;
+    font-style: italic;
+    font-size: 0.9em;
+    margin-bottom: 6px;
+}
+.cse-ft-callout-disclaimer {
+    color: #6b7280;
+    font-style: italic;
+    font-size: 0.85em;
+    margin-top: 6px;
+    padding-top: 6px;
+    border-top: 1px solid #bfdbfe;
 }
 
 /* ============================================================

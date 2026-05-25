@@ -308,5 +308,29 @@
     <mxCell id="e101" value="Invoice cache" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=9;fontColor=#333333;strokeColor=#666666;" edge="1" parent="1" source="n22" target="n53">
       <mxGeometry relative="1" as="geometry"/>
     </mxCell>
+    <mxCell id="n54" value="Tips Sync Lambda&#10;Daily auto-sync&#10;+ Bedrock AI gen" style="outlineConnect=0;fontColor=#232F3E;gradientColor=none;strokeColor=none;fillColor=#ED7100;labelBackgroundColor=#ffffff;align=center;fontStyle=1;fontSize=10;verticalLabelPosition=bottom;verticalAlign=top;html=1;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.lambda_function;" vertex="1" parent="1">
+      <mxGeometry x="40" y="640" width="130" height="55" as="geometry"/>
+    </mxCell>
+    <mxCell id="n55" value="EventBridge&#10;Scheduler&#10;(Daily 02:00 UTC)" style="outlineConnect=0;fontColor=#232F3E;gradientColor=none;strokeColor=none;fillColor=#E7157B;labelBackgroundColor=#ffffff;align=center;fontStyle=1;fontSize=10;verticalLabelPosition=bottom;verticalAlign=top;html=1;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.eventbridge;" vertex="1" parent="1">
+      <mxGeometry x="40" y="730" width="130" height="55" as="geometry"/>
+    </mxCell>
+    <mxCell id="e102" value="Daily trigger" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=9;fontColor=#333333;strokeColor=#E7157B;" edge="1" parent="1" source="n55" target="n54">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+    <mxCell id="e103" value="Sync tips delta" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=9;fontColor=#333333;strokeColor=#666666;" edge="1" parent="1" source="n54" target="n31">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+    <mxCell id="e104" value="Generate new tips" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=9;fontColor=#333333;strokeColor=#8C4FFF;" edge="1" parent="1" source="n54" target="n25">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+    <mxCell id="e105" value="Invoke sync" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=9;fontColor=#333333;strokeColor=#ED7100;" edge="1" parent="1" source="n23" target="n54">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+    <mxCell id="n56" value="Cost Optimization&#10;Hub + Trusted&#10;Advisor" style="outlineConnect=0;fontColor=#232F3E;gradientColor=none;strokeColor=none;fillColor=#E7157B;labelBackgroundColor=#ffffff;align=center;fontStyle=1;fontSize=10;verticalLabelPosition=bottom;verticalAlign=top;html=1;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.trusted_advisor;" vertex="1" parent="1">
+      <mxGeometry x="200" y="680" width="130" height="55" as="geometry"/>
+    </mxCell>
+    <mxCell id="e106" value="Fetch recommendations" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=9;fontColor=#333333;strokeColor=#E7157B;" edge="1" parent="1" source="n54" target="n56">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
   </root>
 </mxGraphModel>

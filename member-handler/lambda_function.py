@@ -165,7 +165,8 @@ def lambda_handler(event, context):
         'GET /members/tag-keys': handle_get_tag_keys,
         'GET /members/tag-values': handle_get_tag_values,
         'POST /members/committed-discounts/scan': handle_committed_discount_scan,
-        'POST /members/committed-discounts/ladder': handle_committed_discount_ladder,
+        'POST /members/committed-discounts/ladder': handle_committed_discount_ladder_removed,
+        'POST /members/committed-discounts/free-tier': handle_committed_discount_free_tier,
         'GET /members/invoices': handle_get_invoices,
         'POST /members/invoices/refresh': handle_refresh_invoices,
         'GET /members/invoices/summary': handle_get_invoices_summary,
@@ -1212,6 +1213,8 @@ def _get_latest_policy_actions():
         'compute-optimizer:GetEnrollmentStatus', 'organizations:DescribeOrganization',
         'ce:UpdateCostAllocationTagsStatus', 'ce:CreateAnomalyMonitor', 'ce:CreateAnomalySubscription',
         'ce:StartCostAllocationTagBackfill', 'compute-optimizer:UpdateEnrollmentStatus',
+        # Free Tier tracking
+        'freetier:GetFreeTierUsage',
     ]
 
 
@@ -2835,11 +2838,13 @@ def _get_sp_recommendations(ce_client, average_hourly_spend):
             - recommendations: list of normalized recommendation objects
             - message: str or None (set to "insufficient history" if no data available)
     """
-    plan_types = ['ComputeSavingsPlans', 'EC2InstanceSavingsPlans']
+    plan_types = ['ComputeSavingsPlans', 'EC2InstanceSavingsPlans', 'SageMakerSavingsPlans']
     term_payment_combos = [
         ('ONE_YEAR', 'NO_UPFRONT'),
+        ('ONE_YEAR', 'PARTIAL_UPFRONT'),
         ('ONE_YEAR', 'ALL_UPFRONT'),
         ('THREE_YEARS', 'NO_UPFRONT'),
+        ('THREE_YEARS', 'PARTIAL_UPFRONT'),
         ('THREE_YEARS', 'ALL_UPFRONT'),
     ]
 
@@ -2855,6 +2860,9 @@ def _get_sp_recommendations(ce_client, average_hourly_spend):
                     LookbackPeriodInDays='THIRTY_DAYS',
                 )
             except ClientError as e:
+                # SageMaker may return empty/error if no usage — skip silently
+                if plan_type == 'SageMakerSavingsPlans':
+                    continue
                 logger.warning(
                     f"SP recommendation call failed for {plan_type} {term} {payment_option}: {e}"
                 )
@@ -2961,10 +2969,21 @@ def _get_ri_recommendations(ce_client):
             - recommendations: list of normalized recommendation objects
             - message: str or None (set if no data available)
     """
-    services = ['Amazon Elastic Compute Cloud - Compute', 'Amazon Relational Database Service']
+    services = [
+        'Amazon Elastic Compute Cloud - Compute',
+        'Amazon Relational Database Service',
+        'Amazon ElastiCache',
+        'Amazon MemoryDB',
+        'Amazon OpenSearch Service',
+        'Amazon Redshift',
+    ]
     service_display = {
         'Amazon Elastic Compute Cloud - Compute': 'EC2',
         'Amazon Relational Database Service': 'RDS',
+        'Amazon ElastiCache': 'ElastiCache',
+        'Amazon MemoryDB': 'MemoryDB',
+        'Amazon OpenSearch Service': 'OpenSearch',
+        'Amazon Redshift': 'Redshift',
     }
     offering_classes = ['STANDARD', 'CONVERTIBLE']
     terms = ['ONE_YEAR', 'THREE_YEARS']
@@ -3011,6 +3030,22 @@ def _get_ri_recommendations(ce_client):
                                 rds_details = instance_details['RDSInstanceDetails']
                                 instance_type = rds_details.get('DatabaseEngine', '') + '.' + rds_details.get('InstanceType', 'unknown')
                                 region = rds_details.get('Region', 'unknown')
+                            elif 'ElastiCacheInstanceDetails' in instance_details:
+                                details = instance_details['ElastiCacheInstanceDetails']
+                                instance_type = details.get('NodeType', 'unknown')
+                                region = details.get('Region', 'unknown')
+                            elif 'MemoryDBInstanceDetails' in instance_details:
+                                details = instance_details['MemoryDBInstanceDetails']
+                                instance_type = details.get('NodeType', 'unknown')
+                                region = details.get('Region', 'unknown')
+                            elif 'ESInstanceDetails' in instance_details:
+                                details = instance_details['ESInstanceDetails']
+                                instance_type = details.get('InstanceClass', 'unknown')
+                                region = details.get('Region', 'unknown')
+                            elif 'RedshiftInstanceDetails' in instance_details:
+                                details = instance_details['RedshiftInstanceDetails']
+                                instance_type = details.get('NodeType', 'unknown')
+                                region = details.get('Region', 'unknown')
                             else:
                                 instance_type = 'unknown'
                                 region = 'unknown'
@@ -3287,117 +3322,6 @@ def _add_months(base_date, months):
     month = month % 12 + 1
     day = min(base_date.day, calendar.monthrange(year, month)[1])
     return base_date.replace(year=year, month=month, day=day)
-
-
-def _generate_laddering_strategy(total_hourly_commitment, average_hourly_spend, current_date):
-    """Generate a quarterly laddering strategy for committed discount purchases.
-
-    Divides the total hourly commitment into 4 equal tranches spread over 12 months,
-    assigns purchase dates at months 0, 3, 6, 9, and recommends plan types based on
-    tranche position (Compute SP for early tranches, EC2 Instance SP for later ones).
-
-    Args:
-        total_hourly_commitment: The total hourly commitment in $/hr (float > 0).
-        average_hourly_spend: The account's trailing 30-day average hourly spend (float).
-        current_date: The reference date for purchase scheduling (date or datetime).
-
-    Returns:
-        dict with keys: totalHourlyCommitment, averageHourlySpend, commitmentPercentage,
-        isAggressive, aggressiveWarning, tranches
-    """
-    # Calculate commitment as percentage of average hourly spend
-    if average_hourly_spend > 0:
-        commitment_percentage = round((total_hourly_commitment / average_hourly_spend) * 100, 1)
-    else:
-        commitment_percentage = 0.0
-
-    # Validate: flag as aggressive if commitment exceeds 70% of average hourly spend
-    is_aggressive = (
-        average_hourly_spend > 0 and total_hourly_commitment > average_hourly_spend * 0.70
-    )
-    aggressive_warning = None
-    if is_aggressive:
-        aggressive_warning = (
-            f"Your commitment of ${total_hourly_commitment:.2f}/hr exceeds 70% of your "
-            f"average hourly spend (${average_hourly_spend:.2f}/hr). "
-            f"We recommend committing to 60-70% of your average "
-            f"(${average_hourly_spend * 0.60:.2f}â€“${average_hourly_spend * 0.70:.2f}/hr) "
-            f"to avoid over-commitment during usage dips."
-        )
-
-    # Divide total into 4 equal tranches, rounded to nearest $0.01/hr
-    tranche_commitment = round(total_hourly_commitment / 4, 2)
-
-    # Savings rate estimates: ~30% for Compute SP, ~35% for EC2 Instance SP
-    COMPUTE_SP_SAVINGS_RATE = 0.30
-    EC2_INSTANCE_SP_SAVINGS_RATE = 0.35
-
-    # Tranche configuration: type, rationale, savings rate
-    tranche_configs = [
-        {
-            'recommendedType': 'ComputeSavingsPlans',
-            'rationale': 'Flexibility \u2014 covers any EC2, Fargate, or Lambda usage',
-            'savingsRate': COMPUTE_SP_SAVINGS_RATE,
-        },
-        {
-            'recommendedType': 'ComputeSavingsPlans',
-            'rationale': 'Flexibility \u2014 usage patterns still stabilizing',
-            'savingsRate': COMPUTE_SP_SAVINGS_RATE,
-        },
-        {
-            'recommendedType': 'EC2InstanceSavingsPlans',
-            'rationale': 'Deeper discount \u2014 usage patterns confirmed stable',
-            'savingsRate': EC2_INSTANCE_SP_SAVINGS_RATE,
-        },
-        {
-            'recommendedType': 'EC2InstanceSavingsPlans',
-            'rationale': 'Deeper discount \u2014 final tranche locks in remaining baseline',
-            'savingsRate': EC2_INSTANCE_SP_SAVINGS_RATE,
-        },
-    ]
-
-    # Month offsets for purchase dates
-    month_offsets = [0, 3, 6, 9]
-
-    tranches = []
-    cumulative_commitment = 0.0
-    cumulative_monthly_savings = 0.0
-
-    for i, (offset, config) in enumerate(zip(month_offsets, tranche_configs)):
-        # Assign purchase date at month offset from current date
-        purchase_date = _add_months(current_date, offset)
-
-        # For the last tranche, adjust to ensure sum equals total exactly
-        if i == 3:
-            this_tranche = round(total_hourly_commitment - cumulative_commitment, 2)
-        else:
-            this_tranche = tranche_commitment
-
-        cumulative_commitment = round(cumulative_commitment + this_tranche, 2)
-
-        # Estimated monthly savings: hourly commitment * hours/month * savings rate
-        # hours/month â‰ˆ 730 (365.25 * 24 / 12)
-        tranche_monthly_savings = round(this_tranche * 730 * config['savingsRate'], 2)
-        cumulative_monthly_savings = round(cumulative_monthly_savings + tranche_monthly_savings, 2)
-
-        tranches.append({
-            'trancheNumber': i + 1,
-            'purchaseDate': purchase_date.strftime('%Y-%m-%d'),
-            'hourlyCommitment': this_tranche,
-            'cumulativeCommitment': cumulative_commitment,
-            'estimatedMonthlySavings': cumulative_monthly_savings,
-            'recommendedType': config['recommendedType'],
-            'rationale': config['rationale'],
-        })
-
-    return {
-        'totalHourlyCommitment': total_hourly_commitment,
-        'averageHourlySpend': average_hourly_spend,
-        'commitmentPercentage': commitment_percentage,
-        'isAggressive': is_aggressive,
-        'aggressiveWarning': aggressive_warning,
-        'tranches': tranches,
-    }
 
 
 def _get_coverage_utilization(ce_client):
@@ -3941,12 +3865,19 @@ def _get_expiring_commitments(ce_client, savingsplans_client, ec2_client, rds_cl
 # ============================================================
 
 
+def handle_committed_discount_ladder_removed(event):
+    """Return 404 for the removed laddering strategy endpoint."""
+    return create_error_response(404, 'EndpointRemoved',
+        'The /members/committed-discounts/ladder endpoint has been removed. '
+        'Laddering strategy is no longer supported.')
+
+
 def handle_committed_discount_scan(event):
-    """Full committed discount analysis: coverage, utilization, recommendations, baseline, laddering.
+    """Full committed discount analysis: coverage, utilization, recommendations, baseline.
 
     Orchestrates parallel retrieval of SP/RI coverage, utilization, recommendations,
-    P10 baseline, and expiring commitments. Cross-references rightsizing recommendations,
-    generates a default laddering strategy, and detects organization sharing context.
+    P10 baseline, and expiring commitments. Cross-references rightsizing recommendations
+    and detects organization sharing context.
 
     Returns a complete scan response within 30 seconds, handling partial failures gracefully.
     """
@@ -4170,26 +4101,6 @@ def handle_committed_discount_scan(event):
         except Exception as e:
             logger.warning(f"Rightsizing cross-reference failed (non-fatal): {e}")
 
-    # â”€â”€ Generate default laddering strategy â”€â”€
-    laddering_strategy = None
-    if not incomplete and results.get('baseline') and avg_hourly_spend > 0:
-        try:
-            baseline_data = results['baseline']
-            safe_range = baseline_data.get('safeCommitmentRange', {})
-            # Use the safe commitment range max as the default (not raw P10)
-            # This ensures we don't recommend committing above 70% of average
-            default_commitment = safe_range.get('max', 0)
-            if default_commitment <= 0:
-                default_commitment = avg_hourly_spend * 0.65  # fallback: 65% of average
-            if default_commitment > 0:
-                current_date = datetime.now(timezone.utc).date()
-                laddering_strategy = _generate_laddering_strategy(
-                    default_commitment, avg_hourly_spend, current_date
-                )
-        except Exception as e:
-            logger.warning(f"Laddering strategy generation failed (non-fatal): {e}")
-            errors['ladderingStrategy'] = f'Failed to generate laddering strategy: {str(e)}'
-
     # â”€â”€ Detect organization sharing context â”€â”€
     organization_sharing = {
         'isManagementAccount': False,
@@ -4273,6 +4184,28 @@ def handle_committed_discount_scan(event):
         'dataPoints': 0,
     }
 
+    # Free tier summary (non-blocking)
+    free_tier_summary = None
+    if not incomplete:
+        try:
+            freetier_client = _make_client_from_creds('freetier', creds)
+            benefits = _get_free_tier_usage(freetier_client)
+            approaching = sum(1 for b in benefits if b['alertStatus'] == 'approaching-limit')
+            exceeded = sum(1 for b in benefits if b['category'] == 'exceeded')
+            in_use = sum(1 for b in benefits if b['category'] == 'in-use')
+            estimated_savings = _estimate_free_tier_savings(benefits)
+            free_tier_summary = {
+                'totalBenefitsTracked': len(benefits),
+                'approachingLimitCount': approaching,
+                'exceededCount': exceeded,
+                'inUseCount': in_use,
+                'estimatedMonthlySavings': round(estimated_savings, 2),
+            }
+        except PermissionError:
+            free_tier_summary = None  # Permission missing — omit silently
+        except Exception as e:
+            logger.warning(f"Free tier summary failed (non-fatal): {e}")
+
     response_body = {
         'scannedAt': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
         'accountId': account_id,
@@ -4283,7 +4216,7 @@ def handle_committed_discount_scan(event):
         'riRecommendations': ri_recommendations,
         'databaseSpEligible': database_sp_eligible,
         'expiringCommitments': expiring_data,
-        'ladderingStrategy': laddering_strategy,
+        'freeTierSummary': free_tier_summary,
         'organizationSharing': organization_sharing,
         'rightsizeWarning': rightsize_warning,
     }
@@ -4307,24 +4240,126 @@ def handle_committed_discount_scan(event):
     return create_response(200, response_body)
 
 
-def handle_committed_discount_ladder(event):
-    """Custom laddering strategy with a user-specified hourly commitment.
+def _get_free_tier_usage(freetier_client):
+    """Call freetier:GetFreeTierUsage and normalize the response.
 
-    Validates the request, retrieves the account's average hourly spend via P10 baseline,
-    and generates a laddering strategy. Returns an aggressive warning if the commitment
-    exceeds 70% of average hourly spend.
+    Retrieves all free tier usage data via pagination, categorizes each benefit
+    as 'in-use', 'unused', or 'exceeded', and assigns alert statuses.
+
+    Args:
+        freetier_client: A boto3 FreeTier client (created from cross-account credentials).
+
+    Returns:
+        list of benefit dicts with keys: service, usageType, limit, actualUsage,
+        usagePercentage, forecastedUsage, category, alertStatus, freeTierType, description.
+
+    Raises:
+        PermissionError: If the cross-account role lacks freetier:GetFreeTierUsage permission.
     """
-    # â”€â”€ Auth & validation â”€â”€
+    ALERT_THRESHOLD = 80  # percentage
+
+    try:
+        paginator = freetier_client.get_paginator('get_free_tier_usage')
+        benefits = []
+        for page in paginator.paginate():
+            for item in page.get('freeTierUsages', []):
+                limit_amount = float(item.get('limit', {}).get('amount', 0))
+                actual_amount = float(item.get('actualUsageAmount', 0))
+                forecasted_amount = float(item.get('forecastedUsageAmount', 0))
+
+                # Calculate usage percentage
+                usage_pct = round((actual_amount / limit_amount) * 100, 1) if limit_amount > 0 else 0.0
+
+                # Categorize
+                if actual_amount > limit_amount:
+                    category = 'exceeded'
+                elif actual_amount > 0:
+                    category = 'in-use'
+                else:
+                    category = 'unused'
+
+                # Alert status
+                alert_status = None
+                if category == 'exceeded':
+                    alert_status = 'exceeded'
+                elif usage_pct >= ALERT_THRESHOLD and category != 'exceeded':
+                    alert_status = 'approaching-limit'
+
+                benefits.append({
+                    'service': item.get('service', ''),
+                    'usageType': item.get('usageType', ''),
+                    'limit': {'amount': limit_amount, 'unit': item.get('unit', '')},
+                    'actualUsage': {'amount': actual_amount, 'unit': item.get('unit', '')},
+                    'usagePercentage': usage_pct,
+                    'forecastedUsage': {'amount': forecasted_amount, 'unit': item.get('unit', '')},
+                    'category': category,
+                    'alertStatus': alert_status,
+                    'freeTierType': item.get('freeTierType', 'unknown'),
+                    'description': item.get('description', ''),
+                })
+        return benefits
+    except ClientError as e:
+        if e.response['Error']['Code'] in ('AccessDeniedException', 'AccessDenied'):
+            raise PermissionError('freetier:GetFreeTierUsage')
+        raise
+
+
+def _estimate_free_tier_savings(benefits):
+    """Estimate monthly savings from free tier usage based on common service pricing.
+
+    Uses approximate on-demand pricing for common free tier services to estimate
+    how much the member is saving by using free tier benefits.
+
+    Args:
+        benefits: list of benefit dicts from _get_free_tier_usage.
+
+    Returns:
+        float: Estimated monthly savings in USD.
+    """
+    # Approximate unit costs for common free tier services
+    unit_costs = {
+        'Amazon Elastic Compute Cloud': 0.0116,  # t2.micro per hour
+        'Amazon EC2': 0.0116,
+        'Amazon Simple Storage Service': 0.023,  # per GB
+        'Amazon S3': 0.023,
+        'Amazon Relational Database Service': 0.017,  # db.t2.micro per hour
+        'Amazon RDS': 0.017,
+        'AWS Lambda': 0.0000002,  # per request
+        'Amazon DynamoDB': 0.25,  # per GB
+        'Amazon CloudWatch': 0.10,  # per alarm
+        'Amazon SNS': 0.0000005,  # per publish
+    }
+
+    total_savings = 0.0
+    for benefit in benefits:
+        if benefit['category'] in ('in-use', 'exceeded'):
+            service = benefit['service']
+            actual = benefit['actualUsage']['amount']
+            limit = benefit['limit']['amount']
+            # Only count savings up to the limit
+            usage_within_limit = min(actual, limit)
+            # Find matching unit cost
+            cost_per_unit = 0
+            for svc_key, cost in unit_costs.items():
+                if svc_key.lower() in service.lower():
+                    cost_per_unit = cost
+                    break
+            total_savings += usage_within_limit * cost_per_unit
+
+    return total_savings
+
+
+def handle_committed_discount_free_tier(event):
+    """Retrieve free tier usage data for a customer account.
+
+    Calls freetier:GetFreeTierUsage via the cross-account role and returns
+    categorized usage data with alert statuses.
+    """
+    # Auth & validation
     auth = validate_token(event)
     if isinstance(auth, dict) and 'statusCode' in auth:
         return auth
     member_email = auth['sub']
-
-    # Token cost
-    tier = _get_member_tier(member_email)
-    credit_err = _check_and_consume_credits(member_email, tier, AI_QUERY_CREDIT_COST)
-    if credit_err:
-        return credit_err
 
     try:
         body = json.loads(event.get('body', '{}'))
@@ -4335,56 +4370,106 @@ def handle_committed_discount_ladder(event):
     if not account_id or not re.match(r'^\d{12}$', account_id):
         return create_error_response(400, 'InvalidAccountId', 'accountId must be exactly 12 digits')
 
-    total_hourly_commitment = body.get('totalHourlyCommitment')
-    if total_hourly_commitment is None:
-        return create_error_response(400, 'InvalidInput', 'totalHourlyCommitment is required')
-    try:
-        total_hourly_commitment = float(total_hourly_commitment)
-    except (TypeError, ValueError):
-        return create_error_response(400, 'InvalidInput', 'totalHourlyCommitment must be a number')
-
-    if total_hourly_commitment <= 0:
-        return create_error_response(400, 'InvalidInput', 'totalHourlyCommitment must be greater than 0')
-
     # Verify account ownership
     ownership = _verify_account_ownership(member_email, [account_id])
     if ownership is not True:
         return ownership
 
-    # â”€â”€ Assume cross-account role â”€â”€
+    # Assume cross-account role
     try:
         creds = _assume_role_for_account(member_email, account_id)
     except ClientError as e:
         code = e.response['Error']['Code']
         if code in ('AccessDeniedException', 'AccessDenied'):
             return create_error_response(403, 'AccessDenied',
-                                         'Cannot access account â€” please re-deploy the CloudFormation template')
+                                         'Cannot access account \u2014 please re-deploy the CloudFormation template')
         return create_error_response(403, 'ConnectionFailed',
-                                     'Cross-account role not found â€” please deploy the CloudFormation template')
+                                     'Cross-account role not found \u2014 please deploy the CloudFormation template')
     except Exception:
         return create_error_response(403, 'ConnectionFailed',
-                                     'Cross-account role not found â€” please deploy the CloudFormation template')
+                                     'Cross-account role not found \u2014 please deploy the CloudFormation template')
 
-    # â”€â”€ Retrieve average hourly spend via P10 baseline â”€â”€
-    ce_client = _make_client_from_creds('ce', creds)
+    # Create freetier client and retrieve usage
     try:
-        baseline = _calculate_p10_baseline(ce_client, account_id)
+        freetier_client = _make_client_from_creds('freetier', creds)
+        benefits = _get_free_tier_usage(freetier_client)
+    except PermissionError:
+        return create_response(200, {
+            'scannedAt': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
+            'accountId': account_id,
+            'benefits': [],
+            'summary': {
+                'totalBenefitsTracked': 0,
+                'inUseCount': 0,
+                'unusedCount': 0,
+                'approachingLimitCount': 0,
+                'exceededCount': 0,
+                'estimatedMonthlySavingsFromFreeTier': 0.0,
+            },
+            'eligibility': {
+                'accountCreationDate': None,
+                'monthsRemaining': None,
+                'isWithin12Months': False,
+            },
+            'error': 'Missing permission: freetier:GetFreeTierUsage. '
+                     'Please update the CloudFormation template to include this permission.',
+        })
     except Exception as e:
-        logger.error(f"P10 baseline error in ladder route: {e}")
-        return create_error_response(500, 'ServerError', 'Failed to retrieve spend data for the account')
+        logger.error(f"Free tier API error: {e}")
+        return create_response(200, {
+            'scannedAt': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
+            'accountId': account_id,
+            'benefits': [],
+            'summary': {
+                'totalBenefitsTracked': 0,
+                'inUseCount': 0,
+                'unusedCount': 0,
+                'approachingLimitCount': 0,
+                'exceededCount': 0,
+                'estimatedMonthlySavingsFromFreeTier': 0.0,
+            },
+            'eligibility': {
+                'accountCreationDate': None,
+                'monthsRemaining': None,
+                'isWithin12Months': False,
+            },
+            'error': f'Free Tier API unavailable: {str(e)}',
+        })
 
-    average_hourly_spend = baseline.get('averageHourlySpend', 0.0) if isinstance(baseline, dict) else 0.0
+    # Compute summary counts
+    in_use_count = sum(1 for b in benefits if b['category'] == 'in-use')
+    unused_count = sum(1 for b in benefits if b['category'] == 'unused')
+    exceeded_count = sum(1 for b in benefits if b['category'] == 'exceeded')
+    approaching_count = sum(1 for b in benefits if b['alertStatus'] == 'approaching-limit')
+    estimated_savings = _estimate_free_tier_savings(benefits)
 
-    if average_hourly_spend == 0:
-        return create_error_response(400, 'InsufficientData',
-                                     'No spend data available for this account. '
-                                     'Ensure the account has at least 7 days of usage history.')
+    # Determine account eligibility
+    eligibility = {
+        'accountCreationDate': None,
+        'monthsRemaining': None,
+        'isWithin12Months': False,
+    }
+    # Try to determine eligibility from free tier data (12-month benefits present = within window)
+    has_12_month_benefits = any(b.get('freeTierType') == '12-month' for b in benefits)
+    if has_12_month_benefits:
+        eligibility['isWithin12Months'] = True
 
-    # â”€â”€ Generate laddering strategy â”€â”€
-    current_date = datetime.now(timezone.utc).date()
-    strategy = _generate_laddering_strategy(total_hourly_commitment, average_hourly_spend, current_date)
+    response_body = {
+        'scannedAt': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
+        'accountId': account_id,
+        'benefits': benefits,
+        'summary': {
+            'totalBenefitsTracked': len(benefits),
+            'inUseCount': in_use_count,
+            'unusedCount': unused_count,
+            'approachingLimitCount': approaching_count,
+            'exceededCount': exceeded_count,
+            'estimatedMonthlySavingsFromFreeTier': round(estimated_savings, 2),
+        },
+        'eligibility': eligibility,
+    }
 
-    return create_response(200, strategy)
+    return create_response(200, response_body)
 
 
 def _get_cost_by_tag(accounts, external_id):
@@ -14870,7 +14955,7 @@ def _get_rightsizing_candidates(ec2_client, current_type, needed_vcpu, needed_me
 
 
 
-def _get_free_tier_usage(creds=None):
+def _get_free_tier_usage_server(creds=None):
     """Query AWS Free Tier usage via freetier:GetFreeTierUsage API."""
     try:
         if creds:
@@ -15103,7 +15188,7 @@ def _handle_server_analyze_inner(event, member_email):
     # Get free tier usage for this account
     free_tier = {}
     try:
-        ft_data = _get_free_tier_usage(creds)
+        ft_data = _get_free_tier_usage_server(creds)
         # Find EC2-related free tier entries
         for key, val in ft_data.items():
             if 'EC2' in val.get('service', '') or 'ec2' in key.lower():

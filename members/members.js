@@ -9280,7 +9280,7 @@ function _committedCheckCache(accountId) {
 }
 
 function _committedShowEmpty() {
-    var panels = ['committed-coverage-panel', 'committed-recommendations-panel', 'committed-laddering-panel', 'committed-expiring-panel', 'committed-rightsize-warning', 'committed-org-sharing'];
+    var panels = ['committed-coverage-panel', 'committed-recommendations-panel', 'committed-free-tier-panel', 'committed-expiring-panel', 'committed-rightsize-warning', 'committed-org-sharing'];
     panels.forEach(function(id) { var el = document.getElementById(id); if (el) el.style.display = 'none'; });
     var empty = document.getElementById('committed-empty');
     if (empty) empty.style.display = 'block';
@@ -9364,8 +9364,23 @@ function _committedRenderResults(data, scannedAt) {
     // Render recommendations table
     _committedRenderRecommendations(data);
 
-    // Render laddering strategy
-    _committedRenderLaddering(data.ladderingStrategy, data.baseline);
+    // Render free tier panel
+    var sel = document.getElementById('committed-account-select');
+    var accountId = sel ? sel.value : '';
+    if (data.freeTierSummary) {
+        // Show summary from scan response with a "Scan Free Tier" button for full details
+        _committedRenderFreeTierSummary(data.freeTierSummary);
+    } else {
+        // Check sessionStorage for cached free tier data
+        var cachedFT = null;
+        try { cachedFT = JSON.parse(sessionStorage.getItem('freeTier_' + accountId)); } catch(e) {}
+        if (cachedFT && cachedFT.data) {
+            _freeTierEligibility = cachedFT.data.eligibility || null;
+            _committedRenderFreeTier(cachedFT.data);
+        } else {
+            _committedRenderFreeTierEmpty();
+        }
+    }
 
     // Render expiring commitments
     _committedRenderExpiring(data.expiringCommitments);
@@ -9483,9 +9498,6 @@ function _committedMetricCard(label, value, color) {
 // ============================================================
 // Commitment Savings Explorer \u2014 SP/RI Explorer State
 // ============================================================
-var _committedLadderSelectedTerm = 1;
-var _committedLadderLastStrategy = null;
-var _committedLadderLastBaseline = null;
 var _spExplorerState = {
     selectedPlanType: 'ComputeSavingsPlans',
     selectedTerm: 1,
@@ -9493,6 +9505,7 @@ var _spExplorerState = {
     compareExpanded: false
 };
 var _riExplorerState = {
+    selectedService: 'all',
     selectedInstanceType: '',
     selectedOfferingClass: 'standard',
     selectedTerm: 1,
@@ -9537,8 +9550,13 @@ function _spExplorerRender(spRecommendations) {
         // Plan Type dropdown
         if (planTypes.length > 1) {
             html += '<div class="cse-control-group"><label>SP Type</label><select id="cse-sp-type" onchange="_spExplorerSelectionChanged()">';
+            var planTypeLabels = {
+                'ComputeSavingsPlans': 'Compute SP',
+                'EC2InstanceSavingsPlans': 'EC2 Instance SP',
+                'SageMakerSavingsPlans': 'SageMaker SP'
+            };
             planTypes.forEach(function(pt) {
-                var label = pt.replace('SavingsPlans', ' SP').replace('Savings', '');
+                var label = planTypeLabels[pt] || pt.replace('SavingsPlans', ' SP').replace('Savings', '');
                 html += '<option value="' + pt + '"' + (pt === _spExplorerState.selectedPlanType ? ' selected' : '') + '>' + label + '</option>';
             });
             html += '</select></div>';
@@ -9695,9 +9713,20 @@ function _riExplorerRender(riRecommendations) {
 function _riExplorerBuildHTML() {
     if (_riExplorerData.length === 0) return '';
 
-    // Get unique instance types
-    var instanceTypes = [];
+    // Get unique services for service selector
+    var services = [];
     _riExplorerData.forEach(function(r) {
+        if (r.service && services.indexOf(r.service) === -1) services.push(r.service);
+    });
+    services.sort();
+
+    // Filter data by selected service
+    var filteredData = _riExplorerState.selectedService === 'all' ? _riExplorerData :
+        _riExplorerData.filter(function(r) { return r.service === _riExplorerState.selectedService; });
+
+    // Get unique instance types from filtered data
+    var instanceTypes = [];
+    filteredData.forEach(function(r) {
         if (instanceTypes.indexOf(r.instanceType) === -1) instanceTypes.push(r.instanceType);
     });
     if (instanceTypes.length > 0 && (!_riExplorerState.selectedInstanceType || instanceTypes.indexOf(_riExplorerState.selectedInstanceType) === -1)) {
@@ -9707,7 +9736,7 @@ function _riExplorerBuildHTML() {
     var html = '<div class="cse-explorer" id="cse-ri-explorer">';
     html += '<div class="cse-explorer-header">';
     html += '<div class="cse-explorer-title"><span class="cse-icon">\ud83c\udff7\ufe0f</span> Reserved Instance Explorer</div>';
-    var recsForInstance = _riExplorerData.filter(function(r) { return r.instanceType === _riExplorerState.selectedInstanceType; });
+    var recsForInstance = filteredData.filter(function(r) { return r.instanceType === _riExplorerState.selectedInstanceType; });
     if (recsForInstance.length >= 2) {
         html += '<button class="cse-compare-toggle" onclick="_riExplorerToggleCompare()">' + (_riExplorerState.compareExpanded ? '\u2715 Close Compare' : '\ud83d\udcca Compare All Options') + '</button>';
     }
@@ -9715,6 +9744,15 @@ function _riExplorerBuildHTML() {
 
     // Controls
     html += '<div class="cse-controls">';
+    // Service selector dropdown
+    if (services.length > 1) {
+        html += '<div class="cse-control-group"><label>Service</label><select id="cse-ri-service" onchange="_riExplorerServiceChanged()">';
+        html += '<option value="all"' + (_riExplorerState.selectedService === 'all' ? ' selected' : '') + '>All Services</option>';
+        services.forEach(function(s) {
+            html += '<option value="' + s + '"' + (s === _riExplorerState.selectedService ? ' selected' : '') + '>' + s + '</option>';
+        });
+        html += '</select></div>';
+    }
     // Instance type dropdown
     html += '<div class="cse-control-group"><label>Instance Type</label><select id="cse-ri-instance" onchange="_riExplorerSelectionChanged()">';
     instanceTypes.forEach(function(it) {
@@ -9722,8 +9760,8 @@ function _riExplorerBuildHTML() {
     });
     html += '</select></div>';
     // Offering class dropdown
-    var hasStandard = _riExplorerData.some(function(r) { return r.instanceType === _riExplorerState.selectedInstanceType && r.offeringClass === 'standard'; });
-    var hasConvertible = _riExplorerData.some(function(r) { return r.instanceType === _riExplorerState.selectedInstanceType && r.offeringClass === 'convertible'; });
+    var hasStandard = filteredData.some(function(r) { return r.instanceType === _riExplorerState.selectedInstanceType && r.offeringClass === 'standard'; });
+    var hasConvertible = filteredData.some(function(r) { return r.instanceType === _riExplorerState.selectedInstanceType && r.offeringClass === 'convertible'; });
     html += '<div class="cse-control-group"><label>Offering Class</label><select id="cse-ri-class" onchange="_riExplorerSelectionChanged()">';
     html += '<option value="standard"' + (_riExplorerState.selectedOfferingClass === 'standard' ? ' selected' : '') + (hasStandard ? '' : ' disabled') + '>Standard' + (hasStandard ? '' : ' (N/A)') + '</option>';
     html += '<option value="convertible"' + (_riExplorerState.selectedOfferingClass === 'convertible' ? ' selected' : '') + (hasConvertible ? '' : ' disabled') + '>Convertible' + (hasConvertible ? '' : ' (N/A)') + '</option>';
@@ -9817,8 +9855,20 @@ function _riExplorerBuildSavingsCard() {
         }
     }
 
+    // Free tier alternative callout
+    html += _riExplorerBuildFreeTierCallout(match);
+
     html += '</div>';
     return html;
+}
+
+function _riExplorerServiceChanged() {
+    var svcEl = document.getElementById('cse-ri-service');
+    if (svcEl) _riExplorerState.selectedService = svcEl.value;
+    // Reset instance type selection when service changes
+    _riExplorerState.selectedInstanceType = '';
+    // Re-render the full panel to update instance type dropdown
+    _spExplorerRender(_spExplorerData);
 }
 
 function _riExplorerSelectionChanged() {
@@ -9847,7 +9897,10 @@ function _riExplorerToggleCompare() {
 }
 
 function _riExplorerBuildCompareTable() {
-    var recsForInstance = _riExplorerData.filter(function(r) { return r.instanceType === _riExplorerState.selectedInstanceType; });
+    // Filter by service if selected
+    var filteredData = _riExplorerState.selectedService === 'all' ? _riExplorerData :
+        _riExplorerData.filter(function(r) { return r.service === _riExplorerState.selectedService; });
+    var recsForInstance = filteredData.filter(function(r) { return r.instanceType === _riExplorerState.selectedInstanceType; });
     if (recsForInstance.length < 2) return '<div class="cse-not-available">Not enough options to compare.</div>';
 
     // Find best savings % and lowest TCO
@@ -9859,7 +9912,7 @@ function _riExplorerBuildCompareTable() {
     });
 
     var html = '<table class="cse-compare-table"><thead><tr>';
-    html += '<th>Class</th><th>Term</th><th>Payment</th><th>Monthly Savings</th><th>Savings %</th><th>Upfront</th><th>Break-Even</th><th>TCO</th>';
+    html += '<th>Service</th><th>Class</th><th>Term</th><th>Payment</th><th>Monthly Savings</th><th>Savings %</th><th>Upfront</th><th>Break-Even</th><th>TCO</th>';
     html += '</tr></thead><tbody>';
 
     recsForInstance.forEach(function(r) {
@@ -9870,6 +9923,7 @@ function _riExplorerBuildCompareTable() {
         if (tco === lowestTCO) rowClass = 'cse-row-lowest-cost';
 
         html += '<tr class="' + rowClass + '">';
+        html += '<td>' + (r.service || '-') + '</td>';
         html += '<td>' + (r.offeringClass === 'convertible' ? 'Convertible' : 'Standard') + '</td>';
         html += '<td>' + (r.termInYears || 1) + 'yr</td>';
         html += '<td>' + (r.paymentOption || '-').replace('Upfront', ' Upfront') + '</td>';
@@ -10282,219 +10336,269 @@ function _buildCommitmentChartData(answerText, existingChartData) {
 }
 
 // ============================================================
-// Task 10: Redesigned Laddering Strategy Section
+// Free Tier Tracker Panel
 // ============================================================
-function _committedRenderLaddering(strategy, baseline) {
-    var panel = document.getElementById('committed-laddering-panel');
+var _freeTierEligibility = null;
+
+async function _committedScanFreeTier() {
+    var sel = document.getElementById('committed-account-select');
+    if (!sel || !sel.value) {
+        notify('Please select an account first.', 'warning');
+        return;
+    }
+    var accountId = sel.value;
+    var panel = document.getElementById('committed-free-tier-panel');
+    if (panel) {
+        panel.innerHTML = '<div style="text-align:center;padding:20px;color:#6b7280;"><div class="spinner"></div> Scanning free tier usage...</div>';
+        panel.style.display = 'block';
+    }
+
+    try {
+        var data = await api('POST', '/members/committed-discounts/free-tier', { accountId: accountId });
+        // Cache in sessionStorage
+        sessionStorage.setItem('freeTier_' + accountId, JSON.stringify({
+            scannedAt: new Date().toISOString(),
+            data: data
+        }));
+        _freeTierEligibility = data.eligibility || null;
+        _committedRenderFreeTier(data);
+    } catch (err) {
+        if (panel) {
+            panel.innerHTML = '<div style="text-align:center;padding:20px;color:#ef4444;">' + (err.message || 'Failed to scan free tier usage.') + '</div>';
+        }
+    }
+}
+
+function _committedRenderFreeTier(freeTierData) {
+    var panel = document.getElementById('committed-free-tier-panel');
     if (!panel) return;
 
-    // Store for re-rendering on term change
-    _committedLadderLastStrategy = strategy;
-    _committedLadderLastBaseline = baseline;
-
-    if (!strategy || !strategy.tranches || strategy.tranches.length === 0) {
-        panel.style.display = 'none';
+    if (!freeTierData || !freeTierData.benefits || freeTierData.benefits.length === 0) {
+        // Check if there's an error message
+        if (freeTierData && freeTierData.error) {
+            panel.innerHTML = '<div class="cse-explorer" style="text-align:center;padding:24px;">'
+                + '<div style="font-size:1.5em;margin-bottom:8px;">\ud83c\udd93</div>'
+                + '<div style="font-weight:600;color:#1f2937;margin-bottom:8px;">Free Tier Tracker</div>'
+                + '<div style="font-size:0.85em;color:#6b7280;margin-bottom:12px;">' + freeTierData.error + '</div>'
+                + '<div style="font-size:0.8em;color:#6366f1;">Update your CloudFormation template to include <code>freetier:GetFreeTierUsage</code> permission.</div>'
+                + '</div>';
+        } else {
+            panel.innerHTML = '<div class="cse-explorer" style="text-align:center;padding:24px;">'
+                + '<div style="font-size:1.5em;margin-bottom:8px;">\ud83c\udd93</div>'
+                + '<div style="font-weight:600;color:#1f2937;margin-bottom:8px;">Free Tier Tracker</div>'
+                + '<div style="font-size:0.85em;color:#6b7280;">No free tier data available. Click "Scan Free Tier" to check your account\'s free tier usage.</div>'
+                + '</div>';
+        }
+        panel.style.display = 'block';
         return;
     }
 
-    var tranches = strategy.tranches || [];
-    var html = '<div style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:20px;">';
-    html += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">';
-    html += '<div style="display:flex;align-items:center;gap:10px;"><span style="font-size:1.3em;">\ud83d\udcc5</span><strong style="color:#1f2937;">Laddering Strategy</strong></div>';
-    html += '<div style="display:flex;align-items:center;gap:8px;">';
-    html += '<select id="committed-ladder-term" onchange="_committedLadderTermChanged()" style="padding:4px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:0.85em;">';
-    html += '<option value="1"' + ((_committedLadderSelectedTerm || 1) === 1 ? ' selected' : '') + '>1-year term</option>';
-    html += '<option value="3"' + ((_committedLadderSelectedTerm || 1) === 3 ? ' selected' : '') + '>3-year term</option>';
-    html += '</select>';
-    html += '<button onclick="document.getElementById(\'committed-ladder-modal\').hidden=false;_committedLadderUpdatePresetLabels();" class="btn btn-outline btn-sm">\u270f\ufe0f Customize</button>';
-    html += '</div></div>';
+    var benefits = freeTierData.benefits;
+    var summary = freeTierData.summary || {};
 
-    // Plain-language explanation
-    html += '<div class="cse-ladder-explanation">';
-    html += 'Instead of buying your full commitment at once, stagger multiple 1-year (or 3-year) purchases across different dates. ';
-    html += 'This way they expire at different times \u2014 giving you flexibility to adjust as your usage evolves. ';
-    html += '<strong>Each purchase is a full 1\u20133 year commitment.</strong> The staggering is about <em>when</em> you buy, not how long each commitment lasts.';
+    var html = '<div class="cse-explorer">';
+    html += '<div class="cse-explorer-header">';
+    html += '<div class="cse-explorer-title"><span class="cse-icon">\ud83c\udd93</span> Free Tier Tracker</div>';
+    html += '<button class="cse-compare-toggle" onclick="_committedScanFreeTier()">\ud83d\udd04 Refresh</button>';
     html += '</div>';
 
-    // Summary sentence \u2014 use recalculated savings based on selected term
-    var perTrancheMonthly = tranches.length > 0 ? (tranches[0].hourlyCommitment || 0) * 730 : 0;
-    var totalMonthlySavings = 0;
-    tranches.forEach(function(t) {
-        var tType = (t.recommendedType || '').replace('SavingsPlans', ' SP').replace('Savings', '') || 'Compute SP';
-        var tRate = _committedGetSavingsRate(tType, _committedLadderSelectedTerm || 1);
-        totalMonthlySavings += (t.hourlyCommitment || 0) * 730 * tRate;
-    });
-    html += '<div class="cse-ladder-summary">';
-    html += '<strong>Recommended:</strong> Buy ' + tranches.length + ' separate commitments of ~$' + perTrancheMonthly.toFixed(0) + '/month each, ';
-    html += 'purchased 3 months apart \u2192 total savings ~<strong>$' + totalMonthlySavings.toFixed(0) + '/month</strong> once all are active.';
+    // Summary line
+    html += '<div class="cse-ft-summary">';
+    html += '<span>' + (summary.totalBenefitsTracked || 0) + ' benefits tracked</span>';
+    html += '<span class="cse-ft-sep">\u2022</span>';
+    html += '<span style="color:#059669;">' + (summary.inUseCount || 0) + ' in use</span>';
+    if (summary.approachingLimitCount > 0) {
+        html += '<span class="cse-ft-sep">\u2022</span>';
+        html += '<span style="color:#d97706;">' + summary.approachingLimitCount + ' approaching limit</span>';
+    }
+    if (summary.exceededCount > 0) {
+        html += '<span class="cse-ft-sep">\u2022</span>';
+        html += '<span style="color:#dc2626;">' + summary.exceededCount + ' exceeded</span>';
+    }
+    if (summary.estimatedMonthlySavingsFromFreeTier > 0) {
+        html += '<span class="cse-ft-sep">\u2022</span>';
+        html += '<span style="color:#059669;">~$' + summary.estimatedMonthlySavingsFromFreeTier.toFixed(0) + '/mo saved</span>';
+    }
     html += '</div>';
 
-    // Aggressive warning
-    if (strategy.isAggressive) {
-        html += '<div style="background:#fef2f2;border:1px solid #fca5a5;border-radius:8px;padding:10px 14px;margin-bottom:12px;font-size:0.85em;color:#991b1b;">';
-        html += '\u26a0\ufe0f <strong>High commitment warning:</strong> This total commitment is high relative to your usage. ';
-        html += 'If your workloads decrease, you\'ll still pay for unused commitment for 1\u20133 years. Consider the Moderate option.';
+    // Benefits list - active/approaching/exceeded
+    var activeBenefits = benefits.filter(function(b) { return b.category === 'in-use' || b.category === 'exceeded'; });
+    var unusedBenefits = benefits.filter(function(b) { return b.category === 'unused'; });
+
+    if (activeBenefits.length > 0) {
+        html += '<div class="cse-ft-benefits">';
+        activeBenefits.forEach(function(b) {
+            var pct = Math.min(b.usagePercentage || 0, 100);
+            var barClass = 'cse-ft-bar-green';
+            if (b.alertStatus === 'exceeded') barClass = 'cse-ft-bar-red';
+            else if (b.alertStatus === 'approaching-limit') barClass = 'cse-ft-bar-amber';
+
+            html += '<div class="cse-ft-benefit-row">';
+            html += '<div class="cse-ft-benefit-info">';
+            html += '<span class="cse-ft-service">' + (b.service || '') + '</span>';
+            html += '<span class="cse-ft-desc">' + (b.description || b.usageType || '') + '</span>';
+            html += '</div>';
+            html += '<div class="cse-ft-benefit-usage">';
+            html += '<div class="cse-ft-progress"><div class="cse-ft-progress-bar ' + barClass + '" style="width:' + Math.min(pct, 100) + '%;"></div></div>';
+            html += '<span class="cse-ft-usage-text">' + _ftFormatAmount(b.actualUsage) + ' / ' + _ftFormatAmount(b.limit) + '</span>';
+            if (b.alertStatus === 'approaching-limit') {
+                html += '<span class="cse-ft-badge cse-ft-badge-warning">\u26a0\ufe0f Approaching</span>';
+            } else if (b.alertStatus === 'exceeded') {
+                html += '<span class="cse-ft-badge cse-ft-badge-danger">\ud83d\udea8 Exceeded</span>';
+            }
+            html += '</div>';
+            html += '</div>';
+        });
         html += '</div>';
     }
 
-    // Visual timeline
-    var now = new Date();
-    html += '<div class="cse-ladder-timeline">';
-    tranches.forEach(function(tranche, idx) {
-        var purchaseDate = tranche.purchaseDate ? new Date(tranche.purchaseDate) : null;
-        var dotClass = 'cse-future';
-        if (purchaseDate && purchaseDate < now) dotClass = 'cse-past';
-        else if (idx === 0 || (idx > 0 && tranches[idx - 1].purchaseDate && new Date(tranches[idx - 1].purchaseDate) < now)) dotClass = 'cse-next';
-
-        var monthlyAmt = (tranche.hourlyCommitment || 0) * 730;
-        var termLabel = (_committedLadderSelectedTerm || tranche.termInYears || 1) + '-year ' + ((tranche.recommendedType || '').replace('SavingsPlans', ' SP').replace('Savings', '') || 'SP');
-
-        html += '<div class="cse-ladder-milestone">';
-        html += '<div class="cse-ladder-dot ' + dotClass + '"></div>';
-        html += '<div class="cse-ladder-milestone-label">Purchase ' + (tranche.trancheNumber || (idx + 1)) + '</div>';
-        html += '<div class="cse-ladder-milestone-amount">$' + monthlyAmt.toFixed(0) + '/mo</div>';
-        html += '<div class="cse-ladder-milestone-term">' + termLabel + '</div>';
-        html += '<div style="font-size:0.68em;color:#6b7280;margin-top:2px;">' + (tranche.purchaseDate || '') + '</div>';
+    // Opportunities section (unused benefits)
+    if (unusedBenefits.length > 0) {
+        html += '<div class="cse-ft-opportunities">';
+        html += '<div class="cse-ft-opportunities-header">\ud83d\udca1 Opportunities (' + unusedBenefits.length + ' unused benefits)</div>';
+        html += '<div class="cse-ft-opportunities-note">You have unused free tier benefits \u2014 consider using these before paying for resources.</div>';
+        unusedBenefits.forEach(function(b) {
+            html += '<div class="cse-ft-opportunity-item">';
+            html += '<span class="cse-ft-service">' + (b.service || '') + '</span>';
+            html += '<span class="cse-ft-desc">' + (b.description || b.usageType || '') + '</span>';
+            html += '<span class="cse-ft-limit">Free: ' + _ftFormatAmount(b.limit) + '</span>';
+            html += '</div>';
+        });
         html += '</div>';
-    });
-    html += '</div>';
-
-    // Summary table
-    html += '<div style="overflow-x:auto;margin-top:12px;">';
-    html += '<table class="cse-ladder-table"><thead><tr>';
-    html += '<th>Purchase #</th><th>Date</th><th>Commitment $/month</th><th>Term</th><th>Cumulative $/month</th><th>Est. Savings $/month</th><th>Plan Type</th>';
-    html += '</tr></thead><tbody>';
-    tranches.forEach(function(tranche, idx) {
-        var monthlyAmt = (tranche.hourlyCommitment || 0) * 730;
-        var cumulativeMonthly = (tranche.cumulativeCommitment || 0) * 730;
-        var termLabel = (_committedLadderSelectedTerm || tranche.termInYears || 1) + ' year';
-        var typeLabel = (tranche.recommendedType || '').replace('SavingsPlans', ' SP').replace('Savings', '') || 'Compute SP';
-
-        // Recalculate savings based on selected term
-        var savingsRate = _committedGetSavingsRate(typeLabel, _committedLadderSelectedTerm || 1);
-        var trancheSavings = (tranche.hourlyCommitment || 0) * 730 * savingsRate;
-        var cumulativeSavings = 0;
-        for (var si = 0; si <= idx; si++) {
-            var siType = (tranches[si].recommendedType || '').replace('SavingsPlans', ' SP').replace('Savings', '') || 'Compute SP';
-            var siRate = _committedGetSavingsRate(siType, _committedLadderSelectedTerm || 1);
-            cumulativeSavings += (tranches[si].hourlyCommitment || 0) * 730 * siRate;
-        }
-
-        html += '<tr>';
-        html += '<td style="font-weight:600;">Purchase ' + (tranche.trancheNumber || (idx + 1)) + '</td>';
-        html += '<td>' + (tranche.purchaseDate || '-') + '</td>';
-        html += '<td style="font-weight:600;">$' + monthlyAmt.toFixed(0) + '/mo <span style="font-size:0.8em;color:#6b7280;">($' + (tranche.hourlyCommitment || 0).toFixed(2) + '/hr)</span></td>';
-        html += '<td>' + termLabel + '</td>';
-        html += '<td>$' + cumulativeMonthly.toFixed(0) + '/mo</td>';
-        html += '<td style="color:#059669;font-weight:600;">$' + cumulativeSavings.toFixed(0) + '/mo</td>';
-        html += '<td>' + typeLabel + '</td>';
-        html += '</tr>';
-        if (tranche.rationale) {
-            html += '<tr><td colspan="7" style="padding:2px 8px 8px;font-size:0.75em;color:#6b7280;font-style:italic;">' + tranche.rationale + '</td></tr>';
-        }
-    });
-    html += '</tbody></table></div>';
+    }
 
     html += '</div>';
     panel.innerHTML = html;
     panel.style.display = 'block';
 }
 
-// Redesigned Customize Modal for Laddering (Task 10.4)
-async function _committedLadderCustom() {
-    var input = document.getElementById('committed-ladder-input');
-    var errorEl = document.getElementById('committed-ladder-error');
-    if (!input) return;
-
-    var monthlyCommitment = parseFloat(input.value);
-    if (isNaN(monthlyCommitment) || monthlyCommitment <= 0) {
-        if (errorEl) errorEl.textContent = 'Please enter a valid monthly commitment greater than 0.';
-        return;
-    }
-
-    // Convert monthly to hourly for the API
-    var commitment = monthlyCommitment / 730;
-
-    var sel = document.getElementById('committed-account-select');
-    if (!sel || !sel.value) {
-        if (errorEl) errorEl.textContent = 'No account selected.';
-        return;
-    }
-
-    if (errorEl) errorEl.textContent = '';
-    var submitBtn = document.getElementById('committed-ladder-submit');
-    if (submitBtn) submitBtn.disabled = true;
-
-    try {
-        var data = await api('POST', '/members/committed-discounts/ladder', {
-            accountId: sel.value,
-            totalHourlyCommitment: commitment
-        });
-        document.getElementById('committed-ladder-modal').hidden = true;
-        _committedRenderLaddering(data, null);
-        notify('Laddering strategy updated.', 'success');
-    } catch (err) {
-        if (errorEl) errorEl.textContent = err.message || 'Failed to generate strategy.';
-    } finally {
-        if (submitBtn) submitBtn.disabled = false;
-    }
+function _ftFormatAmount(usage) {
+    if (!usage) return '0';
+    var amount = usage.amount || 0;
+    var unit = usage.unit || '';
+    if (amount >= 1000000) return (amount / 1000000).toFixed(1) + 'M ' + unit;
+    if (amount >= 1000) return (amount / 1000).toFixed(1) + 'K ' + unit;
+    return amount.toFixed(0) + ' ' + unit;
 }
 
-function _committedLadderPreset(type) {
-    // Read baseline from cached scan data
-    var sel = document.getElementById('committed-account-select');
-    var accountId = sel ? sel.value : '';
-    var cached = null;
-    try { cached = JSON.parse(sessionStorage.getItem('committedDiscounts_' + accountId)); } catch(e) {}
-    var baseline = (cached && cached.data && cached.data.baseline) || {};
-    var avgHourly = baseline.averageHourlySpend || 0;
-    var p10Hourly = baseline.p10HourlySpend || 0;
+function _committedRenderFreeTierSummary(summary) {
+    var panel = document.getElementById('committed-free-tier-panel');
+    if (!panel) return;
 
-    var monthlyValue = 0;
-    if (type === 'conservative') monthlyValue = p10Hourly * 730;
-    else if (type === 'moderate') monthlyValue = avgHourly * 0.6 * 730;
-    else if (type === 'aggressive') monthlyValue = avgHourly * 0.7 * 730;
-
-    var input = document.getElementById('committed-ladder-input');
-    if (input) input.value = monthlyValue.toFixed(0);
-}
-
-function _committedGetSavingsRate(typeLabel, term) {
-    // Returns the savings rate based on plan type and term
-    // typeLabel examples: "Compute SP", "EC2 Instance SP"
-    var isEC2 = typeLabel.toLowerCase().indexOf('ec2') !== -1;
-    if (term === 3) {
-        return isEC2 ? 0.50 : 0.45;
+    var html = '<div class="cse-explorer">';
+    html += '<div class="cse-explorer-header">';
+    html += '<div class="cse-explorer-title"><span class="cse-icon">\ud83c\udd93</span> Free Tier Tracker</div>';
+    html += '<button class="cse-compare-toggle" onclick="_committedScanFreeTier()">\ud83d\udd0d Scan Details</button>';
+    html += '</div>';
+    html += '<div class="cse-ft-summary">';
+    html += '<span>' + (summary.totalBenefitsTracked || 0) + ' benefits tracked</span>';
+    html += '<span class="cse-ft-sep">\u2022</span>';
+    html += '<span style="color:#059669;">' + (summary.inUseCount || 0) + ' in use</span>';
+    if (summary.approachingLimitCount > 0) {
+        html += '<span class="cse-ft-sep">\u2022</span>';
+        html += '<span style="color:#d97706;">' + summary.approachingLimitCount + ' approaching limit</span>';
     }
-    return isEC2 ? 0.35 : 0.30;
-}
-
-function _committedLadderTermChanged() {
-    var sel = document.getElementById('committed-ladder-term');
-    _committedLadderSelectedTerm = sel ? parseInt(sel.value, 10) : 1;
-    // Re-render with stored strategy data
-    if (_committedLadderLastStrategy) {
-        _committedRenderLaddering(_committedLadderLastStrategy, _committedLadderLastBaseline);
+    if (summary.exceededCount > 0) {
+        html += '<span class="cse-ft-sep">\u2022</span>';
+        html += '<span style="color:#dc2626;">' + summary.exceededCount + ' exceeded</span>';
     }
+    if (summary.estimatedMonthlySavings > 0) {
+        html += '<span class="cse-ft-sep">\u2022</span>';
+        html += '<span style="color:#059669;">~$' + summary.estimatedMonthlySavings.toFixed(0) + '/mo saved</span>';
+    }
+    html += '</div>';
+    html += '<div style="font-size:0.8em;color:#6b7280;text-align:center;">Click "Scan Details" for full free tier usage breakdown.</div>';
+    html += '</div>';
+    panel.innerHTML = html;
+    panel.style.display = 'block';
 }
 
-function _committedLadderUpdatePresetLabels() {
-    var sel = document.getElementById('committed-account-select');
-    var accountId = sel ? sel.value : '';
-    var cached = null;
-    try { cached = JSON.parse(sessionStorage.getItem('committedDiscounts_' + accountId)); } catch(e) {}
-    var baseline = (cached && cached.data && cached.data.baseline) || {};
-    var avgHourly = baseline.averageHourlySpend || 0;
-    var p10Hourly = baseline.p10HourlySpend || 0;
+function _committedRenderFreeTierEmpty() {
+    var panel = document.getElementById('committed-free-tier-panel');
+    if (!panel) return;
 
-    var consVal = document.getElementById('preset-conservative-val');
-    var modVal = document.getElementById('preset-moderate-val');
-    var aggVal = document.getElementById('preset-aggressive-val');
-    if (consVal) consVal.textContent = p10Hourly > 0 ? '$' + (p10Hourly * 730).toFixed(0) + '/mo' : 'P10 floor';
-    if (modVal) modVal.textContent = avgHourly > 0 ? '$' + (avgHourly * 0.6 * 730).toFixed(0) + '/mo' : '60% avg';
-    if (aggVal) aggVal.textContent = avgHourly > 0 ? '$' + (avgHourly * 0.7 * 730).toFixed(0) + '/mo' : '70% avg';
+    var html = '<div class="cse-explorer" style="text-align:center;padding:20px;">';
+    html += '<div class="cse-explorer-header">';
+    html += '<div class="cse-explorer-title"><span class="cse-icon">\ud83c\udd93</span> Free Tier Tracker</div>';
+    html += '<button class="cse-compare-toggle" onclick="_committedScanFreeTier()">\ud83d\udd0d Scan Free Tier</button>';
+    html += '</div>';
+    html += '<div style="font-size:0.85em;color:#6b7280;">Click "Scan Free Tier" to check your account\'s free tier usage and find savings opportunities.</div>';
+    html += '</div>';
+    panel.innerHTML = html;
+    panel.style.display = 'block';
 }
 
+// ============================================================
+// Free Tier Alternative Callouts
+// ============================================================
+function _checkFreeTierAlternative(riRec, eligibility) {
+    // Only for single-instance t-family recommendations
+    if (!riRec || riRec.recommendedCount !== 1) return null;
+    if (!riRec.instanceType || !riRec.instanceType.startsWith('t')) return null;
+
+    var freeTierTypes = {
+        'EC2': ['t2.micro', 't3.micro'],
+        'RDS': ['db.t2.micro', 'db.t3.micro']
+    };
+
+    var eligible = freeTierTypes[riRec.service];
+    if (!eligible) return null;
+
+    // Check if already on free tier type
+    if (eligible.indexOf(riRec.instanceType) !== -1) return null;
+
+    // Check eligibility period for time-limited benefits (EC2, RDS)
+    if (riRec.service === 'EC2' || riRec.service === 'RDS') {
+        if (!eligibility || !eligibility.isWithin12Months) return null;
+    }
+
+    var freeTierType = eligible[eligible.length - 1]; // prefer t3.micro
+    var riMonthlySavings = riRec.estimatedMonthlySavings || 0;
+    // Free tier saves the full on-demand cost (since free tier has no cost)
+    var freeTierMonthlySavings = riRec.estimatedMonthlyOnDemandCost || (riMonthlySavings * 2.5);
+
+    var result = {
+        currentType: riRec.instanceType,
+        freeTierType: freeTierType,
+        riMonthlySavings: riMonthlySavings,
+        freeTierMonthlySavings: freeTierMonthlySavings,
+        eligibilityMonthsRemaining: eligibility ? eligibility.monthsRemaining : null,
+        disclaimer: 'Free tier alternatives require workload validation \u2014 verify your application performs acceptably on the smaller instance before migrating.'
+    };
+
+    return result;
+}
+
+function _riExplorerBuildFreeTierCallout(riRec) {
+    var eligibility = _freeTierEligibility || null;
+    var alt = _checkFreeTierAlternative(riRec, eligibility);
+    if (!alt) return '';
+
+    var html = '<div class="cse-ft-callout">';
+    html += '<div class="cse-ft-callout-header">\ud83d\udca1 Free Tier Alternative</div>';
+    html += '<div class="cse-ft-callout-body">';
+    html += '<div class="cse-ft-callout-comparison">';
+    html += '<span>RI commitment saves <strong>$' + alt.riMonthlySavings.toFixed(0) + '/month</strong> vs on-demand.</span>';
+    html += '<span>Free tier migration saves <strong>$' + alt.freeTierMonthlySavings.toFixed(0) + '/month</strong> with zero commitment.</span>';
+    html += '</div>';
+    html += '<div class="cse-ft-callout-detail">Current: <strong>' + alt.currentType + '</strong> \u2192 Free tier: <strong>' + alt.freeTierType + '</strong></div>';
+
+    // Expiry note
+    if (alt.eligibilityMonthsRemaining !== null && alt.eligibilityMonthsRemaining < 3 && alt.eligibilityMonthsRemaining > 0) {
+        html += '<div class="cse-ft-callout-expiry">\u26a0\ufe0f Free tier eligibility expires in ' + alt.eligibilityMonthsRemaining + ' months \u2014 consider an RI commitment for long-term savings after that date.</div>';
+    }
+
+    // Caveat when eligibility unknown
+    if (!eligibility || eligibility.monthsRemaining === null) {
+        html += '<div class="cse-ft-callout-caveat">Verify your account\'s free tier eligibility in the AWS Billing console.</div>';
+    }
+
+    html += '<div class="cse-ft-callout-disclaimer">' + alt.disclaimer + '</div>';
+    html += '</div></div>';
+    return html;
+}
+
+// ============================================================
 // Task 12.2: Expiring Commitments Timeline Renderer
 function _committedRenderExpiring(expiringData) {
     var panel = document.getElementById('committed-expiring-panel');
@@ -10658,7 +10762,7 @@ function _committedShowPurchaseGuide(type, subType) {
     html += '<div style="font-weight:600;color:#92400e;font-size:0.85em;margin-bottom:4px;">\u26a0\ufe0f Important</div>';
     html += '<div style="font-size:0.8em;color:#78350f;line-height:1.6;">';
     html += 'Savings Plans and Reserved Instances are <strong>non-refundable</strong> commitments. ';
-    html += 'We recommend the <strong>laddering approach</strong> \u2014 purchase in quarterly tranches rather than a single large commitment. ';
+    html += 'We recommend starting with a <strong>conservative commitment</strong> \u2014 adding more as your usage stabilizes rather than committing everything at once. ';
     html += 'This reduces risk and allows you to adjust as your usage evolves.';
     html += '</div></div>';
 
