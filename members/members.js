@@ -10339,8 +10339,6 @@ async function _committedScanFreeTier() {
         panel.style.display = 'block';
     }
 
-    // The free tier route may not be registered in API Gateway yet.
-    // Try the dedicated endpoint first, fall back to showing the summary from the main scan.
     try {
         var data = await api('POST', '/members/committed-discounts/free-tier', { accountId: accountId });
         // Cache in sessionStorage
@@ -10351,20 +10349,14 @@ async function _committedScanFreeTier() {
         _freeTierEligibility = data.eligibility || null;
         _committedRenderFreeTier(data);
     } catch (err) {
-        // If the route doesn't exist yet (connection error / 404), show the summary from the main scan
-        var cached = null;
-        try { cached = JSON.parse(sessionStorage.getItem('committedDiscounts_' + accountId)); } catch(e) {}
-        if (cached && cached.data && cached.data.freeTierSummary) {
-            _committedRenderFreeTierSummary(cached.data.freeTierSummary);
-            if (panel) {
-                // Append a note about the missing route
-                var note = document.createElement('div');
-                note.style.cssText = 'font-size:0.8em;color:#6b7280;text-align:center;margin-top:8px;';
-                note.textContent = 'Detailed free tier breakdown requires API Gateway route update. Showing summary from last scan.';
-                panel.appendChild(note);
-            }
-        } else if (panel) {
-            panel.innerHTML = '<div style="text-align:center;padding:20px;color:#f59e0b;">Free tier details unavailable — the API route needs to be added to API Gateway. Summary data is shown from the main scan above.</div>';
+        // Show the actual error from the API
+        if (panel) {
+            var errMsg = (err && err.message) ? err.message : 'Unable to retrieve free tier data.';
+            panel.innerHTML = '<div class="cse-explorer" style="text-align:center;padding:24px;">'
+                + '<div style="font-size:1.5em;margin-bottom:8px;">\ud83c\udd93</div>'
+                + '<div style="font-weight:600;color:#1f2937;margin-bottom:8px;">Free Tier Tracker</div>'
+                + '<div style="font-size:0.85em;color:#ef4444;margin-bottom:12px;">' + esc(errMsg) + '</div>'
+                + '</div>';
             panel.style.display = 'block';
         }
     }
