@@ -9551,6 +9551,16 @@ function _spExplorerRender(spRecommendations) {
             });
             html += '</select></div>';
         }
+        // SP type description
+        var spTypeDescriptions = {
+            'ComputeSavingsPlans': 'Covers EC2, Fargate, and Lambda. Most flexible — applies across regions, instance families, OS, and tenancy.',
+            'EC2InstanceSavingsPlans': 'Covers EC2 only. Locked to a specific instance family + region, but offers deeper discounts than Compute SP.',
+            'SageMakerSavingsPlans': 'Covers SageMaker ML instances. Applies to notebook, training, inference, and data wrangler usage.'
+        };
+        var currentDesc = spTypeDescriptions[_spExplorerState.selectedPlanType] || '';
+        if (currentDesc) {
+            html += '<div style="font-size:0.8em;color:#6b7280;margin-top:4px;grid-column:1/-1;padding:0 4px;">\ud83d\udca1 ' + currentDesc + '</div>';
+        }
         // Term dropdown
         html += '<div class="cse-control-group"><label>Term</label><select id="cse-sp-term" onchange="_spExplorerSelectionChanged()">';
         html += '<option value="1"' + (_spExplorerState.selectedTerm === 1 ? ' selected' : '') + '>1 Year</option>';
@@ -9633,7 +9643,16 @@ function _spExplorerBuildSavingsCard() {
         html += '<div class="cse-savings-metric"><div class="cse-metric-label">Upfront Cost</div><div class="cse-metric-value cse-warning">$' + (match.upfrontCost || 0).toFixed(0) + '</div></div>';
     }
     html += '<div class="cse-savings-metric"><div class="cse-metric-label">Break-Even</div><div class="cse-metric-value cse-neutral">' + (breakEven != null ? breakEven.toFixed(1) + ' mo' : 'Immediate') + '</div></div>';
-    html += '</div></div>';
+    html += '</div>';
+
+    // Break-even warning if it exceeds the term
+    var termMonths = (match.termInYears || 1) * 12;
+    if (breakEven != null && breakEven > termMonths) {
+        html += '<div style="background:#fef2f2;border:1px solid #fca5a5;border-radius:6px;padding:8px 12px;margin-top:10px;font-size:0.82em;color:#991b1b;">'
+            + '\u26a0\ufe0f Break-even (' + breakEven.toFixed(0) + ' mo) exceeds the ' + (match.termInYears || 1) + '-year term (' + termMonths + ' mo). This upfront option does not pay for itself within the commitment period.</div>';
+    }
+
+    html += '</div>';
     return html;
 }
 
@@ -9734,10 +9753,13 @@ function _riExplorerBuildHTML() {
     var html = '<div class="cse-explorer" id="cse-ri-explorer">';
     html += '<div class="cse-explorer-header">';
     html += '<div class="cse-explorer-title"><span class="cse-icon">\ud83c\udff7\ufe0f</span> Reserved Instance Explorer</div>';
+    html += '<div style="display:flex;gap:8px;align-items:center;">';
     var recsForInstance = filteredData.filter(function(r) { return r.instanceType === _riExplorerState.selectedInstanceType; });
     if (recsForInstance.length >= 2) {
         html += '<button class="cse-compare-toggle" onclick="_riExplorerToggleCompare()">' + (_riExplorerState.compareExpanded ? '\u2715 Close Compare' : '\ud83d\udcca Compare All Options') + '</button>';
     }
+    html += '<a href="https://us-east-1.console.aws.amazon.com/ec2/home#ReservedInstancesMarketplace:" target="_blank" rel="noopener" class="cse-compare-toggle" style="text-decoration:none;font-size:0.8em;">\ud83d\udecd\ufe0f RI Marketplace</a>';
+    html += '</div>';
     html += '</div>';
 
     // Controls
@@ -9834,6 +9856,13 @@ function _riExplorerBuildSavingsCard() {
     }
     html += '<div class="cse-savings-metric"><div class="cse-metric-label">Break-Even</div><div class="cse-metric-value cse-neutral">' + (breakEven != null ? breakEven.toFixed(1) + ' mo' : 'Immediate') + '</div></div>';
     html += '</div>';
+
+    // Break-even warning if it exceeds the term
+    var termMonths = (match.termInYears || 1) * 12;
+    if (breakEven != null && breakEven > termMonths) {
+        html += '<div style="background:#fef2f2;border:1px solid #fca5a5;border-radius:6px;padding:8px 12px;margin-top:10px;font-size:0.82em;color:#991b1b;">'
+            + '\u26a0\ufe0f Break-even (' + breakEven.toFixed(0) + ' mo) exceeds the ' + (match.termInYears || 1) + '-year term (' + termMonths + ' mo). Consider No Upfront or a longer term instead.</div>';
+    }
 
     // Standard vs Convertible note
     if (match.standardVsConvertibleNote) {
