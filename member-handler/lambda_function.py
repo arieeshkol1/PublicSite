@@ -3247,7 +3247,7 @@ def _get_database_sp_recommendations(ce_client):
                         Service=service,
                         TermInYears=term,
                         PaymentOption=payment_option,
-                        OfferingClass='STANDARD',
+                        LookbackPeriodInDays='THIRTY_DAYS',
                     )
                 except ClientError as e:
                     logger.warning(
