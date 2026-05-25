@@ -9286,8 +9286,6 @@ function _committedShowEmpty() {
     if (empty) empty.style.display = 'block';
     var scannedAt = document.getElementById('committed-scanned-at');
     if (scannedAt) scannedAt.style.display = 'none';
-    var rescanBtn = document.getElementById('committed-rescan-btn');
-    if (rescanBtn) rescanBtn.style.display = 'none';
     var status = document.getElementById('committed-scan-status');
     if (status) status.textContent = '';
 }
@@ -9300,11 +9298,9 @@ async function _committedDiscountScan() {
     }
     var accountId = sel.value;
     var scanBtn = document.getElementById('committed-scan-btn');
-    var rescanBtn = document.getElementById('committed-rescan-btn');
     var status = document.getElementById('committed-scan-status');
 
     if (scanBtn) scanBtn.disabled = true;
-    if (rescanBtn) rescanBtn.style.display = 'none';
     if (status) status.innerHTML = '<span style="color:#6366f1;">\u23f3 Scanning committed discounts... this may take up to 30 seconds.</span>';
 
     try {
@@ -9330,27 +9326,17 @@ async function _committedDiscountScan() {
     }
 }
 
-function _committedDiscountRescan() {
-    var sel = document.getElementById('committed-account-select');
-    if (!sel || !sel.value) return;
-    var cacheKey = 'committedDiscounts_' + sel.value;
-    sessionStorage.removeItem(cacheKey);
-    _committedDiscountScan();
-}
-
 function _committedRenderResults(data, scannedAt) {
     // Hide empty state
     var empty = document.getElementById('committed-empty');
     if (empty) empty.style.display = 'none';
 
-    // Show scannedAt timestamp and rescan button
+    // Show scannedAt timestamp
     var scannedEl = document.getElementById('committed-scanned-at');
     if (scannedEl && scannedAt) {
         scannedEl.style.display = 'block';
         scannedEl.textContent = '\ud83d\udcca Last scanned: ' + fmtDate(scannedAt);
     }
-    var rescanBtn = document.getElementById('committed-rescan-btn');
-    if (rescanBtn) rescanBtn.style.display = 'inline-flex';
 
     // Render rightsize warning
     _committedRenderRightsizeWarning(data.rightsizeWarning);
@@ -10353,6 +10339,8 @@ async function _committedScanFreeTier() {
         panel.style.display = 'block';
     }
 
+    // The free tier route may not be registered in API Gateway yet.
+    // Try the dedicated endpoint first, fall back to showing the summary from the main scan.
     try {
         var data = await api('POST', '/members/committed-discounts/free-tier', { accountId: accountId });
         // Cache in sessionStorage
@@ -10363,8 +10351,21 @@ async function _committedScanFreeTier() {
         _freeTierEligibility = data.eligibility || null;
         _committedRenderFreeTier(data);
     } catch (err) {
-        if (panel) {
-            panel.innerHTML = '<div style="text-align:center;padding:20px;color:#ef4444;">' + (err.message || 'Failed to scan free tier usage.') + '</div>';
+        // If the route doesn't exist yet (connection error / 404), show the summary from the main scan
+        var cached = null;
+        try { cached = JSON.parse(sessionStorage.getItem('committedDiscounts_' + accountId)); } catch(e) {}
+        if (cached && cached.data && cached.data.freeTierSummary) {
+            _committedRenderFreeTierSummary(cached.data.freeTierSummary);
+            if (panel) {
+                // Append a note about the missing route
+                var note = document.createElement('div');
+                note.style.cssText = 'font-size:0.8em;color:#6b7280;text-align:center;margin-top:8px;';
+                note.textContent = 'Detailed free tier breakdown requires API Gateway route update. Showing summary from last scan.';
+                panel.appendChild(note);
+            }
+        } else if (panel) {
+            panel.innerHTML = '<div style="text-align:center;padding:20px;color:#f59e0b;">Free tier details unavailable — the API route needs to be added to API Gateway. Summary data is shown from the main scan above.</div>';
+            panel.style.display = 'block';
         }
     }
 }
