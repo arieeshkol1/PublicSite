@@ -9273,6 +9273,8 @@ function _committedCheckCache(accountId) {
         try {
             var parsed = JSON.parse(cached);
             _committedRenderResults(parsed.data, parsed.scannedAt);
+            // Also load free tier data from cache or scan
+            _committedScanFreeTier();
             return;
         } catch (e) { /* fall through to empty state */ }
     }
@@ -9310,6 +9312,8 @@ async function _committedDiscountScan() {
         sessionStorage.setItem(cacheKey, JSON.stringify({ scannedAt: data.scannedAt, data: data }));
         _committedRenderResults(data, data.scannedAt);
         if (status) status.textContent = '';
+        // Auto-invoke free tier scan after main scan completes
+        _committedScanFreeTier();
     } catch (err) {
         if (status) {
             if (err.status === 403 && err.message && err.message.indexOf('ermission') !== -1) {
