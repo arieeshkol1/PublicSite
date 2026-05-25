@@ -3041,10 +3041,18 @@ def _get_ri_recommendations(ce_client):
                             instance_details = detail.get('InstanceDetails', {})
 
                             # Extract instance type and region based on service
+                            size_flex_eligible = False
+                            instance_family = ''
+                            platform = ''
+                            tenancy = ''
                             if 'EC2InstanceDetails' in instance_details:
                                 ec2_details = instance_details['EC2InstanceDetails']
                                 instance_type = ec2_details.get('InstanceType', 'unknown')
                                 region = ec2_details.get('Region', 'unknown')
+                                size_flex_eligible = ec2_details.get('SizeFlexEligible', False)
+                                instance_family = ec2_details.get('Family', '')
+                                platform = ec2_details.get('Platform', '')
+                                tenancy = ec2_details.get('Tenancy', '')
                             elif 'RDSInstanceDetails' in instance_details:
                                 rds_details = instance_details['RDSInstanceDetails']
                                 instance_type = rds_details.get('DatabaseEngine', '') + '.' + rds_details.get('InstanceType', 'unknown')
@@ -3125,6 +3133,11 @@ def _get_ri_recommendations(ce_client):
                                 'estimatedSavingsPercentage': savings_percentage,
                                 'breakEvenMonths': break_even_months,
                                 'upfrontCost': round(upfront_cost, 2),
+                                'estimatedMonthlyOnDemandCost': round(estimated_on_demand_cost, 2),
+                                'sizeFlexEligible': size_flex_eligible,
+                                'instanceFamily': instance_family,
+                                'platform': platform,
+                                'tenancy': tenancy,
                                 'standardVsConvertibleNote': None,  # Populated below
                             })
 

@@ -9889,6 +9889,27 @@ function _riExplorerBuildSavingsCard() {
         }
     }
 
+    // Commitment scope info
+    var scopeItems = [];
+    if (match.sizeFlexEligible) {
+        scopeItems.push('<span style="color:#059669;">\u2713 Size-flexible</span> \u2014 applies to entire <strong>' + esc(match.instanceFamily || match.instanceType.split('.')[0]) + '</strong> family in ' + esc(match.region || 'region'));
+    } else {
+        scopeItems.push('<span style="color:#d97706;">\u26a0 Fixed size</span> \u2014 locked to <strong>' + esc(match.instanceType) + '</strong> in ' + esc(match.region || 'region'));
+    }
+    if (match.offeringClass === 'convertible') {
+        scopeItems.push('<span style="color:#059669;">\u2713 Convertible</span> \u2014 can exchange for different instance types/families');
+    } else {
+        scopeItems.push('<span style="color:#6b7280;">\u2022 Standard</span> \u2014 cannot be exchanged (deeper discount)');
+    }
+    if (match.platform) scopeItems.push('\ud83d\udcbb Platform: ' + esc(match.platform));
+    if (match.tenancy && match.tenancy !== 'default') scopeItems.push('\ud83c\udfe2 Tenancy: ' + esc(match.tenancy));
+    scopeItems.push('\ud83d\udcc5 Term: ' + (match.termInYears || 1) + ' year' + ((match.termInYears || 1) > 1 ? 's' : ''));
+
+    html += '<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px 14px;margin-top:10px;font-size:0.82em;line-height:1.6;">';
+    html += '<div style="font-weight:600;color:#334155;margin-bottom:4px;">\ud83d\udccc Commitment Scope</div>';
+    html += scopeItems.join('<br>');
+    html += '</div>';
+
     // Free tier alternative callout
     html += _riExplorerBuildFreeTierCallout(match);
 
