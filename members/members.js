@@ -9652,6 +9652,12 @@ function _spExplorerBuildSavingsCard() {
             + '\u26a0\ufe0f Break-even (' + breakEven.toFixed(0) + ' mo) exceeds the ' + (match.termInYears || 1) + '-year term (' + termMonths + ' mo). This upfront option does not pay for itself within the commitment period.</div>';
     }
 
+    // Purchase link for Savings Plans
+    var spPurchaseUrl = 'https://us-east-1.console.aws.amazon.com/cost-management/home#/savings-plans/purchase';
+    html += '<div style="margin-top:12px;text-align:center;">';
+    html += '<a href="' + spPurchaseUrl + '" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;gap:6px;background:#6366f1;color:#fff;padding:8px 16px;border-radius:8px;font-size:0.85em;font-weight:600;text-decoration:none;">\ud83d\uded2 Purchase Savings Plan on AWS</a>';
+    html += '</div>';
+
     html += '</div>';
     return html;
 }
@@ -9885,6 +9891,15 @@ function _riExplorerBuildSavingsCard() {
 
     // Free tier alternative callout
     html += _riExplorerBuildFreeTierCallout(match);
+
+    // Purchase link
+    var riRegion = (match.region || 'us-east-1').replace(/\s/g, '');
+    var regionMap = {'EU(Frankfurt)':'eu-central-1','EU(Ireland)':'eu-west-1','EU(London)':'eu-west-2','EU(Paris)':'eu-west-3','USEast(N.Virginia)':'us-east-1','USEast(Ohio)':'us-east-2','USWest(Oregon)':'us-west-2','USWest(N.California)':'us-west-1','AsiaPacific(Tokyo)':'ap-northeast-1','AsiaPacific(Singapore)':'ap-southeast-1','AsiaPacific(Sydney)':'ap-southeast-2'};
+    var awsRegion = regionMap[riRegion] || 'us-east-1';
+    var purchaseUrl = 'https://' + awsRegion + '.console.aws.amazon.com/ec2/home?region=' + awsRegion + '#ReservedInstances:';
+    html += '<div style="margin-top:12px;text-align:center;">';
+    html += '<a href="' + purchaseUrl + '" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;gap:6px;background:#6366f1;color:#fff;padding:8px 16px;border-radius:8px;font-size:0.85em;font-weight:600;text-decoration:none;">\ud83d\uded2 Purchase RI on AWS Console</a>';
+    html += '</div>';
 
     html += '</div>';
     return html;
