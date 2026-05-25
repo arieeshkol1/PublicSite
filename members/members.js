@@ -9758,7 +9758,7 @@ function _riExplorerBuildHTML() {
     if (recsForInstance.length >= 2) {
         html += '<button class="cse-compare-toggle" onclick="_riExplorerToggleCompare()">' + (_riExplorerState.compareExpanded ? '\u2715 Close Compare' : '\ud83d\udcca Compare All Options') + '</button>';
     }
-    html += '<a href="https://us-east-1.console.aws.amazon.com/ec2/home#ReservedInstancesMarketplace:" target="_blank" rel="noopener" class="cse-compare-toggle" style="text-decoration:none;font-size:0.8em;">\ud83d\udecd\ufe0f RI Marketplace</a>';
+    html += '<button class="cse-compare-toggle" style="font-size:0.8em;" onclick="_riMarketplaceBrowse()">\ud83d\udecd\ufe0f RI Marketplace</button>';
     html += '</div>';
     html += '</div>';
 
@@ -9810,6 +9810,7 @@ function _riExplorerBuildHTML() {
     }
 
     html += '</div>';
+    html += '<div id="ri-marketplace-panel"></div>';
     return html;
 }
 
@@ -9964,6 +9965,97 @@ function _riExplorerBuildCompareTable() {
 
     html += '</tbody></table>';
     return html;
+}
+
+// ============================================================
+// RI Marketplace Browser
+// ============================================================
+async function _riMarketplaceBrowse() {
+    var panel = document.getElementById('ri-marketplace-panel');
+    if (!panel) return;
+
+    var sel = document.getElementById('committed-account-select');
+    if (!sel || !sel.value) {
+        notify('Please select an account first.', 'warning');
+        return;
+    }
+    var accountId = sel.value;
+    var instanceType = _riExplorerState.selectedInstanceType || '';
+    var region = 'us-east-1';
+    // Try to get region from account data
+    if (sel.value) {
+        var acct = allAccounts.find(function(a) { return a.accountId === sel.value; });
+        if (acct && acct.region) region = acct.region;
+    }
+
+    // Show loading
+    panel.innerHTML = '<div class="cse-explorer" style="margin-top:12px;padding:16px;">'
+        + '<div class="cse-explorer-header">'
+        + '<div class="cse-explorer-title"><span class="cse-icon">\ud83d\udecd\ufe0f</span> RI Marketplace Offerings</div>'
+        + '<button class="cse-compare-toggle" onclick="document.getElementById(\'ri-marketplace-panel\').innerHTML=\'\'">\u2715 Close</button>'
+        + '</div>'
+        + '<div style="text-align:center;padding:24px;"><div class="spinner"></div><p>Searching marketplace offerings...</p></div>'
+        + '</div>';
+
+    try {
+        var data = await api('POST', '/members/committed-discounts/ri-marketplace', {
+            accountId: accountId,
+            instanceType: instanceType,
+            region: region
+        });
+
+        var offerings = data.offerings || [];
+        var html = '<div class="cse-explorer" style="margin-top:12px;padding:16px;">';
+        html += '<div class="cse-explorer-header">';
+        html += '<div class="cse-explorer-title"><span class="cse-icon">\ud83d\udecd\ufe0f</span> RI Marketplace Offerings (' + offerings.length + ' found)</div>';
+        html += '<button class="cse-compare-toggle" onclick="document.getElementById(\'ri-marketplace-panel\').innerHTML=\'\'">\u2715 Close</button>';
+        html += '</div>';
+
+        if (offerings.length === 0) {
+            html += '<div style="text-align:center;padding:24px;color:#6b7280;">No marketplace offerings available for this instance type.</div>';
+        } else {
+            html += '<div style="overflow-x:auto;">';
+            html += '<table class="cse-compare-table"><thead><tr>';
+            html += '<th>Instance Type</th><th>Remaining Term</th><th>Fixed Price</th><th>Hourly Rate</th><th>Offering Class</th><th>Description</th><th></th>';
+            html += '</tr></thead><tbody>';
+
+            offerings.forEach(function(o) {
+                var awsLink = 'https://' + esc(region) + '.console.aws.amazon.com/ec2/home?region=' + esc(region) + '#ReservedInstances:instanceType=' + esc(o.instanceType || instanceType);
+                var hourlyRate = 0;
+                if (o.recurringCharges && o.recurringCharges.length > 0) {
+                    hourlyRate = o.recurringCharges[0].amount || 0;
+                } else {
+                    hourlyRate = o.usagePrice || 0;
+                }
+
+                html += '<tr>';
+                html += '<td>' + esc(o.instanceType || '-') + '</td>';
+                html += '<td>' + (o.duration || 0) + ' months</td>';
+                html += '<td>$' + (o.fixedPrice || 0).toFixed(2) + '</td>';
+                html += '<td>$' + hourlyRate.toFixed(4) + '/hr</td>';
+                html += '<td>' + esc((o.offeringClass || 'standard').charAt(0).toUpperCase() + (o.offeringClass || 'standard').slice(1)) + '</td>';
+                html += '<td>' + esc(o.productDescription || '-') + '</td>';
+                html += '<td><a href="' + awsLink + '" target="_blank" rel="noopener" class="cse-compare-toggle" style="text-decoration:none;font-size:0.75em;">Buy on AWS</a></td>';
+                html += '</tr>';
+            });
+
+            html += '</tbody></table>';
+            html += '</div>';
+        }
+
+        html += '</div>';
+        panel.innerHTML = html;
+
+    } catch (e) {
+        var errMsg = (e && e.message) ? e.message : 'Failed to load marketplace offerings';
+        panel.innerHTML = '<div class="cse-explorer" style="margin-top:12px;padding:16px;">'
+            + '<div class="cse-explorer-header">'
+            + '<div class="cse-explorer-title"><span class="cse-icon">\ud83d\udecd\ufe0f</span> RI Marketplace</div>'
+            + '<button class="cse-compare-toggle" onclick="document.getElementById(\'ri-marketplace-panel\').innerHTML=\'\'">\u2715 Close</button>'
+            + '</div>'
+            + '<div style="text-align:center;padding:24px;color:#ef4444;">' + esc(errMsg) + '</div>'
+            + '</div>';
+    }
 }
 
 // ============================================================

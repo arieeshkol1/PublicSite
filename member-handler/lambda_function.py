@@ -176,6 +176,7 @@ def lambda_handler(event, context):
         'GET /members/invoices/resources': handle_resource_breakdown,
         'POST /members/sql/compare': handle_sql_platform_compare,
         'POST /members/sql/migration-plan': handle_sql_migration_plan,
+        'POST /members/committed-discounts/ri-marketplace': handle_ri_marketplace,
     }
 
     handler = routes.get(route_key)
@@ -1215,6 +1216,8 @@ def _get_latest_policy_actions():
         'ce:StartCostAllocationTagBackfill', 'compute-optimizer:UpdateEnrollmentStatus',
         # Free Tier tracking
         'freetier:GetFreeTierUsage',
+        # RI Marketplace browsing
+        'ec2:DescribeReservedInstancesOfferings',
     ]
 
 
@@ -1437,6 +1440,8 @@ def handle_generate_template(event):
                                             'ce:CreateAnomalySubscription',
                                             'ce:StartCostAllocationTagBackfill',
                                             'compute-optimizer:UpdateEnrollmentStatus',
+                                            # RI Marketplace browsing
+                                            'ec2:DescribeReservedInstancesOfferings',
                                         ],
                                         'Resource': '*'
                                     }
@@ -18663,3 +18668,112 @@ def handle_sql_migration_plan(event):
         'success': True,
         'migrationPlan': plan,
     })
+
+# ============================================================
+# RI Marketplace Browser
+# ============================================================
+
+def handle_ri_marketplace(event):
+    """POST /members/committed-discounts/ri-marketplace — Browse RI Marketplace offerings.
+
+    Queries the EC2 Reserved Instances Marketplace for available offerings,
+    optionally filtered by instance type and region.
+    """
+    # Auth & validation
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+    member_email = auth['sub']
+
+    try:
+        body = json.loads(event.get('body', '{}'))
+    except (json.JSONDecodeError, TypeError):
+        return create_error_response(400, 'InvalidRequest', 'Invalid request body')
+
+    account_id = (body.get('accountId') or '').strip()
+    if not account_id or not re.match(r'^\d{12}$', account_id):
+        return create_error_response(400, 'InvalidAccountId', 'accountId must be exactly 12 digits')
+
+    instance_type = (body.get('instanceType') or '').strip()
+    region = (body.get('region') or 'us-east-1').strip()
+
+    # Verify account ownership
+    ownership = _verify_account_ownership(member_email, [account_id])
+    if ownership is not True:
+        return ownership
+
+    # Assume cross-account role
+    try:
+        creds = _assume_role_for_account(member_email, account_id)
+    except ClientError as e:
+        code = e.response['Error']['Code']
+        if code in ('AccessDeniedException', 'AccessDenied'):
+            return create_error_response(403, 'AccessDenied',
+                                         'Cannot access account — please re-deploy the CloudFormation template')
+        return create_error_response(403, 'ConnectionFailed',
+                                     'Cross-account role not found — please deploy the CloudFormation template')
+    except Exception:
+        return create_error_response(403, 'ConnectionFailed',
+                                     'Cross-account role not found — please deploy the CloudFormation template')
+
+    # Query RI Marketplace offerings
+    try:
+        ec2 = _make_client_from_creds('ec2', creds, region=region)
+
+        params = {
+            'IncludeMarketplace': True,
+            'MaxResults': 50,
+            'Filters': [{'Name': 'marketplace', 'Values': ['true']}],
+        }
+        if instance_type:
+            params['InstanceType'] = instance_type
+
+        response = ec2.describe_reserved_instances_offerings(**params)
+        raw_offerings = response.get('ReservedInstancesOfferings', [])
+
+        # Normalize offerings
+        offerings = []
+        for o in raw_offerings:
+            # Calculate remaining months from duration (seconds)
+            duration_seconds = o.get('Duration', 0)
+            remaining_months = round(duration_seconds / (30.44 * 24 * 3600))
+
+            # Extract recurring charges
+            recurring_charges = []
+            for rc in o.get('RecurringCharges', []):
+                recurring_charges.append({
+                    'amount': rc.get('Amount', 0),
+                    'frequency': rc.get('Frequency', 'Hourly'),
+                })
+
+            offerings.append({
+                'offeringId': o.get('ReservedInstancesOfferingId', ''),
+                'instanceType': o.get('InstanceType', ''),
+                'availabilityZone': o.get('AvailabilityZone', ''),
+                'duration': remaining_months,
+                'fixedPrice': o.get('FixedPrice', 0),
+                'usagePrice': o.get('UsagePrice', 0),
+                'recurringCharges': recurring_charges,
+                'offeringClass': o.get('OfferingClass', 'standard'),
+                'productDescription': o.get('ProductDescription', ''),
+                'currencyCode': o.get('CurrencyCode', 'USD'),
+            })
+
+        logger.info(f"RI Marketplace: found {len(offerings)} offerings for {instance_type or 'all types'} in {region}")
+        return create_response(200, {
+            'offerings': offerings,
+            'count': len(offerings),
+        })
+
+    except ClientError as e:
+        code = e.response['Error']['Code']
+        msg = e.response['Error'].get('Message', str(e))
+        if code in ('AccessDeniedException', 'AccessDenied', 'UnauthorizedOperation'):
+            return create_error_response(403, 'InsufficientPermissions',
+                                         'Missing permission: ec2:DescribeReservedInstancesOfferings. '
+                                         'Please update the CloudFormation template.')
+        logger.error(f"RI Marketplace error: {e}")
+        return create_error_response(500, 'ServerError', f'Failed to query RI Marketplace: {msg[:100]}')
+    except Exception as e:
+        logger.error(f"RI Marketplace unexpected error: {e}", exc_info=True)
+        return create_error_response(500, 'ServerError', 'An unexpected error occurred while querying the RI Marketplace')

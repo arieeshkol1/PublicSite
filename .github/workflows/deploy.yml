@@ -781,6 +781,7 @@ jobs:
             "GET /members/invoices/resources"
             "POST /members/sql/compare"
             "POST /members/sql/migration-plan"
+            "POST /members/committed-discounts/ri-marketplace"
           )
           echo "MEMBER_INT=$MEMBER_INT"
           echo "Creating/verifying ${#MEMBER_ROUTES[@]} member routes..."
