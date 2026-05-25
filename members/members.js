@@ -9389,11 +9389,11 @@ function _committedRenderCoverage(data) {
     var spUtil = (utilization.savingsPlans && utilization.savingsPlans.overall) || 0;
     var riUtil = (utilization.reservedInstances && utilization.reservedInstances.overall) || 0;
 
-    // Calculate total annual savings from recommendations
-    var totalAnnualSavings = 0;
-    var allRecs = (data.spRecommendations || []).concat(data.riRecommendations || []);
-    allRecs.forEach(function(r) { totalAnnualSavings += (r.estimatedMonthlySavings || 0); });
-    totalAnnualSavings = totalAnnualSavings * 12;
+    // Calculate potential annual savings — use MAX of SP or RI (they cover the same usage, not additive)
+    var spTotalMonthly = 0, riTotalMonthly = 0;
+    (data.spRecommendations || []).forEach(function(r) { spTotalMonthly += (r.estimatedMonthlySavings || 0); });
+    (data.riRecommendations || []).forEach(function(r) { riTotalMonthly += (r.estimatedMonthlySavings || 0); });
+    var totalAnnualSavings = Math.max(spTotalMonthly, riTotalMonthly) * 12;
 
     var html = '<div style="background:linear-gradient(135deg,#f0f9ff,#e0f2fe);border:1px solid #7dd3fc;border-radius:12px;padding:20px;margin-bottom:16px;">';
     html += '<div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;"><span style="font-size:1.5em;">\ud83d\udcca</span><div><div style="font-weight:700;color:#0c4a6e;font-size:1.05em;">Coverage & Utilization Summary</div></div></div>';
@@ -9574,6 +9574,14 @@ function _spExplorerRender(spRecommendations) {
             html += '<div id="cse-sp-compare-area">' + _spExplorerBuildCompareTable() + '</div>';
         }
 
+        html += '</div>';
+    }
+
+    // Overlap warning between SP and RI
+    if (_spExplorerData.length > 0 && _riExplorerData.length > 0) {
+        html += '<div style="background:#fffbeb;border:1px solid #fbbf24;border-radius:8px;padding:12px 16px;margin:12px 0;display:flex;align-items:center;gap:10px;">';
+        html += '<span style="font-size:1.2em;">\u26a0\ufe0f</span>';
+        html += '<div style="font-size:0.85em;color:#92400e;"><strong>SP and RI cover the same usage</strong> — Choose one approach per workload. Savings shown are alternatives (not additive). Savings Plans offer flexibility; RIs offer deeper discounts for stable workloads.</div>';
         html += '</div>';
     }
 
@@ -10219,8 +10227,10 @@ function _getCommitmentSavingsForKPI(accountIds) {
             hasData = true;
             var spRecs = cached.data.spRecommendations || [];
             var riRecs = cached.data.riRecommendations || [];
-            spRecs.forEach(function(r) { totalSavings += (r.estimatedMonthlySavings || 0); });
-            riRecs.forEach(function(r) { totalSavings += (r.estimatedMonthlySavings || 0); });
+            var spMonthly = 0, riMonthly = 0;
+            spRecs.forEach(function(r) { spMonthly += (r.estimatedMonthlySavings || 0); });
+            riRecs.forEach(function(r) { riMonthly += (r.estimatedMonthlySavings || 0); });
+            totalSavings += Math.max(spMonthly, riMonthly);
         }
     }
 
