@@ -4263,7 +4263,9 @@ def _get_free_tier_usage(freetier_client):
         benefits = []
         for page in paginator.paginate():
             for item in page.get('freeTierUsages', []):
-                limit_amount = float(item.get('limit', {}).get('amount', 0))
+                # limit can be a plain float or a dict with 'amount' key
+                raw_limit = item.get('limit', 0)
+                limit_amount = float(raw_limit.get('amount', 0)) if isinstance(raw_limit, dict) else float(raw_limit or 0)
                 actual_amount = float(item.get('actualUsageAmount', 0))
                 forecasted_amount = float(item.get('forecastedUsageAmount', 0))
 
@@ -14973,9 +14975,9 @@ def _get_free_tier_usage_server(creds=None):
             service = item.get('service', '')
             desc = item.get('description', '')
             usage_type = item.get('usageType', '')
-            limit = item.get('limit', {})
-            limit_amount = float(limit.get('amount', 0))
-            limit_unit = limit.get('unit', '')
+            raw_limit = item.get('limit', 0)
+            limit_amount = float(raw_limit.get('amount', 0)) if isinstance(raw_limit, dict) else float(raw_limit or 0)
+            limit_unit = raw_limit.get('unit', '') if isinstance(raw_limit, dict) else item.get('unit', '')
             actual = float(item.get('actualUsageAmount', 0))
             forecast = float(item.get('forecastedUsageAmount', 0))
             free_tier_type = item.get('freeTierType', '')  # ALWAYS_FREE, 12_MONTHS_FREE, etc.
