@@ -177,6 +177,7 @@ def lambda_handler(event, context):
         'POST /members/sql/compare': handle_sql_platform_compare,
         'POST /members/sql/migration-plan': handle_sql_migration_plan,
         'POST /members/committed-discounts/ri-marketplace': handle_ri_marketplace,
+        'POST /members/terraform/generate': handle_terraform_generate,
     }
 
     handler = routes.get(route_key)
@@ -1222,7 +1223,11 @@ def _get_latest_policy_actions():
 
 
 def handle_generate_template(event):
-    """Generate CloudFormation template for an account."""
+    """Generate CloudFormation or Terraform template for an account.
+
+    When format is "terraform", returns a downloadable .tf file.
+    When format is "cloudformation" or unspecified, returns the existing CloudFormation YAML.
+    """
     auth = validate_token(event)
     if isinstance(auth, dict) and 'statusCode' in auth:
         return auth
@@ -1237,6 +1242,32 @@ def handle_generate_template(event):
     account_id = (body.get('accountId') or '').strip()
     if not re.fullmatch(r'\d{12}', account_id):
         return create_error_response(400, 'InvalidAccountId', 'Account ID must be exactly 12 digits')
+
+    # Check format parameter — dispatch to Terraform generator if requested
+    output_format = (body.get('format') or '').strip().lower()
+    if output_format == 'terraform':
+        try:
+            from hcl_generator.cross_account import generate_cross_account_template
+            doc = generate_cross_account_template(account_id, member_email)
+            hcl_content = doc.render()
+            filename = f'SlashMyBill-{account_id}.tf'
+            return {
+                'statusCode': 200,
+                'headers': {
+                    'Content-Type': 'application/octet-stream',
+                    'Content-Disposition': f'attachment; filename="{filename}"',
+                    'Access-Control-Allow-Origin': '*',
+                    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+                    'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+                },
+                'body': hcl_content,
+                'isBase64Encoded': False,
+            }
+        except Exception as e:
+            logger.error(f"Terraform template generation failed: {e}", exc_info=True)
+            return create_error_response(500, 'ServerError', f'Terraform generation failed: {str(e)}')
+
+    # Default: CloudFormation YAML (format="cloudformation" or unspecified)
 
     # Compute ExternalId as SHA-256 hash of member email
     external_id = hashlib.sha256(member_email.encode('utf-8')).hexdigest()
@@ -18824,3 +18855,235 @@ def handle_ri_marketplace(event):
     except Exception as e:
         logger.error(f"RI Marketplace unexpected error: {e}", exc_info=True)
         return create_error_response(500, 'ServerError', 'An unexpected error occurred while querying the RI Marketplace')
+
+
+# ============================================================
+# Terraform IaC Generation Handler
+# ============================================================
+
+def handle_terraform_generate(event):
+    """POST /members/terraform/generate — unified Terraform generation endpoint.
+
+    Authenticates the request, validates parameters, dispatches to the
+    appropriate HCL generator, and returns the generated file content
+    with Content-Disposition header for browser download.
+    """
+    # 1. Authenticate
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+    member_email = auth['sub']
+
+    # 2. Parse body
+    try:
+        body = json.loads(event.get('body', '{}'))
+    except (json.JSONDecodeError, TypeError):
+        return create_error_response(400, 'InvalidRequest', 'Invalid request body')
+
+    action_type = body.get('actionType', '').strip()
+    account_id = body.get('accountId', '').strip()
+    region = body.get('region', 'us-east-1').strip()
+    action_params = body.get('actionParams', {})
+
+    # 3. Validate required fields
+    if not action_type:
+        return create_error_response(400, 'InvalidRequest', 'actionType is required')
+
+    # Determine if accountId is required (all except cross-account-role and cross-account-module)
+    account_not_required_types = {'cross-account-role', 'cross-account-module'}
+    if action_type not in account_not_required_types:
+        if not account_id:
+            return create_error_response(400, 'InvalidRequest', 'accountId is required for this action type')
+
+    # Validate accountId format if provided
+    if account_id:
+        if not re.match(r'^\d{12}$', account_id):
+            return create_error_response(400, 'InvalidAccountId', 'Account ID must be exactly 12 digits')
+
+    # 4. Verify account ownership (if accountId provided)
+    if account_id:
+        ownership = _verify_account_ownership(member_email, [account_id])
+        if isinstance(ownership, dict):
+            return ownership
+
+    # 5. Dispatch based on actionType
+    try:
+        if action_type == 'cross-account-role':
+            return _terraform_cross_account_role(member_email, account_id, region)
+        elif action_type == 'cross-account-module':
+            return _terraform_cross_account_module(member_email, account_id)
+        elif action_type in _TERRAFORM_OPTIMIZATION_ACTIONS:
+            return _terraform_optimization_action(action_type, action_params, account_id, region)
+        elif action_type in _TERRAFORM_WASTE_ACTIONS:
+            return _terraform_waste_action(action_type, action_params, account_id, region, member_email)
+        elif action_type == 'ri-sp-commitment':
+            return _terraform_commitment_snippet(action_params, account_id, member_email)
+        else:
+            return create_error_response(
+                400, 'UnsupportedActionType',
+                f"Terraform export is not yet available for action type '{action_type}'"
+            )
+    except Exception as e:
+        logger.error(f"Terraform generation error for {action_type}: {e}", exc_info=True)
+        return create_error_response(500, 'ServerError', f'Failed to generate Terraform code: {str(e)[:200]}')
+
+
+# Optimization action types supported for Terraform generation
+_TERRAFORM_OPTIMIZATION_ACTIONS = {
+    'resize-ec2', 'delete-ebs', 'release-eip',
+    's3-lifecycle', 'create-schedule', 'apply-tags', 'create-budget',
+}
+
+# Waste action types and their mapping to waste module types
+_TERRAFORM_WASTE_ACTIONS = {
+    'waste-ebs': 'ebs-volume',
+    'waste-eip': 'elastic-ip',
+    'waste-lb': 'load-balancer',
+}
+
+
+def _terraform_cross_account_role(member_email, account_id, region):
+    """Generate cross-account role Terraform template."""
+    from hcl_generator.cross_account import generate_cross_account_template
+
+    # Use a default account_id placeholder if not provided
+    target_account_id = account_id or '000000000000'
+    doc = generate_cross_account_template(target_account_id, member_email)
+    hcl_content = doc.render()
+
+    filename = f'SlashMyBill-{target_account_id}.tf'
+    return _terraform_file_response(hcl_content, filename, is_binary=False)
+
+
+def _terraform_cross_account_module(member_email, account_id):
+    """Generate cross-account role Terraform module ZIP."""
+    from hcl_generator.cross_account import generate_cross_account_module
+
+    target_account_id = account_id or '000000000000'
+    zip_bytes = generate_cross_account_module(target_account_id, member_email)
+
+    import base64
+    return {
+        'statusCode': 200,
+        'headers': {
+            'Content-Type': 'application/zip',
+            'Content-Disposition': 'attachment; filename="slashmybill-cross-account-module.zip"',
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+            'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+            'Access-Control-Expose-Headers': 'Content-Disposition',
+        },
+        'body': base64.b64encode(zip_bytes).decode('utf-8'),
+        'isBase64Encoded': True,
+    }
+
+
+def _terraform_optimization_action(action_type, action_params, account_id, region):
+    """Generate optimization action Terraform HCL."""
+    from hcl_generator.actions import generate_action_hcl
+
+    doc = generate_action_hcl(action_type, action_params, account_id, region)
+    hcl_content = doc.render()
+
+    filename = f'SlashMyBill-{account_id}-{action_type}.tf'
+    return _terraform_file_response(hcl_content, filename, is_binary=False)
+
+
+def _terraform_waste_action(action_type, action_params, account_id, region, member_email):
+    """Generate waste action Terraform HCL with import blocks."""
+    from hcl_generator.waste import generate_waste_action_hcl
+    from hcl_generator.aws_client import (
+        assume_cross_account_role,
+        fetch_ebs_volume_attributes,
+        fetch_eip_attributes,
+        fetch_load_balancer_attributes,
+        AWSClientError,
+    )
+
+    waste_type = _TERRAFORM_WASTE_ACTIONS[action_type]
+    resource_id = action_params.get('resourceId', '')
+
+    if not resource_id:
+        return create_error_response(400, 'InvalidRequest', 'actionParams.resourceId is required for waste actions')
+
+    # Fetch current resource attributes from the customer account
+    try:
+        session = assume_cross_account_role(account_id, member_email)
+
+        if waste_type == 'ebs-volume':
+            resource_attributes = fetch_ebs_volume_attributes(session, resource_id, region)
+        elif waste_type == 'elastic-ip':
+            resource_attributes = fetch_eip_attributes(session, resource_id, region)
+        elif waste_type == 'load-balancer':
+            resource_attributes = fetch_load_balancer_attributes(session, resource_id, region)
+        else:
+            return create_error_response(400, 'UnsupportedActionType',
+                                         f"Unsupported waste type: {waste_type}")
+    except AWSClientError as e:
+        logger.error(f"AWS client error fetching attributes for {resource_id}: {e}")
+        return create_error_response(500, 'ServerError', f'Failed to fetch resource attributes: {str(e)[:200]}')
+
+    doc = generate_waste_action_hcl(waste_type, resource_attributes, account_id, region)
+    hcl_content = doc.render()
+
+    filename = f'SlashMyBill-{account_id}-{action_type}.tf'
+    return _terraform_file_response(hcl_content, filename, is_binary=False)
+
+
+def _terraform_commitment_snippet(action_params, account_id, member_email):
+    """Generate RI/SP commitment documentation snippet."""
+    from hcl_generator.commitments import generate_commitment_snippet
+
+    commitment_type = action_params.get('commitmentType', 'sp')
+    options = action_params.get('options', [])
+
+    if not options:
+        return create_error_response(400, 'InvalidRequest', 'actionParams.options is required for ri-sp-commitment')
+
+    doc = generate_commitment_snippet(commitment_type, options, member_email, account_id)
+    hcl_content = doc.render()
+
+    filename = f'SlashMyBill-{account_id}-{commitment_type}-commitment.tf'
+    return _terraform_file_response(hcl_content, filename, is_binary=False)
+
+
+def _terraform_file_response(content, filename, is_binary=False):
+    """Build an API Gateway response for a downloadable Terraform file.
+
+    Args:
+        content: File content (string for .tf, bytes for binary).
+        filename: The filename for Content-Disposition header.
+        is_binary: Whether the content is binary (base64 encoded).
+
+    Returns:
+        API Gateway response dict with appropriate headers.
+    """
+    if is_binary:
+        import base64
+        return {
+            'statusCode': 200,
+            'headers': {
+                'Content-Type': 'application/octet-stream',
+                'Content-Disposition': f'attachment; filename="{filename}"',
+                'Access-Control-Allow-Origin': '*',
+                'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+                'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+                'Access-Control-Expose-Headers': 'Content-Disposition',
+            },
+            'body': base64.b64encode(content).decode('utf-8'),
+            'isBase64Encoded': True,
+        }
+    else:
+        return {
+            'statusCode': 200,
+            'headers': {
+                'Content-Type': 'application/octet-stream',
+                'Content-Disposition': f'attachment; filename="{filename}"',
+                'Access-Control-Allow-Origin': '*',
+                'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+                'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+                'Access-Control-Expose-Headers': 'Content-Disposition',
+            },
+            'body': content,
+            'isBase64Encoded': False,
+        }

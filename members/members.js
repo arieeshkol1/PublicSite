@@ -725,6 +725,7 @@ function renderAccounts(accounts) {
                 (idx > 0 ? '<button class="btn btn-outline btn-sm" data-a="up" data-id="' + ea(a.accountId) + '" title="Move Up" style="padding:2px 6px;font-size:12px;min-width:28px;">\u25b2</button> ' : '<span style="display:inline-block;width:32px;"></span> ') +
                 (idx < accounts.length - 1 ? '<button class="btn btn-outline btn-sm" data-a="down" data-id="' + ea(a.accountId) + '" title="Move Down" style="padding:2px 6px;font-size:12px;min-width:28px;">\u25bc</button> ' : '<span style="display:inline-block;width:32px;"></span> ') +
                 '<button class="btn-icon btn-icon-download" data-a="dl" data-id="' + ea(a.accountId) + '" title="Download CF Template">&#8681;</button> ' +
+                '<button class="btn-icon btn-icon-download" data-a="dl-tf" data-id="' + ea(a.accountId) + '" title="Download Terraform" style="color:#7c3aed;">&#8681;TF</button> ' +
                 '<button class="btn-icon btn-icon-test" data-a="test" data-id="' + ea(a.accountId) + '" title="Test Connection">&#9889;</button> ' +
                 '<button class="btn-icon" data-a="update-perms" data-id="' + ea(a.accountId) + '" title="Update Permissions" style="font-size:11px;">&#128274;</button> ' +
                 '<button class="btn-icon" data-a="hourly" data-id="' + ea(a.accountId) + '" title="Enable Hourly Cost Data" style="font-size:11px;">&#9201;</button> ' +
@@ -748,6 +749,7 @@ accountsTbody.onclick = function(e) {
     if (action === 'edit') showAccountModal(accountId);
     else if (action === 'del') showDeleteDialog(accountId);
     else if (action === 'dl') downloadTemplate(accountId);
+    else if (action === 'dl-tf') _downloadTerraformForAccount(accountId, btn);
     else if (action === 'test') testConnection(accountId, btn);
     else if (action === 'update-perms') updatePermissions(accountId, btn);
     else if (action === 'up' || action === 'down') reorderAccount(accountId, action);
@@ -899,6 +901,60 @@ async function downloadTemplate(accountId) {
     } finally {
         hideLoading();
     }
+}
+
+// ============================================================
+// Download Terraform Template
+// ============================================================
+
+async function downloadTerraform(actionType, accountId, actionParams) {
+    var opts = {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+    };
+    var token = getToken();
+    if (token) {
+        opts.headers['Authorization'] = 'Bearer ' + token;
+    }
+    var body = { actionType: actionType };
+    if (accountId) body.accountId = accountId;
+    if (actionParams) body.actionParams = actionParams;
+    opts.body = JSON.stringify(body);
+
+    var resp;
+    try {
+        resp = await fetch(API + '/members/terraform/generate', opts);
+    } catch (e) {
+        throw { status: 0, message: 'Connection error, please try again' };
+    }
+
+    if (!resp.ok) {
+        var errData;
+        try { errData = await resp.json(); } catch (e) { errData = {}; }
+        if (resp.status === 401) {
+            sessionStorage.removeItem('memberToken');
+            sessionStorage.removeItem('memberEmail');
+            sessionStorage.removeItem('memberDisplayName');
+            showView('login');
+        }
+        throw { status: resp.status, message: errData.message || errData.error || 'Failed to generate Terraform file' };
+    }
+
+    var blob = await resp.blob();
+    var disposition = resp.headers.get('Content-Disposition') || '';
+    var filename = 'SlashMyBill-' + actionType + '.tf';
+    var match = disposition.match(/filename="?([^";\s]+)"?/);
+    if (match && match[1]) filename = match[1];
+
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    notify('Terraform file downloaded.', 'success');
 }
 
 // ============================================================
@@ -1150,6 +1206,47 @@ wizDownloadBtn.onclick = function() {
     notify('Template downloaded!', 'success');
 };
 
+// Download Terraform button in wizard
+var wizDownloadTfBtn = $('wiz-download-tf-btn');
+if (wizDownloadTfBtn) {
+    wizDownloadTfBtn.onclick = async function() {
+        if (!wizardAccountId) {
+            notify('No account selected.', 'error');
+            return;
+        }
+        wizDownloadTfBtn.disabled = true;
+        var origText = wizDownloadTfBtn.innerHTML;
+        wizDownloadTfBtn.innerHTML = '&#8987; Downloading...';
+        try {
+            await downloadTerraform('cross-account-role', wizardAccountId);
+            wizardTemplateDownloaded = true;
+        } catch (err) {
+            notify(err.message || 'Failed to download Terraform file.', 'error');
+        } finally {
+            wizDownloadTfBtn.disabled = false;
+            wizDownloadTfBtn.innerHTML = origText;
+        }
+    };
+}
+
+// Helper: Download Terraform for an account from the accounts table
+async function _downloadTerraformForAccount(accountId, btn) {
+    if (btn) {
+        btn.disabled = true;
+        btn.style.opacity = '0.5';
+    }
+    try {
+        await downloadTerraform('cross-account-role', accountId);
+    } catch (err) {
+        notify(err.message || 'Failed to download Terraform file.', 'error');
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.style.opacity = '1';
+        }
+    }
+}
+
 wizTestBtn.onclick = async function() {
     if (!wizardAccountId) return;
     wizTestResult.hidden = true;
@@ -1273,6 +1370,7 @@ renderAccounts = function(accounts) {
             '<td class="actions-cell">' +
                 setupBtn +
                 '<button class="btn-icon btn-icon-download" data-a="dl" data-id="' + ea(a.accountId) + '" title="Download CF Template">&#8681;</button> ' +
+                '<button class="btn-icon btn-icon-download" data-a="dl-tf" data-id="' + ea(a.accountId) + '" title="Download Terraform" style="color:#7c3aed;">&#8681;TF</button> ' +
                 '<button class="btn-icon btn-icon-test" data-a="test" data-id="' + ea(a.accountId) + '" title="Test Connection">&#9889;</button> ' +
                 '<button class="btn-icon" data-a="update-perms" data-id="' + ea(a.accountId) + '" title="Update Permissions" style="font-size:11px;">&#128274;</button> ' +
                 '<button class="btn-icon" data-a="hourly" data-id="' + ea(a.accountId) + '" title="Enable Hourly Cost Data" style="font-size:11px;">&#9201;</button> ' +
@@ -1295,6 +1393,7 @@ accountsTbody.onclick = function(e) {
     else if (action === 'edit') showAccountModal(accountId);
     else if (action === 'del') showDeleteDialog(accountId);
     else if (action === 'dl') downloadTemplate(accountId);
+    else if (action === 'dl-tf') _downloadTerraformForAccount(accountId, btn);
     else if (action === 'test') testConnection(accountId, btn);
     else if (action === 'update-perms') updatePermissions(accountId, btn);
     else if (action === 'up' || action === 'down') reorderAccount(accountId, action);
@@ -6138,13 +6237,54 @@ function _actBuildCard(card) {
         '<div style="display:flex;justify-content:space-between;align-items:center;">' +
             '<span style="background:' + riskBg + ';color:' + riskColor + ';font-size:0.75em;padding:2px 8px;border-radius:10px;font-weight:600;">' + (card.risk || 'low').toUpperCase() + ' RISK</span>' +
             (card.note ? '<span style="font-size:0.72em;color:#f59e0b;max-width:180px;text-align:right;">' + esc(card.note) + '</span>' : '') +
-            '<button class="btn btn-primary btn-sm act-cleanup-btn" data-card-id="' + ea(card.cardId) + '" style="font-size:0.82em;' + (card.risk === 'high' ? 'background:#dc2626;border-color:#dc2626;' : '') + '">' + cleanupLabel + '</button>' +
+            '<div style="display:flex;gap:6px;align-items:center;">' +
+                '<button class="btn btn-outline btn-sm btn-terraform" data-card-id="' + ea(card.cardId) + '" style="font-size:0.78em;color:#7c3aed;border-color:#7c3aed;position:relative;" title="Download Terraform HCL file for this action">\ud83d\udce5 Terraform</button>' +
+                '<button class="btn btn-primary btn-sm act-cleanup-btn" data-card-id="' + ea(card.cardId) + '" style="font-size:0.82em;' + (card.risk === 'high' ? 'background:#dc2626;border-color:#dc2626;' : '') + '">' + cleanupLabel + '</button>' +
+            '</div>' +
         '</div>';
 
     div.innerHTML = headerHtml + resourcesHtml + footerHtml;
 
     // Wire cleanup button
     div.querySelector('.act-cleanup-btn').onclick = function() { _actShowConfirm(card); };
+
+    // Wire Download Terraform button
+    var tfBtn = div.querySelector('.btn-terraform');
+    if (tfBtn) {
+        tfBtn.onclick = async function(e) {
+            e.stopPropagation();
+            if (tfBtn.disabled) return;
+            tfBtn.disabled = true;
+            var origText = tfBtn.innerHTML;
+            tfBtn.innerHTML = '\u23f3 Downloading\u2026';
+
+            // Build action params from card resources
+            var actionParams = {};
+            var resources = card.resources || [];
+            if (resources.length > 0) {
+                actionParams.resourceIds = resources.map(function(r) { return r.id || r.name || r.arn || ''; }).filter(Boolean);
+            }
+
+            try {
+                await downloadTerraform(card.type, card.accountId, actionParams);
+            } catch (err) {
+                if (err.message && (err.message.indexOf('UnsupportedActionType') !== -1 || err.message.indexOf('not yet available') !== -1)) {
+                    // Show tooltip for unsupported action types
+                    var tooltip = document.createElement('div');
+                    tooltip.style.cssText = 'position:absolute;bottom:calc(100% + 6px);right:0;background:#1c2128;border:1px solid #7c3aed;border-radius:6px;padding:8px 12px;font-size:0.78em;color:#c4b5fd;white-space:nowrap;z-index:100;box-shadow:0 4px 12px rgba(0,0,0,0.3);';
+                    tooltip.textContent = 'Terraform export is not yet available for this action type.';
+                    tfBtn.parentElement.style.position = 'relative';
+                    tfBtn.parentElement.appendChild(tooltip);
+                    setTimeout(function() { if (tooltip.parentElement) tooltip.remove(); }, 4000);
+                } else {
+                    notify(err.message || 'Failed to download Terraform file.', 'error');
+                }
+            } finally {
+                tfBtn.disabled = false;
+                tfBtn.innerHTML = origText;
+            }
+        };
+    }
 
     // Wire Browse buttons (S3 only)
     div.querySelectorAll('.act-browse-btn').forEach(function(btn) {
