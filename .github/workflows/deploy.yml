@@ -256,6 +256,7 @@ jobs:
           cp member-handler/invoice_sync.py .build-member-handler/
           cp member-handler/invoice_validation.py .build-member-handler/
           cp member-handler/invoice_drilldown.py .build-member-handler/
+          cp -r member-handler/hcl_generator .build-member-handler/hcl_generator
           cd .build-member-handler && zip -r ../member-handler-lambda.zip . -q
           cd ..
           aws s3 cp member-handler-lambda.zip s3://${{ env.STORAGE_BUCKET }}/lambda-packages/member-handler.zip
@@ -782,6 +783,7 @@ jobs:
             "POST /members/sql/compare"
             "POST /members/sql/migration-plan"
             "POST /members/committed-discounts/ri-marketplace"
+            "POST /members/terraform/generate"
           )
           echo "MEMBER_INT=$MEMBER_INT"
           echo "Creating/verifying ${#MEMBER_ROUTES[@]} member routes..."
