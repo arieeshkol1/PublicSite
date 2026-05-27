@@ -2070,7 +2070,29 @@ async function askAI() {
         };
         var tagBody = getTagFilterBody();
         if (tagBody.tagKey) { aiPayload.tagKey = tagBody.tagKey; aiPayload.tagValue = tagBody.tagValue; }
-        var data = await api('POST', '/members/accounts/ai-query', aiPayload);
+
+        // Retry logic for transient 503/timeout errors (up to 2 retries)
+        var data = null;
+        var maxRetries = 2;
+        var lastErr = null;
+        for (var attempt = 0; attempt <= maxRetries; attempt++) {
+            try {
+                data = await api('POST', '/members/accounts/ai-query', aiPayload);
+                break; // success
+            } catch (err) {
+                lastErr = err;
+                // Only retry on 503 (Service Unavailable) or network errors
+                if ((err.status === 503 || err.status === 0) && attempt < maxRetries) {
+                    var delay = (attempt + 1) * 3000; // 3s, 6s
+                    var thinkEl = $('ai-thinking');
+                    if (thinkEl) thinkEl.textContent = 'Service busy, retrying in ' + (delay / 1000) + 's... (attempt ' + (attempt + 2) + '/' + (maxRetries + 1) + ')';
+                    await new Promise(function(r) { setTimeout(r, delay); });
+                    continue;
+                }
+                throw err;
+            }
+        }
+        if (!data) throw lastErr;
 
         // Remove thinking message
         var thinking = $('ai-thinking');
