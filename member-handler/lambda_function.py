@@ -18931,7 +18931,7 @@ def handle_terraform_generate(event):
 # Optimization action types supported for Terraform generation
 _TERRAFORM_OPTIMIZATION_ACTIONS = {
     'resize-ec2', 'delete-ebs', 'release-eip',
-    's3-lifecycle', 'create-schedule', 'apply-tags', 'create-budget',
+    's3-lifecycle', 'apply-tags', 'create-budget',
     'ec2-idle', 'rds-idle', 'ebs-snapshot',
 }
 

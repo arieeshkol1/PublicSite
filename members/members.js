@@ -6232,13 +6232,17 @@ function _actBuildCard(card) {
           '</div>'
         : '';
 
+    // Types that run in SlashMyCloudBill's own infra — no Terraform export for customer
+    var noTerraformTypes = ['create-schedule', 'advisory'];
+    var showTfBtn = noTerraformTypes.indexOf(card.type) === -1;
+
     var footerHtml =
         permWarningHtml +
         '<div style="display:flex;justify-content:space-between;align-items:center;">' +
             '<span style="background:' + riskBg + ';color:' + riskColor + ';font-size:0.75em;padding:2px 8px;border-radius:10px;font-weight:600;">' + (card.risk || 'low').toUpperCase() + ' RISK</span>' +
             (card.note ? '<span style="font-size:0.72em;color:#f59e0b;max-width:180px;text-align:right;">' + esc(card.note) + '</span>' : '') +
             '<div style="display:flex;gap:6px;align-items:center;">' +
-                '<button class="btn btn-outline btn-sm btn-terraform" data-card-id="' + ea(card.cardId) + '" style="font-size:0.78em;color:#7c3aed;border-color:#7c3aed;position:relative;" title="Download Terraform HCL file for this action">\ud83d\udce5 Terraform</button>' +
+                (showTfBtn ? '<button class="btn btn-outline btn-sm btn-terraform" data-card-id="' + ea(card.cardId) + '" style="font-size:0.78em;color:#7c3aed;border-color:#7c3aed;position:relative;" title="Download Terraform HCL file for this action">\ud83d\udce5 Terraform</button>' : '') +
                 '<button class="btn btn-primary btn-sm act-cleanup-btn" data-card-id="' + ea(card.cardId) + '" style="font-size:0.82em;' + (card.risk === 'high' ? 'background:#dc2626;border-color:#dc2626;' : '') + '">' + cleanupLabel + '</button>' +
             '</div>' +
         '</div>';
@@ -8360,7 +8364,46 @@ async function _runOptimizeScan() {
                     resHtml += '</div>';
                     el.innerHTML += resHtml;
                 }
+                // Add Terraform button footer
+                var findingAccountId = f.accountId || '';
+                var findingType = f.tipId || f.type || '';
+                el.innerHTML += '<div style="display:flex;justify-content:flex-end;margin-top:10px;">'
+                    + '<button class="btn btn-outline btn-sm btn-terraform-finding" data-tip-id="' + ea(findingType) + '" data-account-id="' + ea(findingAccountId) + '" style="font-size:0.78em;color:#7c3aed;border-color:#7c3aed;position:relative;" title="Download Terraform HCL file for this action">\ud83d\udce5 Terraform</button>'
+                    + '</div>';
                 if (grid) grid.appendChild(el);
+
+                // Wire Terraform button for this finding
+                var tfBtnF = el.querySelector('.btn-terraform-finding');
+                if (tfBtnF) {
+                    tfBtnF.onclick = async function(e) {
+                        e.stopPropagation();
+                        if (tfBtnF.disabled) return;
+                        tfBtnF.disabled = true;
+                        var origText = tfBtnF.innerHTML;
+                        tfBtnF.innerHTML = '\u23f3 Downloading\u2026';
+                        var actionParams = {};
+                        if (f.resources && f.resources.length > 0) {
+                            actionParams.resourceIds = f.resources.map(function(r) { return r.resourceId || r.id || r.arn || ''; }).filter(Boolean);
+                        }
+                        try {
+                            await downloadTerraform(findingType, findingAccountId, actionParams);
+                        } catch (err) {
+                            if (err.message && (err.message.indexOf('UnsupportedActionType') !== -1 || err.message.indexOf('not yet available') !== -1)) {
+                                var tooltip = document.createElement('div');
+                                tooltip.style.cssText = 'position:absolute;bottom:calc(100% + 6px);right:0;background:#1c2128;border:1px solid #7c3aed;border-radius:6px;padding:8px 12px;font-size:0.78em;color:#c4b5fd;white-space:nowrap;z-index:100;box-shadow:0 4px 12px rgba(0,0,0,0.3);';
+                                tooltip.textContent = 'Terraform export is not yet available for this action type.';
+                                tfBtnF.parentElement.style.position = 'relative';
+                                tfBtnF.parentElement.appendChild(tooltip);
+                                setTimeout(function() { if (tooltip.parentElement) tooltip.remove(); }, 4000);
+                            } else {
+                                notify(err.message || 'Failed to download Terraform file.', 'error');
+                            }
+                        } finally {
+                            tfBtnF.disabled = false;
+                            tfBtnF.innerHTML = origText;
+                        }
+                    };
+                }
             });
         }
     } catch(err) {
