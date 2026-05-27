@@ -1534,6 +1534,37 @@ Resources:
       RouteKey: 'GET /members/invoices/resources'
       Target: !Sub 'integrations/${MemberIntegration}'
 
+  # ============================================================
+  # API Gateway - Committed Discounts Routes
+  # ============================================================
+  MemberCommittedDiscountsScanRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'POST /members/committed-discounts/scan'
+      Target: !Sub 'integrations/${MemberIntegration}'
+
+  MemberCommittedDiscountsLadderRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'POST /members/committed-discounts/ladder'
+      Target: !Sub 'integrations/${MemberIntegration}'
+
+  MemberCommittedDiscountsFreeTierRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'POST /members/committed-discounts/free-tier'
+      Target: !Sub 'integrations/${MemberIntegration}'
+
+  MemberTerraformGenerateRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'POST /members/terraform/generate'
+      Target: !Sub 'integrations/${MemberIntegration}'
+
   MemberHandlerInvokePermission:
     Type: AWS::Lambda::Permission
     Properties:
