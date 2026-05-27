@@ -29,6 +29,9 @@ SUPPORTED_ACTION_TYPES: set[str] = {
     "create-schedule",
     "apply-tags",
     "create-budget",
+    "ec2-idle",
+    "rds-idle",
+    "ebs-snapshot",
 }
 
 
@@ -146,6 +149,9 @@ def generate_action_hcl(
         "create-schedule": _generate_create_schedule,
         "apply-tags": _generate_apply_tags,
         "create-budget": _generate_create_budget,
+        "ec2-idle": _generate_ec2_idle,
+        "rds-idle": _generate_rds_idle,
+        "ebs-snapshot": _generate_ebs_snapshot,
     }
 
     generator_fn = dispatch[action_type]
@@ -721,3 +727,217 @@ def _generate_create_budget(
         blocks=[terraform_block, provider_block, budget_block],
         header_comment=header,
     )
+
+
+def _generate_ec2_idle(
+    action_params: dict, account_id: str, region: str, header: str
+) -> HclDocument:
+    """Generate HCL for stopping idle EC2 instances.
+
+    Creates an aws_ec2_instance_state resource to stop each idle instance.
+    Uses Terraform's import block to bring the instance into state first.
+
+    Args:
+        action_params: Should contain 'resourceIds' list of instance IDs.
+        account_id: Target AWS account ID.
+        region: AWS region.
+        header: Pre-built header comment string.
+
+    Returns:
+        HclDocument with the stop-instance configuration.
+    """
+    resource_ids = action_params.get("resourceIds", [])
+    if not resource_ids:
+        resource_ids = [action_params.get("instanceId", "i-unknown")]
+
+    # terraform { required_providers {} } block
+    aws_provider_source = HclBlock(
+        block_type="aws",
+        labels=[],
+        attributes={
+            "source": "hashicorp/aws",
+            "version": ">= 5.0",
+        },
+    )
+    required_providers = HclBlock(
+        block_type="required_providers",
+        labels=[],
+        nested_blocks=[aws_provider_source],
+    )
+    terraform_block = HclBlock(
+        block_type="terraform",
+        labels=[],
+        nested_blocks=[required_providers],
+    )
+
+    # provider "aws" block
+    provider_block = render_provider_block(region, account_id)
+
+    blocks = [terraform_block, provider_block]
+
+    for instance_id in resource_ids:
+        tf_name = to_terraform_identifier(instance_id)
+
+        # import block to bring instance into state
+        import_block = HclBlock(
+            block_type="import",
+            labels=[],
+            attributes={
+                "to": HclRawExpression(f"aws_instance.{tf_name}"),
+                "id": instance_id,
+            },
+        )
+
+        # aws_instance resource in stopped state
+        instance_block = HclBlock(
+            block_type="resource",
+            labels=["aws_instance", tf_name],
+            attributes={
+                "instance_state": "stopped",
+            },
+        )
+
+        blocks.append(import_block)
+        blocks.append(instance_block)
+
+    return HclDocument(blocks=blocks, header_comment=header)
+
+
+def _generate_rds_idle(
+    action_params: dict, account_id: str, region: str, header: str
+) -> HclDocument:
+    """Generate HCL for deleting idle RDS instances (with final snapshot).
+
+    Uses Terraform removed {} block to destroy the RDS instance.
+    Includes a comment reminding the user that a final snapshot is taken.
+
+    Args:
+        action_params: Should contain 'resourceIds' list of DB instance identifiers.
+        account_id: Target AWS account ID.
+        region: AWS region.
+        header: Pre-built header comment string.
+
+    Returns:
+        HclDocument with the delete-RDS configuration.
+    """
+    resource_ids = action_params.get("resourceIds", [])
+    if not resource_ids:
+        resource_ids = [action_params.get("dbInstanceId", "unknown-db")]
+
+    # terraform { required_providers {} } block
+    aws_provider_source = HclBlock(
+        block_type="aws",
+        labels=[],
+        attributes={
+            "source": "hashicorp/aws",
+            "version": ">= 5.0",
+        },
+    )
+    required_providers = HclBlock(
+        block_type="required_providers",
+        labels=[],
+        nested_blocks=[aws_provider_source],
+    )
+    terraform_block = HclBlock(
+        block_type="terraform",
+        labels=[],
+        nested_blocks=[required_providers],
+    )
+
+    # provider "aws" block
+    provider_block = render_provider_block(region, account_id)
+
+    blocks = [terraform_block, provider_block]
+
+    for db_id in resource_ids:
+        tf_name = to_terraform_identifier(db_id)
+
+        # removed {} block with lifecycle { destroy = true }
+        lifecycle_block = HclBlock(
+            block_type="lifecycle",
+            labels=[],
+            attributes={"destroy": True},
+        )
+        removed_block = HclBlock(
+            block_type="removed",
+            labels=[],
+            attributes={
+                "from": HclRawExpression(f"aws_db_instance.{tf_name}"),
+            },
+            nested_blocks=[lifecycle_block],
+        )
+
+        blocks.append(removed_block)
+
+    return HclDocument(
+        blocks=blocks,
+        header_comment=header + "\n# NOTE: AWS creates a final snapshot before deletion by default.",
+    )
+
+
+def _generate_ebs_snapshot(
+    action_params: dict, account_id: str, region: str, header: str
+) -> HclDocument:
+    """Generate HCL for deleting stale EBS snapshots.
+
+    Uses Terraform removed {} block to destroy each snapshot.
+
+    Args:
+        action_params: Should contain 'resourceIds' list of snapshot IDs.
+        account_id: Target AWS account ID.
+        region: AWS region.
+        header: Pre-built header comment string.
+
+    Returns:
+        HclDocument with the delete-snapshot configuration.
+    """
+    resource_ids = action_params.get("resourceIds", [])
+    if not resource_ids:
+        resource_ids = [action_params.get("snapshotId", "snap-unknown")]
+
+    # terraform { required_providers {} } block
+    aws_provider_source = HclBlock(
+        block_type="aws",
+        labels=[],
+        attributes={
+            "source": "hashicorp/aws",
+            "version": ">= 5.0",
+        },
+    )
+    required_providers = HclBlock(
+        block_type="required_providers",
+        labels=[],
+        nested_blocks=[aws_provider_source],
+    )
+    terraform_block = HclBlock(
+        block_type="terraform",
+        labels=[],
+        nested_blocks=[required_providers],
+    )
+
+    # provider "aws" block
+    provider_block = render_provider_block(region, account_id)
+
+    blocks = [terraform_block, provider_block]
+
+    for snap_id in resource_ids:
+        tf_name = to_terraform_identifier(snap_id)
+
+        # removed {} block with lifecycle { destroy = true }
+        lifecycle_block = HclBlock(
+            block_type="lifecycle",
+            labels=[],
+            attributes={"destroy": True},
+        )
+        removed_block = HclBlock(
+            block_type="removed",
+            labels=[],
+            attributes={
+                "from": HclRawExpression(f"aws_ebs_snapshot.{tf_name}"),
+            },
+            nested_blocks=[lifecycle_block],
+        )
+
+        blocks.append(removed_block)
+
+    return HclDocument(blocks=blocks, header_comment=header)

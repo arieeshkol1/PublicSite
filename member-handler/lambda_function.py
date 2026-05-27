@@ -18932,6 +18932,7 @@ def handle_terraform_generate(event):
 _TERRAFORM_OPTIMIZATION_ACTIONS = {
     'resize-ec2', 'delete-ebs', 'release-eip',
     's3-lifecycle', 'create-schedule', 'apply-tags', 'create-budget',
+    'ec2-idle', 'rds-idle', 'ebs-snapshot',
 }
 
 # Waste action types and their mapping to waste module types
@@ -18939,6 +18940,10 @@ _TERRAFORM_WASTE_ACTIONS = {
     'waste-ebs': 'ebs-volume',
     'waste-eip': 'elastic-ip',
     'waste-lb': 'load-balancer',
+    # Frontend card type aliases (cards pass type directly)
+    'ebs-volume': 'ebs-volume',
+    'elastic-ip': 'elastic-ip',
+    'load-balancer': 'load-balancer',
 }
 
 
