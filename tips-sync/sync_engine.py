@@ -128,8 +128,11 @@ def compute_deltas(
             existing = existing_tips[tip_id]
             existing_hash = existing.get("contentHash", "")
 
-            if content_hash != existing_hash:
-                # Content changed — classify as update
+            # Check if content changed OR if metadata fields are missing
+            missing_metadata = not existing.get("cloud") or not existing.get("createdAt")
+
+            if content_hash != existing_hash or missing_metadata:
+                # Content changed or metadata needs backfill — classify as update
                 # Preserve operational fields from existing record
                 updated_tip = dict(existing)
                 # Update content fields only
@@ -146,19 +149,26 @@ def compute_deltas(
                     updated_tip["category"] = tip["category"]
                 if tip.get("difficulty"):
                     updated_tip["difficulty"] = tip["difficulty"]
+                # Backfill cloud and createdAt if missing
+                if not updated_tip.get("cloud"):
+                    updated_tip["cloud"] = "AWS"
+                if not updated_tip.get("createdAt"):
+                    from datetime import datetime, timezone
+                    updated_tip["createdAt"] = datetime.now(timezone.utc).isoformat()
 
                 tips_to_update.append(updated_tip)
+                classification = "update" if content_hash != existing_hash else "metadata_backfill"
                 logger.info(
                     json.dumps(
                         {
                             "action": "classify_tip",
                             "tipId": tip_id,
-                            "classification": "update",
+                            "classification": classification,
                         }
                     )
                 )
             else:
-                # Hash matches — unchanged, skip
+                # Hash matches and metadata present — unchanged, skip
                 unchanged_count += 1
                 logger.info(
                     json.dumps(
