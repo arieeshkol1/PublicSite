@@ -871,8 +871,9 @@ class CacheService:
     ) -> None:
         """Worker function that runs in a background thread to refresh cache.
 
-        Fetches the most recent 3 days of cost data from the Cost Explorer
-        API and writes it to the cache. Logs any errors without raising.
+        Fetches 90 days of cost data from the Cost Explorer API and writes
+        it to the cache. Uses incremental fetch — only fetches dates not
+        already cached. Logs any errors without raising.
 
         Args:
             member_id: The authenticated member's identifier.
@@ -881,19 +882,53 @@ class CacheService:
         """
         try:
             from incremental_fetch_engine import IncrementalFetchEngine
+            from cache_types import DateRange
 
             engine = IncrementalFetchEngine()
 
-            # Compute date range for the most recent 3 days
+            # Compute date range for 90 days of history
             today = datetime.now(timezone.utc).date()
-            start_date = (today - timedelta(days=2)).isoformat()
+            start_date = (today - timedelta(days=89)).isoformat()
             # End date is exclusive (CE API convention), so today + 1
             end_date = (today + timedelta(days=1)).isoformat()
 
-            # Fetch cost data for the 3-day range
-            from cache_types import DateRange
-            date_ranges = [DateRange(start=start_date, end=end_date)]
-            fetched_items = engine.fetch_cost_data(date_ranges, credentials)
+            # Check what's already cached to avoid re-fetching
+            pk = self._build_partition_key(member_id, account_id)
+            start_sk = self._build_sort_key(start_date)
+            end_sk = self._build_sort_key(end_date)
+
+            cached_dates = set()
+            try:
+                from boto3.dynamodb.conditions import Key as DDBKey
+                response = self._table.query(
+                    KeyConditionExpression=DDBKey('pk').eq(pk) & DDBKey('sk').between(start_sk, end_sk),
+                    ProjectionExpression='sk',
+                )
+                for item in response.get('Items', []):
+                    cached_dates.add(item['sk'].replace('DAILY#', ''))
+                while 'LastEvaluatedKey' in response:
+                    response = self._table.query(
+                        KeyConditionExpression=DDBKey('pk').eq(pk) & DDBKey('sk').between(start_sk, end_sk),
+                        ProjectionExpression='sk',
+                        ExclusiveStartKey=response['LastEvaluatedKey'],
+                    )
+                    for item in response.get('Items', []):
+                        cached_dates.add(item['sk'].replace('DAILY#', ''))
+            except Exception:
+                pass  # If we can't read cache, fetch everything
+
+            # Compute gaps — dates not yet cached
+            gaps = engine.compute_gaps(start_date, end_date, cached_dates, include_today=True)
+
+            if not gaps:
+                logger.info(
+                    f"Background refresh: cache already complete for {member_id}#{account_id} "
+                    f"({len(cached_dates)} days cached)"
+                )
+                return
+
+            # Fetch only missing dates from CE API
+            fetched_items = engine.fetch_cost_data(gaps, credentials)
 
             # Write fetched data to cache
             if fetched_items:
@@ -901,7 +936,7 @@ class CacheService:
 
             logger.info(
                 f"Background refresh completed for {member_id}#{account_id}: "
-                f"{len(fetched_items)} items refreshed"
+                f"{len(fetched_items)} new items cached (total {len(cached_dates) + len(fetched_items)} days)"
             )
         except Exception as e:
             logger.error(
