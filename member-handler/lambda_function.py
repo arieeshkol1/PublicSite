@@ -2123,8 +2123,8 @@ def handle_dashboard_data(event):
                     )
                     cache_items = cache_resp.get('Items', [])
 
-                    if cache_items:
-                        # Cache HIT — use cached data directly
+                    if cache_items and len(cache_items) >= 25:
+                        # Cache HIT with sufficient data (25+ days) — use cached data directly
                         cache_used = True
                         service_totals = {}
                         daily_cost_trend = []
