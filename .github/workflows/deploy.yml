@@ -980,7 +980,7 @@ jobs:
         continue-on-error: true
         run: |
           echo "=== Registering FinOpsActions on agent IDG5VJGUOZ5W ==="
-          # First ensure the role has bedrock permissions
+          # Ensure the role has both bedrock: and bedrock-agent: permissions
           aws iam put-role-policy \
             --role-name GitHubDeployRole \
             --policy-name BedrockAgentManagement \
@@ -988,11 +988,12 @@ jobs:
               "Version": "2012-10-17",
               "Statement": [{
                 "Effect": "Allow",
-                "Action": "bedrock:*",
+                "Action": ["bedrock:*", "bedrock-agent:*"],
                 "Resource": "*"
               }]
             }' || echo "⚠ Could not update IAM policy"
-          sleep 5
+          echo "Waiting 15s for IAM propagation..."
+          sleep 15
           pip install boto3 -q
           python infrastructure/register-action-group.py
 
