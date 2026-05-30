@@ -431,7 +431,8 @@ jobs:
                 "Statement": [
                   {"Effect": "Allow", "Action": "sts:AssumeRole", "Resource": "*"},
                   {"Effect": "Allow", "Action": ["dynamodb:GetItem","dynamodb:Query","dynamodb:Scan"], "Resource": ["arn:aws:dynamodb:us-east-1:991105135552:table/ViewMyBill-CostOptimizationTips","arn:aws:dynamodb:us-east-1:991105135552:table/Cost_Cache_Table","arn:aws:dynamodb:us-east-1:991105135552:table/MemberPortal-Members"]},
-                  {"Effect": "Allow", "Action": ["pricing:GetProducts","pricing:DescribeServices","pricing:GetAttributeValues"], "Resource": "*"}
+                  {"Effect": "Allow", "Action": ["pricing:GetProducts","pricing:DescribeServices","pricing:GetAttributeValues"], "Resource": "*"},
+                  {"Effect": "Allow", "Action": ["kms:Decrypt","kms:DescribeKey"], "Resource": "*"}
                 ]
               }'
             echo "✓ $ROLE_NAME created"
@@ -443,6 +444,26 @@ jobs:
               --role "arn:aws:iam::991105135552:role/$ROLE_NAME" > /dev/null || true
             echo "✓ Lambda role updated"
           fi
+
+      - name: Ensure AgentAction role has KMS and full permissions
+        continue-on-error: true
+        run: |
+          # Always update the AgentAction role permissions (role may already exist
+          # but be missing kms:Decrypt which causes "unable to decrypt env vars" errors)
+          aws iam put-role-policy \
+            --role-name "SlashMyBill-AgentAction-Role" \
+            --policy-name "AgentActionPermissions" \
+            --policy-document '{
+              "Version": "2012-10-17",
+              "Statement": [
+                {"Effect": "Allow", "Action": "sts:AssumeRole", "Resource": "*"},
+                {"Effect": "Allow", "Action": ["dynamodb:GetItem","dynamodb:Query","dynamodb:Scan"], "Resource": ["arn:aws:dynamodb:us-east-1:991105135552:table/ViewMyBill-CostOptimizationTips","arn:aws:dynamodb:us-east-1:991105135552:table/Cost_Cache_Table","arn:aws:dynamodb:us-east-1:991105135552:table/MemberPortal-Members"]},
+                {"Effect": "Allow", "Action": ["pricing:GetProducts","pricing:DescribeServices","pricing:GetAttributeValues"], "Resource": "*"},
+                {"Effect": "Allow", "Action": ["kms:Decrypt","kms:DescribeKey"], "Resource": "*"},
+                {"Effect": "Allow", "Action": ["logs:CreateLogGroup","logs:CreateLogStream","logs:PutLogEvents"], "Resource": "arn:aws:logs:us-east-1:991105135552:log-group:/aws/lambda/SlashMyBill-AgentAction:*"}
+              ]
+            }'
+          echo "✓ AgentAction role permissions updated (includes kms:Decrypt)"
 
       - name: Ensure COST_CACHE_TABLE_NAME env var on Lambdas
         continue-on-error: true
@@ -474,10 +495,12 @@ jobs:
 
       - name: Update Lambda function code
         run: |
+          # Wait for any in-progress Lambda updates to complete
+          sleep 15
           aws lambda update-function-code \
             --function-name aws-bill-analyzer-viewmybill \
             --s3-bucket ${{ env.STORAGE_BUCKET }} \
-            --s3-key lambda-packages/bill-analyzer.zip > /dev/null
+            --s3-key lambda-packages/bill-analyzer.zip > /dev/null || sleep 10 && aws lambda update-function-code --function-name aws-bill-analyzer-viewmybill --s3-bucket ${{ env.STORAGE_BUCKET }} --s3-key lambda-packages/bill-analyzer.zip > /dev/null
           aws lambda update-function-code \
             --function-name aws-bill-analyzer-upload-handler \
             --s3-bucket ${{ env.STORAGE_BUCKET }} \
