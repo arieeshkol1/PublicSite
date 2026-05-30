@@ -2104,50 +2104,52 @@ def handle_dashboard_data(event):
                         tag_activation_status = 'check_failed'
 
             # Gather data — use cache service for cost data when available, fall back to direct CE API
-            # Still calls _gather_account_data for waste/rightsizing/EBS analysis
-            # TEMPORARILY DISABLED: cache path causes timeouts. Enable via ENABLE_COST_CACHE=true env var
+            # Cache is READ-ONLY in the critical path: if cache hit, use it. If miss, skip to _gather_account_data.
+            # Cache is populated by background refresh (non-blocking).
             cache_used = False
-            enable_cache = os.environ.get('ENABLE_COST_CACHE', 'false').lower() == 'true'
-            if enable_cache and cache_service and not (tag_key and tag_value):
+            if cache_service and not (tag_key and tag_value):
                 try:
                     end_date_cache = datetime.now(timezone.utc).strftime('%Y-%m-%d')
                     start_30d_cache = (datetime.now(timezone.utc) - timedelta(days=30)).strftime('%Y-%m-%d')
-                    cache_result = cache_service.get_cost_data(
-                        member_id=member_email,
-                        account_id=acct_id,
-                        start_date=start_30d_cache,
-                        end_date=end_date_cache,
-                        credentials=creds,
+
+                    # Quick cache-only read (no CE API fetch, no ownership check overhead)
+                    pk = f"{member_email}#{acct_id}"
+                    start_sk = f"DAILY#{start_30d_cache}"
+                    end_sk = f"DAILY#{end_date_cache}"
+                    cache_table = cache_service._table
+                    from boto3.dynamodb.conditions import Key as DDBKey
+                    cache_resp = cache_table.query(
+                        KeyConditionExpression=DDBKey('pk').eq(pk) & DDBKey('sk').between(start_sk, end_sk)
                     )
+                    cache_items = cache_resp.get('Items', [])
 
-                    # Trigger background refresh if stale
-                    if cache_service.should_background_refresh(member_email, acct_id):
-                        cache_service.trigger_background_refresh(member_email, acct_id, creds)
-
-                    # If cache returned data, convert to dashboard format
-                    if cache_result.data and cache_result.cache_status in ('hit', 'partial'):
+                    if cache_items:
+                        # Cache HIT — use cached data directly
                         cache_used = True
-                        # Build cost_by_service from cached data
                         service_totals = {}
                         daily_cost_trend = []
-                        for item in cache_result.data:
-                            daily_cost_trend.append({'date': item.date, 'cost_usd': item.cost_amount})
-                            for svc, cost in (item.service_breakdown or {}).items():
-                                service_totals[svc] = service_totals.get(svc, 0) + float(cost)
+                        for item in cache_items:
+                            date_str = item['sk'].replace('DAILY#', '')
+                            cost = float(item.get('cost_amount', 0))
+                            daily_cost_trend.append({'date': date_str, 'cost_usd': cost})
+                            for svc, svc_cost in (item.get('service_breakdown') or {}).items():
+                                service_totals[svc] = service_totals.get(svc, 0) + float(svc_cost)
                         cost_by_service = sorted(
                             [{'service': s, 'cost_usd': round(c, 2), 'period': 'last_30_days'} for s, c in service_totals.items()],
                             key=lambda x: x['cost_usd'], reverse=True
                         )
                         # Still call _gather_account_data for waste/rightsizing/EBS data
                         acct_data, _ = _gather_account_data('how efficient is my account? rightsizing savings compare last 3 months', creds)
-                        # Override cost data with cached version
                         acct_data['cost_by_service'] = cost_by_service
                         acct_data['daily_cost_trend'] = daily_cost_trend
-                        acct_data['cache_status'] = cache_result.cache_status
-                        if cache_result.partial_data:
-                            acct_data['partial_data'] = True
+                        acct_data['cache_status'] = 'hit'
+
+                    # Trigger background refresh to populate/update cache (non-blocking)
+                    if cache_service.should_background_refresh(member_email, acct_id):
+                        cache_service.trigger_background_refresh(member_email, acct_id, creds)
+
                 except Exception as cache_err:
-                    logger.warning(f"Cache service failed for {acct_id}, falling back to direct API: {cache_err}")
+                    logger.warning(f"Cache read failed for {acct_id}, falling back to direct API: {cache_err}")
                     cache_used = False
 
             if not cache_used:
