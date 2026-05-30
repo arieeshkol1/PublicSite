@@ -305,6 +305,15 @@
     <mxCell id="n53" value="MemberPortal&#10;-Invoices&#10;(Cache, TTL 90d)" style="outlineConnect=0;fontColor=#232F3E;gradientColor=none;strokeColor=none;fillColor=#C925D1;labelBackgroundColor=#ffffff;align=center;fontStyle=1;fontSize=10;verticalLabelPosition=bottom;verticalAlign=top;html=1;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.dynamodb;" vertex="1" parent="1">
       <mxGeometry x="30" y="980" width="110" height="50" as="geometry"/>
     </mxCell>
+    <mxCell id="n57" value="Cost_Cache_Table&#10;(Daily cost data&#10;TTL 90d, On-Demand)" style="outlineConnect=0;fontColor=#232F3E;gradientColor=none;strokeColor=none;fillColor=#C925D1;labelBackgroundColor=#ffffff;align=center;fontStyle=1;fontSize=10;verticalLabelPosition=bottom;verticalAlign=top;html=1;shape=mxgraph.aws4.resourceIcon;resIcon=mxgraph.aws4.dynamodb;" vertex="1" parent="1">
+      <mxGeometry x="160" y="980" width="130" height="50" as="geometry"/>
+    </mxCell>
+    <mxCell id="e107" value="Cache read/write" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=9;fontColor=#333333;strokeColor=#666666;" edge="1" parent="1" source="n22" target="n57">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
+    <mxCell id="e108" value="Cache read" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=9;fontColor=#333333;strokeColor=#666666;" edge="1" parent="1" source="n24" target="n57">
+      <mxGeometry relative="1" as="geometry"/>
+    </mxCell>
     <mxCell id="e101" value="Invoice cache" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;fontSize=9;fontColor=#333333;strokeColor=#666666;" edge="1" parent="1" source="n22" target="n53">
       <mxGeometry relative="1" as="geometry"/>
     </mxCell>
