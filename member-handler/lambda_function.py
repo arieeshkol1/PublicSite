@@ -2105,8 +2105,10 @@ def handle_dashboard_data(event):
 
             # Gather data — use cache service for cost data when available, fall back to direct CE API
             # Still calls _gather_account_data for waste/rightsizing/EBS analysis
+            # TEMPORARILY DISABLED: cache path causes timeouts. Enable via ENABLE_COST_CACHE=true env var
             cache_used = False
-            if cache_service and not (tag_key and tag_value):
+            enable_cache = os.environ.get('ENABLE_COST_CACHE', 'false').lower() == 'true'
+            if enable_cache and cache_service and not (tag_key and tag_value):
                 try:
                     end_date_cache = datetime.now(timezone.utc).strftime('%Y-%m-%d')
                     start_30d_cache = (datetime.now(timezone.utc) - timedelta(days=30)).strftime('%Y-%m-%d')
