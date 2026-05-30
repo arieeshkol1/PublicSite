@@ -31,6 +31,7 @@ on:
       - '_gen_hld.py'
       - 'knowledge-base/**'
       - 'infrastructure/update-bedrock-agent.py'
+      - 'infrastructure/register-action-group.py'
       - 'agent-action/agent-instructions.md'
       - 'agent-action/openapi-schema.json'
       - '.github/workflows/deploy.yml'
@@ -918,11 +919,11 @@ jobs:
           python knowledge-base/seed-dynamodb.py
           echo "✓ DynamoDB seeded"
 
-      - name: Update Bedrock Agent (create/update schema + prepare)
-        continue-on-error: true
+      - name: Register Bedrock Agent Action Group
         run: |
-          python infrastructure/update-bedrock-agent.py
-          echo "✓ Bedrock Agent updated"
+          echo "=== Registering FinOpsActions on agent IDG5VJGUOZ5W ==="
+          pip install boto3 -q
+          python infrastructure/register-action-group.py
 
       - name: Generate documentation (User Guide + HLD)
         run: |
