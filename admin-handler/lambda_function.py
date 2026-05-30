@@ -160,11 +160,19 @@ def handle_get_leads(event):
 
 
 def handle_get_tips(event):
-    """Return all tips from the Tips table, sorted by service then tipId."""
+    """Return all tips from the Tips table, sorted by service then tipId.
+    Excludes SYSTEM records (SYNC_LOCK, SYNC_METADATA, SYNC_LOG#*)."""
     try:
         table = dynamodb.Table(TIPS_TABLE_NAME)
         response = table.scan()
-        tips = _decimal_to_native(response.get('Items', []))
+        items = response.get('Items', [])
+        # Handle pagination
+        while 'LastEvaluatedKey' in response:
+            response = table.scan(ExclusiveStartKey=response['LastEvaluatedKey'])
+            items.extend(response.get('Items', []))
+        # Filter out SYSTEM records (sync metadata, locks, logs)
+        tips = [t for t in items if t.get('service') != 'SYSTEM']
+        tips = _decimal_to_native(tips)
         tips.sort(key=lambda x: (x.get('service', ''), x.get('tipId', '')))
         return create_response(200, {'tips': tips})
     except ClientError as e:
