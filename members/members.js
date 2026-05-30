@@ -3356,6 +3356,7 @@ window.addEventListener('resize', function() {
  */
 function _switchObserveSection(sectionId) {
     // Step 1: Validate section exists
+    if (!OBSERVE_SECTIONS || !Array.isArray(OBSERVE_SECTIONS)) return;
     var validSection = OBSERVE_SECTIONS.find(function(s) { return s.id === sectionId; });
     if (!validSection) return;
 
