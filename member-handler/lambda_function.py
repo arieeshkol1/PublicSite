@@ -85,6 +85,10 @@ def lambda_handler(event, context):
     if event.get('_asyncScan'):
         return _execute_async_scan(event)
 
+    # -- Async cache refresh (fire-and-forget from dashboard) --
+    if event.get('_cache_refresh'):
+        return _execute_cache_refresh(event)
+
     # â”€â”€ SNS event detection (Spot interruption push pipeline) â”€â”€
     records = event.get('Records', [])
     if records and records[0].get('EventSource') == 'aws:sns':
@@ -2146,7 +2150,27 @@ def handle_dashboard_data(event):
 
                     # Trigger background refresh to populate/update cache (non-blocking)
                     if cache_service.should_background_refresh(member_email, acct_id):
-                        cache_service.trigger_background_refresh(member_email, acct_id, creds)
+                        # Use async Lambda invocation instead of daemon thread
+                        # (daemon threads die when Lambda handler returns)
+                        try:
+                            lambda_client = boto3.client('lambda')
+                            lambda_client.invoke(
+                                FunctionName=os.environ.get('AWS_LAMBDA_FUNCTION_NAME', 'aws-bill-analyzer-member-api'),
+                                InvocationType='Event',  # async fire-and-forget
+                                Payload=json.dumps({
+                                    '_cache_refresh': True,
+                                    'member_email': member_email,
+                                    'account_id': acct_id,
+                                    'credentials': {
+                                        'AccessKeyId': creds['AccessKeyId'],
+                                        'SecretAccessKey': creds['SecretAccessKey'],
+                                        'SessionToken': creds['SessionToken'],
+                                    }
+                                }).encode()
+                            )
+                            logger.info(f"Async cache refresh triggered for {member_email}#{acct_id}")
+                        except Exception as invoke_err:
+                            logger.warning(f"Failed to trigger async cache refresh: {invoke_err}")
 
                 except Exception as cache_err:
                     logger.warning(f"Cache read failed for {acct_id}, falling back to direct API: {cache_err}")
@@ -5150,6 +5174,30 @@ def handle_scan_status(event):
         return create_response(200, last_scan)
     except ClientError as e:
         return create_error_response(500, 'ServerError', 'Failed to load scan status')
+
+
+def _execute_cache_refresh(event):
+    """Execute cache refresh asynchronously (invoked via Lambda Event invocation)."""
+    member_email = event.get('member_email', '')
+    account_id = event.get('account_id', '')
+    credentials = event.get('credentials', {})
+
+    if not member_email or not account_id or not credentials:
+        logger.error("Cache refresh: missing required fields")
+        return {'statusCode': 400, 'body': 'Missing fields'}
+
+    logger.info(f"Async cache refresh starting for {member_email}#{account_id}")
+
+    try:
+        from cache_service import CacheService
+        cache_service = CacheService(table_name=COST_CACHE_TABLE_NAME)
+        # Call the worker directly (not in a thread — we have the full Lambda timeout)
+        cache_service._background_refresh_worker(member_email, account_id, credentials)
+        logger.info(f"Async cache refresh completed for {member_email}#{account_id}")
+        return {'statusCode': 200, 'body': 'Cache refreshed'}
+    except Exception as e:
+        logger.error(f"Async cache refresh failed for {member_email}#{account_id}: {e}")
+        return {'statusCode': 500, 'body': str(e)}
 
 
 def _execute_async_scan(event):
