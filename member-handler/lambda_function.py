@@ -47,6 +47,7 @@ COGNITO_CLIENT_ID = os.environ.get('COGNITO_CLIENT_ID', '')
 SCHEDULER_EXECUTOR_ARN = os.environ.get('SCHEDULER_EXECUTOR_ARN', 'arn:aws:lambda:us-east-1:991105135552:function:slashmybill-scheduler-executor')
 SCHEDULER_ROLE_ARN = os.environ.get('SCHEDULER_ROLE_ARN', 'arn:aws:iam::991105135552:role/SlashMyBill-EventBridge-Scheduler-Role')
 INVOICES_TABLE_NAME = os.environ.get('INVOICES_TABLE_NAME', 'MemberPortal-Invoices')
+COST_CACHE_TABLE_NAME = os.environ.get('COST_CACHE_TABLE_NAME', 'Cost_Cache_Table')
 
 
 # AWS clients
@@ -178,6 +179,7 @@ def lambda_handler(event, context):
         'POST /members/sql/migration-plan': handle_sql_migration_plan,
         'POST /members/committed-discounts/ri-marketplace': handle_ri_marketplace,
         'POST /members/terraform/generate': handle_terraform_generate,
+        'POST /members/cache/invalidate': handle_cache_invalidate,
     }
 
     handler = routes.get(route_key)
@@ -1035,6 +1037,17 @@ def handle_delete_account(event):
         return create_error_response(500, 'ServerError', 'An unexpected error occurred. Please try again.')
 
     logger.info(f"Account {account_id} deleted for member {member_email}")
+
+    # Clean up cached cost data for the disconnected account
+    try:
+        from cache_service import CacheService
+        cache_service = CacheService(table_name=COST_CACHE_TABLE_NAME)
+        deleted_cache_items = cache_service.delete_account_cache(member_email, account_id)
+        if deleted_cache_items > 0:
+            logger.info(f"Cleaned up {deleted_cache_items} cache items for disconnected account {account_id}")
+    except Exception as cache_err:
+        logger.warning(f"Cache cleanup failed for account {account_id}: {cache_err}")
+
     return create_response(200, {
         'message': 'Account deleted',
         'stackDeleteRequested': stack_delete_requested,
@@ -2025,6 +2038,14 @@ def handle_dashboard_data(event):
     external_id = hashlib.sha256(member_email.encode('utf-8')).hexdigest()
     sts_client = boto3.client('sts')
 
+    # Initialize cache service for cost data caching
+    try:
+        from cache_service import CacheService
+        cache_service = CacheService(table_name=COST_CACHE_TABLE_NAME)
+    except Exception as e:
+        logger.warning(f"Failed to initialize CacheService: {e}")
+        cache_service = None
+
     merged_costs = {}
     merged_daily = {}
     merged_hourly = {}
@@ -2082,8 +2103,53 @@ def handle_dashboard_data(event):
                     if not tag_activation_status:
                         tag_activation_status = 'check_failed'
 
-            # Gather data WITHOUT tag filter â€” ensures waste, rightsizing, EBS, etc. are always populated
-            acct_data, _ = _gather_account_data('how efficient is my account? rightsizing savings compare last 3 months', creds)
+            # Gather data — use cache service for cost data when available, fall back to direct CE API
+            # Still calls _gather_account_data for waste/rightsizing/EBS analysis
+            cache_used = False
+            if cache_service and not (tag_key and tag_value):
+                try:
+                    end_date_cache = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+                    start_30d_cache = (datetime.now(timezone.utc) - timedelta(days=30)).strftime('%Y-%m-%d')
+                    cache_result = cache_service.get_cost_data(
+                        member_id=member_email,
+                        account_id=acct_id,
+                        start_date=start_30d_cache,
+                        end_date=end_date_cache,
+                        credentials=creds,
+                    )
+
+                    # Trigger background refresh if stale
+                    if cache_service.should_background_refresh(member_email, acct_id):
+                        cache_service.trigger_background_refresh(member_email, acct_id, creds)
+
+                    # If cache returned data, convert to dashboard format
+                    if cache_result.data and cache_result.cache_status in ('hit', 'partial'):
+                        cache_used = True
+                        # Build cost_by_service from cached data
+                        service_totals = {}
+                        daily_cost_trend = []
+                        for item in cache_result.data:
+                            daily_cost_trend.append({'date': item.date, 'cost_usd': item.cost_amount})
+                            for svc, cost in (item.service_breakdown or {}).items():
+                                service_totals[svc] = service_totals.get(svc, 0) + float(cost)
+                        cost_by_service = sorted(
+                            [{'service': s, 'cost_usd': round(c, 2), 'period': 'last_30_days'} for s, c in service_totals.items()],
+                            key=lambda x: x['cost_usd'], reverse=True
+                        )
+                        # Still call _gather_account_data for waste/rightsizing/EBS data
+                        acct_data, _ = _gather_account_data('how efficient is my account? rightsizing savings compare last 3 months', creds)
+                        # Override cost data with cached version
+                        acct_data['cost_by_service'] = cost_by_service
+                        acct_data['daily_cost_trend'] = daily_cost_trend
+                        acct_data['cache_status'] = cache_result.cache_status
+                        if cache_result.partial_data:
+                            acct_data['partial_data'] = True
+                except Exception as cache_err:
+                    logger.warning(f"Cache service failed for {acct_id}, falling back to direct API: {cache_err}")
+                    cache_used = False
+
+            if not cache_used:
+                acct_data, _ = _gather_account_data('how efficient is my account? rightsizing savings compare last 3 months', creds)
 
             acct_total = sum(s['cost_usd'] for s in acct_data.get('cost_by_service', []))
 
@@ -2452,8 +2518,9 @@ def handle_dashboard_data(event):
                 'topServices': acct_data.get('cost_by_service', [])[:5],
             })
         except Exception as e:
-            logger.warning(f"Dashboard data failed for {acct_id}: {e}")
-            per_account.append({'accountId': acct_id, 'accountName': acct_name, 'error': str(e)})
+            # Partial failure handling: log per-account failure and continue with remaining accounts
+            logger.warning(f"Dashboard data failed for account {acct_id} (member: {member_email}): {type(e).__name__}: {e}")
+            per_account.append({'accountId': acct_id, 'accountName': acct_name, 'error': str(e), 'partial_failure': True})
 
     # Build response
     total_spend = round(sum(merged_costs.values()), 2)
@@ -2518,6 +2585,8 @@ def handle_dashboard_data(event):
             'savingsBreakdown': {k: round(v, 2) for k, v in savings_breakdown.items()},
             'totalAccounts': len(accounts),
             'accountsAnalyzed': len([a for a in per_account if 'error' not in a]),
+            'accountsFailed': len([a for a in per_account if 'error' in a]),
+            'partialData': any('error' in a for a in per_account),
         },
         'costByService': cost_by_service,
         'dailyTrend': daily_trend,
@@ -19092,3 +19161,68 @@ def _terraform_file_response(content, filename, is_binary=False):
             'body': content,
             'isBase64Encoded': False,
         }
+
+
+# ============================================================
+# Cache Invalidation Handler
+# ============================================================
+
+
+def handle_cache_invalidate(event):
+    """POST /members/cache/invalidate — Force refresh of cached cost data.
+
+    Validates JWT authentication, verifies account ownership for all
+    requested account IDs, then invalidates cached data for each account.
+
+    Request body:
+        {
+            "accountIds": ["123456789012", ...],
+            "startDate": "2024-01-01",  // optional
+            "endDate": "2024-01-31"     // optional
+        }
+
+    Returns:
+        200: { "message": "Cache invalidated", "deletedItems": <count> }
+        400: Invalid request body or missing accountIds
+        401: Authentication required
+        403: Account does not belong to authenticated member
+    """
+    from cache_service import CacheService
+
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+    member_email = auth['sub']
+
+    try:
+        body = json.loads(event.get('body', '{}'))
+    except (json.JSONDecodeError, TypeError):
+        return create_error_response(400, 'InvalidRequest', 'Invalid request body')
+
+    account_ids = body.get('accountIds', [])
+    if not account_ids or not isinstance(account_ids, list):
+        return create_error_response(400, 'InvalidRequest', "Field 'accountIds' is required and must be a non-empty list")
+
+    start_date = body.get('startDate')  # optional
+    end_date = body.get('endDate')      # optional
+
+    # Verify account ownership before invalidation
+    ownership = _verify_account_ownership(member_email, account_ids)
+    if ownership is not True:
+        return ownership
+
+    cache_service = CacheService(table_name=COST_CACHE_TABLE_NAME)
+    deleted_count = 0
+    for acct_id in account_ids:
+        deleted_count += cache_service.invalidate(
+            member_id=member_email,
+            account_id=acct_id,
+            start_date=start_date,
+            end_date=end_date,
+        )
+
+    logger.info(f"Cache invalidation completed: member_id={member_email}, accounts={account_ids}, deleted={deleted_count}")
+    return create_response(200, {
+        'message': 'Cache invalidated',
+        'deletedItems': deleted_count,
+    })

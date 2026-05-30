@@ -1,7 +1,7 @@
 """Unit tests for hcl_generator.actions module.
 
 Tests cover:
-- SUPPORTED_ACTION_TYPES contains all 7 expected types
+- SUPPORTED_ACTION_TYPES contains all 10 expected types
 - Unsupported action type raises ValueError
 - Header comment contains action description, timestamp, account ID, warning
 - Dispatch calls correct generator function for each type
@@ -29,9 +29,9 @@ from hcl_generator.actions import (
 class TestSupportedActionTypes:
     """Tests for SUPPORTED_ACTION_TYPES constant."""
 
-    def test_contains_all_seven_types(self):
-        """SUPPORTED_ACTION_TYPES must contain exactly 7 action types."""
-        assert len(SUPPORTED_ACTION_TYPES) == 7
+    def test_contains_all_ten_types(self):
+        """SUPPORTED_ACTION_TYPES must contain exactly 10 action types."""
+        assert len(SUPPORTED_ACTION_TYPES) == 10
 
     def test_contains_resize_ec2(self):
         assert "resize-ec2" in SUPPORTED_ACTION_TYPES
@@ -53,6 +53,15 @@ class TestSupportedActionTypes:
 
     def test_contains_create_budget(self):
         assert "create-budget" in SUPPORTED_ACTION_TYPES
+
+    def test_contains_ec2_idle(self):
+        assert "ec2-idle" in SUPPORTED_ACTION_TYPES
+
+    def test_contains_rds_idle(self):
+        assert "rds-idle" in SUPPORTED_ACTION_TYPES
+
+    def test_contains_ebs_snapshot(self):
+        assert "ebs-snapshot" in SUPPORTED_ACTION_TYPES
 
     def test_is_a_set(self):
         """SUPPORTED_ACTION_TYPES should be a set for O(1) lookup."""
