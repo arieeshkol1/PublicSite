@@ -155,6 +155,19 @@ class IncrementalFetchEngine:
         for batch_range in batched_ranges:
             response = self._call_ce_with_retry(ce_client, batch_range)
             items = self._parse_ce_response(response)
+
+            # Also fetch cost-by-tag for the same range
+            try:
+                tag_response = self._call_ce_by_tag(ce_client, batch_range)
+                tag_data = self._parse_tag_response(tag_response)
+                # Merge tag data into items by date
+                for item in items:
+                    if item.date in tag_data:
+                        item.tag_breakdown = tag_data[item.date]
+            except Exception as e:
+                logger.warning(f"Tag fetch failed for {batch_range.start}-{batch_range.end}: {e}")
+                # Continue without tags — service data is still valid
+
             all_items.extend(items)
 
         return all_items
@@ -294,6 +307,147 @@ class IncrementalFetchEngine:
             ))
 
         return items
+
+    def _call_ce_by_tag(
+        self,
+        ce_client,
+        date_range: DateRange,
+        max_retries: int = 3,
+        base_delay: float = 0.1,
+    ) -> dict:
+        """Call Cost Explorer GetCostAndUsage grouped by TAG keys.
+
+        Fetches cost data grouped by all active cost allocation tags.
+        Uses the same exponential backoff retry logic as the service call.
+
+        Args:
+            ce_client: boto3 Cost Explorer client.
+            date_range: DateRange to query.
+            max_retries: Maximum number of retry attempts (default 3).
+            base_delay: Base delay in seconds for backoff (default 0.1).
+
+        Returns:
+            The CE API response dict grouped by TAG.
+
+        Raises:
+            ClientError: If a non-retryable error occurs, or if retries
+                are exhausted.
+        """
+        # First, try to get active cost allocation tags
+        tag_key = self._get_primary_tag_key(ce_client, date_range)
+
+        for attempt in range(max_retries + 1):
+            try:
+                response = ce_client.get_cost_and_usage(
+                    TimePeriod={
+                        'Start': date_range.start,
+                        'End': date_range.end,
+                    },
+                    Granularity='DAILY',
+                    Metrics=['UnblendedCost'],
+                    GroupBy=[
+                        {
+                            'Type': 'TAG',
+                            'Key': tag_key,
+                        }
+                    ],
+                )
+                return response
+            except ClientError as e:
+                error_code = e.response['Error']['Code']
+                if error_code in RETRYABLE_ERROR_CODES and attempt < max_retries:
+                    delay = base_delay * (2 ** attempt)
+                    logger.warning(
+                        "Transient CE API error '%s' on tag fetch attempt %d/%d, "
+                        "retrying in %.2fs",
+                        error_code,
+                        attempt + 1,
+                        max_retries,
+                        delay,
+                    )
+                    time.sleep(delay)
+                    continue
+                raise
+
+    def _get_primary_tag_key(self, ce_client, date_range: DateRange) -> str:
+        """Get the primary cost allocation tag key to group by.
+
+        Attempts to list active cost allocation tags. If multiple are found,
+        uses the first one. Falls back to 'Environment' if the API call fails
+        or returns no tags.
+
+        Args:
+            ce_client: boto3 Cost Explorer client.
+            date_range: DateRange for context (used for tag lookup).
+
+        Returns:
+            Tag key string to use for GroupBy.
+        """
+        try:
+            # Use get_tags to discover available tag keys in the date range
+            response = ce_client.get_tags(
+                TimePeriod={
+                    'Start': date_range.start,
+                    'End': date_range.end,
+                },
+            )
+            tags = response.get('Tags', [])
+            if tags:
+                # Return the first available tag key
+                return tags[0]
+        except Exception as e:
+            logger.warning(f"Failed to list tag keys, falling back to 'Environment': {e}")
+
+        return 'Environment'
+
+    def _parse_tag_response(self, response: dict) -> dict[str, dict[str, float]]:
+        """Parse Cost Explorer tag-grouped response into date-keyed tag breakdown.
+
+        Each ResultsByTime period produces a mapping of tag values to costs.
+        The keys in the returned dict are "tagKey=tagValue" format.
+
+        Args:
+            response: The raw CE API response dict (grouped by TAG).
+
+        Returns:
+            Dict mapping date (YYYY-MM-DD) to {tag_key=tag_value: cost_amount}.
+            Empty tag values are stored as "tagKey=(untagged)".
+        """
+        tag_data: dict[str, dict[str, float]] = {}
+
+        results_by_time = response.get('ResultsByTime', [])
+
+        for period in results_by_time:
+            period_start = period['TimePeriod']['Start']
+            groups = period.get('Groups', [])
+
+            tag_breakdown: dict[str, float] = {}
+
+            for group in groups:
+                # Keys format is ["tagKey$tagValue"] or ["tagValue"]
+                raw_key = group['Keys'][0]
+                amount_str = group['Metrics']['UnblendedCost']['Amount']
+                amount = float(amount_str)
+
+                # Skip zero-cost entries to keep the breakdown clean
+                if amount == 0.0:
+                    continue
+
+                # The key from CE is in format "tagValue" when grouped by a single tag
+                # or empty string for untagged resources
+                if raw_key == '' or raw_key == '$':
+                    tag_breakdown['(untagged)'] = amount
+                else:
+                    # Remove the tag key prefix if present (format: "key$value")
+                    if '$' in raw_key:
+                        tag_breakdown[raw_key.replace('$', '=')] = amount
+                    else:
+                        tag_breakdown[raw_key] = amount
+
+            if tag_breakdown:
+                tag_data[period_start] = tag_breakdown
+
+        return tag_data
 
     def merge_results(
         self,

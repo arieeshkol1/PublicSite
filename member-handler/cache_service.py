@@ -283,6 +283,7 @@ class CacheService:
                 cost_amount=float(item.get('cost_amount', 0)),
                 currency=item.get('currency', 'USD'),
                 service_breakdown=item.get('service_breakdown', {}),
+                tag_breakdown=item.get('tag_breakdown', {}),
                 fetched_at=item.get('fetched_at', ''),
             ))
 
@@ -389,17 +390,23 @@ class CacheService:
                 fetched_at = item.fetched_at or datetime.now(timezone.utc).isoformat()
                 ttl_value = self._calculate_ttl(fetched_at)
 
+                dynamo_item = {
+                    'pk': pk,
+                    'sk': self._build_sort_key(item.date),
+                    'cost_amount': str(item.cost_amount),
+                    'currency': item.currency,
+                    'service_breakdown': {k: str(v) for k, v in (item.service_breakdown or {}).items()},
+                    'fetched_at': fetched_at,
+                    'ttl': ttl_value,
+                }
+
+                # Include tag_breakdown if available
+                if item.tag_breakdown:
+                    dynamo_item['tag_breakdown'] = {k: str(v) for k, v in item.tag_breakdown.items()}
+
                 put_requests.append({
                     'PutRequest': {
-                        'Item': {
-                            'pk': pk,
-                            'sk': self._build_sort_key(item.date),
-                            'cost_amount': str(item.cost_amount),
-                            'currency': item.currency,
-                            'service_breakdown': {k: str(v) for k, v in (item.service_breakdown or {}).items()},
-                            'fetched_at': fetched_at,
-                            'ttl': ttl_value,
-                        }
+                        'Item': dynamo_item,
                     }
                 })
 

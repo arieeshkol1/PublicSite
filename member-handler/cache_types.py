@@ -37,6 +37,9 @@ class CostDataItem:
         currency: Currency code (e.g., "USD").
         service_breakdown: Mapping of service names to their individual
             cost amounts (e.g., {"Amazon EC2": 25.30, "Amazon S3": 8.12}).
+        tag_breakdown: Mapping of tag values to their cost amounts for
+            all active cost allocation tags. Keys are "tagKey=tagValue"
+            (e.g., {"Environment=Production": 15.0, "Team=Backend": 10.0}).
         fetched_at: ISO 8601 timestamp indicating when this data was
             retrieved from the Cost Explorer API.
     """
@@ -45,6 +48,7 @@ class CostDataItem:
     cost_amount: float
     currency: str
     service_breakdown: dict[str, float] = field(default_factory=dict)
+    tag_breakdown: dict[str, float] = field(default_factory=dict)
     fetched_at: str = ""
 
 
