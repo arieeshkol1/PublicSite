@@ -23,8 +23,8 @@ import sys
 
 REGION = 'us-east-1'
 ACCOUNT_ID = '991105135552'
-AGENT_ID = 'IDG5VJGUOZ5W'
-ALIAS_ID = '9VYFXAEEH6'
+AGENT_ID = 'G5VJGUOZ5W'
+ALIAS_ID = '3TI0ZATFFV'
 MODEL_ID = 'us.amazon.nova-lite-v1:0'
 AGENT_ROLE_ARN = f'arn:aws:iam::{ACCOUNT_ID}:role/SlashMyBill-BedrockAgent-Role'
 ACTION_LAMBDA_ARN = f'arn:aws:lambda:{REGION}:{ACCOUNT_ID}:function:SlashMyBill-AgentAction'

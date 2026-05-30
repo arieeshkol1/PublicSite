@@ -979,7 +979,7 @@ jobs:
       - name: Register Bedrock Agent Action Group
         continue-on-error: true
         run: |
-          echo "=== Registering FinOpsActions on agent IDG5VJGUOZ5W ==="
+          echo "=== Registering FinOpsActions on agent G5VJGUOZ5W ==="
           # Ensure the role has both bedrock: and bedrock-agent: permissions
           aws iam put-role-policy \
             --role-name GitHubDeployRole \

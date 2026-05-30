@@ -1165,8 +1165,8 @@ Resources:
           STORAGE_BUCKET: !Ref BillStorageBucket
           TIPS_TABLE_NAME: !Ref CostOptimizationTipsTable
           BEDROCK_MODEL_ID: !Ref BedrockModelId
-          BEDROCK_AGENT_ID: 'IDG5VJGUOZ5W'
-          BEDROCK_AGENT_ALIAS_ID: '9VYFXAEEH6'
+          BEDROCK_AGENT_ID: 'G5VJGUOZ5W'
+          BEDROCK_AGENT_ALIAS_ID: '3TI0ZATFFV'
           FEEDBACK_TABLE_NAME: !Ref AgentFeedbackTable
           BUSINESS_METRICS_TABLE: !Ref BusinessMetricsTable
           COGNITO_USER_POOL_ID: 'us-east-1_FlR2CmFu0'
