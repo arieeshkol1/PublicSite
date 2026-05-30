@@ -396,7 +396,7 @@ class CacheService:
                             'sk': self._build_sort_key(item.date),
                             'cost_amount': str(item.cost_amount),
                             'currency': item.currency,
-                            'service_breakdown': item.service_breakdown,
+                            'service_breakdown': {k: str(v) for k, v in (item.service_breakdown or {}).items()},
                             'fetched_at': fetched_at,
                             'ttl': ttl_value,
                         }
