@@ -537,6 +537,46 @@ jobs:
             }'
           echo "✓ DynamoDB Invoices table permissions granted"
 
+      - name: Grant Lambda DynamoDB Cost_Cache_Table access
+        continue-on-error: true
+        run: |
+          ROLE_ARN=$(aws lambda get-function-configuration --function-name aws-bill-analyzer-member-api --query "Role" --output text)
+          ROLE_NAME=$(echo $ROLE_ARN | awk -F'/' '{print $NF}')
+          aws iam put-role-policy \
+            --role-name "$ROLE_NAME" \
+            --policy-name "DynamoDBCostCacheAccess" \
+            --policy-document '{
+              "Version": "2012-10-17",
+              "Statement": [{
+                "Effect": "Allow",
+                "Action": [
+                  "dynamodb:GetItem",
+                  "dynamodb:PutItem",
+                  "dynamodb:UpdateItem",
+                  "dynamodb:DeleteItem",
+                  "dynamodb:Query",
+                  "dynamodb:BatchWriteItem"
+                ],
+                "Resource": "arn:aws:dynamodb:us-east-1:991105135552:table/Cost_Cache_Table"
+              }]
+            }'
+          # Also grant read access to AgentAction Lambda
+          aws iam put-role-policy \
+            --role-name "SlashMyBill-BedrockAgent-Role" \
+            --policy-name "DynamoDBCostCacheRead" \
+            --policy-document '{
+              "Version": "2012-10-17",
+              "Statement": [{
+                "Effect": "Allow",
+                "Action": [
+                  "dynamodb:Query",
+                  "dynamodb:GetItem"
+                ],
+                "Resource": "arn:aws:dynamodb:us-east-1:991105135552:table/Cost_Cache_Table"
+              }]
+            }' 2>/dev/null || true
+          echo "✓ DynamoDB Cost_Cache_Table permissions granted"
+
       - name: Ensure Tips Sync Lambda exists
         continue-on-error: true
         run: |
