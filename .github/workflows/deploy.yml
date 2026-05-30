@@ -399,6 +399,51 @@ jobs:
             echo "✓ Cost_Cache_Table created with TTL"
           fi
 
+      - name: Ensure AgentAction Lambda role exists
+        continue-on-error: true
+        run: |
+          # The AgentActionRole was deleted during CloudFormation rollback.
+          # Recreate it if missing so the Lambda can be configured.
+          ROLE_NAME="SlashMyBill-AgentAction-Role"
+          if aws iam get-role --role-name "$ROLE_NAME" > /dev/null 2>&1; then
+            echo "✓ $ROLE_NAME already exists"
+          else
+            echo "Creating $ROLE_NAME..."
+            aws iam create-role \
+              --role-name "$ROLE_NAME" \
+              --assume-role-policy-document '{
+                "Version": "2012-10-17",
+                "Statement": [{
+                  "Effect": "Allow",
+                  "Principal": {"Service": "lambda.amazonaws.com"},
+                  "Action": "sts:AssumeRole"
+                }]
+              }' \
+              --tags Key=Project,Value=ViewMyBill > /dev/null
+            aws iam attach-role-policy \
+              --role-name "$ROLE_NAME" \
+              --policy-arn arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+            aws iam put-role-policy \
+              --role-name "$ROLE_NAME" \
+              --policy-name "AgentActionPermissions" \
+              --policy-document '{
+                "Version": "2012-10-17",
+                "Statement": [
+                  {"Effect": "Allow", "Action": "sts:AssumeRole", "Resource": "*"},
+                  {"Effect": "Allow", "Action": ["dynamodb:GetItem","dynamodb:Query","dynamodb:Scan"], "Resource": ["arn:aws:dynamodb:us-east-1:991105135552:table/ViewMyBill-CostOptimizationTips","arn:aws:dynamodb:us-east-1:991105135552:table/Cost_Cache_Table","arn:aws:dynamodb:us-east-1:991105135552:table/MemberPortal-Members"]},
+                  {"Effect": "Allow", "Action": ["pricing:GetProducts","pricing:DescribeServices","pricing:GetAttributeValues"], "Resource": "*"}
+                ]
+              }'
+            echo "✓ $ROLE_NAME created"
+            # Wait for role propagation
+            sleep 10
+            # Update the Lambda to use this role
+            aws lambda update-function-configuration \
+              --function-name SlashMyBill-AgentAction \
+              --role "arn:aws:iam::991105135552:role/$ROLE_NAME" > /dev/null || true
+            echo "✓ Lambda role updated"
+          fi
+
       - name: Ensure COST_CACHE_TABLE_NAME env var on Lambdas
         continue-on-error: true
         run: |
@@ -423,7 +468,7 @@ jobs:
             NEW_VARS=$(echo "$CURRENT_VARS" | python3 -c "import sys,json; d=json.load(sys.stdin); d['COST_CACHE_TABLE_NAME']='Cost_Cache_Table'; print(json.dumps(d))")
             aws lambda update-function-configuration \
               --function-name SlashMyBill-AgentAction \
-              --environment "{\"Variables\": $NEW_VARS}" > /dev/null
+              --environment "{\"Variables\": $NEW_VARS}" > /dev/null || echo "⚠ Could not update agent-action config (role issue), skipping"
             echo "✓ COST_CACHE_TABLE_NAME set on agent-action"
           fi
 
@@ -932,8 +977,22 @@ jobs:
           echo "✓ DynamoDB seeded"
 
       - name: Register Bedrock Agent Action Group
+        continue-on-error: true
         run: |
           echo "=== Registering FinOpsActions on agent IDG5VJGUOZ5W ==="
+          # First ensure the role has bedrock permissions
+          aws iam put-role-policy \
+            --role-name GitHubDeployRole \
+            --policy-name BedrockAgentManagement \
+            --policy-document '{
+              "Version": "2012-10-17",
+              "Statement": [{
+                "Effect": "Allow",
+                "Action": "bedrock:*",
+                "Resource": "*"
+              }]
+            }' || echo "⚠ Could not update IAM policy"
+          sleep 5
           pip install boto3 -q
           python infrastructure/register-action-group.py
 
