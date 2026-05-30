@@ -86,7 +86,7 @@ ALWAYS show the math: total / unit_price = quantity. This makes the cost tangibl
 | NAT, VPC, Elastic IPs | getNetworkResources |
 | Budget status | getBudgets |
 | FinOps settings, tags | getFinOpsSettings |
-| General optimization | getOptimizationTips |
+| General optimization | getCostData then getEC2Instances |
 | Pricing, Savings Plans | getAWSPricing |
 
 ## OPTIMIZATION PRIORITIES

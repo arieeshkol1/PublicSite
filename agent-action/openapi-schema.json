@@ -1,172 +1,143 @@
 {
   "openapi": "3.0.0",
   "info": {
-    "title": "SlashMyBill FinOps Agent Actions",
-    "version": "2.0.0",
-    "description": "Action group for the SlashMyBill Bedrock Agent. Provides tools to query AWS account cost data, resource inventory, and optimization recommendations."
+    "title": "SlashMyBill FinOps Actions",
+    "version": "2.1.0",
+    "description": "Action group for SlashMyBill Bedrock Agent"
   },
   "paths": {
     "/get-cost-data": {
       "post": {
         "operationId": "getCostData",
-        "summary": "Get AWS cost breakdown by service (30 days) and daily trend (7 days)",
-        "description": "Retrieves cost by service for the last 30 days and daily cost trend for the last 7 days from AWS Cost Explorer.",
+        "summary": "Get cost breakdown by service and daily trend",
+        "description": "Gets cost by service for last 30 days and daily trend for last 7 days",
         "parameters": [
-          {"name": "accountId", "in": "query", "required": true, "schema": {"type": "string"}, "description": "12-digit AWS account ID"},
-          {"name": "memberEmail", "in": "query", "required": true, "schema": {"type": "string"}, "description": "Member email for cross-account role assumption"}
+          {"name": "accountId", "in": "query", "description": "The 12-digit AWS account ID", "required": true, "schema": {"type": "string", "description": "The 12-digit AWS account ID"}},
+          {"name": "memberEmail", "in": "query", "description": "Member email for role assumption", "required": true, "schema": {"type": "string", "description": "Member email for role assumption"}}
         ],
-        "responses": {"200": {"description": "Cost data with topServices array and dailyCosts array"}}
+        "responses": {"200": {"description": "Cost data response"}}
       }
     },
     "/get-monthly-comparison": {
       "post": {
         "operationId": "getMonthlyComparison",
-        "summary": "Compare costs across multiple months by service",
-        "description": "Gets monthly cost breakdown by service for the last 3-6 months. Use this when the user asks to compare months or see trends.",
+        "summary": "Compare costs across months",
+        "description": "Gets monthly cost breakdown by service for last 3 to 6 months",
         "parameters": [
-          {"name": "accountId", "in": "query", "required": true, "schema": {"type": "string"}, "description": "12-digit AWS account ID"},
-          {"name": "memberEmail", "in": "query", "required": true, "schema": {"type": "string"}, "description": "Member email"},
-          {"name": "months", "in": "query", "required": false, "schema": {"type": "string"}, "description": "Number of months to compare (default: 3, max: 6)"}
+          {"name": "accountId", "in": "query", "description": "The 12-digit AWS account ID", "required": true, "schema": {"type": "string", "description": "The 12-digit AWS account ID"}},
+          {"name": "memberEmail", "in": "query", "description": "Member email for role assumption", "required": true, "schema": {"type": "string", "description": "Member email for role assumption"}},
+          {"name": "months", "in": "query", "description": "Number of months default 3 max 6", "required": false, "schema": {"type": "string", "description": "Number of months default 3 max 6"}}
         ],
-        "responses": {"200": {"description": "Monthly cost comparison data"}}
+        "responses": {"200": {"description": "Monthly comparison response"}}
       }
     },
     "/get-ec2-instances": {
       "post": {
         "operationId": "getEC2Instances",
-        "summary": "List EC2 instances with type, state, CPU utilization, and tags",
-        "description": "Lists all EC2 instances with their instance type, state, availability zone, and 14-day average CPU utilization from CloudWatch.",
+        "summary": "List EC2 instances with CPU metrics",
+        "description": "Lists EC2 instances with type state and 14 day average CPU",
         "parameters": [
-          {"name": "accountId", "in": "query", "required": true, "schema": {"type": "string"}},
-          {"name": "memberEmail", "in": "query", "required": true, "schema": {"type": "string"}}
+          {"name": "accountId", "in": "query", "description": "The 12-digit AWS account ID", "required": true, "schema": {"type": "string", "description": "The 12-digit AWS account ID"}},
+          {"name": "memberEmail", "in": "query", "description": "Member email for role assumption", "required": true, "schema": {"type": "string", "description": "Member email for role assumption"}}
         ],
-        "responses": {"200": {"description": "EC2 instances with CPU metrics"}}
+        "responses": {"200": {"description": "EC2 instances response"}}
       }
     },
     "/get-rds-instances": {
       "post": {
         "operationId": "getRDSInstances",
-        "summary": "List RDS database instances with class, engine, CPU, and connections",
-        "description": "Lists all RDS instances with their instance class, engine, storage, and 14-day average CPU and connection metrics.",
+        "summary": "List RDS instances with metrics",
+        "description": "Lists RDS instances with class engine storage and CPU",
         "parameters": [
-          {"name": "accountId", "in": "query", "required": true, "schema": {"type": "string"}},
-          {"name": "memberEmail", "in": "query", "required": true, "schema": {"type": "string"}}
+          {"name": "accountId", "in": "query", "description": "The 12-digit AWS account ID", "required": true, "schema": {"type": "string", "description": "The 12-digit AWS account ID"}},
+          {"name": "memberEmail", "in": "query", "description": "Member email for role assumption", "required": true, "schema": {"type": "string", "description": "Member email for role assumption"}}
         ],
-        "responses": {"200": {"description": "RDS instances with metrics"}}
+        "responses": {"200": {"description": "RDS instances response"}}
       }
     },
     "/get-lambda-functions": {
       "post": {
         "operationId": "getLambdaFunctions",
-        "summary": "List Lambda functions with invocation counts, duration, and errors",
-        "description": "Lists all Lambda functions with their runtime, memory, 30-day invocation count, average duration, and error count.",
+        "summary": "List Lambda functions with metrics",
+        "description": "Lists Lambda functions with runtime memory invocations errors",
         "parameters": [
-          {"name": "accountId", "in": "query", "required": true, "schema": {"type": "string"}},
-          {"name": "memberEmail", "in": "query", "required": true, "schema": {"type": "string"}}
+          {"name": "accountId", "in": "query", "description": "The 12-digit AWS account ID", "required": true, "schema": {"type": "string", "description": "The 12-digit AWS account ID"}},
+          {"name": "memberEmail", "in": "query", "description": "Member email for role assumption", "required": true, "schema": {"type": "string", "description": "Member email for role assumption"}}
         ],
-        "responses": {"200": {"description": "Lambda functions with metrics"}}
+        "responses": {"200": {"description": "Lambda functions response"}}
       }
     },
     "/get-s3-buckets": {
       "post": {
         "operationId": "getS3Buckets",
-        "summary": "List S3 buckets with lifecycle policy status",
-        "description": "Lists all S3 buckets and whether they have lifecycle policies configured.",
+        "summary": "List S3 buckets",
+        "description": "Lists S3 buckets with lifecycle policy status",
         "parameters": [
-          {"name": "accountId", "in": "query", "required": true, "schema": {"type": "string"}},
-          {"name": "memberEmail", "in": "query", "required": true, "schema": {"type": "string"}}
+          {"name": "accountId", "in": "query", "description": "The 12-digit AWS account ID", "required": true, "schema": {"type": "string", "description": "The 12-digit AWS account ID"}},
+          {"name": "memberEmail", "in": "query", "description": "Member email for role assumption", "required": true, "schema": {"type": "string", "description": "Member email for role assumption"}}
         ],
-        "responses": {"200": {"description": "S3 buckets with lifecycle status"}}
+        "responses": {"200": {"description": "S3 buckets response"}}
       }
     },
     "/get-ebs-volumes": {
       "post": {
         "operationId": "getEBSVolumes",
-        "summary": "List EBS volumes with type, size, attachment status, and IOPS",
-        "description": "Lists all EBS volumes including unattached volumes (waste), gp2 volumes (migration candidates), and their sizes.",
+        "summary": "List EBS volumes",
+        "description": "Lists EBS volumes with type size attachment status",
         "parameters": [
-          {"name": "accountId", "in": "query", "required": true, "schema": {"type": "string"}},
-          {"name": "memberEmail", "in": "query", "required": true, "schema": {"type": "string"}}
+          {"name": "accountId", "in": "query", "description": "The 12-digit AWS account ID", "required": true, "schema": {"type": "string", "description": "The 12-digit AWS account ID"}},
+          {"name": "memberEmail", "in": "query", "description": "Member email for role assumption", "required": true, "schema": {"type": "string", "description": "Member email for role assumption"}}
         ],
-        "responses": {"200": {"description": "EBS volumes with details"}}
+        "responses": {"200": {"description": "EBS volumes response"}}
       }
     },
     "/get-network-resources": {
       "post": {
         "operationId": "getNetworkResources",
-        "summary": "List NAT Gateways, VPC Endpoints, and Elastic IPs",
-        "description": "Lists NAT Gateways with data transfer metrics, VPC Endpoints with type and cost, and unassociated Elastic IPs.",
+        "summary": "List NAT Gateways and Elastic IPs",
+        "description": "Lists NAT Gateways VPC Endpoints and Elastic IPs",
         "parameters": [
-          {"name": "accountId", "in": "query", "required": true, "schema": {"type": "string"}},
-          {"name": "memberEmail", "in": "query", "required": true, "schema": {"type": "string"}}
+          {"name": "accountId", "in": "query", "description": "The 12-digit AWS account ID", "required": true, "schema": {"type": "string", "description": "The 12-digit AWS account ID"}},
+          {"name": "memberEmail", "in": "query", "description": "Member email for role assumption", "required": true, "schema": {"type": "string", "description": "Member email for role assumption"}}
         ],
-        "responses": {"200": {"description": "Network resources inventory"}}
+        "responses": {"200": {"description": "Network resources response"}}
       }
     },
     "/get-budgets": {
       "post": {
         "operationId": "getBudgets",
-        "summary": "List AWS Budgets with current spend vs limit",
-        "description": "Lists all configured AWS Budgets with their budget amount, actual spend, and forecasted spend.",
+        "summary": "List AWS Budgets",
+        "description": "Lists AWS Budgets with spend and forecast",
         "parameters": [
-          {"name": "accountId", "in": "query", "required": true, "schema": {"type": "string"}},
-          {"name": "memberEmail", "in": "query", "required": true, "schema": {"type": "string"}}
+          {"name": "accountId", "in": "query", "description": "The 12-digit AWS account ID", "required": true, "schema": {"type": "string", "description": "The 12-digit AWS account ID"}},
+          {"name": "memberEmail", "in": "query", "description": "Member email for role assumption", "required": true, "schema": {"type": "string", "description": "Member email for role assumption"}}
         ],
-        "responses": {"200": {"description": "Budgets with spend data"}}
+        "responses": {"200": {"description": "Budgets response"}}
       }
     },
     "/get-finops-settings": {
       "post": {
         "operationId": "getFinOpsSettings",
-        "summary": "Get FinOps settings healthcheck status for an account",
-        "description": "Returns the cached FinOps settings scan results including cost allocation tags, anomaly detection, budgets, and other best-practice checks.",
+        "summary": "Get FinOps settings healthcheck",
+        "description": "Returns FinOps settings scan results for the account",
         "parameters": [
-          {"name": "accountId", "in": "query", "required": true, "schema": {"type": "string"}},
-          {"name": "memberEmail", "in": "query", "required": true, "schema": {"type": "string"}}
+          {"name": "accountId", "in": "query", "description": "The 12-digit AWS account ID", "required": true, "schema": {"type": "string", "description": "The 12-digit AWS account ID"}},
+          {"name": "memberEmail", "in": "query", "description": "Member email for role assumption", "required": true, "schema": {"type": "string", "description": "Member email for role assumption"}}
         ],
-        "responses": {"200": {"description": "FinOps settings checklist with scores"}}
-      }
-    },
-    "/get-optimization-tips": {
-      "post": {
-        "operationId": "getOptimizationTips",
-        "summary": "Search the cost optimization tips knowledge base",
-        "description": "Queries the SlashMyBill knowledge base for cost optimization tips. Filter by service name.",
-        "parameters": [
-          {"name": "service", "in": "query", "required": false, "schema": {"type": "string"}, "description": "AWS service name filter (e.g., EC2, S3, RDS, Lambda, General)"}
-        ],
-        "responses": {"200": {"description": "Optimization tips"}}
+        "responses": {"200": {"description": "FinOps settings response"}}
       }
     },
     "/get-aws-pricing": {
       "post": {
         "operationId": "getAWSPricing",
-        "summary": "Get real-time AWS pricing for any service",
-        "description": "Queries the AWS Pricing API for current on-demand, Reserved Instance, and Savings Plan pricing. Use for cost comparisons and commitment recommendations.",
+        "summary": "Get real-time AWS pricing",
+        "description": "Queries AWS Pricing API for current pricing data",
         "parameters": [
-          {"name": "serviceCode", "in": "query", "required": true, "schema": {"type": "string"}, "description": "AWS service code: AmazonEC2, AmazonRDS, AmazonS3, AWSLambda, AmazonDynamoDB"},
-          {"name": "filters", "in": "query", "required": false, "schema": {"type": "string"}, "description": "Comma-separated key=value filters, e.g. instanceType=m5.large,operatingSystem=Linux"},
-          {"name": "region", "in": "query", "required": false, "schema": {"type": "string"}, "description": "AWS region code (default: us-east-1)"}
+          {"name": "serviceCode", "in": "query", "description": "AWS service code like AmazonEC2 AmazonRDS AmazonS3", "required": true, "schema": {"type": "string", "description": "AWS service code like AmazonEC2 AmazonRDS AmazonS3"}},
+          {"name": "filters", "in": "query", "description": "Key value filters like instanceType m5.large", "required": false, "schema": {"type": "string", "description": "Key value filters like instanceType m5.large"}},
+          {"name": "region", "in": "query", "description": "AWS region code default us-east-1", "required": false, "schema": {"type": "string", "description": "AWS region code default us-east-1"}}
         ],
-        "responses": {"200": {"description": "Pricing data with on-demand rates"}}
-      }
-    },
-    "/get-spot-placement-score": {
-      "post": {
-        "operationId": "getSpotPlacementScore",
-        "summary": "Get Spot Instance placement scores by region/AZ",
-        "description": "Queries AWS Spot Placement Score API to assess Spot capacity availability. Returns scores 1-10 per region/AZ for the requested instance requirements. Use when the user asks about Spot availability or before recommending Spot migration.",
-        "parameters": [
-          {"name": "accountId", "in": "query", "required": true, "schema": {"type": "string"}, "description": "12-digit AWS account ID"},
-          {"name": "memberEmail", "in": "query", "required": true, "schema": {"type": "string"}, "description": "Member email for cross-account role assumption"},
-          {"name": "vCpuMin", "in": "query", "required": true, "schema": {"type": "integer"}, "description": "Minimum vCPU count (e.g., 2)"},
-          {"name": "vCpuMax", "in": "query", "required": true, "schema": {"type": "integer"}, "description": "Maximum vCPU count (e.g., 8)"},
-          {"name": "memoryMiBMin", "in": "query", "required": true, "schema": {"type": "integer"}, "description": "Minimum memory in MiB (e.g., 4096)"},
-          {"name": "memoryMiBMax", "in": "query", "required": true, "schema": {"type": "integer"}, "description": "Maximum memory in MiB (e.g., 16384)"},
-          {"name": "targetCapacity", "in": "query", "required": false, "schema": {"type": "integer"}, "description": "Target capacity (default: 10)"},
-          {"name": "regions", "in": "query", "required": false, "schema": {"type": "string"}, "description": "Comma-separated region codes (default: us-east-1,us-east-2,us-west-1,us-west-2)"}
-        ],
-        "responses": {"200": {"description": "Spot placement scores sorted by score descending with region/AZ breakdown"}}
+        "responses": {"200": {"description": "Pricing response"}}
       }
     }
   }
