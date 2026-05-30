@@ -470,11 +470,24 @@ jobs:
         run: |
           # The AgentAction Lambda code now hardcodes all config values.
           # Remove env vars entirely to avoid KMS decryption issues.
+          # First, wait for any pending updates to complete
+          aws lambda wait function-updated --function-name SlashMyBill-AgentAction 2>/dev/null || true
+          # Step 1: Remove the KMS key (separate call to avoid issues with empty string)
           aws lambda update-function-configuration \
             --function-name SlashMyBill-AgentAction \
-            --environment '{"Variables":{}}' \
             --kms-key-arn "" > /dev/null 2>&1 || true
-          echo "✓ AgentAction Lambda: env vars and KMS key removed (values hardcoded in code)"
+          sleep 5
+          # Step 2: Remove all environment variables
+          aws lambda wait function-updated --function-name SlashMyBill-AgentAction 2>/dev/null || sleep 5
+          aws lambda update-function-configuration \
+            --function-name SlashMyBill-AgentAction \
+            --environment '{"Variables":{}}' > /dev/null 2>&1 || true
+          # Wait for the config update to complete before proceeding
+          aws lambda wait function-updated --function-name SlashMyBill-AgentAction 2>/dev/null || sleep 10
+          # Verify
+          KMS=$(aws lambda get-function-configuration --function-name SlashMyBill-AgentAction --query 'KMSKeyArn' --output text 2>/dev/null || echo "unknown")
+          ENV_COUNT=$(aws lambda get-function-configuration --function-name SlashMyBill-AgentAction --query 'length(Environment.Variables)' --output text 2>/dev/null || echo "unknown")
+          echo "✓ AgentAction Lambda: KMS=$KMS, env var count=$ENV_COUNT"
 
       - name: Ensure COST_CACHE_TABLE_NAME env var on Lambdas
         continue-on-error: true
