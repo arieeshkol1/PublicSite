@@ -10,6 +10,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 
 import boto3
+from boto3.dynamodb.conditions import Key
 from botocore.exceptions import ClientError
 
 logger = logging.getLogger()
@@ -17,6 +18,7 @@ logger.setLevel(logging.INFO)
 
 PLATFORM_ACCOUNT_ID = os.environ.get('PLATFORM_ACCOUNT_ID', '991105135552')
 TIPS_TABLE_NAME = os.environ.get('TIPS_TABLE_NAME', 'ViewMyBill-CostOptimizationTips')
+COST_CACHE_TABLE_NAME = os.environ.get('COST_CACHE_TABLE_NAME', 'Cost_Cache_Table')
 
 dynamodb = boto3.resource('dynamodb')
 
@@ -113,7 +115,62 @@ def _make_client(service, credentials, region='us-east-1'):
 
 
 def _get_cost_data(account_id, member_email):
-    """Get cost breakdown by service (full previous month) and daily trend (last 7 days)."""
+    """Get cost breakdown by service (full previous month) and daily trend (last 7 days).
+    Reads from Cost_Cache_Table first, falls back to direct CE API on cache miss or error.
+    """
+    try:
+        # Try cache first
+        cache_table = dynamodb.Table(COST_CACHE_TABLE_NAME)
+        now = datetime.now(timezone.utc)
+        # Full previous calendar month
+        end_date = now.replace(day=1)
+        first_of_last_month = (end_date - timedelta(days=1)).replace(day=1)
+        start_date = first_of_last_month
+
+        pk = f"{member_email}#{account_id}"
+        start_sk = f"DAILY#{start_date.strftime('%Y-%m-%d')}"
+        end_sk = f"DAILY#{end_date.strftime('%Y-%m-%d')}"
+
+        resp = cache_table.query(
+            KeyConditionExpression=Key('pk').eq(pk) & Key('sk').between(start_sk, end_sk)
+        )
+        items = resp.get('Items', [])
+
+        if items:
+            # Cache hit - aggregate daily items into service breakdown and total cost
+            services = {}
+            daily_costs = []
+            for item in items:
+                cost = float(item.get('cost_amount', 0))
+                date = item['sk'].replace('DAILY#', '')
+                daily_costs.append({'date': date, 'cost': round(cost, 2)})
+                for svc, svc_cost in item.get('service_breakdown', {}).items():
+                    services[svc] = services.get(svc, 0) + float(svc_cost)
+
+            top_services = sorted(
+                [{'service': k, 'cost': round(v, 2)} for k, v in services.items()],
+                key=lambda x: x['cost'], reverse=True
+            )
+            total = sum(s['cost'] for s in top_services)
+            return {
+                'totalCost30Days': round(total, 2),
+                'topServices': top_services[:10],
+                'dailyCosts': daily_costs[-7:],
+                'period': f"{start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')} (from cache)",
+            }
+
+        # Cache miss - fall back to direct CE API call
+        logger.info(f"Cache miss for {pk}, falling back to CE API")
+        return _get_cost_data_direct(account_id, member_email)
+
+    except Exception as e:
+        # On any cache error, fall back to direct CE API
+        logger.warning(f"Cache read error for {member_email}#{account_id}: {e}")
+        return _get_cost_data_direct(account_id, member_email)
+
+
+def _get_cost_data_direct(account_id, member_email):
+    """Get cost breakdown directly from Cost Explorer API (fallback path)."""
     try:
         creds = _assume_role(account_id, member_email)
         ce = _make_client('ce', creds)
@@ -365,7 +422,57 @@ def _get_optimization_tips(service=''):
 
 
 def _get_monthly_comparison(account_id, member_email, months=3):
-    """Get monthly cost comparison by service."""
+    """Get monthly cost comparison by service.
+    Reads from Cost_Cache_Table first, falls back to direct CE API on cache miss or error.
+    """
+    try:
+        # Try cache first
+        cache_table = dynamodb.Table(COST_CACHE_TABLE_NAME)
+        now = datetime.now(timezone.utc)
+        end_date = now.replace(day=1)
+        start_date = (end_date - timedelta(days=months * 31)).replace(day=1)
+
+        pk = f"{member_email}#{account_id}"
+        start_sk = f"DAILY#{start_date.strftime('%Y-%m-%d')}"
+        end_sk = f"DAILY#{end_date.strftime('%Y-%m-%d')}"
+
+        resp = cache_table.query(
+            KeyConditionExpression=Key('pk').eq(pk) & Key('sk').between(start_sk, end_sk)
+        )
+        items = resp.get('Items', [])
+
+        if items:
+            # Cache hit - aggregate daily items per month per service
+            monthly_data = {}
+            for item in items:
+                date = item['sk'].replace('DAILY#', '')
+                month = date[:7]  # YYYY-MM
+                if month not in monthly_data:
+                    monthly_data[month] = {}
+                for svc, svc_cost in item.get('service_breakdown', {}).items():
+                    cost = float(svc_cost)
+                    if cost > 0.01:
+                        monthly_data[month][svc] = round(
+                            monthly_data[month].get(svc, 0) + cost, 2
+                        )
+
+            return {
+                'monthlyComparison': monthly_data,
+                'months': sorted(monthly_data.keys()),
+            }
+
+        # Cache miss - fall back to direct CE API call
+        logger.info(f"Cache miss for monthly comparison {pk}, falling back to CE API")
+        return _get_monthly_comparison_direct(account_id, member_email, months)
+
+    except Exception as e:
+        # On any cache error, fall back to direct CE API
+        logger.warning(f"Cache read error for monthly comparison {member_email}#{account_id}: {e}")
+        return _get_monthly_comparison_direct(account_id, member_email, months)
+
+
+def _get_monthly_comparison_direct(account_id, member_email, months=3):
+    """Get monthly cost comparison directly from Cost Explorer API (fallback path)."""
     try:
         creds = _assume_role(account_id, member_email)
         ce = _make_client('ce', creds)

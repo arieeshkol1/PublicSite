@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: 'ViewMyBill - AWS Bill Analysis Tool infrastructure'
-# v23 - Spot management + ECS billing test
+# v24 - Cost data cache table + IAM + route
 
 Parameters:
   BillStorageBucket:
@@ -513,6 +513,33 @@ Resources:
               KeyType: RANGE
           Projection:
             ProjectionType: ALL
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+      SSESpecification:
+        SSEEnabled: true
+      Tags:
+        - Key: Project
+          Value: ViewMyBill
+
+  # ============================================================
+  # DynamoDB Table - Cost Data Cache
+  # ============================================================
+  CostCacheTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: Cost_Cache_Table
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
       TimeToLiveSpecification:
         AttributeName: ttl
         Enabled: true
@@ -1094,6 +1121,20 @@ Resources:
                 Resource:
                   - !GetAtt InvoicesTable.Arn
                   - !Sub '${InvoicesTable.Arn}/index/*'
+        - PolicyName: DynamoDBCostCacheAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                  - dynamodb:Query
+                  - dynamodb:BatchWriteItem
+                Resource:
+                  - !GetAtt CostCacheTable.Arn
       Tags:
         - Key: Project
           Value: ViewMyBill
@@ -1133,6 +1174,7 @@ Resources:
           SPOT_LEDGER_TABLE_NAME: !Ref SpotSavingsLedgerTable
           SPOT_SNS_TOPIC_ARN: !Ref SpotInterruptionsTopic
           INVOICES_TABLE_NAME: !Ref InvoicesTable
+          COST_CACHE_TABLE_NAME: !Ref CostCacheTable
           COGNITO_REGION: 'us-east-1'
           PRICING_REGION: 'us-east-1'
           BEDROCK_REGION: 'us-east-1'
@@ -1187,6 +1229,16 @@ Resources:
                   - pricing:DescribeServices
                   - pricing:GetAttributeValues
                 Resource: '*'
+        - PolicyName: DynamoDBCostCacheRead
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:Query
+                  - dynamodb:GetItem
+                Resource:
+                  - !GetAtt CostCacheTable.Arn
       Tags:
         - Key: Project
           Value: ViewMyBill
@@ -1211,6 +1263,7 @@ Resources:
           PLATFORM_ACCOUNT_ID: '991105135552'
           TIPS_TABLE_NAME: !Ref CostOptimizationTipsTable
           PRICING_REGION: 'us-east-1'
+          COST_CACHE_TABLE_NAME: !Ref CostCacheTable
       Tags:
         - Key: Project
           Value: ViewMyBill
@@ -1563,6 +1616,13 @@ Resources:
     Properties:
       ApiId: !Ref ViewMyBillApi
       RouteKey: 'POST /members/terraform/generate'
+      Target: !Sub 'integrations/${MemberIntegration}'
+
+  MemberCacheInvalidateRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'POST /members/cache/invalidate'
       Target: !Sub 'integrations/${MemberIntegration}'
 
   MemberHandlerInvokePermission:
