@@ -161,7 +161,8 @@ def handle_get_leads(event):
 
 def handle_get_tips(event):
     """Return all tips from the Tips table, sorted by service then tipId.
-    Excludes SYSTEM records (SYNC_LOCK, SYNC_METADATA, SYNC_LOG#*)."""
+    Excludes SYSTEM records (SYNC_LOCK, SYNC_METADATA, SYNC_LOG#*).
+    Backfills cloud='AWS' for tips missing the field."""
     try:
         table = dynamodb.Table(TIPS_TABLE_NAME)
         response = table.scan()
@@ -172,6 +173,10 @@ def handle_get_tips(event):
             items.extend(response.get('Items', []))
         # Filter out SYSTEM records (sync metadata, locks, logs)
         tips = [t for t in items if t.get('service') != 'SYSTEM']
+        # Backfill cloud provider for tips that don't have it yet
+        for t in tips:
+            if not t.get('cloud'):
+                t['cloud'] = 'AWS'
         tips = _decimal_to_native(tips)
         tips.sort(key=lambda x: (x.get('service', ''), x.get('tipId', '')))
         return create_response(200, {'tips': tips})

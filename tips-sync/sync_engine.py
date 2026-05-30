@@ -8,6 +8,7 @@ Handles merging tips from multiple sources, computing deltas
 import json
 import logging
 import time
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Tuple
 
 from botocore.exceptions import ClientError
@@ -304,6 +305,7 @@ def apply_deltas(
         return False
 
     # Process inserts in batches
+    now_iso = datetime.now(timezone.utc).isoformat()
     insert_batches = create_batches(inserts, batch_size=25)
     for batch in insert_batches:
         for tip in batch:
@@ -317,6 +319,11 @@ def apply_deltas(
                 item["tipId"] = tid
                 # Initialize version for new items
                 item["version"] = 1
+                # Add cloud provider (default AWS) and creation timestamp
+                if "cloud" not in item:
+                    item["cloud"] = "AWS"
+                if "createdAt" not in item:
+                    item["createdAt"] = now_iso
                 table.put_item(
                     Item=item,
                     ConditionExpression="attribute_not_exists(tipId)",
@@ -363,6 +370,9 @@ def apply_deltas(
                 item["tipId"] = tid
                 # Increment version
                 item["version"] = ver + 1
+                # Ensure cloud provider is set on updates too
+                if "cloud" not in item:
+                    item["cloud"] = "AWS"
                 table.put_item(
                     Item=item,
                     ConditionExpression="attribute_exists(tipId) AND version = :v",
