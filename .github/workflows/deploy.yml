@@ -465,6 +465,17 @@ jobs:
             }'
           echo "✓ AgentAction role permissions updated (includes kms:Decrypt)"
 
+      - name: Remove env vars and KMS key from AgentAction Lambda
+        continue-on-error: true
+        run: |
+          # The AgentAction Lambda code now hardcodes all config values.
+          # Remove env vars entirely to avoid KMS decryption issues.
+          aws lambda update-function-configuration \
+            --function-name SlashMyBill-AgentAction \
+            --environment '{"Variables":{}}' \
+            --kms-key-arn "" > /dev/null 2>&1 || true
+          echo "✓ AgentAction Lambda: env vars and KMS key removed (values hardcoded in code)"
+
       - name: Ensure COST_CACHE_TABLE_NAME env var on Lambdas
         continue-on-error: true
         run: |
@@ -480,64 +491,39 @@ jobs:
               --environment "{\"Variables\": $NEW_VARS}" > /dev/null
             echo "✓ COST_CACHE_TABLE_NAME set on member-handler"
           fi
-          # Add COST_CACHE_TABLE_NAME to agent-action if not already set
-          CURRENT_VARS=$(aws lambda get-function-configuration --function-name SlashMyBill-AgentAction --query 'Environment.Variables' --output json 2>/dev/null || echo '{}')
-          if echo "$CURRENT_VARS" | grep -q "COST_CACHE_TABLE_NAME"; then
-            echo "✓ COST_CACHE_TABLE_NAME already set on agent-action"
-          else
-            echo "Adding COST_CACHE_TABLE_NAME to agent-action..."
-            NEW_VARS=$(echo "$CURRENT_VARS" | python3 -c "import sys,json; d=json.load(sys.stdin); d['COST_CACHE_TABLE_NAME']='Cost_Cache_Table'; print(json.dumps(d))")
-            aws lambda update-function-configuration \
-              --function-name SlashMyBill-AgentAction \
-              --environment "{\"Variables\": $NEW_VARS}" > /dev/null || echo "⚠ Could not update agent-action config (role issue), skipping"
-            echo "✓ COST_CACHE_TABLE_NAME set on agent-action"
-          fi
+          # NOTE: AgentAction Lambda no longer uses env vars (all hardcoded in code)
 
       - name: Update Lambda function code
         run: |
           # Wait for any in-progress Lambda updates to complete
           sleep 15
-          aws lambda update-function-code \
-            --function-name aws-bill-analyzer-viewmybill \
-            --s3-bucket ${{ env.STORAGE_BUCKET }} \
-            --s3-key lambda-packages/bill-analyzer.zip > /dev/null || sleep 10 && aws lambda update-function-code --function-name aws-bill-analyzer-viewmybill --s3-bucket ${{ env.STORAGE_BUCKET }} --s3-key lambda-packages/bill-analyzer.zip > /dev/null
-          aws lambda update-function-code \
-            --function-name aws-bill-analyzer-upload-handler \
-            --s3-bucket ${{ env.STORAGE_BUCKET }} \
-            --s3-key lambda-packages/upload-handler.zip > /dev/null
-          aws lambda update-function-code \
-            --function-name aws-bill-analyzer-otp-handler \
-            --s3-bucket ${{ env.STORAGE_BUCKET }} \
-            --s3-key lambda-packages/otp-handler.zip > /dev/null
-          aws lambda update-function-code \
-            --function-name aws-bill-analyzer-admin-api \
-            --s3-bucket ${{ env.STORAGE_BUCKET }} \
-            --s3-key lambda-packages/admin-handler.zip > /dev/null
-          aws lambda update-function-code \
-            --function-name aws-bill-analyzer-member-api \
-            --s3-bucket ${{ env.STORAGE_BUCKET }} \
-            --s3-key lambda-packages/member-handler.zip > /dev/null
+          # Helper function to update Lambda code with retry on ResourceConflictException
+          update_lambda() {
+            local fn=$1 key=$2
+            for i in 1 2 3; do
+              if aws lambda update-function-code --function-name "$fn" --s3-bucket ${{ env.STORAGE_BUCKET }} --s3-key "$key" > /dev/null 2>&1; then
+                return 0
+              fi
+              echo "⚠ $fn update attempt $i failed, waiting 15s..."
+              sleep 15
+            done
+            echo "⚠ $fn update failed after 3 attempts (non-fatal)"
+            return 0
+          }
+          update_lambda aws-bill-analyzer-viewmybill lambda-packages/bill-analyzer.zip
+          update_lambda aws-bill-analyzer-upload-handler lambda-packages/upload-handler.zip
+          update_lambda aws-bill-analyzer-otp-handler lambda-packages/otp-handler.zip
+          update_lambda aws-bill-analyzer-admin-api lambda-packages/admin-handler.zip
+          update_lambda aws-bill-analyzer-member-api lambda-packages/member-handler.zip
           # Note: Cognito env vars are set in the CloudFormation template (viewmybill-stack.yaml)
           # Do NOT use update-function-configuration here as it replaces ALL env vars
-          aws lambda update-function-code \
-            --function-name SlashMyBill-AgentAction \
-            --s3-bucket ${{ env.STORAGE_BUCKET }} \
-            --s3-key lambda-packages/agent-action.zip > /dev/null || true
+          update_lambda SlashMyBill-AgentAction lambda-packages/agent-action.zip
           # Update Paddle webhook handler (skip if not yet created)
-          aws lambda update-function-code \
-            --function-name slashmybill-paddle-webhook \
-            --s3-bucket ${{ env.STORAGE_BUCKET }} \
-            --s3-key lambda-packages/paddle-webhook.zip > /dev/null 2>&1 || true
+          update_lambda slashmybill-paddle-webhook lambda-packages/paddle-webhook.zip
           # Update Scheduler Executor (skip if not yet created)
-          aws lambda update-function-code \
-            --function-name slashmybill-scheduler-executor \
-            --s3-bucket ${{ env.STORAGE_BUCKET }} \
-            --s3-key lambda-packages/scheduler-executor.zip > /dev/null 2>&1 || true
+          update_lambda slashmybill-scheduler-executor lambda-packages/scheduler-executor.zip
           # Update Tips Sync Lambda (skip if not yet created)
-          aws lambda update-function-code \
-            --function-name slashmybill-tips-sync \
-            --s3-bucket ${{ env.STORAGE_BUCKET }} \
-            --s3-key lambda-packages/tips-sync.zip > /dev/null 2>&1 || true
+          update_lambda slashmybill-tips-sync lambda-packages/tips-sync.zip
           echo "✓ Lambda functions updated"
 
       - name: Update Lambda memory and timeout (CF stack may fail to apply these)
