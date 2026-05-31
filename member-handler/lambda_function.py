@@ -1,4 +1,4 @@
-﻿"""
+"""
 Member Handler Lambda v2 - Registration, login, account management, Console, AI Agent.
 Includes Invoice Explorer (invoice_sync.py, invoice_validation.py).
 Routes: POST /members/register, POST /members/login, GET /members/accounts,
@@ -2422,16 +2422,31 @@ def handle_dashboard_data(event):
             except Exception:
                 pass  # Fall back to 7-day data from _gather_account_data
 
-            # Fetch cost by region (last 30 days) â€” ALWAYS unfiltered (not affected by tag filter)
+            # Fetch cost by region (last 30 days) - scale proportionally when tag filter is active
             try:
                 _region_params = {'TimePeriod': {'Start': start_30d, 'End': end_date}, 'Granularity': 'MONTHLY', 'Metrics': ['UnblendedCost'], 'GroupBy': [{'Type': 'DIMENSION', 'Key': 'REGION'}]}
                 region_resp = ce_30d.get_cost_and_usage(**_region_params)
+                raw_regional = {}
                 for period in region_resp.get('ResultsByTime', []):
                     for group in period.get('Groups', []):
                         region_name = group['Keys'][0]
                         region_cost = float(group['Metrics']['UnblendedCost']['Amount'])
                         if region_cost > 0.01 and region_name:
-                            merged_regional[region_name] = merged_regional.get(region_name, 0) + region_cost
+                            raw_regional[region_name] = raw_regional.get(region_name, 0) + region_cost
+                # If tag filter is active, scale region costs by the tag proportion of total
+                if tag_key and tag_value and raw_regional:
+                    total_regional = sum(raw_regional.values())
+                    tag_total = sum(merged_costs.values()) if merged_costs else 0
+                    if total_regional > 0 and tag_total > 0:
+                        ratio = tag_total / total_regional
+                        for r, c in raw_regional.items():
+                            scaled = c * ratio
+                            if scaled > 0.01:
+                                merged_regional[r] = merged_regional.get(r, 0) + scaled
+                    else:
+                        merged_regional.update(raw_regional)
+                else:
+                    merged_regional.update(raw_regional)
             except Exception:
                 pass
 
