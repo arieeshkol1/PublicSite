@@ -501,14 +501,17 @@ class IncrementalFetchEngine:
                     aws_access_key_id=credentials.get('AccessKeyId'),
                     aws_secret_access_key=credentials.get('SecretAccessKey'),
                     aws_session_token=credentials.get('SessionToken'),
-                    region_name='us-east-1',
+                    region_name='eu-central-1',
                 )
-                tag_keys_response = tagging.get_tag_keys()
-                tag_keys = tag_keys_response.get('TagKeys', [])
-                # Filter out AWS-internal tags (aws:, aws-cdk:) to reduce noise
+                # Use get_tag_keys to discover all tag keys on resources
+                tag_keys = []
+                paginator = tagging.get_paginator('get_tag_keys')
+                for page in paginator.paginate():
+                    tag_keys.extend(page.get('TagKeys', []))
+                # Filter out AWS-internal tags to reduce noise
                 user_tags = [k for k in tag_keys if not k.startswith('aws:') and not k.startswith('aws-cdk:')]
                 if user_tags:
-                    logger.info(f"Discovered {len(user_tags)} tag keys via Resource Groups API: {user_tags}")
+                    logger.info(f"Discovered {len(user_tags)} tag keys via Resource Groups API: {user_tags[:10]}...")
                     return user_tags[:20]  # Cap at 20 to avoid excessive CE calls
             except Exception as e:
                 logger.warning(f"Resource Groups tag key discovery failed: {e}")
