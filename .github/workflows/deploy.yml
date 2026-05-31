@@ -964,6 +964,7 @@ jobs:
             "POST /members/sql/migration-plan"
             "POST /members/committed-discounts/ri-marketplace"
             "POST /members/terraform/generate"
+            "POST /members/cache/invalidate"
           )
           echo "MEMBER_INT=$MEMBER_INT"
           echo "Creating/verifying ${#MEMBER_ROUTES[@]} member routes..."
