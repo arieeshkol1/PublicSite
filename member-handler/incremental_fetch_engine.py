@@ -496,20 +496,26 @@ class IncrementalFetchEngine:
         # Fallback: discover tag keys from Resource Groups Tagging API
         if credentials:
             try:
-                tagging = boto3.client(
-                    'resourcegroupstaggingapi',
-                    aws_access_key_id=credentials.get('AccessKeyId'),
-                    aws_secret_access_key=credentials.get('SecretAccessKey'),
-                    aws_session_token=credentials.get('SessionToken'),
-                    region_name='eu-central-1',
-                )
-                # Use get_tag_keys to discover all tag keys on resources
-                tag_keys = []
-                paginator = tagging.get_paginator('get_tag_keys')
-                for page in paginator.paginate():
-                    tag_keys.extend(page.get('TagKeys', []))
+                # Detect charged regions dynamically instead of hard-coding
+                charged_regions = self._detect_charged_regions(ce_client)
+                tag_keys_set: set[str] = set()
+                for region in charged_regions:
+                    try:
+                        tagging = boto3.client(
+                            'resourcegroupstaggingapi',
+                            aws_access_key_id=credentials.get('AccessKeyId'),
+                            aws_secret_access_key=credentials.get('SecretAccessKey'),
+                            aws_session_token=credentials.get('SessionToken'),
+                            region_name=region,
+                        )
+                        paginator = tagging.get_paginator('get_tag_keys')
+                        for page in paginator.paginate():
+                            tag_keys_set.update(page.get('TagKeys', []))
+                    except Exception as e:
+                        logger.debug(f"get_tag_keys failed for region {region}: {e}")
+                        continue
                 # Filter out AWS-internal tags to reduce noise
-                user_tags = [k for k in tag_keys if not k.startswith('aws:') and not k.startswith('aws-cdk:')]
+                user_tags = [k for k in tag_keys_set if not k.startswith('aws:') and not k.startswith('aws-cdk:')]
                 if user_tags:
                     logger.info(f"Discovered {len(user_tags)} tag keys via Resource Groups API: {user_tags[:10]}...")
                     return user_tags[:20]  # Cap at 20 to avoid excessive CE calls
@@ -625,9 +631,10 @@ class IncrementalFetchEngine:
         """Fetch tag breakdowns for all active tag keys sequentially.
 
         Discovers active tag keys via _discover_active_tag_keys, then queries
-        Cost Explorer for each tag key one at a time. Parses each successful
-        response and collects results. Logs error if all queries fail, warning
-        if some fail.
+        Cost Explorer for each tag key one at a time. For tag keys where CE
+        returns only '(untagged)' (cost allocation tags not activated), falls
+        back to the Resource Groups Tagging API to estimate per-tag-value costs
+        proportionally from the service breakdown.
 
         Args:
             ce_client: boto3 Cost Explorer client.
@@ -644,6 +651,7 @@ class IncrementalFetchEngine:
 
         all_tag_data: dict[str, dict[str, dict[str, float]]] = {}
         failed_count = 0
+        untagged_only_keys: list[str] = []
 
         for tag_key in tag_keys:
             response = self._call_ce_for_single_tag(ce_client, date_range, tag_key)
@@ -652,14 +660,269 @@ class IncrementalFetchEngine:
                 continue
             parsed = self._parse_single_tag_response(response, tag_key)
             if parsed:
-                all_tag_data[tag_key] = parsed
+                # Check if ALL dates have ONLY "(untagged)" — means CE can't break down by this tag
+                all_untagged = all(
+                    list(day_values.keys()) == ['(untagged)']
+                    for day_values in parsed.values()
+                )
+                if all_untagged:
+                    untagged_only_keys.append(tag_key)
+                else:
+                    all_tag_data[tag_key] = parsed
 
         if failed_count == len(tag_keys):
             logger.error(f"All {failed_count} tag key queries failed")
         elif failed_count > 0:
             logger.warning(f"{failed_count}/{len(tag_keys)} tag key queries failed")
 
+        # For tag keys where CE returned only (untagged), use Resource Groups API fallback
+        if untagged_only_keys and credentials:
+            logger.info(
+                f"CE returned only (untagged) for {len(untagged_only_keys)} tag keys, "
+                f"using Resource Groups API fallback: {untagged_only_keys}"
+            )
+            try:
+                rg_tag_data = self._resource_groups_tag_fallback(
+                    ce_client, date_range, credentials, untagged_only_keys
+                )
+                all_tag_data.update(rg_tag_data)
+            except Exception as e:
+                logger.warning(f"Resource Groups tag fallback failed: {e}")
+
         return all_tag_data
+
+    def _detect_charged_regions(self, ce_client) -> list[str]:
+        """Detect regions with actual charges from Cost Explorer.
+
+        Uses a single CE API call grouped by REGION to find regions with
+        non-trivial costs. Falls back to ['us-east-1'] on failure.
+
+        Args:
+            ce_client: boto3 Cost Explorer client.
+
+        Returns:
+            List of region strings sorted by cost descending.
+        """
+        try:
+            now = date.today()
+            first_this = now.replace(day=1)
+            first_last = (first_this - timedelta(days=1)).replace(day=1)
+            resp = ce_client.get_cost_and_usage(
+                TimePeriod={
+                    'Start': first_last.isoformat(),
+                    'End': first_this.isoformat(),
+                },
+                Granularity='MONTHLY',
+                Metrics=['UnblendedCost'],
+                GroupBy=[{'Type': 'DIMENSION', 'Key': 'REGION'}],
+            )
+            regions: dict[str, float] = {}
+            for period in resp.get('ResultsByTime', []):
+                for group in period.get('Groups', []):
+                    region_val = group['Keys'][0]
+                    cost = float(group['Metrics']['UnblendedCost']['Amount'])
+                    if cost > 0.01 and region_val and region_val != 'global':
+                        regions[region_val] = regions.get(region_val, 0) + cost
+            sorted_regions = sorted(regions.keys(), key=lambda r: regions[r], reverse=True)
+            return sorted_regions if sorted_regions else ['us-east-1']
+        except Exception as e:
+            logger.warning(f"Region detection failed: {e}")
+            return ['us-east-1']
+
+    def _resource_groups_tag_fallback(
+        self,
+        ce_client,
+        date_range: DateRange,
+        credentials: dict,
+        tag_keys: list[str],
+    ) -> dict[str, dict[str, dict[str, float]]]:
+        """Estimate per-tag-value costs using Resource Groups Tagging API.
+
+        For each tag key, finds tagged resources across all charged regions,
+        groups them by service, then estimates costs proportionally based on
+        the number of tagged resources per service vs total service cost.
+
+        This replicates the old dashboard behavior that worked without
+        cost allocation tag activation.
+
+        Args:
+            ce_client: boto3 Cost Explorer client (for region detection).
+            date_range: DateRange to query.
+            credentials: AWS credentials dict.
+            tag_keys: List of tag keys to estimate costs for.
+
+        Returns:
+            Nested dict: {tag_key: {date: {tag_value: cost}}}
+        """
+        # Detect charged regions dynamically
+        charged_regions = self._detect_charged_regions(ce_client)
+        logger.info(f"Resource Groups fallback scanning regions: {charged_regions}")
+
+        # For each tag key, find all resources with that tag and their values
+        tag_key_resources: dict[str, dict[str, list[str]]] = {}
+        # Structure: {tag_key: {tag_value: [service_codes...]}}
+
+        for tag_key in tag_keys:
+            value_services: dict[str, list[str]] = {}
+            for region in charged_regions:
+                try:
+                    tagging = boto3.client(
+                        'resourcegroupstaggingapi',
+                        aws_access_key_id=credentials.get('AccessKeyId'),
+                        aws_secret_access_key=credentials.get('SecretAccessKey'),
+                        aws_session_token=credentials.get('SessionToken'),
+                        region_name=region,
+                    )
+                    paginator = tagging.get_paginator('get_resources')
+                    for page in paginator.paginate(
+                        TagFilters=[{'Key': tag_key}],
+                        ResourcesPerPage=100,
+                    ):
+                        for res in page.get('ResourceTagMappingList', []):
+                            arn = res.get('ResourceARN', '')
+                            # Extract tag value for this key
+                            tag_val = None
+                            for t in res.get('Tags', []):
+                                if t['Key'] == tag_key:
+                                    tag_val = t['Value']
+                                    break
+                            if not tag_val:
+                                continue
+                            # Extract service from ARN (arn:aws:SERVICE:region:account:...)
+                            parts = arn.split(':')
+                            if len(parts) >= 3:
+                                svc_code = parts[2]
+                                value_services.setdefault(tag_val, []).append(svc_code)
+                except Exception as e:
+                    logger.debug(f"Resource Groups scan failed for tag '{tag_key}' in {region}: {e}")
+                    continue
+
+            if value_services:
+                tag_key_resources[tag_key] = value_services
+                logger.info(
+                    f"Tag '{tag_key}': found {sum(len(v) for v in value_services.values())} "
+                    f"resources across {len(value_services)} values"
+                )
+
+        if not tag_key_resources:
+            return {}
+
+        # Now fetch daily service costs for the date range (we need this to estimate)
+        # We already have service breakdown from the main fetch, but we need per-day data
+        # Fetch service costs for the date range
+        try:
+            svc_response = ce_client.get_cost_and_usage(
+                TimePeriod={'Start': date_range.start, 'End': date_range.end},
+                Granularity='DAILY',
+                Metrics=['UnblendedCost'],
+                GroupBy=[{'Type': 'DIMENSION', 'Key': 'SERVICE'}],
+            )
+        except Exception as e:
+            logger.warning(f"Failed to fetch service costs for RG fallback: {e}")
+            return {}
+
+        # Map AWS service codes to CE service names
+        SVC_CODE_TO_CE_NAME = {
+            'ec2': 'Amazon Elastic Compute Cloud - Compute',
+            'rds': 'Amazon Relational Database Service',
+            's3': 'Amazon Simple Storage Service',
+            'lambda': 'AWS Lambda',
+            'dynamodb': 'Amazon DynamoDB',
+            'elasticache': 'Amazon ElastiCache',
+            'ecs': 'Amazon Elastic Container Service',
+            'eks': 'Amazon Elastic Kubernetes Service',
+            'sqs': 'Amazon Simple Queue Service',
+            'sns': 'Amazon Simple Notification Service',
+            'kms': 'AWS Key Management Service',
+            'elasticloadbalancing': 'Elastic Load Balancing',
+            'cloudwatch': 'AmazonCloudWatch',
+            'logs': 'AmazonCloudWatch',
+            'apigateway': 'Amazon API Gateway',
+            'cloudfront': 'Amazon CloudFront',
+            'route53': 'Amazon Route 53',
+            'ses': 'Amazon Simple Email Service',
+            'glue': 'AWS Glue',
+            'rekognition': 'Amazon Rekognition',
+            'amplify': 'AWS Amplify',
+            'ecr': 'Amazon EC2 Container Registry (ECR)',
+            'events': 'CloudWatch Events',
+        }
+
+        # Parse daily service costs
+        daily_service_costs: dict[str, dict[str, float]] = {}
+        # {date: {ce_service_name: cost}}
+        for period in svc_response.get('ResultsByTime', []):
+            period_date = period['TimePeriod']['Start']
+            svc_costs: dict[str, float] = {}
+            for group in period.get('Groups', []):
+                svc_name = group['Keys'][0]
+                amount = float(group['Metrics']['UnblendedCost']['Amount'])
+                if amount > 0:
+                    svc_costs[svc_name] = amount
+            daily_service_costs[period_date] = svc_costs
+
+        # For each tag key, estimate per-value costs proportionally
+        result: dict[str, dict[str, dict[str, float]]] = {}
+
+        for tag_key, value_services in tag_key_resources.items():
+            # Count resources per service per tag value
+            # {tag_value: {ce_service_name: resource_count}}
+            value_svc_counts: dict[str, dict[str, int]] = {}
+            for tag_val, svc_codes in value_services.items():
+                svc_counts: dict[str, int] = {}
+                for code in svc_codes:
+                    ce_name = SVC_CODE_TO_CE_NAME.get(code)
+                    if ce_name:
+                        svc_counts[ce_name] = svc_counts.get(ce_name, 0) + 1
+                    else:
+                        # Try partial match for unmapped services
+                        for mapped_code, mapped_name in SVC_CODE_TO_CE_NAME.items():
+                            if mapped_code in code:
+                                svc_counts[mapped_name] = svc_counts.get(mapped_name, 0) + 1
+                                break
+                if svc_counts:
+                    value_svc_counts[tag_val] = svc_counts
+
+            if not value_svc_counts:
+                continue
+
+            # Total resource count per service across all tag values
+            total_svc_counts: dict[str, int] = {}
+            for svc_counts in value_svc_counts.values():
+                for svc_name, count in svc_counts.items():
+                    total_svc_counts[svc_name] = total_svc_counts.get(svc_name, 0) + count
+
+            # Estimate daily costs per tag value
+            date_data: dict[str, dict[str, float]] = {}
+            for period_date, svc_costs in daily_service_costs.items():
+                value_costs: dict[str, float] = {}
+                total_day_cost = sum(svc_costs.values())
+                tagged_cost = 0.0
+
+                for tag_val, svc_counts in value_svc_counts.items():
+                    val_cost = 0.0
+                    for svc_name, res_count in svc_counts.items():
+                        svc_total_cost = svc_costs.get(svc_name, 0.0)
+                        total_res_for_svc = total_svc_counts.get(svc_name, 1)
+                        # Proportional allocation: (resources with this tag value / total tagged resources) * service cost
+                        proportion = res_count / total_res_for_svc
+                        val_cost += svc_total_cost * proportion
+                    if val_cost > 0:
+                        value_costs[tag_val] = round(val_cost, 10)
+                        tagged_cost += val_cost
+
+                # Add (untagged) for the remainder
+                untagged = total_day_cost - tagged_cost
+                if untagged > 0.01:
+                    value_costs['(untagged)'] = round(untagged, 10)
+
+                if value_costs:
+                    date_data[period_date] = value_costs
+
+            if date_data:
+                result[tag_key] = date_data
+
+        return result
 
     def _apply_top_n_cap(
         self,
