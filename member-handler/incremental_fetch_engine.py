@@ -171,7 +171,7 @@ class IncrementalFetchEngine:
 
             # Fetch multi-tag breakdowns for the same range
             try:
-                all_tag_data = self._fetch_all_tag_breakdowns(ce_client, batch_range)
+                all_tag_data = self._fetch_all_tag_breakdowns(ce_client, batch_range, credentials)
                 if all_tag_data:
                     all_tag_data = self._apply_top_n_cap(all_tag_data)
                     all_tag_data = self._apply_size_guard(all_tag_data, account_id)
@@ -465,19 +465,22 @@ class IncrementalFetchEngine:
         return tag_data
 
     def _discover_active_tag_keys(
-        self, ce_client, date_range: DateRange
+        self, ce_client, date_range: DateRange, credentials: dict = None
     ) -> list[str]:
-        """Discover all active cost allocation tag keys for the date range.
+        """Discover tag keys available for cost grouping.
 
-        Calls CE get_tags API. On failure, logs warning and returns empty list
-        (graceful degradation — tag breakdown is skipped, service data unaffected).
+        First tries CE get_tags API (returns cost allocation tags).
+        If that returns empty, falls back to Resource Groups Tagging API
+        to discover tag keys from actual resources (works even without
+        cost allocation tag activation).
 
         Args:
             ce_client: boto3 Cost Explorer client.
             date_range: DateRange to query.
+            credentials: Optional STS credentials for Resource Groups API fallback.
 
         Returns:
-            List of active tag key strings. Empty list on failure or no tags.
+            List of tag key strings. Empty list on failure or no tags.
         """
         try:
             response = ce_client.get_tags(
@@ -485,13 +488,33 @@ class IncrementalFetchEngine:
             )
             tags = response.get('Tags', [])
             if tags:
-                logger.info(f"Discovered {len(tags)} active tag keys: {tags}")
+                logger.info(f"Discovered {len(tags)} active tag keys via CE: {tags}")
                 return tags
-            logger.info("No active tag keys found, skipping tag breakdown")
-            return []
         except Exception as e:
-            logger.warning(f"Failed to discover tag keys, skipping tag breakdown: {e}")
-            return []
+            logger.warning(f"CE get_tags failed: {e}")
+
+        # Fallback: discover tag keys from Resource Groups Tagging API
+        if credentials:
+            try:
+                tagging = boto3.client(
+                    'resourcegroupstaggingapi',
+                    aws_access_key_id=credentials.get('AccessKeyId'),
+                    aws_secret_access_key=credentials.get('SecretAccessKey'),
+                    aws_session_token=credentials.get('SessionToken'),
+                    region_name='us-east-1',
+                )
+                tag_keys_response = tagging.get_tag_keys()
+                tag_keys = tag_keys_response.get('TagKeys', [])
+                # Filter out AWS-internal tags (aws:, aws-cdk:) to reduce noise
+                user_tags = [k for k in tag_keys if not k.startswith('aws:') and not k.startswith('aws-cdk:')]
+                if user_tags:
+                    logger.info(f"Discovered {len(user_tags)} tag keys via Resource Groups API: {user_tags}")
+                    return user_tags[:20]  # Cap at 20 to avoid excessive CE calls
+            except Exception as e:
+                logger.warning(f"Resource Groups tag key discovery failed: {e}")
+
+        logger.info("No tag keys found from any source, skipping tag breakdown")
+        return []
 
     def _call_ce_for_single_tag(
         self,
@@ -594,6 +617,7 @@ class IncrementalFetchEngine:
         self,
         ce_client,
         date_range: DateRange,
+        credentials: dict = None,
     ) -> dict[str, dict[str, dict[str, float]]]:
         """Fetch tag breakdowns for all active tag keys sequentially.
 
@@ -605,12 +629,13 @@ class IncrementalFetchEngine:
         Args:
             ce_client: boto3 Cost Explorer client.
             date_range: DateRange to query.
+            credentials: Optional STS credentials for Resource Groups API fallback.
 
         Returns:
             Nested dict: {tag_key: {date: {tag_value: cost}}}
             Only includes successfully queried tag keys.
         """
-        tag_keys = self._discover_active_tag_keys(ce_client, date_range)
+        tag_keys = self._discover_active_tag_keys(ce_client, date_range, credentials)
         if not tag_keys:
             return {}
 
