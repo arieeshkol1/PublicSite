@@ -681,6 +681,11 @@ class IncrementalFetchEngine:
                 f"CE returned only (untagged) for {len(untagged_only_keys)} tag keys, "
                 f"using Resource Groups API fallback: {untagged_only_keys}"
             )
+            # Auto-activate these tags as cost allocation tags so next sync gets real data
+            try:
+                self._activate_cost_allocation_tags(ce_client, untagged_only_keys)
+            except Exception as e:
+                logger.warning(f"Cost allocation tag activation failed: {e}")
             try:
                 rg_tag_data = self._resource_groups_tag_fallback(
                     ce_client, date_range, credentials, untagged_only_keys
@@ -690,6 +695,38 @@ class IncrementalFetchEngine:
                 logger.warning(f"Resource Groups tag fallback failed: {e}")
 
         return all_tag_data
+
+    def _activate_cost_allocation_tags(
+        self, ce_client, tag_keys: list[str]
+    ) -> None:
+        """Activate discovered tag keys as cost allocation tags.
+
+        Calls UpdateCostAllocationTagsStatus to activate tags that CE
+        doesn't yet track. After activation (takes up to 24h), CE will
+        return real per-tag costs instead of all-untagged.
+
+        Args:
+            ce_client: boto3 Cost Explorer client.
+            tag_keys: List of tag key strings to activate.
+        """
+        try:
+            existing = ce_client.list_cost_allocation_tags(
+                Status='Active', MaxResults=100
+            )
+            active_keys = {t.get('TagKey') for t in existing.get('CostAllocationTags', [])}
+            to_activate = [k for k in tag_keys if k not in active_keys]
+            if not to_activate:
+                return
+            for i in range(0, len(to_activate), 20):
+                batch = to_activate[i:i+20]
+                ce_client.update_cost_allocation_tags_status(
+                    CostAllocationTagsStatus=[
+                        {'TagKey': k, 'Status': 'Active'} for k in batch
+                    ]
+                )
+                logger.info(f"Activated {len(batch)} cost allocation tags: {batch}")
+        except Exception as e:
+            logger.warning(f"Cost allocation tag activation failed: {e}")
 
     def _detect_charged_regions(self, ce_client) -> list[str]:
         """Detect regions with actual charges from Cost Explorer.
@@ -738,9 +775,9 @@ class IncrementalFetchEngine:
     ) -> dict[str, dict[str, dict[str, float]]]:
         """Estimate per-tag-value costs using Resource Groups Tagging API.
 
-        For each tag key, finds tagged resources across all charged regions,
-        groups them by service, then estimates costs proportionally based on
-        the number of tagged resources per service vs total service cost.
+        For EC2 instances, looks up actual instance types and estimates costs
+        based on instance size (not equal proportions). For other services,
+        uses resource-count-based proportional allocation.
 
         This replicates the old dashboard behavior that worked without
         cost allocation tag activation.
@@ -758,12 +795,11 @@ class IncrementalFetchEngine:
         charged_regions = self._detect_charged_regions(ce_client)
         logger.info(f"Resource Groups fallback scanning regions: {charged_regions}")
 
-        # For each tag key, find all resources with that tag and their values
-        tag_key_resources: dict[str, dict[str, list[str]]] = {}
-        # Structure: {tag_key: {tag_value: [service_codes...]}}
+        # Structure: {tag_key: {tag_value: [{arn, service, region, resource}]}}
+        tag_key_resources: dict[str, dict[str, list[dict]]] = {}
 
         for tag_key in tag_keys:
-            value_services: dict[str, list[str]] = {}
+            value_resources: dict[str, list[dict]] = {}
             for region in charged_regions:
                 try:
                     tagging = boto3.client(
@@ -780,7 +816,6 @@ class IncrementalFetchEngine:
                     ):
                         for res in page.get('ResourceTagMappingList', []):
                             arn = res.get('ResourceARN', '')
-                            # Extract tag value for this key
                             tag_val = None
                             for t in res.get('Tags', []):
                                 if t['Key'] == tag_key:
@@ -788,28 +823,88 @@ class IncrementalFetchEngine:
                                     break
                             if not tag_val:
                                 continue
-                            # Extract service from ARN (arn:aws:SERVICE:region:account:...)
                             parts = arn.split(':')
-                            if len(parts) >= 3:
+                            if len(parts) >= 6:
                                 svc_code = parts[2]
-                                value_services.setdefault(tag_val, []).append(svc_code)
+                                res_region = parts[3] or region
+                                resource_part = ':'.join(parts[5:])
+                                value_resources.setdefault(tag_val, []).append({
+                                    'arn': arn, 'service': svc_code,
+                                    'region': res_region, 'resource': resource_part,
+                                })
                 except Exception as e:
                     logger.debug(f"Resource Groups scan failed for tag '{tag_key}' in {region}: {e}")
                     continue
 
-            if value_services:
-                tag_key_resources[tag_key] = value_services
+            if value_resources:
+                tag_key_resources[tag_key] = value_resources
                 logger.info(
-                    f"Tag '{tag_key}': found {sum(len(v) for v in value_services.values())} "
-                    f"resources across {len(value_services)} values"
+                    f"Tag '{tag_key}': found {sum(len(v) for v in value_resources.values())} "
+                    f"resources across {len(value_resources)} values"
                 )
 
         if not tag_key_resources:
             return {}
 
-        # Now fetch daily service costs for the date range (we need this to estimate)
-        # We already have service breakdown from the main fetch, but we need per-day data
-        # Fetch service costs for the date range
+        # Get EC2 instance types for cost-weighted estimation
+        # Collect all EC2 instance IDs by region
+        ec2_instances_by_region: dict[str, list[str]] = {}
+        for value_resources in tag_key_resources.values():
+            for resources in value_resources.values():
+                for r in resources:
+                    if r['service'] == 'ec2' and 'instance/' in r['resource']:
+                        inst_id = r['resource'].split('/')[-1]
+                        ec2_instances_by_region.setdefault(r['region'], []).append(inst_id)
+
+        # Describe instances to get types
+        instance_types: dict[str, str] = {}  # instance_id -> instance_type
+        for region, inst_ids in ec2_instances_by_region.items():
+            try:
+                ec2_client = boto3.client(
+                    'ec2',
+                    aws_access_key_id=credentials.get('AccessKeyId'),
+                    aws_secret_access_key=credentials.get('SecretAccessKey'),
+                    aws_session_token=credentials.get('SessionToken'),
+                    region_name=region,
+                )
+                # Batch describe (max 200 at a time)
+                unique_ids = list(set(inst_ids))
+                for i in range(0, len(unique_ids), 200):
+                    batch = unique_ids[i:i+200]
+                    try:
+                        desc = ec2_client.describe_instances(InstanceIds=batch)
+                        for reservation in desc.get('Reservations', []):
+                            for inst in reservation.get('Instances', []):
+                                iid = inst.get('InstanceId', '')
+                                itype = inst.get('InstanceType', 't3.medium')
+                                instance_types[iid] = itype
+                    except Exception as e:
+                        logger.debug(f"describe_instances failed for batch in {region}: {e}")
+            except Exception as e:
+                logger.debug(f"EC2 client creation failed for {region}: {e}")
+
+        # Hourly cost lookup for instance types
+        _hourly_costs = {
+            't2.nano': 0.0058, 't2.micro': 0.0116, 't2.small': 0.023, 't2.medium': 0.0464,
+            't2.large': 0.0928, 't2.xlarge': 0.1856, 't2.2xlarge': 0.3712,
+            't3.nano': 0.0052, 't3.micro': 0.0104, 't3.small': 0.0208, 't3.medium': 0.0416,
+            't3.large': 0.0832, 't3.xlarge': 0.1664, 't3.2xlarge': 0.3328,
+            't3a.nano': 0.0047, 't3a.micro': 0.0094, 't3a.small': 0.0188, 't3a.medium': 0.0376,
+            't3a.large': 0.0752, 't3a.xlarge': 0.1504, 't3a.2xlarge': 0.3008,
+            'm5.large': 0.096, 'm5.xlarge': 0.192, 'm5.2xlarge': 0.384, 'm5.4xlarge': 0.768,
+            'm6i.large': 0.096, 'm6i.xlarge': 0.192, 'm6i.2xlarge': 0.384,
+            'c5.large': 0.085, 'c5.xlarge': 0.17, 'c5.2xlarge': 0.34, 'c5.4xlarge': 0.68,
+            'c6i.large': 0.085, 'c6i.xlarge': 0.17, 'c6i.2xlarge': 0.34,
+            'r5.large': 0.126, 'r5.xlarge': 0.252, 'r5.2xlarge': 0.504, 'r5.4xlarge': 1.008,
+            'r6i.large': 0.126, 'r6i.xlarge': 0.252, 'r6i.2xlarge': 0.504,
+            'i3.large': 0.156, 'i3.xlarge': 0.312, 'i3.2xlarge': 0.624,
+        }
+
+        def _get_hourly_cost(instance_id: str) -> float:
+            itype = instance_types.get(instance_id, 't3.medium')
+            return _hourly_costs.get(itype, 0.05)
+
+        # Fetch daily service costs
         try:
             svc_response = ce_client.get_cost_and_usage(
                 TimePeriod={'Start': date_range.start, 'End': date_range.end},
@@ -821,36 +916,8 @@ class IncrementalFetchEngine:
             logger.warning(f"Failed to fetch service costs for RG fallback: {e}")
             return {}
 
-        # Map AWS service codes to CE service names
-        SVC_CODE_TO_CE_NAME = {
-            'ec2': 'Amazon Elastic Compute Cloud - Compute',
-            'rds': 'Amazon Relational Database Service',
-            's3': 'Amazon Simple Storage Service',
-            'lambda': 'AWS Lambda',
-            'dynamodb': 'Amazon DynamoDB',
-            'elasticache': 'Amazon ElastiCache',
-            'ecs': 'Amazon Elastic Container Service',
-            'eks': 'Amazon Elastic Kubernetes Service',
-            'sqs': 'Amazon Simple Queue Service',
-            'sns': 'Amazon Simple Notification Service',
-            'kms': 'AWS Key Management Service',
-            'elasticloadbalancing': 'Elastic Load Balancing',
-            'cloudwatch': 'AmazonCloudWatch',
-            'logs': 'AmazonCloudWatch',
-            'apigateway': 'Amazon API Gateway',
-            'cloudfront': 'Amazon CloudFront',
-            'route53': 'Amazon Route 53',
-            'ses': 'Amazon Simple Email Service',
-            'glue': 'AWS Glue',
-            'rekognition': 'Amazon Rekognition',
-            'amplify': 'AWS Amplify',
-            'ecr': 'Amazon EC2 Container Registry (ECR)',
-            'events': 'CloudWatch Events',
-        }
-
         # Parse daily service costs
         daily_service_costs: dict[str, dict[str, float]] = {}
-        # {date: {ce_service_name: cost}}
         for period in svc_response.get('ResultsByTime', []):
             period_date = period['TimePeriod']['Start']
             svc_costs: dict[str, float] = {}
@@ -861,36 +928,61 @@ class IncrementalFetchEngine:
                     svc_costs[svc_name] = amount
             daily_service_costs[period_date] = svc_costs
 
-        # For each tag key, estimate per-value costs proportionally
+        EC2_CE_NAME = 'Amazon Elastic Compute Cloud - Compute'
+
+        # Map service codes to CE names for non-EC2 services
+        SVC_CODE_TO_CE_NAME = {
+            'rds': 'Amazon Relational Database Service',
+            's3': 'Amazon Simple Storage Service',
+            'lambda': 'AWS Lambda',
+            'dynamodb': 'Amazon DynamoDB',
+            'elasticache': 'Amazon ElastiCache',
+            'sqs': 'Amazon Simple Queue Service',
+            'sns': 'Amazon Simple Notification Service',
+            'kms': 'AWS Key Management Service',
+            'elasticloadbalancing': 'Elastic Load Balancing',
+            'cloudwatch': 'AmazonCloudWatch',
+            'apigateway': 'Amazon API Gateway',
+            'cloudfront': 'Amazon CloudFront',
+            'route53': 'Amazon Route 53',
+            'glue': 'AWS Glue',
+            'rekognition': 'Amazon Rekognition',
+            'amplify': 'AWS Amplify',
+        }
+
+        # For each tag key, estimate per-value costs using instance-size weighting
         result: dict[str, dict[str, dict[str, float]]] = {}
 
-        for tag_key, value_services in tag_key_resources.items():
-            # Count resources per service per tag value
-            # {tag_value: {ce_service_name: resource_count}}
-            value_svc_counts: dict[str, dict[str, int]] = {}
-            for tag_val, svc_codes in value_services.items():
-                svc_counts: dict[str, int] = {}
-                for code in svc_codes:
-                    ce_name = SVC_CODE_TO_CE_NAME.get(code)
-                    if ce_name:
-                        svc_counts[ce_name] = svc_counts.get(ce_name, 0) + 1
+        for tag_key, value_resources in tag_key_resources.items():
+            # Compute per-tag-value hourly cost weight for EC2
+            # {tag_value: total_hourly_cost_for_ec2_instances}
+            value_ec2_hourly: dict[str, float] = {}
+            total_ec2_hourly = 0.0
+
+            # Non-EC2: count resources per service per tag value
+            value_other_svc: dict[str, dict[str, int]] = {}
+            total_other_svc: dict[str, int] = {}
+
+            for tag_val, resources in value_resources.items():
+                ec2_hourly = 0.0
+                other_counts: dict[str, int] = {}
+                for r in resources:
+                    if r['service'] == 'ec2' and 'instance/' in r['resource']:
+                        inst_id = r['resource'].split('/')[-1]
+                        ec2_hourly += _get_hourly_cost(inst_id)
                     else:
-                        # Try partial match for unmapped services
-                        for mapped_code, mapped_name in SVC_CODE_TO_CE_NAME.items():
-                            if mapped_code in code:
-                                svc_counts[mapped_name] = svc_counts.get(mapped_name, 0) + 1
-                                break
-                if svc_counts:
-                    value_svc_counts[tag_val] = svc_counts
+                        svc_code = r['service']
+                        ce_name = SVC_CODE_TO_CE_NAME.get(svc_code)
+                        if ce_name:
+                            other_counts[ce_name] = other_counts.get(ce_name, 0) + 1
 
-            if not value_svc_counts:
-                continue
-
-            # Total resource count per service across all tag values
-            total_svc_counts: dict[str, int] = {}
-            for svc_counts in value_svc_counts.values():
-                for svc_name, count in svc_counts.items():
-                    total_svc_counts[svc_name] = total_svc_counts.get(svc_name, 0) + count
+                if ec2_hourly > 0:
+                    value_ec2_hourly[tag_val] = ec2_hourly
+                    total_ec2_hourly += ec2_hourly
+                if other_counts:
+                    value_other_svc[tag_val] = other_counts
+                    for svc, cnt in other_counts.items():
+                        total_other_svc[svc] = total_other_svc.get(svc, 0) + cnt
 
             # Estimate daily costs per tag value
             date_data: dict[str, dict[str, float]] = {}
@@ -899,14 +991,24 @@ class IncrementalFetchEngine:
                 total_day_cost = sum(svc_costs.values())
                 tagged_cost = 0.0
 
-                for tag_val, svc_counts in value_svc_counts.items():
+                ec2_day_cost = svc_costs.get(EC2_CE_NAME, 0.0)
+
+                for tag_val in set(list(value_ec2_hourly.keys()) + list(value_other_svc.keys())):
                     val_cost = 0.0
-                    for svc_name, res_count in svc_counts.items():
-                        svc_total_cost = svc_costs.get(svc_name, 0.0)
-                        total_res_for_svc = total_svc_counts.get(svc_name, 1)
-                        # Proportional allocation: (resources with this tag value / total tagged resources) * service cost
-                        proportion = res_count / total_res_for_svc
-                        val_cost += svc_total_cost * proportion
+
+                    # EC2: weight by instance hourly cost
+                    if tag_val in value_ec2_hourly and total_ec2_hourly > 0 and ec2_day_cost > 0:
+                        ec2_proportion = value_ec2_hourly[tag_val] / total_ec2_hourly
+                        val_cost += ec2_day_cost * ec2_proportion
+
+                    # Other services: weight by resource count
+                    if tag_val in value_other_svc:
+                        for svc_name, res_count in value_other_svc[tag_val].items():
+                            svc_total_cost = svc_costs.get(svc_name, 0.0)
+                            total_res = total_other_svc.get(svc_name, 1)
+                            if total_res > 0 and svc_total_cost > 0:
+                                val_cost += svc_total_cost * (res_count / total_res)
+
                     if val_cost > 0:
                         value_costs[tag_val] = round(val_cost, 10)
                         tagged_cost += val_cost
