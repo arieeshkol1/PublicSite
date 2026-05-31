@@ -727,6 +727,7 @@ function renderAccounts(accounts) {
                 '<button class="btn-icon btn-icon-download" data-a="dl" data-id="' + ea(a.accountId) + '" title="Download CF Template">&#8681;</button> ' +
                 '<button class="btn-icon btn-icon-download" data-a="dl-tf" data-id="' + ea(a.accountId) + '" title="Download Terraform" style="color:#7c3aed;">&#8681;TF</button> ' +
                 '<button class="btn-icon btn-icon-test" data-a="test" data-id="' + ea(a.accountId) + '" title="Test Connection">&#9889;</button> ' +
+                '<button class="btn-icon" data-a="refresh-cache" data-id="' + ea(a.accountId) + '" title="Refresh Cost Cache (90 days)" style="font-size:11px;color:#2563eb;">&#128260;</button> ' +
                 '<button class="btn-icon" data-a="update-perms" data-id="' + ea(a.accountId) + '" title="Update Permissions" style="font-size:11px;">&#128274;</button> ' +
                 '<button class="btn-icon" data-a="hourly" data-id="' + ea(a.accountId) + '" title="Enable Hourly Cost Data" style="font-size:11px;">&#9201;</button> ' +
                 '<button class="btn-icon btn-icon-edit" data-a="edit" data-id="' + ea(a.accountId) + '" title="Edit">&#9998;</button> ' +
@@ -754,6 +755,7 @@ accountsTbody.onclick = function(e) {
     else if (action === 'update-perms') updatePermissions(accountId, btn);
     else if (action === 'up' || action === 'down') reorderAccount(accountId, action);
     else if (action === 'hourly') showEnableHourlyModal(accountId);
+    else if (action === 'refresh-cache') refreshCostCache(accountId, btn);
 };
 
 async function reorderAccount(accountId, direction) {
@@ -981,6 +983,31 @@ async function testConnection(accountId, btn) {
         await loadAccounts();
     } finally {
         hideLoading();
+    }
+}
+
+// ============================================================
+// Refresh Cost Cache (90 days)
+// ============================================================
+
+async function refreshCostCache(accountId, btn) {
+    var origText = btn.innerHTML;
+    btn.innerHTML = '&#8987;';
+    btn.disabled = true;
+    try {
+        // Step 1: Invalidate existing cache for this account
+        await api('POST', '/members/cache/invalidate', { accountIds: [accountId] });
+        // Step 2: Trigger a fresh 90-day refresh by visiting the dashboard
+        // The dashboard handler will detect stale/missing cache and trigger async refresh
+        notify('Cache cleared. Refreshing 90 days of cost data in the background — this takes 1-2 minutes.', 'success');
+        btn.innerHTML = '&#10003;';
+        btn.style.color = '#10b981';
+        setTimeout(function() { btn.innerHTML = origText; btn.style.color = ''; btn.disabled = false; }, 5000);
+    } catch (e) {
+        notify(e.message || 'Failed to refresh cache.', 'error');
+        btn.innerHTML = '&#10007;';
+        btn.style.color = '#ef4444';
+        setTimeout(function() { btn.innerHTML = origText; btn.style.color = ''; btn.disabled = false; }, 3000);
     }
 }
 
