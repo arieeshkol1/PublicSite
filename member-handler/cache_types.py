@@ -37,9 +37,10 @@ class CostDataItem:
         currency: Currency code (e.g., "USD").
         service_breakdown: Mapping of service names to their individual
             cost amounts (e.g., {"Amazon EC2": 25.30, "Amazon S3": 8.12}).
-        tag_breakdown: Mapping of tag values to their cost amounts for
-            all active cost allocation tags. Keys are "tagKey=tagValue"
-            (e.g., {"Environment=Production": 15.0, "Team=Backend": 10.0}).
+        tag_breakdown: Nested mapping of tag keys to their value-cost
+            dictionaries. Format: {tag_key: {tag_value: cost_amount}}
+            (e.g., {"Environment": {"Production": 15.0, "Staging": 3.2},
+                    "Team": {"Backend": 10.0}}).
         fetched_at: ISO 8601 timestamp indicating when this data was
             retrieved from the Cost Explorer API.
     """
@@ -48,8 +49,56 @@ class CostDataItem:
     cost_amount: float
     currency: str
     service_breakdown: dict[str, float] = field(default_factory=dict)
-    tag_breakdown: dict[str, float] = field(default_factory=dict)
+    tag_breakdown: dict[str, dict[str, float]] = field(default_factory=dict)
     fetched_at: str = ""
+
+
+def normalize_tag_breakdown(
+    raw_breakdown: dict,
+) -> dict[str, dict[str, float]]:
+    """Normalize tag_breakdown to nested format regardless of stored format.
+
+    Detection logic:
+    - If empty dict → return empty
+    - If first value is a dict → Nested_Format (pass through with float conversion)
+    - If first value is a number/string-number → Flat_Format (convert)
+
+    Flat format conversion:
+    - "tagKey=tagValue" keys are split and grouped under the tag key
+    - Keys without "=" separator are placed under "unknown" tag key
+
+    Args:
+        raw_breakdown: Tag breakdown dict in either flat or nested format.
+
+    Returns:
+        Nested format: {tag_key: {tag_value: cost_float}}
+    """
+    if not raw_breakdown:
+        return {}
+
+    # Detect format by inspecting first value
+    first_value = next(iter(raw_breakdown.values()))
+
+    if isinstance(first_value, dict):
+        # Already nested format — convert string costs to float
+        return {
+            tag_key: {
+                tag_val: float(cost) for tag_val, cost in values.items()
+            }
+            for tag_key, values in raw_breakdown.items()
+        }
+
+    # Flat format: keys are "tagKey=tagValue", values are cost strings/numbers
+    nested: dict[str, dict[str, float]] = {}
+    for key, cost in raw_breakdown.items():
+        cost_float = float(cost)
+        if '=' in key:
+            tag_key, tag_value = key.split('=', 1)
+            nested.setdefault(tag_key, {})[tag_value] = cost_float
+        else:
+            nested.setdefault('unknown', {})[key] = cost_float
+
+    return nested
 
 
 @dataclass

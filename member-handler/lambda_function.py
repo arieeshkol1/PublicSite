@@ -2130,21 +2130,19 @@ def handle_dashboard_data(event):
                     if cache_items and len(cache_items) >= 25:
                         # Cache HIT with sufficient data (25+ days)
                         if tag_key and tag_value:
-                            # TAG FILTER MODE: Use tag_breakdown from cache
-                            tag_prefix = f"{tag_key}={tag_value}"
+                            # TAG FILTER MODE: Use nested tag_breakdown from cache
+                            from cache_types import normalize_tag_breakdown
                             service_totals = {}
                             daily_cost_trend = []
                             tag_found = False
                             for item in cache_items:
                                 date_str = item['sk'].replace('DAILY#', '')
-                                tb = item.get('tag_breakdown') or {}
-                                # Find matching tag value in tag_breakdown
-                                tag_cost = 0.0
-                                for tk, tv in tb.items():
-                                    if tk == tag_prefix or tk.lower() == tag_prefix.lower():
-                                        tag_cost = float(tv)
-                                        tag_found = True
-                                        break
+                                tb = normalize_tag_breakdown(item.get('tag_breakdown') or {})
+                                # Direct lookup by tag key, then by tag value
+                                tag_key_data = tb.get(tag_key, {})
+                                tag_cost = float(tag_key_data.get(tag_value, 0.0))
+                                if tag_cost > 0.0:
+                                    tag_found = True
                                 daily_cost_trend.append({'date': date_str, 'cost_usd': round(tag_cost, 2)})
                                 # For service breakdown with tag filter, use proportional allocation
                                 if tag_cost > 0:

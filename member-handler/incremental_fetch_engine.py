@@ -6,6 +6,7 @@ and fetching only the missing ranges from the AWS Cost Explorer API.
 Only DAILY granularity is supported — no MONTHLY or HOURLY.
 """
 
+import json
 import logging
 import time
 from datetime import date, datetime, timedelta, timezone
@@ -23,6 +24,12 @@ RETRYABLE_ERROR_CODES = frozenset({
     'RequestLimitExceeded',
     'InternalError',
 })
+
+# Maximum number of tag values retained per tag key (by descending cost)
+TOP_N_CAP_DEFAULT = 50
+
+# Safe size threshold for DynamoDB item (350 KB out of 400 KB limit)
+SIZE_LIMIT_BYTES = 350 * 1024
 
 
 class IncrementalFetchEngine:
@@ -152,23 +159,31 @@ class IncrementalFetchEngine:
 
         all_items: list[CostDataItem] = []
 
+        # Extract account_id for size_guard logging (default "unknown" if not available)
+        account_id = credentials.get('AccountId', credentials.get('account_id', 'unknown'))
+
         for batch_range in batched_ranges:
             response = self._call_ce_with_retry(ce_client, batch_range)
             items = self._parse_ce_response(response)
 
-            # Also fetch cost-by-tag for the same range
+            # Service-breakdown caching completes regardless of tag query outcomes
+            all_items.extend(items)
+
+            # Fetch multi-tag breakdowns for the same range
             try:
-                tag_response = self._call_ce_by_tag(ce_client, batch_range)
-                tag_data = self._parse_tag_response(tag_response)
-                # Merge tag data into items by date
-                for item in items:
-                    if item.date in tag_data:
-                        item.tag_breakdown = tag_data[item.date]
+                all_tag_data = self._fetch_all_tag_breakdowns(ce_client, batch_range)
+                if all_tag_data:
+                    all_tag_data = self._apply_top_n_cap(all_tag_data)
+                    all_tag_data = self._apply_size_guard(all_tag_data, account_id)
+                    # Merge tag data into items by date: for each item, extract per-date dict for each tag key
+                    for item in items:
+                        item.tag_breakdown = {
+                            tag_key: tag_dates.get(item.date, {})
+                            for tag_key, tag_dates in all_tag_data.items()
+                        }
             except Exception as e:
                 logger.warning(f"Tag fetch failed for {batch_range.start}-{batch_range.end}: {e}")
                 # Continue without tags — service data is still valid
-
-            all_items.extend(items)
 
         return all_items
 
@@ -446,6 +461,270 @@ class IncrementalFetchEngine:
 
             if tag_breakdown:
                 tag_data[period_start] = tag_breakdown
+
+        return tag_data
+
+    def _discover_active_tag_keys(
+        self, ce_client, date_range: DateRange
+    ) -> list[str]:
+        """Discover all active cost allocation tag keys for the date range.
+
+        Calls CE get_tags API. On failure, logs warning and returns empty list
+        (graceful degradation — tag breakdown is skipped, service data unaffected).
+
+        Args:
+            ce_client: boto3 Cost Explorer client.
+            date_range: DateRange to query.
+
+        Returns:
+            List of active tag key strings. Empty list on failure or no tags.
+        """
+        try:
+            response = ce_client.get_tags(
+                TimePeriod={'Start': date_range.start, 'End': date_range.end}
+            )
+            tags = response.get('Tags', [])
+            if tags:
+                logger.info(f"Discovered {len(tags)} active tag keys: {tags}")
+                return tags
+            logger.info("No active tag keys found, skipping tag breakdown")
+            return []
+        except Exception as e:
+            logger.warning(f"Failed to discover tag keys, skipping tag breakdown: {e}")
+            return []
+
+    def _call_ce_for_single_tag(
+        self,
+        ce_client,
+        date_range: DateRange,
+        tag_key: str,
+        max_retries: int = 3,
+        base_delay: float = 0.1,
+    ) -> dict | None:
+        """Query CE GetCostAndUsage for a single tag key with retry.
+
+        Uses exponential backoff for transient errors (same codes as
+        _call_ce_with_retry). Returns None on failure after retry exhaustion
+        to allow caller to continue with remaining tag keys.
+
+        Args:
+            ce_client: boto3 Cost Explorer client.
+            date_range: DateRange to query.
+            tag_key: The tag key to group by.
+            max_retries: Maximum number of retry attempts (default 3).
+            base_delay: Base delay in seconds for backoff (default 0.1).
+
+        Returns:
+            The CE API response dict, or None on failure.
+        """
+        for attempt in range(max_retries + 1):
+            try:
+                response = ce_client.get_cost_and_usage(
+                    TimePeriod={'Start': date_range.start, 'End': date_range.end},
+                    Granularity='DAILY',
+                    Metrics=['UnblendedCost'],
+                    GroupBy=[{'Type': 'TAG', 'Key': tag_key}],
+                )
+                return response
+            except ClientError as e:
+                error_code = e.response['Error']['Code']
+                if error_code in RETRYABLE_ERROR_CODES and attempt < max_retries:
+                    delay = base_delay * (2 ** attempt)
+                    logger.warning(
+                        "Transient CE error '%s' for tag '%s' attempt %d/%d, "
+                        "retry in %.2fs",
+                        error_code, tag_key, attempt + 1, max_retries, delay,
+                    )
+                    time.sleep(delay)
+                    continue
+                logger.warning(
+                    "Tag key query failed for '%s': %s (code: %s)",
+                    tag_key, e, error_code,
+                )
+                return None
+        return None
+
+    def _parse_single_tag_response(
+        self, response: dict, tag_key: str
+    ) -> dict[str, dict[str, float]]:
+        """Parse CE tag response for a single tag key into {date: {value: cost}}.
+
+        Rules:
+        - Zero-cost values are excluded
+        - Empty/missing tag values are stored as "(untagged)"
+        - The dollar-sign separator in CE keys ("key$value") is handled
+
+        Args:
+            response: The raw CE API response dict (grouped by TAG).
+            tag_key: The tag key that was queried (used for key prefix detection).
+
+        Returns:
+            Dict mapping date (YYYY-MM-DD) to {tag_value: cost_amount}.
+        """
+        date_data: dict[str, dict[str, float]] = {}
+
+        for period in response.get('ResultsByTime', []):
+            period_start = period['TimePeriod']['Start']
+            values: dict[str, float] = {}
+
+            for group in period.get('Groups', []):
+                raw_key = group['Keys'][0]
+                amount = float(group['Metrics']['UnblendedCost']['Amount'])
+
+                if amount == 0.0:
+                    continue
+
+                # Extract tag value from CE key format
+                if raw_key == '' or raw_key == '$' or raw_key == f'{tag_key}$':
+                    tag_value = '(untagged)'
+                elif '$' in raw_key:
+                    # Format: "tagKey$tagValue" — extract value after $
+                    tag_value = raw_key.split('$', 1)[1] or '(untagged)'
+                else:
+                    tag_value = raw_key
+
+                values[tag_value] = values.get(tag_value, 0.0) + amount
+
+            if values:
+                date_data[period_start] = values
+
+        return date_data
+
+    def _fetch_all_tag_breakdowns(
+        self,
+        ce_client,
+        date_range: DateRange,
+    ) -> dict[str, dict[str, dict[str, float]]]:
+        """Fetch tag breakdowns for all active tag keys sequentially.
+
+        Discovers active tag keys via _discover_active_tag_keys, then queries
+        Cost Explorer for each tag key one at a time. Parses each successful
+        response and collects results. Logs error if all queries fail, warning
+        if some fail.
+
+        Args:
+            ce_client: boto3 Cost Explorer client.
+            date_range: DateRange to query.
+
+        Returns:
+            Nested dict: {tag_key: {date: {tag_value: cost}}}
+            Only includes successfully queried tag keys.
+        """
+        tag_keys = self._discover_active_tag_keys(ce_client, date_range)
+        if not tag_keys:
+            return {}
+
+        all_tag_data: dict[str, dict[str, dict[str, float]]] = {}
+        failed_count = 0
+
+        for tag_key in tag_keys:
+            response = self._call_ce_for_single_tag(ce_client, date_range, tag_key)
+            if response is None:
+                failed_count += 1
+                continue
+            parsed = self._parse_single_tag_response(response, tag_key)
+            if parsed:
+                all_tag_data[tag_key] = parsed
+
+        if failed_count == len(tag_keys):
+            logger.error(f"All {failed_count} tag key queries failed")
+        elif failed_count > 0:
+            logger.warning(f"{failed_count}/{len(tag_keys)} tag key queries failed")
+
+        return all_tag_data
+
+    def _apply_top_n_cap(
+        self,
+        tag_data: dict[str, dict[str, dict[str, float]]],
+        top_n: int = TOP_N_CAP_DEFAULT,
+    ) -> dict[str, dict[str, dict[str, float]]]:
+        """Retain only top N tag values per tag key by total cost across all dates.
+
+        Sums costs per tag value across all dates for each tag key, then retains
+        only the top N values (by descending total cost). Discarded values are
+        aggregated into a single "(other)" entry per day. The "(untagged)" entry
+        is always preserved regardless of ranking.
+
+        Args:
+            tag_data: {tag_key: {date: {tag_value: cost}}}
+            top_n: Maximum values to retain per tag key (default 50).
+
+        Returns:
+            Modified tag_data with capped values per tag key.
+        """
+        for tag_key, date_values in tag_data.items():
+            # Sum costs across all dates per value (excluding special entries)
+            value_totals: dict[str, float] = {}
+            for date_dict in date_values.values():
+                for value, cost in date_dict.items():
+                    if value == '(other)':
+                        continue
+                    if value == '(untagged)':
+                        continue
+                    value_totals[value] = value_totals.get(value, 0.0) + cost
+
+            if len(value_totals) <= top_n:
+                continue
+
+            # Determine top N values by descending total cost
+            sorted_values = sorted(
+                value_totals.items(), key=lambda x: x[1], reverse=True
+            )
+            top_values = {v[0] for v in sorted_values[:top_n]}
+
+            # Aggregate discarded values into "(other)" per day
+            for date_str, day_values in date_values.items():
+                other_sum = 0.0
+                keys_to_remove = []
+                for value, cost in day_values.items():
+                    if value not in top_values and value != '(untagged)' and value != '(other)':
+                        other_sum += cost
+                        keys_to_remove.append(value)
+                for k in keys_to_remove:
+                    del day_values[k]
+                if other_sum > 0:
+                    day_values['(other)'] = day_values.get('(other)', 0.0) + other_sum
+
+        return tag_data
+
+    def _apply_size_guard(
+        self,
+        tag_data: dict[str, dict[str, dict[str, float]]],
+        account_id: str,
+    ) -> dict[str, dict[str, dict[str, float]]]:
+        """Remove tag keys with fewest values until serialized size <= 350KB.
+
+        Serializes tag_data to JSON and checks UTF-8 byte size against
+        SIZE_LIMIT_BYTES (350KB). While over limit, finds the tag key with
+        the fewest distinct values across all dates, removes it, and logs
+        a warning. Repeats until within limit or no tag keys remain.
+
+        Args:
+            tag_data: {tag_key: {date: {tag_value: cost}}} — already Top-N capped.
+            account_id: Account identifier for logging context.
+
+        Returns:
+            Potentially reduced tag_data within size limit.
+        """
+        while True:
+            serialized = json.dumps(tag_data, default=str)
+            if len(serialized.encode('utf-8')) <= SIZE_LIMIT_BYTES:
+                break
+            if not tag_data:
+                break
+
+            # Find tag key with fewest total distinct values across all dates
+            key_value_counts = {
+                tk: len(set(v for day in dates.values() for v in day.keys()))
+                for tk, dates in tag_data.items()
+            }
+            smallest_key = min(key_value_counts, key=key_value_counts.get)
+            logger.warning(
+                "Size guard: removing tag key '%s' (account: %s) — "
+                "%d values, breakdown exceeds 350KB",
+                smallest_key, account_id, key_value_counts[smallest_key],
+            )
+            del tag_data[smallest_key]
 
         return tag_data
 

@@ -400,9 +400,12 @@ class CacheService:
                     'ttl': ttl_value,
                 }
 
-                # Include tag_breakdown if available
+                # Include tag_breakdown if available (nested format)
                 if item.tag_breakdown:
-                    dynamo_item['tag_breakdown'] = {k: str(v) for k, v in item.tag_breakdown.items()}
+                    dynamo_item['tag_breakdown'] = {
+                        tag_key: {tag_val: str(cost) for tag_val, cost in values.items()}
+                        for tag_key, values in item.tag_breakdown.items()
+                    }
 
                 put_requests.append({
                     'PutRequest': {
