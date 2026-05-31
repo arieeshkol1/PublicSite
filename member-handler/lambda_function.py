@@ -19310,7 +19310,31 @@ def handle_cache_invalidate(event):
         )
 
     logger.info(f"Cache invalidation completed: member_id={member_email}, accounts={account_ids}, deleted={deleted_count}")
+
+    # Trigger async 90-day refresh for each account (fire-and-forget)
+    for acct_id in account_ids:
+        try:
+            # Assume the cross-account role to get credentials for the refresh
+            creds = _assume_role_for_account(member_email, acct_id)
+            lambda_client.invoke(
+                FunctionName=os.environ.get('AWS_LAMBDA_FUNCTION_NAME', 'aws-bill-analyzer-member-api'),
+                InvocationType='Event',
+                Payload=json.dumps({
+                    '_cache_refresh': True,
+                    'member_email': member_email,
+                    'account_id': acct_id,
+                    'credentials': {
+                        'AccessKeyId': creds['AccessKeyId'],
+                        'SecretAccessKey': creds['SecretAccessKey'],
+                        'SessionToken': creds['SessionToken'],
+                    }
+                }).encode()
+            )
+            logger.info(f"Async cache refresh triggered after invalidation for {member_email}#{acct_id}")
+        except Exception as refresh_err:
+            logger.warning(f"Failed to trigger async refresh for {acct_id}: {refresh_err}")
+
     return create_response(200, {
-        'message': 'Cache invalidated',
+        'message': 'Cache invalidated and refresh triggered',
         'deletedItems': deleted_count,
     })
