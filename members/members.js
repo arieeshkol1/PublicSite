@@ -1399,6 +1399,7 @@ renderAccounts = function(accounts) {
                 '<button class="btn-icon btn-icon-download" data-a="dl" data-id="' + ea(a.accountId) + '" title="Download CF Template">&#8681;</button> ' +
                 '<button class="btn-icon btn-icon-download" data-a="dl-tf" data-id="' + ea(a.accountId) + '" title="Download Terraform" style="color:#7c3aed;">&#8681;TF</button> ' +
                 '<button class="btn-icon btn-icon-test" data-a="test" data-id="' + ea(a.accountId) + '" title="Test Connection">&#9889;</button> ' +
+                '<button class="btn-icon" data-a="refresh-cache" data-id="' + ea(a.accountId) + '" title="Refresh Cost Cache (90 days)" style="font-size:11px;color:#2563eb;">&#128260;</button> ' +
                 '<button class="btn-icon" data-a="update-perms" data-id="' + ea(a.accountId) + '" title="Update Permissions" style="font-size:11px;">&#128274;</button> ' +
                 '<button class="btn-icon" data-a="hourly" data-id="' + ea(a.accountId) + '" title="Enable Hourly Cost Data" style="font-size:11px;">&#9201;</button> ' +
                 '<button class="btn-icon btn-icon-edit" data-a="edit" data-id="' + ea(a.accountId) + '" title="Edit">&#9998;</button> ' +
@@ -1425,6 +1426,7 @@ accountsTbody.onclick = function(e) {
     else if (action === 'update-perms') updatePermissions(accountId, btn);
     else if (action === 'up' || action === 'down') reorderAccount(accountId, action);
     else if (action === 'hourly') showEnableHourlyModal(accountId);
+    else if (action === 'refresh-cache') refreshCostCache(accountId, btn);
 };
 
 // ============================================================
