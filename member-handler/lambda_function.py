@@ -2111,7 +2111,7 @@ def handle_dashboard_data(event):
             # Cache is READ-ONLY in the critical path: if cache hit, use it. If miss, skip to _gather_account_data.
             # Cache is populated by background refresh (non-blocking).
             cache_used = False
-            if cache_service and not (tag_key and tag_value):
+            if cache_service:
                 try:
                     end_date_cache = datetime.now(timezone.utc).strftime('%Y-%m-%d')
                     start_30d_cache = (datetime.now(timezone.utc) - timedelta(days=30)).strftime('%Y-%m-%d')
@@ -2128,25 +2128,63 @@ def handle_dashboard_data(event):
                     cache_items = cache_resp.get('Items', [])
 
                     if cache_items and len(cache_items) >= 25:
-                        # Cache HIT with sufficient data (25+ days) — use cached data directly
-                        cache_used = True
-                        service_totals = {}
-                        daily_cost_trend = []
-                        for item in cache_items:
-                            date_str = item['sk'].replace('DAILY#', '')
-                            cost = float(item.get('cost_amount', 0))
-                            daily_cost_trend.append({'date': date_str, 'cost_usd': cost})
-                            for svc, svc_cost in (item.get('service_breakdown') or {}).items():
-                                service_totals[svc] = service_totals.get(svc, 0) + float(svc_cost)
-                        cost_by_service = sorted(
-                            [{'service': s, 'cost_usd': round(c, 2), 'period': 'last_30_days'} for s, c in service_totals.items()],
-                            key=lambda x: x['cost_usd'], reverse=True
-                        )
-                        # Still call _gather_account_data for waste/rightsizing/EBS data
-                        acct_data, _ = _gather_account_data('how efficient is my account? rightsizing savings compare last 3 months', creds)
-                        acct_data['cost_by_service'] = cost_by_service
-                        acct_data['daily_cost_trend'] = daily_cost_trend
-                        acct_data['cache_status'] = 'hit'
+                        # Cache HIT with sufficient data (25+ days)
+                        if tag_key and tag_value:
+                            # TAG FILTER MODE: Use tag_breakdown from cache
+                            tag_prefix = f"{tag_key}={tag_value}"
+                            service_totals = {}
+                            daily_cost_trend = []
+                            tag_found = False
+                            for item in cache_items:
+                                date_str = item['sk'].replace('DAILY#', '')
+                                tb = item.get('tag_breakdown') or {}
+                                # Find matching tag value in tag_breakdown
+                                tag_cost = 0.0
+                                for tk, tv in tb.items():
+                                    if tk == tag_prefix or tk.lower() == tag_prefix.lower():
+                                        tag_cost = float(tv)
+                                        tag_found = True
+                                        break
+                                daily_cost_trend.append({'date': date_str, 'cost_usd': round(tag_cost, 2)})
+                                # For service breakdown with tag filter, use proportional allocation
+                                if tag_cost > 0:
+                                    total_day_cost = float(item.get('cost_amount', 0))
+                                    ratio = tag_cost / total_day_cost if total_day_cost > 0 else 0
+                                    for svc, svc_cost in (item.get('service_breakdown') or {}).items():
+                                        allocated = float(svc_cost) * ratio
+                                        if allocated > 0.01:
+                                            service_totals[svc] = service_totals.get(svc, 0) + allocated
+
+                            if tag_found:
+                                cache_used = True
+                                cost_by_service = sorted(
+                                    [{'service': s, 'cost_usd': round(c, 2), 'period': 'estimated'} for s, c in service_totals.items()],
+                                    key=lambda x: x['cost_usd'], reverse=True
+                                )
+                                acct_data, _ = _gather_account_data('how efficient is my account? rightsizing savings compare last 3 months', creds)
+                                acct_data['cost_by_service'] = cost_by_service
+                                acct_data['daily_cost_trend'] = daily_cost_trend
+                                acct_data['cache_status'] = 'hit_tag_filtered'
+                        else:
+                            # NORMAL MODE: Use service_breakdown from cache
+                            cache_used = True
+                            service_totals = {}
+                            daily_cost_trend = []
+                            for item in cache_items:
+                                date_str = item['sk'].replace('DAILY#', '')
+                                cost = float(item.get('cost_amount', 0))
+                                daily_cost_trend.append({'date': date_str, 'cost_usd': cost})
+                                for svc, svc_cost in (item.get('service_breakdown') or {}).items():
+                                    service_totals[svc] = service_totals.get(svc, 0) + float(svc_cost)
+                            cost_by_service = sorted(
+                                [{'service': s, 'cost_usd': round(c, 2), 'period': 'last_30_days'} for s, c in service_totals.items()],
+                                key=lambda x: x['cost_usd'], reverse=True
+                            )
+                            # Still call _gather_account_data for waste/rightsizing/EBS data
+                            acct_data, _ = _gather_account_data('how efficient is my account? rightsizing savings compare last 3 months', creds)
+                            acct_data['cost_by_service'] = cost_by_service
+                            acct_data['daily_cost_trend'] = daily_cost_trend
+                            acct_data['cache_status'] = 'hit'
 
                     # Trigger background refresh to populate/update cache (non-blocking)
                     if cache_service.should_background_refresh(member_email, acct_id):
