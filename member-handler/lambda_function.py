@@ -2421,8 +2421,8 @@ def handle_dashboard_data(event):
                     aws_session_token=creds['SessionToken'])
                 end_date = datetime.now(timezone.utc).strftime('%Y-%m-%d')
                 start_30d = (datetime.now(timezone.utc) - timedelta(days=30)).strftime('%Y-%m-%d')
-                # Only fetch unfiltered 30-day trend if no tag filter (filtered data comes from fallback)
-                if not (tag_key and tag_value):
+                # Only fetch unfiltered 30-day trend if no tag filter AND cache was not used (cache already has 30 days)
+                if not (tag_key and tag_value) and not cache_used:
                     _daily_params = {'TimePeriod': {'Start': start_30d, 'End': end_date}, 'Granularity': 'DAILY', 'Metrics': ['UnblendedCost']}
                     daily_30d = ce_30d.get_cost_and_usage(**_daily_params)
                     for period in daily_30d.get('ResultsByTime', []):

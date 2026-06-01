@@ -3324,13 +3324,13 @@ function _kpiCard(label, value, color) {
 // Widget layout management
 var DASH_WIDGET_DEFS = [
     {id:'dash-treemap', title:'Cost by Service', height:300, q:'Show me my cost breakdown by service'},
-    {id:'dash-daily', title:'Cost Trend', height:250, q:'Are there any cost anomalies?', extraTitle:' <span id="dash-trend-toggle" style="font-size:0.7em;margin-left:8px;"><button class="btn btn-outline btn-sm" style="padding:1px 6px;font-size:0.8em;background:#6366f1;color:#fff;border-color:#6366f1;" onclick="_toggleTrendView(\'daily\')">Daily</button> <button class="btn btn-outline btn-sm" style="padding:1px 6px;font-size:0.8em;" onclick="_toggleTrendView(\'hourly\')">Hourly</button></span>'},
+    {id:'dash-daily', title:'Cost Trend', height:250, q:'Are there any cost anomalies?', extraTitle:' <span id="dash-trend-toggle" style="font-size:0.7em;margin-left:8px;"><button class="btn btn-outline btn-sm" style="padding:1px 6px;font-size:0.8em;background:#6366f1;color:#fff;border-color:#6366f1;" onclick="_toggleTrendView(\'daily\')">Daily</button> </span>'},
     {id:'dash-waste', title:'Waste Detection', height:250, q:'What services do I not need? Show me all waste.'},
     {id:'dash-monthly', title:'Monthly Cost by Service', height:320, q:'Compare my costs over the last 3 months'},
     {id:'dash-unit-economics', title:'Live Business Metrics', height:380, q:'How are my live business metrics trending?'},
     {id:'dash-regional', title:'Cost by Region', height:300, q:'Show me my cost breakdown by region'},
     {id:'dash-cost-by-tag', title:'Tag Distribution', height:320, q:'Show me tag coverage across my resources'},
-    {id:'dash-cost-by-service', title:'Cost By Service', height:280, q:'Show me my cost breakdown by service over time', extraTitle:' <span id="dash-service-gran-toggle" style="font-size:0.7em;margin-left:8px;"><button class="btn btn-outline btn-sm" style="padding:1px 6px;font-size:0.8em;background:#6366f1;color:#fff;border-color:#6366f1;" onclick="_toggleServiceGranularity(\'daily\')">Daily</button> <button class="btn btn-outline btn-sm" style="padding:1px 6px;font-size:0.8em;" onclick="_toggleServiceGranularity(\'hourly\')">Hourly</button></span>'},
+    {id:'dash-cost-by-service', title:'Cost By Service', height:280, q:'Show me my cost breakdown by service over time', extraTitle:' <span id="dash-service-gran-toggle" style="font-size:0.7em;margin-left:8px;"><button class="btn btn-outline btn-sm" style="padding:1px 6px;font-size:0.8em;background:#6366f1;color:#fff;border-color:#6366f1;" onclick="_toggleServiceGranularity(\'daily\')">Daily</button> </span>'},
     {id:'dash-sp-coverage', title:'SP Coverage', height:180, q:'What is my Savings Plan coverage?'},
     {id:'dash-ri-coverage', title:'RI Coverage', height:180, q:'What is my Reserved Instance coverage?'},
     {id:'dash-finops-score', title:'FinOps Score Summary', height:280, q:'What is my FinOps maturity score?'}
