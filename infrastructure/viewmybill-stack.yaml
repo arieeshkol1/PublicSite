@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: 'ViewMyBill - AWS Bill Analysis Tool infrastructure'
-# v24 - Cost data cache table + IAM + route
+# v25 - Provider Registry table + IAM permissions
 
 Parameters:
   BillStorageBucket:
@@ -181,6 +181,15 @@ Resources:
                   - lambda:InvokeFunction
                 Resource:
                   - !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:aws-bill-analyzer-viewmybill'
+        - PolicyName: DynamoDBProviderRegistryRead
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:Query
+                Resource:
+                  - !GetAtt ProviderRegistryTable.Arn
       Tags:
         - Key: Project
           Value: ViewMyBill
@@ -224,6 +233,15 @@ Resources:
                   - dynamodb:Scan
                 Resource:
                   - !GetAtt LeadsTable.Arn
+        - PolicyName: DynamoDBProviderRegistryRead
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:Query
+                Resource:
+                  - !GetAtt ProviderRegistryTable.Arn
       Tags:
         - Key: Project
           Value: ViewMyBill
@@ -364,6 +382,15 @@ Resources:
                   - cognito-idp:ListUsers
                 Resource:
                   - !Sub 'arn:aws:cognito-idp:${AWS::Region}:${AWS::AccountId}:userpool/*'
+        - PolicyName: DynamoDBProviderRegistryRead
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:Query
+                Resource:
+                  - !GetAtt ProviderRegistryTable.Arn
       Tags:
         - Key: Project
           Value: ViewMyBill
@@ -543,6 +570,30 @@ Resources:
       TimeToLiveSpecification:
         AttributeName: ttl
         Enabled: true
+      SSESpecification:
+        SSEEnabled: true
+      Tags:
+        - Key: Project
+          Value: ViewMyBill
+
+  # ============================================================
+  # DynamoDB Table - Provider Registry (Multi-Cloud Config)
+  # ============================================================
+  ProviderRegistryTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: ProviderRegistry
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: providerId
+          AttributeType: S
+        - AttributeName: configCategory
+          AttributeType: S
+      KeySchema:
+        - AttributeName: providerId
+          KeyType: HASH
+        - AttributeName: configCategory
+          KeyType: RANGE
       SSESpecification:
         SSEEnabled: true
       Tags:
@@ -757,6 +808,15 @@ Resources:
                   - dynamodb:Scan
                 Resource:
                   - !GetAtt MembersTable.Arn
+        - PolicyName: DynamoDBProviderRegistryRead
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:Query
+                Resource:
+                  - !GetAtt ProviderRegistryTable.Arn
       Tags:
         - Key: Project
           Value: ViewMyBill
@@ -1135,6 +1195,15 @@ Resources:
                   - dynamodb:BatchWriteItem
                 Resource:
                   - !GetAtt CostCacheTable.Arn
+        - PolicyName: DynamoDBProviderRegistryRead
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:Query
+                Resource:
+                  - !GetAtt ProviderRegistryTable.Arn
       Tags:
         - Key: Project
           Value: ViewMyBill
@@ -1239,6 +1308,15 @@ Resources:
                   - dynamodb:GetItem
                 Resource:
                   - !GetAtt CostCacheTable.Arn
+        - PolicyName: DynamoDBProviderRegistryRead
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:Query
+                Resource:
+                  - !GetAtt ProviderRegistryTable.Arn
       Tags:
         - Key: Project
           Value: ViewMyBill
@@ -1258,12 +1336,8 @@ Resources:
       Code:
         S3Bucket: !Ref LambdaCodeBucket
         S3Key: 'lambda-packages/agent-action.zip'
-      Environment:
-        Variables:
-          PLATFORM_ACCOUNT_ID: '991105135552'
-          TIPS_TABLE_NAME: !Ref CostOptimizationTipsTable
-          PRICING_REGION: 'us-east-1'
-          COST_CACHE_TABLE_NAME: !Ref CostCacheTable
+      # No Environment block — all config values are hardcoded in the Lambda code
+      # to avoid KMS decryption issues with customer-managed keys.
       Tags:
         - Key: Project
           Value: ViewMyBill
@@ -1671,6 +1745,15 @@ Resources:
                   - dynamodb:Query
                 Resource:
                   - !GetAtt MembersTable.Arn
+        - PolicyName: DynamoDBProviderRegistryRead
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:Query
+                Resource:
+                  - !GetAtt ProviderRegistryTable.Arn
       Tags:
         - Key: Project
           Value: ViewMyBill
