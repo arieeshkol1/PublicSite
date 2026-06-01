@@ -2227,8 +2227,8 @@ def handle_dashboard_data(event):
 
             acct_total = sum(s['cost_usd'] for s in acct_data.get('cost_by_service', []))
 
-            # If tag filter is active, override cost_by_service/daily/monthly with per-instance estimates
-            if tag_key and tag_value:
+            # If tag filter is active and cache was NOT used, override with per-instance estimates
+            if tag_key and tag_value and not cache_used:
                 try:
                     tagged_resources = []  # list of {arn, service, region, resource_id, resource_type}
                     for _tag_region in ['eu-central-1', 'us-east-1', 'eu-west-1', 'us-west-2']:
