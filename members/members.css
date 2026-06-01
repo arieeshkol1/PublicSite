@@ -1414,3 +1414,70 @@
     font-weight: 700;
     letter-spacing: 0.03em;
 }
+
+/* ============================================================
+   Cost By Service Widget
+   ============================================================ */
+
+/* Loading indicator */
+.cost-by-service-loading {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 280px;
+    color: #6b7280;
+    font-size: 0.9em;
+    gap: 8px;
+}
+.cost-by-service-loading::before {
+    content: '';
+    width: 20px;
+    height: 20px;
+    border: 3px solid #e5e7eb;
+    border-top-color: #6366f1;
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+}
+
+/* Empty state message */
+.cost-by-service-empty {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 280px;
+    color: #6b7280;
+    font-size: 0.9em;
+    text-align: center;
+    padding: 24px;
+    background: #f9fafb;
+    border-radius: 8px;
+    border: 1px dashed #d1d5db;
+}
+
+/* Granularity toggle active state (supplement for btn-outline btn-sm) */
+#dash-cost-by-service .btn-outline.active,
+#dash-cost-by-service .btn-outline[aria-pressed="true"] {
+    background: #6366f1;
+    color: #fff;
+    border-color: #6366f1;
+}
+#dash-cost-by-service .btn-outline.active:hover,
+#dash-cost-by-service .btn-outline[aria-pressed="true"]:hover {
+    background: #4f46e5;
+    border-color: #4f46e5;
+}
+
+/* Responsive: ensure widget respects 380px minimum */
+#dash-cost-by-service {
+    min-width: 380px;
+}
+
+@media (max-width: 480px) {
+    #dash-cost-by-service {
+        min-width: 100%;
+    }
+    .cost-by-service-loading,
+    .cost-by-service-empty {
+        height: 200px;
+    }
+}

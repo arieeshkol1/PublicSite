@@ -3330,6 +3330,7 @@ var DASH_WIDGET_DEFS = [
     {id:'dash-unit-economics', title:'Live Business Metrics', height:380, q:'How are my live business metrics trending?'},
     {id:'dash-regional', title:'Cost by Region', height:300, q:'Show me my cost breakdown by region'},
     {id:'dash-cost-by-tag', title:'Tag Distribution', height:320, q:'Show me tag coverage across my resources'},
+    {id:'dash-cost-by-service', title:'Cost By Service', height:280, q:'Show me my cost breakdown by service over time', extraTitle:' <span id="dash-service-gran-toggle" style="font-size:0.7em;margin-left:8px;"><button class="btn btn-outline btn-sm" style="padding:1px 6px;font-size:0.8em;background:#6366f1;color:#fff;border-color:#6366f1;" onclick="_toggleServiceGranularity(\'daily\')">Daily</button> <button class="btn btn-outline btn-sm" style="padding:1px 6px;font-size:0.8em;" onclick="_toggleServiceGranularity(\'hourly\')">Hourly</button></span>'},
     {id:'dash-sp-coverage', title:'SP Coverage', height:180, q:'What is my Savings Plan coverage?'},
     {id:'dash-ri-coverage', title:'RI Coverage', height:180, q:'What is my Reserved Instance coverage?'},
     {id:'dash-finops-score', title:'FinOps Score Summary', height:280, q:'What is my FinOps maturity score?'}
@@ -3346,7 +3347,7 @@ var OBSERVE_SECTIONS = [
 
 // Widget-to-section mapping: each section ID maps to an array of widget IDs
 var OBSERVE_WIDGET_SECTIONS = {
-    'observe-cost': ['dash-treemap', 'dash-daily', 'dash-monthly', 'dash-regional', 'dash-cost-by-tag'],
+    'observe-cost': ['dash-treemap', 'dash-daily', 'dash-monthly', 'dash-regional', 'dash-cost-by-tag', 'dash-cost-by-service'],
     'observe-commitments': ['dash-sp-coverage', 'dash-ri-coverage', 'dash-waste'],
     'observe-metrics': ['dash-unit-economics'],
     'observe-health': ['dash-finops-score']
@@ -3746,6 +3747,7 @@ function _renderVisibleSectionCharts(data, sectionId) {
         if (toRender.indexOf('dash-unit-economics') !== -1) _renderLiveMetrics($("dash-unit-economics"));
         if (toRender.indexOf('dash-regional') !== -1) _renderRegionalPie(data.costByRegion || []);
         if (toRender.indexOf('dash-cost-by-tag') !== -1) _renderCostByTag(data.costByTag || {});
+        if (toRender.indexOf('dash-cost-by-service') !== -1) _renderCostByService(data.dailyServiceBreakdown || [], data.hourlyServiceBreakdown || []);
         if (toRender.indexOf('dash-sp-coverage') !== -1) _renderSPCoverageWidget();
         if (toRender.indexOf('dash-ri-coverage') !== -1) _renderRICoverageWidget();
         if (toRender.indexOf('dash-finops-score') !== -1 && typeof _renderFinOpsScoreWidget === 'function') _renderFinOpsScoreWidget();
@@ -3982,6 +3984,8 @@ function _askAIFromDashboard(question) {
 var _dashDailyData = null;
 var _dashHourlyData = null;
 var _dashDrillDown = {};
+var _dashServiceDaily = [];
+var _dashServiceHourly = [];
 
 function _toggleTrendView(mode) {
     var btns = document.querySelectorAll('#dash-trend-toggle button');
@@ -5130,6 +5134,293 @@ function _renderCostByTagChart() {
         }]
     });
     dashboardCharts.push(chart);
+    window.addEventListener('resize', function() { chart.resize(); });
+}
+
+function _renderCostByService(dailyData, hourlyData) {
+    _dashServiceDaily = dailyData || [];
+    _dashServiceHourly = hourlyData || [];
+    var el = $('dash-cost-by-service');
+    if (!el || !window.echarts) return;
+
+    var data = _dashServiceDaily;
+    var tagFilterActive = globalTagFilter && globalTagFilter.key && globalTagFilter.value;
+
+    if (!data.length) {
+        var emptyMsg = tagFilterActive
+            ? 'No data available for selected tag'
+            : 'No service breakdown data available';
+        el.innerHTML = '<div class="cost-by-service-empty">' + emptyMsg + '</div>';
+        return;
+    }
+
+    // Check if all days have zero cost (tag filter yielded no meaningful data)
+    if (tagFilterActive) {
+        var totalCostAllDays = 0;
+        data.forEach(function(day) {
+            var services = day.services || {};
+            Object.keys(services).forEach(function(svc) { totalCostAllDays += services[svc]; });
+        });
+        if (totalCostAllDays === 0) {
+            el.innerHTML = '<div class="cost-by-service-empty">No data available for selected tag</div>';
+            return;
+        }
+    }
+
+    // Calculate total cost per service across all days
+    var serviceTotals = {};
+    data.forEach(function(day) {
+        var services = day.services || {};
+        Object.keys(services).forEach(function(svc) {
+            serviceTotals[svc] = (serviceTotals[svc] || 0) + services[svc];
+        });
+    });
+
+    // Sort by total cost descending, take top 8
+    var sorted = Object.entries(serviceTotals).sort(function(a, b) { return b[1] - a[1]; });
+    var topServices = sorted.slice(0, 8).map(function(e) { return e[0]; });
+    var hasOther = sorted.length > 8;
+
+    // Build date categories (MM-DD format)
+    var dates = data.map(function(d) { return d.date.substring(5); });
+
+    // Build series data
+    var colors = _treemapColors;
+    var series = topServices.map(function(svc, i) {
+        return {
+            name: svc.replace('Amazon ', '').replace('AWS ', '').substring(0, 25),
+            type: 'bar',
+            stack: 'total',
+            data: data.map(function(day) { return Math.round((day.services[svc] || 0) * 100) / 100; }),
+            itemStyle: { color: colors[i % colors.length] },
+            emphasis: { focus: 'series' }
+        };
+    });
+
+    // Add "Other" series if needed
+    if (hasOther) {
+        series.push({
+            name: 'Other',
+            type: 'bar',
+            stack: 'total',
+            data: data.map(function(day) {
+                var otherCost = 0;
+                Object.keys(day.services || {}).forEach(function(svc) {
+                    if (topServices.indexOf(svc) === -1) {
+                        otherCost += day.services[svc];
+                    }
+                });
+                return Math.round(otherCost * 100) / 100;
+            }),
+            itemStyle: { color: colors[8 % colors.length] },
+            emphasis: { focus: 'series' }
+        });
+    }
+
+    // Precompute day totals for tooltip percentage
+    var dayTotals = data.map(function(day) {
+        var total = 0;
+        Object.keys(day.services || {}).forEach(function(svc) { total += day.services[svc]; });
+        return total;
+    });
+
+    var chart = echarts.init(el, null);
+    chart.setOption({
+        tooltip: {
+            trigger: 'axis',
+            axisPointer: { type: 'shadow' },
+            formatter: function(ps) {
+                var s = ps[0].axisValue + '<br>';
+                var dayIdx = dates.indexOf(ps[0].axisValue);
+                var dayTotal = dayIdx >= 0 ? dayTotals[dayIdx] : 0;
+                ps.forEach(function(p) {
+                    if (p.value > 0) {
+                        var pct = dayTotal > 0 ? (p.value / dayTotal * 100).toFixed(1) : '0.0';
+                        s += p.marker + p.seriesName + ': $' + p.value.toFixed(2) + ' (' + pct + '%)<br>';
+                    }
+                });
+                return s;
+            }
+        },
+        legend: { type: 'scroll', bottom: 0, textStyle: { color: '#6b7280', fontSize: 10 }, itemWidth: 12, itemHeight: 8 },
+        xAxis: { type: 'category', data: dates, axisLabel: { color: '#6b7280', fontSize: 9, rotate: dates.length > 15 ? 45 : 0 } },
+        yAxis: { type: 'value', axisLabel: { color: '#6b7280', formatter: '${value}' }, splitLine: { lineStyle: { color: '#e5e7eb' } } },
+        series: series,
+        grid: { left: 55, right: 10, bottom: 50, top: 10 }
+    });
+    window.addEventListener('resize', function() { chart.resize(); });
+
+    // On initial render, check sessionStorage and restore last granularity selection
+    var savedGran = sessionStorage.getItem('costByServiceGran');
+    if (savedGran === 'hourly') {
+        _toggleServiceGranularity('hourly');
+    }
+}
+
+// ============================================================
+// Cost By Service — Granularity Toggle
+// Requirements: 6.1, 6.2, 6.3, 6.4, 6.5, 3.3
+// ============================================================
+
+function _toggleServiceGranularity(mode) {
+    // Update button active states (toggle visual)
+    var btns = document.querySelectorAll('#dash-service-gran-toggle button');
+    btns.forEach(function(b) { b.style.background = ''; b.style.color = ''; b.style.borderColor = ''; });
+    if (mode === 'hourly') {
+        if (btns[1]) { btns[1].style.background = '#6366f1'; btns[1].style.color = '#fff'; btns[1].style.borderColor = '#6366f1'; }
+    } else {
+        if (btns[0]) { btns[0].style.background = '#6366f1'; btns[0].style.color = '#fff'; btns[0].style.borderColor = '#6366f1'; }
+    }
+
+    // Persist selected granularity in sessionStorage
+    sessionStorage.setItem('costByServiceGran', mode);
+
+    var el = $('dash-cost-by-service');
+    if (!el) return;
+
+    if (mode === 'daily') {
+        // Restore chart from cached _dashServiceDaily without re-fetching
+        _renderCostByServiceChart(_dashServiceDaily, 'daily');
+    } else if (mode === 'hourly') {
+        // Show loading indicator during fetch
+        el.innerHTML = '<div class="cost-by-service-loading">Loading hourly data...</div>';
+
+        // Build the API URL with account IDs and tag filter params
+        var selectedIds = getDashSelectedAccountIds();
+        var url = '/members/dashboard-data?hourlyService=true';
+        if (selectedIds.length > 0) url += '&accountIds=' + selectedIds.join(',');
+        var tagParams = getTagFilterParams();
+        if (tagParams) url += '&' + tagParams;
+
+        // Fetch hourly data
+        api('GET', url).then(function(resp) {
+            var hourlyData = resp.hourlyServiceBreakdown || [];
+            _dashServiceHourly = hourlyData;
+            if (!hourlyData.length) {
+                el.innerHTML = '<div class="cost-by-service-empty">No hourly service data available</div>';
+                return;
+            }
+            _renderCostByServiceChart(hourlyData, 'hourly');
+        }).catch(function(err) {
+            var msg = (err && err.message) || '';
+            if (msg.indexOf('hourly granularity') !== -1 || msg.indexOf('DataUnavailable') !== -1 || msg.indexOf('not enabled') !== -1) {
+                el.innerHTML = '<div class="cost-by-service-empty" style="flex-direction:column;gap:8px;">' +
+                    '<span>Enable hourly granularity in AWS Cost Explorer settings</span>' +
+                    '</div>';
+            } else {
+                el.innerHTML = '<div class="cost-by-service-empty" style="flex-direction:column;gap:8px;">' +
+                    '<span>Unable to load hourly data. Try again.</span>' +
+                    '<button class="btn btn-outline btn-sm" onclick="_toggleServiceGranularity(\'hourly\')">Retry</button>' +
+                    '</div>';
+            }
+        });
+    }
+}
+
+/**
+ * Render the cost-by-service stacked bar chart from either daily or hourly data.
+ * Shared rendering logic used by both _renderCostByService and _toggleServiceGranularity.
+ */
+function _renderCostByServiceChart(data, mode) {
+    var el = $('dash-cost-by-service');
+    if (!el || !window.echarts) return;
+
+    if (!data || !data.length) {
+        el.innerHTML = '<div class="cost-by-service-empty">No service breakdown data available</div>';
+        return;
+    }
+
+    // Calculate total cost per service across all time periods
+    var serviceTotals = {};
+    data.forEach(function(entry) {
+        var services = entry.services || {};
+        Object.keys(services).forEach(function(svc) {
+            serviceTotals[svc] = (serviceTotals[svc] || 0) + services[svc];
+        });
+    });
+
+    // Sort by total cost descending, take top 8
+    var sorted = Object.entries(serviceTotals).sort(function(a, b) { return b[1] - a[1]; });
+    var topServices = sorted.slice(0, 8).map(function(e) { return e[0]; });
+    var hasOther = sorted.length > 8;
+
+    // Build x-axis categories based on granularity
+    var categories;
+    if (mode === 'hourly') {
+        // Format: "MM-DD HH:00" from "YYYY-MM-DDTHH:00"
+        categories = data.map(function(d) {
+            var h = d.hour || '';
+            return h.substring(5, 10) + ' ' + h.substring(11, 16);
+        });
+    } else {
+        // Format: "MM-DD" from "YYYY-MM-DD"
+        categories = data.map(function(d) { return (d.date || '').substring(5); });
+    }
+
+    // Build series data
+    var colors = _treemapColors;
+    var series = topServices.map(function(svc, i) {
+        return {
+            name: svc.replace('Amazon ', '').replace('AWS ', '').substring(0, 25),
+            type: 'bar',
+            stack: 'total',
+            data: data.map(function(entry) { return Math.round((entry.services[svc] || 0) * 100) / 100; }),
+            itemStyle: { color: colors[i % colors.length] },
+            emphasis: { focus: 'series' }
+        };
+    });
+
+    // Add "Other" series if needed
+    if (hasOther) {
+        series.push({
+            name: 'Other',
+            type: 'bar',
+            stack: 'total',
+            data: data.map(function(entry) {
+                var otherCost = 0;
+                Object.keys(entry.services || {}).forEach(function(svc) {
+                    if (topServices.indexOf(svc) === -1) {
+                        otherCost += entry.services[svc];
+                    }
+                });
+                return Math.round(otherCost * 100) / 100;
+            }),
+            itemStyle: { color: colors[8 % colors.length] },
+            emphasis: { focus: 'series' }
+        });
+    }
+
+    // Precompute period totals for tooltip percentage
+    var periodTotals = data.map(function(entry) {
+        var total = 0;
+        Object.keys(entry.services || {}).forEach(function(svc) { total += entry.services[svc]; });
+        return total;
+    });
+
+    var chart = echarts.init(el, null);
+    chart.setOption({
+        tooltip: {
+            trigger: 'axis',
+            axisPointer: { type: 'shadow' },
+            formatter: function(ps) {
+                var s = ps[0].axisValue + '<br>';
+                var idx = categories.indexOf(ps[0].axisValue);
+                var periodTotal = idx >= 0 ? periodTotals[idx] : 0;
+                ps.forEach(function(p) {
+                    if (p.value > 0) {
+                        var pct = periodTotal > 0 ? (p.value / periodTotal * 100).toFixed(1) : '0.0';
+                        s += p.marker + p.seriesName + ': $' + p.value.toFixed(2) + ' (' + pct + '%)<br>';
+                    }
+                });
+                return s;
+            }
+        },
+        legend: { type: 'scroll', bottom: 0, textStyle: { color: '#6b7280', fontSize: 10 }, itemWidth: 12, itemHeight: 8 },
+        xAxis: { type: 'category', data: categories, axisLabel: { color: '#6b7280', fontSize: 9, rotate: categories.length > 15 ? 45 : 0 } },
+        yAxis: { type: 'value', axisLabel: { color: '#6b7280', formatter: '${value}' }, splitLine: { lineStyle: { color: '#e5e7eb' } } },
+        series: series,
+        grid: { left: 55, right: 10, bottom: 50, top: 10 }
+    });
     window.addEventListener('resize', function() { chart.resize(); });
 }
 

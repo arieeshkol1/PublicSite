@@ -2014,6 +2014,9 @@ def handle_dashboard_data(event):
     tag_key = qs.get('tagKey', '').strip() or None
     tag_value = qs.get('tagValue', '').strip() or None
 
+    # Check if hourly service breakdown is requested
+    hourly_service_requested = qs.get('hourlyService') == 'true'
+
     # Auto-activate cost allocation tag if tag filter is being used
     # This uses the PLATFORM account's CE (not cross-account) since cost allocation tags
     # are managed at the payer/management account level
@@ -2064,7 +2067,9 @@ def handle_dashboard_data(event):
     savings_breakdown = {}
     containers = {'ecsClusters': [], 'eksClusters': []}
     all_discovered_metrics = []
+    all_cache_items = []
     tag_filter_empty = False
+    first_account_creds = None  # Capture first account's credentials for hourly service breakdown
 
     for acct in accounts[:5]:
         acct_id = acct['accountId']
@@ -2075,6 +2080,10 @@ def handle_dashboard_data(event):
                 RoleSessionName='SlashMyBillDash', ExternalId=external_id,
             )
             creds = assume_resp['Credentials']
+
+            # Capture first account's credentials for hourly service breakdown
+            if first_account_creds is None:
+                first_account_creds = creds
 
             # Activate cost allocation tag on the linked account if tag filter is active
             if tag_key and tag_value:
@@ -2126,6 +2135,7 @@ def handle_dashboard_data(event):
                         KeyConditionExpression=DDBKey('pk').eq(pk) & DDBKey('sk').between(start_sk, end_sk)
                     )
                     cache_items = cache_resp.get('Items', [])
+                    all_cache_items.extend(cache_items)
 
                     if cache_items and len(cache_items) >= 25:
                         # Cache HIT with sufficient data (25+ days)
@@ -2653,6 +2663,11 @@ def handle_dashboard_data(event):
     except Exception as e:
         logger.warning(f"Allocation rules error: {e}")
 
+    # Fetch hourly service breakdown if requested (uses first account's credentials)
+    hourly_service_breakdown = None
+    if hourly_service_requested and first_account_creds:
+        hourly_service_breakdown = _fetch_hourly_service_breakdown(first_account_creds, tag_key, tag_value)
+
     return create_response(200, {
         'summary': {
             'totalSpend': total_spend,
@@ -2692,6 +2707,8 @@ def handle_dashboard_data(event):
         ),
         'commitments': _get_commitments_data(accounts, external_id),
         'costByTag': _get_cost_by_tag(accounts, external_id),
+        'dailyServiceBreakdown': _build_daily_service_breakdown(all_cache_items, tag_key, tag_value),
+        'hourlyServiceBreakdown': hourly_service_breakdown,
         'healthcheckResults': _get_healthcheck_results(member_email),
         'taggedResources': all_tagged_resources if (tag_key and tag_value and all_tagged_resources) else None,
         'tagFilterWarning': (
@@ -2702,6 +2719,211 @@ def handle_dashboard_data(event):
             else None
         ),
     })
+
+
+
+def _build_daily_service_breakdown(cache_items, tag_key=None, tag_value=None):
+    """Build daily service cost breakdown from cache items.
+
+    Iterates cache records, extracts service_breakdown per day, optionally applies
+    proportional tag allocation, merges across multiple accounts, and returns a
+    sorted list of {date, services} entries.
+
+    Args:
+        cache_items: List of DynamoDB cache records with pk, sk, cost_amount,
+                     service_breakdown, and optionally tag_breakdown fields.
+        tag_key: Optional tag key for filtering (e.g., 'Environment').
+        tag_value: Optional tag value for filtering (e.g., 'Production').
+
+    Returns:
+        List of {"date": "YYYY-MM-DD", "services": {"ServiceName": cost_float, ...}}
+        sorted by date ascending.
+    """
+    from decimal import Decimal
+
+    # Accumulator: {date_str: {service_name: cost_float}}
+    daily_services = {}
+
+    for item in cache_items:
+        # Extract date from sort key (format: "DAILY#YYYY-MM-DD")
+        sk = item.get('sk', '')
+        if not sk.startswith('DAILY#'):
+            continue
+        date_str = sk.replace('DAILY#', '')
+
+        # Skip items without service_breakdown
+        service_breakdown = item.get('service_breakdown')
+        if not service_breakdown:
+            continue
+
+        # Convert service costs to float (handles Decimal from DynamoDB)
+        services = {}
+        for svc_name, svc_cost in service_breakdown.items():
+            cost_val = float(svc_cost) if isinstance(svc_cost, (Decimal, int, float, str)) else 0.0
+            if cost_val > 0:
+                services[svc_name] = cost_val
+
+        if not services:
+            continue
+
+        if tag_key and tag_value:
+            # Proportional tag allocation mode
+            # Get total tag cost for this day from tag_breakdown
+            tag_breakdown = item.get('tag_breakdown') or {}
+
+            # Normalize tag_breakdown (handles both flat and nested formats)
+            try:
+                from cache_types import normalize_tag_breakdown
+                tag_breakdown = normalize_tag_breakdown(tag_breakdown)
+            except (ImportError, Exception):
+                # If normalize not available, assume nested format
+                pass
+
+            tag_key_data = tag_breakdown.get(tag_key, {})
+            tag_cost = float(tag_key_data.get(tag_value, 0.0))
+
+            if tag_cost <= 0:
+                # No cost for this tag on this day - skip
+                continue
+
+            # Total day cost from service breakdown
+            total_day_cost = sum(services.values())
+
+            if total_day_cost <= 0:
+                # Avoid division by zero - all services get zero
+                allocated_services = {svc: 0.0 for svc in services}
+            else:
+                # Proportional allocation: tag_cost * (service_cost / total_day_cost)
+                allocated_services = {}
+                for svc_name, svc_cost in services.items():
+                    allocated_services[svc_name] = tag_cost * (svc_cost / total_day_cost)
+
+            # Merge into accumulator (handles multiple accounts for same date)
+            if date_str not in daily_services:
+                daily_services[date_str] = {}
+            for svc_name, alloc_cost in allocated_services.items():
+                daily_services[date_str][svc_name] = daily_services[date_str].get(svc_name, 0.0) + alloc_cost
+        else:
+            # No tag filter - return services as-is, merge across accounts
+            if date_str not in daily_services:
+                daily_services[date_str] = {}
+            for svc_name, svc_cost in services.items():
+                daily_services[date_str][svc_name] = daily_services[date_str].get(svc_name, 0.0) + svc_cost
+
+    # Build output sorted by date ascending
+    result = []
+    for date_str in sorted(daily_services.keys()):
+        result.append({
+            'date': date_str,
+            'services': {svc: round(cost, 4) for svc, cost in daily_services[date_str].items()}
+        })
+
+    return result
+
+
+def _fetch_hourly_service_breakdown(creds, tag_key=None, tag_value=None):
+    """Fetch hourly service cost breakdown from Cost Explorer API.
+
+    Calls CE get_cost_and_usage with HOURLY granularity grouped by SERVICE
+    for the last 3 days. Optionally applies a tag filter to the query.
+
+    Args:
+        creds: Dict with AccessKeyId, SecretAccessKey, SessionToken from STS AssumeRole.
+        tag_key: Optional tag key for filtering (e.g., 'Environment').
+        tag_value: Optional tag value for filtering (e.g., 'Production').
+
+    Returns:
+        List of {"hour": "YYYY-MM-DDTHH:00", "services": {"ServiceName": cost_float, ...}}
+        on success, or an error dict like {"error": "hourly_not_enabled", "message": "..."}
+        on failure.
+    """
+    try:
+        ce_client = boto3.client(
+            'ce',
+            aws_access_key_id=creds['AccessKeyId'],
+            aws_secret_access_key=creds['SecretAccessKey'],
+            aws_session_token=creds['SessionToken'],
+            region_name='us-east-1'
+        )
+
+        # Time period: last 3 days
+        end_date = datetime.now(timezone.utc)
+        start_date = end_date - timedelta(days=3)
+
+        ce_params = {
+            'TimePeriod': {
+                'Start': start_date.strftime('%Y-%m-%d'),
+                'End': end_date.strftime('%Y-%m-%d')
+            },
+            'Granularity': 'HOURLY',
+            'Metrics': ['UnblendedCost'],
+            'GroupBy': [{'Type': 'DIMENSION', 'Key': 'SERVICE'}]
+        }
+
+        # Apply tag filter if active
+        if tag_key and tag_value:
+            ce_params['Filter'] = {
+                'Tags': {
+                    'Key': tag_key,
+                    'Values': [tag_value]
+                }
+            }
+
+        response = ce_client.get_cost_and_usage(**ce_params)
+
+        # Transform ResultsByTime into our format
+        result = []
+        for time_result in response.get('ResultsByTime', []):
+            # Extract hour from time period start (format: "2024-01-15T08:00:00Z" or "2024-01-15T08:00:00")
+            period_start = time_result.get('TimePeriod', {}).get('Start', '')
+            # Normalize to "YYYY-MM-DDTHH:00" format
+            if 'T' in period_start:
+                hour_str = period_start[:13] + ':00'
+            else:
+                # Fallback: if no T separator, use as-is
+                hour_str = period_start
+
+            services = {}
+            for group in time_result.get('Groups', []):
+                # Service name is the first key in the group
+                svc_name = group.get('Keys', ['Unknown'])[0]
+                cost_amount = group.get('Metrics', {}).get('UnblendedCost', {}).get('Amount', '0')
+                cost_float = float(cost_amount)
+                if cost_float > 0:
+                    services[svc_name] = round(cost_float, 4)
+
+            if services:
+                result.append({
+                    'hour': hour_str,
+                    'services': services
+                })
+
+        return result
+
+    except ClientError as e:
+        error_code = e.response.get('Error', {}).get('Code', '')
+        error_message = e.response.get('Error', {}).get('Message', str(e))
+
+        if error_code == 'DataUnavailableException' or 'HOURLY' in error_message.upper():
+            return {
+                'error': 'hourly_not_enabled',
+                'message': 'Hourly granularity is not enabled. Enable it in AWS Cost Explorer settings (takes up to 24 hours to activate).'
+            }
+
+        # Rate limiting or other API errors
+        logger.warning(f"CE API error fetching hourly breakdown: {error_code} - {error_message}")
+        return {
+            'error': 'ce_api_error',
+            'message': f'Unable to fetch hourly data: {error_message}'
+        }
+
+    except Exception as e:
+        # Timeout, network errors, or unexpected failures
+        logger.warning(f"Unexpected error fetching hourly service breakdown: {e}")
+        return {
+            'error': 'fetch_failed',
+            'message': 'Unable to load hourly data. Please try again.'
+        }
 
 
 def _get_healthcheck_results(member_email):
