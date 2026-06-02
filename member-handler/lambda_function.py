@@ -754,9 +754,10 @@ def handle_add_account(event):
     account_id = (body.get('accountId') or '').strip()
     account_name = (body.get('accountName') or '').strip()
 
-    # Validate 12-digit Account ID
-    if not re.fullmatch(r'\d{12}', account_id):
-        return create_error_response(400, 'InvalidAccountId', 'Account ID must be exactly 12 digits')
+    # Validate Account ID format (registry-driven)
+    validation_err = _validate_account_id(account_id)
+    if validation_err:
+        return validation_err
 
     accounts_table = dynamodb.Table(ACCOUNTS_TABLE_NAME)
 
@@ -838,9 +839,10 @@ def handle_edit_account(event):
     if not old_account_id or not new_account_id:
         return create_error_response(400, 'InvalidRequest', "Fields 'oldAccountId' and 'newAccountId' are required")
 
-    # Validate new Account ID is 12 digits
-    if not re.fullmatch(r'\d{12}', new_account_id):
-        return create_error_response(400, 'InvalidAccountId', 'Account ID must be exactly 12 digits')
+    # Validate new Account ID format (registry-driven)
+    validation_err = _validate_account_id(new_account_id)
+    if validation_err:
+        return validation_err
 
     accounts_table = dynamodb.Table(ACCOUNTS_TABLE_NAME)
 
@@ -5286,6 +5288,26 @@ def _assume_role_for_account(member_email, account_id):
     """
     import sts_assume_role
     return sts_assume_role.assume_role(account_id, member_email, session_name='SlashMyBillAct')
+
+
+def _validate_account_id(account_id):
+    """Validate account ID format using Provider Registry config (with fallback).
+
+    Returns None if valid, or an error response dict if invalid.
+    """
+    validation_config = provider_registry.get_config('aws', 'validation')
+    if validation_config:
+        pattern = validation_config.get('account_id_regex', r'^\d{12}$')
+        error_msg = validation_config.get('error_messages', {}).get(
+            'invalid_format', 'Account ID must be exactly 12 digits')
+    else:
+        # Fallback if registry unavailable
+        pattern = r'^\d{12}$'
+        error_msg = 'Account ID must be exactly 12 digits'
+
+    if not re.fullmatch(pattern.lstrip('^').rstrip('$'), account_id):
+        return create_error_response(400, 'InvalidAccountId', error_msg)
+    return None
 
 
 def _make_client_from_creds(service, creds, region='us-east-1'):
