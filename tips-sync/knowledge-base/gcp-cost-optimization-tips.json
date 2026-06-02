@@ -71,22 +71,122 @@
       "cloudProvider": "gcp"
     },
     {
-      "id": "gcp-storage-001",
-      "service": "Cloud Storage",
-      "category": "storage-tiering",
-      "title": "Apply lifecycle rules to move data to colder storage classes",
-      "description": "Configure Object Lifecycle Management to automatically transition objects from Standard to Nearline (30-day min), Coldline (90-day min), or Archive (365-day min). Up to 83% savings on storage costs.",
-      "estimatedSavings": "50-83%",
+      "id": "gcp-ce-007",
+      "service": "Compute Engine",
+      "category": "licensing",
+      "title": "Use BYOL or free-tier OS images to avoid license premiums",
+      "description": "Premium OS images (RHEL, SLES, Windows) add per-vCPU/hour charges. Use CentOS Stream, Debian, Ubuntu, or bring your own license to avoid premium image surcharges on compute costs.",
+      "estimatedSavings": "15-30%",
       "difficulty": "easy",
       "cloudProvider": "gcp"
     },
     {
-      "id": "gcp-storage-002",
-      "service": "Cloud Storage",
+      "id": "gcp-ce-008",
+      "service": "Compute Engine",
       "category": "idle-resources",
-      "title": "Delete orphaned persistent disks and snapshots",
-      "description": "Unattached persistent disks and old snapshots continue incurring charges. Use the GCP Recommender idle disk detection or list unattached disks via gcloud to identify and clean up.",
+      "title": "Delete idle VMs identified by GCP Recommender",
+      "description": "GCP Idle VM Recommender flags instances with near-zero CPU usage over 14 days. Delete truly idle VMs or snapshot their disks and terminate them to eliminate ongoing compute charges.",
       "estimatedSavings": "100%",
+      "difficulty": "easy",
+      "cloudProvider": "gcp"
+    },
+    {
+      "id": "gcp-cf-001",
+      "service": "Cloud Functions",
+      "category": "right-sizing",
+      "title": "Reduce Cloud Functions memory allocation",
+      "description": "Cloud Functions bills per GB-second of allocated memory. Profile actual memory usage and reduce allocation from defaults. Many functions run fine at 128-256MB instead of the default 256-512MB.",
+      "estimatedSavings": "25-50%",
+      "difficulty": "easy",
+      "cloudProvider": "gcp"
+    },
+    {
+      "id": "gcp-cf-002",
+      "service": "Cloud Functions",
+      "category": "architecture",
+      "title": "Optimize function cold starts and execution time",
+      "description": "Reduce execution duration by optimizing dependencies, using connection pooling, and lazy initialization. Shorter execution time directly reduces per-invocation costs in the GB-second billing model.",
+      "estimatedSavings": "20-40%",
+      "difficulty": "medium",
+      "cloudProvider": "gcp"
+    },
+    {
+      "id": "gcp-cf-003",
+      "service": "Cloud Functions",
+      "category": "pricing-model",
+      "title": "Use min-instances wisely to balance cost and latency",
+      "description": "Min-instances keep functions warm but charge for idle time. Only set min-instances for latency-critical production functions. Use 0 min-instances for async, background, or dev/test functions.",
+      "estimatedSavings": "30-50%",
+      "difficulty": "easy",
+      "cloudProvider": "gcp"
+    },
+    {
+      "id": "gcp-run-001",
+      "service": "Cloud Run",
+      "category": "right-sizing",
+      "title": "Reduce Cloud Run CPU and memory allocation",
+      "description": "Cloud Run charges per vCPU-second and GB-second while the container processes requests. Set CPU and memory to minimum viable values. Most APIs work fine at 1 vCPU and 256-512MB memory.",
+      "estimatedSavings": "25-40%",
+      "difficulty": "easy",
+      "cloudProvider": "gcp"
+    },
+    {
+      "id": "gcp-run-002",
+      "service": "Cloud Run",
+      "category": "architecture",
+      "title": "Use Cloud Run concurrency to reduce instance count",
+      "description": "Increase max concurrency per container (up to 1000) so each instance handles more simultaneous requests. Fewer total instances means lower compute costs, especially for IO-bound services.",
+      "estimatedSavings": "30-60%",
+      "difficulty": "medium",
+      "cloudProvider": "gcp"
+    },
+    {
+      "id": "gcp-run-003",
+      "service": "Cloud Run",
+      "category": "scheduling",
+      "title": "Scale Cloud Run to zero for infrequent services",
+      "description": "Cloud Run scales to zero by default — no charge when idle. Ensure min-instances is set to 0 for services that can tolerate cold starts. Only use min-instances for latency-critical paths.",
+      "estimatedSavings": "40-70%",
+      "difficulty": "easy",
+      "cloudProvider": "gcp"
+    },
+    {
+      "id": "gcp-run-004",
+      "service": "Cloud Run",
+      "category": "pricing-model",
+      "title": "Use Cloud Run committed use discounts",
+      "description": "Cloud Run offers spend-based CUDs with up to 17% discount for committing to minimum spend amounts. Apply to services with predictable traffic that consistently uses Cloud Run compute.",
+      "estimatedSavings": "15-17%",
+      "difficulty": "medium",
+      "cloudProvider": "gcp"
+    },
+    {
+      "id": "gcp-ae-001",
+      "service": "App Engine",
+      "category": "right-sizing",
+      "title": "Use App Engine automatic scaling with conservative settings",
+      "description": "Configure target CPU utilization, max instances, and idle timeout to prevent over-scaling. Set target_utilization to 0.7-0.8 and reduce max_instances to cap costs during traffic spikes.",
+      "estimatedSavings": "25-40%",
+      "difficulty": "medium",
+      "cloudProvider": "gcp"
+    },
+    {
+      "id": "gcp-ae-002",
+      "service": "App Engine",
+      "category": "architecture",
+      "title": "Migrate from App Engine Standard to Cloud Run for better pricing",
+      "description": "Cloud Run offers per-request billing that scales to zero, while App Engine Standard charges for minimum instances. For services with variable traffic, Cloud Run often provides better cost efficiency.",
+      "estimatedSavings": "30-50%",
+      "difficulty": "hard",
+      "cloudProvider": "gcp"
+    },
+    {
+      "id": "gcp-ae-003",
+      "service": "App Engine",
+      "category": "scheduling",
+      "title": "Set minimum instances to zero for non-production App Engine versions",
+      "description": "Non-production App Engine versions with min_instances > 0 incur charges even without traffic. Set to zero and accept cold starts for dev/staging environments.",
+      "estimatedSavings": "50-70%",
       "difficulty": "easy",
       "cloudProvider": "gcp"
     },
@@ -111,6 +211,36 @@
       "cloudProvider": "gcp"
     },
     {
+      "id": "gcp-gke-003",
+      "service": "Google Kubernetes Engine",
+      "category": "architecture",
+      "title": "Use GKE Autopilot for per-pod billing",
+      "description": "GKE Autopilot charges per pod resource request instead of per node, eliminating waste from partially-filled nodes. Google manages node provisioning, achieving near-perfect bin-packing efficiency.",
+      "estimatedSavings": "25-40%",
+      "difficulty": "medium",
+      "cloudProvider": "gcp"
+    },
+    {
+      "id": "gcp-gke-004",
+      "service": "Google Kubernetes Engine",
+      "category": "scheduling",
+      "title": "Scale GKE dev/test clusters to zero nodes after hours",
+      "description": "Configure cluster autoscaler to scale node pools to 0 minimum nodes for non-production clusters. Use scheduled scaling or CronJobs to ensure workloads only run during business hours.",
+      "estimatedSavings": "50-70%",
+      "difficulty": "medium",
+      "cloudProvider": "gcp"
+    },
+    {
+      "id": "gcp-gke-005",
+      "service": "Google Kubernetes Engine",
+      "category": "right-sizing",
+      "title": "Use e2 machine types for GKE cost-optimized node pools",
+      "description": "E2 machine types offer 20-30% discount over N1/N2 for general-purpose workloads. Use e2-standard or e2-custom for GKE nodes running non-CPU-intensive services.",
+      "estimatedSavings": "20-30%",
+      "difficulty": "easy",
+      "cloudProvider": "gcp"
+    },
+    {
       "id": "gcp-sql-001",
       "service": "Cloud SQL",
       "category": "right-sizing",
@@ -121,11 +251,251 @@
       "cloudProvider": "gcp"
     },
     {
+      "id": "gcp-sql-002",
+      "service": "Cloud SQL",
+      "category": "pricing-model",
+      "title": "Use Cloud SQL committed use discounts",
+      "description": "Commit to 1 or 3-year CUDs for Cloud SQL instances to receive up to 52% discount. Apply to production databases with stable, predictable resource requirements.",
+      "estimatedSavings": "30-52%",
+      "difficulty": "medium",
+      "cloudProvider": "gcp"
+    },
+    {
+      "id": "gcp-sql-003",
+      "service": "Cloud SQL",
+      "category": "scheduling",
+      "title": "Stop Cloud SQL instances in non-production environments",
+      "description": "Cloud SQL instances can be stopped to halt CPU charges while retaining data on disk. Schedule stops for dev/test databases during off-hours using Cloud Scheduler and Cloud Functions.",
+      "estimatedSavings": "50-70%",
+      "difficulty": "easy",
+      "cloudProvider": "gcp"
+    },
+    {
+      "id": "gcp-sql-004",
+      "service": "Cloud SQL",
+      "category": "data-management",
+      "title": "Reduce Cloud SQL backup retention and storage",
+      "description": "Default automated backup retention is 7 days. Reduce to minimum required and delete on-demand backups no longer needed. Disable point-in-time recovery for non-critical dev databases.",
+      "estimatedSavings": "15-30%",
+      "difficulty": "easy",
+      "cloudProvider": "gcp"
+    },
+    {
+      "id": "gcp-spanner-001",
+      "service": "Cloud Spanner",
+      "category": "right-sizing",
+      "title": "Scale down Cloud Spanner nodes for off-peak periods",
+      "description": "Cloud Spanner charges per node-hour. Use autoscaler to reduce compute nodes during off-peak periods. Many workloads can handle lower node counts outside business hours.",
+      "estimatedSavings": "30-50%",
+      "difficulty": "medium",
+      "cloudProvider": "gcp"
+    },
+    {
+      "id": "gcp-spanner-002",
+      "service": "Cloud Spanner",
+      "category": "pricing-model",
+      "title": "Use Cloud Spanner committed use discounts",
+      "description": "Commit to 1 or 3-year CUDs for Spanner compute capacity. Provides up to 40% savings for production databases with predictable node requirements.",
+      "estimatedSavings": "25-40%",
+      "difficulty": "medium",
+      "cloudProvider": "gcp"
+    },
+    {
+      "id": "gcp-spanner-003",
+      "service": "Cloud Spanner",
+      "category": "architecture",
+      "title": "Use Spanner Free Trial instances for development",
+      "description": "Cloud Spanner offers free trial instances with limited capacity for development and testing. Use free instances for prototyping instead of running paid multi-node production configurations.",
+      "estimatedSavings": "100%",
+      "difficulty": "easy",
+      "cloudProvider": "gcp"
+    },
+    {
+      "id": "gcp-firestore-001",
+      "service": "Firestore",
+      "category": "data-management",
+      "title": "Optimize Firestore document reads with caching",
+      "description": "Firestore charges per document read. Implement client-side caching, use Firestore offline persistence, and batch reads to reduce document operation costs for frequently accessed data.",
+      "estimatedSavings": "30-50%",
+      "difficulty": "medium",
+      "cloudProvider": "gcp"
+    },
+    {
+      "id": "gcp-firestore-002",
+      "service": "Firestore",
+      "category": "architecture",
+      "title": "Use composite indexes efficiently to reduce query costs",
+      "description": "Inefficient queries scan more documents than necessary. Design composite indexes for common query patterns and denormalize data to reduce the number of reads per operation.",
+      "estimatedSavings": "20-40%",
+      "difficulty": "medium",
+      "cloudProvider": "gcp"
+    },
+    {
+      "id": "gcp-firestore-003",
+      "service": "Firestore",
+      "category": "cleanup",
+      "title": "Delete expired and orphaned Firestore documents",
+      "description": "Configure TTL policies on Firestore collections to auto-delete expired documents. Remove orphaned documents from deleted user accounts or decommissioned features to reduce storage costs.",
+      "estimatedSavings": "20-40%",
+      "difficulty": "easy",
+      "cloudProvider": "gcp"
+    },
+    {
+      "id": "gcp-bigtable-001",
+      "service": "Bigtable",
+      "category": "right-sizing",
+      "title": "Scale down Bigtable nodes based on actual throughput",
+      "description": "Monitor Bigtable CPU utilization and request latency. Scale down node count when consistently below 35% CPU. Use autoscaling to dynamically adjust capacity based on demand.",
+      "estimatedSavings": "30-50%",
+      "difficulty": "medium",
+      "cloudProvider": "gcp"
+    },
+    {
+      "id": "gcp-bigtable-002",
+      "service": "Bigtable",
+      "category": "pricing-model",
+      "title": "Use Bigtable committed use discounts",
+      "description": "Commit to 1 or 3-year CUDs for Bigtable node capacity. Provides significant savings for production time-series, IoT, and analytics workloads with steady-state node requirements.",
+      "estimatedSavings": "30-50%",
+      "difficulty": "medium",
+      "cloudProvider": "gcp"
+    },
+    {
+      "id": "gcp-bigtable-003",
+      "service": "Bigtable",
+      "category": "data-management",
+      "title": "Configure garbage collection policies for Bigtable column families",
+      "description": "Set GC policies to automatically delete old cell versions or cells older than a specified age. Prevents unbounded storage growth for time-series data and reduces storage costs.",
+      "estimatedSavings": "20-40%",
+      "difficulty": "easy",
+      "cloudProvider": "gcp"
+    },
+    {
+      "id": "gcp-memorystore-001",
+      "service": "Memorystore",
+      "category": "right-sizing",
+      "title": "Right-size Memorystore Redis instances",
+      "description": "Monitor memory usage percentage and downgrade instance tier if consistently below 50% memory utilization. Switch from Standard (HA) to Basic tier for dev/test and non-critical caches.",
+      "estimatedSavings": "30-50%",
+      "difficulty": "easy",
+      "cloudProvider": "gcp"
+    },
+    {
+      "id": "gcp-memorystore-002",
+      "service": "Memorystore",
+      "category": "idle-resources",
+      "title": "Delete unused Memorystore instances",
+      "description": "Memorystore charges per-GB/hour regardless of utilization. Delete instances for decommissioned applications and dev/test environments no longer in use.",
+      "estimatedSavings": "100%",
+      "difficulty": "easy",
+      "cloudProvider": "gcp"
+    },
+    {
+      "id": "gcp-memorystore-003",
+      "service": "Memorystore",
+      "category": "pricing-model",
+      "title": "Use Memorystore for Redis Cluster for large deployments",
+      "description": "Memorystore for Redis Cluster provides higher throughput per dollar for large cache deployments. Use cluster mode for datasets exceeding 16GB to benefit from distributed architecture pricing.",
+      "estimatedSavings": "20-35%",
+      "difficulty": "medium",
+      "cloudProvider": "gcp"
+    },
+    {
+      "id": "gcp-storage-001",
+      "service": "Cloud Storage",
+      "category": "storage-tiering",
+      "title": "Apply lifecycle rules to move data to colder storage classes",
+      "description": "Configure Object Lifecycle Management to automatically transition objects from Standard to Nearline (30-day min), Coldline (90-day min), or Archive (365-day min). Up to 83% savings on storage costs.",
+      "estimatedSavings": "50-83%",
+      "difficulty": "easy",
+      "cloudProvider": "gcp"
+    },
+    {
+      "id": "gcp-storage-002",
+      "service": "Cloud Storage",
+      "category": "idle-resources",
+      "title": "Delete orphaned persistent disks and snapshots",
+      "description": "Unattached persistent disks and old snapshots continue incurring charges. Use the GCP Recommender idle disk detection or list unattached disks via gcloud to identify and clean up.",
+      "estimatedSavings": "100%",
+      "difficulty": "easy",
+      "cloudProvider": "gcp"
+    },
+    {
+      "id": "gcp-storage-003",
+      "service": "Cloud Storage",
+      "category": "cleanup",
+      "title": "Configure Object Lifecycle to delete old temporary objects",
+      "description": "Set lifecycle rules to auto-delete objects in temporary upload, log, and staging buckets after a defined period. Prevents accumulation of forgotten temporary data.",
+      "estimatedSavings": "20-40%",
+      "difficulty": "easy",
+      "cloudProvider": "gcp"
+    },
+    {
+      "id": "gcp-storage-004",
+      "service": "Cloud Storage",
+      "category": "architecture",
+      "title": "Use regional buckets instead of multi-regional when locality suffices",
+      "description": "Regional Cloud Storage is cheaper than multi-regional and provides lower latency for same-region access. Use regional for data processing pipelines where global access isn't needed.",
+      "estimatedSavings": "20-30%",
+      "difficulty": "easy",
+      "cloudProvider": "gcp"
+    },
+    {
+      "id": "gcp-pd-001",
+      "service": "Persistent Disks",
+      "category": "right-sizing",
+      "title": "Use Standard persistent disks instead of SSD for non-critical workloads",
+      "description": "Standard (HDD) persistent disks cost 80% less per GB than SSD persistent disks. Use standard for backups, archival, and workloads not requiring high IOPS or low latency.",
+      "estimatedSavings": "60-80%",
+      "difficulty": "easy",
+      "cloudProvider": "gcp"
+    },
+    {
+      "id": "gcp-pd-002",
+      "service": "Persistent Disks",
+      "category": "idle-resources",
+      "title": "Delete unattached persistent disks",
+      "description": "Persistent disks not attached to any VM continue billing at full provisioned capacity rates. Regularly audit and delete orphaned disks or snapshot and remove them.",
+      "estimatedSavings": "100%",
+      "difficulty": "easy",
+      "cloudProvider": "gcp"
+    },
+    {
+      "id": "gcp-pd-003",
+      "service": "Persistent Disks",
+      "category": "cleanup",
+      "title": "Delete old disk snapshots beyond retention requirements",
+      "description": "Disk snapshots are incremental but accumulate storage costs over time. Set automated snapshot schedules with retention limits and delete manual snapshots older than your recovery requirements.",
+      "estimatedSavings": "20-40%",
+      "difficulty": "easy",
+      "cloudProvider": "gcp"
+    },
+    {
+      "id": "gcp-filestore-001",
+      "service": "Filestore",
+      "category": "right-sizing",
+      "title": "Right-size Filestore capacity and tier",
+      "description": "Filestore charges per-provisioned-TB/hour. Choose Basic HDD for non-performance-sensitive shares, and reduce provisioned capacity to match actual file storage needs plus reasonable growth buffer.",
+      "estimatedSavings": "30-50%",
+      "difficulty": "easy",
+      "cloudProvider": "gcp"
+    },
+    {
+      "id": "gcp-filestore-002",
+      "service": "Filestore",
+      "category": "idle-resources",
+      "title": "Delete unused Filestore instances",
+      "description": "Filestore instances charge for minimum provisioned capacity (1TB for Basic) regardless of stored data. Remove instances for decommissioned workloads or migrate to Cloud Storage for archival.",
+      "estimatedSavings": "100%",
+      "difficulty": "easy",
+      "cloudProvider": "gcp"
+    },
+    {
       "id": "gcp-bq-001",
       "service": "BigQuery",
       "category": "pricing-model",
-      "title": "Use BigQuery flat-rate pricing for heavy workloads",
-      "description": "Switch from on-demand (per-TB scanned) to flat-rate slot reservations for teams running many queries daily. Also use partitioning and clustering to reduce bytes scanned per query.",
+      "title": "Use BigQuery editions with autoscaling for variable workloads",
+      "description": "BigQuery editions (Standard, Enterprise, Enterprise Plus) offer slot-based pricing with autoscaling. Better than flat-rate for variable query patterns — pay for baseline and auto-scale for peaks.",
       "estimatedSavings": "30-60%",
       "difficulty": "medium",
       "cloudProvider": "gcp"
@@ -141,6 +511,126 @@
       "cloudProvider": "gcp"
     },
     {
+      "id": "gcp-bq-003",
+      "service": "BigQuery",
+      "category": "data-management",
+      "title": "Use clustering to reduce BigQuery bytes scanned",
+      "description": "Cluster tables by frequently filtered columns to allow BigQuery to skip irrelevant data blocks. Reduces bytes scanned per query, directly lowering on-demand query costs.",
+      "estimatedSavings": "30-50%",
+      "difficulty": "easy",
+      "cloudProvider": "gcp"
+    },
+    {
+      "id": "gcp-bq-004",
+      "service": "BigQuery",
+      "category": "pricing-model",
+      "title": "Purchase BigQuery committed slots for steady analytics workloads",
+      "description": "Commit to baseline slot capacity for 1 or 3 years and use autoscaling for peak demand. Provides up to 60% discount over on-demand pricing for teams running many daily queries.",
+      "estimatedSavings": "40-60%",
+      "difficulty": "medium",
+      "cloudProvider": "gcp"
+    },
+    {
+      "id": "gcp-bq-005",
+      "service": "BigQuery",
+      "category": "storage-tiering",
+      "title": "Use BigQuery long-term storage pricing automatically",
+      "description": "Tables not modified for 90 days automatically move to long-term storage at 50% reduced cost. Avoid unnecessary table rewrites that reset the timer and keep data in active pricing.",
+      "estimatedSavings": "50%",
+      "difficulty": "easy",
+      "cloudProvider": "gcp"
+    },
+    {
+      "id": "gcp-dataflow-001",
+      "service": "Dataflow",
+      "category": "right-sizing",
+      "title": "Use autoscaling and right-size Dataflow worker machines",
+      "description": "Enable Dataflow autoscaling to adjust worker count based on pipeline backlog. Use n1-standard-2 instead of larger machines for IO-bound pipelines and set maxNumWorkers to cap costs.",
+      "estimatedSavings": "30-50%",
+      "difficulty": "medium",
+      "cloudProvider": "gcp"
+    },
+    {
+      "id": "gcp-dataflow-002",
+      "service": "Dataflow",
+      "category": "pricing-model",
+      "title": "Use Dataflow Shuffle and Streaming Engine to reduce worker costs",
+      "description": "Dataflow Shuffle offloads shuffle operations to a managed service, allowing smaller worker machines. Streaming Engine reduces per-worker resource consumption for streaming pipelines.",
+      "estimatedSavings": "20-40%",
+      "difficulty": "medium",
+      "cloudProvider": "gcp"
+    },
+    {
+      "id": "gcp-dataflow-003",
+      "service": "Dataflow",
+      "category": "architecture",
+      "title": "Use FlexRS for non-time-critical batch Dataflow jobs",
+      "description": "Dataflow Flexible Resource Scheduling (FlexRS) uses a combination of on-demand and Spot VMs, offering up to 40% savings. Best for batch pipelines that can tolerate delayed scheduling.",
+      "estimatedSavings": "25-40%",
+      "difficulty": "easy",
+      "cloudProvider": "gcp"
+    },
+    {
+      "id": "gcp-dataproc-001",
+      "service": "Dataproc",
+      "category": "pricing-model",
+      "title": "Use Spot VMs for Dataproc worker nodes",
+      "description": "Configure secondary workers as Spot VMs in Dataproc clusters. Set preemptibility to 'SPOT' for data processing and analytics workloads that can tolerate node reclamation.",
+      "estimatedSavings": "60-80%",
+      "difficulty": "medium",
+      "cloudProvider": "gcp"
+    },
+    {
+      "id": "gcp-dataproc-002",
+      "service": "Dataproc",
+      "category": "scheduling",
+      "title": "Use ephemeral Dataproc clusters for batch jobs",
+      "description": "Create job-scoped clusters that spin up, execute the workload, and auto-delete on completion. Avoid keeping long-running clusters idle between job submissions.",
+      "estimatedSavings": "40-60%",
+      "difficulty": "medium",
+      "cloudProvider": "gcp"
+    },
+    {
+      "id": "gcp-dataproc-003",
+      "service": "Dataproc",
+      "category": "architecture",
+      "title": "Use Dataproc Serverless for intermittent Spark workloads",
+      "description": "Dataproc Serverless manages infrastructure automatically and charges only during job execution. Eliminates idle cluster costs for Spark jobs that run periodically rather than continuously.",
+      "estimatedSavings": "40-60%",
+      "difficulty": "easy",
+      "cloudProvider": "gcp"
+    },
+    {
+      "id": "gcp-pubsub-001",
+      "service": "Pub/Sub",
+      "category": "data-management",
+      "title": "Reduce Pub/Sub message retention and snapshot costs",
+      "description": "Default message retention is 7 days. Reduce to minimum required for subscriber catch-up. Delete unused snapshots and seek-to-time bookmarks to eliminate retained message storage costs.",
+      "estimatedSavings": "20-40%",
+      "difficulty": "easy",
+      "cloudProvider": "gcp"
+    },
+    {
+      "id": "gcp-pubsub-002",
+      "service": "Pub/Sub",
+      "category": "cleanup",
+      "title": "Delete unused Pub/Sub subscriptions and topics",
+      "description": "Unacknowledged messages in unused subscriptions accumulate storage charges. Remove subscriptions for decommissioned consumers and topics with no active publishers or subscribers.",
+      "estimatedSavings": "100%",
+      "difficulty": "easy",
+      "cloudProvider": "gcp"
+    },
+    {
+      "id": "gcp-pubsub-003",
+      "service": "Pub/Sub",
+      "category": "architecture",
+      "title": "Use Pub/Sub Lite for high-volume, cost-sensitive streaming",
+      "description": "Pub/Sub Lite provides zonal messaging at lower cost per-byte for use cases that don't require global durability. Ideal for high-throughput event streams within a single region.",
+      "estimatedSavings": "50-80%",
+      "difficulty": "medium",
+      "cloudProvider": "gcp"
+    },
+    {
       "id": "gcp-network-001",
       "service": "Networking",
       "category": "architecture",
@@ -151,6 +641,336 @@
       "cloudProvider": "gcp"
     },
     {
+      "id": "gcp-network-002",
+      "service": "Networking",
+      "category": "networking",
+      "title": "Use Standard network tier for non-latency-critical egress",
+      "description": "Standard tier routes traffic via ISP networks at lower cost than Premium tier's Google backbone. Use Standard for bulk data transfers, backups, and non-user-facing egress to save 20-40%.",
+      "estimatedSavings": "20-40%",
+      "difficulty": "easy",
+      "cloudProvider": "gcp"
+    },
+    {
+      "id": "gcp-nat-001",
+      "service": "Cloud NAT",
+      "category": "right-sizing",
+      "title": "Right-size Cloud NAT min ports per VM",
+      "description": "Cloud NAT charges per-VM based on allocated port mappings. Reduce minPortsPerVm to actual concurrent connection needs. Most internal services need 64-128 ports, not the 64K maximum.",
+      "estimatedSavings": "30-50%",
+      "difficulty": "medium",
+      "cloudProvider": "gcp"
+    },
+    {
+      "id": "gcp-nat-002",
+      "service": "Cloud NAT",
+      "category": "architecture",
+      "title": "Use Private Google Access instead of NAT for GCP API calls",
+      "description": "Enable Private Google Access on subnets to reach Google APIs without NAT or public IPs. Eliminates NAT data processing charges for GCS, BigQuery, and other Google service API calls.",
+      "estimatedSavings": "30-50%",
+      "difficulty": "easy",
+      "cloudProvider": "gcp"
+    },
+    {
+      "id": "gcp-lb-001",
+      "service": "Load Balancing",
+      "category": "right-sizing",
+      "title": "Choose the right Load Balancer type for your use case",
+      "description": "Regional load balancers cost less than global. Use regional HTTP(S) LB for single-region deployments, regional TCP/UDP for internal services, and global only for multi-region presence.",
+      "estimatedSavings": "25-40%",
+      "difficulty": "medium",
+      "cloudProvider": "gcp"
+    },
+    {
+      "id": "gcp-lb-002",
+      "service": "Load Balancing",
+      "category": "idle-resources",
+      "title": "Delete idle load balancer forwarding rules",
+      "description": "Each forwarding rule incurs hourly charges. Remove forwarding rules for decommissioned services and consolidate multiple services behind a single URL map where possible.",
+      "estimatedSavings": "100%",
+      "difficulty": "easy",
+      "cloudProvider": "gcp"
+    },
+    {
+      "id": "gcp-cdn-001",
+      "service": "Cloud CDN",
+      "category": "architecture",
+      "title": "Enable Cloud CDN cache for static content",
+      "description": "Cloud CDN caching reduces origin fetches and egress costs. Configure cache TTLs, enable CDN on HTTP(S) LB backend buckets for static assets. CDN-served bytes cost less than origin egress.",
+      "estimatedSavings": "30-50%",
+      "difficulty": "easy",
+      "cloudProvider": "gcp"
+    },
+    {
+      "id": "gcp-cdn-002",
+      "service": "Cloud CDN",
+      "category": "data-management",
+      "title": "Optimize Cloud CDN cache hit ratio",
+      "description": "Increase cache hit ratio by normalizing URLs, removing unnecessary query parameters from cache keys, and setting appropriate max-age headers. Higher hit rates reduce expensive origin fetches.",
+      "estimatedSavings": "20-40%",
+      "difficulty": "medium",
+      "cloudProvider": "gcp"
+    },
+    {
+      "id": "gcp-interconnect-001",
+      "service": "Cloud Interconnect",
+      "category": "right-sizing",
+      "title": "Right-size Dedicated Interconnect attachments",
+      "description": "Dedicated Interconnect charges per-attachment regardless of utilization. Reduce VLAN attachment capacity or switch to Partner Interconnect for connections under 2Gbps utilization.",
+      "estimatedSavings": "30-50%",
+      "difficulty": "medium",
+      "cloudProvider": "gcp"
+    },
+    {
+      "id": "gcp-interconnect-002",
+      "service": "Cloud Interconnect",
+      "category": "architecture",
+      "title": "Use Partner Interconnect for medium-bandwidth hybrid connectivity",
+      "description": "Partner Interconnect starts at 50Mbps and costs less than Dedicated Interconnect (10Gbps minimum). Suitable for organizations needing 50Mbps-10Gbps private connectivity to GCP.",
+      "estimatedSavings": "40-60%",
+      "difficulty": "medium",
+      "cloudProvider": "gcp"
+    },
+    {
+      "id": "gcp-armor-001",
+      "service": "Cloud Armor",
+      "category": "right-sizing",
+      "title": "Use Cloud Armor Standard tier for basic protection",
+      "description": "Cloud Armor Standard tier provides rate limiting and IP/geo blocking at lower cost than Plus tier. Reserve Plus tier only for applications requiring adaptive protection and DDoS response team.",
+      "estimatedSavings": "40-60%",
+      "difficulty": "easy",
+      "cloudProvider": "gcp"
+    },
+    {
+      "id": "gcp-armor-002",
+      "service": "Cloud Armor",
+      "category": "architecture",
+      "title": "Consolidate Cloud Armor policies across services",
+      "description": "Share Cloud Armor security policies across multiple backend services and forwarding rules rather than creating duplicate policies per service. Reduces per-policy management overhead.",
+      "estimatedSavings": "20-30%",
+      "difficulty": "medium",
+      "cloudProvider": "gcp"
+    },
+    {
+      "id": "gcp-logging-001",
+      "service": "Cloud Logging",
+      "category": "data-management",
+      "title": "Exclude verbose logs with exclusion filters",
+      "description": "Configure log exclusion filters to drop high-volume, low-value logs before ingestion (e.g., health check requests, debug-level traces). Reduces per-GB ingestion and storage costs significantly.",
+      "estimatedSavings": "30-60%",
+      "difficulty": "easy",
+      "cloudProvider": "gcp"
+    },
+    {
+      "id": "gcp-logging-002",
+      "service": "Cloud Logging",
+      "category": "data-management",
+      "title": "Route logs to cheaper storage with log sinks",
+      "description": "Export logs to Cloud Storage (for archival) or BigQuery (for analytics) via sinks, then exclude from Cloud Logging. Storage-based retention is significantly cheaper than Cloud Logging retention.",
+      "estimatedSavings": "40-60%",
+      "difficulty": "medium",
+      "cloudProvider": "gcp"
+    },
+    {
+      "id": "gcp-logging-003",
+      "service": "Cloud Logging",
+      "category": "data-management",
+      "title": "Reduce log retention period to minimum required",
+      "description": "Default Cloud Logging retention is 30 days. Custom retention beyond 30 days incurs additional per-GB/month charges. Set retention to compliance minimum and archive older logs to Cloud Storage.",
+      "estimatedSavings": "20-40%",
+      "difficulty": "easy",
+      "cloudProvider": "gcp"
+    },
+    {
+      "id": "gcp-monitoring-001",
+      "service": "Cloud Monitoring",
+      "category": "data-management",
+      "title": "Reduce custom metrics volume and cardinality",
+      "description": "Cloud Monitoring charges per-custom-metric time series ingested. Reduce cardinality by aggregating labels, sampling less frequently, and deleting unused metric descriptors.",
+      "estimatedSavings": "25-50%",
+      "difficulty": "medium",
+      "cloudProvider": "gcp"
+    },
+    {
+      "id": "gcp-monitoring-002",
+      "service": "Cloud Monitoring",
+      "category": "cleanup",
+      "title": "Remove unused alerting policies and uptime checks",
+      "description": "Uptime checks generate monitoring data and incur costs for external checks. Remove checks for decommissioned endpoints and consolidate redundant alerting policies.",
+      "estimatedSavings": "15-25%",
+      "difficulty": "easy",
+      "cloudProvider": "gcp"
+    },
+    {
+      "id": "gcp-trace-001",
+      "service": "Cloud Trace",
+      "category": "data-management",
+      "title": "Configure trace sampling rate for cost control",
+      "description": "Cloud Trace charges per-span ingested. Set sampling rate to 0.1-1% for high-traffic services instead of tracing every request. Use higher rates only for debugging specific issues.",
+      "estimatedSavings": "80-99%",
+      "difficulty": "easy",
+      "cloudProvider": "gcp"
+    },
+    {
+      "id": "gcp-ar-001",
+      "service": "Artifact Registry",
+      "category": "cleanup",
+      "title": "Set cleanup policies for old container images",
+      "description": "Configure Artifact Registry cleanup policies to automatically delete container images and artifacts older than a retention period. Keeps only the last N versions to reduce storage costs.",
+      "estimatedSavings": "30-50%",
+      "difficulty": "easy",
+      "cloudProvider": "gcp"
+    },
+    {
+      "id": "gcp-ar-002",
+      "service": "Artifact Registry",
+      "category": "architecture",
+      "title": "Use regional Artifact Registry repositories",
+      "description": "Multi-region repositories cost more per-GB storage. Use regional repositories when artifacts are only consumed from a single region to reduce storage and eliminate cross-region transfer costs.",
+      "estimatedSavings": "20-30%",
+      "difficulty": "easy",
+      "cloudProvider": "gcp"
+    },
+    {
+      "id": "gcp-build-001",
+      "service": "Cloud Build",
+      "category": "right-sizing",
+      "title": "Use default machine type unless builds require more resources",
+      "description": "Cloud Build charges per-build-minute based on machine type. Use the default e2-medium pool for most builds. Upgrade to larger machines only for builds that are CPU or memory constrained.",
+      "estimatedSavings": "30-50%",
+      "difficulty": "easy",
+      "cloudProvider": "gcp"
+    },
+    {
+      "id": "gcp-build-002",
+      "service": "Cloud Build",
+      "category": "architecture",
+      "title": "Use Docker layer caching to reduce build times",
+      "description": "Enable kaniko cache in Cloud Build to reuse Docker layers between builds. Shorter build times directly reduce per-minute compute costs and improve developer velocity.",
+      "estimatedSavings": "20-40%",
+      "difficulty": "medium",
+      "cloudProvider": "gcp"
+    },
+    {
+      "id": "gcp-secretmgr-001",
+      "service": "Secret Manager",
+      "category": "cleanup",
+      "title": "Delete unused Secret Manager secret versions",
+      "description": "Secret Manager charges per-active-secret-version/month plus per-access-operation. Destroy old secret versions (rotated credentials) and remove secrets for decommissioned applications.",
+      "estimatedSavings": "20-40%",
+      "difficulty": "easy",
+      "cloudProvider": "gcp"
+    },
+    {
+      "id": "gcp-vertex-001",
+      "service": "Vertex AI",
+      "category": "right-sizing",
+      "title": "Use smaller model serving machine types for low-traffic endpoints",
+      "description": "Vertex AI prediction endpoints charge per-node-hour. Use n1-standard-2 or custom containers with minimal resources for low-traffic models instead of GPU-equipped large machines.",
+      "estimatedSavings": "40-60%",
+      "difficulty": "medium",
+      "cloudProvider": "gcp"
+    },
+    {
+      "id": "gcp-vertex-002",
+      "service": "Vertex AI",
+      "category": "scheduling",
+      "title": "Use autoscaling to scale prediction endpoints to zero",
+      "description": "Configure Vertex AI endpoints with min-replica-count of 0 for dev/test and low-traffic models. Endpoints scale to zero when idle, eliminating compute charges during inactive periods.",
+      "estimatedSavings": "50-80%",
+      "difficulty": "medium",
+      "cloudProvider": "gcp"
+    },
+    {
+      "id": "gcp-vertex-003",
+      "service": "Vertex AI",
+      "category": "pricing-model",
+      "title": "Use Spot VMs for Vertex AI training jobs",
+      "description": "Configure Vertex AI custom training jobs to use Spot VMs for workers. Training jobs with checkpointing can tolerate preemption and benefit from 60-80% compute cost reduction.",
+      "estimatedSavings": "60-80%",
+      "difficulty": "medium",
+      "cloudProvider": "gcp"
+    },
+    {
+      "id": "gcp-vision-001",
+      "service": "Vision AI",
+      "category": "architecture",
+      "title": "Batch Vision AI requests for volume discounts",
+      "description": "Vision AI offers lower per-image pricing for batch async operations vs. online requests. Use batch mode for bulk image processing where real-time results aren't required.",
+      "estimatedSavings": "30-50%",
+      "difficulty": "easy",
+      "cloudProvider": "gcp"
+    },
+    {
+      "id": "gcp-speech-001",
+      "service": "Speech-to-Text",
+      "category": "right-sizing",
+      "title": "Choose appropriate Speech-to-Text model for accuracy needs",
+      "description": "Speech-to-Text offers multiple models at different price points. Use the standard model for general transcription and reserve enhanced/medical models only where accuracy justifies the 2-3x premium.",
+      "estimatedSavings": "40-60%",
+      "difficulty": "easy",
+      "cloudProvider": "gcp"
+    },
+    {
+      "id": "gcp-dns-001",
+      "service": "Cloud DNS",
+      "category": "cleanup",
+      "title": "Delete unused Cloud DNS managed zones",
+      "description": "Each managed zone incurs a monthly charge plus per-query fees. Remove DNS zones for decommissioned domains and consolidate zones where possible to reduce fixed monthly costs.",
+      "estimatedSavings": "100%",
+      "difficulty": "easy",
+      "cloudProvider": "gcp"
+    },
+    {
+      "id": "gcp-dns-002",
+      "service": "Cloud DNS",
+      "category": "architecture",
+      "title": "Use DNS policies for internal resolution instead of forwarding zones",
+      "description": "DNS forwarding zones incur per-query charges for forwarded queries. Use Cloud DNS private zones for internal service discovery instead of forwarding to on-premises resolvers.",
+      "estimatedSavings": "20-30%",
+      "difficulty": "medium",
+      "cloudProvider": "gcp"
+    },
+    {
+      "id": "gcp-apigee-001",
+      "service": "Apigee",
+      "category": "right-sizing",
+      "title": "Right-size Apigee environment type and instances",
+      "description": "Apigee offers Eval, Intermediate, and Comprehensive tiers. Use Eval for dev/test, Intermediate for standard APIs, and only Comprehensive for high-traffic production requiring full SLA.",
+      "estimatedSavings": "40-60%",
+      "difficulty": "medium",
+      "cloudProvider": "gcp"
+    },
+    {
+      "id": "gcp-apigee-002",
+      "service": "Apigee",
+      "category": "architecture",
+      "title": "Use Apigee API proxy caching to reduce backend calls",
+      "description": "Enable response caching in Apigee policies to serve repeated requests from cache. Reduces backend compute costs, API quota consumption, and Apigee message processing volume.",
+      "estimatedSavings": "20-40%",
+      "difficulty": "medium",
+      "cloudProvider": "gcp"
+    },
+    {
+      "id": "gcp-backup-001",
+      "service": "Backup",
+      "category": "data-management",
+      "title": "Optimize Backup for GKE and Compute Engine retention",
+      "description": "Review backup retention policies and reduce beyond compliance minimums. Set shorter retention for dev/test (7 days) vs. production (30 days) and delete manual backups after migration.",
+      "estimatedSavings": "30-50%",
+      "difficulty": "easy",
+      "cloudProvider": "gcp"
+    },
+    {
+      "id": "gcp-backup-002",
+      "service": "Backup",
+      "category": "cleanup",
+      "title": "Remove backups for deleted resources",
+      "description": "Backup vaults retain data for deleted VMs and GKE clusters. Audit backup plans and remove entries for resources that no longer exist to stop ongoing storage charges.",
+      "estimatedSavings": "100%",
+      "difficulty": "easy",
+      "cloudProvider": "gcp"
+    },
+    {
       "id": "gcp-governance-001",
       "service": "Governance",
       "category": "tagging",
@@ -158,6 +978,26 @@
       "description": "Use GCP resource labels to tag all resources by team, environment, and project. Set up billing budgets with alerts per label to catch unexpected spend early and enable accurate chargeback.",
       "estimatedSavings": "10-20%",
       "difficulty": "easy",
+      "cloudProvider": "gcp"
+    },
+    {
+      "id": "gcp-governance-002",
+      "service": "Governance",
+      "category": "architecture",
+      "title": "Use Organization Policies to restrict expensive resources",
+      "description": "Set organization policies to restrict allowed machine types, locations, and services. Prevent accidental deployment of expensive GPU instances or resources in premium regions.",
+      "estimatedSavings": "15-30%",
+      "difficulty": "medium",
+      "cloudProvider": "gcp"
+    },
+    {
+      "id": "gcp-governance-003",
+      "service": "Governance",
+      "category": "architecture",
+      "title": "Use project-level budgets with automated responses",
+      "description": "Configure billing budgets per project with Cloud Functions triggers to disable billing or notify teams when spending exceeds thresholds. Prevents runaway costs from misconfigured resources.",
+      "estimatedSavings": "10-25%",
+      "difficulty": "medium",
       "cloudProvider": "gcp"
     }
   ]

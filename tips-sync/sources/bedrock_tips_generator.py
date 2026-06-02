@@ -4,7 +4,7 @@ Bedrock AI Tips Generator.
 Uses Claude via Bedrock to generate new cost optimization tips
 by analyzing coverage gaps in the existing tips catalog.
 Groups existing tips by service, identifies underrepresented areas,
-and generates new actionable tips.
+and generates new actionable tips across AWS, Azure, and GCP.
 """
 
 import json
@@ -12,7 +12,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# Services that should have tips but might be underrepresented
+# AWS services that should have tips but might be underrepresented
 TARGET_SERVICES = [
     "EC2", "S3", "RDS", "Lambda", "ECS", "EKS", "DynamoDB",
     "ElastiCache", "Redshift", "CloudFront", "EBS", "NAT Gateway",
@@ -23,26 +23,65 @@ TARGET_SERVICES = [
     "AppSync", "Cognito", "WAF", "Shield", "GuardDuty",
 ]
 
-PROMPT_TEMPLATE = """You are an AWS FinOps expert. Analyze the following existing cost optimization tips catalog and generate NEW tips for services/categories that are underrepresented.
+# Azure services that should have tips
+AZURE_TARGET_SERVICES = [
+    "Virtual Machines", "VM Scale Sets", "Azure Functions", "App Service",
+    "Container Instances", "Azure Kubernetes Service",
+    "Azure SQL", "Cosmos DB", "Azure Database for PostgreSQL", "Azure Database for MySQL",
+    "Blob Storage", "Managed Disks", "Azure Files", "Data Lake Storage",
+    "Azure Monitor", "Log Analytics", "Application Insights",
+    "Networking", "Application Gateway", "ExpressRoute", "VPN Gateway",
+    "Azure DevOps", "Azure AD", "Key Vault",
+    "Azure Cache for Redis", "Event Hubs", "Service Bus",
+    "Azure Synapse", "Data Factory", "Azure Databricks",
+    "Azure Firewall", "DDoS Protection", "Web Application Firewall",
+    "Azure Backup", "Site Recovery", "Azure Policy",
+]
 
-EXISTING TIPS BY SERVICE (count):
+# GCP services that should have tips
+GCP_TARGET_SERVICES = [
+    "Compute Engine", "Cloud Functions", "Cloud Run", "App Engine",
+    "Google Kubernetes Engine",
+    "Cloud SQL", "Cloud Spanner", "Firestore", "Bigtable", "Memorystore",
+    "Cloud Storage", "Persistent Disks", "Filestore",
+    "BigQuery", "Dataflow", "Dataproc", "Pub/Sub",
+    "Networking", "Cloud NAT", "Load Balancing", "Cloud CDN",
+    "Cloud Interconnect", "Cloud Armor",
+    "Cloud Logging", "Cloud Monitoring", "Cloud Trace",
+    "Artifact Registry", "Cloud Build", "Secret Manager",
+    "Vertex AI", "Vision AI", "Speech-to-Text",
+    "Cloud DNS", "Apigee",
+]
+
+PROMPT_TEMPLATE = """You are a multi-cloud FinOps expert covering AWS, Azure, and GCP. Analyze the following existing cost optimization tips catalog and generate NEW tips for services/categories that are underrepresented across all three cloud providers.
+
+EXISTING TIPS BY CLOUD PROVIDER AND SERVICE (count):
 {service_summary}
 
-SERVICES WITH NO TIPS YET: {missing_services}
+SERVICES WITH NO TIPS YET:
+- AWS: {missing_aws_services}
+- Azure: {missing_azure_services}
+- GCP: {missing_gcp_services}
 
-Generate exactly {num_tips} NEW cost optimization tips that DON'T duplicate existing ones. Focus on:
+Generate exactly {num_tips} NEW cost optimization tips distributed across all 3 providers. Aim for approximately:
+- {aws_count} AWS tips
+- {azure_count} Azure tips
+- {gcp_count} GCP tips
+
+Focus on:
 1. Services with 0 tips (highest priority)
 2. Services with only 1-2 tips (add more depth)
 3. New categories for well-covered services (e.g., new pricing models, new features)
 
 For each tip, output ONLY a JSON array with objects containing:
-- "service": AWS service name (e.g., "Glue", "Athena")
-- "category": tip category (e.g., "right-sizing", "scheduling", "pricing-model", "cleanup", "architecture")
+- "cloud": cloud provider in UPPERCASE ("AWS", "AZURE", or "GCP")
+- "service": service name (e.g., "Glue", "Virtual Machines", "BigQuery")
+- "category": tip category (e.g., "right-sizing", "scheduling", "pricing-model", "cleanup", "architecture", "storage-tiering", "idle-resources", "data-management", "tagging", "networking", "licensing")
 - "title": short actionable title (max 80 chars)
 - "description": detailed description with specific actions (2-3 sentences)
 - "estimatedSavings": savings estimate (e.g., "20-40%", "$50/month", "varies")
 - "difficulty": "easy", "medium", or "hard"
-- "automatedCheck": AWS CLI or API call to verify this optimization opportunity
+- "automatedCheck": CLI or API call to verify this optimization opportunity (use aws cli for AWS, az cli for Azure, gcloud for GCP)
 
 Output ONLY the JSON array, no markdown, no explanation."""
 
@@ -51,7 +90,8 @@ def generate_tips_with_bedrock(bedrock_client, existing_tips: list, num_tips: in
     """Use Bedrock Claude to generate new cost optimization tips.
 
     Analyzes the existing tips catalog to find coverage gaps and
-    generates new tips for underrepresented services/categories.
+    generates new tips for underrepresented services/categories
+    across AWS, Azure, and GCP.
 
     Args:
         bedrock_client: boto3 client for bedrock-runtime service.
@@ -62,34 +102,63 @@ def generate_tips_with_bedrock(bedrock_client, existing_tips: list, num_tips: in
         List of new tip dicts ready for delta comparison, or empty list on error.
     """
     try:
-        # Build service summary from existing tips
-        service_counts = {}
+        # Build service summary from existing tips, grouped by cloud provider
+        service_counts_by_cloud = {"AWS": {}, "AZURE": {}, "GCP": {}}
         existing_titles = set()
         for tip in existing_tips:
+            cloud = tip.get("cloud", tip.get("cloudProvider", "AWS")).upper()
+            if cloud not in service_counts_by_cloud:
+                cloud = "AWS"  # Default to AWS for legacy tips without cloud field
             svc = tip.get("service", "General")
-            service_counts[svc] = service_counts.get(svc, 0) + 1
+            service_counts_by_cloud[cloud][svc] = service_counts_by_cloud[cloud].get(svc, 0) + 1
             existing_titles.add(tip.get("title", "").lower().strip())
 
-        service_summary = "\n".join(
-            f"  - {svc}: {count} tips"
-            for svc, count in sorted(service_counts.items(), key=lambda x: -x[1])
-        )
+        # Build combined service summary
+        summary_lines = []
+        for cloud in ["AWS", "AZURE", "GCP"]:
+            counts = service_counts_by_cloud[cloud]
+            if counts:
+                summary_lines.append(f"\n  {cloud}:")
+                for svc, count in sorted(counts.items(), key=lambda x: -x[1]):
+                    summary_lines.append(f"    - {svc}: {count} tips")
+            else:
+                summary_lines.append(f"\n  {cloud}: (no tips yet)")
+        service_summary = "\n".join(summary_lines)
 
-        # Find services with no tips
-        covered_services = set(service_counts.keys())
-        missing_services = [s for s in TARGET_SERVICES if s not in covered_services]
+        # Find services with no tips per cloud
+        covered_aws = set(service_counts_by_cloud["AWS"].keys())
+        covered_azure = set(service_counts_by_cloud["AZURE"].keys())
+        covered_gcp = set(service_counts_by_cloud["GCP"].keys())
+
+        missing_aws = [s for s in TARGET_SERVICES if s not in covered_aws]
+        missing_azure = [s for s in AZURE_TARGET_SERVICES if s not in covered_azure]
+        missing_gcp = [s for s in GCP_TARGET_SERVICES if s not in covered_gcp]
+
+        # Distribute tips across providers (roughly: 2 AWS, 2 Azure, 1 GCP for 5 tips)
+        aws_count = max(1, round(num_tips * 0.4))
+        azure_count = max(1, round(num_tips * 0.4))
+        gcp_count = max(1, num_tips - aws_count - azure_count)
 
         prompt = PROMPT_TEMPLATE.format(
             service_summary=service_summary,
-            missing_services=", ".join(missing_services) if missing_services else "None (all covered)",
+            missing_aws_services=", ".join(missing_aws) if missing_aws else "None (all covered)",
+            missing_azure_services=", ".join(missing_azure) if missing_azure else "None (all covered)",
+            missing_gcp_services=", ".join(missing_gcp) if missing_gcp else "None (all covered)",
             num_tips=num_tips,
+            aws_count=aws_count,
+            azure_count=azure_count,
+            gcp_count=gcp_count,
         )
 
         logger.info(json.dumps({
             "event": "bedrock_tips_generation_started",
             "existing_tips_count": len(existing_tips),
-            "services_covered": len(covered_services),
-            "services_missing": len(missing_services),
+            "aws_services_covered": len(covered_aws),
+            "azure_services_covered": len(covered_azure),
+            "gcp_services_covered": len(covered_gcp),
+            "aws_services_missing": len(missing_aws),
+            "azure_services_missing": len(missing_azure),
+            "gcp_services_missing": len(missing_gcp),
             "num_tips_requested": num_tips,
         }))
 
@@ -143,9 +212,15 @@ def generate_tips_with_bedrock(bedrock_client, existing_tips: list, num_tips: in
                 }))
                 continue
 
+            # Determine cloud provider (UPPERCASE for DynamoDB)
+            cloud = tip.get("cloud", "AWS").upper()
+            if cloud not in ("AWS", "AZURE", "GCP"):
+                cloud = "AWS"
+
             # Normalize to standard schema
             normalized = {
                 "id": "",  # Will be assigned by generate_tip_id later
+                "cloud": cloud,
                 "service": tip.get("service", "General"),
                 "category": tip.get("category", "optimization"),
                 "title": title,
@@ -165,6 +240,11 @@ def generate_tips_with_bedrock(bedrock_client, existing_tips: list, num_tips: in
             "event": "bedrock_tips_generation_complete",
             "tips_generated": len(new_tips),
             "tips_raw": len(new_tips_raw),
+            "tips_by_cloud": {
+                "AWS": sum(1 for t in new_tips if t.get("cloud") == "AWS"),
+                "AZURE": sum(1 for t in new_tips if t.get("cloud") == "AZURE"),
+                "GCP": sum(1 for t in new_tips if t.get("cloud") == "GCP"),
+            },
         }))
 
         return new_tips

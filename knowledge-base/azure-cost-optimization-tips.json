@@ -71,21 +71,191 @@
       "cloudProvider": "azure"
     },
     {
-      "id": "azure-storage-001",
-      "service": "Storage",
-      "category": "storage-tiering",
-      "title": "Move infrequently accessed blobs to Cool or Archive tier",
-      "description": "Azure Blob Storage offers Hot, Cool, Cold, and Archive tiers. Move data accessed less than once per month to Cool (50% cheaper) or Archive (90% cheaper) with lifecycle management policies.",
-      "estimatedSavings": "50-90%",
+      "id": "azure-vm-007",
+      "service": "Virtual Machines",
+      "category": "right-sizing",
+      "title": "Switch to burstable B-series VMs for variable workloads",
+      "description": "B-series VMs provide a baseline CPU with burst capability. Ideal for web servers, small databases, and dev environments that don't need continuous full CPU — costs 40-60% less than general-purpose VMs.",
+      "estimatedSavings": "40-60%",
       "difficulty": "easy",
       "cloudProvider": "azure"
     },
     {
-      "id": "azure-storage-002",
-      "service": "Storage",
-      "category": "idle-resources",
-      "title": "Delete unattached Managed Disks",
-      "description": "Orphaned managed disks (not attached to any VM) continue incurring charges. Identify and delete unused disks or snapshot them to a cheaper tier before deletion.",
+      "id": "azure-vm-008",
+      "service": "Virtual Machines",
+      "category": "architecture",
+      "title": "Use Ephemeral OS Disks for stateless VMs",
+      "description": "Ephemeral OS disks use the VM's local storage at no additional cost, eliminating managed disk charges for the OS disk. Best for stateless nodes, VMSS, and container hosts.",
+      "estimatedSavings": "15-25%",
+      "difficulty": "medium",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-vmss-001",
+      "service": "VM Scale Sets",
+      "category": "right-sizing",
+      "title": "Configure autoscaling rules for VM Scale Sets",
+      "description": "Set scale-in and scale-out rules based on CPU, memory, or custom metrics. Use scheduled scaling for predictable load patterns and configure aggressive scale-in to avoid running excess instances.",
+      "estimatedSavings": "30-50%",
+      "difficulty": "medium",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-vmss-002",
+      "service": "VM Scale Sets",
+      "category": "pricing-model",
+      "title": "Mix Spot and on-demand instances in VMSS",
+      "description": "Use Spot priority VMs in VM Scale Sets with on-demand fallback for high availability. Configure eviction policies and max price to optimize cost while maintaining workload resilience.",
+      "estimatedSavings": "50-80%",
+      "difficulty": "hard",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-vmss-003",
+      "service": "VM Scale Sets",
+      "category": "scheduling",
+      "title": "Scale VMSS to zero during off-peak hours",
+      "description": "For non-production workloads, configure scheduled autoscale to reduce VMSS capacity to zero instances overnight and on weekends. Re-scale before business hours begin.",
+      "estimatedSavings": "50-70%",
+      "difficulty": "easy",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-functions-001",
+      "service": "Azure Functions",
+      "category": "architecture",
+      "title": "Use Consumption Plan for sporadic workloads",
+      "description": "Azure Functions Consumption Plan charges only for execution time and memory used. Avoid Premium or Dedicated plans for workloads with fewer than 1M executions/month or sporadic invocation patterns.",
+      "estimatedSavings": "50-80%",
+      "difficulty": "easy",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-functions-002",
+      "service": "Azure Functions",
+      "category": "right-sizing",
+      "title": "Optimize function memory allocation and execution time",
+      "description": "Profile function memory usage and reduce allocation to match actual needs. Optimize code to reduce execution duration — billing is per GB-second. Use async patterns to avoid idle waits.",
+      "estimatedSavings": "20-40%",
+      "difficulty": "medium",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-functions-003",
+      "service": "Azure Functions",
+      "category": "pricing-model",
+      "title": "Use Premium Plan with reserved instances for steady Functions",
+      "description": "For Functions that run continuously or need VNET integration, use Premium Plan with pre-warmed instances and apply Reserved Instance pricing for predictable monthly savings.",
+      "estimatedSavings": "30-55%",
+      "difficulty": "medium",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-appservice-001",
+      "service": "App Service",
+      "category": "right-sizing",
+      "title": "Scale down idle App Service plans",
+      "description": "Downgrade underutilized App Service plans from Premium to Standard or Basic tier. Consider consolidating multiple low-traffic apps into a single plan.",
+      "estimatedSavings": "30-70%",
+      "difficulty": "easy",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-appservice-002",
+      "service": "App Service",
+      "category": "architecture",
+      "title": "Consolidate apps into shared App Service Plans",
+      "description": "Multiple App Service apps can share a single plan's compute resources. Consolidate low-traffic apps to avoid paying for separate compute instances per application.",
+      "estimatedSavings": "40-60%",
+      "difficulty": "easy",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-appservice-003",
+      "service": "App Service",
+      "category": "pricing-model",
+      "title": "Use Reserved Instances for production App Service Plans",
+      "description": "Reserve Premium v3 and Isolated v2 App Service Plan instances for 1 or 3 years. Provides up to 55% discount over pay-as-you-go for stable production web applications.",
+      "estimatedSavings": "35-55%",
+      "difficulty": "medium",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-appservice-004",
+      "service": "App Service",
+      "category": "scheduling",
+      "title": "Use autoscaling rules for App Service Plans",
+      "description": "Configure scale-out and scale-in rules based on HTTP queue length, CPU, or schedule. Avoid running maximum instances 24/7 when peak traffic only occurs during business hours.",
+      "estimatedSavings": "25-45%",
+      "difficulty": "medium",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-aci-001",
+      "service": "Container Instances",
+      "category": "architecture",
+      "title": "Use Container Instances for short-lived batch jobs",
+      "description": "ACI bills per-second for CPU and memory. Use it for short-lived tasks instead of maintaining always-on VMs. Ideal for build agents, data processing, and scheduled jobs under 10 minutes.",
+      "estimatedSavings": "40-70%",
+      "difficulty": "easy",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-aci-002",
+      "service": "Container Instances",
+      "category": "right-sizing",
+      "title": "Minimize ACI resource allocations",
+      "description": "Only allocate the CPU and memory that your container actually needs. Each additional vCPU or GB of memory adds to the per-second cost. Profile containers to find the minimum viable resources.",
+      "estimatedSavings": "20-40%",
+      "difficulty": "easy",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-aci-003",
+      "service": "Container Instances",
+      "category": "pricing-model",
+      "title": "Use Spot containers for interruptible ACI workloads",
+      "description": "ACI Spot containers offer significant discounts for fault-tolerant workloads. Configure restart policies and use container groups with multiple containers sharing resources to optimize costs.",
+      "estimatedSavings": "50-70%",
+      "difficulty": "medium",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-aks-001",
+      "service": "Azure Kubernetes Service",
+      "category": "right-sizing",
+      "title": "Right-size AKS node pools and enable cluster autoscaler",
+      "description": "Enable AKS cluster autoscaler to scale node pools based on pod demand. Use Virtual Nodes for burst workloads and configure resource requests/limits to improve bin-packing efficiency.",
+      "estimatedSavings": "20-40%",
+      "difficulty": "medium",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-aks-002",
+      "service": "Azure Kubernetes Service",
+      "category": "pricing-model",
+      "title": "Use Spot node pools for interruptible AKS workloads",
+      "description": "Add Spot VM node pools to AKS clusters for batch processing, dev/test, and stateless workloads. Configure pod anti-affinity and disruption budgets for workload resilience.",
+      "estimatedSavings": "60-80%",
+      "difficulty": "medium",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-aks-003",
+      "service": "Azure Kubernetes Service",
+      "category": "scheduling",
+      "title": "Scale down AKS dev/test clusters outside business hours",
+      "description": "Use KEDA or scheduled autoscaler to scale dev/test node pools to minimum (or zero) after hours. Use AKS Start/Stop feature to completely deallocate non-production clusters overnight.",
+      "estimatedSavings": "50-70%",
+      "difficulty": "medium",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-aks-004",
+      "service": "Azure Kubernetes Service",
+      "category": "architecture",
+      "title": "Use AKS Free tier for dev/test clusters",
+      "description": "AKS Free tier provides cluster management at no cost for dev/test. Reserve Paid (Standard/Premium) tier for production where SLA guarantees and advanced features are required.",
       "estimatedSavings": "100%",
       "difficulty": "easy",
       "cloudProvider": "azure"
@@ -111,32 +281,252 @@
       "cloudProvider": "azure"
     },
     {
-      "id": "azure-aks-001",
-      "service": "Azure Kubernetes Service",
-      "category": "right-sizing",
-      "title": "Right-size AKS node pools and enable cluster autoscaler",
-      "description": "Enable AKS cluster autoscaler to scale node pools based on pod demand. Use Virtual Nodes for burst workloads and configure resource requests/limits to improve bin-packing efficiency.",
-      "estimatedSavings": "20-40%",
+      "id": "azure-sql-003",
+      "service": "Azure SQL",
+      "category": "architecture",
+      "title": "Use Elastic Pools for multi-tenant databases",
+      "description": "Azure SQL Elastic Pools share eDTU/vCore resources across multiple databases. Ideal when databases have variable usage patterns with different peak times, reducing per-database costs significantly.",
+      "estimatedSavings": "40-60%",
       "difficulty": "medium",
       "cloudProvider": "azure"
     },
     {
-      "id": "azure-network-001",
-      "service": "Networking",
+      "id": "azure-sql-004",
+      "service": "Azure SQL",
+      "category": "scheduling",
+      "title": "Use serverless tier for intermittent SQL workloads",
+      "description": "Azure SQL Serverless auto-pauses the database after a configurable idle period and auto-resumes on connection. Only pay for compute when active — ideal for dev/test and intermittent workloads.",
+      "estimatedSavings": "40-70%",
+      "difficulty": "easy",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-sql-005",
+      "service": "Azure SQL",
+      "category": "licensing",
+      "title": "Apply Azure Hybrid Benefit to Azure SQL",
+      "description": "Use existing SQL Server core licenses with active Software Assurance on Azure SQL Database and Managed Instance. Saves up to 55% on vCore-based compute pricing.",
+      "estimatedSavings": "30-55%",
+      "difficulty": "easy",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-cosmos-001",
+      "service": "Cosmos DB",
+      "category": "right-sizing",
+      "title": "Use autoscale throughput for variable Cosmos DB workloads",
+      "description": "Switch from manual provisioned throughput to autoscale to automatically adjust RU/s between 10% and 100% of max. Avoid paying for peak capacity during off-peak periods.",
+      "estimatedSavings": "20-50%",
+      "difficulty": "easy",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-cosmos-002",
+      "service": "Cosmos DB",
+      "category": "pricing-model",
+      "title": "Purchase Cosmos DB Reserved Capacity",
+      "description": "Reserve Cosmos DB throughput (RU/s) for 1 or 3 years to receive up to 65% discount over pay-as-you-go pricing. Apply to production databases with predictable RU/s requirements.",
+      "estimatedSavings": "40-65%",
+      "difficulty": "medium",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-cosmos-003",
+      "service": "Cosmos DB",
+      "category": "architecture",
+      "title": "Use Cosmos DB serverless for low-traffic applications",
+      "description": "Cosmos DB serverless mode charges only for RUs consumed per request with no minimum commitment. Ideal for dev/test, prototypes, and applications with fewer than 5000 RU/s average throughput.",
+      "estimatedSavings": "50-80%",
+      "difficulty": "easy",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-cosmos-004",
+      "service": "Cosmos DB",
+      "category": "data-management",
+      "title": "Configure TTL to auto-expire stale Cosmos DB data",
+      "description": "Set Time-to-Live (TTL) on containers to automatically delete documents after a specified period. Reduces storage costs and keeps throughput efficient for session data, logs, and temporary records.",
+      "estimatedSavings": "20-40%",
+      "difficulty": "easy",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-postgresql-001",
+      "service": "Azure Database for PostgreSQL",
+      "category": "right-sizing",
+      "title": "Right-size PostgreSQL Flexible Server tiers",
+      "description": "Monitor CPU and memory utilization and downgrade from General Purpose to Burstable tier for databases under 20% average CPU. Reduce vCores and storage to match actual workload requirements.",
+      "estimatedSavings": "30-50%",
+      "difficulty": "easy",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-postgresql-002",
+      "service": "Azure Database for PostgreSQL",
+      "category": "scheduling",
+      "title": "Stop PostgreSQL Flexible Server when not in use",
+      "description": "Azure Database for PostgreSQL Flexible Server supports stop/start. Schedule stops for dev/test databases during off-hours to eliminate compute charges while retaining data.",
+      "estimatedSavings": "50-70%",
+      "difficulty": "easy",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-postgresql-003",
+      "service": "Azure Database for PostgreSQL",
+      "category": "pricing-model",
+      "title": "Use Reserved Capacity for PostgreSQL",
+      "description": "Commit to 1 or 3-year reservations for Azure Database for PostgreSQL Flexible Server compute. Provides up to 60% discount over pay-as-you-go for production databases.",
+      "estimatedSavings": "35-60%",
+      "difficulty": "medium",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-mysql-001",
+      "service": "Azure Database for MySQL",
+      "category": "right-sizing",
+      "title": "Downgrade MySQL Flexible Server compute tier",
+      "description": "Switch from General Purpose to Burstable tier for dev/test MySQL databases. Monitor InnoDB buffer pool hit ratio and CPU to validate smaller tier handles the workload adequately.",
+      "estimatedSavings": "30-50%",
+      "difficulty": "easy",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-mysql-002",
+      "service": "Azure Database for MySQL",
+      "category": "scheduling",
+      "title": "Stop MySQL Flexible Server during idle periods",
+      "description": "Use the stop/start capability of MySQL Flexible Server for non-production instances. Compute charges stop immediately while storage and backups remain intact.",
+      "estimatedSavings": "50-70%",
+      "difficulty": "easy",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-mysql-003",
+      "service": "Azure Database for MySQL",
+      "category": "pricing-model",
+      "title": "Purchase Reserved Capacity for MySQL",
+      "description": "Commit to 1 or 3-year reservations for MySQL Flexible Server compute resources. Provides up to 60% savings over pay-as-you-go pricing for steady-state production databases.",
+      "estimatedSavings": "35-60%",
+      "difficulty": "medium",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-storage-001",
+      "service": "Blob Storage",
+      "category": "storage-tiering",
+      "title": "Move infrequently accessed blobs to Cool or Archive tier",
+      "description": "Azure Blob Storage offers Hot, Cool, Cold, and Archive tiers. Move data accessed less than once per month to Cool (50% cheaper) or Archive (90% cheaper) with lifecycle management policies.",
+      "estimatedSavings": "50-90%",
+      "difficulty": "easy",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-storage-002",
+      "service": "Blob Storage",
+      "category": "data-management",
+      "title": "Configure lifecycle management policies for blob data",
+      "description": "Automate tier transitions and deletion using lifecycle management rules. Set rules to move blobs to Cool after 30 days, Archive after 90 days, and delete after retention period expires.",
+      "estimatedSavings": "40-70%",
+      "difficulty": "easy",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-storage-003",
+      "service": "Blob Storage",
+      "category": "cleanup",
+      "title": "Delete old blob snapshots and versions",
+      "description": "Blob versioning and snapshots accumulate storage costs over time. Configure lifecycle rules to delete versions and snapshots older than your retention policy requires.",
+      "estimatedSavings": "20-40%",
+      "difficulty": "easy",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-storage-004",
+      "service": "Blob Storage",
+      "category": "pricing-model",
+      "title": "Use Reserved Capacity for predictable storage volumes",
+      "description": "Azure Storage Reserved Capacity offers up to 38% discount for committing to 1 or 3 years of storage capacity (100TB or 1PB) on Hot or Cool tiers.",
+      "estimatedSavings": "20-38%",
+      "difficulty": "medium",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-disk-001",
+      "service": "Managed Disks",
       "category": "idle-resources",
-      "title": "Delete unused Public IP addresses and idle Load Balancers",
-      "description": "Unassociated Public IP addresses and idle Standard Load Balancers incur hourly charges. Remove unused networking resources identified by Azure Advisor.",
+      "title": "Delete unattached Managed Disks",
+      "description": "Orphaned managed disks (not attached to any VM) continue incurring charges. Identify and delete unused disks or snapshot them to a cheaper tier before deletion.",
       "estimatedSavings": "100%",
       "difficulty": "easy",
       "cloudProvider": "azure"
     },
     {
-      "id": "azure-appservice-001",
-      "service": "App Service",
+      "id": "azure-disk-002",
+      "service": "Managed Disks",
       "category": "right-sizing",
-      "title": "Scale down idle App Service plans",
-      "description": "Downgrade underutilized App Service plans from Premium to Standard or Basic tier. Consider consolidating multiple low-traffic apps into a single plan.",
-      "estimatedSavings": "30-70%",
+      "title": "Downgrade Premium SSD to Standard SSD for non-critical disks",
+      "description": "Use Standard SSD (or Standard HDD for archival) for non-production and low-IOPS workloads. Premium SSD is only necessary for latency-sensitive production databases and applications.",
+      "estimatedSavings": "40-60%",
+      "difficulty": "easy",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-disk-003",
+      "service": "Managed Disks",
+      "category": "right-sizing",
+      "title": "Right-size disk capacity to actual usage",
+      "description": "Azure bills for provisioned disk size, not used space. Shrink oversized disks by creating a smaller disk from snapshot. Use monitoring to track actual disk space utilization.",
+      "estimatedSavings": "25-50%",
+      "difficulty": "medium",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-files-001",
+      "service": "Azure Files",
+      "category": "storage-tiering",
+      "title": "Use transaction-optimized or Cool tier for Azure Files",
+      "description": "Azure Files offers Premium, Transaction-optimized, Hot, and Cool tiers. Move file shares with low access frequency to Cool tier. Reserve Premium only for latency-sensitive workloads.",
+      "estimatedSavings": "30-50%",
+      "difficulty": "easy",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-files-002",
+      "service": "Azure Files",
+      "category": "pricing-model",
+      "title": "Use Azure File Sync to tier cold data to cloud",
+      "description": "Azure File Sync keeps frequently accessed files on-premises while tiering cold data to Azure Files. Reduces on-premises storage costs while maintaining fast access to hot data.",
+      "estimatedSavings": "30-50%",
+      "difficulty": "medium",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-datalake-001",
+      "service": "Data Lake Storage",
+      "category": "storage-tiering",
+      "title": "Apply lifecycle policies to Data Lake Storage Gen2",
+      "description": "Data Lake Storage Gen2 supports the same Hot/Cool/Archive tiers as Blob Storage. Configure lifecycle management to tier aging analytics data to cheaper storage classes automatically.",
+      "estimatedSavings": "40-70%",
+      "difficulty": "easy",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-datalake-002",
+      "service": "Data Lake Storage",
+      "category": "data-management",
+      "title": "Compress and optimize file formats in Data Lake",
+      "description": "Store data in columnar formats (Parquet, Delta) with compression instead of raw CSV/JSON. Reduces storage volume by 60-80% and improves query performance for analytics workloads.",
+      "estimatedSavings": "40-60%",
+      "difficulty": "medium",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-datalake-003",
+      "service": "Data Lake Storage",
+      "category": "cleanup",
+      "title": "Delete temporary and staging data in Data Lake",
+      "description": "Implement cleanup pipelines to remove temporary ETL staging data, failed job outputs, and intermediate processing files that accumulate in Data Lake Storage directories.",
+      "estimatedSavings": "15-30%",
       "difficulty": "easy",
       "cloudProvider": "azure"
     },
@@ -148,6 +538,596 @@
       "description": "Reduce Log Analytics costs by filtering verbose logs at collection, setting appropriate retention periods, using Basic Logs tier for debug data, and archiving old data to cheaper storage.",
       "estimatedSavings": "30-60%",
       "difficulty": "medium",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-monitor-002",
+      "service": "Azure Monitor",
+      "category": "pricing-model",
+      "title": "Use commitment tiers for Log Analytics",
+      "description": "Log Analytics commitment tiers (100GB/day+) provide up to 30% discount over pay-as-you-go per-GB pricing. Analyze daily ingestion volume to select the optimal commitment level.",
+      "estimatedSavings": "15-30%",
+      "difficulty": "medium",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-monitor-003",
+      "service": "Azure Monitor",
+      "category": "data-management",
+      "title": "Use Basic Logs for high-volume diagnostic data",
+      "description": "Basic Logs plan reduces ingestion costs by ~60% for verbose diagnostic logs you rarely query. Trade interactive query capabilities for significantly lower per-GB costs.",
+      "estimatedSavings": "40-60%",
+      "difficulty": "easy",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-loganalytics-001",
+      "service": "Log Analytics",
+      "category": "data-management",
+      "title": "Reduce workspace data retention to minimum required",
+      "description": "Default retention is 30 days (free). Additional retention costs per-GB/month. Set retention to compliance minimums and archive older data to Storage Account for long-term needs.",
+      "estimatedSavings": "20-40%",
+      "difficulty": "easy",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-loganalytics-002",
+      "service": "Log Analytics",
+      "category": "cleanup",
+      "title": "Filter out unnecessary log sources and tables",
+      "description": "Disable collection of high-volume, low-value log tables (e.g., ContainerLog stdout for healthy pods, SecurityEvent noise). Use workspace transformations to filter rows before ingestion.",
+      "estimatedSavings": "20-50%",
+      "difficulty": "medium",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-appinsights-001",
+      "service": "Application Insights",
+      "category": "data-management",
+      "title": "Configure sampling to reduce Application Insights volume",
+      "description": "Enable adaptive or fixed-rate sampling to reduce telemetry volume by 50-90% while preserving statistical accuracy. Most apps don't need 100% of request/dependency telemetry captured.",
+      "estimatedSavings": "40-70%",
+      "difficulty": "easy",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-appinsights-002",
+      "service": "Application Insights",
+      "category": "data-management",
+      "title": "Set daily cap on Application Insights ingestion",
+      "description": "Configure a daily ingestion cap to prevent unexpected cost spikes from verbose logging or traffic bursts. Set alerts when approaching the cap to avoid data loss.",
+      "estimatedSavings": "20-40%",
+      "difficulty": "easy",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-appinsights-003",
+      "service": "Application Insights",
+      "category": "pricing-model",
+      "title": "Move to workspace-based Application Insights",
+      "description": "Workspace-based Application Insights benefits from Log Analytics commitment tier pricing and data archival options. Migrate from classic resources to gain cost management features.",
+      "estimatedSavings": "15-30%",
+      "difficulty": "medium",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-network-001",
+      "service": "Networking",
+      "category": "idle-resources",
+      "title": "Delete unused Public IP addresses",
+      "description": "Unassociated Standard Public IP addresses incur hourly charges. Remove unused public IPs identified by Azure Advisor or use dynamic allocation where static IPs aren't required.",
+      "estimatedSavings": "100%",
+      "difficulty": "easy",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-network-002",
+      "service": "Networking",
+      "category": "idle-resources",
+      "title": "Remove idle Load Balancers",
+      "description": "Standard Load Balancers charge per hour and per rule even without backend traffic. Delete unused load balancers and consolidate multiple load balancers where possible.",
+      "estimatedSavings": "100%",
+      "difficulty": "easy",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-network-003",
+      "service": "Networking",
+      "category": "architecture",
+      "title": "Use VNet peering instead of VPN Gateway for Azure-to-Azure",
+      "description": "VNet peering provides lower latency and higher bandwidth than VPN Gateway for intra-Azure connectivity. Peering is billed per-GB vs. VPN Gateway hourly charges plus data transfer.",
+      "estimatedSavings": "30-50%",
+      "difficulty": "medium",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-appgw-001",
+      "service": "Application Gateway",
+      "category": "right-sizing",
+      "title": "Right-size Application Gateway capacity units",
+      "description": "Use autoscaling Application Gateway v2 instead of fixed capacity. Set appropriate min/max instance counts based on traffic patterns to avoid paying for unused capacity units.",
+      "estimatedSavings": "30-50%",
+      "difficulty": "medium",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-appgw-002",
+      "service": "Application Gateway",
+      "category": "idle-resources",
+      "title": "Delete unused Application Gateway instances",
+      "description": "Application Gateway v2 charges per hour plus capacity units even without traffic. Remove gateways for decommissioned applications or consolidate apps behind fewer gateways.",
+      "estimatedSavings": "100%",
+      "difficulty": "easy",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-expressroute-001",
+      "service": "ExpressRoute",
+      "category": "right-sizing",
+      "title": "Right-size ExpressRoute circuit bandwidth",
+      "description": "Monitor ExpressRoute circuit utilization and downgrade bandwidth tier if consistently below 30% usage. Consider Local SKU for same-metro peering which eliminates data transfer charges.",
+      "estimatedSavings": "30-50%",
+      "difficulty": "medium",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-expressroute-002",
+      "service": "ExpressRoute",
+      "category": "pricing-model",
+      "title": "Use ExpressRoute Local for same-metro connectivity",
+      "description": "ExpressRoute Local SKU eliminates per-GB egress charges for circuits connected at peering locations in the same Azure metro. Unlimited data at a lower monthly circuit fee.",
+      "estimatedSavings": "40-60%",
+      "difficulty": "medium",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-bandwidth-001",
+      "service": "Networking",
+      "category": "networking",
+      "title": "Reduce egress costs with Azure CDN or Front Door",
+      "description": "Data egress from Azure to the internet is metered. Use Azure CDN or Front Door to cache static content closer to users. CDN egress is cheaper per-GB than direct blob/compute egress.",
+      "estimatedSavings": "30-50%",
+      "difficulty": "medium",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-bandwidth-002",
+      "service": "Networking",
+      "category": "architecture",
+      "title": "Co-locate resources in the same region to avoid cross-region transfer",
+      "description": "Inter-region data transfer charges apply for resources in different Azure regions. Place dependent services (app + database + cache) in the same region to eliminate cross-region bandwidth costs.",
+      "estimatedSavings": "20-40%",
+      "difficulty": "medium",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-vpngw-001",
+      "service": "VPN Gateway",
+      "category": "right-sizing",
+      "title": "Downgrade VPN Gateway SKU for low-throughput connections",
+      "description": "VPN Gateway SKUs range from Basic to VpnGw5. Downgrade to a lower SKU if actual throughput is well below the current tier's capacity. Basic SKU suits dev/test scenarios.",
+      "estimatedSavings": "40-70%",
+      "difficulty": "medium",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-vpngw-002",
+      "service": "VPN Gateway",
+      "category": "idle-resources",
+      "title": "Delete unused VPN Gateway connections",
+      "description": "VPN Gateways charge hourly regardless of traffic. Remove gateways for decommissioned site-to-site connections or replaced ExpressRoute circuits to stop incurring idle charges.",
+      "estimatedSavings": "100%",
+      "difficulty": "easy",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-devops-001",
+      "service": "Azure DevOps",
+      "category": "right-sizing",
+      "title": "Use self-hosted agents for high-volume CI/CD pipelines",
+      "description": "Microsoft-hosted agents charge per-minute for parallel jobs. Use self-hosted agents on existing VMs or Spot instances for pipelines running hundreds of minutes daily to reduce costs.",
+      "estimatedSavings": "50-70%",
+      "difficulty": "medium",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-devops-002",
+      "service": "Azure DevOps",
+      "category": "cleanup",
+      "title": "Clean up old build artifacts and test attachments",
+      "description": "Azure DevOps storage is free up to 2GB then charged per-GB. Set retention policies on build pipelines, delete old artifacts, and purge test attachments to stay within free tier.",
+      "estimatedSavings": "10-30%",
+      "difficulty": "easy",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-devops-003",
+      "service": "Azure DevOps",
+      "category": "licensing",
+      "title": "Audit and remove inactive Azure DevOps users",
+      "description": "Basic plan users cost per-user/month. Audit user access levels, downgrade inactive users to Stakeholder (free), and remove departed team members to reduce licensing costs.",
+      "estimatedSavings": "15-30%",
+      "difficulty": "easy",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-ad-001",
+      "service": "Azure AD",
+      "category": "licensing",
+      "title": "Optimize Azure AD Premium license assignments",
+      "description": "Assign P1/P2 licenses only to users who need premium features (Conditional Access, PIM, Identity Protection). Use group-based licensing to automate and audit assignments.",
+      "estimatedSavings": "20-40%",
+      "difficulty": "easy",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-ad-002",
+      "service": "Azure AD",
+      "category": "cleanup",
+      "title": "Remove stale guest accounts and app registrations",
+      "description": "Inactive guest users and orphaned app registrations can accumulate licensing costs. Audit last sign-in dates and remove accounts inactive for 90+ days using access reviews.",
+      "estimatedSavings": "10-20%",
+      "difficulty": "easy",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-keyvault-001",
+      "service": "Key Vault",
+      "category": "right-sizing",
+      "title": "Use Standard tier Key Vault unless HSM is required",
+      "description": "Key Vault Premium tier (HSM-backed keys) costs significantly more. Use Standard tier for secrets and certificates unless regulatory compliance mandates hardware security modules.",
+      "estimatedSavings": "40-60%",
+      "difficulty": "easy",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-keyvault-002",
+      "service": "Key Vault",
+      "category": "cleanup",
+      "title": "Delete unused Key Vault secrets and expired certificates",
+      "description": "While Key Vault charges per-operation not per-secret, unnecessary vaults incur base costs. Consolidate secrets into fewer vaults and purge soft-deleted vaults after retention period.",
+      "estimatedSavings": "15-30%",
+      "difficulty": "easy",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-redis-001",
+      "service": "Azure Cache for Redis",
+      "category": "right-sizing",
+      "title": "Right-size Redis cache tier and memory",
+      "description": "Monitor cache hit ratio, memory usage, and connected clients. Downgrade from Premium to Standard tier or reduce cache size if memory utilization is consistently below 50%.",
+      "estimatedSavings": "30-50%",
+      "difficulty": "medium",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-redis-002",
+      "service": "Azure Cache for Redis",
+      "category": "pricing-model",
+      "title": "Use Reserved Capacity for production Redis instances",
+      "description": "Commit to 1 or 3-year reservations for Azure Cache for Redis to receive up to 55% discount over pay-as-you-go. Apply to stable production caching layers with predictable capacity needs.",
+      "estimatedSavings": "35-55%",
+      "difficulty": "medium",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-redis-003",
+      "service": "Azure Cache for Redis",
+      "category": "idle-resources",
+      "title": "Delete unused Redis instances in non-production environments",
+      "description": "Dev/test Redis instances often remain running after project completion. Identify caches with near-zero operations and delete or consolidate them to reduce monthly costs.",
+      "estimatedSavings": "100%",
+      "difficulty": "easy",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-eventhub-001",
+      "service": "Event Hubs",
+      "category": "right-sizing",
+      "title": "Right-size Event Hubs throughput units",
+      "description": "Monitor incoming and outgoing bytes/events to determine actual throughput needs. Reduce throughput units (TUs) for namespaces running below 50% capacity or enable auto-inflate selectively.",
+      "estimatedSavings": "30-50%",
+      "difficulty": "medium",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-eventhub-002",
+      "service": "Event Hubs",
+      "category": "pricing-model",
+      "title": "Use Basic tier for simple event streaming scenarios",
+      "description": "Event Hubs Basic tier costs significantly less than Standard. Use Basic for scenarios not requiring consumer groups, capture, or partition keys — suitable for simple telemetry ingestion.",
+      "estimatedSavings": "40-60%",
+      "difficulty": "easy",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-eventhub-003",
+      "service": "Event Hubs",
+      "category": "idle-resources",
+      "title": "Delete unused Event Hub namespaces",
+      "description": "Event Hubs namespaces incur hourly charges for allocated TUs regardless of message volume. Remove namespaces for decommissioned event streams or consolidate hubs into fewer namespaces.",
+      "estimatedSavings": "100%",
+      "difficulty": "easy",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-servicebus-001",
+      "service": "Service Bus",
+      "category": "right-sizing",
+      "title": "Downgrade Service Bus tier for low-volume messaging",
+      "description": "Service Bus Premium tier includes dedicated capacity but costs significantly more. Use Standard tier for workloads not requiring message isolation, large messages, or geo-disaster recovery.",
+      "estimatedSavings": "50-70%",
+      "difficulty": "medium",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-servicebus-002",
+      "service": "Service Bus",
+      "category": "idle-resources",
+      "title": "Remove unused Service Bus queues and topics",
+      "description": "Unused Premium tier messaging units incur costs regardless of message flow. Delete unused queues, topics, and entire namespaces for decommissioned microservice communication patterns.",
+      "estimatedSavings": "100%",
+      "difficulty": "easy",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-servicebus-003",
+      "service": "Service Bus",
+      "category": "data-management",
+      "title": "Set message TTL and dead-letter policies",
+      "description": "Configure message Time-to-Live and max delivery counts to prevent queue bloat. Route dead-lettered messages to cheaper storage for analysis instead of keeping them in Service Bus indefinitely.",
+      "estimatedSavings": "10-20%",
+      "difficulty": "easy",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-synapse-001",
+      "service": "Azure Synapse",
+      "category": "scheduling",
+      "title": "Pause dedicated SQL pools when not in use",
+      "description": "Synapse dedicated SQL pools (formerly SQL DW) charge per-DWU-hour. Pause pools during off-hours, weekends, and non-query periods. Storage charges continue but compute stops entirely.",
+      "estimatedSavings": "50-70%",
+      "difficulty": "easy",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-synapse-002",
+      "service": "Azure Synapse",
+      "category": "right-sizing",
+      "title": "Scale down Synapse DWU level for lighter workloads",
+      "description": "Monitor query concurrency and performance to find the minimum DWU level that meets SLAs. Many workloads perform adequately at DW100c-DW500c instead of DW1000c or higher.",
+      "estimatedSavings": "30-60%",
+      "difficulty": "medium",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-synapse-003",
+      "service": "Azure Synapse",
+      "category": "architecture",
+      "title": "Use Synapse Serverless SQL for ad-hoc queries",
+      "description": "Synapse Serverless SQL charges per-TB scanned instead of per-hour compute. Use it for ad-hoc exploration and lightweight queries, reserving dedicated pools for heavy production workloads.",
+      "estimatedSavings": "40-70%",
+      "difficulty": "medium",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-datafactory-001",
+      "service": "Data Factory",
+      "category": "right-sizing",
+      "title": "Optimize Data Factory integration runtime sizing",
+      "description": "Use auto-resolve integration runtime for light workloads instead of self-hosted. Right-size core count for data flows — start with 8 cores general-purpose and scale only if performance requires it.",
+      "estimatedSavings": "30-50%",
+      "difficulty": "medium",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-datafactory-002",
+      "service": "Data Factory",
+      "category": "scheduling",
+      "title": "Set TTL on Data Factory data flow clusters",
+      "description": "Data flow clusters have a warm-up time but also charge while idle after job completion. Set TTL to 5-10 minutes to auto-terminate clusters quickly after pipeline runs finish.",
+      "estimatedSavings": "20-40%",
+      "difficulty": "easy",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-datafactory-003",
+      "service": "Data Factory",
+      "category": "architecture",
+      "title": "Use pipeline concurrency limits to control parallel costs",
+      "description": "Unbounded parallel pipeline runs can create expensive spikes in integration runtime costs. Set concurrency limits and queue excess runs to maintain predictable spending patterns.",
+      "estimatedSavings": "15-30%",
+      "difficulty": "medium",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-databricks-001",
+      "service": "Azure Databricks",
+      "category": "pricing-model",
+      "title": "Use Spot instances for Databricks worker nodes",
+      "description": "Configure Databricks clusters to use Spot/Low-Priority VMs for worker nodes with on-demand driver. Provides 60-80% savings on cluster compute costs for fault-tolerant data engineering jobs.",
+      "estimatedSavings": "60-80%",
+      "difficulty": "medium",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-databricks-002",
+      "service": "Azure Databricks",
+      "category": "scheduling",
+      "title": "Configure aggressive auto-termination for Databricks clusters",
+      "description": "Set auto-termination to 10-20 minutes of inactivity. Use job clusters instead of interactive clusters for scheduled workloads — they terminate immediately after job completion.",
+      "estimatedSavings": "30-50%",
+      "difficulty": "easy",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-databricks-003",
+      "service": "Azure Databricks",
+      "category": "right-sizing",
+      "title": "Use Photon runtime and right-size cluster nodes",
+      "description": "Photon-enabled clusters run queries 2-8x faster, allowing smaller clusters to handle the same workload. Profile jobs to find optimal node count and type instead of over-provisioning.",
+      "estimatedSavings": "30-50%",
+      "difficulty": "medium",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-databricks-004",
+      "service": "Azure Databricks",
+      "category": "architecture",
+      "title": "Use Databricks SQL Serverless for BI queries",
+      "description": "Databricks SQL Serverless warehouses start instantly and scale to zero when idle. Better cost model for interactive BI queries than keeping dedicated SQL warehouses running 24/7.",
+      "estimatedSavings": "40-60%",
+      "difficulty": "medium",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-firewall-001",
+      "service": "Azure Firewall",
+      "category": "right-sizing",
+      "title": "Use Azure Firewall Basic SKU for smaller deployments",
+      "description": "Azure Firewall Basic SKU costs significantly less than Standard/Premium for small businesses and branch offices. Provides core FQDN and network rules without premium features like IDPS.",
+      "estimatedSavings": "40-60%",
+      "difficulty": "medium",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-firewall-002",
+      "service": "Azure Firewall",
+      "category": "scheduling",
+      "title": "Deallocate Azure Firewall in non-production environments",
+      "description": "Azure Firewall charges per-hour even without traffic. Deallocate firewalls in dev/test environments after hours using Azure Automation. Reallocate on the same public IP when needed.",
+      "estimatedSavings": "50-70%",
+      "difficulty": "medium",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-firewall-003",
+      "service": "Azure Firewall",
+      "category": "architecture",
+      "title": "Use shared Azure Firewall with hub-spoke topology",
+      "description": "Deploy a single Azure Firewall in the hub VNet rather than one per spoke. Route all spoke traffic through the centralized firewall to avoid multiple firewall deployment costs.",
+      "estimatedSavings": "50-75%",
+      "difficulty": "hard",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-ddos-001",
+      "service": "DDoS Protection",
+      "category": "architecture",
+      "title": "Use DDoS Network Protection plan across subscriptions",
+      "description": "A single DDoS Protection plan can cover up to 100 public IPs across all VNets in a subscription. Share one plan across subscriptions instead of per-VNet protection to reduce costs.",
+      "estimatedSavings": "60-80%",
+      "difficulty": "medium",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-ddos-002",
+      "service": "DDoS Protection",
+      "category": "right-sizing",
+      "title": "Evaluate if DDoS IP Protection suits your needs",
+      "description": "DDoS IP Protection covers individual public IPs at a lower per-IP cost than the Network Protection plan for fewer than ~10-15 IPs. Assess resource count to pick the cost-effective option.",
+      "estimatedSavings": "30-50%",
+      "difficulty": "easy",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-waf-001",
+      "service": "Web Application Firewall",
+      "category": "architecture",
+      "title": "Consolidate WAF policies across Application Gateways",
+      "description": "Share WAF policies across multiple Application Gateway and Front Door instances rather than duplicating configurations. Reduces management overhead and can reduce per-policy charges.",
+      "estimatedSavings": "20-40%",
+      "difficulty": "medium",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-waf-002",
+      "service": "Web Application Firewall",
+      "category": "right-sizing",
+      "title": "Use WAF on Front Door instead of per-region Application Gateway",
+      "description": "A single Azure Front Door with WAF can protect globally distributed apps cheaper than deploying WAF-enabled Application Gateways in each region.",
+      "estimatedSavings": "30-50%",
+      "difficulty": "hard",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-backup-001",
+      "service": "Azure Backup",
+      "category": "data-management",
+      "title": "Optimize backup retention policies",
+      "description": "Review and reduce backup retention beyond compliance requirements. Keep daily backups for 7-14 days, weekly for 4-8 weeks, and monthly for 6-12 months instead of default aggressive retention.",
+      "estimatedSavings": "30-50%",
+      "difficulty": "easy",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-backup-002",
+      "service": "Azure Backup",
+      "category": "storage-tiering",
+      "title": "Move long-term backup data to Vault-Archive tier",
+      "description": "Azure Backup supports Vault-Archive tier for recovery points retained longer than 6 months. Saves up to 70% on backup storage for long-term compliance retention scenarios.",
+      "estimatedSavings": "50-70%",
+      "difficulty": "medium",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-backup-003",
+      "service": "Azure Backup",
+      "category": "cleanup",
+      "title": "Delete backups for decommissioned resources",
+      "description": "Backup vaults continue storing (and billing for) recovery points after source VMs or databases are deleted. Remove stale backup items and soft-deleted data after retention period.",
+      "estimatedSavings": "100%",
+      "difficulty": "easy",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-asr-001",
+      "service": "Site Recovery",
+      "category": "right-sizing",
+      "title": "Remove unnecessary VMs from Site Recovery replication",
+      "description": "Azure Site Recovery charges per-protected-instance/month. Review which VMs truly need DR replication — dev/test and easily-recreatable VMs often don't justify the replication cost.",
+      "estimatedSavings": "30-50%",
+      "difficulty": "easy",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-asr-002",
+      "service": "Site Recovery",
+      "category": "data-management",
+      "title": "Reduce Site Recovery snapshot retention",
+      "description": "Configure minimal recovery point retention (default is 24 hours, max 72). Reduce to the minimum acceptable RPO to lower the storage costs for replicated snapshots in the target region.",
+      "estimatedSavings": "20-35%",
+      "difficulty": "easy",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-policy-001",
+      "service": "Azure Policy",
+      "category": "tagging",
+      "title": "Enforce cost-center and environment tags via Policy",
+      "description": "Deploy Azure Policy definitions that deny resource creation without mandatory tags (cost-center, environment, owner). Enables accurate chargeback and orphaned resource identification.",
+      "estimatedSavings": "10-20%",
+      "difficulty": "medium",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-policy-002",
+      "service": "Azure Policy",
+      "category": "architecture",
+      "title": "Restrict expensive VM SKUs with Azure Policy",
+      "description": "Use Azure Policy to create an allowed VM sizes list. Block deployment of expensive GPU or memory-optimized SKUs unless explicitly justified. Prevents accidental expensive resource creation.",
+      "estimatedSavings": "20-40%",
+      "difficulty": "medium",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-policy-003",
+      "service": "Azure Policy",
+      "category": "architecture",
+      "title": "Restrict allowed regions with Azure Policy",
+      "description": "Limit deployments to cost-effective regions using Azure Policy. Prevent accidental deployment to expensive regions and ensure resources stay co-located to avoid cross-region data transfer charges.",
+      "estimatedSavings": "10-25%",
+      "difficulty": "easy",
       "cloudProvider": "azure"
     },
     {
