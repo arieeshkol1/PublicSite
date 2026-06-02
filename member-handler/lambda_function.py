@@ -1998,8 +1998,13 @@ def handle_dashboard_data(event):
                             service_totals = {}
                             daily_cost_trend = []
                             tag_found = False
+                            _today_tag = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+                            _yesterday_tag = (datetime.now(timezone.utc) - timedelta(days=1)).strftime('%Y-%m-%d')
                             for item in cache_items:
                                 date_str = item['sk'].replace('DAILY#', '')
+                                # Skip today/yesterday — cost data incomplete until finalized (~48h)
+                                if date_str == _today_tag or date_str == _yesterday_tag:
+                                    continue
                                 tb = normalize_tag_breakdown(item.get('tag_breakdown') or {})
                                 # Direct lookup by tag key, then by tag value
                                 tag_key_data = tb.get(tag_key, {})
@@ -2031,8 +2036,13 @@ def handle_dashboard_data(event):
                             cache_used = True
                             service_totals = {}
                             daily_cost_trend = []
+                            _today_cache = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+                            _yesterday_cache = (datetime.now(timezone.utc) - timedelta(days=1)).strftime('%Y-%m-%d')
                             for item in cache_items:
                                 date_str = item['sk'].replace('DAILY#', '')
+                                # Skip today/yesterday — cost data incomplete until finalized (~48h)
+                                if date_str == _today_cache or date_str == _yesterday_cache:
+                                    continue
                                 cost = float(item.get('cost_amount', 0))
                                 daily_cost_trend.append({'date': date_str, 'cost_usd': cost})
                                 for svc, svc_cost in (item.get('service_breakdown') or {}).items():
@@ -2484,7 +2494,10 @@ def handle_dashboard_data(event):
     eff_score = round((1 - total_savings / total_spend) * 100, 1) if total_spend > 0 else 100
 
     # Daily trend with anomaly detection
-    daily_list = sorted(merged_daily.items())
+    # Exclude today AND yesterday — cost data takes up to 48h to fully finalize in AWS
+    today_str = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+    yesterday_str = (datetime.now(timezone.utc) - timedelta(days=1)).strftime('%Y-%m-%d')
+    daily_list = sorted((d, c) for d, c in merged_daily.items() if d != today_str and d != yesterday_str)
     daily_costs = [c for _, c in daily_list]
     avg_daily = sum(daily_costs) / len(daily_costs) if daily_costs else 0
     daily_trend = []
@@ -2663,9 +2676,13 @@ def _build_daily_service_breakdown(cache_items, tag_key=None, tag_value=None):
             for svc_name, svc_cost in services.items():
                 daily_services[date_str][svc_name] = daily_services[date_str].get(svc_name, 0.0) + svc_cost
 
-    # Build output sorted by date ascending
+    # Build output sorted by date ascending, excluding today/yesterday (incomplete data ~48h finalization)
+    today_str = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+    yesterday_str = (datetime.now(timezone.utc) - timedelta(days=1)).strftime('%Y-%m-%d')
     result = []
     for date_str in sorted(daily_services.keys()):
+        if date_str == today_str or date_str == yesterday_str:
+            continue
         result.append({
             'date': date_str,
             'services': {svc: round(cost, 4) for svc, cost in daily_services[date_str].items()}
@@ -15806,6 +15823,13 @@ def handle_server_list_instances(event):
         # If body specifies a region, use only that
         if body.get('region'):
             all_regions = [body['region']]
+
+        # Filter out invalid region names (CE can return empty, 'global', or display names)
+        import re as _re
+        _valid_region_re = _re.compile(r'^[a-z]{2}(-[a-z]+-\d+)$')
+        all_regions = [r for r in all_regions if _valid_region_re.match(r)]
+        if not all_regions:
+            all_regions = ['us-east-1']
 
         for _region in all_regions:
             try:
