@@ -1699,6 +1699,13 @@ Resources:
       RouteKey: 'POST /members/cache/invalidate'
       Target: !Sub 'integrations/${MemberIntegration}'
 
+  MemberProviderConfigRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'GET /members/provider-config'
+      Target: !Sub 'integrations/${MemberIntegration}'
+
   MemberHandlerInvokePermission:
     Type: AWS::Lambda::Permission
     Properties:
