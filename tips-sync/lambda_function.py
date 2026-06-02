@@ -354,45 +354,93 @@ def _fetch_ta_tips(sources_succeeded, sources_failed) -> list:
 
 
 def _fetch_baseline_tips(sources_succeeded, sources_failed) -> list:
-    """Fetch tips from the baseline file with graceful degradation.
+    """Fetch tips from all baseline files (AWS, Azure, GCP) with graceful degradation.
+
+    Reads each provider's JSON file from the knowledge-base directory.
+    Each tip gets its cloudProvider field preserved (or defaulted to 'aws').
+    Continues processing remaining providers if one fails.
 
     Args:
         sources_succeeded: List to append source name on success.
         sources_failed: List to append source name on failure.
 
     Returns:
-        List of tip dicts from baseline file, or empty list on error.
+        List of tip dicts from all baseline files, or empty list on error.
     """
-    try:
-        baseline_path = os.path.join(
-            os.path.dirname(__file__), "knowledge-base", "aws-cost-optimization-tips.json"
-        )
-        tips = load_baseline_tips(baseline_path)
-        if tips:
-            sources_succeeded.append("baseline")
-            logger.info(json.dumps({
-                "action": "source_fetch_complete",
-                "source": "baseline",
-                "tipsCount": len(tips),
+    all_tips = []
+    kb_dir = os.path.join(os.path.dirname(__file__), "knowledge-base")
+
+    # All provider baseline files to load
+    baseline_files = [
+        ("aws-cost-optimization-tips.json", "aws", "baseline-aws"),
+        ("azure-cost-optimization-tips.json", "azure", "baseline-azure"),
+        ("gcp-cost-optimization-tips.json", "gcp", "baseline-gcp"),
+    ]
+
+    any_succeeded = False
+    for filename, default_provider, source_label in baseline_files:
+        try:
+            file_path = os.path.join(kb_dir, filename)
+            if not os.path.exists(file_path):
+                logger.info(json.dumps({
+                    "action": "baseline_file_not_found",
+                    "source": source_label,
+                    "path": file_path,
+                }))
+                continue
+
+            tips = load_baseline_tips(file_path)
+            if tips:
+                # Ensure each tip has the 'cloud' field (DynamoDB field name) set
+                provider_label = default_provider.upper()  # DynamoDB uses uppercase: AWS, AZURE, GCP
+                for tip in tips:
+                    # Map cloudProvider from JSON to 'cloud' field in DynamoDB
+                    if not tip.get("cloud"):
+                        tip["cloud"] = tip.pop("cloudProvider", None) or provider_label
+                        if tip["cloud"].islower():
+                            tip["cloud"] = tip["cloud"].upper()
+                    # Also keep cloudProvider for backward compat if needed
+                    if "cloudProvider" in tip:
+                        del tip["cloudProvider"]
+                all_tips.extend(tips)
+                any_succeeded = True
+                logger.info(json.dumps({
+                    "action": "source_fetch_complete",
+                    "source": source_label,
+                    "tipsCount": len(tips),
+                    "cloudProvider": default_provider,
+                }))
+            else:
+                logger.warning(json.dumps({
+                    "action": "source_fetch_empty",
+                    "source": source_label,
+                    "tipsCount": 0,
+                    "path": file_path,
+                }))
+        except Exception as e:
+            logger.error(json.dumps({
+                "action": "source_fetch_error",
+                "source": source_label,
+                "error": str(e),
+                "errorType": type(e).__name__,
             }))
-        else:
-            sources_failed.append("baseline")
-            logger.warning(json.dumps({
-                "action": "source_fetch_empty",
-                "source": "baseline",
-                "tipsCount": 0,
-                "path": baseline_path,
-            }))
-        return tips
-    except Exception as e:
-        logger.error(json.dumps({
-            "action": "source_fetch_error",
-            "source": "baseline",
-            "error": str(e),
-            "errorType": type(e).__name__,
+            # Continue with other providers
+
+    if any_succeeded:
+        sources_succeeded.append("baseline")
+        logger.info(json.dumps({
+            "action": "baseline_all_loaded",
+            "totalTips": len(all_tips),
+            "providers": [f[1] for f in baseline_files if os.path.exists(os.path.join(kb_dir, f[0]))],
         }))
+    else:
         sources_failed.append("baseline")
-        return []
+        logger.warning(json.dumps({
+            "action": "baseline_all_failed",
+            "message": "No baseline tips loaded from any provider file",
+        }))
+
+    return all_tips
 
 
 def _scan_existing_tips(table) -> dict:

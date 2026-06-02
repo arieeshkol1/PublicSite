@@ -1,0 +1,164 @@
+{
+  "version": "1.0",
+  "lastUpdated": "2026-06-02",
+  "cloudProvider": "azure",
+  "sources": [
+    "https://learn.microsoft.com/azure/cost-management-billing/costs/cost-mgt-best-practices",
+    "https://learn.microsoft.com/en-ca/azure/advisor/advisor-reference-cost-recommendations",
+    "https://learn.microsoft.com/en-us/azure/advisor/advisor-cost-optimization-workbook",
+    "https://medhacloud.com/blog/azure-cost-optimization-guide",
+    "https://www.sedai.io/blog/cost-optimization-strategies-azure"
+  ],
+  "tips": [
+    {
+      "id": "azure-vm-001",
+      "service": "Virtual Machines",
+      "category": "right-sizing",
+      "title": "Right-size underutilized Virtual Machines",
+      "description": "Azure Advisor identifies VMs with average CPU below 5% or network utilization below 7 Mbps over 7 days. Switch to a smaller VM size or deallocate idle VMs to reduce compute costs.",
+      "estimatedSavings": "20-50%",
+      "difficulty": "easy",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-vm-002",
+      "service": "Virtual Machines",
+      "category": "pricing-model",
+      "title": "Purchase Reserved Instances for steady workloads",
+      "description": "Azure Reserved VM Instances provide up to 72% discount over pay-as-you-go pricing with 1-year or 3-year commitments. Best for production workloads with predictable usage patterns.",
+      "estimatedSavings": "40-72%",
+      "difficulty": "medium",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-vm-003",
+      "service": "Virtual Machines",
+      "category": "pricing-model",
+      "title": "Use Azure Savings Plans for flexible compute",
+      "description": "Azure Savings Plans for Compute offer up to 65% savings with hourly spend commitment that applies across VM series, regions, and operating systems. More flexible than Reserved Instances.",
+      "estimatedSavings": "30-65%",
+      "difficulty": "medium",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-vm-004",
+      "service": "Virtual Machines",
+      "category": "pricing-model",
+      "title": "Use Spot VMs for interruptible workloads",
+      "description": "Azure Spot VMs offer up to 90% discount for workloads that can tolerate interruption — batch processing, dev/test, CI/CD pipelines, and stateless microservices.",
+      "estimatedSavings": "60-90%",
+      "difficulty": "medium",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-vm-005",
+      "service": "Virtual Machines",
+      "category": "licensing",
+      "title": "Apply Azure Hybrid Benefit for Windows and SQL",
+      "description": "Bring existing Windows Server and SQL Server licenses with Software Assurance to Azure. Saves up to 85% on Windows VMs and up to 55% on Azure SQL compared to pay-as-you-go.",
+      "estimatedSavings": "40-85%",
+      "difficulty": "easy",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-vm-006",
+      "service": "Virtual Machines",
+      "category": "scheduling",
+      "title": "Auto-shutdown non-production VMs",
+      "description": "Configure auto-shutdown schedules for dev/test/staging VMs during off-hours and weekends. Use Azure Automation or VM auto-shutdown feature to stop VMs when not needed.",
+      "estimatedSavings": "50-70%",
+      "difficulty": "easy",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-storage-001",
+      "service": "Storage",
+      "category": "storage-tiering",
+      "title": "Move infrequently accessed blobs to Cool or Archive tier",
+      "description": "Azure Blob Storage offers Hot, Cool, Cold, and Archive tiers. Move data accessed less than once per month to Cool (50% cheaper) or Archive (90% cheaper) with lifecycle management policies.",
+      "estimatedSavings": "50-90%",
+      "difficulty": "easy",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-storage-002",
+      "service": "Storage",
+      "category": "idle-resources",
+      "title": "Delete unattached Managed Disks",
+      "description": "Orphaned managed disks (not attached to any VM) continue incurring charges. Identify and delete unused disks or snapshot them to a cheaper tier before deletion.",
+      "estimatedSavings": "100%",
+      "difficulty": "easy",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-sql-001",
+      "service": "Azure SQL",
+      "category": "right-sizing",
+      "title": "Right-size Azure SQL databases",
+      "description": "Scale down DTU or vCore tiers for databases with consistently low CPU and IO utilization. Use elastic pools to share resources across multiple databases with variable usage patterns.",
+      "estimatedSavings": "30-60%",
+      "difficulty": "medium",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-sql-002",
+      "service": "Azure SQL",
+      "category": "pricing-model",
+      "title": "Use Azure SQL Reserved Capacity",
+      "description": "Reserve vCore compute capacity for Azure SQL Database or Managed Instance for 1 or 3 years. Provides significant discounts over pay-as-you-go pricing for predictable database workloads.",
+      "estimatedSavings": "30-55%",
+      "difficulty": "medium",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-aks-001",
+      "service": "Azure Kubernetes Service",
+      "category": "right-sizing",
+      "title": "Right-size AKS node pools and enable cluster autoscaler",
+      "description": "Enable AKS cluster autoscaler to scale node pools based on pod demand. Use Virtual Nodes for burst workloads and configure resource requests/limits to improve bin-packing efficiency.",
+      "estimatedSavings": "20-40%",
+      "difficulty": "medium",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-network-001",
+      "service": "Networking",
+      "category": "idle-resources",
+      "title": "Delete unused Public IP addresses and idle Load Balancers",
+      "description": "Unassociated Public IP addresses and idle Standard Load Balancers incur hourly charges. Remove unused networking resources identified by Azure Advisor.",
+      "estimatedSavings": "100%",
+      "difficulty": "easy",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-appservice-001",
+      "service": "App Service",
+      "category": "right-sizing",
+      "title": "Scale down idle App Service plans",
+      "description": "Downgrade underutilized App Service plans from Premium to Standard or Basic tier. Consider consolidating multiple low-traffic apps into a single plan.",
+      "estimatedSavings": "30-70%",
+      "difficulty": "easy",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-monitor-001",
+      "service": "Azure Monitor",
+      "category": "data-management",
+      "title": "Optimize Log Analytics data ingestion",
+      "description": "Reduce Log Analytics costs by filtering verbose logs at collection, setting appropriate retention periods, using Basic Logs tier for debug data, and archiving old data to cheaper storage.",
+      "estimatedSavings": "30-60%",
+      "difficulty": "medium",
+      "cloudProvider": "azure"
+    },
+    {
+      "id": "azure-governance-001",
+      "service": "Governance",
+      "category": "tagging",
+      "title": "Enforce tagging policies for cost allocation",
+      "description": "Use Azure Policy to enforce mandatory tags (cost-center, environment, owner) on all resources. Tags enable accurate chargeback, showback, and identification of unowned resources.",
+      "estimatedSavings": "10-20%",
+      "difficulty": "medium",
+      "cloudProvider": "azure"
+    }
+  ]
+}
