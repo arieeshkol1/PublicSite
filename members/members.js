@@ -9,6 +9,7 @@ var tagKeysCacheTime = 0;
 var tagValuesCache = {};
 var tagValuesCacheTime = {};
 var TAG_CACHE_TTL = 300000;
+var _providerConfigCache = null;
 
 // ============================================================
 // PayPal Payment Integration
@@ -212,6 +213,23 @@ function _updateTokenDisplay(tokens) {
         }
     }
     sessionStorage.setItem('memberTokens', JSON.stringify(tokens));
+}
+
+// ============================================================
+// Provider Config (session-level cache)
+// ============================================================
+
+async function getProviderConfig() {
+    if (_providerConfigCache) return _providerConfigCache;
+
+    try {
+        var data = await api('GET', '/members/provider-config');
+        _providerConfigCache = data;
+        return _providerConfigCache;
+    } catch (e) {
+        console.warn('getProviderConfig failed:', e);
+        return {};
+    }
 }
 
 function _showUpgradeModal() {
