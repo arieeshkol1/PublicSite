@@ -601,6 +601,42 @@ Resources:
           Value: ViewMyBill
 
   # ============================================================
+  # KMS Key - Multi-Cloud Credential Encryption
+  # ============================================================
+  CredentialEncryptionKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: 'Encryption key for multi-cloud provider credentials'
+      EnableKeyRotation: true
+      KeyPolicy:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AllowRootAccountAdministration
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+            Action: 'kms:*'
+            Resource: '*'
+          - Sid: AllowMemberHandlerLambdaUsage
+            Effect: Allow
+            Principal:
+              AWS: !GetAtt MemberHandlerRole.Arn
+            Action:
+              - kms:Encrypt
+              - kms:Decrypt
+              - kms:GenerateDataKey
+            Resource: '*'
+      Tags:
+        - Key: Project
+          Value: ViewMyBill
+
+  CredentialEncryptionKeyAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: 'alias/slashmybill-credentials'
+      TargetKeyId: !Ref CredentialEncryptionKey
+
+  # ============================================================
   # SES Email Identity - eshkolai.com domain
   # ============================================================
   # SES EmailIdentity — managed by CloudFormation (do not remove)
@@ -1204,6 +1240,16 @@ Resources:
                   - dynamodb:Query
                 Resource:
                   - !GetAtt ProviderRegistryTable.Arn
+        - PolicyName: KMSCredentialEncryption
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - kms:Encrypt
+                  - kms:Decrypt
+                Resource:
+                  - !GetAtt CredentialEncryptionKey.Arn
       Tags:
         - Key: Project
           Value: ViewMyBill
@@ -1248,6 +1294,7 @@ Resources:
           PRICING_REGION: 'us-east-1'
           BEDROCK_REGION: 'us-east-1'
           SES_REGION: 'us-east-1'
+          CREDENTIAL_KMS_KEY_ARN: !GetAtt CredentialEncryptionKey.Arn
       Tags:
         - Key: Project
           Value: ViewMyBill
