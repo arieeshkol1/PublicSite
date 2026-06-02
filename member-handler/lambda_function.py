@@ -660,6 +660,18 @@ def handle_get_accounts(event):
     # Convert Decimal values for JSON serialization
     accounts = _decimal_to_native(accounts)
 
+    # Strip sensitive credential fields from response
+    for a in accounts:
+        creds = a.get('credentials', {})
+        if creds:
+            # Only return non-sensitive identifiers
+            safe_creds = {}
+            if 'tenantId' in creds: safe_creds['tenantId'] = creds['tenantId']
+            if 'clientId' in creds: safe_creds['clientId'] = creds['clientId']
+            if 'clientEmail' in creds: safe_creds['clientEmail'] = creds['clientEmail']
+            if 'projectId' in creds: safe_creds['projectId'] = creds['projectId']
+            a['credentials'] = safe_creds
+
     # Include tier and token info for frontend
     tier = _get_member_tier(member_email)
     limit = _get_tier_limit(tier)
@@ -839,6 +851,45 @@ def handle_add_account(event):
         'addedAt': now_iso,
         'lastTestedAt': None,
     }
+
+    # Handle provider-specific credentials
+    if cloud_provider == 'azure':
+        tenant_id = (body.get('tenantId') or '').strip()
+        client_id = (body.get('clientId') or '').strip()
+        client_secret = (body.get('clientSecret') or '').strip()
+        
+        # Validate UUID formats for Azure
+        uuid_re = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', re.IGNORECASE)
+        if not uuid_re.match(account_id):
+            return create_error_response(400, 'InvalidFormat', 'Subscription ID must be a valid UUID.')
+        if tenant_id and not uuid_re.match(tenant_id):
+            return create_error_response(400, 'InvalidFormat', 'Tenant ID must be a valid UUID.')
+        if client_id and not uuid_re.match(client_id):
+            return create_error_response(400, 'InvalidFormat', 'Client ID must be a valid UUID.')
+        
+        credentials = {'tenantId': tenant_id, 'clientId': client_id}
+        if client_secret:
+            from connectors.kms_helpers import encrypt_credential
+            credentials['encryptedClientSecret'] = encrypt_credential(client_secret)
+        account_record['credentials'] = credentials
+        account_record['roleName'] = 'Service Principal'
+    
+    elif cloud_provider == 'gcp':
+        service_account_key = body.get('serviceAccountKey')
+        if service_account_key and isinstance(service_account_key, dict):
+            required_fields = ['type', 'project_id', 'private_key_id', 'private_key', 'client_email']
+            missing = [f for f in required_fields if f not in service_account_key]
+            if missing:
+                return create_error_response(400, 'InvalidKeyFile', f'Service account key missing required fields: {", ".join(missing)}')
+            from connectors.kms_helpers import encrypt_credential
+            credentials = {
+                'clientEmail': service_account_key['client_email'],
+                'projectId': service_account_key.get('project_id', ''),
+                'privateKeyId': service_account_key.get('private_key_id', ''),
+                'encryptedPrivateKey': encrypt_credential(service_account_key['private_key']),
+            }
+            account_record['credentials'] = credentials
+        account_record['roleName'] = 'Service Account'
 
     try:
         accounts_table.put_item(Item=account_record)
@@ -1496,18 +1547,77 @@ def handle_test_connection(event):
         return create_error_response(400, 'InvalidRequest', 'Invalid request body')
 
     account_id = (body.get('accountId') or '').strip()
-    if not re.fullmatch(r'\d{12}', account_id):
-        return create_error_response(400, 'InvalidAccountId', 'Account ID must be exactly 12 digits')
+    if not account_id:
+        return create_error_response(400, 'InvalidAccountId', 'Account ID is required')
 
     # Verify account ownership
     ownership = _verify_account_ownership(member_email, [account_id])
     if isinstance(ownership, dict):
         return ownership
 
+    accounts_table = dynamodb.Table(ACCOUNTS_TABLE_NAME)
+
+    # Multi-cloud connection test routing
+    account = accounts_table.get_item(Key={'memberEmail': member_email, 'accountId': account_id}).get('Item')
+    if not account:
+        return create_error_response(404, 'NotFound', 'Account not found.')
+    
+    cloud_provider = account.get('cloudProvider', 'aws')
+    
+    if cloud_provider == 'azure':
+        # Azure connection test
+        credentials = account.get('credentials', {})
+        if not credentials.get('encryptedClientSecret'):
+            return create_error_response(400, 'MissingCredentials', 'Client Secret not provided. Please edit the account and add the Client Secret.')
+        
+        try:
+            from connectors.kms_helpers import decrypt_credential
+            from connectors.azure_connector import AzureConnector
+            
+            client_secret = decrypt_credential(credentials['encryptedClientSecret'])
+            connector = AzureConnector()
+            auth_context = connector.authenticate({
+                'tenant_id': credentials.get('tenantId', ''),
+                'client_id': credentials.get('clientId', ''),
+                'client_secret': client_secret,
+            })
+            result = connector.test_connection(auth_context, account_id)
+            
+            # Update account status
+            new_status = 'connected' if result['success'] else 'failed'
+            now_iso = datetime.now(timezone.utc).isoformat()
+            accounts_table.update_item(
+                Key={'memberEmail': member_email, 'accountId': account_id},
+                UpdateExpression='SET connectionStatus = :s, lastTestedAt = :t',
+                ExpressionAttributeValues={':s': new_status, ':t': now_iso}
+            )
+            
+            return create_response(200, {
+                'message': result['message'],
+                'connectionStatus': new_status,
+                'cloudProvider': 'azure',
+                'details': result.get('details', {}),
+            })
+        except Exception as e:
+            logger.error(f"Azure connection test error: {e}")
+            accounts_table.update_item(
+                Key={'memberEmail': member_email, 'accountId': account_id},
+                UpdateExpression='SET connectionStatus = :s',
+                ExpressionAttributeValues={':s': 'failed'}
+            )
+            return create_error_response(400, 'ConnectionFailed', str(e))
+    
+    elif cloud_provider == 'gcp':
+        # GCP connection test — not yet implemented
+        return create_error_response(501, 'NotImplemented', 'GCP connection testing is coming soon.')
+    
+    # Existing AWS connection test logic
+    if not re.fullmatch(r'\d{12}', account_id):
+        return create_error_response(400, 'InvalidAccountId', 'Account ID must be exactly 12 digits')
+
     role_arn = f'arn:aws:iam::{account_id}:role/SlashMyBill-{account_id}'
     external_id = hashlib.sha256(member_email.encode('utf-8')).hexdigest()
 
-    accounts_table = dynamodb.Table(ACCOUNTS_TABLE_NAME)
     now_iso = datetime.now(timezone.utc).isoformat()
 
     # Step 1: STS AssumeRole
