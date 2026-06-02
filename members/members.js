@@ -9,6 +9,7 @@ var tagKeysCacheTime = 0;
 var tagValuesCache = {};
 var tagValuesCacheTime = {};
 var TAG_CACHE_TTL = 300000;
+var _providerConfigCache = null;
 
 // ============================================================
 // PayPal Payment Integration
