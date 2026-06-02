@@ -263,6 +263,8 @@ jobs:
           echo "Packaging Admin Handler Lambda..."
           pip install PyJWT bcrypt -t .build-admin-handler/ --quiet
           cp admin-handler/lambda_function.py .build-admin-handler/
+          cp member-handler/provider_registry.py .build-admin-handler/
+          cp member-handler/sts_assume_role.py .build-admin-handler/
           cd .build-admin-handler && zip -r ../admin-handler-lambda.zip . -q
           cd ..
           aws s3 cp admin-handler-lambda.zip s3://${{ env.STORAGE_BUCKET }}/lambda-packages/admin-handler.zip
@@ -292,6 +294,8 @@ jobs:
           echo "Packaging Agent Action Lambda..."
           mkdir -p .build-agent-action
           cp agent-action/lambda_function.py .build-agent-action/
+          cp member-handler/provider_registry.py .build-agent-action/
+          cp member-handler/sts_assume_role.py .build-agent-action/
           cd .build-agent-action && zip -r ../agent-action-lambda.zip . -q
           cd ..
           aws s3 cp agent-action-lambda.zip s3://${{ env.STORAGE_BUCKET }}/lambda-packages/agent-action.zip
@@ -319,6 +323,8 @@ jobs:
           cp tips-sync/metrics.py .build-tips-sync/
           cp tips-sync/sources/*.py .build-tips-sync/sources/
           cp knowledge-base/aws-cost-optimization-tips.json .build-tips-sync/knowledge-base/
+          cp knowledge-base/azure-cost-optimization-tips.json .build-tips-sync/knowledge-base/
+          cp knowledge-base/gcp-cost-optimization-tips.json .build-tips-sync/knowledge-base/
           cd .build-tips-sync && zip -r ../tips-sync-lambda.zip . -q
           cd ..
           aws s3 cp tips-sync-lambda.zip s3://${{ env.STORAGE_BUCKET }}/lambda-packages/tips-sync.zip
@@ -501,6 +507,27 @@ jobs:
             echo "✓ COST_CACHE_TABLE_NAME set on member-handler"
           fi
           # NOTE: AgentAction Lambda no longer uses env vars (all hardcoded in code)
+
+      - name: Seed Provider Registry
+        if: success()
+        run: |
+          # Create table if it doesn't exist (in case CloudFormation stack failed)
+          if ! aws dynamodb describe-table --table-name ProviderRegistry > /dev/null 2>&1; then
+            echo "Creating ProviderRegistry table..."
+            aws dynamodb create-table \
+              --table-name ProviderRegistry \
+              --attribute-definitions AttributeName=providerId,AttributeType=S AttributeName=configCategory,AttributeType=S \
+              --key-schema AttributeName=providerId,KeyType=HASH AttributeName=configCategory,KeyType=RANGE \
+              --billing-mode PAY_PER_REQUEST \
+              --tags Key=Project,Value=ViewMyBill
+            aws dynamodb wait table-exists --table-name ProviderRegistry
+            echo "✓ ProviderRegistry table created"
+          else
+            echo "✓ ProviderRegistry table already exists"
+          fi
+          pip install boto3 --quiet
+          python infrastructure/seed-provider-registry.py
+          echo "✓ Provider Registry seeded"
 
       - name: Update Lambda function code
         run: |
@@ -993,25 +1020,6 @@ jobs:
           pip install boto3 --quiet
           python knowledge-base/seed-dynamodb.py
           echo "✓ DynamoDB seeded"
-
-      - name: Seed Provider Registry
-        run: |
-          # Create table if it doesn't exist
-          if ! aws dynamodb describe-table --table-name ProviderRegistry > /dev/null 2>&1; then
-            echo "Creating ProviderRegistry table..."
-            aws dynamodb create-table \
-              --table-name ProviderRegistry \
-              --attribute-definitions AttributeName=providerId,AttributeType=S AttributeName=configCategory,AttributeType=S \
-              --key-schema AttributeName=providerId,KeyType=HASH AttributeName=configCategory,KeyType=RANGE \
-              --billing-mode PAY_PER_REQUEST \
-              --tags Key=Project,Value=ViewMyBill
-            aws dynamodb wait table-exists --table-name ProviderRegistry
-            echo "✓ ProviderRegistry table created"
-          else
-            echo "✓ ProviderRegistry table already exists"
-          fi
-          python infrastructure/seed-provider-registry.py
-          echo "✓ Provider Registry seeded"
 
       - name: Register Bedrock Agent Action Group
         continue-on-error: true
