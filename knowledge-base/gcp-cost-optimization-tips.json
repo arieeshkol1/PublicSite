@@ -1,0 +1,164 @@
+{
+  "version": "1.0",
+  "lastUpdated": "2026-06-02",
+  "cloudProvider": "gcp",
+  "sources": [
+    "https://cloud.google.com/architecture/framework/cost-optimization/compute",
+    "https://cloud.google.com/recommender/docs/recommenders",
+    "https://cloud.google.com/billing/docs/how-to/finops-hub",
+    "https://www.cloudzero.com/blog/google-cloud-cost-optimization/",
+    "https://www.economize.cloud/blog/10-ways-to-save-on-google-cloud-costs/"
+  ],
+  "tips": [
+    {
+      "id": "gcp-ce-001",
+      "service": "Compute Engine",
+      "category": "right-sizing",
+      "title": "Right-size underutilized VM instances",
+      "description": "GCP Recommender identifies idle and underutilized VMs based on CPU, memory, and network metrics over 14 days. Resize to a smaller machine type or delete idle instances to reduce costs.",
+      "estimatedSavings": "30-50%",
+      "difficulty": "easy",
+      "cloudProvider": "gcp"
+    },
+    {
+      "id": "gcp-ce-002",
+      "service": "Compute Engine",
+      "category": "pricing-model",
+      "title": "Purchase Committed Use Discounts (CUDs)",
+      "description": "Commit to a spend amount (spend-based CUDs) or specific resources (resource-based CUDs) for 1 or 3 years. Spend-based CUDs offer flexibility to switch instance types while maintaining the discount.",
+      "estimatedSavings": "40-70%",
+      "difficulty": "medium",
+      "cloudProvider": "gcp"
+    },
+    {
+      "id": "gcp-ce-003",
+      "service": "Compute Engine",
+      "category": "pricing-model",
+      "title": "Leverage Sustained Use Discounts (automatic)",
+      "description": "GCP automatically applies discounts (up to 30% off) when VMs run for more than 25% of a billing month. No commitment required — ensure instances run consistently rather than being frequently recreated.",
+      "estimatedSavings": "20-30%",
+      "difficulty": "easy",
+      "cloudProvider": "gcp"
+    },
+    {
+      "id": "gcp-ce-004",
+      "service": "Compute Engine",
+      "category": "pricing-model",
+      "title": "Use Spot VMs for fault-tolerant workloads",
+      "description": "Spot VMs (formerly Preemptible) offer 60-91% discount for interruptible workloads such as batch processing, data analysis, CI/CD, and rendering. Set up instance groups with fallback to on-demand.",
+      "estimatedSavings": "60-91%",
+      "difficulty": "medium",
+      "cloudProvider": "gcp"
+    },
+    {
+      "id": "gcp-ce-005",
+      "service": "Compute Engine",
+      "category": "right-sizing",
+      "title": "Use custom machine types for precise sizing",
+      "description": "GCP allows creating custom VM shapes with exact vCPU and memory combinations. Avoid overpaying for predefined machine types when your workload needs non-standard resource ratios.",
+      "estimatedSavings": "15-30%",
+      "difficulty": "easy",
+      "cloudProvider": "gcp"
+    },
+    {
+      "id": "gcp-ce-006",
+      "service": "Compute Engine",
+      "category": "scheduling",
+      "title": "Schedule non-production VM stop/start",
+      "description": "Use Cloud Scheduler with Cloud Functions to automatically stop dev/test/staging VMs during off-hours and weekends. Stopped VMs only incur disk storage costs, not compute charges.",
+      "estimatedSavings": "50-70%",
+      "difficulty": "easy",
+      "cloudProvider": "gcp"
+    },
+    {
+      "id": "gcp-storage-001",
+      "service": "Cloud Storage",
+      "category": "storage-tiering",
+      "title": "Apply lifecycle rules to move data to colder storage classes",
+      "description": "Configure Object Lifecycle Management to automatically transition objects from Standard to Nearline (30-day min), Coldline (90-day min), or Archive (365-day min). Up to 83% savings on storage costs.",
+      "estimatedSavings": "50-83%",
+      "difficulty": "easy",
+      "cloudProvider": "gcp"
+    },
+    {
+      "id": "gcp-storage-002",
+      "service": "Cloud Storage",
+      "category": "idle-resources",
+      "title": "Delete orphaned persistent disks and snapshots",
+      "description": "Unattached persistent disks and old snapshots continue incurring charges. Use the GCP Recommender idle disk detection or list unattached disks via gcloud to identify and clean up.",
+      "estimatedSavings": "100%",
+      "difficulty": "easy",
+      "cloudProvider": "gcp"
+    },
+    {
+      "id": "gcp-gke-001",
+      "service": "Google Kubernetes Engine",
+      "category": "right-sizing",
+      "title": "Enable GKE cluster autoscaler and vertical pod autoscaler",
+      "description": "Use Cluster Autoscaler to scale node pools based on pod demand and Vertical Pod Autoscaler to adjust resource requests. Prevents over-provisioning while maintaining availability.",
+      "estimatedSavings": "20-40%",
+      "difficulty": "medium",
+      "cloudProvider": "gcp"
+    },
+    {
+      "id": "gcp-gke-002",
+      "service": "Google Kubernetes Engine",
+      "category": "pricing-model",
+      "title": "Use Spot VMs for GKE node pools",
+      "description": "Configure GKE node pools to use Spot VMs for fault-tolerant workloads like batch jobs, stateless services, and CI/CD runners. Combine with pod disruption budgets for availability.",
+      "estimatedSavings": "60-80%",
+      "difficulty": "medium",
+      "cloudProvider": "gcp"
+    },
+    {
+      "id": "gcp-sql-001",
+      "service": "Cloud SQL",
+      "category": "right-sizing",
+      "title": "Right-size Cloud SQL instances",
+      "description": "GCP Recommender identifies overprovisioned Cloud SQL instances based on CPU and memory utilization. Reduce machine type or switch to shared-core for low-traffic databases.",
+      "estimatedSavings": "30-50%",
+      "difficulty": "easy",
+      "cloudProvider": "gcp"
+    },
+    {
+      "id": "gcp-bq-001",
+      "service": "BigQuery",
+      "category": "pricing-model",
+      "title": "Use BigQuery flat-rate pricing for heavy workloads",
+      "description": "Switch from on-demand (per-TB scanned) to flat-rate slot reservations for teams running many queries daily. Also use partitioning and clustering to reduce bytes scanned per query.",
+      "estimatedSavings": "30-60%",
+      "difficulty": "medium",
+      "cloudProvider": "gcp"
+    },
+    {
+      "id": "gcp-bq-002",
+      "service": "BigQuery",
+      "category": "data-management",
+      "title": "Set table expiration and partition pruning",
+      "description": "Configure default table expiration to auto-delete temporary datasets. Use partitioned tables with partition filters required to prevent full-table scans and reduce query costs.",
+      "estimatedSavings": "40-70%",
+      "difficulty": "easy",
+      "cloudProvider": "gcp"
+    },
+    {
+      "id": "gcp-network-001",
+      "service": "Networking",
+      "category": "architecture",
+      "title": "Minimize cross-region and internet egress",
+      "description": "GCP charges for data egress between regions and to the internet. Co-locate services in the same region, use Cloud CDN for static content delivery, and consider Premium vs Standard network tier.",
+      "estimatedSavings": "20-40%",
+      "difficulty": "medium",
+      "cloudProvider": "gcp"
+    },
+    {
+      "id": "gcp-governance-001",
+      "service": "Governance",
+      "category": "tagging",
+      "title": "Apply labels for cost attribution and budget alerts",
+      "description": "Use GCP resource labels to tag all resources by team, environment, and project. Set up billing budgets with alerts per label to catch unexpected spend early and enable accurate chargeback.",
+      "estimatedSavings": "10-20%",
+      "difficulty": "easy",
+      "cloudProvider": "gcp"
+    }
+  ]
+}
