@@ -725,7 +725,7 @@
                     <!-- Left Navigation Pane -->
                     <div id="config-nav" style="width:180px;flex-shrink:0;border-right:1px solid #e5e7eb;padding:12px 0;">
                         <button class="act-nav-btn active" data-section="accounts" onclick="_switchConfigSection('accounts')">
-                            <span style="font-size:1.2em;">🔧</span> AWS Accounts
+                            <span style="font-size:1.2em;">🔧</span> Accounts
                         </button>
                         <button class="act-nav-btn" data-section="finops-settings" onclick="_switchConfigSection('finops-settings')">
                             <span style="font-size:1.2em;">⚙️</span> FinOps Settings
@@ -739,10 +739,10 @@
                     <!-- Right Content Area -->
                     <div style="flex:1;padding:20px 24px;overflow-y:auto;">
 
-                        <!-- AWS Accounts Sub-Section -->
+                        <!-- Cloud Accounts Sub-Section -->
                         <div id="config-section-accounts">
                             <div class="tab-toolbar">
-                                <h2>AWS Accounts</h2>
+                                <h2>Cloud Accounts</h2>
                                 <button id="add-account-btn" class="btn btn-primary btn-sm">+ Add Account</button>
                             </div>
                             <div class="table-wrapper">
@@ -750,9 +750,10 @@
                                     <thead>
                                         <tr>
                                             <th>#</th>
+                                            <th>Cloud</th>
                                             <th>Account ID</th>
                                             <th>Name</th>
-                                            <th>Role Name</th>
+                                            <th>Connection</th>
                                             <th>Status</th>
                                             <th>Added</th>
                                             <th>Last Tested</th>
@@ -762,7 +763,7 @@
                                     <tbody id="accounts-tbody"></tbody>
                                 </table>
                                 <div id="accounts-empty" class="empty-state" hidden>
-                                    <p>No AWS accounts connected yet. Click "Add Account" to get started.</p>
+                                    <p>No cloud accounts connected yet. Click "Add Account" to connect AWS, Azure, or GCP.</p>
                                 </div>
                             </div>
                         </div>
@@ -1051,7 +1052,31 @@
                 <button id="account-modal-close" class="modal-close">&times;</button>
             </div>
             <form id="account-form" novalidate>
-                <div class="modal-body">
+                <!-- Step 1: Provider Selection -->
+                <div id="account-step-provider" class="modal-body">
+                    <p style="color:#6b7280;margin-bottom:16px;">Select your cloud provider:</p>
+                    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;">
+                        <div class="provider-card" data-provider="aws" onclick="_selectAccountProvider('aws')" style="border:2px solid #e5e7eb;border-radius:12px;padding:20px 16px;text-align:center;cursor:pointer;transition:all 0.2s;">
+                            <div style="font-size:2em;margin-bottom:8px;">☁️</div>
+                            <div style="font-weight:700;color:#ff9900;">AWS</div>
+                            <div style="font-size:0.75em;color:#6b7280;margin-top:4px;">12-digit Account ID<br>IAM Role access</div>
+                        </div>
+                        <div class="provider-card" data-provider="azure" onclick="_selectAccountProvider('azure')" style="border:2px solid #e5e7eb;border-radius:12px;padding:20px 16px;text-align:center;cursor:pointer;transition:all 0.2s;">
+                            <div style="font-size:2em;margin-bottom:8px;">🔷</div>
+                            <div style="font-weight:700;color:#0078d4;">Azure</div>
+                            <div style="font-size:0.75em;color:#6b7280;margin-top:4px;">Subscription UUID<br>Service Principal</div>
+                        </div>
+                        <div class="provider-card" data-provider="gcp" onclick="_selectAccountProvider('gcp')" style="border:2px solid #e5e7eb;border-radius:12px;padding:20px 16px;text-align:center;cursor:pointer;transition:all 0.2s;">
+                            <div style="font-size:2em;margin-bottom:8px;">🔴</div>
+                            <div style="font-weight:700;color:#4285f4;">GCP</div>
+                            <div style="font-size:0.75em;color:#6b7280;margin-top:4px;">Project ID<br>Service Account Key</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Step 2: AWS Form -->
+                <div id="account-step-aws" class="modal-body" style="display:none;">
+                    <div style="margin-bottom:12px;"><button type="button" onclick="_backToProviderSelect()" style="background:none;border:none;color:#6b7280;cursor:pointer;font-size:0.85em;">← Back to provider selection</button></div>
                     <div class="form-group">
                         <label for="account-id-input">AWS Account ID</label>
                         <input type="text" id="account-id-input" maxlength="12" inputmode="numeric" pattern="[0-9]{12}" placeholder="123456789012" required>
@@ -1063,9 +1088,60 @@
                     </div>
                     <div id="account-form-error" class="form-error" role="alert" aria-live="polite"></div>
                 </div>
-                <div class="modal-footer">
+
+                <!-- Step 2: Azure Form -->
+                <div id="account-step-azure" class="modal-body" style="display:none;">
+                    <div style="margin-bottom:12px;"><button type="button" onclick="_backToProviderSelect()" style="background:none;border:none;color:#6b7280;cursor:pointer;font-size:0.85em;">← Back to provider selection</button></div>
+                    <div class="form-group">
+                        <label for="azure-subscription-id">Subscription ID</label>
+                        <input type="text" id="azure-subscription-id" maxlength="36" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" required>
+                        <div class="field-hint">UUID format from Azure Portal → Subscriptions</div>
+                    </div>
+                    <div class="form-group">
+                        <label for="azure-tenant-id">Tenant ID</label>
+                        <input type="text" id="azure-tenant-id" maxlength="36" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" required>
+                        <div class="field-hint">Azure Active Directory → Properties → Tenant ID</div>
+                    </div>
+                    <div class="form-group">
+                        <label for="azure-client-id">Client ID (App Registration)</label>
+                        <input type="text" id="azure-client-id" maxlength="36" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" required>
+                        <div class="field-hint">App Registration → Application (client) ID</div>
+                    </div>
+                    <div class="form-group">
+                        <label for="azure-client-secret">Client Secret (optional — add later)</label>
+                        <input type="password" id="azure-client-secret" maxlength="200" placeholder="Enter client secret...">
+                        <div class="field-hint">App Registration → Certificates & secrets → New client secret</div>
+                    </div>
+                    <div class="form-group">
+                        <label for="azure-account-name">Display Name</label>
+                        <input type="text" id="azure-account-name" maxlength="80" placeholder="Production Subscription, Dev...">
+                    </div>
+                    <div id="azure-form-error" class="form-error" role="alert" aria-live="polite"></div>
+                </div>
+
+                <!-- Step 2: GCP Form -->
+                <div id="account-step-gcp" class="modal-body" style="display:none;">
+                    <div style="margin-bottom:12px;"><button type="button" onclick="_backToProviderSelect()" style="background:none;border:none;color:#6b7280;cursor:pointer;font-size:0.85em;">← Back to provider selection</button></div>
+                    <div class="form-group">
+                        <label for="gcp-project-id">Project ID</label>
+                        <input type="text" id="gcp-project-id" maxlength="30" placeholder="my-project-123" required>
+                        <div class="field-hint">6-30 lowercase letters, digits, hyphens. From GCP Console → Dashboard.</div>
+                    </div>
+                    <div class="form-group">
+                        <label for="gcp-service-account-key">Service Account Key (JSON)</label>
+                        <textarea id="gcp-service-account-key" rows="4" placeholder='Paste the full JSON key file content...' style="font-family:monospace;font-size:0.85em;"></textarea>
+                        <div class="field-hint">IAM → Service Accounts → Keys → Add Key → JSON</div>
+                    </div>
+                    <div class="form-group">
+                        <label for="gcp-account-name">Display Name</label>
+                        <input type="text" id="gcp-account-name" maxlength="80" placeholder="Production Project, Dev...">
+                    </div>
+                    <div id="gcp-form-error" class="form-error" role="alert" aria-live="polite"></div>
+                </div>
+
+                <div class="modal-footer" id="account-modal-footer">
                     <button type="button" id="account-cancel-btn" class="btn btn-outline">Cancel</button>
-                    <button type="submit" id="account-submit-btn" class="btn btn-primary">Add Account</button>
+                    <button type="submit" id="account-submit-btn" class="btn btn-primary" style="display:none;">Add Account</button>
                 </div>
             </form>
         </div>
@@ -1075,7 +1151,7 @@
     <div id="wizard-modal" class="modal-overlay" hidden>
         <div class="modal-card modal-card-wizard">
             <div class="modal-header">
-                <h2>Connect AWS Account</h2>
+                <h2 id="wizard-title">Connect Account</h2>
                 <button id="wizard-close" class="modal-close">&times;</button>
             </div>
             <div class="modal-body">

@@ -110,6 +110,7 @@ var resetToken = null;
 var dashboardItems = [];
 var pendingVisualize = null;
 var dashboardCharts = [];
+var _selectedAccountProvider = 'aws';
 
 // ============================================================
 // Helpers
@@ -783,9 +784,10 @@ function renderAccounts(accounts) {
         var tr = document.createElement('tr');
         tr.innerHTML =
             '<td style="color:#999;font-size:12px">' + (idx + 1) + '</td>' +
+            '<td><span style="background:' + _getProviderColor(a.cloudProvider || 'aws') + ';color:#fff;font-size:10px;padding:2px 6px;border-radius:4px;font-weight:600;">' + (a.cloudProvider || 'AWS').toUpperCase() + '</span></td>' +
             '<td>' + esc(a.accountId || '') + '</td>' +
             '<td>' + esc(a.accountName || '-') + '</td>' +
-            '<td>' + esc(a.roleName || '') + '</td>' +
+            '<td>' + (a.cloudProvider === 'azure' ? 'Service Principal' : a.cloudProvider === 'gcp' ? 'Service Account' : esc(a.roleName || '')) + '</td>' +
             '<td><span class="status-badge ' + statusClass + '">' + esc(a.connectionStatus || 'pending') + '</span>' + hourlyBadge + '</td>' +
             '<td>' + fmtDate(a.addedAt) + '</td>' +
             '<td>' + fmtDate(a.lastTestedAt) + '</td>' +
@@ -855,27 +857,72 @@ addAccountBtn.onclick = function() { showAccountModal(null); };
 async function showAccountModal(existingId) {
     accountFormError.textContent = '';
     editingAccountId = existingId;
-    var config = await getProviderConfig();
-    var placeholder = (config.validation && config.validation.placeholder) || '123456789012';
     if (existingId) {
         var existing = allAccounts.find(function(a) { return a.accountId === existingId; }) || {};
+        var provider = existing.cloudProvider || 'aws';
         accountModalTitle.textContent = 'Edit Account';
         accountSubmitBtn.textContent = 'Update Account';
-        accountIdInput.value = existingId;
-        accountIdInput.placeholder = placeholder;
-        if (accountNameInput) accountNameInput.value = existing.accountName || '';
+        accountSubmitBtn.style.display = '';
+        _selectAccountProvider(provider);
+        // Populate fields based on provider
+        if (provider === 'aws') {
+            accountIdInput.value = existingId;
+            if (accountNameInput) accountNameInput.value = existing.accountName || '';
+        }
+        // Hide the back button in edit mode
+        document.querySelectorAll('[onclick="_backToProviderSelect()"]').forEach(function(b) { b.style.display = 'none'; });
     } else {
         accountModalTitle.textContent = 'Add Account';
         accountSubmitBtn.textContent = 'Add Account';
+        accountSubmitBtn.style.display = 'none'; // Hidden until provider is selected
+        _backToProviderSelect();
+        // Reset all form fields
         accountIdInput.value = '';
-        accountIdInput.placeholder = placeholder;
         if (accountNameInput) accountNameInput.value = '';
+        var azSub = document.getElementById('azure-subscription-id'); if (azSub) azSub.value = '';
+        var azTen = document.getElementById('azure-tenant-id'); if (azTen) azTen.value = '';
+        var azCli = document.getElementById('azure-client-id'); if (azCli) azCli.value = '';
+        var azSec = document.getElementById('azure-client-secret'); if (azSec) azSec.value = '';
+        var azName = document.getElementById('azure-account-name'); if (azName) azName.value = '';
+        var gcpProj = document.getElementById('gcp-project-id'); if (gcpProj) gcpProj.value = '';
+        var gcpKey = document.getElementById('gcp-service-account-key'); if (gcpKey) gcpKey.value = '';
+        var gcpName = document.getElementById('gcp-account-name'); if (gcpName) gcpName.value = '';
+        // Show back buttons
+        document.querySelectorAll('[onclick="_backToProviderSelect()"]').forEach(function(b) { b.style.display = ''; });
     }
     accountModal.hidden = false;
-    accountIdInput.focus();
 }
 
 function hideAccountModal() { accountModal.hidden = true; editingAccountId = null; }
+
+function _selectAccountProvider(provider) {
+    _selectedAccountProvider = provider;
+    document.getElementById('account-step-provider').style.display = 'none';
+    document.getElementById('account-step-aws').style.display = provider === 'aws' ? 'block' : 'none';
+    document.getElementById('account-step-azure').style.display = provider === 'azure' ? 'block' : 'none';
+    document.getElementById('account-step-gcp').style.display = provider === 'gcp' ? 'block' : 'none';
+    accountSubmitBtn.style.display = '';
+    // Highlight selected card
+    document.querySelectorAll('.provider-card').forEach(function(c) {
+        c.style.borderColor = c.dataset.provider === provider ? '#3b82f6' : '#e5e7eb';
+        c.style.background = c.dataset.provider === provider ? '#eff6ff' : '#fff';
+    });
+}
+
+function _backToProviderSelect() {
+    document.getElementById('account-step-provider').style.display = 'block';
+    document.getElementById('account-step-aws').style.display = 'none';
+    document.getElementById('account-step-azure').style.display = 'none';
+    document.getElementById('account-step-gcp').style.display = 'none';
+    accountSubmitBtn.style.display = 'none';
+}
+
+function _getProviderColor(provider) {
+    var p = (provider || 'aws').toLowerCase();
+    if (p === 'azure') return '#0078d4';
+    if (p === 'gcp') return '#4285f4';
+    return '#ff9900'; // AWS
+}
 
 accountCancelBtn.onclick = hideAccountModal;
 accountModalClose.onclick = hideAccountModal;
@@ -883,30 +930,71 @@ accountModal.onclick = function(e) { if (e.target === accountModal) hideAccountM
 
 accountForm.onsubmit = async function(e) {
     e.preventDefault();
-    accountFormError.textContent = '';
-    var val = accountIdInput.value.trim();
-    var accountName = accountNameInput ? accountNameInput.value.trim() : '';
-    var config = await getProviderConfig();
-    var regexPattern = (config.validation && config.validation.account_id_regex) || '^\\d{12}$';
-    var errorMsg = (config.validation && config.validation.error_messages && config.validation.error_messages.invalid_format) || 'Account ID must be exactly 12 digits.';
-    if (!new RegExp(regexPattern).test(val)) {
-        accountFormError.textContent = errorMsg;
-        return;
+    // Clear all errors
+    var awsErr = document.getElementById('account-form-error'); if (awsErr) awsErr.textContent = '';
+    var azErr = document.getElementById('azure-form-error'); if (azErr) azErr.textContent = '';
+    var gcpErr = document.getElementById('gcp-form-error'); if (gcpErr) gcpErr.textContent = '';
+
+    var provider = _selectedAccountProvider;
+    var payload = { cloudProvider: provider };
+    var errorEl = null;
+
+    if (provider === 'aws') {
+        var val = accountIdInput.value.trim();
+        var accountName = accountNameInput ? accountNameInput.value.trim() : '';
+        if (!/^\d{12}$/.test(val)) { if (awsErr) awsErr.textContent = 'Account ID must be exactly 12 digits.'; return; }
+        payload.accountId = val;
+        payload.accountName = accountName;
+        errorEl = awsErr;
+    } else if (provider === 'azure') {
+        var subId = (document.getElementById('azure-subscription-id') || {}).value.trim();
+        var tenId = (document.getElementById('azure-tenant-id') || {}).value.trim();
+        var cliId = (document.getElementById('azure-client-id') || {}).value.trim();
+        var secret = (document.getElementById('azure-client-secret') || {}).value.trim();
+        var name = (document.getElementById('azure-account-name') || {}).value.trim();
+        var uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        if (!uuidRe.test(subId)) { if (azErr) azErr.textContent = 'Subscription ID must be a valid UUID.'; return; }
+        if (!uuidRe.test(tenId)) { if (azErr) azErr.textContent = 'Tenant ID must be a valid UUID.'; return; }
+        if (!uuidRe.test(cliId)) { if (azErr) azErr.textContent = 'Client ID must be a valid UUID.'; return; }
+        payload.accountId = subId;
+        payload.tenantId = tenId;
+        payload.clientId = cliId;
+        if (secret) payload.clientSecret = secret;
+        payload.accountName = name;
+        errorEl = azErr;
+    } else if (provider === 'gcp') {
+        var projId = (document.getElementById('gcp-project-id') || {}).value.trim();
+        var keyJson = (document.getElementById('gcp-service-account-key') || {}).value.trim();
+        var gcpN = (document.getElementById('gcp-account-name') || {}).value.trim();
+        if (!/^[a-z][a-z0-9-]{4,28}[a-z0-9]$/.test(projId)) { if (gcpErr) gcpErr.textContent = 'Project ID must be 6-30 lowercase chars/digits/hyphens, starting with a letter.'; return; }
+        if (keyJson) {
+            try { var parsed = JSON.parse(keyJson); if (!parsed.private_key || !parsed.client_email) throw new Error(); }
+            catch(ex) { if (gcpErr) gcpErr.textContent = 'Invalid service account key JSON. Must contain private_key and client_email.'; return; }
+            payload.serviceAccountKey = JSON.parse(keyJson);
+        }
+        payload.accountId = projId;
+        payload.accountName = gcpN;
+        errorEl = gcpErr;
     }
 
     try {
         showLoading();
         if (editingAccountId) {
-            await api('PUT', '/members/accounts', { oldAccountId: editingAccountId, newAccountId: val, accountName: accountName });
+            await api('PUT', '/members/accounts', { oldAccountId: editingAccountId, newAccountId: payload.accountId, accountName: payload.accountName, cloudProvider: provider });
             notify('Account updated.', 'success');
+            hideAccountModal();
+            await loadAccounts();
         } else {
-            await api('POST', '/members/accounts', { accountId: val, accountName: accountName });
-            notify('Account added.', 'success');
+            await api('POST', '/members/accounts', payload);
+            notify('Account added!', 'success');
+            hideAccountModal();
+            await loadAccounts();
+            // Show setup wizard for AWS accounts only
+            if (provider === 'aws') showWizard(payload.accountId);
         }
-        hideAccountModal();
-        await loadAccounts();
     } catch (err) {
-        accountFormError.textContent = err.message || 'Failed.';
+        if (errorEl) errorEl.textContent = err.message || 'Failed.';
+        else notify(err.message || 'Failed.', 'error');
     } finally {
         hideLoading();
     }
@@ -1418,42 +1506,6 @@ if (wizCheckHourlyBtn) {
     };
 }
 
-// Override the add account flow to show wizard after adding
-var _originalAccountFormSubmit = accountForm.onsubmit;
-accountForm.onsubmit = async function(e) {
-    e.preventDefault();
-    accountFormError.textContent = '';
-    var val = accountIdInput.value.trim();
-    var accountName = accountNameInput ? accountNameInput.value.trim() : '';
-    var config = await getProviderConfig();
-    var regexPattern = (config.validation && config.validation.account_id_regex) || '^\\d{12}$';
-    var errorMsg = (config.validation && config.validation.error_messages && config.validation.error_messages.invalid_format) || 'Account ID must be exactly 12 digits.';
-    if (!new RegExp(regexPattern).test(val)) {
-        accountFormError.textContent = errorMsg;
-        return;
-    }
-    try {
-        showLoading();
-        if (editingAccountId) {
-            await api('PUT', '/members/accounts', { oldAccountId: editingAccountId, newAccountId: val, accountName: accountName });
-            notify('Account updated.', 'success');
-            hideAccountModal();
-            await loadAccounts();
-        } else {
-            await api('POST', '/members/accounts', { accountId: val, accountName: accountName });
-            notify('Account added!', 'success');
-            hideAccountModal();
-            await loadAccounts();
-            // Show the setup wizard for the new account
-            showWizard(val);
-        }
-    } catch (err) {
-        accountFormError.textContent = err.message || 'Failed.';
-    } finally {
-        hideLoading();
-    }
-};
-
 // Also add a "Setup" button to the accounts table for pending accounts
 var _originalRenderAccounts = renderAccounts;
 renderAccounts = function(accounts) {
@@ -1476,9 +1528,10 @@ renderAccounts = function(accounts) {
         var tr = document.createElement('tr');
         tr.innerHTML =
             '<td style="color:#999;font-size:12px">' + (idx + 1) + '</td>' +
+            '<td><span style="background:' + _getProviderColor(a.cloudProvider || 'aws') + ';color:#fff;font-size:10px;padding:2px 6px;border-radius:4px;font-weight:600;">' + (a.cloudProvider || 'AWS').toUpperCase() + '</span></td>' +
             '<td>' + esc(a.accountId || '') + '</td>' +
             '<td>' + esc(a.accountName || '-') + '</td>' +
-            '<td>' + esc(a.roleName || '') + '</td>' +
+            '<td>' + (a.cloudProvider === 'azure' ? 'Service Principal' : a.cloudProvider === 'gcp' ? 'Service Account' : esc(a.roleName || '')) + '</td>' +
             '<td><span class="status-badge ' + statusClass + '">' + esc(a.connectionStatus || 'pending') + '</span>' + hourlyBadge2 + '</td>' +
             '<td>' + fmtDate(a.addedAt) + '</td>' +
             '<td>' + fmtDate(a.lastTestedAt) + '</td>' +
