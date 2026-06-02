@@ -1290,6 +1290,15 @@ def handle_generate_template(event):
 
     # Default: CloudFormation YAML (format="cloudformation" or unspecified)
 
+    # Load connection-setup and auth config from Provider Registry (with fallback)
+    conn_config = provider_registry.get_config('aws', 'connection-setup')
+    auth_config = provider_registry.get_config('aws', 'auth')
+
+    # Use registry values or fall back to hardcoded defaults
+    role_name_pattern = conn_config.get('role_name_pattern', 'SlashMyBill-{accountId}') if conn_config else 'SlashMyBill-{accountId}'
+    iam_actions = auth_config.get('required_iam_actions', _get_latest_policy_actions()) if auth_config else _get_latest_policy_actions()
+    platform_account = PLATFORM_ACCOUNT_ID  # Always from env/constant
+
     # Compute ExternalId as SHA-256 hash of member email
     external_id = hashlib.sha256(member_email.encode('utf-8')).hexdigest()
 
@@ -1302,7 +1311,7 @@ def handle_generate_template(event):
                 'DeletionPolicy': 'Delete',
                 'UpdateReplacePolicy': 'Delete',
                 'Properties': {
-                    'RoleName': f'SlashMyBill-{account_id}',
+                    'RoleName': role_name_pattern.format(accountId=account_id),
                     'AssumeRolePolicyDocument': {
                         'Version': '2012-10-17',
                         'Statement': [
@@ -1334,167 +1343,7 @@ def handle_generate_template(event):
                                 'Statement': [
                                     {
                                         'Effect': 'Allow',
-                                        'Action': [
-                                            # Cost Explorer â€” core FinOps data
-                                            'ce:GetCostAndUsage',
-                                            'ce:GetCostForecast',
-                                            'ce:GetReservationUtilization',
-                                            'ce:GetReservationCoverage',
-                                            'ce:GetSavingsPlansUtilization',
-                                            'ce:GetSavingsPlansCoverage',
-                                            'ce:GetSavingsPlansPurchaseRecommendation',
-                                            'ce:GetReservationPurchaseRecommendation',
-                                            'ce:GetRightsizingRecommendation',
-                                            'ce:GetCostCategories',
-                                            'ce:GetDimensionValues',
-                                            'ce:GetTags',
-                                            'ce:ListCostAllocationTags',
-                                            'ce:GetApproximateUsageRecords',
-                                            'ce:UpdatePreferences',
-                                            'ce:GetPreferences',
-                                            'ce:GetCostAndUsageWithResources',
-                                            # AWS Invoicing API (invoice-level metadata)
-                                            'invoicing:ListInvoiceSummaries',
-                                            # Savings Plans (expiring commitments retrieval)
-                                            'savingsplans:DescribeSavingsPlans',
-                                            # Budgets
-                                            'budgets:ViewBudget',
-                                            'budgets:DescribeBudgets',
-                                            'budgets:DescribeBudgetActionsForAccount',
-                                            'budgets:*',
-                                            # Cost Optimization Hub
-                                            'cost-optimization-hub:ListRecommendations',
-                                            'cost-optimization-hub:GetRecommendation',
-                                            # Billing / CUR
-                                            'cur:DescribeReportDefinitions',
-                                            'cur:GetClassicReport',
-                                            'cur:GetUsageReport',
-                                            'billing:GetBillingData',
-                                            'billing:GetBillingDetails',
-                                            # Trusted Advisor (cost checks)
-                                            'support:DescribeTrustedAdvisorChecks',
-                                            'support:DescribeTrustedAdvisorCheckResult',
-                                            # Stack self-management (for template update/delete)
-                                            'cloudformation:DeleteStack',
-                                            'cloudformation:UpdateStack',
-                                            'cloudformation:CreateStack',
-                                            'cloudformation:DescribeStacks',
-                                            'cloudformation:DescribeStackResources',
-                                            'cloudformation:GetTemplate',
-                                            'iam:GetRole',
-                                            'iam:ListRolePolicies',
-                                            'iam:ListAttachedRolePolicies',
-                                            'iam:DeleteRolePolicy',
-                                            'iam:DetachRolePolicy',
-                                            'iam:DeleteRole',
-                                            'iam:CreateRole',
-                                            'iam:PutRolePolicy',
-                                            'iam:AttachRolePolicy',
-                                            'iam:TagRole',
-                                            'iam:PassRole',
-                                            # Level 1 cleanup actions
-                                            'ec2:ReleaseAddress',
-                                            'ec2:DeleteVolume',
-                                            'elasticloadbalancing:DeleteLoadBalancer',
-                                            's3:PutBucketLifecycleConfiguration',
-                                            's3:GetBucketLifecycleConfiguration',
-                                            's3:GetBucketLocation',
-                                            's3:ListBucketMultipartUploads',
-                                            's3:AbortMultipartUpload',
-                                            's3:ListBucket',
-                                            's3:GetObject',
-                                            's3:HeadObject',
-                                            's3:DeleteObject',
-                                            's3:DeleteObjects',
-                                            # Idle EC2 / RDS / Snapshot cleanup
-                                            'ec2:StopInstances',
-                                            'ec2:TerminateInstances',
-                                            'ec2:DescribeInstanceAttribute',
-                                            'ec2:ModifyInstanceAttribute',
-                                            'autoscaling:DescribeAutoScalingInstances',
-                                            'autoscaling:DetachInstances',
-                                            'autoscaling:UpdateAutoScalingGroup',
-                                            'ec2:DeleteSnapshot',
-                                            'rds:DeleteDBInstance',
-                                            'rds:DescribeDBInstances',
-                                            # Resource tagging (bulk tag management)
-                                            'tag:GetResources',
-                                            'tag:GetTagKeys',
-                                            'tag:GetTagValues',
-                                            'tag:TagResources',
-                                            'tag:UntagResources',
-                                            # Per-service tagging â€” covers all AWS services
-                                            'ec2:CreateTags',
-                                            'ec2:DeleteTags',
-                                            'rds:AddTagsToResource',
-                                            'rds:RemoveTagsFromResource',
-                                            's3:PutBucketTagging',
-                                            's3:GetBucketTagging',
-                                            's3:PutObjectTagging',
-                                            's3:DeleteObjectTagging',
-                                            'elasticloadbalancing:AddTags',
-                                            'elasticloadbalancing:RemoveTags',
-                                            'sqs:TagQueue',
-                                            'sqs:UntagQueue',
-                                            'logs:TagLogGroup',
-                                            'logs:UntagLogGroup',
-                                            'dynamodb:TagResource',
-                                            'dynamodb:UntagResource',
-                                            'lambda:TagResource',
-                                            'lambda:UntagResource',
-                                            'sns:TagResource',
-                                            'sns:UntagResource',
-                                            'kms:TagResource',
-                                            'kms:UntagResource',
-                                            'es:AddTags',
-                                            'es:RemoveTags',
-                                            'elasticache:AddTagsToResource',
-                                            'elasticache:RemoveTagsFromResource',
-                                            'ecs:TagResource',
-                                            'ecs:UntagResource',
-                                            'eks:TagResource',
-                                            'eks:UntagResource',
-                                            'secretsmanager:TagResource',
-                                            'secretsmanager:UntagResource',
-                                            'cloudwatch:TagResource',
-                                            'cloudwatch:UntagResource',
-                                            'kinesis:AddTagsToStream',
-                                            'kinesis:RemoveTagsFromStream',
-                                            'redshift:CreateTags',
-                                            'redshift:DeleteTags',
-                                            'glue:TagResource',
-                                            'glue:UntagResource',
-                                            'stepfunctions:TagResource',
-                                            'stepfunctions:UntagResource',
-                                            'sagemaker:AddTags',
-                                            'sagemaker:DeleteTags',
-                                            # Scheduler write actions (stop/start/scale)
-                                            'ec2:StartInstances',
-                                            'rds:StopDBInstance',
-                                            'rds:StartDBInstance',
-                                            'eks:UpdateNodegroupConfig',
-                                            'eks:DescribeNodegroup',
-                                            'sagemaker:StopNotebookInstance',
-                                            'sagemaker:StartNotebookInstance',
-                                            'redshift:PauseCluster',
-                                            'redshift:ResumeCluster',
-                                            'workspaces:ModifyWorkspaceProperties',
-                                            'ec2:ModifyVolume',
-                                            # FinOps Settings Healthcheck - read permissions
-                                            'ce:GetAnomalyMonitors',
-                                            'ce:GetAnomalySubscriptions',
-                                            'ce:ListCostAllocationTagBackfillHistory',
-                                            'compute-optimizer:GetEnrollmentStatus',
-                                            'organizations:DescribeOrganization',
-                                            # FinOps Settings Healthcheck - write permissions (fix actions)
-                                            'ce:UpdateCostAllocationTagsStatus',
-                                            'ce:CreateAnomalyMonitor',
-                                            'ce:CreateAnomalySubscription',
-                                            'ce:StartCostAllocationTagBackfill',
-                                            'compute-optimizer:UpdateEnrollmentStatus',
-                                            # RI Marketplace browsing
-                                            'ec2:DescribeReservedInstancesOfferings',
-                                        ],
+                                        'Action': iam_actions,
                                         'Resource': '*'
                                     }
                                 ]
