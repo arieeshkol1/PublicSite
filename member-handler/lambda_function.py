@@ -2068,6 +2068,80 @@ def handle_dashboard_data(event):
     for acct in accounts[:5]:
         acct_id = acct['accountId']
         acct_name = acct.get('accountName', f'Account {acct_id[-4:]}')
+
+        # Multi-cloud routing: handle Azure accounts differently
+        cloud_provider = acct.get('cloudProvider', 'aws')
+        if cloud_provider == 'azure':
+            try:
+                credentials = acct.get('credentials', {})
+                if not credentials.get('encryptedClientSecret'):
+                    logger.warning(f"Azure account {acct_id} has no client secret, skipping")
+                    per_account.append({'accountId': acct_id, 'accountName': acct_name, 'error': 'Missing credentials', 'partial_failure': True})
+                    continue
+                
+                from connectors.kms_helpers import decrypt_credential
+                from connectors.azure_connector import AzureConnector
+                from cost_normalizer import normalize_azure
+                
+                client_secret = decrypt_credential(credentials['encryptedClientSecret'])
+                connector = AzureConnector()
+                auth_context = connector.authenticate({
+                    'tenant_id': credentials.get('tenantId', ''),
+                    'client_id': credentials.get('clientId', ''),
+                    'client_secret': client_secret,
+                })
+                
+                # Fetch 30 days of cost data
+                end_date = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+                start_30d = (datetime.now(timezone.utc) - timedelta(days=30)).strftime('%Y-%m-%d')
+                
+                raw_cost_data = connector.get_cost_data(auth_context, acct_id, start_30d, end_date)
+                normalized = normalize_azure(raw_cost_data, acct_id)
+                
+                # Build cost_by_service from normalized data
+                service_costs = {}
+                daily_cost_trend = []
+                daily_totals = {}
+                
+                for record in normalized:
+                    svc = record['service_name']
+                    cost = record['cost_amount']
+                    date = record['date']
+                    service_costs[svc] = service_costs.get(svc, 0) + cost
+                    daily_totals[date] = daily_totals.get(date, 0) + cost
+                
+                acct_total = sum(service_costs.values())
+                cost_by_service = sorted(
+                    [{'service': s, 'cost_usd': round(c, 2), 'period': 'last_30_days'} for s, c in service_costs.items()],
+                    key=lambda x: x['cost_usd'], reverse=True
+                )
+                daily_cost_trend = [{'date': d, 'cost_usd': round(c, 4)} for d, c in sorted(daily_totals.items())]
+                
+                # Merge into global aggregates
+                for svc in cost_by_service:
+                    merged_costs[svc['service']] = merged_costs.get(svc['service'], 0) + svc['cost_usd']
+                for d in daily_cost_trend:
+                    merged_daily[d['date']] = merged_daily.get(d['date'], 0) + d['cost_usd']
+                
+                per_account.append({
+                    'accountId': acct_id, 'accountName': acct_name,
+                    'totalSpend': round(acct_total, 2),
+                    'cloudProvider': 'azure',
+                    'topServices': cost_by_service[:5],
+                })
+                
+                logger.info(f"Azure account {acct_id}: {len(normalized)} cost records, total ${acct_total:.2f}")
+                
+            except Exception as e:
+                logger.warning(f"Azure dashboard data failed for {acct_id}: {type(e).__name__}: {e}")
+                per_account.append({'accountId': acct_id, 'accountName': acct_name, 'error': str(e), 'partial_failure': True, 'cloudProvider': 'azure'})
+            continue  # Skip the AWS-specific logic below
+        
+        elif cloud_provider == 'gcp':
+            # GCP cost data not yet implemented - skip gracefully
+            per_account.append({'accountId': acct_id, 'accountName': acct_name, 'cloudProvider': 'gcp', 'error': 'GCP cost data coming soon', 'partial_failure': True})
+            continue
+
         try:
             assume_resp = sts_client.assume_role(
                 RoleArn=f'arn:aws:iam::{acct_id}:role/SlashMyBill-{acct_id}',
@@ -2607,13 +2681,14 @@ def handle_dashboard_data(event):
             per_account.append({
                 'accountId': acct_id, 'accountName': acct_name,
                 'totalSpend': round(acct_total, 2),
+                'cloudProvider': cloud_provider,
                 'efficiencyScore': eff.get('score', 0),
                 'topServices': acct_data.get('cost_by_service', [])[:5],
             })
         except Exception as e:
             # Partial failure handling: log per-account failure and continue with remaining accounts
             logger.warning(f"Dashboard data failed for account {acct_id} (member: {member_email}): {type(e).__name__}: {e}")
-            per_account.append({'accountId': acct_id, 'accountName': acct_name, 'error': str(e), 'partial_failure': True})
+            per_account.append({'accountId': acct_id, 'accountName': acct_name, 'error': str(e), 'partial_failure': True, 'cloudProvider': cloud_provider})
 
     # Build response
     total_spend = round(sum(merged_costs.values()), 2)
