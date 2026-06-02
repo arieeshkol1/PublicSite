@@ -30,7 +30,7 @@ def load_tips(filepath):
     return data["tips"]
 
 
-def seed_table(tips, table):
+def seed_table(tips, table, cloud_label="AWS"):
     """Batch write tips to DynamoDB. Overwrites existing items."""
     loaded = 0
     failed = 0
@@ -45,6 +45,7 @@ def seed_table(tips, table):
                 "description": tip["description"],
                 "estimatedSavings": tip["estimatedSavings"],
                 "difficulty": tip["difficulty"],
+                "cloud": cloud_label,
                 # Phase 1 scan engine fields
                 "checkImplemented": tip.get("checkImplemented", False),
                 "actionType": tip.get("actionType", "pending"),
@@ -73,15 +74,7 @@ def main():
         if idx + 1 < len(sys.argv):
             REGION = sys.argv[idx + 1]
 
-    print(f"Loading tips from {TIPS_FILE}")
     print(f"Target region: {REGION}")
-    try:
-        tips = load_tips(TIPS_FILE)
-    except (FileNotFoundError, json.JSONDecodeError, KeyError) as e:
-        print(f"Error reading tips file: {e}")
-        sys.exit(1)
-
-    print(f"Found {len(tips)} tips")
 
     dynamodb = boto3.resource("dynamodb", region_name=REGION)
     table = dynamodb.Table(TABLE_NAME)
@@ -94,11 +87,38 @@ def main():
         print("Make sure the CloudFormation stack is deployed first.")
         sys.exit(1)
 
-    print(f"Writing tips to {TABLE_NAME}...")
-    loaded, failed = seed_table(tips, table)
+    # Seed all provider tips files
+    tips_files = [
+        ("aws-cost-optimization-tips.json", "AWS"),
+        ("azure-cost-optimization-tips.json", "AZURE"),
+        ("gcp-cost-optimization-tips.json", "GCP"),
+    ]
 
-    print(f"\nDone! {loaded} tips loaded, {failed} failed.")
-    if failed:
+    total_loaded = 0
+    total_failed = 0
+
+    for filename, cloud_label in tips_files:
+        filepath = os.path.join(SCRIPT_DIR, filename)
+        if not os.path.exists(filepath):
+            print(f"  SKIP: {filename} not found")
+            continue
+
+        print(f"\nLoading {filename} (cloud={cloud_label})...")
+        try:
+            tips = load_tips(filepath)
+        except (FileNotFoundError, json.JSONDecodeError, KeyError) as e:
+            print(f"  Error reading {filename}: {e}")
+            continue
+
+        print(f"  Found {len(tips)} tips")
+        print(f"  Writing to {TABLE_NAME}...")
+        loaded, failed = seed_table(tips, table, cloud_label)
+        total_loaded += loaded
+        total_failed += failed
+        print(f"  {loaded} loaded, {failed} failed")
+
+    print(f"\nDone! Total: {total_loaded} tips loaded, {total_failed} failed.")
+    if total_failed:
         sys.exit(1)
 
 
