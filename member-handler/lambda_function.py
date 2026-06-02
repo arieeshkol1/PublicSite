@@ -612,6 +612,27 @@ def handle_reset_password(event):
         return create_error_response(400, "InvalidRequest", "Field 'action' is required")
 
 
+# ============================================================
+# Multi-cloud provider helpers
+# ============================================================
+
+VALID_CLOUD_PROVIDERS = {'aws', 'azure', 'gcp'}
+
+
+def _backfill_cloud_provider(account):
+    """Ensure account record has cloudProvider attribute (defaults to 'aws' for legacy records)."""
+    if not account.get('cloudProvider'):
+        account['cloudProvider'] = 'aws'
+    return account
+
+
+def _validate_cloud_provider(cloud_provider):
+    """Validate cloudProvider value. Returns error response dict or None if valid."""
+    if cloud_provider not in VALID_CLOUD_PROVIDERS:
+        return create_error_response(400, 'InvalidProvider', f"Invalid cloud provider '{cloud_provider}'. Supported: aws, azure, gcp.")
+    return None
+
+
 def handle_get_accounts(event):
     """List member's accounts."""
     auth = validate_token(event)
@@ -629,6 +650,9 @@ def handle_get_accounts(event):
     except ClientError as e:
         logger.error(f"DynamoDB query error: {e}")
         return create_error_response(500, 'ServerError', 'An unexpected error occurred. Please try again.')
+
+    # Backfill cloudProvider for legacy records
+    accounts = [_backfill_cloud_provider(a) for a in accounts]
 
     # Sort by sortOrder (priority), then addedAt
     accounts.sort(key=lambda a: (a.get('sortOrder', 999), a.get('addedAt', '')))
@@ -739,7 +763,7 @@ def _get_member_tier(email: str) -> str:
 
 
 def handle_add_account(event):
-    """Add a new AWS account."""
+    """Add a new cloud account (AWS, Azure, or GCP)."""
     auth = validate_token(event)
     if isinstance(auth, dict) and 'statusCode' in auth:
         return auth
@@ -753,6 +777,12 @@ def handle_add_account(event):
 
     account_id = (body.get('accountId') or '').strip()
     account_name = (body.get('accountName') or '').strip()
+    cloud_provider = (body.get('cloudProvider') or 'aws').strip().lower()
+
+    # Validate cloudProvider value
+    provider_err = _validate_cloud_provider(cloud_provider)
+    if provider_err:
+        return provider_err
 
     # Validate Account ID format (registry-driven)
     validation_err = _validate_account_id(account_id)
@@ -761,11 +791,11 @@ def handle_add_account(event):
 
     accounts_table = dynamodb.Table(ACCOUNTS_TABLE_NAME)
 
-    # Check for duplicate
+    # Check for duplicate accountId per member (409 Conflict regardless of provider)
     try:
         existing = accounts_table.get_item(Key={'memberEmail': member_email, 'accountId': account_id}).get('Item')
         if existing:
-            return create_error_response(409, 'ConflictError', 'This AWS account is already connected')
+            return create_error_response(409, 'ConflictError', 'An account with this identifier is already connected.')
     except ClientError as e:
         logger.error(f"DynamoDB read error: {e}")
         return create_error_response(500, 'ServerError', 'An unexpected error occurred. Please try again.')
@@ -803,6 +833,7 @@ def handle_add_account(event):
         'memberEmail': member_email,
         'accountId': account_id,
         'accountName': account_name or f'Account {account_id[-4:]}',
+        'cloudProvider': cloud_provider,
         'roleName': role_name,
         'connectionStatus': 'pending',
         'addedAt': now_iso,
@@ -1883,7 +1914,7 @@ def handle_dashboard_data(event):
         result = accounts_table.query(
             KeyConditionExpression=boto3.dynamodb.conditions.Key('memberEmail').eq(member_email)
         )
-        accounts = [a for a in result.get('Items', []) if a.get('connectionStatus') == 'connected']
+        accounts = [_backfill_cloud_provider(a) for a in result.get('Items', []) if a.get('connectionStatus') == 'connected']
     except ClientError:
         accounts = []
 
