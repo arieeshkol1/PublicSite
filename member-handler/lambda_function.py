@@ -5279,12 +5279,13 @@ def handle_save_business_metrics(event):
 # ============================================================
 
 def _assume_role_for_account(member_email, account_id):
-    """Assume cross-account role and return boto3 credentials dict, or raise."""
-    role_arn = f'arn:aws:iam::{account_id}:role/SlashMyBill-{account_id}'
-    external_id = hashlib.sha256(member_email.encode('utf-8')).hexdigest()
-    sts = boto3.client('sts')
-    resp = sts.assume_role(RoleArn=role_arn, RoleSessionName='SlashMyBillAct', ExternalId=external_id)
-    return resp['Credentials']
+    """Assume cross-account role and return boto3 credentials dict, or raise.
+
+    Uses the Provider Registry auth config via sts_assume_role module.
+    Falls back to hardcoded defaults if registry is unavailable.
+    """
+    import sts_assume_role
+    return sts_assume_role.assume_role(account_id, member_email, session_name='SlashMyBillAct')
 
 
 def _make_client_from_creds(service, creds, region='us-east-1'):
