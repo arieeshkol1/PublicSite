@@ -273,6 +273,8 @@ jobs:
           echo "Packaging Member Handler Lambda..."
           pip install PyJWT bcrypt pyyaml -t .build-member-handler/ --quiet
           cp member-handler/lambda_function.py .build-member-handler/
+          cp member-handler/provider_registry.py .build-member-handler/
+          cp member-handler/sts_assume_role.py .build-member-handler/
           cp member-handler/invoice_sync.py .build-member-handler/
           cp member-handler/invoice_validation.py .build-member-handler/
           cp member-handler/invoice_drilldown.py .build-member-handler/
