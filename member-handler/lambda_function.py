@@ -24,6 +24,7 @@ from botocore.exceptions import ClientError
 import jwt
 import bcrypt
 import yaml
+import provider_registry
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -184,6 +185,7 @@ def lambda_handler(event, context):
         'POST /members/committed-discounts/ri-marketplace': handle_ri_marketplace,
         'POST /members/terraform/generate': handle_terraform_generate,
         'POST /members/cache/invalidate': handle_cache_invalidate,
+        'GET /members/provider-config': handle_get_provider_config,
     }
 
     handler = routes.get(route_key)
@@ -9752,6 +9754,49 @@ def _build_otp_email(otp_code):
     <p style="color:#999;font-size:11px;">eshkolai.com &bull; Cloud and AI Services</p>
   </div>
 </body></html>"""
+
+
+# ============================================================
+# Provider Config Handler
+# ============================================================
+
+FRONTEND_SAFE_CATEGORIES = ['display', 'validation', 'connection-setup', 'ui-config', 'ai-prompts']
+
+
+def handle_get_provider_config(event):
+    """Return non-sensitive provider config for frontend consumption."""
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+
+    try:
+        all_config = provider_registry.get_all_categories('aws')
+        response_config = {
+            category: all_config[category]
+            for category in FRONTEND_SAFE_CATEGORIES
+            if category in all_config
+        }
+        return {
+            'statusCode': 200,
+            'headers': {
+                **cors_headers(),
+                'Cache-Control': 'public, max-age=3600',
+            },
+            'body': json.dumps(_decimal_to_native(response_config)),
+        }
+    except Exception as e:
+        logger.error(f"Provider registry unavailable: {e}")
+        return {
+            'statusCode': 503,
+            'headers': {
+                **cors_headers(),
+                'Retry-After': '30',
+            },
+            'body': json.dumps({
+                'error': 'ServiceUnavailable',
+                'message': 'Provider configuration temporarily unavailable',
+            }),
+        }
 
 
 # ============================================================
