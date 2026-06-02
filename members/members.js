@@ -216,20 +216,70 @@ function _updateTokenDisplay(tokens) {
 }
 
 // ============================================================
-// Provider Config (session-level cache)
+// Provider Config API - registry-driven configuration cache
 // ============================================================
+var _providerConfig = null;
 
 async function getProviderConfig() {
-    if (_providerConfigCache) return _providerConfigCache;
-
+    if (_providerConfig) return _providerConfig;
     try {
-        var data = await api('GET', '/members/provider-config');
-        _providerConfigCache = data;
-        return _providerConfigCache;
+        var resp = await fetch(API + '/members/provider-config', {
+            headers: { 'Authorization': 'Bearer ' + getToken() }
+        });
+        if (!resp.ok) return {};
+        _providerConfig = await resp.json();
+        return _providerConfig;
     } catch (e) {
-        console.warn('getProviderConfig failed:', e);
         return {};
     }
+}
+
+// Default follow-up questions (fallback if config not loaded)
+var _defaultFollowUpQuestions = [
+    'Which services are costing me the most?',
+    'How can I reduce my EC2 costs?',
+    'Show me my spending trend for the last 30 days',
+    'What are my biggest cost optimization opportunities?',
+    'Compare my costs month over month'
+];
+
+function getFollowUpQuestionsFromConfig() {
+    var config = _providerConfig || {};
+    var uiConfig = config['ui-config'] || {};
+    var questions = uiConfig.follow_up_questions;
+    if (questions && questions.length > 0) return questions;
+    return _defaultFollowUpQuestions;
+}
+
+// Default service display name mapping (fallback if config not loaded)
+var _defaultServiceDisplayNames = {
+    'Amazon Elastic Compute Cloud - Compute': 'EC2 - Compute',
+    'Amazon Simple Storage Service': 'S3',
+    'Amazon Relational Database Service': 'RDS',
+    'AWS Lambda': 'Lambda',
+    'Amazon Virtual Private Cloud': 'VPC & Networking',
+    'Amazon Elastic Block Store': 'EBS Volumes',
+    'Amazon Elastic Kubernetes Service': 'EKS',
+    'Amazon Elastic Container Service': 'ECS',
+    'AmazonCloudWatch': 'CloudWatch',
+    'Amazon Route 53': 'Route 53',
+    'Amazon CloudFront': 'CloudFront',
+    'Amazon ElastiCache': 'ElastiCache',
+    'Amazon DynamoDB': 'DynamoDB',
+    'AWS Key Management Service': 'KMS',
+    'Amazon Elastic Load Balancing': 'Load Balancers'
+};
+
+function getServiceDisplayName(serviceName) {
+    var config = _providerConfig || {};
+    var uiConfig = config['ui-config'] || {};
+    var displayNames = uiConfig.service_display_names || {};
+    // Try config lookup first (supports both CUR names and service codes as keys)
+    if (displayNames[serviceName]) return displayNames[serviceName];
+    // Try hardcoded fallback mapping
+    if (_defaultServiceDisplayNames[serviceName]) return _defaultServiceDisplayNames[serviceName];
+    // Final fallback: strip Amazon/AWS prefix
+    return serviceName.replace(/^Amazon\s+/, '').replace(/^AWS\s+/, '');
 }
 
 function _showUpgradeModal() {
@@ -802,21 +852,23 @@ async function reorderAccount(accountId, direction) {
 
 addAccountBtn.onclick = function() { showAccountModal(null); };
 
-function showAccountModal(existingId) {
+async function showAccountModal(existingId) {
     accountFormError.textContent = '';
     editingAccountId = existingId;
+    var config = await getProviderConfig();
+    var placeholder = (config.validation && config.validation.placeholder) || '123456789012';
     if (existingId) {
         var existing = allAccounts.find(function(a) { return a.accountId === existingId; }) || {};
         accountModalTitle.textContent = 'Edit Account';
         accountSubmitBtn.textContent = 'Update Account';
         accountIdInput.value = existingId;
-        accountIdInput.placeholder = 'New 12-digit Account ID';
+        accountIdInput.placeholder = placeholder;
         if (accountNameInput) accountNameInput.value = existing.accountName || '';
     } else {
         accountModalTitle.textContent = 'Add Account';
         accountSubmitBtn.textContent = 'Add Account';
         accountIdInput.value = '';
-        accountIdInput.placeholder = '123456789012';
+        accountIdInput.placeholder = placeholder;
         if (accountNameInput) accountNameInput.value = '';
     }
     accountModal.hidden = false;
@@ -834,8 +886,11 @@ accountForm.onsubmit = async function(e) {
     accountFormError.textContent = '';
     var val = accountIdInput.value.trim();
     var accountName = accountNameInput ? accountNameInput.value.trim() : '';
-    if (!/^\d{12}$/.test(val)) {
-        accountFormError.textContent = 'Account ID must be exactly 12 digits.';
+    var config = await getProviderConfig();
+    var regexPattern = (config.validation && config.validation.account_id_regex) || '^\\d{12}$';
+    var errorMsg = (config.validation && config.validation.error_messages && config.validation.error_messages.invalid_format) || 'Account ID must be exactly 12 digits.';
+    if (!new RegExp(regexPattern).test(val)) {
+        accountFormError.textContent = errorMsg;
         return;
     }
 
@@ -1092,13 +1147,16 @@ var wizardCfUpdateUrl = null;
 var wizardTemplateYaml = null;
 var wizardFilename = null;
 
-function showWizard(accountId) {
+async function showWizard(accountId) {
     wizardAccountId = accountId;
     wizardStep = 1;
     wizardTemplateDownloaded = false;
     wizardCfConsoleUrl = null;
     wizardCfUpdateUrl = null;
-    var roleName = 'SlashMyBill-' + accountId;
+    var config = await getProviderConfig();
+    var connSetup = (config && config['connection-setup']) || {};
+    var roleNamePattern = (connSetup.role_name_pattern) || 'SlashMyBill-{accountId}';
+    var roleName = roleNamePattern.replace('{accountId}', accountId);
     var stackName = 'SlashMyBill-Access-' + accountId;
     wizRoleName.textContent = roleName;
     wizStackName.textContent = stackName;
@@ -1130,7 +1188,7 @@ function showWizard(accountId) {
             '<div style="font-weight:600;color:#166534;margin-bottom:8px;">\ud83d\udd12 How it works (secure, read-only access)</div>' +
             '<div style="background:#fff;border:1px solid #d1d5db;border-radius:6px;padding:10px 12px;font-family:monospace;font-size:10px;color:#374151;margin-bottom:6px;white-space:pre;overflow-x:auto;line-height:1.3;padding:6px 8px;">' +
                 'Your AWS Account\n' +
-                '  \u2514\u2500\u2500 SlashMyBill-' + accountId + ' (IAM Role)\n' +
+                '  \u2514\u2500\u2500 ' + roleName + ' (IAM Role)\n' +
                 '      \u2514\u2500\u2500 Read-Only Access to:\n' +
                 '          \u2022 Cost Explorer (billing data)\n' +
                 '          \u2022 CloudWatch (metrics)\n' +
@@ -1150,7 +1208,7 @@ function showWizard(accountId) {
         if (monoBlock) {
             monoBlock.textContent =
                 'Your AWS Account\n' +
-                '  \u2514\u2500\u2500 SlashMyBill-' + accountId + ' (IAM Role)\n' +
+                '  \u2514\u2500\u2500 ' + roleName + ' (IAM Role)\n' +
                 '      \u2514\u2500\u2500 Read-Only Access to:\n' +
                 '          \u2022 Cost Explorer (billing data)\n' +
                 '          \u2022 CloudWatch (metrics)\n' +
@@ -1166,6 +1224,15 @@ async function _fetchTemplate(accountId) {
         wizardFilename = data.filename;
         wizardCfConsoleUrl = data.cfConsoleUrl;
         wizardCfUpdateUrl = data.cfUpdateUrl;
+        // Fallback to provider config console URL if API didn't supply one
+        if (!wizardCfConsoleUrl) {
+            var config = await getProviderConfig();
+            var connSetup = (config && config['connection-setup']) || {};
+            var consoleUrls = connSetup.console_urls || {};
+            if (consoleUrls.cloudformation) {
+                wizardCfConsoleUrl = consoleUrls.cloudformation;
+            }
+        }
         if (wizardCfConsoleUrl) {
             wizLaunchCfBtn.href = wizardCfConsoleUrl;
             wizLaunchCfBtn.style.opacity = '1';
@@ -1358,8 +1425,11 @@ accountForm.onsubmit = async function(e) {
     accountFormError.textContent = '';
     var val = accountIdInput.value.trim();
     var accountName = accountNameInput ? accountNameInput.value.trim() : '';
-    if (!/^\d{12}$/.test(val)) {
-        accountFormError.textContent = 'Account ID must be exactly 12 digits.';
+    var config = await getProviderConfig();
+    var regexPattern = (config.validation && config.validation.account_id_regex) || '^\\d{12}$';
+    var errorMsg = (config.validation && config.validation.error_messages && config.validation.error_messages.invalid_format) || 'Account ID must be exactly 12 digits.';
+    if (!new RegExp(regexPattern).test(val)) {
+        accountFormError.textContent = errorMsg;
         return;
     }
     try {
@@ -1964,11 +2034,9 @@ function addAIMessage(type, content, topServices) {
             questionLower.indexOf('reduce') !== -1 || questionLower.indexOf('optimize') !== -1;
 
         if (isComparison) {
-            // Comparison-context drill-downs
-            followUps.push('What caused the biggest cost increase?');
-            followUps.push('Which services are trending up?');
-            followUps.push('How efficient is my account?');
-            followUps.push('Where can I save money?');
+            // Comparison-context drill-downs - use config follow-up questions
+            var configQuestions = getFollowUpQuestionsFromConfig();
+            configQuestions.slice(0, 4).forEach(function(q) { followUps.push(q); });
         } else if (isEfficiency) {
             // Efficiency-context drill-downs
             if (answerLower.indexOf('ebs') !== -1) followUps.push('List my unattached EBS volumes with sizes');
@@ -2004,6 +2072,12 @@ function addAIMessage(type, content, topServices) {
                 if (answerLower.indexOf('0 invocation') !== -1 || answerLower.indexOf('deletion') !== -1)
                     followUps.push('List unused Lambda functions I can delete');
             }
+        }
+
+        // If no context-specific follow-ups generated, use config follow-up questions as fallback
+        if (followUps.length === 0) {
+            var configQuestions = getFollowUpQuestionsFromConfig();
+            configQuestions.slice(0, 4).forEach(function(q) { followUps.push(q); });
         }
 
         // Limit to 4 most relevant follow-ups
@@ -2237,7 +2311,7 @@ async function askAI() {
                                         }
                                     }
                                     if (monthCols.length >= 2) {
-                                        var compLabels = dataRows.map(function(r) { return r[0].replace('Amazon ', '').replace('AWS ', '').substring(0, 25); });
+                                        var compLabels = dataRows.map(function(r) { return getServiceDisplayName(r[0]).substring(0, 25); });
                                         if (monthCols.length === 2) {
                                             // 2-month comparison
                                             var compChart = {
@@ -4048,8 +4122,8 @@ function _renderTreemapServices() {
     if (old) old.remove();
 
     var treeData = _treemapServiceData.map(function(s, i) {
-        // Normalize service name \u2014 strip Amazon/AWS prefix for display
-        var displayName = s.service.replace(/^Amazon\s+/,'').replace(/^AWS\s+/,'');
+        // Use config-driven service display names with fallback
+        var displayName = getServiceDisplayName(s.service);
         return {
             name: displayName,
             fullName: s.service,
@@ -4105,7 +4179,7 @@ function _drillIntoService(serviceName, totalCost, pct, color) {
     breadcrumb.innerHTML =
         '<button onclick="_renderTreemapServices();" style="background:none;border:none;color:#6366f1;cursor:pointer;font-size:0.9em;padding:2px 6px;border-radius:4px;border:1px solid #6366f1;">\u2190 All Services</button>' +
         '<span style="color:#6b7280;">\u203a</span>' +
-        '<span style="color:#e6edf3;font-weight:600;">' + esc(serviceName.replace(/^Amazon\s+/,'').replace(/^AWS\s+/,'')) + '</span>' +
+        '<span style="color:#e6edf3;font-weight:600;">' + esc(getServiceDisplayName(serviceName)) + '</span>' +
         '<span style="color:#10b981;margin-left:4px;">$' + totalCost.toFixed(2) + '</span>' +
         '<button onclick="_showServiceDrillPanel(' + JSON.stringify(serviceName) + ',' + totalCost + ',' + JSON.stringify(pct||'') + ',' + JSON.stringify(color||'#6366f1') + ');" style="background:none;border:none;color:#8b949e;cursor:pointer;font-size:0.85em;margin-left:auto;padding:2px 6px;border-radius:4px;border:1px solid #30363d;">Details \u2197</button>';
     el.parentNode.insertBefore(breadcrumb, el);
@@ -4174,7 +4248,7 @@ function _showServiceDrillPanel(serviceName, totalCost, pct, color) {
 
     var header = '<div style="padding:16px 20px;border-bottom:1px solid #30363d;display:flex;align-items:center;justify-content:space-between;">' +
         '<div>' +
-            '<div style="font-size:1.1em;font-weight:700;color:#e6edf3;">' + esc(serviceName.replace('Amazon ','').replace('AWS ','')) + '</div>' +
+            '<div style="font-size:1.1em;font-weight:700;color:#e6edf3;">' + esc(getServiceDisplayName(serviceName)) + '</div>' +
             '<div style="color:#10b981;font-size:1.3em;font-weight:700;">$' + (totalCost||0).toFixed(2) + (pct ? ' <span style="color:#6b7280;font-size:0.75em;">(' + pct + '%)</span>' : '') + '</div>' +
         '</div>' +
         '<button onclick="document.getElementById(\'svc-drill-panel\').remove();" style="background:none;border:none;color:#8b949e;font-size:1.4em;cursor:pointer;padding:4px;">\u2715</button>' +
@@ -4217,7 +4291,7 @@ function _showServiceDrillPanel(serviceName, totalCost, pct, color) {
 
     // Chat link
     body += '<div style="margin-top:20px;padding-top:16px;border-top:1px solid #30363d;">' +
-        '<button onclick="_drillToChat(this);" data-svc="' + ea(serviceName) + '" class="btn btn-primary" style="width:100%;font-size:0.9em;">\ud83d\udcac Ask AI about ' + esc(serviceName.replace('Amazon ','').replace('AWS ','')) + '</button>' +
+        '<button onclick="_drillToChat(this);" data-svc="' + ea(serviceName) + '" class="btn btn-primary" style="width:100%;font-size:0.9em;">\ud83d\udcac Ask AI about ' + esc(getServiceDisplayName(serviceName)) + '</button>' +
     '</div>';
 
     body += '</div>';
@@ -4366,7 +4440,7 @@ function _renderMonthly(monthlyTrend) {
 
     var series = topSvcs.map(function(svc, i) {
         return {
-            name: svc.replace('Amazon ','').replace('AWS ','').substring(0, 25),
+            name: getServiceDisplayName(svc).substring(0, 25),
             type: 'bar',
             stack: 'total',
             data: months.map(function(m) { return Math.round((monthlyTrend[m][svc] || 0) * 100) / 100; }),
@@ -5206,7 +5280,7 @@ function _renderCostByService(dailyData, hourlyData) {
     var colors = _treemapColors;
     var series = topServices.map(function(svc, i) {
         return {
-            name: svc.replace('Amazon ', '').replace('AWS ', '').substring(0, 25),
+            name: getServiceDisplayName(svc).substring(0, 25),
             type: 'bar',
             stack: 'total',
             data: data.map(function(day) { return Math.round((day.services[svc] || 0) * 100) / 100; }),
@@ -5379,7 +5453,7 @@ function _renderCostByServiceChart(data, mode) {
     var colors = _treemapColors;
     var series = topServices.map(function(svc, i) {
         return {
-            name: svc.replace('Amazon ', '').replace('AWS ', '').substring(0, 25),
+            name: getServiceDisplayName(svc).substring(0, 25),
             type: 'bar',
             stack: 'total',
             data: data.map(function(entry) { return Math.round((entry.services[svc] || 0) * 100) / 100; }),
@@ -6403,9 +6477,15 @@ async function _actRunScan(accountIds) {
     }
 }
 
-function _actShowRedeployGuide(accountId) {
+async function _actShowRedeployGuide(accountId) {
     var existing = document.getElementById('act-redeploy-modal');
     if (existing) existing.remove();
+
+    var config = await getProviderConfig();
+    var connSetup = (config && config['connection-setup']) || {};
+    var roleNamePattern = (connSetup.role_name_pattern) || 'SlashMyBill-{accountId}';
+    var roleName = roleNamePattern.replace('{accountId}', accountId);
+    var stackName = 'SlashMyBill-Access-' + accountId;
 
     var modal = document.createElement('div');
     modal.id = 'act-redeploy-modal';
@@ -6419,7 +6499,7 @@ function _actShowRedeployGuide(accountId) {
             '<button onclick="document.getElementById(\'act-redeploy-modal\').remove();" style="background:none;border:none;color:#8b949e;font-size:1.3em;cursor:pointer;">\u2715</button>' +
         '</div>' +
         '<div style="background:#1e3a5f;border:1px solid #2563eb;border-radius:8px;padding:12px;margin-bottom:16px;font-size:0.85em;color:#93c5fd;">' +
-            '<strong>Why is this needed?</strong> The SlashMyBill IAM role in your AWS account was deployed with read-only permissions. ' +
+            '<strong>Why is this needed?</strong> The ' + esc(roleName) + ' IAM role in your AWS account was deployed with read-only permissions. ' +
             'Write actions (apply lifecycle policies, delete objects, stop instances, delete snapshots) require additional permissions that were added in a newer version of the CloudFormation template.' +
         '</div>' +
         '<div style="background:#161b22;border-radius:8px;padding:14px;margin-bottom:16px;">' +
@@ -6428,7 +6508,7 @@ function _actShowRedeployGuide(accountId) {
                 '<li>Go to the <strong>Configure</strong> tab in SlashMyBill</li>' +
                 '<li>Click the <strong>\u2193 Download CF Template</strong> button for account <code style="background:#21262d;padding:1px 4px;border-radius:3px;">' + esc(accountId) + '</code></li>' +
                 '<li>In your AWS Console, go to <strong>CloudFormation \u2192 Stacks</strong></li>' +
-                '<li>Find the stack <code style="background:#21262d;padding:1px 4px;border-radius:3px;">SlashMyBill-Access-' + esc(accountId) + '</code></li>' +
+                '<li>Find the stack <code style="background:#21262d;padding:1px 4px;border-radius:3px;">' + esc(stackName) + '</code></li>' +
                 '<li>Click <strong>Update</strong> \u2192 <strong>Replace current template</strong> \u2192 upload the new template</li>' +
                 '<li>Review the IAM permission changes and confirm the update</li>' +
             '</ol>' +
@@ -9983,7 +10063,7 @@ function _committedRenderCoverage(data) {
             var sp = spByService[svc] || 0;
             var ri = riByService[svc] || 0;
             if (sp > 0 || ri > 0) {
-                var shortName = svc.replace('Amazon ', '');
+                var shortName = getServiceDisplayName(svc);
                 html += '<div style="background:#fff;border:1px solid #e0f2fe;border-radius:8px;padding:8px 12px;">';
                 html += '<div style="font-weight:600;font-size:0.8em;color:#374151;">' + shortName + '</div>';
                 html += '<div style="font-size:0.75em;color:#6b7280;">SP: ' + sp.toFixed(1) + '% | RI: ' + ri.toFixed(1) + '%</div>';
