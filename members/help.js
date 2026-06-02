@@ -18,14 +18,14 @@ var HELP_CONTENT = {
         heading: 'What is SlashMyBill?',
         icon: '💡',
         content: `
-          <p>SlashMyBill is an AI-powered AWS FinOps platform that helps you analyze, optimize,
-          and reduce your cloud spending across multiple AWS accounts.</p>
+          <p>SlashMyBill is an AI-powered multi-cloud FinOps platform that helps you analyze, optimize,
+          and reduce your cloud spending across AWS, Azure, and GCP accounts.</p>
           <p>The platform has five main areas:</p>
           <ul>
-            <li><strong>Configure</strong> — Connect and manage your AWS accounts</li>
+            <li><strong>Configure</strong> — Connect and manage your cloud accounts (AWS, Azure, GCP)</li>
             <li><strong>Plan</strong> — Budget management and tag resources</li>
             <li><strong>Observe</strong> — FinOps dashboard with sub-sections: Cost Analysis, Commitments, Business Metrics, Health & Score, Invoices</li>
-            <li><strong>Chat</strong> — Ask natural language questions about your AWS costs (🪙 2 tokens per question)</li>
+            <li><strong>Chat</strong> — Ask natural language questions about your cloud costs (🪙 2 tokens per question)</li>
             <li><strong>Act</strong> — Scan for waste, clean up idle resources, automate stop/start schedules, resize servers, and optimize ASG clusters (🪙 10 per scan, 🪙 50 per action)</li>
           </ul>
           <p><strong>Platform URL:</strong> <a href="https://slashmycloudbill.com/members/" target="_blank">slashmycloudbill.com/members</a></p>
@@ -38,7 +38,7 @@ var HELP_CONTENT = {
         content: `
           <h4>Free Plan</h4>
           <ul>
-            <li><strong>1 AWS Account</strong></li>
+            <li><strong>1 Cloud Account</strong> (AWS, Azure, or GCP)</li>
             <li>BI dashboard with all charts (cost by service, daily trend, waste detection, rightsizing, regional breakdown, Savings Plans &amp; RIs)</li>
             <li>🪙 100 tokens/month — AI questions cost 2 tokens, scans cost 10 tokens, cleanup actions cost 50 tokens</li>
             <li>Tokens reset monthly</li>
@@ -46,7 +46,7 @@ var HELP_CONTENT = {
           </ul>
           <h4>Growth Plan — $50/month</h4>
           <ul>
-            <li><strong>Up to 5 AWS Accounts</strong></li>
+            <li><strong>Up to 5 Cloud Accounts</strong> (any mix of AWS, Azure, GCP)</li>
             <li>Everything in Free, plus:</li>
             <li>🪙 300 tokens/month</li>
             <li>1-click automated cleanup (Actions tab)</li>
@@ -56,7 +56,7 @@ var HELP_CONTENT = {
           </ul>
           <h4>Scale Plan — $200/month</h4>
           <ul>
-            <li><strong>Up to 20 AWS Accounts</strong></li>
+            <li><strong>Up to 20 Cloud Accounts</strong> (any mix of AWS, Azure, GCP)</li>
             <li>Everything in Growth, plus:</li>
             <li>🪙 1,500 tokens/month</li>
             <li>Priority AI processing</li>
@@ -128,23 +128,47 @@ var HELP_CONTENT = {
     sections: [
       {
         id: 'connect-account',
-        heading: 'Connecting an AWS Account',
+        heading: 'Connecting a Cloud Account',
         icon: '🔗',
         content: `
-          <p>SlashMyBill uses a secure cross-account IAM role — no credentials are stored.</p>
+          <p>SlashMyBill supports connecting accounts from <strong>AWS</strong>, <strong>Azure</strong>, and <strong>GCP</strong>.</p>
           <ol>
             <li>Click <strong>+ Add Account</strong></li>
-            <li>Enter your 12-digit AWS Account ID and an optional name</li>
-            <li>Click <strong>Add</strong> — the Setup Wizard opens automatically</li>
+            <li>Select your cloud provider (AWS, Azure, or GCP)</li>
+            <li>Fill in the provider-specific form</li>
+            <li>Click <strong>Add</strong> to save the account</li>
+            <li>Click <strong>Test Connection</strong> to verify access</li>
           </ol>
-          <h4>Setup Wizard (4 steps)</h4>
+          <h4>AWS — Cross-Account IAM Role (no credentials stored)</h4>
           <ol>
-            <li><strong>Download Template</strong> — Click "Download CF Template"</li>
-            <li><strong>Deploy in AWS</strong> — Upload to CloudFormation and create the stack</li>
-            <li><strong>Wait</strong> — Stack takes 1-2 minutes to deploy</li>
-            <li><strong>Test &amp; Configure</strong> — Click "Test Connection" to verify access</li>
+            <li>Enter your 12-digit AWS Account ID and an optional name</li>
+            <li>Click <strong>Add</strong> — the Setup Wizard opens</li>
+            <li>Download the CloudFormation template and deploy it in your AWS account</li>
+            <li>Click <strong>Test Connection</strong> to verify</li>
           </ol>
-          <div class="help-note">⚠ The CloudFormation stack creates an IAM role named <code>SlashMyBill-{AccountID}</code> with ReadOnlyAccess + a write policy for cleanup, tagging, and scheduling. It does NOT access your application data.</div>
+          <h4>Azure — Service Principal (OAuth2)</h4>
+          <ol>
+            <li>Enter your Subscription ID (UUID), Tenant ID, Client ID, and Client Secret</li>
+            <li>The Service Principal needs the <strong>"Cost Management Reader"</strong> role assigned to the subscription</li>
+            <li>Credentials are encrypted with KMS before storage</li>
+            <li>Click <strong>Test Connection</strong> to verify Azure access</li>
+          </ol>
+          <p><strong>How to create an Azure Service Principal:</strong></p>
+          <ol>
+            <li>Go to Azure Portal → App Registrations → New Registration</li>
+            <li>Name it "SlashMyBill-CostReader"</li>
+            <li>Create a Client Secret under Certificates & Secrets</li>
+            <li>Go to your Subscription → Access Control (IAM) → Add Role Assignment</li>
+            <li>Assign "Cost Management Reader" role to the App Registration</li>
+          </ol>
+          <h4>GCP — Service Account Key</h4>
+          <ol>
+            <li>Enter your Project ID and upload the Service Account Key JSON file</li>
+            <li>The Service Account needs the <strong>"Billing Account Viewer"</strong> role</li>
+            <li>Private key is encrypted with KMS before storage</li>
+            <li>Click <strong>Test Connection</strong> to verify GCP access</li>
+          </ol>
+          <div class="help-note">⚠ For AWS, no credentials are stored — only a cross-account IAM role is used. For Azure and GCP, secrets are encrypted with AWS KMS before storage and never returned in API responses.</div>
         `
       },
       {
@@ -331,8 +355,9 @@ var HELP_CONTENT = {
         icon: '🏦',
         content: `
           <p>Use the account selector dropdown (top right) to choose which accounts to include.
-          All accounts are selected by default.</p>
+          All accounts are selected by default — including AWS, Azure, and GCP accounts.</p>
           <p>Your selection is preserved when you switch between Observe, Chat, and Act tabs.</p>
+          <p>The dashboard aggregates cost data from all connected providers and shows a unified view with per-provider breakdown.</p>
         `
       },
       {
@@ -399,11 +424,11 @@ var HELP_CONTENT = {
             <li>"Which S3 buckets need lifecycle policies?"</li>
             <li>"List Lambda transactions for Jan, Feb, March"</li>
             <li>"Which EC2 instances are over-provisioned?"</li>
-            <li>"How do I set up AWS Budgets with cost alerts?"</li>
-            <li>"Which of my instances can use Spot pricing?"</li>
+            <li>"What are my top Azure services by cost?"</li>
+            <li>"Compare my AWS and Azure spending"</li>
           </ul>
           <p>Your remaining tokens are shown in the header bar (🪙 icon).</p>
-          <div class="help-tip">💡 For multi-account questions, select multiple accounts using the account dropdown. The AI will provide per-account breakdowns.</div>
+          <div class="help-tip">💡 For multi-account questions, select multiple accounts using the account dropdown. The AI will provide per-account breakdowns. It works across all connected providers.</div>
           <div class="help-tip">🏷️ When a tag filter is active in the Observe tab (e.g., Environment=production), AI queries automatically use the same filter. Clear the filter to ask about all costs.</div>
         `
       },
@@ -440,13 +465,16 @@ var HELP_CONTENT = {
           <p>The AI Agent tab provides a conversational interface powered by Amazon Bedrock that can execute multi-step actions on your behalf.</p>
           <h4>Capabilities</h4>
           <ul>
-            <li>Query cost data across all connected accounts</li>
+            <li>Query cost data across all connected accounts (AWS, Azure, GCP)</li>
             <li>Analyze EC2 instances, EBS volumes, and other resources</li>
             <li>Provide optimization recommendations with specific savings estimates</li>
             <li>Execute cleanup actions (with your confirmation)</li>
+            <li>Compare spending across cloud providers</li>
           </ul>
+          <h4>Multi-Cloud</h4>
+          <p>The AI automatically detects which providers you have connected and provides provider-specific recommendations. Ask about a specific provider or ask for a cross-cloud comparison.</p>
           <h4>Multi-Region</h4>
-          <p>The AI automatically discovers resources across regions where you have charges (via Cost Explorer). For broad questions, it focuses on cost data only to stay within response time limits.</p>
+          <p>For AWS accounts, the AI automatically discovers resources across regions where you have charges (via Cost Explorer). For broad questions, it focuses on cost data only to stay within response time limits.</p>
           <div class="help-tip">💡 For best results, ask specific questions like "List my EC2 instances with CPU usage" rather than broad ones like "How efficient is my account?"</div>
         `
       }

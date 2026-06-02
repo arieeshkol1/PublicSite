@@ -2095,20 +2095,43 @@ def handle_dashboard_data(event):
                 end_date = datetime.now(timezone.utc).strftime('%Y-%m-%d')
                 start_30d = (datetime.now(timezone.utc) - timedelta(days=30)).strftime('%Y-%m-%d')
                 
-                raw_cost_data = connector.get_cost_data(auth_context, acct_id, start_30d, end_date)
-                normalized = normalize_azure(raw_cost_data, acct_id)
-                
                 # Build cost_by_service from normalized data
                 service_costs = {}
                 daily_cost_trend = []
                 daily_totals = {}
                 
-                for record in normalized:
-                    svc = record['service_name']
-                    cost = record['cost_amount']
-                    date = record['date']
-                    service_costs[svc] = service_costs.get(svc, 0) + cost
-                    daily_totals[date] = daily_totals.get(date, 0) + cost
+                # Check cache first for Azure (same pattern as AWS)
+                azure_cache_used = False
+                if cache_service:
+                    try:
+                        pk = f"{member_email}#{acct_id}"
+                        start_sk = f"DAILY#{start_30d}"
+                        end_sk = f"DAILY#{end_date}"
+                        from boto3.dynamodb.conditions import Key as DDBKey
+                        cache_resp = cache_service._table.query(
+                            KeyConditionExpression=DDBKey('pk').eq(pk) & DDBKey('sk').between(start_sk, end_sk)
+                        )
+                        cache_items = cache_resp.get('Items', [])
+                        if cache_items and len(cache_items) >= 25:
+                            azure_cache_used = True
+                            for item in cache_items:
+                                date_str = item['sk'].replace('DAILY#', '')
+                                cost = float(item.get('cost_amount', 0))
+                                daily_totals[date_str] = daily_totals.get(date_str, 0) + cost
+                                for svc, svc_cost in (item.get('service_breakdown') or {}).items():
+                                    service_costs[svc] = service_costs.get(svc, 0) + float(svc_cost)
+                    except Exception as cache_err:
+                        logger.warning(f"Azure cache read failed for {acct_id}: {cache_err}")
+                
+                if not azure_cache_used:
+                    raw_cost_data = connector.get_cost_data(auth_context, acct_id, start_30d, end_date)
+                    normalized = normalize_azure(raw_cost_data, acct_id)
+                    for record in normalized:
+                        svc = record['service_name']
+                        cost = record['cost_amount']
+                        date = record['date']
+                        service_costs[svc] = service_costs.get(svc, 0) + cost
+                        daily_totals[date] = daily_totals.get(date, 0) + cost
                 
                 acct_total = sum(service_costs.values())
                 cost_by_service = sorted(
@@ -7536,13 +7559,14 @@ def handle_ai_query(event):
     if not question:
         return create_error_response(400, 'InvalidRequest', 'Question is required')
 
-    # Support multi-account: accountIds array takes priority over single accountId
+    # Multi-cloud account ID validation: AWS (12 digits), Azure (UUID), GCP (6-30 chars lowercase)
+    _valid_account_id_re = re.compile(r'^(\d{12}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[a-z][a-z0-9-]{4,28}[a-z0-9])$', re.IGNORECASE)
     if account_ids and isinstance(account_ids, list):
-        account_ids = [a.strip() for a in account_ids if re.fullmatch(r'\d{12}', a.strip())]
-    elif account_id and re.fullmatch(r'\d{12}', account_id):
+        account_ids = [a.strip() for a in account_ids if _valid_account_id_re.match(a.strip())]
+    elif account_id and _valid_account_id_re.match(account_id):
         account_ids = [account_id]
     else:
-        return create_error_response(400, 'InvalidAccountId', 'At least one valid 12-digit Account ID is required')
+        return create_error_response(400, 'InvalidAccountId', 'At least one valid account ID is required (AWS 12-digit, Azure UUID, or GCP project ID)')
 
     # Generate unique interactionId for feedback tracking
     interaction_id = datetime.now(timezone.utc).isoformat() + '-' + secrets.token_hex(4)

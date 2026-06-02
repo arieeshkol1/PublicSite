@@ -4795,7 +4795,7 @@ function _renderLiveMetrics(container) {
         + '<div id="live-metrics-chart" style="width:100%;height:300px;"></div>'
         + '<div id="live-metrics-empty" style="display:none;text-align:center;padding:40px 20px;color:#6b7280;">'
         + '<div style="font-size:2em;margin-bottom:8px;">&#x1f4ca;</div>'
-        + '<div>No business metrics discovered. Connect an AWS account to get started.</div>'
+        + '<div>No business metrics discovered. Connect a cloud account to get started.</div>'
         + '</div>';
 
     _refreshLiveMetrics();
@@ -5578,7 +5578,7 @@ function showBusinessMetricsModal() {
 
     var discoveredHtml = '';
     if (discovered.length > 0) {
-        discoveredHtml = '<div style="margin-bottom:16px;"><div style="font-weight:600;color:#1f2937;margin-bottom:6px;">Auto-Discovered Metrics (from your AWS accounts):</div>';
+        discoveredHtml = '<div style="margin-bottom:16px;"><div style="font-weight:600;color:#1f2937;margin-bottom:6px;">Auto-Discovered Metrics (from your cloud accounts):</div>';
         discovered.forEach(function(d, i) {
             discoveredHtml += '<div style="display:flex;align-items:center;gap:8px;padding:6px 8px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:6px;margin-bottom:4px;font-size:0.85em;">' +
                 '<span style="color:#16a34a;font-weight:600;">\u2713</span>' +
@@ -11687,8 +11687,8 @@ function _populateInvoiceAccounts() {
             msgDiv.id = 'inv-no-accounts';
             msgDiv.style.cssText = 'text-align:center;padding:60px 20px;color:#6b7280;';
             msgDiv.innerHTML = '<div style="font-size:2.5em;margin-bottom:12px;">\ud83d\udd17</div>'
-                + '<div style="font-size:1.1em;margin-bottom:8px;color:#1f2937;font-weight:600;">Connect an AWS account to explore invoices</div>'
-                + '<div style="font-size:0.9em;color:#6b7280;margin-bottom:16px;">Go to the Configure tab to add and connect your AWS accounts.</div>'
+                + '<div style="font-size:1.1em;margin-bottom:8px;color:#1f2937;font-weight:600;">Connect a cloud account to explore invoices</div>'
+                + '<div style="font-size:0.9em;color:#6b7280;margin-bottom:16px;">Go to the Configure tab to add and connect your cloud accounts.</div>'
                 + '<button class="btn btn-primary btn-sm" onclick="document.querySelector(\'[data-tab=accounts-tab]\').click();">Go to Configure</button>';
             var summaryCards = $('inv-summary-cards');
             if (summaryCards) summaryCards.parentElement.insertBefore(msgDiv, summaryCards);
