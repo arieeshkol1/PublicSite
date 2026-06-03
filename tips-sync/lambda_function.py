@@ -120,6 +120,25 @@ def lambda_handler(event, context):
         # Scan existing tips from DynamoDB to get current state
         existing_tips = _scan_existing_tips(table)
 
+        # Clean up invalid "AI-GENERATED" service entries from DynamoDB
+        invalid_service_keys = [
+            k for k, v in existing_tips.items()
+            if v.get("service", "").upper() in ("AI-GENERATED", "UNKNOWN", "N/A")
+        ]
+        if invalid_service_keys:
+            logger.info(json.dumps({
+                "action": "cleanup_invalid_services",
+                "count": len(invalid_service_keys),
+                "services": list(set(v.get("service") for k, v in existing_tips.items() if k in invalid_service_keys)),
+            }))
+            for key in invalid_service_keys:
+                tip = existing_tips[key]
+                try:
+                    table.delete_item(Key={"service": tip["service"], "tipId": tip["tipId"]})
+                except Exception as e:
+                    logger.warning(f"Failed to delete invalid tip {key}: {e}")
+                del existing_tips[key]
+
         # Generate new tips with Bedrock AI (uses existing + merged as context)
         all_known_tips = list(existing_tips.values()) + merged_tips
         bedrock_tips = _fetch_bedrock_tips(all_known_tips, sources_succeeded, sources_failed)

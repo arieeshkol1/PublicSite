@@ -234,6 +234,18 @@ def generate_tips_with_bedrock(bedrock_client, existing_tips: list, num_tips: in
                 "level": 3,
                 "syncSource": "bedrock-ai",
             }
+
+            # Validate service name — reject placeholder/meta values
+            svc = normalized["service"]
+            invalid_services = {"AI-GENERATED", "ai-generated", "Unknown", "UNKNOWN", "General", "general", "N/A", ""}
+            if svc in invalid_services or not svc.strip():
+                logger.warning(json.dumps({
+                    "event": "bedrock_tip_skipped_invalid_service",
+                    "service": svc,
+                    "title": title,
+                }))
+                continue
+
             new_tips.append(normalized)
 
         logger.info(json.dumps({
