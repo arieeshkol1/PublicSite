@@ -883,7 +883,8 @@ class CacheService:
 
         Fetches 90 days of cost data from the Cost Explorer API and writes
         it to the cache. Uses incremental fetch — only fetches dates not
-        already cached. Logs any errors without raising.
+        already cached. Always re-fetches the most recent 3 days to catch
+        finalization delays (AWS Cost Explorer can take 48-72h to finalize).
 
         Args:
             member_id: The authenticated member's identifier.
@@ -897,15 +898,15 @@ class CacheService:
             engine = IncrementalFetchEngine()
 
             # Compute date range for 90 days of history
+            # End 2 days ago (today and yesterday are always incomplete)
             today = datetime.now(timezone.utc).date()
+            end_date_exclusive = (today - timedelta(days=1)).isoformat()  # yesterday (exclusive = up to day-before-yesterday)
             start_date = (today - timedelta(days=89)).isoformat()
-            # End date is exclusive (CE API convention), so today + 1
-            end_date = (today + timedelta(days=1)).isoformat()
 
             # Check what's already cached to avoid re-fetching
             pk = self._build_partition_key(member_id, account_id)
             start_sk = self._build_sort_key(start_date)
-            end_sk = self._build_sort_key(end_date)
+            end_sk = self._build_sort_key(end_date_exclusive)
 
             cached_dates = set()
             try:
@@ -927,8 +928,17 @@ class CacheService:
             except Exception:
                 pass  # If we can't read cache, fetch everything
 
-            # Compute gaps — dates not yet cached
-            gaps = engine.compute_gaps(start_date, end_date, cached_dates, include_today=True)
+            # Always re-fetch last 3 days (finalization window) even if cached
+            # This ensures stale $0 entries from incomplete data get corrected
+            recent_days_to_refresh = set()
+            for offset in range(2, 5):  # days 2, 3, 4 ago
+                d = (today - timedelta(days=offset)).isoformat()
+                recent_days_to_refresh.add(d)
+            # Remove recent days from "cached" so they get re-fetched
+            cached_dates -= recent_days_to_refresh
+
+            # Compute gaps — dates not yet cached (plus recent days forced to re-fetch)
+            gaps = engine.compute_gaps(start_date, end_date_exclusive, cached_dates, include_today=False)
 
             if not gaps:
                 logger.info(
@@ -940,13 +950,18 @@ class CacheService:
             # Fetch only missing dates from CE API
             fetched_items = engine.fetch_cost_data(gaps, credentials)
 
+            # Filter out any items with $0 cost for recent days (likely still incomplete)
+            # Only write items that have actual cost data
+            valid_items = [item for item in fetched_items if item.cost_amount > 0.001 or item.date < start_date]
+
             # Write fetched data to cache
-            if fetched_items:
-                self.write_cost_data(member_id, account_id, fetched_items)
+            if valid_items:
+                self.write_cost_data(member_id, account_id, valid_items)
 
             logger.info(
                 f"Background refresh completed for {member_id}#{account_id}: "
-                f"{len(fetched_items)} new items cached (total {len(cached_dates) + len(fetched_items)} days)"
+                f"{len(valid_items)} items cached ({len(fetched_items) - len(valid_items)} skipped as $0), "
+                f"total {len(cached_dates) + len(valid_items)} days"
             )
         except Exception as e:
             logger.error(

@@ -4381,14 +4381,6 @@ function _renderDailyTrend(daily, hourly) {
 
 function _renderDailyChart(daily) {
     var el = $('dash-daily'); if (!el || !window.echarts || !daily.length) return;
-    // Filter out any trailing days with suspiciously low cost (< 10% of average = likely incomplete data)
-    var costs = daily.map(function(d) { return d.cost; });
-    var avg = costs.reduce(function(a, b) { return a + b; }, 0) / costs.length;
-    var threshold = avg * 0.1;
-    // Remove trailing entries that are below threshold (incomplete days at the end)
-    while (daily.length > 1 && daily[daily.length - 1].cost < threshold && threshold > 0) {
-        daily = daily.slice(0, -1);
-    }
     var chart = echarts.init(el, null);
     var anomalyPoints = daily.filter(function(d) { return d.isAnomaly; }).map(function(d) {
         return { xAxis: d.date.substring(5), yAxis: d.cost, value: '+' + d.spikePct + '%' };
