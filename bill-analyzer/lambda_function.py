@@ -115,20 +115,23 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         if len(first_page_text) < 50:
             return _create_error_response(400,
                 "This PDF appears to be a scanned image and cannot be processed. "
-                "Please download your AWS bill directly from the AWS Billing Console "
-                "(Billing → Bills → Download CSV or PDF) as a native digital PDF."
+                "Please download your bill directly from the AWS Billing Console or Azure Portal "
+                "as a native digital PDF."
             )
 
-        # 4.0.4: Content check — verify it looks like an AWS bill
+        # 4.0.4: Content check — verify it looks like a cloud bill (AWS or Azure)
         text_lower = first_page_text.lower()
         aws_keywords = ['amazon web services', 'aws', 'invoice', 'billing', 'total', 'account']
-        matches = sum(1 for kw in aws_keywords if kw in text_lower)
-        logger.info("STEP 4.0: AWS keyword matches: %d/6 (%s)", matches, [kw for kw in aws_keywords if kw in text_lower])
+        azure_keywords = ['microsoft', 'azure', 'invoice', 'billing', 'subscription', 'total']
+        aws_matches = sum(1 for kw in aws_keywords if kw in text_lower)
+        azure_matches = sum(1 for kw in azure_keywords if kw in text_lower)
+        matches = max(aws_matches, azure_matches)
+        logger.info("STEP 4.0: Cloud keyword matches: AWS=%d/6, Azure=%d/6", aws_matches, azure_matches)
 
         if matches < 2:
             return _create_error_response(400,
-                "This PDF does not appear to be an AWS invoice. "
-                "Please upload an AWS billing PDF downloaded from the AWS Billing Console."
+                "This PDF does not appear to be a cloud invoice. "
+                "Please upload an AWS or Azure billing PDF."
             )
 
         logger.info("STEP 4.0: Validation PASSED — %d pages, %.1f MB, %d AWS keywords", num_pages, file_size_mb, matches)

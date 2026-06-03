@@ -10,8 +10,8 @@
       gtag('js', new Date());
       gtag('config', 'G-SLW7ZXWV23');
     </script>
-    <meta name="description" content="Cut your AWS bill by 30-70%. AI finds waste, automates shutdowns, rightsizes servers, and manages commitments — so you save money without the complexity.">
-    <title>SlashMyCloudBill — Stop Overpaying for AWS</title>
+    <meta name="description" content="Cut your cloud bill by 30-70%. AI finds waste across AWS, Azure, and GCP — automates shutdowns, rightsizes servers, and manages commitments so you save money without the complexity.">
+    <title>SlashMyCloudBill — Stop Overpaying for Cloud</title>
     <link rel="icon" type="image/png" href="/SlashMyBill.png">
     <link rel="stylesheet" href="slashMyBill.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
@@ -39,8 +39,13 @@
     <!-- ── Hero ── -->
     <section class="smb-hero">
         <div class="smb-container smb-hero-inner">
-            <h1>Stop Overpaying<br>for <span class="smb-coral">AWS</span></h1>
-            <p class="smb-hero-sub">Upload your AWS invoice and our AI finds every dollar you're wasting — in minutes. Fix it yourself free, or let our experts handle it.</p>
+            <h1>Stop Overpaying<br>for <span class="smb-coral">Cloud</span></h1>
+            <p class="smb-hero-sub">Upload your AWS or Azure invoice and our AI finds every dollar you're wasting — in minutes. Fix it yourself free, or let our experts handle it.</p>
+            <div class="smb-hero-providers" style="display:flex;align-items:center;justify-content:center;gap:24px;margin-top:16px;opacity:0.85;">
+                <img src="https://upload.wikimedia.org/wikipedia/commons/9/93/Amazon_Web_Services_Logo.svg" alt="AWS" style="height:28px;">
+                <img src="https://upload.wikimedia.org/wikipedia/commons/f/fa/Microsoft_Azure.svg" alt="Azure" style="height:32px;">
+                <img src="https://upload.wikimedia.org/wikipedia/commons/5/51/Google_Cloud_logo.svg" alt="GCP" style="height:24px;">
+            </div>
             <div class="smb-hero-btns">
                 <a href="#vmb-form" class="smb-btn smb-btn-cta smb-btn-lg">Analyze My Bill &rarr;</a>
                 <a href="#how-it-works" class="smb-btn smb-btn-ghost smb-btn-lg">How It Works</a>
@@ -59,8 +64,8 @@
     <section class="smb-form-section" id="vmb-form-section">
         <div class="smb-container">
             <div class="smb-section-header">
-                <h2>Analyze Your AWS Bill</h2>
-                <p>Verify your email, upload your invoice, and get your free report in minutes.</p>
+                <h2>Analyze Your Cloud Bill</h2>
+                <p>Verify your email, upload your AWS or Azure invoice, and get your free report in minutes.</p>
             </div>
             <form id="vmb-form" class="smb-form" novalidate>
                 <div class="smb-form-grid">
@@ -108,7 +113,7 @@
 
                 <!-- File Upload -->
                 <div class="smb-field">
-                    <label for="vmb-file">AWS Invoice (PDF)</label>
+                    <label for="vmb-file">Cloud Invoice (PDF)</label>
                     <div class="smb-file-picker smb-file-picker-disabled" id="vmb-file-picker-wrapper">
                         <div class="smb-file-overlay" id="vmb-file-overlay">
                             <i class="fas fa-lock"></i>
@@ -122,14 +127,12 @@
                         <span id="vmb-filename" class="smb-filename"></span>
                     </div>
                     <span id="vmb-file-error" class="smb-error" role="alert" aria-live="polite"></span>
-                    <p class="smb-file-hint"><i class="fas fa-info-circle"></i> Native PDF from AWS Billing Console only (max 10MB)</p>
+                    <p class="smb-file-hint"><i class="fas fa-info-circle"></i> Native PDF from AWS or Azure portal (max 10MB)</p>
                     <div class="smb-instructions" id="vmb-bill-instructions">
-                        <div class="smb-instructions-title"><i class="fas fa-question-circle"></i> How to download your AWS bill as PDF</div>
+                        <div class="smb-instructions-title"><i class="fas fa-question-circle"></i> How to download your cloud bill as PDF</div>
                         <ol>
-                            <li>Sign in to <a href="https://console.aws.amazon.com" target="_blank" rel="noopener">AWS Management Console</a></li>
-                            <li>Go to <strong>Billing and Cost Management → Bills</strong></li>
-                            <li>Select the billing period, click <strong>Print</strong></li>
-                            <li>Set destination to <strong>Save as PDF</strong> and save</li>
+                            <li><strong>AWS:</strong> Sign in to <a href="https://console.aws.amazon.com" target="_blank" rel="noopener">AWS Console</a> → Billing → Bills → Print → Save as PDF</li>
+                            <li><strong>Azure:</strong> Sign in to <a href="https://portal.azure.com" target="_blank" rel="noopener">Azure Portal</a> → Cost Management + Billing → Invoices → Download PDF</li>
                             <li>Upload the saved PDF here</li>
                         </ol>
                     </div>
@@ -147,7 +150,7 @@
         <div class="smb-container smb-loading-inner">
             <div class="smb-spinner"></div>
             <h3>Analyzing your bill...</h3>
-            <p>Our AI is reviewing your AWS invoice. This may take a moment.</p>
+            <p>Our AI is reviewing your cloud invoice. This may take a moment.</p>
         </div>
     </section>
 
@@ -230,7 +233,7 @@
                                 <div class="smb-offer-price"><span class="smb-price-big">$0</span><span class="smb-price-note">forever</span></div>
                                 <div class="smb-token-badge">🪙 100 tokens/month</div>
                                 <ul class="smb-offer-list">
-                                    <li><i class="fas fa-check-circle"></i> 1 AWS Account</li>
+                                    <li><i class="fas fa-check-circle"></i> 1 Cloud Account (AWS, Azure, or GCP)</li>
                                     <li><i class="fas fa-check-circle"></i> BI dashboard &amp; charts</li>
                                     <li><i class="fas fa-check-circle"></i> Cost by Region pie chart</li>
                                     <li><i class="fas fa-check-circle"></i> Waste detection alerts</li>
@@ -251,7 +254,7 @@
                                 <div class="smb-offer-price"><span class="smb-price-big">$50</span><span class="smb-price-note">/month</span></div>
                                 <div class="smb-token-badge">🪙 300 tokens/month</div>
                                 <ul class="smb-offer-list">
-                                    <li><i class="fas fa-check-circle"></i> Up to 5 AWS Accounts</li>
+                                    <li><i class="fas fa-check-circle"></i> Up to 5 Cloud Accounts</li>
                                     <li><i class="fas fa-check-circle"></i> Everything in Free</li>
                                     <li><i class="fas fa-check-circle"></i> 1-click automated cleanup <span class="smb-coin-sm">🪙50</span></li>
                                     <li><i class="fas fa-check-circle"></i> AI Agent + Actions tab</li>
@@ -271,7 +274,7 @@
                                 <div class="smb-offer-price"><span class="smb-price-big">$200</span><span class="smb-price-note">/month</span></div>
                                 <div class="smb-token-badge">🪙 1,500 tokens/month</div>
                                 <ul class="smb-offer-list">
-                                    <li><i class="fas fa-check-circle"></i> Up to 20 AWS Accounts</li>
+                                    <li><i class="fas fa-check-circle"></i> Up to 20 Cloud Accounts</li>
                                     <li><i class="fas fa-check-circle"></i> Everything in Growth</li>
                                     <li><i class="fas fa-check-circle"></i> Priority AI processing</li>
                                     <li><i class="fas fa-check-circle"></i> Bulk token top-ups at discount</li>
@@ -328,8 +331,8 @@
     <section class="smb-features" id="platform-features">
         <div class="smb-container">
             <div class="smb-section-header">
-                <h2>Your AWS Costs, Under Control</h2>
-                <p>The all-in-one FinOps platform that monitors, optimizes, and automates your AWS spend — so you can focus on building, not billing.</p>
+                <h2>Your Cloud Costs, Under Control</h2>
+                <p>The all-in-one multi-cloud FinOps platform that monitors, optimizes, and automates your AWS, Azure, and GCP spend — so you can focus on building, not billing.</p>
             </div>
 
             <!-- Plan & Govern -->
@@ -392,7 +395,7 @@
                     <div class="smb-feature-card smb-feature-card-screenshot">
                         <img src="screenshots/ChatWindow.png" alt="AI FinOps Agent" class="smb-feature-screenshot" loading="lazy">
                         <h4>AI FinOps Agent</h4>
-                        <p>Ask natural language questions about your AWS costs. Get specific, actionable answers with resource IDs and dollar amounts.</p>
+                        <p>Ask natural language questions about your cloud costs across AWS, Azure, and GCP. Get specific, actionable answers with resource IDs and dollar amounts.</p>
                     </div>
                     <div class="smb-feature-card smb-feature-card-screenshot">
                         <img src="screenshots/Chat_Charts.png" alt="AI-Generated Charts" class="smb-feature-screenshot" loading="lazy">
@@ -439,14 +442,14 @@
         <div class="smb-container">
             <div class="smb-section-header">
                 <h2>Check your Cloud Bill Overpay Now for Free!</h2>
-                <p>Three simple steps to slash your AWS bill</p>
+                <p>Three simple steps to slash your cloud bill</p>
             </div>
             <div class="smb-steps">
                 <div class="smb-step">
                     <div class="smb-step-left">
                         <div class="smb-step-num">1</div>
                         <h3>Upload Your Bill</h3>
-                        <p>Verify your email and upload your AWS invoice PDF. Takes 2 minutes.</p>
+                        <p>Verify your email and upload your AWS or Azure invoice PDF. Takes 2 minutes.</p>
                         <ul class="smb-step-bullets">
                             <li><i class="fas fa-check-circle"></i> Quick, secure upload</li>
                             <li><i class="fas fa-check-circle"></i> Bill deleted within 24h</li>
@@ -490,13 +493,13 @@
         <div class="smb-container">
             <div class="smb-section-header">
                 <h2>Why Let Us Handle It?</h2>
-                <p>You shouldn't have to become an AWS billing expert to avoid overpaying.</p>
+                <p>You shouldn't have to become a cloud billing expert to avoid overpaying.</p>
             </div>
             <div class="smb-why-grid">
                 <div class="smb-why-card">
                     <div class="smb-why-icon"><i class="fas fa-user-shield"></i></div>
                     <h4>You Focus on What Matters</h4>
-                    <p>We handle all the complexity so you can focus on building your product — not fighting AWS billing.</p>
+                    <p>We handle all the complexity so you can focus on building your product — not fighting cloud billing.</p>
                 </div>
                 <div class="smb-why-card">
                     <div class="smb-why-icon"><i class="fas fa-bell"></i></div>
@@ -530,7 +533,7 @@
                     <div class="smb-timeline-card">
                         <span class="smb-timeline-day">Immediately</span>
                         <strong>You upload your bill</strong>
-                        <p>Submit your AWS invoice through our secure portal</p>
+                        <p>Submit your cloud invoice through our secure portal</p>
                     </div>
                 </div>
                 <div class="smb-timeline-connector"></div>
@@ -599,7 +602,7 @@
     <!-- ── CTA Banner ── -->
     <section class="smb-cta-banner">
         <div class="smb-container smb-cta-inner">
-            <h2>Ready to Slash Your AWS Bill?</h2>
+            <h2>Ready to Slash Your Cloud Bill?</h2>
             <p>Don't pay more than you should. Upload your bill today and let our AI find the savings you deserve.</p>
             <a href="#vmb-form-section" class="smb-btn smb-btn-cta smb-btn-lg">Get Started Free &rarr;</a>
         </div>
@@ -610,7 +613,7 @@
         <div class="smb-container smb-footer-inner">
             <div class="smb-footer-brand">
                 <span class="smb-logo">SlashMyCloudBill</span>
-                <p>AI-powered AWS cost optimization for teams of all sizes.</p>
+                <p>AI-powered multi-cloud cost optimization for teams of all sizes.</p>
             </div>
             <div class="smb-footer-links">
                 <div>

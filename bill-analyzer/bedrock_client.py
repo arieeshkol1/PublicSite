@@ -154,6 +154,58 @@ Respond in this exact JSON:
 }}"""
 
 
+# Azure analysis prompt template
+AZURE_ANALYSIS_PROMPT = """You are a cloud billing expert specializing in Microsoft Azure. Analyze this Azure invoice and provide insights.
+
+## Bill Data:
+{bill_data}
+
+## Cost Optimization Tips:
+{retrieved_tips}
+
+## Azure-specific optimization strategies:
+1. Azure Reservations (1-year or 3-year): Virtual Machines, SQL Database, Cosmos DB, App Service, Azure Synapse, Storage, Managed Disks
+2. Azure Savings Plans for Compute (up to 65% off): VMs, App Service, Functions, Container Instances
+3. Azure Hybrid Benefit: Use existing Windows Server and SQL Server licenses to save up to 85% on Azure VMs
+4. Spot VMs: Up to 90% off for fault-tolerant workloads (batch, CI/CD, dev/test)
+5. Right-sizing: Resize underutilized VMs, databases, and managed services
+6. Auto-shutdown: Configure dev/test VMs to stop outside business hours
+7. Storage tier optimization: Move cold data to Cool or Archive tiers
+8. Advisor recommendations: Azure Advisor provides free rightsizing and shutdown recommendations
+
+Provide analysis in this JSON format:
+
+1. SUMMARY: 2-3 sentences about total cost and top spenders.
+
+2. SERVICE_ANALYSIS: For each service:
+   - explanation: Describe the charge with actual amounts from the bill. Do NOT start with "This represents".
+   - billing_details: One-line formula with quantities if available.
+   - recommendations: 1-2 Azure-specific cost-saving tips with estimated savings %.
+
+3. SAVINGS_PLAN_ANALYSIS: Based on the bill, recommend Azure Reservations, Savings Plans, or Hybrid Benefit where applicable.
+
+Respond in this exact JSON:
+{{
+  "summary": "...",
+  "service_analysis": [
+    {{
+      "service": "...",
+      "cost": "...",
+      "explanation": "...",
+      "billing_details": "...",
+      "recommendations": [{{"title": "...", "description": "...", "estimated_savings": "..."}}]
+    }}
+  ],
+  "savings_plan_analysis": {{
+    "has_savings_plans": true/false,
+    "has_reserved_instances": true/false,
+    "recommendation": "...",
+    "potential_savings_percent": "...",
+    "how_to_purchase": "..."
+  }}
+}}"""
+
+
 def analyze_bill(parsed_bill: Dict[str, Any]) -> AIAnalysis:
     """
     Run the full AI analysis pipeline on a parsed bill.
@@ -174,10 +226,11 @@ def analyze_bill(parsed_bill: Dict[str, Any]) -> AIAnalysis:
     """
     service_totals = parsed_bill.get("service_totals", {})
     services = list(service_totals.keys())
-    logger.info("Detected %d services: %s", len(services), services)
+    cloud_provider = parsed_bill.get("cloud_provider", "aws")
+    logger.info("Detected %d services (provider=%s): %s", len(services), cloud_provider, services)
 
     # Query DynamoDB for optimization tips (once, for all services)
-    tips = _get_optimization_tips(services)
+    tips = _get_optimization_tips(services, cloud_provider)
 
     # If small enough, do a single call (original behavior)
     if len(services) <= MAX_SERVICES_PER_BATCH:
@@ -308,14 +361,15 @@ def _invoke_bedrock_with_retry(prompt: str) -> str:
 
 
 
-def _get_optimization_tips(services: List[str]) -> List[Dict[str, Any]]:
+def _get_optimization_tips(services: List[str], cloud_provider: str = 'aws') -> List[Dict[str, Any]]:
     """
     Query DynamoDB for cost optimization tips matching the given services.
 
     Always includes "General" tips in addition to service-specific tips.
 
     Args:
-        services: List of AWS service names detected in the bill.
+        services: List of service names detected in the bill.
+        cloud_provider: The cloud provider ('aws', 'azure', 'gcp').
 
     Returns:
         List of tip dicts from DynamoDB.
@@ -328,11 +382,15 @@ def _get_optimization_tips(services: List[str]) -> List[Dict[str, Any]]:
     # Map full bill names to short DynamoDB tip keys
     services_to_query = set()
     for svc in services:
-        tip_key = SERVICE_NAME_TO_TIP_KEY.get(svc, svc)
+        if cloud_provider == 'aws':
+            tip_key = SERVICE_NAME_TO_TIP_KEY.get(svc, svc)
+        else:
+            # For Azure/GCP, use service name as-is (tips table uses the service name directly)
+            tip_key = svc
         services_to_query.add(tip_key)
     services_to_query.add("General")
 
-    logger.info("Querying DynamoDB for tips for services: %s", services_to_query)
+    logger.info("Querying DynamoDB for tips for services: %s (provider=%s)", services_to_query, cloud_provider)
 
     for service_name in services_to_query:
         try:
@@ -340,6 +398,10 @@ def _get_optimization_tips(services: List[str]) -> List[Dict[str, Any]]:
                 KeyConditionExpression=Key('service').eq(service_name)
             )
             items = response.get('Items', [])
+            # Filter by cloud provider if the field exists
+            if cloud_provider != 'aws':
+                provider_upper = cloud_provider.upper()
+                items = [t for t in items if t.get('cloud', 'AWS').upper() == provider_upper or t.get('cloud', 'AWS').upper() == 'GENERAL']
             tips.extend(items)
             logger.info("Retrieved %d tips for service '%s'", len(items), service_name)
         except Exception as e:
@@ -362,9 +424,13 @@ def _build_prompt(parsed_bill: Dict[str, Any], tips: List[Dict[str, Any]]) -> st
     Returns:
         Formatted prompt string for Bedrock.
     """
+    # Detect cloud provider
+    cloud_provider = parsed_bill.get("cloud_provider", "aws")
+
     # Format bill data as readable text — include service_totals and line items
     # so Bedrock can explain how charges were calculated from the actual bill data.
     bill_lines = [
+        f"Cloud Provider: {cloud_provider.upper()}",
         f"Invoice Number: {parsed_bill.get('invoice_number', 'N/A')}",
         f"Account ID: {parsed_bill.get('account_id', 'N/A')}",
         f"Billing Period: {parsed_bill.get('period_start', 'N/A')} to {parsed_bill.get('period_end', 'N/A')}",
@@ -448,6 +514,10 @@ def _build_prompt(parsed_bill: Dict[str, Any], tips: List[Dict[str, Any]]) -> st
         retrieved_tips = "\n".join(tip_lines)
     else:
         retrieved_tips = "No specific tips available for the detected services."
+
+    # Use Azure-specific prompt if this is an Azure bill
+    if cloud_provider == 'azure':
+        return AZURE_ANALYSIS_PROMPT.format(bill_data=bill_data, retrieved_tips=retrieved_tips)
 
     return ANALYSIS_PROMPT.format(bill_data=bill_data, retrieved_tips=retrieved_tips)
 

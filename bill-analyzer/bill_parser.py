@@ -138,8 +138,10 @@ def parse_bill(pdf_bytes: bytes) -> ParsedBill:
                     text = text[inv_idx:]
                     break
 
-    # Detect format: billing console export vs traditional invoice
-    if _is_billing_console_format(text):
+    # Detect format: billing console export vs traditional invoice vs Azure
+    if _is_azure_invoice(text):
+        return _parse_azure_invoice(text, [])
+    elif _is_billing_console_format(text):
         # Billing console format only needs text, no tables
         return _parse_billing_console(text, [])
 
@@ -153,7 +155,7 @@ def parse_bill(pdf_bytes: bytes) -> ParsedBill:
     if not line_items:
         raise ValueError(
             "No billing line items found in the PDF. "
-            "Please ensure this is a valid AWS invoice."
+            "Please ensure this is a valid AWS or Azure invoice."
         )
 
     total_cost = sum(item["cost"] for item in line_items)
@@ -1451,3 +1453,251 @@ def _parse_cost(value: str | None) -> Decimal | None:
         return result
     except InvalidOperation:
         return None
+
+
+# ============================================================
+# Azure Invoice Parsing
+# ============================================================
+
+def _is_azure_invoice(text: str) -> bool:
+    """Detect if the PDF is an Azure invoice."""
+    indicators = [
+        "Microsoft Azure",
+        "Azure",
+        "Subscription",
+        "Microsoft Corporation",
+        "Microsoft Ireland",
+        "Cost Management",
+    ]
+    text_lower = text.lower()
+    score = sum(1 for ind in indicators if ind.lower() in text_lower)
+    # Also check it's NOT an AWS bill
+    aws_strong = sum(1 for kw in ['amazon web services', 'aws'] if kw in text_lower)
+    return score >= 2 and aws_strong == 0
+
+
+def _parse_azure_invoice(text: str, tables: List[List[List[str]]]) -> ParsedBill:
+    """
+    Parse an Azure invoice PDF and extract billing information.
+
+    Azure invoices typically contain:
+        - Invoice number, billing period, subscription ID
+        - Service charges grouped by meter category (e.g., Virtual Machines, Storage)
+        - Totals in various currencies (USD, EUR, etc.)
+    """
+    metadata = _extract_azure_metadata(text)
+    line_items = _extract_azure_services(text)
+
+    if not line_items:
+        raise ValueError(
+            "No billing line items found in the Azure invoice. "
+            "Please ensure this is a valid Azure invoice PDF."
+        )
+
+    total_cost = sum(item["cost"] for item in line_items)
+    service_totals = _aggregate_service_totals(line_items)
+
+    result = {
+        "line_items": line_items,
+        "total_cost": total_cost,
+        "currency": metadata.get("currency", "USD"),
+        "period_start": metadata.get("period_start", "N/A"),
+        "period_end": metadata.get("period_end", "N/A"),
+        "invoice_number": metadata.get("invoice_number", "N/A"),
+        "account_id": metadata.get("subscription_id", "N/A"),
+        "service_totals": service_totals,
+        "cloud_provider": "azure",
+        "commitment_discounts": {
+            "has_savings_plans": False,
+            "has_reserved_instances": False,
+            "savings_plan_details": [],
+            "reserved_instance_details": [],
+            "savings_amount": None,
+        },
+    }
+
+    # Detect Azure reservations
+    if re.search(r'reserved?\s+instance|reservation', text, re.IGNORECASE):
+        result["commitment_discounts"]["has_reserved_instances"] = True
+
+    return result
+
+
+def _extract_azure_metadata(text: str) -> Dict[str, str]:
+    """Extract metadata from an Azure invoice."""
+    metadata: Dict[str, str] = {
+        "invoice_number": "N/A",
+        "subscription_id": "N/A",
+        "period_start": "N/A",
+        "period_end": "N/A",
+        "currency": "USD",
+    }
+
+    # Invoice number
+    inv_match = re.search(r'Invoice\s+(?:Number|#|ID)[:\s]*([A-Z0-9-]+)', text, re.IGNORECASE)
+    if inv_match:
+        metadata["invoice_number"] = inv_match.group(1)
+
+    # Subscription ID (UUID)
+    sub_match = re.search(
+        r'Subscription\s+(?:ID|Id)?[:\s]*([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})',
+        text, re.IGNORECASE
+    )
+    if sub_match:
+        metadata["subscription_id"] = sub_match.group(1)
+
+    # Billing period
+    period_match = re.search(
+        r'(?:Billing\s+[Pp]eriod|Service\s+[Pp]eriod|Invoice\s+[Dd]ate)[:\s]*'
+        r'(\d{1,2}[/\-]\d{1,2}[/\-]\d{4})\s*[-–to]+\s*(\d{1,2}[/\-]\d{1,2}[/\-]\d{4})',
+        text
+    )
+    if period_match:
+        metadata["period_start"] = period_match.group(1)
+        metadata["period_end"] = period_match.group(2)
+    else:
+        # Try month-based format: "January 2026" or "Jan 1, 2026 - Jan 31, 2026"
+        month_match = re.search(
+            r'(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{4})',
+            text, re.IGNORECASE
+        )
+        if month_match:
+            month_num = MONTH_MAP[month_match.group(1).lower()]
+            year = month_match.group(2)
+            metadata["period_start"] = f"{year}-{month_num}-01"
+
+    # Currency detection
+    if re.search(r'\bEUR\b', text) and not re.search(r'\bUSD\b', text):
+        metadata["currency"] = "EUR"
+    elif re.search(r'\bGBP\b', text) and not re.search(r'\bUSD\b', text):
+        metadata["currency"] = "GBP"
+
+    return metadata
+
+
+def _extract_azure_services(text: str) -> List[Dict[str, Any]]:
+    """
+    Extract service charges from an Azure invoice PDF.
+
+    Azure invoices list charges by service category (meter category):
+        - Virtual Machines
+        - Storage
+        - Bandwidth
+        - Azure App Service
+        - SQL Database
+        - etc.
+
+    Looks for patterns like:
+        "Virtual Machines  $1,234.56"
+        "Storage           $567.89"
+    Or table-like formats with service name and amount columns.
+    """
+    items: List[Dict[str, Any]] = []
+
+    # Pattern 1: Service name followed by currency amount on the same line
+    # Matches: "Virtual Machines $1,234.56" or "Storage USD 567.89"
+    amount_pattern = re.compile(
+        r'^(.+?)\s+(?:USD|EUR|GBP|\$)\s*([\d,]+\.\d{2})\s*$',
+        re.MULTILINE
+    )
+
+    # Known Azure service categories
+    azure_services = {
+        'virtual machines', 'storage', 'bandwidth', 'networking',
+        'azure app service', 'sql database', 'cosmos db', 'azure functions',
+        'azure kubernetes service', 'load balancer', 'vpn gateway',
+        'azure active directory', 'azure monitor', 'key vault',
+        'azure devops', 'cognitive services', 'azure ai',
+        'application gateway', 'azure firewall', 'dns',
+        'azure blob storage', 'azure files', 'azure backup',
+        'azure site recovery', 'log analytics', 'sentinel',
+        'virtual network', 'express route', 'cdn',
+        'redis cache', 'service bus', 'event hubs',
+        'azure sql', 'azure database', 'azure synapse',
+    }
+
+    skip_words = {
+        'total', 'subtotal', 'tax', 'amount due', 'previous balance',
+        'payment', 'credits', 'adjustments', 'description',
+    }
+
+    seen_services: Dict[str, bool] = {}
+
+    for match in amount_pattern.finditer(text):
+        service_name = match.group(1).strip()
+        cost_str = match.group(2).replace(",", "")
+        name_lower = service_name.lower()
+
+        # Skip headers, totals, and non-service lines
+        if any(skip in name_lower for skip in skip_words):
+            continue
+        if len(service_name) < 3 or len(service_name) > 80:
+            continue
+        if not service_name[0].isalpha():
+            continue
+
+        try:
+            cost_val = Decimal(cost_str)
+        except InvalidOperation:
+            continue
+
+        if cost_val <= Decimal("0"):
+            continue
+
+        # Normalize service name
+        cleaned = service_name.strip(" -")
+        if cleaned in seen_services:
+            continue
+        seen_services[cleaned] = True
+
+        items.append({
+            "service": cleaned,
+            "cost": cost_val,
+            "description": cleaned,
+        })
+
+    # If no items found with the amount pattern, try a more flexible approach
+    if not items:
+        # Look for any lines with amounts that look like Azure services
+        for line in text.split('\n'):
+            line = line.strip()
+            cost_match = COST_PATTERN.search(line)
+            if not cost_match:
+                continue
+            cost_str = cost_match.group(1).replace(",", "")
+            try:
+                cost_val = Decimal(cost_str)
+            except InvalidOperation:
+                continue
+            if cost_val <= Decimal("0.01"):
+                continue
+
+            # Extract service name (everything before the cost)
+            service_part = line[:cost_match.start()].strip()
+            service_part = re.sub(r'[\$€£]', '', service_part).strip()
+            service_part = re.sub(r'\s*(USD|EUR|GBP)\s*$', '', service_part, flags=re.IGNORECASE).strip()
+
+            if not service_part or len(service_part) < 3:
+                continue
+            name_lower = service_part.lower()
+            if any(skip in name_lower for skip in skip_words):
+                continue
+            if not service_part[0].isalpha():
+                continue
+
+            # Check if it resembles an Azure service
+            is_azure_like = any(svc in name_lower for svc in azure_services)
+            if not is_azure_like and len(items) > 5:
+                continue  # Be stricter if we already have items
+
+            if service_part in seen_services:
+                continue
+            seen_services[service_part] = True
+
+            items.append({
+                "service": service_part,
+                "cost": cost_val,
+                "description": service_part,
+            })
+
+    return items

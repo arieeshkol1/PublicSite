@@ -1,4 +1,4 @@
-/* Slash My Bill - Client-side logic for AWS bill analysis */
+/* Slash My Bill - Client-side logic for cloud bill analysis (AWS, Azure, GCP) */
 
 const API_GATEWAY_URL = 'https://l2fd4h481h.execute-api.us-east-1.amazonaws.com';
 const CONTACT_FORM_URL = 'https://l2fd4h481h.execute-api.us-east-1.amazonaws.com/contact';
