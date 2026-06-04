@@ -26,7 +26,7 @@ import boto3
 logger = logging.getLogger(__name__)
 
 # DynamoDB resource (initialized once per Lambda cold start)
-dynamodb = boto3.resource('dynamodb')
+dynamodb = boto3.resource('dynamodb', region_name='us-east-1')
 TRANSACTION_LOG_TABLE_NAME = 'Audit_Transaction_Log'
 
 # Maximum payload size in bytes before truncation (100 KB)
@@ -141,9 +141,18 @@ def _persist_async(entry):
         if isinstance(entry.get('response_payload'), dict):
             entry['response_payload'] = json.dumps(entry['response_payload'], default=str)
 
-        table.put_item(Item=entry)
+        # Remove any empty string values (DynamoDB doesn't allow empty strings in some contexts)
+        clean_entry = {k: v for k, v in entry.items() if v != ''}
+        # Ensure required keys are present even if empty
+        if 'user_email' not in clean_entry:
+            clean_entry['user_email'] = 'unknown'
+        if 'function_name' not in clean_entry:
+            clean_entry['function_name'] = 'unknown'
+
+        table.put_item(Item=clean_entry)
+        logger.info(f"Transaction logged: {clean_entry.get('transaction_id', 'N/A')} - {clean_entry.get('function_name', 'N/A')}")
     except Exception as e:
-        logger.error(f"Failed to persist transaction log entry: {e}")
+        logger.error(f"Failed to persist transaction log entry: {type(e).__name__}: {e}")
 
 
 def transaction_log(source_handler):
