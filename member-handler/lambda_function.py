@@ -2693,59 +2693,15 @@ def handle_dashboard_data(event):
             except Exception:
                 pass
 
-            # Fetch hourly usage metrics (last 24h) via CloudWatch for real-time waste detection
+            # Fetch hourly cost data via CE HOURLY granularity (only available if enabled in AWS console)
             try:
-                cw_hourly = boto3.client('cloudwatch',
-                    aws_access_key_id=creds['AccessKeyId'],
-                    aws_secret_access_key=creds['SecretAccessKey'],
-                    aws_session_token=creds['SessionToken'],
-                    region_name='us-east-1')
-                h_start = datetime.now(timezone.utc) - timedelta(hours=24)
-                h_end = datetime.now(timezone.utc)
-
-                # Try CE HOURLY first (most accurate if enabled)
-                try:
-                    _hourly_params = {'TimePeriod': {'Start': (datetime.now(timezone.utc) - timedelta(days=2)).strftime('%Y-%m-%d'), 'End': datetime.now(timezone.utc).strftime('%Y-%m-%d')}, 'Granularity': 'HOURLY', 'Metrics': ['UnblendedCost']}
-                    hourly_resp = ce_30d.get_cost_and_usage(**_hourly_params)
-                    for period in hourly_resp.get('ResultsByTime', []):
-                        h_ts = period['TimePeriod']['Start'][:16]
-                        h_cost = float(period['Total']['UnblendedCost']['Amount'])
-                        if h_cost > 0:
-                            merged_hourly[h_ts] = h_cost
-                except Exception:
-                    pass
-
-                # If CE hourly didn't work, estimate from daily cost split into 24 hours
-                if not merged_hourly:
-                    # Use the last 3 days of daily data, split each day into 24 equal hours
-                    for d in acct_data.get('daily_cost_trend', []):
-                        daily_cost = d.get('cost_usd', 0)
-                        if daily_cost > 0:
-                            hourly_est = daily_cost / 24
-                            for h in range(24):
-                                ts = f"{d['date']}T{h:02d}:00"
-                                merged_hourly[ts] = merged_hourly.get(ts, 0) + hourly_est
-
-                    # Now overlay CloudWatch spikes on top of the flat estimate
-                    # This shows WHERE the spikes happen even if we can't get exact hourly costs
-                    metrics_to_check = [
-                        ('AWS/EC2', 'NetworkIn', 0.09 / (1024**3)),  # $/byte
-                        ('AWS/NATGateway', 'BytesOutToDestination', 0.045 / (1024**3)),
-                        ('AWS/Lambda', 'Invocations', 0.0000002),
-                    ]
-                    for ns, metric, rate in metrics_to_check:
-                        try:
-                            resp = cw_hourly.get_metric_statistics(
-                                Namespace=ns, MetricName=metric,
-                                StartTime=h_start, EndTime=h_end, Period=3600, Statistics=['Sum'],
-                            )
-                            for dp in sorted(resp.get('Datapoints', []), key=lambda x: x['Timestamp']):
-                                ts = dp['Timestamp'].strftime('%Y-%m-%dT%H:00')
-                                est = dp['Sum'] * rate
-                                if est > 0.001:
-                                    merged_hourly[ts] = merged_hourly.get(ts, 0) + est
-                        except Exception:
-                            pass
+                _hourly_params = {'TimePeriod': {'Start': (datetime.now(timezone.utc) - timedelta(days=2)).strftime('%Y-%m-%d'), 'End': datetime.now(timezone.utc).strftime('%Y-%m-%d')}, 'Granularity': 'HOURLY', 'Metrics': ['UnblendedCost']}
+                hourly_resp = ce_30d.get_cost_and_usage(**_hourly_params)
+                for period in hourly_resp.get('ResultsByTime', []):
+                    h_ts = period['TimePeriod']['Start'][:16]
+                    h_cost = float(period['Total']['UnblendedCost']['Amount'])
+                    if h_cost > 0:
+                        merged_hourly[h_ts] = h_cost
             except Exception:
                 pass
 
@@ -2944,7 +2900,7 @@ def handle_dashboard_data(event):
         'perAccount': per_account,
         'containers': containers,
         'costAllocation': allocation_data,
-        'hourlyTrend': sorted([{'hour': h, 'cost': round(c, 4)} for h, c in merged_hourly.items()], key=lambda x: x['hour']) if merged_hourly else [],
+        'hourlyTrend': [],
         'drillDown': drill_down_data,
         'unitEconomics': _get_unit_economics(member_email, merged_monthly) if merged_monthly else None,
         'discoveredMetrics': all_discovered_metrics,
