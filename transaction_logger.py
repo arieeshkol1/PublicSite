@@ -171,7 +171,11 @@ def transaction_log(source_handler):
     def decorator(handler_fn):
         @functools.wraps(handler_fn)
         def wrapper(event):
-            transaction_id = str(uuid.uuid4())
+            # Use API Gateway requestId as transaction_id for idempotency.
+            # If the same request is processed twice (Lambda retry, client retry),
+            # the second PutItem overwrites the first (same PK).
+            request_id = (event.get('requestContext') or {}).get('requestId', '')
+            transaction_id = request_id if request_id else str(uuid.uuid4())
             start_time = time.time()
             start_iso = datetime.now(timezone.utc).isoformat()
 
