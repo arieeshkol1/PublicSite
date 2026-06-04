@@ -8719,6 +8719,7 @@ def _gather_account_data(question, credentials, tag_key=None, tag_value=None, me
     question_lower = question.lower()
     data = {}
     actions = []
+    _gather_start = time.time()
 
     # Determine which APIs to call based on intent classification.
     # When intent is None or {'all'}, we fetch everything (legacy behavior).
@@ -10026,7 +10027,9 @@ def _gather_account_data(question, credentials, tag_key=None, tag_value=None, me
         }
 
     # Fetch real pricing for top spending services to ground recommendations
-    if data.get('cost_by_service'):
+    # Skip if already past 15s to leave time for the Bedrock model call (27s timeout)
+    _elapsed_total = time.time() - _gather_start
+    if data.get('cost_by_service') and _elapsed_total < 15:
         pricing_context = _fetch_pricing_context(data['cost_by_service'], data)
         if pricing_context:
             data['pricing_context'] = pricing_context
