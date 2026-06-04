@@ -814,8 +814,15 @@ def handle_get_transactions(event):
         end_idx = start_idx + page_size
         page_items = filtered[start_idx:end_idx]
 
+        # Strip large payload fields from list response to stay under Lambda 6MB limit.
+        # Payloads are only returned in the detail endpoint (GET /admin/transactions/detail).
+        slim_items = []
+        for item in page_items:
+            slim = {k: v for k, v in item.items() if k not in ('request_payload', 'response_payload')}
+            slim_items.append(slim)
+
         # Convert Decimals for JSON serialization
-        transactions = _decimal_to_native(page_items)
+        transactions = _decimal_to_native(slim_items)
 
         return create_response(200, {
             'transactions': transactions,
@@ -845,12 +852,21 @@ def _query_all_pages(table, query_kwargs):
 
 
 def _scan_all_pages(table, max_items=500):
-    """Execute a DynamoDB scan with a cap to prevent Lambda timeout."""
+    """Execute a DynamoDB scan with a cap to prevent Lambda timeout.
+    Excludes large payload fields to keep memory under control."""
     items = []
-    response = table.scan(Limit=200)
+    # Project only summary fields — payloads excluded to avoid 6MB response limit
+    scan_kwargs = {
+        'Limit': 200,
+        'ProjectionExpression': 'transaction_id, start_timestamp, end_timestamp, function_name, #s, user_email, source_handler, duration_ms, audit_status, audit_score, audit_accuracy_assessment, audit_timing_assessment, audit_improvement_suggestions',
+        'ExpressionAttributeNames': {'#s': 'status'},
+    }
+    response = table.scan(**scan_kwargs)
     items.extend(response.get('Items', []))
     while 'LastEvaluatedKey' in response and len(items) < max_items:
-        response = table.scan(ExclusiveStartKey=response['LastEvaluatedKey'], Limit=200)
+        scan_kwargs['ExclusiveStartKey'] = response['LastEvaluatedKey']
+        response = table.scan(**scan_kwargs)
+        items.extend(response.get('Items', []))
         items.extend(response.get('Items', []))
     return items
 
