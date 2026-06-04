@@ -137,6 +137,183 @@ Resources:
         DNSName: !GetAtt CloudFrontDistribution.DomainName
         EvaluateTargetHealth: false
 
+  # ─── Audit Evaluator Lambda ───
+  AuditEvaluatorFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: audit-evaluator
+      Runtime: python3.12
+      Handler: lambda_function.lambda_handler
+      Timeout: 60
+      MemorySize: 256
+      Code:
+        ZipFile: |
+          # Placeholder - deploy via CI/CD or script
+          def lambda_handler(event, context):
+              pass
+      Environment:
+        Variables:
+          TABLE_NAME: Audit_Transaction_Log
+          BEDROCK_MODEL_ID: us.anthropic.claude-opus-4-0-20250514
+      Role: !GetAtt AuditEvaluatorRole.Arn
+
+  AuditEvaluatorRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: audit-evaluator-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: AuditEvaluatorPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:DescribeStream
+                  - dynamodb:GetRecords
+                  - dynamodb:GetShardIterator
+                  - dynamodb:ListStreams
+                Resource:
+                  - !GetAtt TransactionLogTable.Arn
+                  - !Sub '${TransactionLogTable.Arn}/stream/*'
+              - Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                Resource: '*'
+
+  AuditEvaluatorEventSource:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      EventSourceArn: !GetAtt TransactionLogTable.StreamArn
+      FunctionName: !Ref AuditEvaluatorFunction
+      StartingPosition: LATEST
+      BatchSize: 1
+
+  # ─── DynamoDB: Audit Transaction Log ───
+  TransactionLogTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: Audit_Transaction_Log
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: transaction_id
+          AttributeType: S
+        - AttributeName: start_timestamp
+          AttributeType: S
+        - AttributeName: user_email
+          AttributeType: S
+        - AttributeName: function_name
+          AttributeType: S
+      KeySchema:
+        - AttributeName: transaction_id
+          KeyType: HASH
+        - AttributeName: start_timestamp
+          KeyType: RANGE
+      GlobalSecondaryIndexes:
+        - IndexName: user-email-index
+          KeySchema:
+            - AttributeName: user_email
+              KeyType: HASH
+            - AttributeName: start_timestamp
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+        - IndexName: function-name-index
+          KeySchema:
+            - AttributeName: function_name
+              KeyType: HASH
+            - AttributeName: start_timestamp
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      TimeToLiveSpecification:
+        AttributeName: expiry_ttl
+        Enabled: true
+      StreamSpecification:
+        StreamViewType: NEW_IMAGE
+
+  # ─── Audit Evaluator Lambda ───
+  AuditEvaluatorRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: AuditEvaluatorLambdaRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: AuditEvaluatorPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                  - dynamodb:DescribeStream
+                  - dynamodb:GetRecords
+                  - dynamodb:GetShardIterator
+                  - dynamodb:ListStreams
+                Resource:
+                  - !GetAtt TransactionLogTable.Arn
+                  - !Sub '${TransactionLogTable.Arn}/index/*'
+                  - !GetAtt TransactionLogTable.StreamArn
+              - Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:*'
+
+  AuditEvaluatorFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: AuditEvaluatorRole
+    Properties:
+      FunctionName: audit-evaluator
+      Runtime: python3.12
+      Handler: lambda_function.lambda_handler
+      Timeout: 60
+      Role: !GetAtt AuditEvaluatorRole.Arn
+      Code:
+        ZipFile: |
+          # Placeholder - deploy actual code via CI/CD
+          def lambda_handler(event, context):
+              pass
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref TransactionLogTable
+          BEDROCK_MODEL_ID: us.anthropic.claude-opus-4-0-20250514
+
+  AuditEvaluatorEventSourceMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    DependsOn: AuditEvaluatorFunction
+    Properties:
+      EventSourceArn: !GetAtt TransactionLogTable.StreamArn
+      FunctionName: !GetAtt AuditEvaluatorFunction.Arn
+      StartingPosition: LATEST
+      BatchSize: 1
+      Enabled: true
+
 Outputs:
   WebsiteURL:
     Value: !Sub 'https://${DomainName}'
@@ -150,3 +327,13 @@ Outputs:
     Value: !GetAtt CloudFrontDistribution.DomainName
   CertificateArn:
     Value: !Ref SSLCertificate
+  TransactionLogTableName:
+    Value: !Ref TransactionLogTable
+  TransactionLogTableArn:
+    Value: !GetAtt TransactionLogTable.Arn
+  TransactionLogStreamArn:
+    Value: !GetAtt TransactionLogTable.StreamArn
+  AuditEvaluatorFunctionArn:
+    Value: !GetAtt AuditEvaluatorFunction.Arn
+  AuditEvaluatorRoleArn:
+    Value: !GetAtt AuditEvaluatorRole.Arn

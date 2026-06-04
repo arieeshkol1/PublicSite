@@ -391,3 +391,212 @@ async function triggerSync(){
 // Wire trigger button
 var trigBtn=$('trigger-sync-btn');
 if(trigBtn)trigBtn.onclick=triggerSync;
+
+
+// ============================================================
+// Transactions Tab
+// ============================================================
+var txnPage=1;var txnTotalPages=1;var txnDebounceTimer=null;var txnLoaded=false;
+var txnFilters={search:'',date_from:'',date_to:'',score_min:'',score_max:'',status:'',source_handler:''};
+
+var txnTbody=$('txn-tbody');var txnEmpty=$('txn-empty');var txnSearch=$('txn-search');
+var txnPrevBtn=$('txn-prev-btn');var txnNextBtn=$('txn-next-btn');var txnPageIndicator=$('txn-page-indicator');
+var txnDetailModal=$('txn-detail-modal');
+
+function getScoreBadgeColor(score){
+    if(score==null||score===''||isNaN(Number(score)))return'gray';
+    var s=Number(score);
+    if(s>=70)return'green';
+    if(s>=40)return'yellow';
+    return'red';
+}
+
+async function loadTransactions(page,filters){
+    var params=[];
+    params.push('page='+(page||1));
+    params.push('page_size=50');
+    if(filters.search)params.push('search='+encodeURIComponent(filters.search));
+    if(filters.date_from)params.push('date_from='+encodeURIComponent(filters.date_from));
+    if(filters.date_to)params.push('date_to='+encodeURIComponent(filters.date_to));
+    if(filters.score_min)params.push('score_min='+encodeURIComponent(filters.score_min));
+    if(filters.score_max)params.push('score_max='+encodeURIComponent(filters.score_max));
+    if(filters.status)params.push('status='+encodeURIComponent(filters.status));
+    if(filters.source_handler)params.push('source_handler='+encodeURIComponent(filters.source_handler));
+    try{
+        showL();
+        var d=await api('GET','/admin/transactions?'+params.join('&'));
+        txnLoaded=true;
+        var transactions=d.transactions||[];
+        var pagination=d.pagination||{};
+        txnPage=pagination.page||1;
+        txnTotalPages=pagination.total_pages||1;
+        renderTransactionsTable(transactions);
+        updateTxnPagination();
+    }catch(e){
+        notify('Failed to load transactions.','error');
+    }finally{hideL();}
+}
+
+async function loadTransactionDetail(transaction_id,start_timestamp){
+    try{
+        showL();
+        var d=await api('GET','/admin/transactions/detail?transaction_id='+encodeURIComponent(transaction_id)+'&start_timestamp='+encodeURIComponent(start_timestamp));
+        renderDetailModal(d.transaction||d);
+        txnDetailModal.hidden=false;
+    }catch(e){
+        notify('Failed to load transaction detail.','error');
+    }finally{hideL();}
+}
+
+function renderTransactionsTable(transactions){
+    txnTbody.innerHTML='';
+    if(!transactions.length){txnEmpty.hidden=false;return;}
+    txnEmpty.hidden=true;
+    var off=(txnPage-1)*50;
+    transactions.forEach(function(t,idx){
+        var r=document.createElement('tr');
+        r.style.cursor='pointer';
+        r.dataset.txnId=t.transaction_id||'';
+        r.dataset.txnTs=t.start_timestamp||'';
+        var scoreBadge='';
+        if(t.audit_status==='pending'){
+            scoreBadge='<span class="score-badge score-pending">⏳ Pending</span>';
+        }else if(t.audit_status==='failed'){
+            scoreBadge='<span class="score-badge score-failed">✗ Failed</span>';
+        }else if(t.audit_score!=null&&t.audit_score!==''){
+            var color=getScoreBadgeColor(t.audit_score);
+            scoreBadge='<span class="score-badge score-'+color+'">'+t.audit_score+'</span>';
+        }else{
+            scoreBadge='<span class="score-badge score-pending">⏳ Pending</span>';
+        }
+        var statusColor=t.status==='success'?'#10b981':'#ef4444';
+        var statusText=t.status==='success'?'✅ Success':'❌ Error';
+        r.innerHTML='<td style="color:#999;font-size:12px">'+(off+idx+1)+'</td>'
+            +'<td>'+esc(t.user_email||'')+'</td>'
+            +'<td>'+esc(t.function_name||'')+'</td>'
+            +'<td>'+(t.duration_ms!=null?t.duration_ms+'ms':'-')+'</td>'
+            +'<td>'+scoreBadge+'</td>'
+            +'<td><span style="color:'+statusColor+';font-weight:600;">'+statusText+'</span></td>'
+            +'<td>'+fmtD(t.start_timestamp)+'</td>';
+        txnTbody.appendChild(r);
+    });
+}
+
+function updateTxnPagination(){
+    txnPageIndicator.textContent='Page '+txnPage+' of '+txnTotalPages;
+    txnPrevBtn.disabled=txnPage<=1;
+    txnNextBtn.disabled=txnPage>=txnTotalPages;
+}
+
+function renderDetailModal(entry){
+    $('txn-detail-id').textContent=entry.transaction_id||'-';
+    $('txn-detail-email').textContent=entry.user_email||'-';
+    $('txn-detail-function').textContent=entry.function_name||'-';
+    $('txn-detail-source').textContent=entry.source_handler||'-';
+    var statusColor=entry.status==='success'?'#10b981':'#ef4444';
+    $('txn-detail-status').innerHTML='<span style="color:'+statusColor+';font-weight:600;">'+esc(entry.status||'-')+'</span>';
+    $('txn-detail-duration').textContent=(entry.duration_ms!=null?entry.duration_ms+'ms':'-');
+    $('txn-detail-start').textContent=fmtD(entry.start_timestamp);
+    $('txn-detail-end').textContent=fmtD(entry.end_timestamp);
+
+    // Request/Response payloads formatted as JSON
+    var reqPayload=entry.request_payload;
+    var resPayload=entry.response_payload;
+    try{
+        if(typeof reqPayload==='string')reqPayload=JSON.parse(reqPayload);
+        $('txn-detail-request').textContent=JSON.stringify(reqPayload,null,2);
+    }catch(e){$('txn-detail-request').textContent=typeof reqPayload==='object'?JSON.stringify(reqPayload,null,2):String(reqPayload||'N/A');}
+    try{
+        if(typeof resPayload==='string')resPayload=JSON.parse(resPayload);
+        $('txn-detail-response').textContent=JSON.stringify(resPayload,null,2);
+    }catch(e){$('txn-detail-response').textContent=typeof resPayload==='object'?JSON.stringify(resPayload,null,2):String(resPayload||'N/A');}
+
+    // Audit evaluation section
+    var auditPending=$('txn-detail-audit-pending');
+    var auditContent=$('txn-detail-audit-content');
+    if(entry.audit_status==='pending'||(!entry.audit_score&&entry.audit_status!=='completed'&&entry.audit_status!=='failed')){
+        auditPending.hidden=false;
+        auditContent.hidden=true;
+    }else{
+        auditPending.hidden=true;
+        auditContent.hidden=false;
+        var scoreColor=getScoreBadgeColor(entry.audit_score);
+        $('txn-detail-score').innerHTML='<span class="score-badge score-'+scoreColor+'" style="font-size:1.2em;">'+(entry.audit_score!=null?entry.audit_score:'-')+'</span>';
+        $('txn-detail-audit-status').textContent=entry.audit_status||'-';
+        $('txn-detail-accuracy').textContent=entry.audit_accuracy_assessment||'-';
+        $('txn-detail-timing').textContent=entry.audit_timing_assessment||'-';
+        $('txn-detail-suggestions').textContent=entry.audit_improvement_suggestions||'-';
+    }
+}
+
+function collectTxnFilters(){
+    txnFilters.search=txnSearch.value.trim();
+    txnFilters.date_from=$('txn-date-from').value;
+    txnFilters.date_to=$('txn-date-to').value;
+    txnFilters.score_min=$('txn-score-min').value;
+    txnFilters.score_max=$('txn-score-max').value;
+    txnFilters.status=$('txn-status-filter').value;
+    txnFilters.source_handler=$('txn-source-filter').value;
+}
+
+// Search input with debounce (300ms)
+if(txnSearch)txnSearch.addEventListener('input',function(){
+    clearTimeout(txnDebounceTimer);
+    txnDebounceTimer=setTimeout(function(){
+        txnPage=1;
+        collectTxnFilters();
+        loadTransactions(txnPage,txnFilters);
+    },300);
+});
+
+// Filter change handlers
+['txn-date-from','txn-date-to','txn-score-min','txn-score-max','txn-status-filter','txn-source-filter'].forEach(function(id){
+    var el=$(id);
+    if(el)el.addEventListener('change',function(){
+        txnPage=1;
+        collectTxnFilters();
+        loadTransactions(txnPage,txnFilters);
+    });
+});
+
+// Row click handler to open detail modal
+if(txnTbody)txnTbody.addEventListener('click',function(e){
+    var row=e.target.closest('tr');
+    if(!row||!row.dataset.txnId)return;
+    loadTransactionDetail(row.dataset.txnId,row.dataset.txnTs);
+});
+
+// Pagination button handlers
+if(txnPrevBtn)txnPrevBtn.addEventListener('click',function(){
+    if(txnPage>1){
+        txnPage--;
+        collectTxnFilters();
+        loadTransactions(txnPage,txnFilters);
+    }
+});
+if(txnNextBtn)txnNextBtn.addEventListener('click',function(){
+    if(txnPage<txnTotalPages){
+        txnPage++;
+        collectTxnFilters();
+        loadTransactions(txnPage,txnFilters);
+    }
+});
+
+// Modal close handlers
+if($('txn-modal-close'))$('txn-modal-close').addEventListener('click',function(){txnDetailModal.hidden=true;});
+if($('txn-modal-close-btn'))$('txn-modal-close-btn').addEventListener('click',function(){txnDetailModal.hidden=true;});
+if(txnDetailModal)txnDetailModal.addEventListener('click',function(e){if(e.target===txnDetailModal)txnDetailModal.hidden=true;});
+
+// Tab activation — update switchTab to include transactions
+(function(){
+    var origSwitch=switchTab;
+    switchTab=function(n){
+        origSwitch(n);
+        var txnPanel=$('transactions-tab');
+        if(txnPanel)txnPanel.hidden=n!=='transactions';
+        if(n==='transactions'&&!txnLoaded){
+            collectTxnFilters();
+            loadTransactions(txnPage,txnFilters);
+        }
+    };
+})();

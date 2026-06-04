@@ -25,6 +25,8 @@ on:
       - 'member-handler/**'
       - 'members/**'
       - 'agent-action/**'
+      - 'audit-evaluator/**'
+      - 'transaction_logger.py'
       - 'scheduler-executor/**'
       - 'tips-sync/**'
       - '_gen_ug.py'
@@ -219,7 +221,9 @@ jobs:
                   "Resource": [
                     "arn:aws:dynamodb:us-east-1:991105135552:table/MemberPortal-Invoices",
                     "arn:aws:dynamodb:us-east-1:991105135552:table/Cost_Cache_Table",
-                    "arn:aws:dynamodb:us-east-1:991105135552:table/ProviderRegistry"
+                    "arn:aws:dynamodb:us-east-1:991105135552:table/ProviderRegistry",
+                    "arn:aws:dynamodb:us-east-1:991105135552:table/Audit_Transaction_Log",
+                    "arn:aws:dynamodb:us-east-1:991105135552:table/Audit_Transaction_Log/index/*"
                   ]
                 }
               ]
@@ -263,6 +267,7 @@ jobs:
           echo "Packaging Admin Handler Lambda..."
           pip install PyJWT bcrypt -t .build-admin-handler/ --quiet
           cp admin-handler/lambda_function.py .build-admin-handler/
+          cp transaction_logger.py .build-admin-handler/
           cp member-handler/provider_registry.py .build-admin-handler/
           cp member-handler/sts_assume_role.py .build-admin-handler/
           cd .build-admin-handler && zip -r ../admin-handler-lambda.zip . -q
@@ -275,6 +280,7 @@ jobs:
           echo "Packaging Member Handler Lambda..."
           pip install PyJWT bcrypt pyyaml cryptography -t .build-member-handler/ --quiet
           cp member-handler/lambda_function.py .build-member-handler/
+          cp transaction_logger.py .build-member-handler/
           cp member-handler/provider_registry.py .build-member-handler/
           cp member-handler/sts_assume_role.py .build-member-handler/
           cp member-handler/invoice_sync.py .build-member-handler/
@@ -338,6 +344,16 @@ jobs:
           cd ..
           aws s3 cp tips-sync-lambda.zip s3://${{ env.STORAGE_BUCKET }}/lambda-packages/tips-sync.zip
           echo "✓ Tips Sync packaged"
+
+      - name: Package Audit Evaluator Lambda
+        run: |
+          echo "Packaging Audit Evaluator Lambda..."
+          mkdir -p .build-audit-evaluator
+          cp audit-evaluator/lambda_function.py .build-audit-evaluator/
+          cd .build-audit-evaluator && zip -r ../audit-evaluator-lambda.zip . -q
+          cd ..
+          aws s3 cp audit-evaluator-lambda.zip s3://${{ env.STORAGE_BUCKET }}/lambda-packages/audit-evaluator.zip
+          echo "✓ Audit Evaluator packaged"
 
       - name: Deploy SlashMyBill CloudFormation stack
         continue-on-error: true
@@ -567,6 +583,8 @@ jobs:
           update_lambda slashmybill-scheduler-executor lambda-packages/scheduler-executor.zip
           # Update Tips Sync Lambda (skip if not yet created)
           update_lambda slashmybill-tips-sync lambda-packages/tips-sync.zip
+          # Update Audit Evaluator Lambda (skip if not yet created)
+          update_lambda audit-evaluator lambda-packages/audit-evaluator.zip
           echo "✓ Lambda functions updated"
 
       - name: Update Lambda memory and timeout (CF stack may fail to apply these)
@@ -686,6 +704,36 @@ jobs:
               }]
             }' 2>/dev/null || true
           echo "✓ DynamoDB Cost_Cache_Table permissions granted"
+
+      - name: Grant Lambda DynamoDB Audit_Transaction_Log access
+        continue-on-error: true
+        run: |
+          # Grant member-handler and admin-handler write access to Audit_Transaction_Log
+          for FN in aws-bill-analyzer-member-api aws-bill-analyzer-admin-api; do
+            ROLE_ARN=$(aws lambda get-function-configuration --function-name $FN --query "Role" --output text)
+            ROLE_NAME=$(echo $ROLE_ARN | awk -F'/' '{print $NF}')
+            aws iam put-role-policy \
+              --role-name "$ROLE_NAME" \
+              --policy-name "DynamoDBAuditLogAccess" \
+              --policy-document '{
+                "Version": "2012-10-17",
+                "Statement": [{
+                  "Effect": "Allow",
+                  "Action": [
+                    "dynamodb:PutItem",
+                    "dynamodb:GetItem",
+                    "dynamodb:Query",
+                    "dynamodb:Scan",
+                    "dynamodb:UpdateItem"
+                  ],
+                  "Resource": [
+                    "arn:aws:dynamodb:us-east-1:991105135552:table/Audit_Transaction_Log",
+                    "arn:aws:dynamodb:us-east-1:991105135552:table/Audit_Transaction_Log/index/*"
+                  ]
+                }]
+              }'
+            echo "✓ Audit_Transaction_Log access granted to $FN"
+          done
 
       - name: Ensure Tips Sync Lambda exists
         continue-on-error: true

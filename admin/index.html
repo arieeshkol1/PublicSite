@@ -49,6 +49,7 @@
             <button class="tab-btn" data-tab="subscribers">Subscribers</button>
             <button class="tab-btn" data-tab="schedules">Schedules</button>
             <button class="tab-btn" data-tab="sync">Tips Sync</button>
+            <button class="tab-btn" data-tab="transactions">Transactions</button>
         </nav>
 
         <!-- Leads Tab -->
@@ -226,6 +227,162 @@
                 </table>
                 <div id="sync-empty" class="empty-state" hidden>
                     <p>No sync history available yet. Trigger a manual sync or wait for the daily schedule.</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Transactions Tab -->
+        <div id="transactions-tab" class="tab-content" hidden>
+            <div class="tab-toolbar">
+                <input type="text" id="txn-search" class="search-input" placeholder="Search by email, function name, or request content...">
+            </div>
+            <div class="txn-filter-row">
+                <div class="filter-group">
+                    <label for="txn-date-from">From</label>
+                    <input type="date" id="txn-date-from" class="filter-input">
+                </div>
+                <div class="filter-group">
+                    <label for="txn-date-to">To</label>
+                    <input type="date" id="txn-date-to" class="filter-input">
+                </div>
+                <div class="filter-group">
+                    <label for="txn-score-min">Score Min</label>
+                    <input type="number" id="txn-score-min" class="filter-input" min="0" max="100" placeholder="0">
+                </div>
+                <div class="filter-group">
+                    <label for="txn-score-max">Score Max</label>
+                    <input type="number" id="txn-score-max" class="filter-input" min="0" max="100" placeholder="100">
+                </div>
+                <div class="filter-group">
+                    <label for="txn-status-filter">Status</label>
+                    <select id="txn-status-filter" class="filter-input">
+                        <option value="">All</option>
+                        <option value="success">Success</option>
+                        <option value="error">Error</option>
+                    </select>
+                </div>
+                <div class="filter-group">
+                    <label for="txn-source-filter">Source</label>
+                    <select id="txn-source-filter" class="filter-input">
+                        <option value="">All</option>
+                        <option value="member-handler">member-handler</option>
+                        <option value="admin-handler">admin-handler</option>
+                    </select>
+                </div>
+            </div>
+            <div class="table-wrapper">
+                <table id="txn-table" class="data-table">
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th class="sortable" data-col="user_email">User Email <span class="sort-icon">⇅</span></th>
+                            <th class="sortable" data-col="function_name">Function <span class="sort-icon">⇅</span></th>
+                            <th class="sortable" data-col="duration_ms">Duration (ms) <span class="sort-icon">⇅</span></th>
+                            <th class="sortable" data-col="audit_score">Score <span class="sort-icon">⇅</span></th>
+                            <th class="sortable" data-col="status">Status <span class="sort-icon">⇅</span></th>
+                            <th class="sortable" data-col="start_timestamp">Timestamp <span class="sort-icon">⇅</span></th>
+                        </tr>
+                    </thead>
+                    <tbody id="txn-tbody"></tbody>
+                </table>
+                <div id="txn-empty" class="empty-state" hidden>
+                    <p>No transactions found. Transactions will appear here once users interact with the platform.</p>
+                </div>
+            </div>
+            <div class="txn-pagination">
+                <button id="txn-prev-btn" class="btn btn-outline btn-sm" disabled>← Previous</button>
+                <span id="txn-page-indicator" class="page-indicator">Page 1</span>
+                <button id="txn-next-btn" class="btn btn-outline btn-sm" disabled>Next →</button>
+            </div>
+        </div>
+
+        <!-- Transaction Detail Modal -->
+        <div id="txn-detail-modal" class="modal-overlay" hidden>
+            <div class="modal-card modal-card-lg">
+                <div class="modal-header">
+                    <h2>Transaction Detail</h2>
+                    <button id="txn-modal-close" class="modal-close">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <div class="txn-detail-section">
+                        <h3>Overview</h3>
+                        <div class="txn-detail-grid">
+                            <div class="detail-field">
+                                <label>Transaction ID</label>
+                                <span id="txn-detail-id"></span>
+                            </div>
+                            <div class="detail-field">
+                                <label>User Email</label>
+                                <span id="txn-detail-email"></span>
+                            </div>
+                            <div class="detail-field">
+                                <label>Function</label>
+                                <span id="txn-detail-function"></span>
+                            </div>
+                            <div class="detail-field">
+                                <label>Source Handler</label>
+                                <span id="txn-detail-source"></span>
+                            </div>
+                            <div class="detail-field">
+                                <label>Status</label>
+                                <span id="txn-detail-status"></span>
+                            </div>
+                            <div class="detail-field">
+                                <label>Duration</label>
+                                <span id="txn-detail-duration"></span>
+                            </div>
+                            <div class="detail-field">
+                                <label>Start Time</label>
+                                <span id="txn-detail-start"></span>
+                            </div>
+                            <div class="detail-field">
+                                <label>End Time</label>
+                                <span id="txn-detail-end"></span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="txn-detail-section">
+                        <h3>Request Payload</h3>
+                        <pre id="txn-detail-request" class="payload-block"></pre>
+                    </div>
+                    <div class="txn-detail-section">
+                        <h3>Response Payload</h3>
+                        <pre id="txn-detail-response" class="payload-block"></pre>
+                    </div>
+                    <div class="txn-detail-section">
+                        <h3>Audit Evaluation</h3>
+                        <div id="txn-detail-audit-pending" class="audit-pending" hidden>
+                            <span class="pending-badge">⏳ Pending</span>
+                            <p>Audit evaluation is still in progress.</p>
+                        </div>
+                        <div id="txn-detail-audit-content" hidden>
+                            <div class="txn-detail-grid">
+                                <div class="detail-field">
+                                    <label>Score</label>
+                                    <span id="txn-detail-score"></span>
+                                </div>
+                                <div class="detail-field">
+                                    <label>Audit Status</label>
+                                    <span id="txn-detail-audit-status"></span>
+                                </div>
+                            </div>
+                            <div class="detail-field">
+                                <label>Accuracy Assessment</label>
+                                <p id="txn-detail-accuracy"></p>
+                            </div>
+                            <div class="detail-field">
+                                <label>Timing Assessment</label>
+                                <p id="txn-detail-timing"></p>
+                            </div>
+                            <div class="detail-field">
+                                <label>Improvement Suggestions</label>
+                                <p id="txn-detail-suggestions"></p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button id="txn-modal-close-btn" class="btn btn-primary">Close</button>
                 </div>
             </div>
         </div>

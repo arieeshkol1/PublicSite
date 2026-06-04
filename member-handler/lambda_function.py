@@ -52,6 +52,15 @@ try:
 except ImportError:
     _gather_multi_account_parallel = None
 
+try:
+    from transaction_logger import transaction_log
+except ImportError:
+    # No-op decorator fallback if transaction_logger not available
+    def transaction_log(source_handler):
+        def decorator(fn):
+            return fn
+        return decorator
+
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
@@ -307,6 +316,7 @@ def _verify_account_ownership(member_email, account_ids):
 # ============================================================
 
 
+@transaction_log('member-handler')
 def handle_register(event):
     """Register a new member via Cognito User Pool."""
     try:
@@ -467,6 +477,7 @@ def handle_register(event):
         return create_error_response(400, "InvalidRequest", "Field 'action' is required")
 
 
+@transaction_log('member-handler')
 def handle_login(event):
     """Authenticate member via Cognito and return access token."""
     try:
@@ -567,6 +578,7 @@ def handle_login(event):
     return create_response(200, {"token": token, "email": email, "displayName": display_name})
 
 
+@transaction_log('member-handler')
 def handle_reset_password(event):
     """Handle password reset via Cognito ForgotPassword flow."""
     try:
@@ -666,6 +678,7 @@ def _validate_cloud_provider(cloud_provider):
     return None
 
 
+@transaction_log('member-handler')
 def handle_get_accounts(event):
     """List member's accounts."""
     auth = validate_token(event)
@@ -807,6 +820,7 @@ def _get_member_tier(email: str) -> str:
         return 'free'
 
 
+@transaction_log('member-handler')
 def handle_add_account(event):
     """Add a new cloud account (AWS, Azure, or GCP)."""
     auth = validate_token(event)
@@ -934,6 +948,7 @@ def handle_add_account(event):
     return create_response(201, {'message': 'Account added', 'account': account_record})
 
 
+@transaction_log('member-handler')
 def handle_edit_account(event):
     """Edit an existing AWS account (change Account ID)."""
     auth = validate_token(event)
@@ -1020,6 +1035,7 @@ def handle_edit_account(event):
     return create_response(200, {'message': 'Account updated', 'account': new_record})
 
 
+@transaction_log('member-handler')
 def handle_reorder_accounts(event):
     """Reorder accounts by setting sortOrder on each."""
     auth = validate_token(event)
@@ -1048,6 +1064,7 @@ def handle_reorder_accounts(event):
     return create_response(200, {'message': 'Accounts reordered'})
 
 
+@transaction_log('member-handler')
 def handle_delete_account(event):
     """Delete an AWS account."""
     auth = validate_token(event)
@@ -1180,6 +1197,7 @@ def handle_delete_account(event):
 
 
 
+@transaction_log('member-handler')
 def handle_update_permissions(event):
     """Update the cross-account role's inline policy to the latest version.
     Assumes the role and calls iam:PutRolePolicy directly."""
@@ -1358,6 +1376,7 @@ def _get_latest_policy_actions():
     ]
 
 
+@transaction_log('member-handler')
 def handle_generate_template(event):
     """Generate CloudFormation or Terraform template for an account.
 
@@ -1566,6 +1585,7 @@ def handle_generate_template(event):
     })
 
 
+@transaction_log('member-handler')
 def handle_test_connection(event):
     """Test cross-account connection via STS AssumeRole + Cost Explorer."""
     auth = validate_token(event)
@@ -1860,6 +1880,7 @@ def _apply_tag_groupby_to_ce_call(base_params, tag_key):
 # ============================================================
 
 
+@transaction_log('member-handler')
 def handle_get_tag_keys(event):
     """Return available cost allocation tag keys for selected accounts."""
     auth = validate_token(event)
@@ -1944,6 +1965,7 @@ def handle_get_tag_keys(event):
     return create_response(200, result)
 
 
+@transaction_log('member-handler')
 def handle_get_tag_values(event):
     """Return available values for a specific tag key."""
     auth = validate_token(event)
@@ -2025,6 +2047,7 @@ def handle_get_tag_values(event):
     return create_response(200, {'tagValues': sorted(all_values)})
 
 
+@transaction_log('member-handler')
 def handle_dashboard_data(event):
     """Return comprehensive FinOps dashboard data for selected accounts."""
     auth = validate_token(event)
@@ -4441,6 +4464,7 @@ def _get_expiring_commitments(ce_client, savingsplans_client, ec2_client, rds_cl
 # ============================================================
 
 
+@transaction_log('member-handler')
 def handle_committed_discount_ladder_removed(event):
     """Return 404 for the removed laddering strategy endpoint."""
     return create_error_response(404, 'EndpointRemoved',
@@ -4448,6 +4472,7 @@ def handle_committed_discount_ladder_removed(event):
         'Laddering strategy is no longer supported.')
 
 
+@transaction_log('member-handler')
 def handle_committed_discount_scan(event):
     """Full committed discount analysis: coverage, utilization, recommendations, baseline.
 
@@ -4927,6 +4952,7 @@ def _estimate_free_tier_savings(benefits):
     return total_savings
 
 
+@transaction_log('member-handler')
 def handle_committed_discount_free_tier(event):
     """Retrieve free tier usage data for a customer account.
 
@@ -5159,6 +5185,7 @@ def _get_cost_by_tag(accounts, external_id):
     }
 
 
+@transaction_log('member-handler')
 def handle_get_dashboard(event):
     """Return saved dashboard/favorite query items for the authenticated member."""
     auth = validate_token(event)
@@ -5180,6 +5207,7 @@ def handle_get_dashboard(event):
     return create_response(200, {'items': _decimal_to_native(favorites)})
 
 
+@transaction_log('member-handler')
 def handle_add_dashboard_item(event):
     """Add a new dashboard item (table/graph) to the member profile."""
     auth = validate_token(event)
@@ -5235,6 +5263,7 @@ def handle_add_dashboard_item(event):
     return create_response(201, {'message': 'Dashboard item saved', 'item': item})
 
 
+@transaction_log('member-handler')
 def handle_delete_dashboard_item(event):
     """Delete a dashboard item from the member profile by item id."""
     auth = validate_token(event)
@@ -5273,6 +5302,7 @@ def handle_delete_dashboard_item(event):
 # Cost Allocation Rules (Virtual Tagging)
 # ============================================================
 
+@transaction_log('member-handler')
 def handle_get_allocation_rules(event):
     """Get the member's cost allocation rules."""
     auth = validate_token(event)
@@ -5288,6 +5318,7 @@ def handle_get_allocation_rules(event):
     return create_response(200, {'rules': _decimal_to_native(rules)})
 
 
+@transaction_log('member-handler')
 def handle_save_allocation_rules(event):
     """Save the member's virtual tagging business units and rules."""
     auth = validate_token(event)
@@ -5355,6 +5386,7 @@ def handle_save_allocation_rules(event):
 BUSINESS_METRICS_TABLE = os.environ.get('BUSINESS_METRICS_TABLE', 'MemberPortal-BusinessMetrics')
 
 
+@transaction_log('member-handler')
 def handle_get_business_metrics(event):
     """Get business metrics for the member."""
     auth = validate_token(event)
@@ -5374,6 +5406,7 @@ def handle_get_business_metrics(event):
     return create_response(200, {'metrics': metrics})
 
 
+@transaction_log('member-handler')
 def handle_save_business_metrics(event):
     """Save or update a business metric for a specific month."""
     auth = validate_token(event)
@@ -5513,6 +5546,7 @@ def _detect_charged_regions(creds_or_client):
     except Exception:
         return ['us-east-1']
 
+@transaction_log('member-handler')
 def handle_actions_scan(event):
     """Async waste scan kickoff â€” returns scanId immediately, invokes Lambda asynchronously."""
     auth = validate_token(event)
@@ -5586,6 +5620,7 @@ def handle_actions_scan(event):
     return create_response(200, {'scanId': scan_id, 'status': 'in_progress'})
 
 
+@transaction_log('member-handler')
 def handle_scan_status(event):
     """Return the current status of an async scan by scanId."""
     auth = validate_token(event)
@@ -6632,6 +6667,7 @@ def _save_last_scan(member_email, account_ids, findings, total_savings, scanned_
         logger.warning(f"Failed to save last scan: {e}")
 
 
+@transaction_log('member-handler')
 def handle_get_last_scan(event):
     """Return the cached last scan result for the Chat widget."""
     auth = validate_token(event)
@@ -6647,6 +6683,7 @@ def handle_get_last_scan(event):
         return create_error_response(500, 'ServerError', 'Failed to load last scan')
 
 
+@transaction_log('member-handler')
 def handle_actions_execute(event):
     """Execute a Level-1 cleanup action with JIT safety checks."""
     auth = validate_token(event)
@@ -6887,6 +6924,7 @@ def handle_actions_execute(event):
     })
 
 
+@transaction_log('member-handler')
 def handle_browse_bucket(event):
     """Return top objects in an S3 bucket sorted by LastModified (oldest first for aged data review)."""
     auth = validate_token(event)
@@ -7229,6 +7267,7 @@ def _apply_allocation_rules(cost_by_service, per_account, alloc_config):
     }
 
 
+@transaction_log('member-handler')
 def handle_execute_command(event):
     """Execute an AWS CLI command against a member's connected account via cross-account role."""
     auth = validate_token(event)
@@ -7437,6 +7476,7 @@ def _derive_related_service(question):
     return 'General'
 
 
+@transaction_log('member-handler')
 def handle_ai_feedback(event):
     """Handle AI feedback submissions â€” store feedback and optionally save tip."""
     auth = validate_token(event)
@@ -7564,6 +7604,7 @@ def handle_ai_feedback(event):
 # AI Agent Query Handler
 # ============================================================
 
+@transaction_log('member-handler')
 def handle_ai_query(event):
     """Handle natural language questions â€” uses Bedrock Agent or falls back to direct model API."""
     auth = validate_token(event)
@@ -10310,6 +10351,7 @@ def _build_otp_email(otp_code):
 FRONTEND_SAFE_CATEGORIES = ['display', 'validation', 'connection-setup', 'ui-config', 'ai-prompts']
 
 
+@transaction_log('member-handler')
 def handle_get_provider_config(event):
     """Return non-sensitive provider config for frontend consumption."""
     auth = validate_token(event)
@@ -10391,6 +10433,7 @@ def create_error_response(status_code, error_type, message, extra=None):
 # Tag Management Handlers
 # ============================================================
 
+@transaction_log('member-handler')
 def handle_tag_scan(event):
     """Scan resources for missing tags using Resource Groups Tagging API."""
     auth = validate_token(event)
@@ -11131,6 +11174,7 @@ def _tag_resource_service_specific(arn, tags, creds, region):
         return False
 
 
+@transaction_log('member-handler')
 def handle_tag_apply(event):
     """Apply tags to selected resources in bulk."""
     auth = validate_token(event)
@@ -11333,6 +11377,7 @@ def handle_tag_apply(event):
 # Scheduler â€” Recommendation Engine
 # ============================================================
 
+@transaction_log('member-handler')
 def handle_schedule_analyze(event):
     """Analyze environment and generate scheduling recommendations."""
     auth = validate_token(event)
@@ -11538,6 +11583,7 @@ def handle_schedule_analyze(event):
     })
 
 
+@transaction_log('member-handler')
 def handle_get_schedules(event):
     """Get saved scheduler recommendations, statuses, and user-created schedules with execution data."""
     auth = validate_token(event)
@@ -11606,6 +11652,7 @@ def handle_get_schedules(event):
         return create_response(200, {'recommendations': [], 'completed': [], 'dismissed': [], 'lastAnalyzedAt': '', 'userSchedules': []})
 
 
+@transaction_log('member-handler')
 def handle_update_schedule_status(event):
     """Update a recommendation's status (completed/dismissed/pending)."""
     auth = validate_token(event)
@@ -11664,6 +11711,7 @@ def handle_update_schedule_status(event):
 # Budget Management
 # ============================================================
 
+@transaction_log('member-handler')
 def handle_list_budgets(event):
     """List existing AWS Budgets from connected accounts."""
     auth = validate_token(event)
@@ -11729,6 +11777,7 @@ def handle_list_budgets(event):
     return create_response(200, {'budgets': all_budgets})
 
 
+@transaction_log('member-handler')
 def handle_create_budget(event):
     """Create an AWS Budget with alerts in a connected account."""
     auth = validate_token(event)
@@ -11828,6 +11877,7 @@ def handle_create_budget(event):
         return create_error_response(500, 'ServerError', f'Failed to create budget: {str(e)}')
 
 
+@transaction_log('member-handler')
 def handle_update_budget(event):
     """Update an existing AWS Budget (amount and/or name)."""
     auth = validate_token(event)
@@ -11878,6 +11928,7 @@ def handle_update_budget(event):
         return create_error_response(500, 'ServerError', f'Failed to update budget: {str(e)}')
 
 
+@transaction_log('member-handler')
 def handle_delete_budget(event):
     """Delete an AWS Budget from a connected account."""
     auth = validate_token(event)
@@ -11963,6 +12014,7 @@ def _build_eb_cron_expression(days, time_str, timezone_str):
 # Schedule Creation
 # ============================================================
 
+@transaction_log('member-handler')
 def handle_create_schedule(event):
     """Create a real EventBridge Scheduler-backed schedule for the member."""
     auth = validate_token(event)
@@ -12156,6 +12208,7 @@ def _find_member_schedule(members_table, member_email, schedule_id):
         return None, None
 
 
+@transaction_log('member-handler')
 def handle_pause_schedule(event):
     """Pause an active schedule by disabling its EventBridge Scheduler schedules."""
     auth = validate_token(event)
@@ -12214,6 +12267,7 @@ def handle_pause_schedule(event):
         return create_error_response(500, 'ServerError', 'Failed to update schedule status')
 
 
+@transaction_log('member-handler')
 def handle_resume_schedule(event):
     """Resume a paused schedule by enabling its EventBridge Scheduler schedules."""
     auth = validate_token(event)
@@ -12271,6 +12325,7 @@ def handle_resume_schedule(event):
         return create_error_response(500, 'ServerError', 'Failed to update schedule status')
 
 
+@transaction_log('member-handler')
 def handle_delete_schedule(event):
     """Delete a schedule and its EventBridge Scheduler schedules."""
     auth = validate_token(event)
@@ -13089,6 +13144,7 @@ def _group_metrics_by_name(metrics_list):
     return list(grouped.values())
 
 
+@transaction_log('member-handler')
 def handle_live_metrics(event):
     """GET /members/live-metrics - Discover metrics, compute unit economics."""
     auth = validate_token(event)
@@ -13198,6 +13254,7 @@ def handle_live_metrics(event):
 
 
 
+@transaction_log('member-handler')
 def handle_edit_schedule(event):
     """Edit an existing schedule â€” delete old EB schedules, create new ones with updated config."""
     auth = validate_token(event)
@@ -14020,6 +14077,7 @@ BEDROCK_AGENT_ID_V2 = os.environ.get('BEDROCK_AGENT_ID', '')
 BEDROCK_AGENT_ALIAS_V2 = os.environ.get('BEDROCK_AGENT_ALIAS_ID', '')
 
 
+@transaction_log('member-handler')
 def handle_agent_invoke(event):
     """Invoke the Bedrock Agent and return the response.
     This is the new agent-based AI endpoint (alongside the legacy ai-query)."""
@@ -14112,6 +14170,7 @@ def handle_agent_invoke(event):
         return create_error_response(500, 'AgentError', f'Agent invocation failed: {str(e)}')
 
 
+@transaction_log('member-handler')
 def handle_get_tag_policy(event):
     """Get the member's tag policy. Returns default if none set."""
     auth = validate_token(event)
@@ -14134,6 +14193,7 @@ def handle_get_tag_policy(event):
         return create_response(200, {'tagPolicy': DEFAULT_TAG_POLICY.copy()})
 
 
+@transaction_log('member-handler')
 def handle_save_tag_policy(event):
     """Save the member's tag policy."""
     auth = validate_token(event)
@@ -14177,6 +14237,7 @@ def handle_save_tag_policy(event):
         return create_error_response(500, 'ServerError', f'Failed to save tag policy: {str(e)}')
 
 
+@transaction_log('member-handler')
 def handle_healthcheck_scan(event):
     """Scan all FinOps settings for a connected AWS account."""
     auth = validate_token(event)
@@ -14366,6 +14427,7 @@ _FIX_ACTION_ACCOUNT_TYPES = {
 }
 
 
+@transaction_log('member-handler')
 def handle_healthcheck_fix(event):
     """Execute a single FinOps settings fix action."""
     auth = validate_token(event)
@@ -14639,6 +14701,7 @@ def handle_healthcheck_fix(event):
 # Paddle Payment Handlers
 # ============================================================
 
+@transaction_log('member-handler')
 def handle_add_tokens(event):
     """Add bonus tokens to a member's account (called from frontend after Paddle checkout)."""
     try:
@@ -14692,6 +14755,7 @@ def handle_add_tokens(event):
         return create_error_response(500, 'InternalError', 'Failed to add tokens')
 
 
+@transaction_log('member-handler')
 def handle_update_tier(event):
     """Update a member's tier (called from frontend after Paddle subscription checkout)."""
     try:
@@ -14851,6 +14915,7 @@ def _save_spot_config(member_email, spot_config):
         logger.warning(f"Failed to save spotConfig for {member_email}: {e}")
 
 
+@transaction_log('member-handler')
 def handle_spot_config(event):
     """POST /members/spot/config -- Enable/disable Spot management per account."""
     auth = validate_token(event)
@@ -15041,6 +15106,7 @@ def _handle_spot_interruption_sns(record):
 # Spot Instance Management -- Qualification, Planning, Migration
 # ============================================================
 
+@transaction_log('member-handler')
 def handle_spot_qualify(event):
     """POST /members/spot/qualify -- Evaluate which ASGs are safe for Spot migration."""
     auth = validate_token(event)
@@ -15138,6 +15204,7 @@ def handle_spot_qualify(event):
     })
 
 
+@transaction_log('member-handler')
 def handle_spot_plan(event):
     """POST /members/spot/plan -- Configure capacity mix and get savings estimate."""
     auth = validate_token(event)
@@ -15252,6 +15319,7 @@ def handle_spot_plan(event):
     })
 
 
+@transaction_log('member-handler')
 def handle_spot_migrate(event):
     """POST /members/spot/migrate -- Execute, dry-run, or rollback a Spot migration."""
     auth = validate_token(event)
@@ -15645,6 +15713,7 @@ def _calculate_esr(member_email, account_ids=None, period_days=30):
         return {'actual': 0.0, 'maximum': 0.0, 'esr': 0.0, 'gainshareAmount': 0.0}
 
 
+@transaction_log('member-handler')
 def handle_spot_dashboard(event):
     """GET /members/spot/dashboard -- Spot operations dashboard data."""
     auth = validate_token(event)
@@ -16050,6 +16119,7 @@ def _get_free_tier_usage_server(creds=None):
         logger.warning(f"Free Tier API failed: {e}")
         return {}
 
+@transaction_log('member-handler')
 def handle_server_analyze(event):
     """POST /members/servers/analyze -- Analyze EC2 instance usage and recommend resize options."""
     auth = validate_token(event)
@@ -16305,6 +16375,7 @@ def _handle_server_analyze_inner(event, member_email):
     })
 
 
+@transaction_log('member-handler')
 def handle_server_resize(event):
     """POST /members/servers/resize -- Execute instance type change (stop, modify, start)."""
     auth = validate_token(event)
@@ -16450,6 +16521,7 @@ def handle_server_resize(event):
 
 
 
+@transaction_log('member-handler')
 def handle_server_list_instances(event):
     """POST /members/servers/list-instances -- List EC2 instances for resize wizard."""
     auth = validate_token(event)
@@ -16521,6 +16593,7 @@ def handle_server_list_instances(event):
 # Optimize a Cluster -- ASG Health Report + Optimization
 # ============================================================
 
+@transaction_log('member-handler')
 def handle_cluster_analyze(event):
     """POST /members/cluster/analyze -- Analyze an existing ASG and return optimization report."""
     auth = validate_token(event)
@@ -16820,6 +16893,7 @@ def create_success_response(data):
 # Licensing Optimizer â€” Windows/SQL Server Cost Analysis
 # ============================================================
 
+@transaction_log('member-handler')
 def handle_licensing_scan(event):
     """POST /members/licensing/scan -- Discover Windows/SQL instances, analyze utilization, calculate licensing costs, generate recommendations."""
     import math
@@ -17372,6 +17446,7 @@ def handle_licensing_scan(event):
 # RDS Optimizer â€” Rightsize databases, gp2->gp3, Multi-AZ review
 # ============================================================
 
+@transaction_log('member-handler')
 def handle_rds_optimize(event):
     """POST /members/rds/optimize -- Analyze RDS instances for cost optimization."""
     import math
@@ -17561,6 +17636,7 @@ def handle_rds_optimize(event):
 # Lambda Optimizer â€” Memory rightsizing, architecture, unused functions
 # ============================================================
 
+@transaction_log('member-handler')
 def handle_lambda_optimize(event):
     """POST /members/lambda/optimize -- Analyze Lambda functions for cost optimization."""
 
@@ -17684,6 +17760,7 @@ def handle_lambda_optimize(event):
 # EBS Optimizer â€” gp2->gp3, over-provisioned IOPS, unattached volumes
 # ============================================================
 
+@transaction_log('member-handler')
 def handle_ebs_optimize(event):
     """POST /members/ebs/optimize -- Analyze EBS volumes for cost optimization."""
 
@@ -17786,6 +17863,7 @@ def handle_ebs_optimize(event):
     return create_success_response({'success': True, 'volumes': volumes, 'summary': summary, 'totalRecommendations': total_recs})
 
 
+@transaction_log('member-handler')
 def handle_ebs_migrate_gp3(event):
     """POST /members/ebs/migrate-gp3 -- Execute gp2 to gp3 volume migration."""
     auth = validate_token(event)
@@ -17862,6 +17940,7 @@ def handle_ebs_migrate_gp3(event):
 INVOICES_TABLE_NAME = os.environ.get('INVOICES_TABLE_NAME', 'MemberPortal-Invoices')
 
 
+@transaction_log('member-handler')
 def handle_get_invoices(event):
     """GET /members/invoices â€” List invoices with filters and pagination."""
     try:
@@ -18187,6 +18266,7 @@ def _apply_invoice_filters(items, validated):
     return filtered
 
 
+@transaction_log('member-handler')
 def handle_refresh_invoices(event):
     """POST /members/invoices/refresh â€” Force re-sync invoice data from AWS."""
     from invoice_sync import sync_invoice_data, InvoiceSyncError
@@ -18320,6 +18400,7 @@ def handle_refresh_invoices(event):
     })
 
 
+@transaction_log('member-handler')
 def handle_get_invoices_summary(event):
     """GET /members/invoices/summary â€” Get spending summary (totals, trends)."""
     auth = validate_token(event)
@@ -18437,6 +18518,7 @@ def handle_get_invoices_summary(event):
     })
 
 
+@transaction_log('member-handler')
 def handle_get_invoices_services(event):
     """GET /members/invoices/services â€” Get distinct services for filter dropdown."""
     auth = validate_token(event)
@@ -18501,6 +18583,7 @@ def handle_get_invoices_services(event):
 # ============================================================
 
 
+@transaction_log('member-handler')
 def handle_invoice_list(event):
     """GET /members/invoices/list â€” Paginated invoice-level records for drill-down."""
     auth = validate_token(event)
@@ -18520,6 +18603,7 @@ def handle_invoice_list(event):
         return create_error_response(500, 'ServerError', f'Unexpected error: {type(e).__name__}: {str(e)}')
 
 
+@transaction_log('member-handler')
 def handle_service_breakdown(event):
     """GET /members/invoices/services-breakdown â€” Service-level breakdown for a period."""
     auth = validate_token(event)
@@ -18539,6 +18623,7 @@ def handle_service_breakdown(event):
         return create_error_response(500, 'ServerError', f'Unexpected error: {type(e).__name__}: {str(e)}')
 
 
+@transaction_log('member-handler')
 def handle_resource_breakdown(event):
     """GET /members/invoices/resources â€” Resource-level breakdown for a service+period."""
     auth = validate_token(event)
@@ -19050,6 +19135,7 @@ def _build_sql_comparison_matrix(workloads, pricing):
     return results
 
 
+@transaction_log('member-handler')
 def handle_sql_platform_compare(event):
     """POST /members/sql/compare â€” Compare SQL Server platform costs.
 
@@ -19575,6 +19661,7 @@ def _generate_sql_migration_plan(instance_id, source_platform, target_platform, 
     }
 
 
+@transaction_log('member-handler')
 def handle_sql_migration_plan(event):
     """POST /members/sql/migration-plan â€” Generate migration plan for SQL platform conversion.
 
@@ -19713,6 +19800,7 @@ def handle_sql_migration_plan(event):
 # RI Marketplace Browser
 # ============================================================
 
+@transaction_log('member-handler')
 def handle_ri_marketplace(event):
     """POST /members/committed-discounts/ri-marketplace — Browse RI Marketplace offerings.
 
@@ -19856,6 +19944,7 @@ def handle_ri_marketplace(event):
 # Terraform IaC Generation Handler
 # ============================================================
 
+@transaction_log('member-handler')
 def handle_terraform_generate(event):
     """POST /members/terraform/generate — unified Terraform generation endpoint.
 
@@ -20094,6 +20183,7 @@ def _terraform_file_response(content, filename, is_binary=False):
 # ============================================================
 
 
+@transaction_log('member-handler')
 def handle_cache_invalidate(event):
     """POST /members/cache/invalidate — Force refresh of cached cost data.
 

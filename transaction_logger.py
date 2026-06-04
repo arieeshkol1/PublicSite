@@ -1,0 +1,205 @@
+"""
+Transaction Logger Module — Shared decorator for audit transaction logging.
+
+Captures request/response data, timing, and metadata for every handler invocation
+in member-handler and admin-handler. Persists entries to the Audit_Transaction_Log
+DynamoDB table without affecting handler behavior.
+
+Usage:
+    from transaction_logger import transaction_log
+
+    @transaction_log('member-handler')
+    def handle_login(event):
+        ...
+"""
+
+import functools
+import uuid
+import time
+import json
+import copy
+import logging
+from datetime import datetime, timezone
+
+import boto3
+
+logger = logging.getLogger(__name__)
+
+# DynamoDB resource (initialized once per Lambda cold start)
+dynamodb = boto3.resource('dynamodb')
+TRANSACTION_LOG_TABLE_NAME = 'Audit_Transaction_Log'
+
+# Maximum payload size in bytes before truncation (100 KB)
+MAX_PAYLOAD_BYTES = 100 * 1024
+
+# Fields that must be stripped from request/response payloads at any nesting depth
+SENSITIVE_FIELDS = {
+    'password', 'token', 'jwt', 'secret', 'authorization',
+    'jwt_secret', 'password_hash', 'new_password', 'old_password'
+}
+
+
+def _sanitize(payload):
+    """Deep-copy payload and recursively remove keys matching SENSITIVE_FIELDS at any nesting depth."""
+    if not isinstance(payload, dict):
+        try:
+            sanitized = copy.deepcopy(payload)
+        except Exception:
+            sanitized = payload
+        return sanitized
+
+    result = {}
+    for key, value in payload.items():
+        if key.lower() in SENSITIVE_FIELDS:
+            continue
+        if isinstance(value, dict):
+            result[key] = _sanitize(value)
+        elif isinstance(value, list):
+            result[key] = [_sanitize(item) if isinstance(item, dict) else item for item in value]
+        else:
+            result[key] = value
+    return result
+
+
+def _extract_user_email(event):
+    """Extract email from JWT claims in headers or from request body. Defaults to 'unknown'."""
+    try:
+        # Try to get email from JWT token in Authorization header
+        headers = event.get('headers') or {}
+        auth_header = headers.get('authorization') or headers.get('Authorization') or ''
+
+        if auth_header.startswith('Bearer '):
+            token = auth_header[7:]
+            # Decode without verification — we only need to read claims, not validate
+            import jwt as pyjwt
+            try:
+                claims = pyjwt.decode(token, options={"verify_signature": False})
+                email = claims.get('sub') or claims.get('email') or ''
+                if email:
+                    return email
+            except Exception:
+                pass
+
+        # Try to get email from the request body
+        body_str = event.get('body') or ''
+        if body_str:
+            try:
+                body = json.loads(body_str) if isinstance(body_str, str) else body_str
+                email = body.get('email') or body.get('username') or ''
+                if email:
+                    return email
+            except (json.JSONDecodeError, AttributeError):
+                pass
+
+    except Exception:
+        pass
+
+    return 'unknown'
+
+
+def _extract_function_name(event):
+    """Extract function/route name from routeKey field of the event."""
+    try:
+        route_key = event.get('routeKey', '')
+        if route_key:
+            return route_key
+    except Exception:
+        pass
+    return 'unknown'
+
+
+def _truncate_payload(payload):
+    """If serialized payload exceeds MAX_PAYLOAD_BYTES, truncate and add _truncated flag."""
+    try:
+        serialized = json.dumps(payload, default=str)
+        if len(serialized.encode('utf-8')) > MAX_PAYLOAD_BYTES:
+            # Truncate the serialized string and parse back
+            truncated_str = serialized[:MAX_PAYLOAD_BYTES]
+            # Return a dict indicating truncation with partial data
+            return {'_truncated': True, '_partial_data': truncated_str[:MAX_PAYLOAD_BYTES]}
+    except (TypeError, ValueError):
+        return {'_truncated': True, '_error': 'payload_not_serializable'}
+    return payload
+
+
+def _persist_async(entry):
+    """Write entry to DynamoDB Audit_Transaction_Log table.
+
+    Swallows all exceptions and logs failures to CloudWatch so that
+    the original handler response is never affected.
+    """
+    try:
+        table = dynamodb.Table(TRANSACTION_LOG_TABLE_NAME)
+
+        # Truncate payloads if they exceed 100KB
+        entry['request_payload'] = _truncate_payload(entry.get('request_payload', {}))
+        entry['response_payload'] = _truncate_payload(entry.get('response_payload', {}))
+
+        # Convert payload dicts to JSON strings for DynamoDB storage
+        if isinstance(entry.get('request_payload'), dict):
+            entry['request_payload'] = json.dumps(entry['request_payload'], default=str)
+        if isinstance(entry.get('response_payload'), dict):
+            entry['response_payload'] = json.dumps(entry['response_payload'], default=str)
+
+        table.put_item(Item=entry)
+    except Exception as e:
+        logger.error(f"Failed to persist transaction log entry: {e}")
+
+
+def transaction_log(source_handler):
+    """Decorator factory for transaction logging.
+
+    Args:
+        source_handler: Identifier string ('member-handler' or 'admin-handler').
+
+    Returns:
+        A decorator that wraps handler functions to capture transaction data.
+    """
+    def decorator(handler_fn):
+        @functools.wraps(handler_fn)
+        def wrapper(event):
+            transaction_id = str(uuid.uuid4())
+            start_time = time.time()
+            start_iso = datetime.now(timezone.utc).isoformat()
+
+            user_email = _extract_user_email(event)
+            function_name = _extract_function_name(event)
+
+            try:
+                response = handler_fn(event)
+                status = 'success'
+            except Exception as e:
+                # Build an error response matching the handler pattern
+                response = {
+                    'statusCode': 500,
+                    'body': json.dumps({
+                        'error': 'ServerError',
+                        'message': str(e),
+                        'code': 500,
+                    }),
+                }
+                status = 'error'
+
+            end_time = time.time()
+            duration_ms = int((end_time - start_time) * 1000)
+
+            entry = {
+                'transaction_id': transaction_id,
+                'start_timestamp': start_iso,
+                'end_timestamp': datetime.now(timezone.utc).isoformat(),
+                'user_email': user_email,
+                'function_name': function_name,
+                'request_payload': _sanitize(event),
+                'response_payload': _sanitize(response) if isinstance(response, dict) else response,
+                'duration_ms': duration_ms,
+                'source_handler': source_handler,
+                'status': status,
+                'expiry_ttl': int(start_time) + (90 * 24 * 60 * 60),
+                'audit_status': 'pending',
+            }
+
+            _persist_async(entry)
+            return response
+
+        return wrapper
+    return decorator

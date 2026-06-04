@@ -13,9 +13,12 @@ import logging
 from decimal import Decimal
 
 import boto3
+from boto3.dynamodb.conditions import Key, Attr
 from botocore.exceptions import ClientError
 import jwt
 import bcrypt
+
+from transaction_logger import transaction_log
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -26,6 +29,7 @@ JWT_SECRET = os.environ.get('JWT_SECRET', '')
 LEADS_TABLE_NAME = os.environ.get('LEADS_TABLE_NAME', 'ViewMyBill-Leads')
 TIPS_TABLE_NAME = os.environ.get('TIPS_TABLE_NAME', 'ViewMyBill-CostOptimizationTips')
 FEEDBACK_TABLE_NAME = os.environ.get('FEEDBACK_TABLE_NAME', 'MemberPortal-AgentFeedback')
+TRANSACTION_LOG_TABLE_NAME = os.environ.get('TRANSACTION_LOG_TABLE_NAME', 'Audit_Transaction_Log')
 
 dynamodb = boto3.resource('dynamodb')
 s3_client = boto3.client('s3')
@@ -72,6 +76,8 @@ def lambda_handler(event, context):
         'GET /admin/tips-sync/status': handle_get_sync_status,
         'GET /admin/tips-sync/logs': handle_get_sync_logs,
         'POST /admin/tips-sync/trigger': handle_trigger_sync,
+        'GET /admin/transactions': handle_get_transactions,
+        'GET /admin/transactions/detail': handle_get_transaction_detail,
     }
 
     handler = routes.get(route_key)
@@ -81,6 +87,7 @@ def lambda_handler(event, context):
     return handler(event)
 
 
+@transaction_log('admin-handler')
 def handle_login(event):
     """Authenticate admin user and return JWT token."""
     try:
@@ -146,6 +153,7 @@ def validate_token(event):
         return create_error_response(401, 'AuthError', 'Invalid or expired token')
 
 
+@transaction_log('admin-handler')
 def handle_get_leads(event):
     """Return all leads from the Leads table, sorted by timestamp descending."""
     try:
@@ -159,6 +167,7 @@ def handle_get_leads(event):
         return create_error_response(500, 'ServerError', 'Failed to retrieve leads')
 
 
+@transaction_log('admin-handler')
 def handle_get_tips(event):
     """Return all tips from the Tips table, sorted by service then tipId.
     Excludes SYSTEM records (SYNC_LOCK, SYNC_METADATA, SYNC_LOG#*).
@@ -185,6 +194,7 @@ def handle_get_tips(event):
         return create_error_response(500, 'ServerError', 'Failed to retrieve tips')
 
 
+@transaction_log('admin-handler')
 def handle_get_feedback(event):
     """Return all feedback from the AgentFeedback table, sorted by createdAt descending."""
     try:
@@ -198,6 +208,7 @@ def handle_get_feedback(event):
         return create_error_response(500, 'ServerError', 'Failed to retrieve feedback')
 
 
+@transaction_log('admin-handler')
 def handle_update_lead(event):
     """Update an existing lead's editable fields."""
     try:
@@ -237,6 +248,7 @@ def handle_update_lead(event):
         return create_error_response(500, 'ServerError', 'Failed to update lead')
 
 
+@transaction_log('admin-handler')
 def handle_delete_lead(event):
     """Delete a lead from the Leads table."""
     try:
@@ -263,6 +275,7 @@ def handle_delete_lead(event):
         return create_error_response(500, 'ServerError', 'Failed to delete lead')
 
 
+@transaction_log('admin-handler')
 def handle_bulk_delete_leads(event):
     """Delete multiple leads from the Leads table."""
     try:
@@ -292,6 +305,7 @@ def handle_bulk_delete_leads(event):
     return create_response(200, {'message': f'{deleted} leads deleted, {failed} failed', 'deleted': deleted, 'failed': failed})
 
 
+@transaction_log('admin-handler')
 def handle_sync_billing(event):
     """Sync billing data from S3 result.json to the lead record in DynamoDB."""
     try:
@@ -337,6 +351,7 @@ def handle_sync_billing(event):
         return create_error_response(500, 'ServerError', f'Failed to sync: {str(e)}')
 
 
+@transaction_log('admin-handler')
 def handle_create_tip(event):
     """Create a new tip in the Tips table."""
     try:
@@ -369,6 +384,7 @@ def handle_create_tip(event):
         return create_error_response(500, 'ServerError', 'Failed to create tip')
 
 
+@transaction_log('admin-handler')
 def handle_update_tip(event):
     """Update an existing tip in the Tips table."""
     try:
@@ -396,6 +412,7 @@ def handle_update_tip(event):
         return create_error_response(500, 'ServerError', 'Failed to update tip')
 
 
+@transaction_log('admin-handler')
 def handle_delete_tip(event):
     """Delete a tip from the Tips table."""
     try:
@@ -423,6 +440,7 @@ def handle_delete_tip(event):
         return create_error_response(500, 'ServerError', 'Failed to delete tip')
 
 
+@transaction_log('admin-handler')
 def handle_get_subscribers(event):
     """Return all subscribers from the Members table, sorted by createdAt descending."""
     try:
@@ -455,6 +473,7 @@ def handle_get_subscribers(event):
         return create_error_response(500, 'ServerError', 'Failed to retrieve subscribers')
 
 
+@transaction_log('admin-handler')
 def handle_update_subscriber_tier(event):
     """Update a subscriber's tier in the Members table."""
     try:
@@ -492,6 +511,7 @@ def handle_update_subscriber_tier(event):
         return create_error_response(500, 'ServerError', 'Failed to update subscriber tier')
 
 
+@transaction_log('admin-handler')
 def handle_add_subscriber_tokens(event):
     """Atomically add bonus tokens to a subscriber in the Members table."""
     try:
@@ -540,6 +560,7 @@ def handle_add_subscriber_tokens(event):
         return create_error_response(500, 'ServerError', 'Failed to add tokens')
 
 
+@transaction_log('admin-handler')
 def handle_get_schedules(event):
     """Return all schedules across all members with aggregated stats."""
     try:
@@ -609,6 +630,7 @@ def handle_get_schedules(event):
         return create_error_response(500, 'ServerError', 'Failed to retrieve schedules')
 
 
+@transaction_log('admin-handler')
 def handle_get_sync_status(event):
     """Return the current SYNC_METADATA record."""
     try:
@@ -625,10 +647,10 @@ def handle_get_sync_status(event):
         return create_error_response(500, 'ServerError', f'Failed to retrieve sync status: {str(e)}')
 
 
+@transaction_log('admin-handler')
 def handle_get_sync_logs(event):
     """Return sync log history and current metadata."""
     try:
-        from boto3.dynamodb.conditions import Key
         table = dynamodb.Table(TIPS_TABLE_NAME)
         response = table.query(
             KeyConditionExpression=Key('service').eq('SYSTEM') & Key('tipId').begins_with('SYNC_LOG#'),
@@ -650,6 +672,7 @@ def handle_get_sync_logs(event):
         return create_error_response(500, 'ServerError', f'Failed to retrieve sync logs: {str(e)}')
 
 
+@transaction_log('admin-handler')
 def handle_trigger_sync(event):
     """Invoke the tips-sync Lambda asynchronously."""
     try:
@@ -663,6 +686,237 @@ def handle_trigger_sync(event):
     except Exception as e:
         logger.error(f"Failed to trigger sync: {e}")
         return create_error_response(500, 'ServerError', f'Failed to trigger sync: {str(e)}')
+
+
+# ============================================================
+# Transaction Log Routes (NOT decorated to avoid recursive logging)
+# ============================================================
+
+def handle_get_transactions(event):
+    """Return paginated, filterable transaction log entries. NOT decorated with @transaction_log to avoid recursive logging."""
+    # Validate JWT
+    auth_result = validate_token(event)
+    if isinstance(auth_result, dict) and 'statusCode' in auth_result:
+        return auth_result
+
+    # Parse query parameters
+    params = event.get('queryStringParameters', {}) or {}
+    try:
+        page = max(1, int(params.get('page', '1')))
+    except (ValueError, TypeError):
+        page = 1
+    try:
+        page_size = min(100, max(1, int(params.get('page_size', '50'))))
+    except (ValueError, TypeError):
+        page_size = 50
+
+    user_email = params.get('user_email', '').strip()
+    function_name = params.get('function_name', '').strip()
+    status_filter = params.get('status', '').strip()
+    score_min = params.get('score_min', '').strip()
+    score_max = params.get('score_max', '').strip()
+    date_from = params.get('date_from', '').strip()
+    date_to = params.get('date_to', '').strip()
+    search = params.get('search', '').strip().lower()
+
+    try:
+        table = dynamodb.Table(TRANSACTION_LOG_TABLE_NAME)
+
+        # Choose query strategy based on filters
+        if user_email:
+            # Query user-email-index GSI
+            query_kwargs = {
+                'IndexName': 'user-email-index',
+                'KeyConditionExpression': Key('user_email').eq(user_email),
+                'ScanIndexForward': False,
+            }
+            # Add date range to key condition if provided
+            if date_from and date_to:
+                query_kwargs['KeyConditionExpression'] = (
+                    Key('user_email').eq(user_email) &
+                    Key('start_timestamp').between(date_from, date_to)
+                )
+            elif date_from:
+                query_kwargs['KeyConditionExpression'] = (
+                    Key('user_email').eq(user_email) &
+                    Key('start_timestamp').gte(date_from)
+                )
+            elif date_to:
+                query_kwargs['KeyConditionExpression'] = (
+                    Key('user_email').eq(user_email) &
+                    Key('start_timestamp').lte(date_to)
+                )
+
+            items = _query_all_pages(table, query_kwargs)
+
+        elif function_name:
+            # Query function-name-index GSI
+            query_kwargs = {
+                'IndexName': 'function-name-index',
+                'KeyConditionExpression': Key('function_name').eq(function_name),
+                'ScanIndexForward': False,
+            }
+            # Add date range to key condition if provided
+            if date_from and date_to:
+                query_kwargs['KeyConditionExpression'] = (
+                    Key('function_name').eq(function_name) &
+                    Key('start_timestamp').between(date_from, date_to)
+                )
+            elif date_from:
+                query_kwargs['KeyConditionExpression'] = (
+                    Key('function_name').eq(function_name) &
+                    Key('start_timestamp').gte(date_from)
+                )
+            elif date_to:
+                query_kwargs['KeyConditionExpression'] = (
+                    Key('function_name').eq(function_name) &
+                    Key('start_timestamp').lte(date_to)
+                )
+
+            items = _query_all_pages(table, query_kwargs)
+
+        else:
+            # Full table scan
+            items = _scan_all_pages(table)
+
+        # Apply server-side filtering
+        filtered = _apply_filters(items, status_filter, score_min, score_max, date_from, date_to, search, user_email, function_name)
+
+        # Sort by start_timestamp descending
+        filtered.sort(key=lambda x: x.get('start_timestamp', ''), reverse=True)
+
+        # Paginate
+        total_count = len(filtered)
+        total_pages = max(1, (total_count + page_size - 1) // page_size)
+        start_idx = (page - 1) * page_size
+        end_idx = start_idx + page_size
+        page_items = filtered[start_idx:end_idx]
+
+        # Convert Decimals for JSON serialization
+        transactions = _decimal_to_native(page_items)
+
+        return create_response(200, {
+            'transactions': transactions,
+            'pagination': {
+                'total_count': total_count,
+                'page': page,
+                'page_size': page_size,
+                'total_pages': total_pages,
+            }
+        })
+
+    except ClientError as e:
+        logger.error(f"DynamoDB error querying transactions: {e}")
+        return create_error_response(500, 'ServerError', 'Failed to retrieve transactions')
+
+
+def _query_all_pages(table, query_kwargs):
+    """Execute a DynamoDB query and handle pagination."""
+    items = []
+    response = table.query(**query_kwargs)
+    items.extend(response.get('Items', []))
+    while 'LastEvaluatedKey' in response:
+        query_kwargs['ExclusiveStartKey'] = response['LastEvaluatedKey']
+        response = table.query(**query_kwargs)
+        items.extend(response.get('Items', []))
+    return items
+
+
+def _scan_all_pages(table):
+    """Execute a DynamoDB scan and handle pagination."""
+    items = []
+    response = table.scan()
+    items.extend(response.get('Items', []))
+    while 'LastEvaluatedKey' in response:
+        response = table.scan(ExclusiveStartKey=response['LastEvaluatedKey'])
+        items.extend(response.get('Items', []))
+    return items
+
+
+def _apply_filters(items, status_filter, score_min, score_max, date_from, date_to, search, user_email_used, function_name_used):
+    """Apply server-side filtering for status, score range, date range, and text search."""
+    filtered = []
+
+    # Parse score range
+    score_min_val = None
+    score_max_val = None
+    if score_min:
+        try:
+            score_min_val = int(score_min)
+        except (ValueError, TypeError):
+            pass
+    if score_max:
+        try:
+            score_max_val = int(score_max)
+        except (ValueError, TypeError):
+            pass
+
+    for item in items:
+        # Status filter
+        if status_filter and item.get('status', '') != status_filter:
+            continue
+
+        # Score range filter
+        item_score = item.get('audit_score')
+        if score_min_val is not None:
+            if item_score is None or int(item_score) < score_min_val:
+                continue
+        if score_max_val is not None:
+            if item_score is None or int(item_score) > score_max_val:
+                continue
+
+        # Date range filter (only if not already applied via key condition)
+        if not user_email_used and not function_name_used:
+            item_timestamp = item.get('start_timestamp', '')
+            if date_from and item_timestamp < date_from:
+                continue
+            if date_to and item_timestamp > date_to:
+                continue
+
+        # Text search filter
+        if search:
+            searchable = ' '.join([
+                str(item.get('user_email', '')),
+                str(item.get('function_name', '')),
+                json.dumps(item.get('request_payload', {})) if isinstance(item.get('request_payload'), dict) else str(item.get('request_payload', '')),
+            ]).lower()
+            if search not in searchable:
+                continue
+
+        filtered.append(item)
+
+    return filtered
+
+
+def handle_get_transaction_detail(event):
+    """Return a single transaction log entry with full payloads and audit evaluation."""
+    auth = validate_token(event)
+    if isinstance(auth, dict) and auth.get('statusCode'):
+        return auth
+
+    params = event.get('queryStringParameters', {}) or {}
+    transaction_id = params.get('transaction_id', '').strip()
+    start_timestamp = params.get('start_timestamp', '').strip()
+
+    if not transaction_id or not start_timestamp:
+        return create_error_response(400, 'InvalidRequest', 'Query parameters "transaction_id" and "start_timestamp" are required')
+
+    try:
+        table = dynamodb.Table(TRANSACTION_LOG_TABLE_NAME)
+        response = table.get_item(
+            Key={
+                'transaction_id': transaction_id,
+                'start_timestamp': start_timestamp,
+            }
+        )
+        item = response.get('Item')
+        if not item:
+            return create_error_response(404, 'NotFound', 'Transaction not found')
+
+        return create_response(200, {'transaction': _decimal_to_native(item)})
+    except ClientError as e:
+        logger.error(f"DynamoDB error getting transaction detail: {e}")
+        return create_error_response(500, 'ServerError', 'Failed to retrieve transaction detail')
 
 
 # ============================================================
