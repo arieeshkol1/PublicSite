@@ -807,6 +807,18 @@ def handle_get_transactions(event):
         # Sort by start_timestamp descending
         filtered.sort(key=lambda x: x.get('start_timestamp', ''), reverse=True)
 
+        # Deduplicate by transaction_id (same API Gateway request logged by multiple Lambdas)
+        seen_ids = set()
+        deduped = []
+        for item in filtered:
+            tid = item.get('transaction_id', '')
+            if tid and tid in seen_ids:
+                continue
+            if tid:
+                seen_ids.add(tid)
+            deduped.append(item)
+        filtered = deduped
+
         # Paginate
         total_count = len(filtered)
         total_pages = max(1, (total_count + page_size - 1) // page_size)
