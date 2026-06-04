@@ -169,14 +169,21 @@ def handle_get_leads(event):
 
 @transaction_log('admin-handler')
 def handle_get_tips(event):
-    """Return all tips from the Tips table, sorted by service then tipId.
+    """Return tips from the Tips table, sorted by service then tipId.
+    Supports optional pagination via query params: limit, offset, cloud, service.
     Excludes SYSTEM records (SYNC_LOCK, SYNC_METADATA, SYNC_LOG#*).
     Backfills cloud='AWS' for tips missing the field."""
     try:
+        params = event.get('queryStringParameters') or {}
+        limit = int(params.get('limit', '0'))  # 0 = return all (backward compat)
+        offset = int(params.get('offset', '0'))
+        cloud_filter = params.get('cloud', '').upper()
+        service_filter = params.get('service', '').lower()
+
         table = dynamodb.Table(TIPS_TABLE_NAME)
         response = table.scan()
         items = response.get('Items', [])
-        # Handle pagination
+        # Handle DynamoDB pagination
         while 'LastEvaluatedKey' in response:
             response = table.scan(ExclusiveStartKey=response['LastEvaluatedKey'])
             items.extend(response.get('Items', []))
@@ -186,9 +193,26 @@ def handle_get_tips(event):
         for t in tips:
             if not t.get('cloud'):
                 t['cloud'] = 'AWS'
+        # Apply optional filters
+        if cloud_filter:
+            tips = [t for t in tips if (t.get('cloud') or '').upper() == cloud_filter]
+        if service_filter:
+            tips = [t for t in tips if (t.get('service') or '').lower() == service_filter]
+
         tips = _decimal_to_native(tips)
         tips.sort(key=lambda x: (x.get('service', ''), x.get('tipId', '')))
-        return create_response(200, {'tips': tips})
+
+        total = len(tips)
+        # Apply pagination if limit is specified
+        if limit > 0:
+            tips = tips[offset:offset + limit]
+
+        return create_response(200, {
+            'tips': tips,
+            'total': total,
+            'offset': offset,
+            'limit': limit if limit > 0 else total,
+        })
     except ClientError as e:
         logger.error(f"DynamoDB error scanning tips: {e}")
         return create_error_response(500, 'ServerError', 'Failed to retrieve tips')

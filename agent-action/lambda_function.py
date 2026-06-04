@@ -4,7 +4,6 @@ Called by the Bedrock Agent to execute AWS API calls on member accounts.
 """
 
 import json
-import os
 import hashlib
 import logging
 from datetime import datetime, timedelta, timezone
@@ -16,9 +15,11 @@ from botocore.exceptions import ClientError
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-PLATFORM_ACCOUNT_ID = os.environ.get('PLATFORM_ACCOUNT_ID', '991105135552')
-TIPS_TABLE_NAME = os.environ.get('TIPS_TABLE_NAME', 'ViewMyBill-CostOptimizationTips')
-COST_CACHE_TABLE_NAME = os.environ.get('COST_CACHE_TABLE_NAME', 'Cost_Cache_Table')
+# Hardcoded constants — no environment variables needed.
+# This avoids KMS decryption issues when Lambda has a customer-managed KMS key.
+PLATFORM_ACCOUNT_ID = '991105135552'
+TIPS_TABLE_NAME = 'ViewMyBill-CostOptimizationTips'
+COST_CACHE_TABLE_NAME = 'Cost_Cache_Table'
 
 dynamodb = boto3.resource('dynamodb')
 
@@ -228,36 +229,12 @@ def _get_cost_data_direct(account_id, member_email):
 
 
 def _detect_active_regions(creds):
-    """Detect active regions from Cost Explorer usage type prefixes. Fast — single API call."""
-    # Region prefixes in Cost Explorer usage types (e.g., EUC1- = eu-central-1, USE1- = us-east-1)
-    PREFIX_TO_REGION = {
-        'USE1': 'us-east-1', 'USE2': 'us-east-2', 'USW1': 'us-west-1', 'USW2': 'us-west-2',
-        'EUC1': 'eu-central-1', 'EUW1': 'eu-west-1', 'EUW2': 'eu-west-2', 'EUW3': 'eu-west-3',
-        'APS1': 'ap-southeast-1', 'APS2': 'ap-southeast-2', 'APN1': 'ap-northeast-1',
-        'SAE1': 'sa-east-1', 'CAN1': 'ca-central-1', 'MES1': 'me-south-1', 'MEC1': 'me-central-1',
-    }
-    try:
-        ce = _make_client('ce', creds)
-        now = datetime.now(timezone.utc)
-        start = (now.replace(day=1) - timedelta(days=1)).replace(day=1).strftime('%Y-%m-%d')
-        end = now.replace(day=1).strftime('%Y-%m-%d')
-        resp = ce.get_cost_and_usage(
-            TimePeriod={'Start': start, 'End': end},
-            Granularity='MONTHLY', Metrics=['UnblendedCost'],
-            GroupBy=[{'Type': 'DIMENSION', 'Key': 'USAGE_TYPE'}],
-        )
-        regions = set()
-        for period in resp.get('ResultsByTime', []):
-            for group in period.get('Groups', []):
-                usage_type = group['Keys'][0]
-                prefix = usage_type.split('-')[0] if '-' in usage_type else ''
-                if prefix in PREFIX_TO_REGION:
-                    regions.add(PREFIX_TO_REGION[prefix])
-        if not regions:
-            regions = {'us-east-1'}
-        return list(regions)[:5]  # Cap at 5 active regions
-    except Exception:
-        return ['us-east-1', 'eu-central-1']
+    """Return likely active regions. Skips slow CE API — uses hardcoded common regions.
+    The EC2/RDS/EBS functions will skip regions that return empty results anyway.
+    """
+    # Most AWS accounts use 1-2 regions. Check the most common ones.
+    # This avoids the 3-8 second Cost Explorer API call entirely.
+    return ['eu-central-1', 'us-east-1']
 
 
 def _get_ec2_instances(account_id, member_email):
@@ -318,7 +295,7 @@ def _get_aws_pricing(service_code, filters_str='', region='us-east-1'):
     filters_str: comma-separated key=value pairs, e.g. "instanceType=m5.large,operatingSystem=Linux"
     """
     try:
-        pricing = boto3.client('pricing', region_name=os.environ.get('PRICING_REGION', 'us-east-1'))
+        pricing = boto3.client('pricing', region_name='us-east-1')
 
         if not service_code:
             # Return available service codes if none specified

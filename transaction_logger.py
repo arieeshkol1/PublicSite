@@ -29,8 +29,8 @@ logger = logging.getLogger(__name__)
 dynamodb = boto3.resource('dynamodb', region_name='us-east-1')
 TRANSACTION_LOG_TABLE_NAME = 'Audit_Transaction_Log'
 
-# Maximum payload size in bytes before truncation (100 KB)
-MAX_PAYLOAD_BYTES = 100 * 1024
+# Maximum payload size in bytes before truncation (10 KB for audit — keeps DynamoDB items small)
+MAX_PAYLOAD_BYTES = 10 * 1024
 
 # Fields that must be stripped from request/response payloads at any nesting depth
 SENSITIVE_FIELDS = {
@@ -109,14 +109,18 @@ def _extract_function_name(event):
 
 
 def _truncate_payload(payload):
-    """If serialized payload exceeds MAX_PAYLOAD_BYTES, truncate and add _truncated flag."""
+    """If serialized payload exceeds MAX_PAYLOAD_BYTES, truncate and add metadata."""
     try:
         serialized = json.dumps(payload, default=str)
-        if len(serialized.encode('utf-8')) > MAX_PAYLOAD_BYTES:
-            # Truncate the serialized string and parse back
+        byte_size = len(serialized.encode('utf-8'))
+        if byte_size > MAX_PAYLOAD_BYTES:
+            # Include first portion of data plus metadata about full size
             truncated_str = serialized[:MAX_PAYLOAD_BYTES]
-            # Return a dict indicating truncation with partial data
-            return {'_truncated': True, '_partial_data': truncated_str[:MAX_PAYLOAD_BYTES]}
+            return {
+                '_truncated': True,
+                '_original_size_bytes': byte_size,
+                '_partial_data': truncated_str
+            }
     except (TypeError, ValueError):
         return {'_truncated': True, '_error': 'payload_not_serializable'}
     return payload

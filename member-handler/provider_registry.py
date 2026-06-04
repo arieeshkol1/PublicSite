@@ -12,16 +12,24 @@ _cache: dict = {}  # {provider_id: {category: config_map}}
 
 
 def _load_provider(provider_id: str) -> None:
-    """Query all config categories for a provider and populate cache."""
-    dynamodb = boto3.resource('dynamodb')
-    table = dynamodb.Table(_TABLE_NAME)
-    response = table.query(
-        KeyConditionExpression=Key('providerId').eq(provider_id)
-    )
-    _cache[provider_id] = {
-        item['configCategory']: item['config']
-        for item in response.get('Items', [])
-    }
+    """Query all config categories for a provider and populate cache.
+
+    On any DynamoDB error (AccessDenied, table not found, etc.),
+    caches an empty dict so callers get {} and can use fallback logic.
+    """
+    try:
+        dynamodb = boto3.resource('dynamodb')
+        table = dynamodb.Table(_TABLE_NAME)
+        response = table.query(
+            KeyConditionExpression=Key('providerId').eq(provider_id)
+        )
+        _cache[provider_id] = {
+            item['configCategory']: item['config']
+            for item in response.get('Items', [])
+        }
+    except Exception:
+        # Cache empty dict so fallback logic in consumers kicks in
+        _cache[provider_id] = {}
 
 
 def get_config(provider_id: str, category: str) -> dict:

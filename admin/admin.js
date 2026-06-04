@@ -587,6 +587,9 @@ if($('txn-modal-close'))$('txn-modal-close').addEventListener('click',function()
 if($('txn-modal-close-btn'))$('txn-modal-close-btn').addEventListener('click',function(){txnDetailModal.hidden=true;});
 if(txnDetailModal)txnDetailModal.addEventListener('click',function(e){if(e.target===txnDetailModal)txnDetailModal.hidden=true;});
 
+// Refresh button for Transactions tab — reloads without switching tabs
+if($('txn-refresh-btn'))$('txn-refresh-btn').addEventListener('click',function(){collectTxnFilters();loadTransactions(txnPage,txnFilters);});
+
 // Tab activation — update switchTab to include transactions
 (function(){
     var origSwitch=switchTab;
