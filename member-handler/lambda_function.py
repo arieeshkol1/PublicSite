@@ -3059,11 +3059,15 @@ def _build_daily_service_breakdown(cache_items, tag_key=None, tag_value=None):
                 daily_services[date_str][svc_name] = daily_services[date_str].get(svc_name, 0.0) + svc_cost
 
     # Build output sorted by date ascending, excluding today/yesterday (incomplete data ~48h finalization)
+    # Limit to last 30 days to match the Cost Trend chart timeframe
     today_str = datetime.now(timezone.utc).strftime('%Y-%m-%d')
     yesterday_str = (datetime.now(timezone.utc) - timedelta(days=1)).strftime('%Y-%m-%d')
+    cutoff_30d = (datetime.now(timezone.utc) - timedelta(days=30)).strftime('%Y-%m-%d')
     result = []
     for date_str in sorted(daily_services.keys()):
         if date_str == today_str or date_str == yesterday_str:
+            continue
+        if date_str < cutoff_30d:
             continue
         result.append({
             'date': date_str,
