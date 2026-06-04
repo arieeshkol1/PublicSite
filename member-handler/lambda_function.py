@@ -15,6 +15,7 @@ import math
 import secrets
 import hashlib
 import logging
+import traceback
 import concurrent.futures
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -24,11 +25,32 @@ from botocore.exceptions import ClientError
 import jwt
 import bcrypt
 import yaml
-import provider_registry
-from cost_cache import _get_cost_data_cached
-from intent_classifier import _classify_intent, get_apis_for_intent
-from provider_router import _route_to_connector
-from parallel_executor import _gather_multi_account_parallel
+
+try:
+    import provider_registry
+except ImportError:
+    provider_registry = None
+
+try:
+    from cost_cache import _get_cost_data_cached
+except ImportError:
+    _get_cost_data_cached = None
+
+try:
+    from intent_classifier import _classify_intent, get_apis_for_intent
+except ImportError:
+    _classify_intent = None
+    get_apis_for_intent = None
+
+try:
+    from provider_router import _route_to_connector
+except ImportError:
+    _route_to_connector = None
+
+try:
+    from parallel_executor import _gather_multi_account_parallel
+except ImportError:
+    _gather_multi_account_parallel = None
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -502,8 +524,15 @@ def handle_login(event):
         except cognito_client.exceptions.UserNotConfirmedException:
             return create_error_response(401, "AuthError", "Please verify your email before logging in")
         except ClientError as e:
-            logger.error(f"Cognito login error: {e}")
-            return create_error_response(500, "ServerError", "An unexpected error occurred.")
+            error_code = e.response.get('Error', {}).get('Code', '')
+            if error_code == 'InvalidParameterException':
+                logger.error(f"Cognito auth flow misconfiguration: {e}\n{traceback.format_exc()}")
+                return create_error_response(500, "AuthConfigError", "Authentication service misconfigured. Please contact support.")
+            logger.error(f"Cognito login error: {e}\n{traceback.format_exc()}")
+            return create_error_response(500, "ServerError", "An unexpected error occurred. Reference: cognito_client_error")
+        except Exception as e:
+            logger.error(f"Unexpected login error: {type(e).__name__}: {e}\n{traceback.format_exc()}")
+            return create_error_response(500, "ServerError", "An unexpected error occurred. Reference: unhandled_exception")
 
     # â”€â”€ Legacy DynamoDB login (fallback during migration) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     members_table = dynamodb.Table(MEMBERS_TABLE_NAME)
@@ -1377,8 +1406,8 @@ def handle_generate_template(event):
     # Default: CloudFormation YAML (format="cloudformation" or unspecified)
 
     # Load connection-setup and auth config from Provider Registry (with fallback)
-    conn_config = provider_registry.get_config('aws', 'connection-setup')
-    auth_config = provider_registry.get_config('aws', 'auth')
+    conn_config = provider_registry.get_config('aws', 'connection-setup') if provider_registry else None
+    auth_config = provider_registry.get_config('aws', 'auth') if provider_registry else None
 
     # Use registry values or fall back to hardcoded defaults
     role_name_pattern = conn_config.get('role_name_pattern', 'SlashMyBill-{accountId}') if conn_config else 'SlashMyBill-{accountId}'
@@ -5404,7 +5433,7 @@ def _validate_account_id(account_id):
 
     Returns None if valid, or an error response dict if invalid.
     """
-    validation_config = provider_registry.get_config('aws', 'validation')
+    validation_config = provider_registry.get_config('aws', 'validation') if provider_registry else None
     if validation_config:
         pattern = validation_config.get('account_id_regex', r'^\d{12}$')
         error_msg = validation_config.get('error_messages', {}).get(
@@ -8206,7 +8235,7 @@ DAILY COST ANOMALY DETECTION:
 
 TIP CITATION ENFORCEMENT:
 - When tips are provided in the RELEVANT OPTIMIZATION TIPS section below, you MUST cite at least one tip. This is mandatory, not optional.
-- Format: "������ Tip: [tip title] — [how it applies to this account's data]"
+- Format: "������ Tip: [tip title] — [how it applies to this account's data]"
 - Place tip citations inline where they are most relevant to the analysis.
 - If no tips section is provided, skip citations entirely.
 
@@ -8758,7 +8787,7 @@ def _gather_account_data(question, credentials, tag_key=None, tag_value=None, me
         # filter is active, attempt to read from Cost_Cache_Table first.
         _cache_used_for_cost = False
         service_costs = []  # Initialize for later reference by usage-breakdown logic
-        if member_email and account_id and not (tag_key and tag_value):
+        if member_email and account_id and not (tag_key and tag_value) and _get_cost_data_cached:
             try:
                 cached_costs, from_cache = _get_cost_data_cached(
                     member_email, account_id, credentials, start_30d, end_date
@@ -10024,7 +10053,7 @@ DAILY COST ANOMALY DETECTION:
 
 TIP CITATION ENFORCEMENT:
 - When tips are provided in the RELEVANT OPTIMIZATION TIPS section below, you MUST cite at least one tip. This is mandatory, not optional.
-- Format: "������ Tip: [tip title] — [how it applies to this account's data]"
+- Format: "������ Tip: [tip title] — [how it applies to this account's data]"
 - Place tip citations inline where they are most relevant to the analysis.
 - If no tips section is provided, skip citations entirely.
 
@@ -10288,6 +10317,8 @@ def handle_get_provider_config(event):
         return auth
 
     try:
+        if not provider_registry:
+            return create_error_response(503, "ServiceUnavailable", "Provider registry not available")
         all_config = provider_registry.get_all_categories('aws')
         response_config = {
             category: all_config[category]
