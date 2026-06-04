@@ -14569,14 +14569,25 @@ def handle_healthcheck_scan(event):
     if type_note:
         result['accountTypeNote'] = type_note
 
-    # Store in DynamoDB
+    # Store in DynamoDB (convert floats to Decimal — DynamoDB rejects Python float)
     try:
+        from decimal import Decimal as _Dec
+        def _floats_to_decimal(obj):
+            if isinstance(obj, float):
+                return _Dec(str(obj))
+            elif isinstance(obj, dict):
+                return {k: _floats_to_decimal(v) for k, v in obj.items()}
+            elif isinstance(obj, list):
+                return [_floats_to_decimal(i) for i in obj]
+            return obj
+
+        result_ddb = _floats_to_decimal(result)
         members_table = dynamodb.Table(MEMBERS_TABLE_NAME)
         members_table.update_item(
             Key={'email': member_email},
             UpdateExpression='SET healthcheckResults.#aid = :result',
             ExpressionAttributeNames={'#aid': account_id},
-            ExpressionAttributeValues={':result': result},
+            ExpressionAttributeValues={':result': result_ddb},
         )
     except ClientError:
         # If healthcheckResults map doesn't exist yet, create it
@@ -14585,7 +14596,7 @@ def handle_healthcheck_scan(event):
             members_table.update_item(
                 Key={'email': member_email},
                 UpdateExpression='SET healthcheckResults = :results',
-                ExpressionAttributeValues={':results': {account_id: result}},
+                ExpressionAttributeValues={':results': {account_id: result_ddb}},
                 ConditionExpression='attribute_not_exists(healthcheckResults)',
             )
         except ClientError:
@@ -14594,7 +14605,7 @@ def handle_healthcheck_scan(event):
                     Key={'email': member_email},
                     UpdateExpression='SET healthcheckResults.#aid = :result',
                     ExpressionAttributeNames={'#aid': account_id},
-                    ExpressionAttributeValues={':result': result},
+                    ExpressionAttributeValues={':result': result_ddb},
                 )
             except Exception as e:
                 logger.error(f'Failed to store healthcheck results: {e}')
