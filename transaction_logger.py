@@ -177,7 +177,21 @@ def transaction_log(source_handler):
             request_id = (event.get('requestContext') or {}).get('requestId', '')
             transaction_id = request_id if request_id else str(uuid.uuid4())
             start_time = time.time()
-            start_iso = datetime.now(timezone.utc).isoformat()
+            # Use API Gateway request time for deterministic sort key (prevents duplicates
+            # when both member-handler and admin-handler process the same request).
+            # Format from API GW: "04/Jun/2026:18:15:08 +0000"
+            apigw_time = (event.get('requestContext') or {}).get('time', '')
+            if apigw_time:
+                try:
+                    from email.utils import parsedate_to_datetime
+                    # API Gateway format: DD/Mon/YYYY:HH:MM:SS +0000
+                    # Convert to ISO format for consistent storage
+                    parsed = datetime.strptime(apigw_time, '%d/%b/%Y:%H:%M:%S %z')
+                    start_iso = parsed.isoformat()
+                except (ValueError, TypeError):
+                    start_iso = datetime.now(timezone.utc).isoformat()
+            else:
+                start_iso = datetime.now(timezone.utc).isoformat()
 
             user_email = _extract_user_email(event)
             function_name = _extract_function_name(event)

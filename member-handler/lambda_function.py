@@ -2820,6 +2820,30 @@ def handle_dashboard_data(event):
     mom_potential_savings = round(mom_delta, 2) if mom_delta > 0 else 0
     # Combine waste-based savings with MoM-based savings (use the larger of the two)
     combined_savings = max(total_savings, mom_potential_savings)
+
+    # Commitment gap savings: if user has no Savings Plans or RIs and has meaningful
+    # spend on SP-eligible services (EC2, Lambda, Fargate), estimate 25% savings potential
+    commitment_gap_savings = 0
+    try:
+        sp_eligible_services = {
+            'Amazon Elastic Compute Cloud - Compute', 'AWS Lambda',
+            'Amazon Elastic Container Service', 'Amazon EC2 Container Service',
+            'Amazon SageMaker', 'AWS Fargate',
+        }
+        eligible_spend = sum(
+            c for s, c in merged_costs.items()
+            if any(elig.lower() in s.lower() for elig in sp_eligible_services)
+        )
+        # Only suggest commitment savings if spend > $10/month and no existing SPs/RIs
+        # (We don't have commitments data yet here, so check later and patch)
+        if eligible_spend > 10:
+            # Conservative 25% estimate (AWS typically claims 20-40% savings with SPs)
+            commitment_gap_savings = round(eligible_spend * 0.25, 2)
+    except Exception:
+        pass
+
+    # Final combined savings = max of (waste, MoM increase, commitment gap)
+    combined_savings = max(combined_savings, commitment_gap_savings)
     eff_score = round((1 - combined_savings / total_spend) * 100, 1) if total_spend > 0 else 100
 
     # Daily trend with anomaly detection
@@ -2863,6 +2887,20 @@ def handle_dashboard_data(event):
     if hourly_service_requested and first_account_creds:
         hourly_service_breakdown = _fetch_hourly_service_breakdown(first_account_creds, tag_key, tag_value)
 
+    # Fetch commitments data early so we can use it for savings gap calculation
+    commitments_data = _get_commitments_data(accounts, external_id)
+
+    # If user already has Savings Plans or RIs, don't add commitment gap savings
+    # (they're already committed, so the "gap" doesn't apply)
+    if commitments_data.get('totalSP', 0) > 0 or commitments_data.get('totalEC2RI', 0) > 0 or commitments_data.get('totalRDSRI', 0) > 0:
+        commitment_gap_savings = 0
+        combined_savings = max(total_savings, mom_potential_savings)
+        eff_score = round((1 - combined_savings / total_spend) * 100, 1) if total_spend > 0 else 100
+
+    # Add commitment gap to savings breakdown for transparency
+    if commitment_gap_savings > 0:
+        savings_breakdown['commitment_gap'] = commitment_gap_savings
+
     return create_response(200, {
         'summary': {
             'totalSpend': total_spend,
@@ -2900,7 +2938,7 @@ def handle_dashboard_data(event):
              for r, c in merged_regional.items() if c > 0.01],
             key=lambda x: x['cost'], reverse=True
         ),
-        'commitments': _get_commitments_data(accounts, external_id),
+        'commitments': commitments_data,
         'costByTag': _get_cost_by_tag(accounts, external_id),
         'dailyServiceBreakdown': _build_daily_service_breakdown(all_cache_items, tag_key, tag_value),
         'hourlyServiceBreakdown': hourly_service_breakdown,
