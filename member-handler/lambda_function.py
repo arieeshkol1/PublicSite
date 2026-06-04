@@ -7699,6 +7699,16 @@ def handle_ai_query(event):
         if len(account_ids) > 1:
             return _invoke_multi_account(ai_question, account_ids, member_email, interaction_id)
         elif BEDROCK_AGENT_ID and BEDROCK_AGENT_ALIAS_ID:
+            # Force direct model path for cost-breakdown questions — the agent
+            # doesn't have usage-type breakdown tools, but direct model does
+            _q = question.lower()
+            _needs_breakdown = any(kw in _q for kw in [
+                'breakdown', 'usage type', 'ec2-other', 'ec2 other', 'vpc cost',
+                'what makes up', 'sub-cost', 'drill down', 'drilldown',
+                'usage breakdown', 'cost breakdown', 'list my',
+            ])
+            if _needs_breakdown:
+                return _invoke_direct_model(ai_question, account_ids[0], member_email, interaction_id)
             return _invoke_bedrock_agent(ai_question, account_ids[0], member_email, interaction_id)
         else:
             return _invoke_direct_model(ai_question, account_ids[0], member_email, interaction_id)
