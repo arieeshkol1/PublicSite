@@ -11014,6 +11014,106 @@ function _renderRICoverageWidget(container) {
     container.innerHTML = html;
 }
 
+function _renderFinOpsScoreWidget(container) {
+    if (!container) container = document.getElementById('dash-finops-score');
+    if (!container) return;
+
+    var hcResults = (typeof dashDataCache !== 'undefined' && dashDataCache && dashDataCache.healthcheckResults) || {};
+    var accountIds = Object.keys(hcResults);
+    var summary = (typeof dashDataCache !== 'undefined' && dashDataCache && dashDataCache.summary) || {};
+
+    // Aggregate healthcheck scores across all accounts
+    var totalPassed = 0, totalItems = 0, categories = {};
+    accountIds.forEach(function(aid) {
+        var r = hcResults[aid];
+        if (r && r.settingsScore) {
+            totalPassed += (r.settingsScore.passed || 0);
+            totalItems += (r.settingsScore.total || 0);
+        }
+        if (r && r.checklistItems) {
+            r.checklistItems.forEach(function(item) {
+                var cat = item.category || 'General';
+                if (!categories[cat]) categories[cat] = {passed: 0, total: 0};
+                categories[cat].total++;
+                if (item.status === 'pass') categories[cat].passed++;
+            });
+        }
+    });
+
+    // Also use efficiency score from summary
+    var effScore = summary.efficiencyScore || 0;
+    var effRating = summary.efficiencyRating || 'N/A';
+    var potSavings = summary.potentialSavings || 0;
+    var momChange = summary.monthOverMonthChange || 0;
+
+    if (accountIds.length === 0 && effScore === 0) {
+        container.innerHTML =
+            '<div style="text-align:center;padding:20px;color:#6b7280;">' +
+                '<div style="font-size:2em;margin-bottom:8px;">\ud83c\udfe5</div>' +
+                '<div style="font-weight:600;color:#e6edf3;margin-bottom:4px;">No FinOps Score Data</div>' +
+                '<div style="font-size:0.85em;">Run a Health & Score scan from the settings to see your FinOps maturity.</div>' +
+                '<a class="cse-widget-link" onclick="switchToFinOpsSettings();" style="margin-top:12px;display:inline-block;">Scan Now \u25b6</a>' +
+            '</div>';
+        return;
+    }
+
+    var scorePct = totalItems > 0 ? Math.round((totalPassed / totalItems) * 100) : effScore;
+    var color = scorePct >= 80 ? '#22c55e' : scorePct >= 50 ? '#f59e0b' : '#ef4444';
+    var bgGrad = scorePct >= 80 ? 'linear-gradient(135deg, rgba(34,197,94,0.1), transparent)' : scorePct >= 50 ? 'linear-gradient(135deg, rgba(245,158,11,0.1), transparent)' : 'linear-gradient(135deg, rgba(239,68,68,0.1), transparent)';
+
+    var html = '<div style="background:' + bgGrad + ';border-radius:8px;padding:16px;">';
+
+    // Score circle + efficiency
+    html += '<div style="display:flex;align-items:center;gap:16px;margin-bottom:12px;">';
+    html += '<div style="width:64px;height:64px;border-radius:50%;border:4px solid ' + color + ';display:flex;align-items:center;justify-content:center;flex-shrink:0;">';
+    html += '<span style="color:' + color + ';font-weight:700;font-size:1.3em;">' + scorePct + '%</span>';
+    html += '</div>';
+    html += '<div>';
+    html += '<div style="color:#e6edf3;font-weight:600;font-size:1.1em;">FinOps Maturity</div>';
+    if (totalItems > 0) {
+        html += '<div style="color:#8b949e;font-size:0.85em;">' + totalPassed + '/' + totalItems + ' checks passing</div>';
+    }
+    html += '<div style="color:#8b949e;font-size:0.85em;">Efficiency: ' + effRating + '</div>';
+    html += '</div></div>';
+
+    // Key metrics row
+    html += '<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px;">';
+    // MoM
+    var momColor = momChange > 0 ? '#ef4444' : momChange < 0 ? '#22c55e' : '#6b7280';
+    var momArrow = momChange > 0 ? '\u25b2' : momChange < 0 ? '\u25bc' : '\u2014';
+    html += '<div style="flex:1;min-width:100px;background:#161b22;border:1px solid #30363d;border-radius:6px;padding:8px 10px;">';
+    html += '<div style="color:#8b949e;font-size:0.7em;">Month over Month</div>';
+    html += '<div style="color:' + momColor + ';font-weight:600;">' + momArrow + ' ' + Math.abs(momChange).toFixed(1) + '%</div>';
+    html += '</div>';
+    // Potential Savings
+    html += '<div style="flex:1;min-width:100px;background:#161b22;border:1px solid #30363d;border-radius:6px;padding:8px 10px;">';
+    html += '<div style="color:#8b949e;font-size:0.7em;">Potential Savings</div>';
+    html += '<div style="color:#f59e0b;font-weight:600;">$' + potSavings.toFixed(0) + '</div>';
+    html += '</div>';
+    html += '</div>';
+
+    // Category breakdown (if available)
+    var catKeys = Object.keys(categories);
+    if (catKeys.length > 0) {
+        html += '<div style="border-top:1px solid #30363d;padding-top:10px;">';
+        html += '<div style="color:#8b949e;font-size:0.75em;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.5px;">Categories</div>';
+        catKeys.slice(0, 5).forEach(function(cat) {
+            var c = categories[cat];
+            var catPct = c.total > 0 ? Math.round((c.passed / c.total) * 100) : 0;
+            var catColor = catPct >= 80 ? '#22c55e' : catPct >= 50 ? '#f59e0b' : '#ef4444';
+            html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">';
+            html += '<span style="color:#c9d1d9;font-size:0.8em;">' + cat + '</span>';
+            html += '<span style="color:' + catColor + ';font-size:0.8em;font-weight:600;">' + c.passed + '/' + c.total + '</span>';
+            html += '</div>';
+        });
+        html += '</div>';
+    }
+
+    html += '<a class="cse-widget-link" onclick="switchToFinOpsSettings();" style="margin-top:10px;display:inline-block;">View Full Score \u25b6</a>';
+    html += '</div>';
+    container.innerHTML = html;
+}
+
 function _renderTaggedResourcesTable(resources) {
     var container = document.getElementById('dash-tagged-resources-table');
     if (!container) {
