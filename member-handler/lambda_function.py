@@ -7736,19 +7736,12 @@ def handle_ai_query(event):
     def _run_ai_query():
         if len(account_ids) > 1:
             return _invoke_multi_account(ai_question, account_ids, member_email, interaction_id)
-        elif BEDROCK_AGENT_ID and BEDROCK_AGENT_ALIAS_ID:
-            # Force direct model path for cost-breakdown questions — the agent
-            # doesn't have usage-type breakdown tools, but direct model does
-            _q = question.lower()
-            _needs_breakdown = any(kw in _q for kw in [
-                'breakdown', 'usage type', 'ec2-other', 'ec2 other', 'vpc cost',
-                'what makes up', 'sub-cost', 'drill down', 'drilldown',
-                'usage breakdown', 'cost breakdown', 'list my',
-            ])
-            if _needs_breakdown:
-                return _invoke_direct_model(ai_question, account_ids[0], member_email, interaction_id)
-            return _invoke_bedrock_agent(ai_question, account_ids[0], member_email, interaction_id)
         else:
+            # Always use direct model path for single-account queries.
+            # The direct model path has curated prompts with verified pricing rules,
+            # anti-hallucination guardrails, usage-type breakdown tools, and tip citations.
+            # The Bedrock Agent lacks these controls and hallucinates service pricing.
+            # This is the scalable approach — works for any cloud/service without keyword lists.
             return _invoke_direct_model(ai_question, account_ids[0], member_email, interaction_id)
 
     try:
@@ -7800,8 +7793,16 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
     """Invoke the Bedrock Agent for a conversational FinOps query."""
     agent_runtime = boto3.client('bedrock-agent-runtime', region_name=os.environ.get('BEDROCK_REGION', os.environ.get('AWS_REGION', 'us-east-1')))
 
-    # Include account context in the prompt
+    # Search tips table for relevant pricing/optimization data
+    tips_context = _search_tips(question)
+    tip_found = bool(tips_context)
+
+    # Include account context and tips in the prompt so the Agent has accurate pricing
     enriched_prompt = f"[Account: {account_id}, Member: {member_email}] {question}"
+    if tips_context:
+        from tip_citation import build_tip_citation_prompt
+        tips_text = build_tip_citation_prompt(tips_context)
+        enriched_prompt += f"\n\n{tips_text}"
 
     try:
         response = agent_runtime.invoke_agent(
@@ -7828,7 +7829,7 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
             'interactionId': interaction_id,
             'commands': ['Bedrock Agent orchestrated the analysis'],
             'results': [],
-            'tipFound': False,
+            'tipFound': tip_found,
             'agentUsed': True,
         })
     except Exception as e:
