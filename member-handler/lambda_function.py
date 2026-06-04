@@ -2693,17 +2693,8 @@ def handle_dashboard_data(event):
             except Exception:
                 pass
 
-            # Fetch hourly cost data via CE HOURLY granularity (only available if enabled in AWS console)
-            try:
-                _hourly_params = {'TimePeriod': {'Start': (datetime.now(timezone.utc) - timedelta(days=2)).strftime('%Y-%m-%d'), 'End': datetime.now(timezone.utc).strftime('%Y-%m-%d')}, 'Granularity': 'HOURLY', 'Metrics': ['UnblendedCost']}
-                hourly_resp = ce_30d.get_cost_and_usage(**_hourly_params)
-                for period in hourly_resp.get('ResultsByTime', []):
-                    h_ts = period['TimePeriod']['Start'][:16]
-                    h_cost = float(period['Total']['UnblendedCost']['Amount'])
-                    if h_cost > 0:
-                        merged_hourly[h_ts] = h_cost
-            except Exception:
-                pass
+            # Hourly trend disabled — CE hourly granularity not enabled in these accounts
+            # and returning empty hourlyTrend in the response to reduce payload size.
 
             # Fetch usage type breakdown for drill-down (top services)
             try:
@@ -8962,13 +8953,41 @@ def _gather_account_data(question, credentials, tag_key=None, tag_value=None, me
         actions.append('ce:GetCostAndUsage (daily, last 7 days)')
 
         # For top-cost services that are hard to explain (VPC, EC2-Other),
-        # fetch a USAGE_TYPE breakdown so the AI can identify the exact driver
-        top_svc_names = [s['service'] for s in service_costs[:6]]
+        # fetch a USAGE_TYPE breakdown so the AI can identify the exact driver.
+        # Also fetch breakdown for any service the user specifically asks about.
+        top_svc_names = [s['service'] for s in service_costs[:10]]
+        all_svc_names = [s['service'] for s in service_costs]
         breakdown_services = []
         if 'Amazon Virtual Private Cloud' in top_svc_names:
             breakdown_services.append('Amazon Virtual Private Cloud')
         if 'EC2 - Other' in top_svc_names:
             breakdown_services.append('EC2 - Other')
+
+        # If user question mentions a specific service, fetch its breakdown too
+        _q_lower = question_lower if 'question_lower' in dir() else question.lower()
+        _svc_question_map = {
+            'ec2-other': 'EC2 - Other',
+            'ec2 other': 'EC2 - Other',
+            'ec2 - other': 'EC2 - Other',
+            'vpc': 'Amazon Virtual Private Cloud',
+            'virtual private cloud': 'Amazon Virtual Private Cloud',
+            'nat': 'Amazon Virtual Private Cloud',
+            's3': 'Amazon Simple Storage Service',
+            'lambda': 'AWS Lambda',
+            'rds': 'Amazon Relational Database Service',
+            'cloudwatch': 'AmazonCloudWatch',
+            'dynamodb': 'Amazon DynamoDB',
+            'bedrock': 'Amazon Bedrock',
+            'route 53': 'Amazon Route 53',
+            'route53': 'Amazon Route 53',
+            'cloudfront': 'Amazon CloudFront',
+            'kms': 'AWS Key Management Service',
+            'secrets manager': 'AWS Secrets Manager',
+            'cost explorer': 'AWS Cost Explorer',
+        }
+        for keyword, svc_name in _svc_question_map.items():
+            if keyword in _q_lower and svc_name in all_svc_names and svc_name not in breakdown_services:
+                breakdown_services.append(svc_name)
 
         for svc_name in breakdown_services:
             try:
@@ -10121,9 +10140,20 @@ def _ask_bedrock_analyze(question, tips_context, account_data, account_id):
 
     tips_text = build_tip_citation_prompt(tips_context)
 
-    data_text = json.dumps(account_data, indent=2, default=str)
-    if len(data_text) > 8000:
-        data_text = data_text[:8000] + '\n... (truncated)'
+    # Prioritize usage_breakdown data by putting it at the start of the serialized data
+    # so it doesn't get truncated
+    prioritized_data = {}
+    other_data = {}
+    for k, v in account_data.items():
+        if 'usage_breakdown' in k:
+            prioritized_data[k] = v
+        else:
+            other_data[k] = v
+    ordered_data = {**prioritized_data, **other_data}
+
+    data_text = json.dumps(ordered_data, indent=2, default=str)
+    if len(data_text) > 15000:
+        data_text = data_text[:15000] + '\n... (truncated)'
 
     prompt = f"""You are SlashMyBill AI, a multi-cloud FinOps assistant supporting AWS, Azure, and GCP. Analyze the following real data from account {account_id} and answer the user's question.
 
