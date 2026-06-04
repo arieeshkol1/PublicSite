@@ -153,6 +153,12 @@ def _persist_async(entry):
         if 'function_name' not in clean_entry:
             clean_entry['function_name'] = 'unknown'
 
+        # Convert any float values to Decimal (DynamoDB doesn't accept Python floats)
+        from decimal import Decimal as _Decimal
+        for k, v in list(clean_entry.items()):
+            if isinstance(v, float):
+                clean_entry[k] = _Decimal(str(v))
+
         table.put_item(Item=clean_entry)
         logger.info(f"Transaction logged: {clean_entry.get('transaction_id', 'N/A')} - {clean_entry.get('function_name', 'N/A')}")
     except Exception as e:
@@ -229,7 +235,10 @@ def transaction_log(source_handler):
                 'audit_status': 'pending',
             }
 
-            _persist_async(entry)
+            try:
+                _persist_async(entry)
+            except Exception as persist_err:
+                logger.error(f"Transaction log persist raised unexpectedly: {type(persist_err).__name__}: {persist_err}")
             return response
 
         return wrapper
