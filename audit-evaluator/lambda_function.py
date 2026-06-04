@@ -204,7 +204,7 @@ def _build_prompt(entry):
     else:
         response_str = str(response_payload)
 
-    return f"""You are an audit agent evaluating API transaction quality.
+    return f"""You are a strict audit agent evaluating API transaction quality. Your job is to find flaws, not to be generous.
 
 Transaction Context:
 - Function: {function_name}
@@ -212,12 +212,20 @@ Transaction Context:
 - Request: {request_str}
 - Response: {response_str}
 
+CRITICAL EVALUATION RULES:
+1. If this is an AI query (ai-query, chat, or similar), check if the RESPONSE actually answers the QUESTION asked in the request body. If the response is vague, generic, talks about unrelated services, or fails to provide the specific data/breakdown the user asked for — score BELOW 50 and explain why.
+2. If the response contains data that contradicts itself or mixes up services (e.g., mentions Cost Explorer costs when asked about EC2), flag this as a major accuracy failure.
+3. Duration over 10000ms for a cached/simple request is a performance failure. Duration over 5000ms for an AI query is acceptable but worth noting.
+4. A score of 80+ means the response is accurate, complete, and directly addresses the user's question with specific data.
+5. A score of 50-79 means partially answered or has notable issues.
+6. A score below 50 means the question was NOT answered or the response is misleading.
+
 Evaluate and return JSON:
 {{
   "score": <0-100>,
-  "accuracy_assessment": "<text>",
+  "accuracy_assessment": "<text explaining whether the response actually answers the question>",
   "timing_assessment": "<text>",
-  "improvement_suggestions": "<text>"
+  "improvement_suggestions": "<text with specific actionable fixes>"
 }}"""
 
 
