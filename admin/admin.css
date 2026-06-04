@@ -629,7 +629,7 @@ body {
 /* ============================================================
    Larger Modal
    ============================================================ */
-.modal-card-lg { max-width: 680px; }
+.modal-card-lg { max-width: 680px; max-height: 85vh; overflow-y: auto; }
 
 /* ============================================================
    Optional Label + Field Hint
@@ -884,7 +884,7 @@ body {
 }
 
 /* Payload Block (JSON display) */
-.txn-payload-block {
+.txn-payload-block, .payload-block {
     background: #1e1e1e;
     color: #d4d4d4;
     padding: 16px;
@@ -893,7 +893,8 @@ body {
     font-size: 12px;
     white-space: pre-wrap;
     word-wrap: break-word;
-    max-height: 300px;
+    word-break: break-all;
+    max-height: 250px;
     overflow-y: auto;
     line-height: 1.5;
 }
