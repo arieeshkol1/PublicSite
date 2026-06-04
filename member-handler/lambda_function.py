@@ -2321,15 +2321,36 @@ def handle_dashboard_data(event):
                                     [{'service': s, 'cost_usd': round(c, 2), 'period': 'estimated'} for s, c in service_totals.items()],
                                     key=lambda x: x['cost_usd'], reverse=True
                                 )
+                                # Build monthly_trend from tag-filtered daily data
+                                monthly_trend_tag = {}
+                                for item in cache_items:
+                                    date_str = item['sk'].replace('DAILY#', '')
+                                    if date_str == _today_tag or date_str == _yesterday_tag:
+                                        continue
+                                    tb = normalize_tag_breakdown(item.get('tag_breakdown') or {})
+                                    tag_key_data = tb.get(tag_key, {})
+                                    tag_cost = float(tag_key_data.get(tag_value, 0.0))
+                                    if tag_cost > 0:
+                                        month_key = date_str[:7]
+                                        if month_key not in monthly_trend_tag:
+                                            monthly_trend_tag[month_key] = {}
+                                        total_day_cost = float(item.get('cost_amount', 0))
+                                        ratio = tag_cost / total_day_cost if total_day_cost > 0 else 0
+                                        for svc, svc_cost in (item.get('service_breakdown') or {}).items():
+                                            allocated = float(svc_cost) * ratio
+                                            if allocated > 0.01:
+                                                monthly_trend_tag[month_key][svc] = monthly_trend_tag[month_key].get(svc, 0) + allocated
                                 acct_data, _ = _gather_account_data('how efficient is my account? rightsizing savings compare last 3 months', creds)
                                 acct_data['cost_by_service'] = cost_by_service
                                 acct_data['daily_cost_trend'] = daily_cost_trend
+                                acct_data['monthly_trend'] = monthly_trend_tag
                                 acct_data['cache_status'] = 'hit_tag_filtered'
                         else:
                             # NORMAL MODE: Use service_breakdown from cache
                             cache_used = True
                             service_totals = {}
                             daily_cost_trend = []
+                            monthly_trend_from_cache = {}
                             _today_cache = datetime.now(timezone.utc).strftime('%Y-%m-%d')
                             _yesterday_cache = (datetime.now(timezone.utc) - timedelta(days=1)).strftime('%Y-%m-%d')
                             for item in cache_items:
@@ -2339,8 +2360,14 @@ def handle_dashboard_data(event):
                                     continue
                                 cost = float(item.get('cost_amount', 0))
                                 daily_cost_trend.append({'date': date_str, 'cost_usd': cost})
+                                # Build monthly trend by grouping days into YYYY-MM
+                                month_key = date_str[:7]  # 'YYYY-MM'
+                                if month_key not in monthly_trend_from_cache:
+                                    monthly_trend_from_cache[month_key] = {}
                                 for svc, svc_cost in (item.get('service_breakdown') or {}).items():
-                                    service_totals[svc] = service_totals.get(svc, 0) + float(svc_cost)
+                                    svc_cost_f = float(svc_cost)
+                                    service_totals[svc] = service_totals.get(svc, 0) + svc_cost_f
+                                    monthly_trend_from_cache[month_key][svc] = monthly_trend_from_cache[month_key].get(svc, 0) + svc_cost_f
                             cost_by_service = sorted(
                                 [{'service': s, 'cost_usd': round(c, 2), 'period': 'last_30_days'} for s, c in service_totals.items()],
                                 key=lambda x: x['cost_usd'], reverse=True
@@ -2349,6 +2376,7 @@ def handle_dashboard_data(event):
                             acct_data, _ = _gather_account_data('how efficient is my account? rightsizing savings compare last 3 months', creds)
                             acct_data['cost_by_service'] = cost_by_service
                             acct_data['daily_cost_trend'] = daily_cost_trend
+                            acct_data['monthly_trend'] = monthly_trend_from_cache
                             acct_data['cache_status'] = 'hit'
 
                     # Trigger background refresh to populate/update cache (non-blocking)
@@ -2383,6 +2411,38 @@ def handle_dashboard_data(event):
                 acct_data, _ = _gather_account_data('how efficient is my account? rightsizing savings compare last 3 months', creds)
 
             acct_total = sum(s['cost_usd'] for s in acct_data.get('cost_by_service', []))
+
+            # If monthly_trend is still empty, build it from CE API (last 3 months)
+            if not acct_data.get('monthly_trend'):
+                try:
+                    _ce_monthly = boto3.client('ce',
+                        aws_access_key_id=creds['AccessKeyId'],
+                        aws_secret_access_key=creds['SecretAccessKey'],
+                        aws_session_token=creds['SessionToken'])
+                    _now_mt = datetime.now(timezone.utc)
+                    _end_mt = _now_mt.replace(day=1).strftime('%Y-%m-%d')
+                    _start_mt = (_now_mt.replace(day=1) - timedelta(days=90)).replace(day=1).strftime('%Y-%m-%d')
+                    _mt_params = {
+                        'TimePeriod': {'Start': _start_mt, 'End': _end_mt},
+                        'Granularity': 'MONTHLY',
+                        'Metrics': ['UnblendedCost'],
+                        'GroupBy': [{'Type': 'DIMENSION', 'Key': 'SERVICE'}],
+                    }
+                    _mt_resp = _ce_monthly.get_cost_and_usage(**_mt_params)
+                    monthly_trend_live = {}
+                    for period in _mt_resp.get('ResultsByTime', []):
+                        month_key = period['TimePeriod']['Start'][:7]
+                        if month_key not in monthly_trend_live:
+                            monthly_trend_live[month_key] = {}
+                        for group in period.get('Groups', []):
+                            svc = group['Keys'][0]
+                            cost = float(group['Metrics']['UnblendedCost']['Amount'])
+                            if cost > 0.01:
+                                monthly_trend_live[month_key][svc] = monthly_trend_live[month_key].get(svc, 0) + cost
+                    if monthly_trend_live:
+                        acct_data['monthly_trend'] = monthly_trend_live
+                except Exception as mt_err:
+                    logger.warning(f"Monthly trend CE fetch failed for {acct_id}: {mt_err}")
 
             # If tag filter is active and cache was NOT used, override with per-instance estimates
             if tag_key and tag_value and not cache_used:
