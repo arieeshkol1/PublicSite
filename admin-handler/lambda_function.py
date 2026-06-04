@@ -844,13 +844,13 @@ def _query_all_pages(table, query_kwargs):
     return items
 
 
-def _scan_all_pages(table):
-    """Execute a DynamoDB scan and handle pagination."""
+def _scan_all_pages(table, max_items=500):
+    """Execute a DynamoDB scan with a cap to prevent Lambda timeout."""
     items = []
-    response = table.scan()
+    response = table.scan(Limit=200)
     items.extend(response.get('Items', []))
-    while 'LastEvaluatedKey' in response:
-        response = table.scan(ExclusiveStartKey=response['LastEvaluatedKey'])
+    while 'LastEvaluatedKey' in response and len(items) < max_items:
+        response = table.scan(ExclusiveStartKey=response['LastEvaluatedKey'], Limit=200)
         items.extend(response.get('Items', []))
     return items
 
