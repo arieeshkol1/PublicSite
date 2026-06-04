@@ -219,6 +219,8 @@ CRITICAL EVALUATION RULES:
 4. A score of 80+ means the response is accurate, complete, and directly addresses the user's question with specific data.
 5. A score of 50-79 means partially answered or has notable issues.
 6. A score below 50 means the question was NOT answered or the response is misleading.
+7. For LIST/SCAN endpoints (budgets/list, tips, transactions, list-instances, etc.): an empty request body or minimal filters means "return all". If the response returns data successfully, score 85+. Do NOT penalize for empty request body — that is the intended "get all" behavior.
+8. For successful data responses (statusCode 200 with actual data), focus your evaluation on data quality and completeness rather than questioning whether a query was present.
 
 Evaluate and return JSON:
 {{
