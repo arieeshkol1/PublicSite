@@ -1090,6 +1090,8 @@ jobs:
             "GET /admin/tips-sync/status"
             "GET /admin/tips-sync/logs"
             "POST /admin/tips-sync/trigger"
+            "GET /admin/transactions"
+            "GET /admin/transactions/detail"
           )
           for ROUTE in "${ADMIN_ROUTES[@]}"; do
             aws apigatewayv2 create-route --api-id $API_ID --route-key "$ROUTE" --target "integrations/$ADMIN_INT" 2>/dev/null || true
