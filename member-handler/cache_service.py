@@ -897,11 +897,11 @@ class CacheService:
 
             engine = IncrementalFetchEngine()
 
-            # Compute date range for 90 days of history
+            # Compute date range for 120 days of history (covers 4 full months for monthly trend)
             # End 2 days ago (today and yesterday are always incomplete)
             today = datetime.now(timezone.utc).date()
             end_date_exclusive = (today - timedelta(days=1)).isoformat()  # yesterday (exclusive = up to day-before-yesterday)
-            start_date = (today - timedelta(days=89)).isoformat()
+            start_date = (today - timedelta(days=119)).isoformat()
 
             # Check what's already cached to avoid re-fetching
             pk = self._build_partition_key(member_id, account_id)

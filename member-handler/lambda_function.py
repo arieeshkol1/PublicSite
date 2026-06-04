@@ -2270,11 +2270,12 @@ def handle_dashboard_data(event):
             if cache_service:
                 try:
                     end_date_cache = datetime.now(timezone.utc).strftime('%Y-%m-%d')
-                    start_30d_cache = (datetime.now(timezone.utc) - timedelta(days=30)).strftime('%Y-%m-%d')
+                    # Query 120 days of cache data (covers 3 previous months + current month)
+                    start_120d_cache = (datetime.now(timezone.utc) - timedelta(days=120)).strftime('%Y-%m-%d')
 
                     # Quick cache-only read (no CE API fetch, no ownership check overhead)
                     pk = f"{member_email}#{acct_id}"
-                    start_sk = f"DAILY#{start_30d_cache}"
+                    start_sk = f"DAILY#{start_120d_cache}"
                     end_sk = f"DAILY#{end_date_cache}"
                     cache_table = cache_service._table
                     from boto3.dynamodb.conditions import Key as DDBKey
@@ -2282,6 +2283,13 @@ def handle_dashboard_data(event):
                         KeyConditionExpression=DDBKey('pk').eq(pk) & DDBKey('sk').between(start_sk, end_sk)
                     )
                     cache_items = cache_resp.get('Items', [])
+                    # Handle DynamoDB pagination for larger result sets
+                    while 'LastEvaluatedKey' in cache_resp:
+                        cache_resp = cache_table.query(
+                            KeyConditionExpression=DDBKey('pk').eq(pk) & DDBKey('sk').between(start_sk, end_sk),
+                            ExclusiveStartKey=cache_resp['LastEvaluatedKey']
+                        )
+                        cache_items.extend(cache_resp.get('Items', []))
                     all_cache_items.extend(cache_items)
 
                     if cache_items and len(cache_items) >= 25:
@@ -2353,21 +2361,26 @@ def handle_dashboard_data(event):
                             monthly_trend_from_cache = {}
                             _today_cache = datetime.now(timezone.utc).strftime('%Y-%m-%d')
                             _yesterday_cache = (datetime.now(timezone.utc) - timedelta(days=1)).strftime('%Y-%m-%d')
+                            _30d_ago_cache = (datetime.now(timezone.utc) - timedelta(days=30)).strftime('%Y-%m-%d')
                             for item in cache_items:
                                 date_str = item['sk'].replace('DAILY#', '')
                                 # Skip today/yesterday — cost data incomplete until finalized (~48h)
                                 if date_str == _today_cache or date_str == _yesterday_cache:
                                     continue
                                 cost = float(item.get('cost_amount', 0))
-                                daily_cost_trend.append({'date': date_str, 'cost_usd': cost})
-                                # Build monthly trend by grouping days into YYYY-MM
+                                # Build monthly trend from ALL cached days (3+ months)
                                 month_key = date_str[:7]  # 'YYYY-MM'
                                 if month_key not in monthly_trend_from_cache:
                                     monthly_trend_from_cache[month_key] = {}
                                 for svc, svc_cost in (item.get('service_breakdown') or {}).items():
                                     svc_cost_f = float(svc_cost)
-                                    service_totals[svc] = service_totals.get(svc, 0) + svc_cost_f
                                     monthly_trend_from_cache[month_key][svc] = monthly_trend_from_cache[month_key].get(svc, 0) + svc_cost_f
+                                    # Only include last 30 days in cost_by_service and daily trend
+                                    if date_str >= _30d_ago_cache:
+                                        service_totals[svc] = service_totals.get(svc, 0) + svc_cost_f
+                                # Only include last 30 days in daily cost trend
+                                if date_str >= _30d_ago_cache:
+                                    daily_cost_trend.append({'date': date_str, 'cost_usd': cost})
                             cost_by_service = sorted(
                                 [{'service': s, 'cost_usd': round(c, 2), 'period': 'last_30_days'} for s, c in service_totals.items()],
                                 key=lambda x: x['cost_usd'], reverse=True
@@ -2412,16 +2425,19 @@ def handle_dashboard_data(event):
 
             acct_total = sum(s['cost_usd'] for s in acct_data.get('cost_by_service', []))
 
-            # If monthly_trend is still empty, build it from CE API (last 3 months)
-            if not acct_data.get('monthly_trend'):
+            # Fallback: if cache didn't provide monthly_trend (no cache data or first-time user),
+            # fetch from CE API: last 3 complete months + current month (4 months total)
+            if not acct_data.get('monthly_trend') or len(acct_data.get('monthly_trend', {})) < 3:
                 try:
                     _ce_monthly = boto3.client('ce',
                         aws_access_key_id=creds['AccessKeyId'],
                         aws_secret_access_key=creds['SecretAccessKey'],
                         aws_session_token=creds['SessionToken'])
                     _now_mt = datetime.now(timezone.utc)
-                    _end_mt = _now_mt.replace(day=1).strftime('%Y-%m-%d')
-                    _start_mt = (_now_mt.replace(day=1) - timedelta(days=90)).replace(day=1).strftime('%Y-%m-%d')
+                    # End = tomorrow (to include current month's partial data)
+                    _end_mt = (_now_mt + timedelta(days=1)).strftime('%Y-%m-%d')
+                    # Start = 4 months ago (first of month, 3 complete + current partial)
+                    _start_mt = (_now_mt.replace(day=1) - timedelta(days=92)).replace(day=1).strftime('%Y-%m-%d')
                     _mt_params = {
                         'TimePeriod': {'Start': _start_mt, 'End': _end_mt},
                         'Granularity': 'MONTHLY',
@@ -2831,22 +2847,33 @@ def handle_dashboard_data(event):
 
     # Build response
     total_spend = round(sum(merged_costs.values()), 2)
-    # MoM from monthly_trend: compare last two calendar months
+    # MoM from monthly_trend: compare last two COMPLETE calendar months
+    # (exclude current partial month from comparison)
     sorted_months = sorted(merged_monthly.keys())
+    current_month_key = datetime.now(timezone.utc).strftime('%Y-%m')
+    # Separate complete months from current partial month
+    complete_months = [m for m in sorted_months if m != current_month_key]
     current_month_spend = 0
     prev_month_spend = 0
-    if len(sorted_months) >= 1:
-        current_month_spend = round(sum(merged_monthly[sorted_months[-1]].values()), 2)
-    if len(sorted_months) >= 2:
-        prev_month_spend = round(sum(merged_monthly[sorted_months[-2]].values()), 2)
-    # Use total_spend from cost_by_service as the primary number, but MoM from trend
+    second_prev_month_spend = 0
+    if len(complete_months) >= 1:
+        current_month_spend = round(sum(merged_monthly[complete_months[-1]].values()), 2)
+    if len(complete_months) >= 2:
+        prev_month_spend = round(sum(merged_monthly[complete_months[-2]].values()), 2)
+    if len(complete_months) >= 3:
+        second_prev_month_spend = round(sum(merged_monthly[complete_months[-3]].values()), 2)
+    # MoM: compare latest complete month vs the one before
     if prev_month_spend > 0 and current_month_spend > 0:
         mom_change = round(((current_month_spend - prev_month_spend) / prev_month_spend * 100), 1)
-    elif prev_month_spend > 0:
-        mom_change = round(((total_spend - prev_month_spend) / prev_month_spend * 100), 1)
     else:
         mom_change = 0
-    eff_score = round((1 - total_savings / total_spend) * 100, 1) if total_spend > 0 else 100
+    # Potential savings: if costs increased MoM, the delta is the potential savings opportunity
+    # If costs decreased, savings = 0 (already saving)
+    mom_delta = current_month_spend - prev_month_spend if prev_month_spend > 0 else 0
+    mom_potential_savings = round(mom_delta, 2) if mom_delta > 0 else 0
+    # Combine waste-based savings with MoM-based savings (use the larger of the two)
+    combined_savings = max(total_savings, mom_potential_savings)
+    eff_score = round((1 - combined_savings / total_spend) * 100, 1) if total_spend > 0 else 100
 
     # Daily trend with anomaly detection
     # Exclude today AND yesterday — cost data takes up to 48h to fully finalize in AWS
@@ -2896,7 +2923,7 @@ def handle_dashboard_data(event):
             'monthOverMonthChange': mom_change,
             'efficiencyScore': max(0, eff_score),
             'efficiencyRating': 'Excellent' if eff_score >= 90 else 'Good' if eff_score >= 75 else 'Needs Improvement' if eff_score >= 50 else 'Critical',
-            'potentialSavings': round(total_savings, 2),
+            'potentialSavings': round(combined_savings, 2),
             'savingsBreakdown': {k: round(v, 2) for k, v in savings_breakdown.items()},
             'totalAccounts': len(accounts),
             'accountsAnalyzed': len([a for a in per_account if 'error' not in a]),
