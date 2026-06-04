@@ -8411,7 +8411,7 @@ CRITICAL RULE: NEVER recommend "potential" savings without verifying the data fi
 CRITICAL RULE: Read the user's question carefully. If it is a SPECIFIC question (e.g. "list Lambda transactions", "show EC2 usage", "compare costs for Jan Feb March"), answer THAT question DIRECTLY and completely using the data provided. Do NOT default to a generic cost summary. The specific answer must come FIRST.
 
 SPECIFIC QUESTION HANDLING:
-- If the user asks about Lambda invocations/transactions: use lambda_metrics (invocations_30d per function) and monthly_trend (Lambda cost per month). Show per-function breakdown per account.
+- If the user asks about Lambda invocations/transactions: use lambda_metrics (invocations_30d per function) and monthly_trend (Lambda cost per month). Show per-function breakdown per account. If lambda_permission_warning is present for an account, show the warning and use aws_lambda_usage_breakdown from Cost Explorer to show Lambda costs/usage types. Do NOT say "No Lambda data available" when lambda_permission_warning explains that IAM permissions are missing — instead report what IS available and note the permission gap.
 - If the user asks about EC2: use ec2_instances and ec2_cpu_metrics. Show instance IDs, types, CPU utilization.
 - If the user asks about RDS: use rds_instances and rds_cpu_metrics. Show DB identifiers, instance class, CPU, connections.
 - If the user asks about S3: use s3_buckets (per account). Show bucket names and count **per account separately** â€” never merge accounts or report only one. List ALL buckets without lifecycle policies from ALL accounts. Count must match the list length exactly.
@@ -9277,26 +9277,70 @@ def _gather_account_data(question, credentials, tag_key=None, tag_value=None, me
             actions.append('lambda:ListFunctions')
         except Exception as e:
             data['lambda_error'] = str(e)
-            # Fallback: check CloudWatch for Lambda invocation metrics to detect permission gap
+            # Fallback: use CloudWatch ListMetrics to discover Lambda function names
+            # (cloudwatch:ListMetrics doesn't require lambda:ListFunctions permission)
             try:
                 cw = _make_client('cloudwatch')
                 _now = datetime.now(timezone.utc)
-                inv_resp = cw.get_metric_statistics(
-                    Namespace='AWS/Lambda', MetricName='Invocations',
-                    StartTime=_now - timedelta(days=30), EndTime=_now,
-                    Period=86400 * 30, Statistics=['Sum']
-                )
-                total_invocations = int(sum(d['Sum'] for d in inv_resp.get('Datapoints', [])))
-                if total_invocations > 0:
+                # Discover function names from CloudWatch metrics namespace
+                discovered_functions = set()
+                paginator = cw.get_paginator('list_metrics')
+                for page in paginator.paginate(
+                    Namespace='AWS/Lambda',
+                    MetricName='Invocations',
+                ):
+                    for metric in page.get('Metrics', []):
+                        for dim in metric.get('Dimensions', []):
+                            if dim['Name'] == 'FunctionName':
+                                discovered_functions.add(dim['Value'])
+
+                if discovered_functions:
+                    # We found Lambda functions via CloudWatch - populate lambda_functions
+                    data['lambda_functions'] = [
+                        {'name': fn, 'runtime': 'unknown', 'memory': 0, 'timeout': 0}
+                        for fn in sorted(discovered_functions)
+                    ]
+                    data['lambda_discovery_method'] = 'cloudwatch_metrics'
                     data['lambda_permission_warning'] = (
-                        f"WARNING: CloudWatch shows {total_invocations:,} Lambda invocations in 30 days, "
-                        f"but lambda:ListFunctions is denied. The cross-account role is missing "
-                        f"lambda:ListFunctions permission. Add lambda:ListFunctions, lambda:GetFunction "
-                        f"to the SlashMyBill cross-account IAM role to enable Lambda analysis."
+                        f"Note: lambda:ListFunctions is denied on this account's cross-account role. "
+                        f"Discovered {len(discovered_functions)} functions via CloudWatch metrics. "
+                        f"Runtime/memory details unavailable without lambda:ListFunctions permission."
                     )
-                    data['lambda_invocations_30d'] = total_invocations
+                    actions.append('cloudwatch:ListMetrics (Lambda function discovery)')
+                else:
+                    # No functions discovered via CloudWatch either - check aggregate invocations
+                    # Use Period=86400 (1 day) instead of 30-day period for reliable datapoint alignment
+                    inv_resp = cw.get_metric_statistics(
+                        Namespace='AWS/Lambda', MetricName='Invocations',
+                        StartTime=_now - timedelta(days=30), EndTime=_now,
+                        Period=86400, Statistics=['Sum']
+                    )
+                    total_invocations = int(sum(d['Sum'] for d in inv_resp.get('Datapoints', [])))
+                    if total_invocations > 0:
+                        data['lambda_permission_warning'] = (
+                            f"WARNING: CloudWatch shows {total_invocations:,} Lambda invocations in 30 days, "
+                            f"but lambda:ListFunctions is denied. The cross-account role is missing "
+                            f"lambda:ListFunctions permission. Add lambda:ListFunctions, lambda:GetFunction "
+                            f"to the SlashMyBill cross-account IAM role to enable Lambda analysis."
+                        )
+                        data['lambda_invocations_30d'] = total_invocations
+                    else:
+                        # Even CloudWatch aggregate shows 0 - check if CE usage data has Lambda
+                        # (Lambda may be free-tier but still has invocations)
+                        data['lambda_permission_warning'] = (
+                            "lambda:ListFunctions is denied and CloudWatch metrics are unavailable. "
+                            "The cross-account role needs lambda:ListFunctions and cloudwatch:ListMetrics "
+                            "permissions to enumerate Lambda functions. Check aws_lambda_usage_breakdown "
+                            "for cost data from Cost Explorer."
+                        )
             except Exception:
-                pass
+                # CloudWatch fallback completely failed - note the IAM gap
+                data['lambda_permission_warning'] = (
+                    "lambda:ListFunctions AND cloudwatch:ListMetrics are both denied. "
+                    "The cross-account IAM role is missing permissions needed for Lambda analysis. "
+                    "Add lambda:ListFunctions, cloudwatch:ListMetrics, cloudwatch:GetMetricStatistics "
+                    "to the SlashMyBill cross-account role."
+                )
 
     # Budgets â€” fetch when question mentions budgets/alerts/cost alerts
     if any(kw in question_lower for kw in ['budget', 'alert', 'cost alert', 'billing alarm', 'spend limit']):
@@ -17844,6 +17888,36 @@ def handle_lambda_optimize(event):
                 continue
     except Exception as e:
         return create_error_response(500, 'LambdaError', f'Failed to list functions: {str(e)[:200]}')
+
+    # Fallback: if list_functions returned nothing (permission denied or truly empty),
+    # try discovering Lambda functions via CloudWatch ListMetrics
+    if not functions:
+        try:
+            _cw_fallback = boto3.client('cloudwatch',
+                aws_access_key_id=creds['AccessKeyId'],
+                aws_secret_access_key=creds['SecretAccessKey'],
+                aws_session_token=creds['SessionToken'],
+                region_name='us-east-1')
+            _discovered = set()
+            _paginator = _cw_fallback.get_paginator('list_metrics')
+            for page in _paginator.paginate(Namespace='AWS/Lambda', MetricName='Invocations'):
+                for metric in page.get('Metrics', []):
+                    for dim in metric.get('Dimensions', []):
+                        if dim['Name'] == 'FunctionName':
+                            _discovered.add(dim['Value'])
+            for fn_name in sorted(_discovered):
+                functions.append({
+                    'functionName': fn_name,
+                    'runtime': 'unknown (ListFunctions denied)',
+                    'memoryMb': 0,
+                    'timeout': 0,
+                    'architecture': 'unknown',
+                    'codeSize': 0,
+                    'lastModified': '',
+                    'discoveredVia': 'cloudwatch',
+                })
+        except Exception:
+            pass
 
     if not functions:
         return create_success_response({'success': True, 'functions': [], 'recommendations': [], 'message': 'No Lambda functions found.'})
