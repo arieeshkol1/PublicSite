@@ -765,6 +765,31 @@ jobs:
             echo "✓ Audit_Transaction_Log access granted to $FN"
           done
 
+      - name: Grant member-handler DynamoDB ProviderRegistry access
+        continue-on-error: true
+        run: |
+          ROLE_ARN=$(aws lambda get-function-configuration --function-name aws-bill-analyzer-member-api --query "Role" --output text)
+          ROLE_NAME=$(echo $ROLE_ARN | awk -F'/' '{print $NF}')
+          aws iam put-role-policy \
+            --role-name "$ROLE_NAME" \
+            --policy-name "DynamoDBProviderRegistryAccess" \
+            --policy-document '{
+              "Version": "2012-10-17",
+              "Statement": [{
+                "Effect": "Allow",
+                "Action": [
+                  "dynamodb:GetItem",
+                  "dynamodb:Query",
+                  "dynamodb:Scan"
+                ],
+                "Resource": [
+                  "arn:aws:dynamodb:us-east-1:991105135552:table/ProviderRegistry",
+                  "arn:aws:dynamodb:us-east-1:991105135552:table/ProviderRegistry/index/*"
+                ]
+              }]
+            }'
+          echo "✓ ProviderRegistry access granted to member-handler"
+
       - name: Ensure Tips Sync Lambda exists
         continue-on-error: true
         run: |
