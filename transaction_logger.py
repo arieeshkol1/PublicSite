@@ -159,7 +159,10 @@ def _persist_async(entry):
             if isinstance(v, float):
                 clean_entry[k] = _Decimal(str(v))
 
-        table.put_item(Item=clean_entry)
+        table.put_item(
+            Item=clean_entry,
+            ConditionExpression='attribute_not_exists(transaction_id)'
+        )
         logger.info(f"Transaction logged: {clean_entry.get('transaction_id', 'N/A')} - {clean_entry.get('function_name', 'N/A')}")
     except Exception as e:
         logger.error(f"Failed to persist transaction log entry: {type(e).__name__}: {e}")
