@@ -25,6 +25,10 @@ import jwt
 import bcrypt
 import yaml
 import provider_registry
+from cost_cache import _get_cost_data_cached
+from intent_classifier import _classify_intent, get_apis_for_intent
+from provider_router import _route_to_connector
+from parallel_executor import _gather_multi_account_parallel
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -7678,27 +7682,54 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
 
 
 def _invoke_direct_model(question, account_id, member_email, interaction_id):
-    """Fallback: use direct Bedrock model API with boto3 data gathering."""
-    # Step 1: Search tips
-    tips_context = _search_tips(question)
+    """Fallback: use direct Bedrock model API with boto3 data gathering.
 
-    # Step 2: Assume role and gather data
-    role_arn = f'arn:aws:iam::{account_id}:role/SlashMyBill-{account_id}'
-    external_id = hashlib.sha256(member_email.encode('utf-8')).hexdigest()
-    credentials = None
+    Integrates multi-cloud provider routing:
+    - Detects provider via _route_to_connector (reads cloudProvider from DynamoDB)
+    - Classifies question intent via _classify_intent for data routing
+    - For AWS: uses existing _gather_account_data path (STS AssumeRole + boto3)
+    - For Azure/GCP: uses the respective connector's get_cost_data method
+    - Maintains backward compatibility — AWS accounts work identically to before
+    """
+    # Step 0: Classify intent to control which APIs are called
+    intent = _classify_intent(question)
+
+    # Step 1: Detect cloud provider via provider router (also retrieves credentials)
     try:
-        sts_client = boto3.client('sts')
-        assume_response = sts_client.assume_role(
-            RoleArn=role_arn, RoleSessionName='SlashMyBillAI', ExternalId=external_id,
-        )
-        credentials = assume_response['Credentials']
-    except ClientError as e:
-        logger.error(f"STS AssumeRole failed: {e}")
+        provider, provider_credentials = _route_to_connector(account_id, member_email)
+    except (ValueError, RuntimeError) as e:
+        logger.warning(f"Provider routing failed for {account_id}, defaulting to AWS: {e}")
+        provider = 'aws'
+        provider_credentials = {'account_id': account_id, 'member_email': member_email}
 
+    # Step 1.5: Search tips with provider-specific filtering
+    tips_context = _search_tips(question, provider=provider)
+
+    # Step 2: Gather data based on detected provider
     account_data = {}
     executed_actions = []
-    if credentials:
-        account_data, executed_actions = _gather_account_data(question, credentials)
+
+    if provider == 'aws':
+        # AWS path: maintain existing behavior — STS AssumeRole + _gather_account_data
+        role_arn = f'arn:aws:iam::{account_id}:role/SlashMyBill-{account_id}'
+        external_id = hashlib.sha256(member_email.encode('utf-8')).hexdigest()
+        credentials = None
+        try:
+            sts_client = boto3.client('sts')
+            assume_response = sts_client.assume_role(
+                RoleArn=role_arn, RoleSessionName='SlashMyBillAI', ExternalId=external_id,
+            )
+            credentials = assume_response['Credentials']
+        except ClientError as e:
+            logger.error(f"STS AssumeRole failed: {e}")
+
+        if credentials:
+            account_data, executed_actions = _gather_account_data(question, credentials, intent=intent, member_email=member_email, account_id=account_id)
+    else:
+        # Azure/GCP path: use the respective connector's get_cost_data method
+        account_data, executed_actions = _gather_non_aws_data(
+            provider, provider_credentials, account_id, intent
+        )
 
     # Step 2.5: Include healthcheck results in AI context
     try:
@@ -7739,28 +7770,218 @@ def _invoke_direct_model(question, account_id, member_email, interaction_id):
     })
 
 
+def _gather_non_aws_data(provider, provider_credentials, account_id, intent):
+    """Gather cost data from Azure or GCP connectors.
+
+    Uses the connector's get_cost_data method with normalized output.
+    Returns data in the same structure as _gather_account_data for AWS,
+    enabling the Bedrock prompt and response builder to remain provider-agnostic.
+
+    Args:
+        provider: "azure" or "gcp"
+        provider_credentials: Provider-specific credentials dict from _route_to_connector
+        account_id: The cloud account identifier
+        intent: Set of intent categories from _classify_intent (for logging/future routing)
+
+    Returns:
+        Tuple of (account_data_dict, executed_actions_list)
+    """
+    from connectors import get_connector
+    from connectors.base_connector import AuthenticationError
+
+    account_data = {}
+    executed_actions = []
+
+    try:
+        connector = get_connector(provider)
+        if connector is None:
+            logger.error(f"No connector registered for provider: {provider}")
+            account_data['error'] = f"No connector available for provider: {provider}"
+            return account_data, executed_actions
+
+        # Authenticate with provider-specific credentials
+        auth_context = connector.authenticate(provider_credentials)
+        executed_actions.append(f'{provider}:Authenticate')
+
+        # Get cost data (last 30 days)
+        now = datetime.now(timezone.utc)
+        end_date = now.strftime('%Y-%m-%d')
+        start_date = (now - timedelta(days=30)).strftime('%Y-%m-%d')
+
+        cost_data = connector.get_cost_data(auth_context, account_id, start_date, end_date)
+        executed_actions.append(f'{provider}:GetCostData ({start_date} to {end_date})')
+
+        # Normalize into the same structure as _gather_account_data returns for AWS
+        account_data['cost_by_service'] = cost_data.get('cost_by_service', [])
+        account_data['daily_cost_trend'] = cost_data.get('daily_cost_trend', [])
+        account_data['provider'] = provider
+
+        if cost_data.get('error'):
+            account_data['cost_error'] = cost_data['error']
+
+    except AuthenticationError as e:
+        logger.error(f"{provider} authentication failed for {account_id}: {e}")
+        account_data['error'] = f'{provider.upper()} authentication failed: {e}'
+    except Exception as e:
+        logger.error(f"{provider} data gathering failed for {account_id}: {type(e).__name__}: {e}")
+        account_data['error'] = f'{provider.upper()} data gathering failed: {type(e).__name__}: {e}'
+
+    return account_data, executed_actions
+
+
 def _invoke_multi_account(question, account_ids, member_email, interaction_id):
-    """Gather data from multiple accounts, merge, and analyze together."""
-    tips_context = _search_tips(question)
-    external_id = hashlib.sha256(member_email.encode('utf-8')).hexdigest()
-    sts_client = boto3.client('sts')
+    """Gather data from multiple accounts, merge, and analyze together.
+
+    Uses provider routing to detect cloud provider per account and processes
+    accounts concurrently via _gather_multi_account_parallel. AWS accounts
+    continue to use the full _gather_account_data path for backward compatibility.
+    Azure/GCP accounts route through their respective connectors.
+
+    Includes failedAccounts metadata in response for partial failures.
+    Returns error response if all accounts fail.
+
+    Requirements: 1.6, 12.1, 12.2, 12.3, 12.4
+    """
+    # Step 0: Classify intent to control which APIs are called
+    intent = _classify_intent(question)
+
+    # Step 1: Detect cloud provider for each account using provider router
+    account_providers = {}  # acct_id -> (provider, credentials)
+    for acct_id in account_ids[:5]:
+        try:
+            provider, credentials = _route_to_connector(acct_id, member_email)
+            account_providers[acct_id] = (provider, credentials)
+        except Exception as e:
+            logger.warning(f"Provider routing failed for account {acct_id}: {e}")
+            # Default to AWS on routing failure for backward compatibility
+            account_providers[acct_id] = ('aws', {
+                'account_id': acct_id,
+                'member_email': member_email,
+                'session_name': 'SlashMyBillAI',
+            })
+
+    # Determine unique providers for tips search
+    providers = set(p for p, _ in account_providers.values())
+
+    # Multi-provider: merge and deduplicate tips from all relevant providers
+    if len(providers) > 1:
+        tips_context = _search_tips_multi_provider(question, providers)
+    else:
+        tips_context = _search_tips(question, provider=next(iter(providers)))
+
+    # Step 2: Build account configs and process concurrently
+    # Separate AWS accounts (use full _gather_account_data) from non-AWS (use connectors)
+    aws_accounts = []
+    non_aws_configs = []
+
+    for acct_id, (provider, credentials) in account_providers.items():
+        if provider == 'aws':
+            aws_accounts.append((acct_id, credentials))
+        else:
+            non_aws_configs.append((acct_id, provider, credentials))
 
     all_account_data = {}
     all_actions = []
+    failed_accounts = []
+
+    # Process all accounts in parallel using ThreadPoolExecutor
+    def _process_aws_account(acct_id, creds):
+        """Process a single AWS account using the full _gather_account_data path."""
+        external_id = hashlib.sha256(member_email.encode('utf-8')).hexdigest()
+        sts_client = boto3.client('sts')
+        role_arn = f'arn:aws:iam::{creds["account_id"]}:role/SlashMyBill-{creds["account_id"]}'
+        assume_response = sts_client.assume_role(
+            RoleArn=role_arn, RoleSessionName='SlashMyBillAI', ExternalId=external_id,
+        )
+        sts_credentials = assume_response['Credentials']
+        acct_data, acct_actions = _gather_account_data(question, sts_credentials, intent=intent)
+        return acct_id, 'aws', acct_data, acct_actions
+
+    # Use concurrent processing for all accounts
+    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+        futures = {}
+
+        # Submit AWS account tasks
+        for acct_id, creds in aws_accounts:
+            future = executor.submit(_process_aws_account, acct_id, creds)
+            futures[future] = (acct_id, 'aws')
+
+        # Process non-AWS accounts via _gather_multi_account_parallel
+        # (runs in its own thread pool but we submit it as a single task)
+        if non_aws_configs:
+            non_aws_future = executor.submit(
+                _gather_multi_account_parallel, non_aws_configs, question
+            )
+            futures[non_aws_future] = ('_non_aws_batch', 'mixed')
+
+        # Collect results
+        for future in concurrent.futures.as_completed(futures):
+            key = futures[future]
+
+            if key == ('_non_aws_batch', 'mixed'):
+                # Handle batch result from non-AWS accounts
+                try:
+                    non_aws_result = future.result(timeout=25)
+                    # Merge successful non-AWS accounts into all_account_data
+                    for acct_id_result, cost_data in non_aws_result.get('accounts', {}).items():
+                        # Normalize non-AWS cost data to match _gather_account_data format
+                        normalized = _normalize_connector_cost_data(cost_data)
+                        all_account_data[acct_id_result] = normalized
+                        all_actions.append(f'[{acct_id_result}] cost_management:GetCostData')
+                    # Track failed non-AWS accounts
+                    for failure in non_aws_result.get('failedAccounts', []):
+                        failed_accounts.append(failure)
+                        all_account_data[failure['accountId']] = {'error': failure['error']}
+                except Exception as e:
+                    logger.error(f"Non-AWS batch processing failed: {e}")
+                    for cfg_acct_id, cfg_provider, _ in non_aws_configs:
+                        failed_accounts.append({
+                            'accountId': cfg_acct_id,
+                            'provider': cfg_provider,
+                            'error': f'Batch processing failed: {e}',
+                        })
+                        all_account_data[cfg_acct_id] = {'error': str(e)}
+            else:
+                # Handle individual AWS account result
+                acct_id, provider = key
+                try:
+                    _, _, acct_data, acct_actions_result = future.result(timeout=25)
+                    all_account_data[acct_id] = acct_data
+                    all_actions.extend([f'[{acct_id}] {a}' for a in acct_actions_result])
+                except Exception as e:
+                    logger.warning(f"Failed to gather data for account {acct_id} (provider={provider}): {e}")
+                    failed_accounts.append({
+                        'accountId': acct_id,
+                        'provider': provider,
+                        'error': str(e),
+                    })
+                    all_account_data[acct_id] = {'error': str(e)}
+
+    # Requirement 12.3: If ALL accounts failed, return error response
+    successful_accounts = {aid: data for aid, data in all_account_data.items() if 'error' not in data}
+    if not successful_accounts:
+        logger.error(f"All {len(account_ids)} accounts failed for multi-account query")
+        return create_response(200, {
+            'answer': 'I was unable to retrieve data from any of your accounts. '
+                      'Please check your account connections and try again.',
+            'interactionId': interaction_id,
+            'commands': [],
+            'results': [],
+            'tipFound': False,
+            'agentUsed': False,
+            'chartData': [],
+            'topServices': [],
+            'multiAccount': True,
+            'accountIds': account_ids,
+            'failedAccounts': failed_accounts,
+        })
+
+    # Build merged cost and monthly data from successful accounts
     merged_costs = {}
     merged_monthly = {}  # month -> service -> total cost
 
-    for acct_id in account_ids[:5]:
-        role_arn = f'arn:aws:iam::{acct_id}:role/SlashMyBill-{acct_id}'
-        try:
-            assume_response = sts_client.assume_role(
-                RoleArn=role_arn, RoleSessionName='SlashMyBillAI', ExternalId=external_id,
-            )
-            credentials = assume_response['Credentials']
-            acct_data, acct_actions = _gather_account_data(question, credentials)
-            all_account_data[acct_id] = acct_data
-            all_actions.extend([f'[{acct_id}] {a}' for a in acct_actions])
-
+    for acct_id, acct_data in all_account_data.items():
+        if 'error' not in acct_data:
             for svc in acct_data.get('cost_by_service', []):
                 key = svc['service']
                 merged_costs[key] = merged_costs.get(key, 0) + svc['cost_usd']
@@ -7771,14 +7992,11 @@ def _invoke_multi_account(question, account_ids, member_email, interaction_id):
                     merged_monthly[month] = {}
                 for svc, cost in svc_costs.items():
                     merged_monthly[month][svc] = merged_monthly[month].get(svc, 0) + cost
-        except Exception as e:
-            logger.warning(f"Failed to gather data for account {acct_id}: {e}")
-            all_account_data[acct_id] = {'error': str(e)}
 
     # Build aggregate
     aggregate = {
         'total_accounts': len(account_ids),
-        'accounts_analyzed': len([a for a in all_account_data.values() if 'error' not in a]),
+        'accounts_analyzed': len(successful_accounts),
         'aggregate_cost_by_service': sorted(
             [{'service': s, 'cost_usd': round(c, 4)} for s, c in merged_costs.items()],
             key=lambda x: x['cost_usd'], reverse=True
@@ -7857,7 +8075,8 @@ def _invoke_multi_account(question, account_ids, member_email, interaction_id):
                     for s in aggregate['aggregate_cost_by_service'][:10]
                     if s['cost_usd'] > 0.5 and s['service'] != 'Tax']
 
-    return create_response(200, {
+    # Build response with failedAccounts metadata (Requirement 12.2)
+    response_body = {
         'answer': answer,
         'interactionId': interaction_id,
         'commands': all_actions,
@@ -7868,19 +8087,79 @@ def _invoke_multi_account(question, account_ids, member_email, interaction_id):
         'topServices': top_services,
         'multiAccount': True,
         'accountIds': account_ids,
-    })
+    }
+
+    # Include failedAccounts only when there are partial failures
+    if failed_accounts:
+        response_body['failedAccounts'] = failed_accounts
+
+    return create_response(200, response_body)
+
+
+def _normalize_connector_cost_data(cost_data) -> dict:
+    """Normalize cost data from a non-AWS connector to match _gather_account_data format.
+
+    The connector's get_cost_data returns data in a normalized structure with
+    cost_by_service and daily_cost_trend. This function ensures it integrates
+    seamlessly with the existing multi-account aggregation logic.
+
+    Args:
+        cost_data: Dict or list returned by connector.get_cost_data(), expected to have
+                   'cost_by_service' and 'daily_cost_trend' fields if it's a dict.
+
+    Returns:
+        Dict matching the structure returned by _gather_account_data:
+        {
+            'cost_by_service': [{'service': str, 'cost_usd': float, ...}],
+            'daily_cost_trend': [{'date': str, 'cost_usd': float}],
+            ...
+        }
+    """
+    if isinstance(cost_data, dict):
+        # Already in normalized dict format from connector
+        normalized = {}
+        if 'cost_by_service' in cost_data:
+            normalized['cost_by_service'] = cost_data['cost_by_service']
+        else:
+            normalized['cost_by_service'] = []
+        if 'daily_cost_trend' in cost_data:
+            normalized['daily_cost_trend'] = cost_data['daily_cost_trend']
+        else:
+            normalized['daily_cost_trend'] = []
+        # Preserve any additional fields the connector provides
+        for key in cost_data:
+            if key not in normalized:
+                normalized[key] = cost_data[key]
+        return normalized
+    elif isinstance(cost_data, list):
+        # Raw Cost Explorer format (list of ResultsByTime) — parse into normalized
+        cost_by_service = {}
+        daily_trend = []
+        for period in cost_data:
+            date = period.get('TimePeriod', {}).get('Start', '')
+            day_total = 0.0
+            for group in period.get('Groups', []):
+                svc = group.get('Keys', ['Unknown'])[0]
+                amount = float(group.get('Metrics', {}).get('UnblendedCost', {}).get('Amount', '0'))
+                cost_by_service[svc] = cost_by_service.get(svc, 0) + amount
+                day_total += amount
+            if date:
+                daily_trend.append({'date': date, 'cost_usd': round(day_total, 4)})
+        return {
+            'cost_by_service': [{'service': s, 'cost_usd': round(c, 4)} for s, c in
+                                sorted(cost_by_service.items(), key=lambda x: x[1], reverse=True)],
+            'daily_cost_trend': sorted(daily_trend, key=lambda x: x['date']),
+        }
+    else:
+        return {'cost_by_service': [], 'daily_cost_trend': []}
 
 
 def _ask_bedrock_multi_account(question, tips_context, aggregate, all_account_data, account_ids):
     """Call Bedrock to analyze multi-account data."""
+    from tip_citation import build_tip_citation_prompt
     bedrock_client = boto3.client('bedrock-runtime', region_name=os.environ.get('BEDROCK_REGION', os.environ.get('AWS_REGION', 'us-east-1')))
 
-    tips_text = ""
-    if tips_context:
-        tips_text = "\n\nRelevant optimization tips from our knowledge base:\n"
-        for tip in tips_context[:5]:
-            label = "[Validated] " if tip.get('confidenceTag') == 'high-confidence' else ""
-            tips_text += f"- {label}{tip.get('title', '')}: {tip.get('description', '')} (Savings: {tip.get('estimatedSavings', 'N/A')})\n"
+    tips_text = build_tip_citation_prompt(tips_context)
 
     # Trim per-account data to keep prompt manageable while preserving all key metrics
     trimmed_aggregate = dict(aggregate)
@@ -8186,77 +8465,97 @@ def _build_chart_data(account_data):
     return charts if charts else None
 
 
-def _search_tips(question):
-    """Search ViewMyBill-CostOptimizationTips for relevant tips matching the question."""
+def _search_tips(question, provider='aws'):
+    """Search ViewMyBill-CostOptimizationTips for relevant tips matching the question.
+
+    Uses provider-specific keyword-to-service mappings (AWS, Azure, GCP).
+    Always includes tips tagged with service "General" regardless of provider.
+    Supports deduplication by tipId for multi-provider queries.
+
+    Args:
+        question: The user's question text.
+        provider: Cloud provider ("aws", "azure", "gcp"). Defaults to "aws".
+
+    Returns:
+        List of tip items (deduplicated, sorted), max 10.
+    """
+    from tips_filter import _search_tips as _search_tips_impl
     tips_table = dynamodb.Table(TIPS_TABLE_NAME)
-    question_lower = question.lower()
+    return _search_tips_impl(question, provider=provider, tips_table=tips_table)
 
-    # Map keywords to the EXACT service names used in DynamoDB (case-sensitive)
-    keyword_to_service = {
-        'ec2': 'EC2', 's3': 'S3', 'rds': 'RDS', 'lambda': 'Lambda',
-        'cloudfront': 'CloudFront', 'dynamodb': 'DynamoDB', 'ebs': 'EBS',
-        'elb': 'ELB', 'ecs': 'ECS', 'eks': 'EKS', 'redshift': 'Redshift',
-        'elasticache': 'ElastiCache', 'route53': 'Route53', 'route 53': 'Route53',
-        'cloudwatch': 'CloudWatch', 'iam': 'IAM', 'vpc': 'VPC', 'nat': 'NAT Gateway',
-        'kms': 'KMS', 'general': 'General', 'cost': 'General', 'billing': 'General',
-        'save': 'General', 'efficient': 'General', 'optimize': 'General',
-        'data transfer': 'Data Transfer', 'efs': 'EFS',
-    }
-    matched_services = set()
-    for kw, svc in keyword_to_service.items():
-        if kw in question_lower:
-            matched_services.add(svc)
 
-    tips = []
+def _search_tips_multi_provider(question, providers):
+    """Search tips across multiple providers and merge with deduplication.
+
+    Args:
+        question: The user's question text.
+        providers: Set or list of provider strings (e.g., {"aws", "azure"}).
+
+    Returns:
+        Deduplicated list of tips sorted by confidence/score, max 10.
+    """
+    from tips_filter import merge_tips_multi_provider
+    tips_by_provider = {}
+    for provider in providers:
+        tips_by_provider[provider] = _search_tips(question, provider=provider)
+    return merge_tips_multi_provider(tips_by_provider)
+
+
+def _get_account_provider(member_email, account_id):
+    """Look up the cloud provider for a given account.
+
+    Queries MemberPortal-Accounts table and returns the cloudProvider field.
+    Defaults to 'aws' if the field is missing or empty.
+
+    Args:
+        member_email: The account owner's email.
+        account_id: The account ID to look up.
+
+    Returns:
+        Cloud provider string: "aws", "azure", or "gcp".
+    """
     try:
-        if matched_services:
-            for svc in list(matched_services)[:4]:
-                result = tips_table.query(
-                    KeyConditionExpression=boto3.dynamodb.conditions.Key('service').eq(svc)
-                )
-                tips.extend(result.get('Items', []))
-            # Also check AI-GENERATED tips (from auto-save)
-            try:
-                ai_tips = tips_table.query(
-                    KeyConditionExpression=boto3.dynamodb.conditions.Key('service').eq('AI-GENERATED')
-                )
-                tips.extend(ai_tips.get('Items', []))
-            except Exception:
-                pass
-        else:
-            result = tips_table.scan(Limit=20)
-            tips = result.get('Items', [])
-    except ClientError as e:
-        logger.warning(f"Tips table query error: {e}")
-
-    # Deduplicate by tipId
-    seen = set()
-    unique_tips = []
-    for t in tips:
-        tid = t.get('tipId', '')
-        if tid not in seen:
-            seen.add(tid)
-            unique_tips.append(t)
-
-    # Sort: high-confidence first, then by feedbackScore (positive count), then curated
-    def _tip_sort_key(t):
-        if t.get('confidenceTag') == 'high-confidence':
-            return (0, -(t.get('positiveCount', 0)))
-        if t.get('source') == 'user-feedback':
-            return (1, -(t.get('positiveCount', 0)))
-        if t.get('source') == 'ai-agent':
-            return (2, 0)
-        return (3, 0)  # curated tips last
-    unique_tips.sort(key=_tip_sort_key)
-
-    return _decimal_to_native(unique_tips[:10])
+        accounts_table = dynamodb.Table(ACCOUNTS_TABLE_NAME)
+        resp = accounts_table.get_item(
+            Key={'memberEmail': member_email, 'accountId': account_id},
+            ProjectionExpression='cloudProvider',
+        )
+        item = resp.get('Item', {})
+        provider = item.get('cloudProvider', '').strip().lower()
+        return provider if provider in ('aws', 'azure', 'gcp') else 'aws'
+    except Exception as e:
+        logger.warning(f"Failed to get provider for account {account_id}: {e}")
+        return 'aws'
 
 
-def _gather_account_data(question, credentials, tag_key=None, tag_value=None):
-    """Gather relevant AWS account data based on the question using direct boto3 calls."""
+def _gather_account_data(question, credentials, tag_key=None, tag_value=None, member_email=None, account_id=None, intent=None):
+    """Gather relevant AWS account data based on the question using direct boto3 calls.
+
+    Args:
+        question: The user's question text.
+        credentials: STS temporary credentials dict.
+        tag_key: Optional tag key for filtering.
+        tag_value: Optional tag value for filtering.
+        member_email: Optional member email for cache lookups.
+        account_id: Optional account ID.
+        intent: Set of intent categories from _classify_intent(). If None or {'all'},
+                all APIs are called (preserving existing behavior).
+    """
     question_lower = question.lower()
     data = {}
     actions = []
+
+    # Determine which APIs to call based on intent classification.
+    # When intent is None or {'all'}, we fetch everything (legacy behavior).
+    if intent is None or 'all' in intent:
+        _apis_to_call = None  # None means "call everything" (legacy behavior)
+    else:
+        _apis_to_call = get_apis_for_intent(intent)
+
+    def _intent_allows(api_id):
+        """Check if the current intent allows calling a specific API.
+        Returns True if apis_to_call is None (fetch all) or the api_id is in the set."""
+        return _apis_to_call is None or api_id in _apis_to_call
 
     def _make_client(service, region='us-east-1'):
         return boto3.client(
@@ -8414,7 +8713,6 @@ def _gather_account_data(question, credentials, tag_key=None, tag_value=None):
             _rm_params = {
                 'TimePeriod': {'Start': range_start, 'End': range_end},
                 'Granularity': 'MONTHLY',
-                'Metrics': ['UnblendedCost'],
                 'GroupBy': [{'Type': 'DIMENSION', 'Key': 'SERVICE'}],
             }
             _rm_params = _apply_filter_to_ce_call(_rm_params, tag_key, tag_value)
@@ -8437,30 +8735,78 @@ def _gather_account_data(question, credentials, tag_key=None, tag_value=None):
             data['monthly_trend_months'] = sorted(monthly_data.keys())
             actions.append(f'ce:GetCostAndUsage (monthly trend, {range_start} to {range_end})')
 
-        # Monthly cost by service â€” cost only (no UsageQuantity to avoid unit confusion)
-        _cbs_params = {
-            'TimePeriod': {'Start': start_30d, 'End': end_date},
-            'Granularity': 'MONTHLY',
-            'Metrics': ['UnblendedCost'],
-            'GroupBy': [{'Type': 'DIMENSION', 'Key': 'SERVICE'}],
-        }
-        _cbs_params = _apply_filter_to_ce_call(_cbs_params, tag_key, tag_value)
-        cost_by_service = ce.get_cost_and_usage(**_cbs_params)
-        # Flatten to a clean list so the AI gets unambiguous numbers
-        service_costs = []
-        for period in cost_by_service.get('ResultsByTime', []):
-            for group in period.get('Groups', []):
-                svc = group['Keys'][0]
-                cost_usd = float(group['Metrics']['UnblendedCost']['Amount'])
-                if cost_usd > 0:
-                    service_costs.append({
-                        'service': svc,
-                        'cost_usd': round(cost_usd, 4),
-                        'period': f"{period['TimePeriod']['Start']} to {period['TimePeriod']['End']}",
-                    })
-        service_costs.sort(key=lambda x: x['cost_usd'], reverse=True)
-        data['cost_by_service'] = service_costs
-        actions.append('ce:GetCostAndUsage (monthly by service, last 30 days)')
+        # Monthly cost by service — cache-first lookup with live API fallback
+        # When member_email and account_id are available (AI chat flow) and no tag
+        # filter is active, attempt to read from Cost_Cache_Table first.
+        _cache_used_for_cost = False
+        service_costs = []  # Initialize for later reference by usage-breakdown logic
+        if member_email and account_id and not (tag_key and tag_value):
+            try:
+                cached_costs, from_cache = _get_cost_data_cached(
+                    member_email, account_id, credentials, start_30d, end_date
+                )
+                if from_cache:
+                    # Cache hit — use cached data, skip live CE call
+                    service_costs = [
+                        item for item in cached_costs
+                        if item.get('service') != '_error'
+                    ]
+                    service_costs.sort(key=lambda x: x['cost_usd'], reverse=True)
+                    data['cost_by_service'] = service_costs
+                    actions.append('cache:Cost_Cache_Table (cache hit, skipped live CE)')
+                    _cache_used_for_cost = True
+                else:
+                    # Cache miss — _get_cost_data_cached already fell back to live API
+                    # Check for error indicator (service=='_error')
+                    if cached_costs and cached_costs[0].get('service') == '_error':
+                        # Both cache and live API failed
+                        logger.warning(
+                            f"Cache-first cost lookup failed for {account_id}: "
+                            f"both cache and live API returned error"
+                        )
+                        data['cost_by_service'] = []
+                        data['cost_error'] = 'Cost data unavailable from both cache and live API'
+                        actions.append('ce:GetCostAndUsage (both cache and live API failed)')
+                    else:
+                        # Live API succeeded via fallback in _get_cost_data_cached
+                        service_costs = [
+                            item for item in cached_costs
+                            if item.get('service') != '_error'
+                        ]
+                        service_costs.sort(key=lambda x: x['cost_usd'], reverse=True)
+                        data['cost_by_service'] = service_costs
+                        actions.append('ce:GetCostAndUsage (cache miss, live API fallback)')
+                    _cache_used_for_cost = True
+            except Exception as e:
+                logger.warning(f"Cache-first cost lookup exception for {account_id}: {e}")
+                # Fall through to standard live CE call below
+                _cache_used_for_cost = False
+
+        if not _cache_used_for_cost:
+            # Standard live Cost Explorer call (tag-filtered queries, or no cache params)
+            _cbs_params = {
+                'TimePeriod': {'Start': start_30d, 'End': end_date},
+                'Granularity': 'MONTHLY',
+                'Metrics': ['UnblendedCost'],
+                'GroupBy': [{'Type': 'DIMENSION', 'Key': 'SERVICE'}],
+            }
+            _cbs_params = _apply_filter_to_ce_call(_cbs_params, tag_key, tag_value)
+            cost_by_service = ce.get_cost_and_usage(**_cbs_params)
+            # Flatten to a clean list so the AI gets unambiguous numbers
+            service_costs = []
+            for period in cost_by_service.get('ResultsByTime', []):
+                for group in period.get('Groups', []):
+                    svc = group['Keys'][0]
+                    cost_usd = float(group['Metrics']['UnblendedCost']['Amount'])
+                    if cost_usd > 0:
+                        service_costs.append({
+                            'service': svc,
+                            'cost_usd': round(cost_usd, 4),
+                            'period': f"{period['TimePeriod']['Start']} to {period['TimePeriod']['End']}",
+                        })
+            service_costs.sort(key=lambda x: x['cost_usd'], reverse=True)
+            data['cost_by_service'] = service_costs
+            actions.append('ce:GetCostAndUsage (monthly by service, last 30 days)')
 
         # Daily cost trend â€” cost only
         start_7d = (datetime.now(timezone.utc) - timedelta(days=7)).strftime('%Y-%m-%d')
@@ -8528,7 +8874,7 @@ def _gather_account_data(question, credentials, tag_key=None, tag_value=None):
     _is_ec2_specific = any(kw in question_lower for kw in _ec2_specific_keywords)
     
     top_service_names_ec2 = [s['service'] for s in data.get('cost_by_service', [])[:8]]
-    if _is_ec2_specific and not _is_broad_question:
+    if _is_ec2_specific and not _is_broad_question and _intent_allows("ec2_describe_instances"):
         try:
             _ec2_start = time.time()
             # Use only 1 region to stay within 30s API Gateway limit
@@ -8576,7 +8922,7 @@ def _gather_account_data(question, credentials, tag_key=None, tag_value=None):
         _elapsed = time.time() - _ec2_start
     except NameError:
         _elapsed = 0
-    if not _specific_service_question and _elapsed < 18 and (
+    if not _specific_service_question and _elapsed < 18 and _intent_allows('nat_gateways') and (
         any(s in top_service_names for s in ['EC2 - Other', 'Amazon Virtual Private Cloud']) or
         any(kw in question_lower for kw in ['nat', 'vpc', 'network', 'data transfer', 'ebs', 'volume', 'eip', 'elastic ip', 'load balancer'])
     ):
@@ -8673,7 +9019,7 @@ def _gather_account_data(question, credentials, tag_key=None, tag_value=None):
             data['nat_gateway_error'] = str(e)
 
     # S3 if question mentions S3, storage, buckets
-    if any(kw in question_lower for kw in ['s3', 'storage', 'bucket']):
+    if any(kw in question_lower for kw in ['s3', 'storage', 'bucket']) and _intent_allows('s3_list_buckets'):
         try:
             s3 = _make_client('s3')
             buckets = s3.list_buckets()
@@ -8684,8 +9030,8 @@ def _gather_account_data(question, credentials, tag_key=None, tag_value=None):
 
     # RDS â€” fetch when it's a top cost or question mentions database
     top_service_names_rds = [s['service'] for s in data.get('cost_by_service', [])[:8]]
-    if 'Amazon Relational Database Service' in top_service_names_rds or \
-       any(kw in question_lower for kw in ['rds', 'database', 'db']):
+    if ('Amazon Relational Database Service' in top_service_names_rds or \
+       any(kw in question_lower for kw in ['rds', 'database', 'db'])) and _intent_allows('rds_describe_instances'):
         try:
             rds = _make_client('rds')
             dbs = rds.describe_db_instances()
@@ -8721,7 +9067,7 @@ def _gather_account_data(question, credentials, tag_key=None, tag_value=None):
             data['kms_error'] = str(e)
 
     # Lambda if question mentions Lambda, functions
-    if any(kw in question_lower for kw in ['lambda', 'function', 'serverless']):
+    if any(kw in question_lower for kw in ['lambda', 'function', 'serverless']) and _intent_allows('lambda_list_functions'):
         try:
             lam = _make_client('lambda')
             funcs = lam.list_functions()
@@ -9635,14 +9981,10 @@ def _fetch_pricing_context(service_costs, account_data=None):
 
 def _ask_bedrock_analyze(question, tips_context, account_data, account_id):
     """Call Bedrock to analyze gathered data and answer the question."""
+    from tip_citation import build_tip_citation_prompt
     bedrock_client = boto3.client('bedrock-runtime', region_name=os.environ.get('BEDROCK_REGION', os.environ.get('AWS_REGION', 'us-east-1')))
 
-    tips_text = ""
-    if tips_context:
-        tips_text = "\n\nRelevant optimization tips from our knowledge base:\n"
-        for tip in tips_context[:5]:
-            label = "[Validated] " if tip.get('confidenceTag') == 'high-confidence' else ""
-            tips_text += f"- {label}{tip.get('title', '')}: {tip.get('description', '')} (Savings: {tip.get('estimatedSavings', 'N/A')})\n"
+    tips_text = build_tip_citation_prompt(tips_context)
 
     data_text = json.dumps(account_data, indent=2, default=str)
     if len(data_text) > 8000:

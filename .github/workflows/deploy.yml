@@ -273,7 +273,7 @@ jobs:
       - name: Package Member Handler Lambda
         run: |
           echo "Packaging Member Handler Lambda..."
-          pip install PyJWT bcrypt pyyaml -t .build-member-handler/ --quiet
+          pip install PyJWT bcrypt pyyaml cryptography -t .build-member-handler/ --quiet
           cp member-handler/lambda_function.py .build-member-handler/
           cp member-handler/provider_registry.py .build-member-handler/
           cp member-handler/sts_assume_role.py .build-member-handler/
@@ -283,7 +283,16 @@ jobs:
           cp member-handler/cache_service.py .build-member-handler/
           cp member-handler/cache_types.py .build-member-handler/
           cp member-handler/incremental_fetch_engine.py .build-member-handler/
+          cp member-handler/intent_classifier.py .build-member-handler/
+          cp member-handler/provider_router.py .build-member-handler/
+          cp member-handler/parallel_executor.py .build-member-handler/
+          cp member-handler/tips_cache.py .build-member-handler/
+          cp member-handler/tips_filter.py .build-member-handler/
+          cp member-handler/tip_citation.py .build-member-handler/
+          cp member-handler/cost_cache.py .build-member-handler/
           cp -r member-handler/hcl_generator .build-member-handler/hcl_generator
+          cp -r member-handler/connectors .build-member-handler/connectors
+          rm -rf .build-member-handler/connectors/__pycache__
           cd .build-member-handler && zip -r ../member-handler-lambda.zip . -q
           cd ..
           aws s3 cp member-handler-lambda.zip s3://${{ env.STORAGE_BUCKET }}/lambda-packages/member-handler.zip
