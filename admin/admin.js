@@ -525,7 +525,38 @@ function renderDetailModal(entry){
         $('txn-detail-audit-status').textContent=entry.audit_status||'-';
         $('txn-detail-accuracy').textContent=entry.audit_accuracy_assessment||'-';
         $('txn-detail-timing').textContent=entry.audit_timing_assessment||'-';
-        $('txn-detail-suggestions').textContent=entry.audit_improvement_suggestions||'-';
+        // Render improvement suggestions as clickable recommendation chips
+        var suggestionsEl=$('txn-detail-suggestions');
+        var sugText=entry.audit_improvement_suggestions||'';
+        if(sugText&&sugText!=='-'){
+            var items=sugText.split(/\d+\.\s+/).filter(function(s){return s.trim();});
+            if(items.length>1){
+                var html='';
+                items.forEach(function(item){
+                    html+='<button class="txn-recommendation-chip" title="Click to copy" onclick="navigator.clipboard.writeText(this.textContent.trim());this.style.background=\'#10b981\';this.style.color=\'#fff\';setTimeout(function(){}.bind(this),1000);">'+esc(item.trim())+'</button>';
+                });
+                suggestionsEl.innerHTML=html;
+            }else{
+                suggestionsEl.textContent=sugText;
+            }
+        }else{
+            suggestionsEl.textContent='-';
+        }
+    }
+
+    // Copy buttons — store entry for the copy handlers
+    window._currentTxnEntry=entry;
+    var copyBtnsEl=$('txn-copy-buttons');
+    if(copyBtnsEl){
+        copyBtnsEl.innerHTML='<button class="btn btn-sm" id="txn-copy-text-btn" style="margin-right:8px;">&#128203; Copy as Text</button><button class="btn btn-sm" id="txn-copy-json-btn">&#123;&#125; Copy as JSON</button><span id="txn-copy-status" style="margin-left:10px;color:#10b981;font-size:12px;"></span>';
+        $('txn-copy-text-btn').addEventListener('click',function(){
+            var e=window._currentTxnEntry;
+            var text='Transaction Detail\n'+'Transaction ID: '+e.transaction_id+'\nUser Email: '+e.user_email+'\nFunction: '+e.function_name+'\nSource Handler: '+e.source_handler+'\nStatus: '+e.status+'\nDuration: '+e.duration_ms+'ms\nStart Time: '+e.start_timestamp+'\nEnd Time: '+e.end_timestamp+'\n\nRequest Payload:\n'+$('txn-detail-request').textContent+'\n\nResponse Payload:\n'+$('txn-detail-response').textContent+'\n\nAudit Evaluation\nScore: '+(e.audit_score||'-')+'\nAudit Status: '+(e.audit_status||'-')+'\nAccuracy Assessment: '+(e.audit_accuracy_assessment||'-')+'\nTiming Assessment: '+(e.audit_timing_assessment||'-')+'\nImprovement Suggestions: '+(e.audit_improvement_suggestions||'-');
+            navigator.clipboard.writeText(text).then(function(){$('txn-copy-status').textContent='Copied!';setTimeout(function(){$('txn-copy-status').textContent='';},2000);});
+        });
+        $('txn-copy-json-btn').addEventListener('click',function(){
+            navigator.clipboard.writeText(JSON.stringify(window._currentTxnEntry,null,2)).then(function(){$('txn-copy-status').textContent='JSON copied!';setTimeout(function(){$('txn-copy-status').textContent='';},2000);});
+        });
     }
 }
 
