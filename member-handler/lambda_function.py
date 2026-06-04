@@ -7964,6 +7964,7 @@ SPECIFIC QUESTION HANDLING:
 - If the user asks about S3: use s3_buckets (per account). Show bucket names and count **per account separately** â€” never merge accounts or report only one. List ALL buckets without lifecycle policies from ALL accounts. Count must match the list length exactly.
 - If the user asks about NAT Gateway: use nat_gateways and nat_gateway_metrics. Show gateway IDs, state, bytes transferred.
 - If the user asks about EBS: use ebs_summary. Show total volumes, unattached count, gp2 vs gp3 breakdown.
+- If the user asks about EC2-Other: ALWAYS use ec2___other_usage_breakdown data if present. Explain that EC2-Other is an AWS billing category containing EBS volumes, NAT Gateways, data transfer, and Elastic IPs. Show the exact breakdown with dollar amounts. NEVER say it contains ELB, Spot Fleet, or compute instances — those are separate billing lines.
 - If the user asks about VPC/endpoints: use vpc_endpoints and elastic_ips. Show endpoint types, unattached EIPs.
 - If the user asks about KMS: use kms_summary. Show total keys, customer-managed key count.
 - If the user asks about Route 53: use route53_hosted_zones. Show zone names and record counts.
@@ -7976,10 +7977,19 @@ GENERAL QUESTION RULES (only apply when the question is broad/general):
 2. Then break down PER ACCOUNT: each account's total spend and top services.
 3. Identify cross-account patterns.
 4. Savings recommendations ranked by total dollar impact.
-5. NON-ACTIONABLE SERVICES (never list as savings): Tax, Amazon Registrar, AWS Cost Explorer, AWS CloudTrail.
+5. NON-ACTIONABLE SERVICES — ABSOLUTE EXCLUSION LIST (NEVER list as savings, NEVER include in recommendations, NEVER mention as a cost to reduce):
+   * Tax — proportional to spend, not a savings opportunity, EXCLUDE COMPLETELY from savings lists
+   * Amazon Registrar — annual domain fee, not optimizable
+   * AWS Cost Explorer — this is the cost of SlashMyBill monitoring your account; explain that reducing dashboard refresh frequency would lower this cost but it is a trade-off for visibility
+   * AWS CloudTrail — audit trail, required for compliance
+   If you include Tax or any non-actionable service in a "save money" response, the answer is WRONG.
 6. ONLY services < $0.50 across all accounts = Minor costs. ANY service >= $0.50 MUST be listed individually (e.g., $7 Amplify is NOT minor, $38 RDS is NOT minor).
 7. Do NOT give generic advice for services with $0 spend.
 8. ALWAYS rank services by cost descending.
+9. EC2-Other is NOT compute — it contains EBS volumes, NAT Gateways, data transfer, Elastic IPs. NEVER recommend Spot Instances or Reserved Instances for EC2-Other. Instead recommend: gp2→gp3 migration, NAT Gateway alternatives (VPC endpoints), releasing unused EIPs, reviewing data transfer.
+10. For EC2 Compute > $500/month: ALWAYS lead with Savings Plans / Reserved Instances recommendation (30-72% savings) BEFORE rightsizing. Also recommend Act → Scheduler for non-production instances.
+11. For any service > $200/month: provide specific, actionable advice — not generic "review your usage." Mention specific features in SlashMyBill that help (Act → Scheduler, Act → Waste Cleanup, Act → Optimize, Chat for deeper analysis).
+12. MANDATORY BREAKDOWN RULE: When ec2___other_usage_breakdown or amazon_virtual_private_cloud_usage_breakdown data is present in the account data, you MUST show the usage-type breakdown with dollar amounts for that service. List the top 5 usage types by cost. Example: "EC2-Other ($587): EBS:VolumeUsage.gp3 $250, NatGateway-Hours $180, DataTransfer-Out-Bytes $95, ElasticIP:IdleAddress $35, EBS:SnapshotUsage $27". This is the most valuable insight for these opaque billing categories.
 
 User question: {question}
 {tips_text}
@@ -9691,7 +9701,8 @@ IMPORTANT RULES:
 - "EC2 - Other" = NAT Gateway hours/data, EBS volumes, data transfer, Elastic IPs, load balancers. NOT EC2 instances. Do NOT recommend Reserved Instances for this line item.
 - "Amazon Virtual Private Cloud" costs = NAT Gateway data processing, VPC endpoints (Interface type cost ~$7.20/month each), Elastic IPs. Use elastic_ips and vpc_endpoints data to identify the exact driver.
 - When amazon_virtual_private_cloud_usage_breakdown is present, use it to show the EXACT cost drivers (e.g. NatGateway-Hours, VpcEndpoint-Hours, ElasticIP:IdleAddress, DataTransfer-Out-Bytes). List each usage type with its cost.
-- When ec2___other_usage_breakdown is present, use it to show the EXACT cost drivers for EC2-Other (e.g. EBS:VolumeUsage.gp2, NatGateway-Hours, DataTransfer-Out-Bytes). List each usage type with its cost.
+- CRITICAL: "EC2 - Other" (or "EC2-Other") is a SPECIFIC AWS billing category. It contains: EBS volume usage (gp2/gp3/io1), NAT Gateway hours, data transfer, Elastic IP charges, and EBS snapshots. It does NOT contain: ELB (separate service), Spot Fleet (that's EC2-Compute), EC2 instance compute (that's EC2-Compute). When ec2___other_usage_breakdown is present in the data, you MUST use it to show the EXACT cost drivers with their real dollar amounts. NEVER guess or fabricate what EC2-Other contains — always cite the actual breakdown data.
+- When ec2___other_usage_breakdown is present, list each usage type with its cost (e.g. "EBS:VolumeUsage.gp3: $45.20, NatGateway-Hours: $32.10, DataTransfer-Out-Bytes: $8.50"). Do NOT invent categories not in the data.
 - Reserved Instances ONLY apply to "Amazon Elastic Compute Cloud - Compute" and RDS instances, never to EC2-Other or VPC.
 - PRICING STRATEGY (CRITICAL â€” follow this exact sequence):
   1. RIGHTSIZE FIRST: If compute_optimizer_ec2 data is present showing OVER_PROVISIONED instances, ALWAYS recommend rightsizing BEFORE any commitment purchase. Say: "Do NOT buy Savings Plans on oversized instances â€” rightsize first to avoid locking in waste for 1-3 years."
