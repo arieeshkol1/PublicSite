@@ -790,6 +790,101 @@ jobs:
             }'
           echo "✓ ProviderRegistry access granted to member-handler"
 
+      - name: Ensure Audit Evaluator Lambda exists
+        continue-on-error: true
+        run: |
+          FUNCTION_NAME="audit-evaluator"
+          ROLE_NAME="audit-evaluator-role"
+          ACCOUNT_ID="991105135552"
+          REGION="us-east-1"
+          TABLE_ARN="arn:aws:dynamodb:us-east-1:991105135552:table/Audit_Transaction_Log"
+
+          # Create IAM role if it doesn't exist
+          if aws iam get-role --role-name "$ROLE_NAME" > /dev/null 2>&1; then
+            echo "✓ $ROLE_NAME already exists"
+          else
+            echo "Creating $ROLE_NAME..."
+            aws iam create-role \
+              --role-name "$ROLE_NAME" \
+              --assume-role-policy-document '{
+                "Version": "2012-10-17",
+                "Statement": [{
+                  "Effect": "Allow",
+                  "Principal": {"Service": "lambda.amazonaws.com"},
+                  "Action": "sts:AssumeRole"
+                }]
+              }' \
+              --tags Key=Project,Value=ViewMyBill > /dev/null
+            aws iam attach-role-policy \
+              --role-name "$ROLE_NAME" \
+              --policy-arn arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+            aws iam put-role-policy \
+              --role-name "$ROLE_NAME" \
+              --policy-name "AuditEvaluatorPermissions" \
+              --policy-document '{
+                "Version": "2012-10-17",
+                "Statement": [
+                  {
+                    "Effect": "Allow",
+                    "Action": [
+                      "dynamodb:GetItem",
+                      "dynamodb:UpdateItem",
+                      "dynamodb:DescribeStream",
+                      "dynamodb:GetRecords",
+                      "dynamodb:GetShardIterator",
+                      "dynamodb:ListStreams"
+                    ],
+                    "Resource": [
+                      "arn:aws:dynamodb:us-east-1:991105135552:table/Audit_Transaction_Log",
+                      "arn:aws:dynamodb:us-east-1:991105135552:table/Audit_Transaction_Log/stream/*"
+                    ]
+                  },
+                  {
+                    "Effect": "Allow",
+                    "Action": "bedrock:InvokeModel",
+                    "Resource": "*"
+                  }
+                ]
+              }'
+            echo "✓ $ROLE_NAME created"
+            sleep 10
+          fi
+
+          # Create Lambda function if it doesn't exist
+          if aws lambda get-function --function-name "$FUNCTION_NAME" > /dev/null 2>&1; then
+            echo "✓ $FUNCTION_NAME Lambda already exists"
+          else
+            echo "Creating $FUNCTION_NAME Lambda..."
+            # Wait for role propagation
+            sleep 5
+            aws lambda create-function \
+              --function-name "$FUNCTION_NAME" \
+              --runtime python3.12 \
+              --handler lambda_function.lambda_handler \
+              --role "arn:aws:iam::${ACCOUNT_ID}:role/${ROLE_NAME}" \
+              --timeout 60 \
+              --memory-size 256 \
+              --environment "Variables={TABLE_NAME=Audit_Transaction_Log,BEDROCK_MODEL_ID=us.anthropic.claude-opus-4-0-20250514}" \
+              --zip-file fileb://audit-evaluator-lambda.zip \
+              --tags Project=ViewMyBill > /dev/null
+            echo "✓ $FUNCTION_NAME Lambda created"
+            # Wait for function to be active
+            aws lambda wait function-active --function-name "$FUNCTION_NAME"
+
+            # Connect DynamoDB Stream as event source
+            STREAM_ARN=$(aws dynamodb describe-table --table-name Audit_Transaction_Log --query "Table.LatestStreamArn" --output text)
+            if [ "$STREAM_ARN" != "None" ] && [ -n "$STREAM_ARN" ]; then
+              aws lambda create-event-source-mapping \
+                --function-name "$FUNCTION_NAME" \
+                --event-source-arn "$STREAM_ARN" \
+                --starting-position LATEST \
+                --batch-size 1 > /dev/null
+              echo "✓ DynamoDB Stream event source mapping created"
+            else
+              echo "⚠ No stream ARN found on Audit_Transaction_Log table"
+            fi
+          fi
+
       - name: Ensure Tips Sync Lambda exists
         continue-on-error: true
         run: |
