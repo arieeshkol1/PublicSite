@@ -7737,11 +7737,8 @@ def handle_ai_query(event):
         if len(account_ids) > 1:
             return _invoke_multi_account(ai_question, account_ids, member_email, interaction_id)
         else:
-            # Always use direct model path for single-account queries.
-            # The direct model path has curated prompts with verified pricing rules,
-            # anti-hallucination guardrails, usage-type breakdown tools, and tip citations.
-            # The Bedrock Agent lacks these controls and hallucinates service pricing.
-            # This is the scalable approach — works for any cloud/service without keyword lists.
+            # Always use direct model path — has curated prompts, anti-hallucination rules,
+            # and the intent classifier controls which APIs are called.
             return _invoke_direct_model(ai_question, account_ids[0], member_email, interaction_id)
 
     try:
@@ -8720,6 +8717,11 @@ def _gather_account_data(question, credentials, tag_key=None, tag_value=None, me
     data = {}
     actions = []
     _gather_start = time.time()
+    # Time budget: leave 12s for the Bedrock model call (Lambda timeout ~29s, minus overhead)
+    _MAX_GATHER_SECONDS = 14
+
+    def _time_left():
+        return _MAX_GATHER_SECONDS - (time.time() - _gather_start)
 
     # Determine which APIs to call based on intent classification.
     # When intent is None or {'all'}, we fetch everything (legacy behavior).
@@ -9126,7 +9128,7 @@ def _gather_account_data(question, credentials, tag_key=None, tag_value=None, me
         _elapsed = time.time() - _ec2_start
     except NameError:
         _elapsed = 0
-    if not _specific_service_question and _elapsed < 18 and _intent_allows('nat_gateways') and (
+    if not _specific_service_question and _elapsed < 18 and _time_left() > 3 and _intent_allows('nat_gateways') and (
         any(s in top_service_names for s in ['EC2 - Other', 'Amazon Virtual Private Cloud']) or
         any(kw in question_lower for kw in ['nat', 'vpc', 'network', 'data transfer', 'ebs', 'volume', 'eip', 'elastic ip', 'load balancer'])
     ):
@@ -9223,7 +9225,7 @@ def _gather_account_data(question, credentials, tag_key=None, tag_value=None, me
             data['nat_gateway_error'] = str(e)
 
     # S3 if question mentions S3, storage, buckets
-    if any(kw in question_lower for kw in ['s3', 'storage', 'bucket']) and _intent_allows('s3_list_buckets'):
+    if any(kw in question_lower for kw in ['s3', 'storage', 'bucket']) and _time_left() > 2 and _intent_allows('s3_list_buckets'):
         try:
             s3 = _make_client('s3')
             buckets = s3.list_buckets()
@@ -10027,9 +10029,8 @@ def _gather_account_data(question, credentials, tag_key=None, tag_value=None, me
         }
 
     # Fetch real pricing for top spending services to ground recommendations
-    # Skip if already past 15s to leave time for the Bedrock model call (27s timeout)
-    _elapsed_total = time.time() - _gather_start
-    if data.get('cost_by_service') and _elapsed_total < 15:
+    # Skip if time budget is exhausted — leaves room for Bedrock model call
+    if data.get('cost_by_service') and _time_left() > 4:
         pricing_context = _fetch_pricing_context(data['cost_by_service'], data)
         if pricing_context:
             data['pricing_context'] = pricing_context
