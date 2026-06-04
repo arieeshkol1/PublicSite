@@ -49,6 +49,6 @@ def assume_role(account_id: str, member_email: str, session_name: str = 'SlashMy
         RoleArn=role_arn,
         RoleSessionName=session_name,
         ExternalId=external_id,
-        DurationSeconds=session_duration
+        DurationSeconds=int(session_duration)
     )
     return response['Credentials']
