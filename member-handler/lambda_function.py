@@ -9229,6 +9229,26 @@ def _gather_account_data(question, credentials, tag_key=None, tag_value=None, me
             actions.append('lambda:ListFunctions')
         except Exception as e:
             data['lambda_error'] = str(e)
+            # Fallback: check CloudWatch for Lambda invocation metrics to detect permission gap
+            try:
+                cw = _make_client('cloudwatch')
+                _now = datetime.now(timezone.utc)
+                inv_resp = cw.get_metric_statistics(
+                    Namespace='AWS/Lambda', MetricName='Invocations',
+                    StartTime=_now - timedelta(days=30), EndTime=_now,
+                    Period=86400 * 30, Statistics=['Sum']
+                )
+                total_invocations = int(sum(d['Sum'] for d in inv_resp.get('Datapoints', [])))
+                if total_invocations > 0:
+                    data['lambda_permission_warning'] = (
+                        f"WARNING: CloudWatch shows {total_invocations:,} Lambda invocations in 30 days, "
+                        f"but lambda:ListFunctions is denied. The cross-account role is missing "
+                        f"lambda:ListFunctions permission. Add lambda:ListFunctions, lambda:GetFunction "
+                        f"to the SlashMyBill cross-account IAM role to enable Lambda analysis."
+                    )
+                    data['lambda_invocations_30d'] = total_invocations
+            except Exception:
+                pass
 
     # Budgets â€” fetch when question mentions budgets/alerts/cost alerts
     if any(kw in question_lower for kw in ['budget', 'alert', 'cost alert', 'billing alarm', 'spend limit']):
