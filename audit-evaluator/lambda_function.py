@@ -19,7 +19,7 @@ logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
 TABLE_NAME = os.environ.get('TABLE_NAME', 'Audit_Transaction_Log')
-BEDROCK_MODEL_ID = os.environ.get('BEDROCK_MODEL_ID', 'us.anthropic.claude-opus-4-0-20250514')
+BEDROCK_MODEL_ID = os.environ.get('BEDROCK_MODEL_ID', 'us.amazon.nova-lite-v1:0')
 
 MAX_RETRIES = 3
 BACKOFF_BASE = 2  # seconds
@@ -119,11 +119,23 @@ def _evaluate_with_bedrock(entry):
 
     for attempt in range(MAX_RETRIES):
         try:
-            response = bedrock_runtime.invoke_model(
-                modelId=BEDROCK_MODEL_ID,
-                contentType='application/json',
-                accept='application/json',
-                body=json.dumps({
+            # Build request body based on model type
+            if 'amazon.nova' in BEDROCK_MODEL_ID:
+                # Amazon Nova format
+                request_body = {
+                    'messages': [
+                        {
+                            'role': 'user',
+                            'content': [{'text': prompt}]
+                        }
+                    ],
+                    'inferenceConfig': {
+                        'maxTokens': 1024
+                    }
+                }
+            else:
+                # Anthropic Claude format
+                request_body = {
                     'anthropic_version': 'bedrock-2023-05-31',
                     'max_tokens': 1024,
                     'messages': [
@@ -132,11 +144,22 @@ def _evaluate_with_bedrock(entry):
                             'content': prompt
                         }
                     ]
-                })
+                }
+
+            response = bedrock_runtime.invoke_model(
+                modelId=BEDROCK_MODEL_ID,
+                contentType='application/json',
+                accept='application/json',
+                body=json.dumps(request_body)
             )
 
             response_body = json.loads(response['body'].read())
-            content_text = response_body['content'][0]['text']
+
+            # Parse response based on model type
+            if 'amazon.nova' in BEDROCK_MODEL_ID:
+                content_text = response_body['output']['message']['content'][0]['text']
+            else:
+                content_text = response_body['content'][0]['text']
 
             evaluation = _parse_bedrock_response(content_text)
             evaluation['audit_status'] = 'completed'
