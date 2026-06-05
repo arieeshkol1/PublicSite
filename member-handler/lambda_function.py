@@ -8420,6 +8420,8 @@ SPECIFIC QUESTION HANDLING:
 - If the user asks about KMS: use kms_summary. Show total keys, customer-managed key count.
 - If the user asks about Route 53: use route53_hosted_zones. Show zone names and record counts.
 - If the user asks about commitments, Reserved Instances, or Savings Plans (RIs/SPs): ALWAYS use sp_coverage, ri_coverage, sp_utilization, and sp_purchase_recommendation data when present. Structure your answer as: (1) Current SP coverage % and on-demand cost still uncovered, (2) RI coverage hours %, (3) SP utilization % and unused commitment $, (4) AWS Recommendation from sp_purchase_recommendation: state the exact hourlyCommitment ($/hr Compute SP), estimatedMonthlySavings, and estimatedSavingsPct — this is what AWS recommends you purchase based on your actual trailing usage. If sp_purchase_recommendation is missing, estimate from on-demand spend. ALWAYS note rightsizing status first — do NOT recommend committing to oversized resources. Point to Observe → Commitments for the full interactive analyzer.
+- If the user asks about forecast, trend, or expected costs: use cost_forecast data when present. Report: (1) daily_average_7d (last 7 days average), (2) total_forecast = usage_forecast + recurring_monthly_fees, (3) breakdown: "$X/day avg × Y days = $Z usage + $W recurring (Tax, Support) = $TOTAL forecast for [month]". Compare to previous month from monthly_trend to show direction (up/down/flat). Do NOT tell the user to "check Cost Explorer" — you already have the data.
+- If the user asks about forecasts, trends, or predictions: use cost_forecast data when present. Show: forecastedMonthTotal (this month's projected total), avgDailyCost (from last 7 days), daysInMonth, and recurringMonthlyFees. The formula is: avg daily cost × days in month. Compare to previous month from monthly_trend. If cost_forecast is not present, calculate manually from daily_cost_trend data using the same formula.
 - If the user asks for a monthly comparison (Jan/Feb/March): use monthly_trend data â€” each key is YYYY-MM with serviceâ†’cost dict. Show a table per account.
 - If the user asks about a specific service: show ONLY that service's data across all accounts with exact numbers.
 - Only after answering the specific question, add a brief cross-account summary if relevant.
@@ -9013,6 +9015,32 @@ def _gather_account_data(question, credentials, tag_key=None, tag_value=None, me
             })
         data['daily_cost_trend'] = daily_costs
         actions.append('ce:GetCostAndUsage (daily, last 7 days)')
+
+        # Pre-compute monthly forecast: (7-day avg × days in month) + recurring fees
+        if daily_costs and len(daily_costs) >= 2:
+            import calendar
+            _now_fc = datetime.now(timezone.utc)
+            _days_in_month = calendar.monthrange(_now_fc.year, _now_fc.month)[1]
+            _daily_avg = sum(d['cost_usd'] for d in daily_costs) / len(daily_costs)
+            # Identify recurring monthly fees (services that charge flat monthly, not usage-based)
+            _recurring_services = {'Tax', 'AWS Support (Business)', 'AWS Support (Developer)',
+                                   'AWS Support (Enterprise)', 'Amazon Registrar'}
+            _recurring_monthly = sum(
+                s['cost_usd'] for s in data.get('cost_by_service', [])
+                if s['service'] in _recurring_services
+            )
+            # Forecast = (daily avg × days in month) for usage services + recurring fees
+            _usage_forecast = round(_daily_avg * _days_in_month, 2)
+            _total_forecast = round(_usage_forecast + _recurring_monthly, 2)
+            data['cost_forecast'] = {
+                'daily_average_7d': round(_daily_avg, 2),
+                'days_in_month': _days_in_month,
+                'usage_forecast': _usage_forecast,
+                'recurring_monthly_fees': round(_recurring_monthly, 2),
+                'total_forecast': _total_forecast,
+                'forecast_month': _now_fc.strftime('%Y-%m'),
+                'data_points_used': len(daily_costs),
+            }
 
         # For top-cost services that are hard to explain (VPC, EC2-Other),
         # fetch a USAGE_TYPE breakdown so the AI can identify the exact driver.
@@ -10037,6 +10065,42 @@ def _gather_account_data(question, credentials, tag_key=None, tag_value=None, me
             'savings_breakdown': savings_breakdown,
             'rating': 'Excellent' if efficiency_score >= 90 else 'Good' if efficiency_score >= 75 else 'Needs Improvement' if efficiency_score >= 50 else 'Critical',
         }
+
+    # Cost Forecast: avg daily cost (last 7 days) × days in month + recurring fees
+    try:
+        daily_costs_for_forecast = data.get('daily_cost_trend', [])
+        if daily_costs_for_forecast and len(daily_costs_for_forecast) >= 3:
+            # Use last 7 days (or available days) for average
+            recent_days = daily_costs_for_forecast[-7:]
+            avg_daily = sum(d['cost_usd'] for d in recent_days) / len(recent_days)
+            # Days in current month
+            _now_fc = datetime.now(timezone.utc)
+            if _now_fc.month == 12:
+                _days_in_month_fc = 31
+            else:
+                _next_month = _now_fc.replace(month=_now_fc.month + 1, day=1)
+                _days_in_month_fc = (_next_month - _now_fc.replace(day=1)).days
+            # Identify recurring monthly fees (Support, Registrar, KMS keys — fixed charges)
+            recurring_services = {'AWS Support (Business)', 'AWS Support (Developer)',
+                                  'AWS Support (Enterprise)', 'Amazon Registrar',
+                                  'AWS Key Management Service'}
+            recurring_monthly = sum(
+                s['cost_usd'] for s in data.get('cost_by_service', [])
+                if s['service'] in recurring_services
+            )
+            # Forecast = (avg daily × days in month) + recurring that aren't in daily
+            # Note: recurring IS already in daily costs, so just use avg × days
+            forecast_total = round(avg_daily * _days_in_month_fc, 2)
+            data['cost_forecast'] = {
+                'forecastedMonthTotal': forecast_total,
+                'avgDailyCost': round(avg_daily, 2),
+                'daysInMonth': _days_in_month_fc,
+                'daysUsedForAvg': len(recent_days),
+                'recurringMonthlyFees': round(recurring_monthly, 2),
+                'method': 'avg_daily_7d × days_in_month',
+            }
+    except Exception:
+        pass
 
     # Fetch SP/RI coverage data when intent is commitments — fast CE API calls only
     if _intent_allows('sp_ri_coverage') and _time_left() > 3:
