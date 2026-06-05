@@ -47,7 +47,7 @@ CATEGORY_KEYWORDS: dict[str, list[str]] = {
     ],
     'commitments': [
         'reserved instance', 'reserved instances', 'savings plan', 'savings plans',
-        ' ri ', 'ris', ' sp ', 'sps', 'commitment', 'commitments',
+        ' ri ', 'ris', ' sp ', 'sps', 'commitment', 'commitments', 'committment', 'committments',
         'commit', 'reserve', 'reservation', 'coverage', 'utilization',
         'compute savings', 'ec2 savings', 'convertible ri', 'standard ri',
         'no upfront', 'partial upfront', 'all upfront',

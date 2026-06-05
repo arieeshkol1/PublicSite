@@ -8419,7 +8419,7 @@ SPECIFIC QUESTION HANDLING:
 - If the user asks about VPC/endpoints: use vpc_endpoints and elastic_ips. Show endpoint types, unattached EIPs.
 - If the user asks about KMS: use kms_summary. Show total keys, customer-managed key count.
 - If the user asks about Route 53: use route53_hosted_zones. Show zone names and record counts.
-- If the user asks about commitments, Reserved Instances, or Savings Plans (RIs/SPs): ALWAYS use sp_coverage, ri_coverage, and sp_utilization data when present. Structure your answer as: (1) Current SP coverage % and on-demand cost still uncovered, (2) RI coverage hours %, (3) SP utilization % and unused commitment $, (4) Concrete recommendation: specific $ amount to commit, which plan type (Compute SP preferred over EC2 RI for flexibility), and estimated savings. If no sp_coverage/ri_coverage data is present, state it requires checking Observe → Commitments. ALWAYS note rightsizing status first — do NOT recommend committing to oversized resources.
+- If the user asks about commitments, Reserved Instances, or Savings Plans (RIs/SPs): ALWAYS use sp_coverage, ri_coverage, sp_utilization, and sp_purchase_recommendation data when present. Structure your answer as: (1) Current SP coverage % and on-demand cost still uncovered, (2) RI coverage hours %, (3) SP utilization % and unused commitment $, (4) AWS Recommendation from sp_purchase_recommendation: state the exact hourlyCommitment ($/hr Compute SP), estimatedMonthlySavings, and estimatedSavingsPct — this is what AWS recommends you purchase based on your actual trailing usage. If sp_purchase_recommendation is missing, estimate from on-demand spend. ALWAYS note rightsizing status first — do NOT recommend committing to oversized resources. Point to Observe → Commitments for the full interactive analyzer.
 - If the user asks for a monthly comparison (Jan/Feb/March): use monthly_trend data â€” each key is YYYY-MM with serviceâ†’cost dict. Show a table per account.
 - If the user asks about a specific service: show ONLY that service's data across all accounts with exact numbers.
 - Only after answering the specific question, add a brief cross-account summary if relevant.
@@ -10083,7 +10083,25 @@ def _gather_account_data(question, credentials, tag_key=None, tag_value=None, me
                     'onDemandSpend': float(savings.get('OnDemandCostEquivalent', '0')),
                 })
             data['sp_utilization'] = sp_util_data
-            actions.append('ce:GetSavingsPlansCoverage + GetReservationCoverage + GetSavingsPlansUtilization')
+            # SP Purchase Recommendation — the key: what should the user BUY?
+            try:
+                sp_rec = ce_commit.get_savings_plans_purchase_recommendation(
+                    SavingsPlansType='COMPUTE_SP',
+                    TermInYears='ONE_YEAR',
+                    PaymentOption='NO_UPFRONT',
+                    LookbackPeriodInDays='THIRTY_DAYS',
+                )
+                summary = sp_rec.get('SavingsPlansPurchaseRecommendationSummary', {})
+                data['sp_purchase_recommendation'] = {
+                    'hourlyCommitment': float(summary.get('HourlyCommitmentToPurchase', '0') or '0'),
+                    'estimatedMonthlySavings': float(summary.get('EstimatedMonthlySavingsAmount', '0') or '0'),
+                    'estimatedSavingsPct': float(summary.get('EstimatedSavingsPercentage', '0') or '0'),
+                    'currentOnDemandSpend': float(summary.get('CurrentOnDemandSpend', '0') or '0'),
+                    'estimatedROI': float(summary.get('EstimatedROI', '0') or '0'),
+                }
+            except Exception as e:
+                logger.warning(f'SP purchase recommendation failed: {e}')
+            actions.append('ce:GetSavingsPlansCoverage + GetReservationCoverage + GetSavingsPlansUtilization + GetSavingsPlansPurchaseRecommendation')
         except Exception as e:
             logger.warning(f'SP/RI coverage fetch failed: {e}')
 
