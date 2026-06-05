@@ -8419,6 +8419,7 @@ SPECIFIC QUESTION HANDLING:
 - If the user asks about VPC/endpoints: use vpc_endpoints and elastic_ips. Show endpoint types, unattached EIPs.
 - If the user asks about KMS: use kms_summary. Show total keys, customer-managed key count.
 - If the user asks about Route 53: use route53_hosted_zones. Show zone names and record counts.
+- If the user asks about commitments, Reserved Instances, or Savings Plans (RIs/SPs): ALWAYS use sp_coverage, ri_coverage, and sp_utilization data when present. Structure your answer as: (1) Current SP coverage % and on-demand cost still uncovered, (2) RI coverage hours %, (3) SP utilization % and unused commitment $, (4) Concrete recommendation: specific $ amount to commit, which plan type (Compute SP preferred over EC2 RI for flexibility), and estimated savings. If no sp_coverage/ri_coverage data is present, state it requires checking Observe → Commitments. ALWAYS note rightsizing status first — do NOT recommend committing to oversized resources.
 - If the user asks for a monthly comparison (Jan/Feb/March): use monthly_trend data â€” each key is YYYY-MM with serviceâ†’cost dict. Show a table per account.
 - If the user asks about a specific service: show ONLY that service's data across all accounts with exact numbers.
 - Only after answering the specific question, add a brief cross-account summary if relevant.
