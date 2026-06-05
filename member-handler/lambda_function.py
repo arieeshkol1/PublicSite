@@ -10028,6 +10028,64 @@ def _gather_account_data(question, credentials, tag_key=None, tag_value=None, me
             'rating': 'Excellent' if efficiency_score >= 90 else 'Good' if efficiency_score >= 75 else 'Needs Improvement' if efficiency_score >= 50 else 'Critical',
         }
 
+    # Fetch SP/RI coverage data when intent is commitments — fast CE API calls only
+    if _intent_allows('sp_ri_coverage') and _time_left() > 3:
+        try:
+            ce_commit = _make_client('ce')
+            end_date = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+            start_date = (datetime.now(timezone.utc) - timedelta(days=30)).strftime('%Y-%m-%d')
+            # SP Coverage
+            sp_cov = ce_commit.get_savings_plans_coverage(
+                TimePeriod={'Start': start_date, 'End': end_date},
+                Granularity='MONTHLY',
+            )
+            sp_coverage_data = []
+            for period in sp_cov.get('SavingsPlansCoverages', []):
+                cov = period.get('Coverage', {})
+                sp_coverage_data.append({
+                    'coveragePct': float(cov.get('CoveragePercentage', '0')),
+                    'spendCovered': float(cov.get('SpendCoveredBySavingsPlans', '0')),
+                    'onDemandCost': float(cov.get('OnDemandCost', '0')),
+                    'totalCost': float(cov.get('TotalCost', '0')),
+                })
+            data['sp_coverage'] = sp_coverage_data
+            # RI Coverage
+            ri_cov = ce_commit.get_reservation_coverage(
+                TimePeriod={'Start': start_date, 'End': end_date},
+                Granularity='MONTHLY',
+            )
+            ri_coverage_data = []
+            for period in ri_cov.get('CoveragesByTime', []):
+                total = period.get('Total', {}).get('CoverageHours', {})
+                ri_coverage_data.append({
+                    'coveragePct': float(total.get('CoverageHoursPercentage', '0')),
+                    'reservedHours': float(total.get('ReservedHours', '0')),
+                    'totalRunningHours': float(total.get('TotalRunningHours', '0')),
+                    'onDemandHours': float(total.get('OnDemandHours', '0')),
+                })
+            data['ri_coverage'] = ri_coverage_data
+            # SP Utilization
+            sp_util = ce_commit.get_savings_plans_utilization(
+                TimePeriod={'Start': start_date, 'End': end_date},
+                Granularity='MONTHLY',
+            )
+            sp_util_data = []
+            for period in sp_util.get('SavingsPlansUtilizationsByTime', []):
+                util = period.get('Utilization', {})
+                savings = period.get('Savings', {})
+                sp_util_data.append({
+                    'utilizationPct': float(util.get('UtilizationPercentage', '0')),
+                    'totalCommitment': float(util.get('TotalCommitment', '0')),
+                    'usedCommitment': float(util.get('UsedCommitment', '0')),
+                    'unusedCommitment': float(util.get('UnusedCommitment', '0')),
+                    'netSavings': float(savings.get('NetSavings', '0')),
+                    'onDemandSpend': float(savings.get('OnDemandCostEquivalent', '0')),
+                })
+            data['sp_utilization'] = sp_util_data
+            actions.append('ce:GetSavingsPlansCoverage + GetReservationCoverage + GetSavingsPlansUtilization')
+        except Exception as e:
+            logger.warning(f'SP/RI coverage fetch failed: {e}')
+
     # Fetch real pricing for top spending services to ground recommendations
     # Skip if time budget is exhausted — leaves room for Bedrock model call
     if data.get('cost_by_service') and _time_left() > 4:

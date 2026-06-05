@@ -28,7 +28,7 @@ CATEGORY_KEYWORDS: dict[str, list[str]] = {
     'ec2': [
         'ec2', 'virtual machine', 'vm ',
         'ami', 'elastic compute', 'auto scaling', 'autoscaling',
-        'launch template', 'spot instance', 'reserved instance',
+        'launch template', 'spot instance',
         'on-demand', 'on demand',
     ],
     'rds': [
@@ -45,11 +45,18 @@ CATEGORY_KEYWORDS: dict[str, list[str]] = {
         'lambda', 'serverless',
         'invocation', 'invocations', 'cold start', 'concurrency',
     ],
+    'commitments': [
+        'reserved instance', 'reserved instances', 'savings plan', 'savings plans',
+        ' ri ', 'ris', ' sp ', 'sps', 'commitment', 'commitments',
+        'commit', 'reserve', 'reservation', 'coverage', 'utilization',
+        'compute savings', 'ec2 savings', 'convertible ri', 'standard ri',
+        'no upfront', 'partial upfront', 'all upfront',
+    ],
     'cost-general': [
         'total cost', 'overall cost', 'monthly bill', 'bill',
         'spending', 'spend', 'budget', 'forecast', 'trend',
         'cost breakdown', 'how much', 'expensive', 'cheapest',
-        'savings', 'save money', 'reduce cost', 'cut cost',
+        'save money', 'reduce cost', 'cut cost',
         'cost optimization', 'optimize cost', 'billing',
         'invoice', 'charge', 'pricing', 'cost',
     ],
@@ -86,6 +93,7 @@ CATEGORY_API_MAPPING: dict[str, list[str]] = {
     'rds': ['cost_explorer', 'rds_describe_instances'],
     's3': ['cost_explorer', 's3_list_buckets'],
     'lambda': ['cost_explorer', 'lambda_list_functions'],
+    'commitments': ['cost_explorer', 'sp_ri_coverage'],
     'cost-general': ['cost_explorer'],
     'network': ['cost_explorer', 'nat_gateways', 'eips', 'vpc_endpoints'],
     'storage': ['cost_explorer', 'ebs_volumes'],
@@ -94,6 +102,7 @@ CATEGORY_API_MAPPING: dict[str, list[str]] = {
         'cost_explorer', 'ec2_describe_instances', 'cloudwatch',
         'rds_describe_instances', 's3_list_buckets', 'lambda_list_functions',
         'nat_gateways', 'eips', 'vpc_endpoints', 'ebs_volumes',
+        'sp_ri_coverage',
     ],
 }
 
@@ -135,6 +144,11 @@ def _classify_intent(question: str) -> set[str]:
         if 'ec2' in matched_categories or 'rds' in matched_categories:
             matched_categories.discard('ec2')
             matched_categories.discard('rds')
+
+    # If 'commitments' is matched, it's standalone — don't also run ec2 instance enumeration
+    # unless the user specifically asked about ec2 instances alongside commitments
+    if 'commitments' in matched_categories and 'ec2' in matched_categories:
+        matched_categories.discard('ec2')  # commitments doesn't need full instance scan
 
     # Too many distinct categories — ambiguous, fetch all
     if len(matched_categories) > _MAX_CATEGORIES:
