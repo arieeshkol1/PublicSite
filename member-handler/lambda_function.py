@@ -8420,7 +8420,7 @@ SPECIFIC QUESTION HANDLING:
 - If the user asks about KMS: use kms_summary. Show total keys, customer-managed key count.
 - If the user asks about Route 53: use route53_hosted_zones. Show zone names and record counts.
 - If the user asks about commitments, Reserved Instances, or Savings Plans (RIs/SPs): ALWAYS use sp_coverage, ri_coverage, sp_utilization, and sp_purchase_recommendation data when present. Structure your answer as: (1) Current SP coverage % and on-demand cost still uncovered, (2) RI coverage hours %, (3) SP utilization % and unused commitment $, (4) AWS Recommendation from sp_purchase_recommendation: state the exact hourlyCommitment ($/hr Compute SP), estimatedMonthlySavings, and estimatedSavingsPct — this is what AWS recommends you purchase based on your actual trailing usage. If sp_purchase_recommendation is missing, estimate from on-demand spend. ALWAYS note rightsizing status first — do NOT recommend committing to oversized resources. Point to Observe → Commitments for the full interactive analyzer.
-- If the user asks about forecast, trend, or expected costs: use cost_forecast data when present. Report: (1) daily_average_7d (last 7 days average), (2) total_forecast = usage_forecast + recurring_monthly_fees, (3) breakdown: "$X/day avg × Y days = $Z usage + $W recurring (Tax, Support) = $TOTAL forecast for [month]". Compare to previous month from monthly_trend to show direction (up/down/flat). Do NOT tell the user to "check Cost Explorer" — you already have the data.
+- If the user asks about forecast, trend, or expected costs: use cost_forecast data when present. Report: (1) total_forecast for forecast_month, (2) the math: "$X/day avg × Y days = $Z usage + $W recurring = $TOTAL", (3) per-service breakdown from cost_forecast.by_service showing each service's projected cost with type (usage vs recurring). Compare to previous month from monthly_trend. The forecast_month field already contains the correct month name — use it directly, do NOT say "May" when it says "June". Do NOT tell the user to "check Cost Explorer" — the data is already computed.
 - If the user asks about forecasts, trends, or predictions: use cost_forecast data when present. Show: forecastedMonthTotal (this month's projected total), avgDailyCost (from last 7 days), daysInMonth, and recurringMonthlyFees. The formula is: avg daily cost × days in month. Compare to previous month from monthly_trend. If cost_forecast is not present, calculate manually from daily_cost_trend data using the same formula.
 - If the user asks for a monthly comparison (Jan/Feb/March): use monthly_trend data â€” each key is YYYY-MM with serviceâ†’cost dict. Show a table per account.
 - If the user asks about a specific service: show ONLY that service's data across all accounts with exact numbers.
@@ -9029,6 +9029,18 @@ def _gather_account_data(question, credentials, tag_key=None, tag_value=None, me
                 s['cost_usd'] for s in data.get('cost_by_service', [])
                 if s['service'] in _recurring_services
             )
+            # Per-service forecast: (last_month_cost / days_in_last_month) × days_in_current_month
+            # This gives each service its own projected monthly cost
+            _svc_forecast = []
+            for svc in data.get('cost_by_service', [])[:12]:
+                svc_name = svc['service']
+                svc_cost_30d = svc['cost_usd']
+                if svc_name in _recurring_services:
+                    # Recurring fees stay the same
+                    _svc_forecast.append({'service': svc_name, 'forecast': round(svc_cost_30d, 2), 'type': 'recurring'})
+                else:
+                    # Usage-based: scale by days ratio
+                    _svc_forecast.append({'service': svc_name, 'forecast': round(svc_cost_30d * _days_in_month / 30.0, 2), 'type': 'usage'})
             # Forecast = (daily avg × days in month) for usage services + recurring fees
             _usage_forecast = round(_daily_avg * _days_in_month, 2)
             _total_forecast = round(_usage_forecast + _recurring_monthly, 2)
@@ -9038,8 +9050,9 @@ def _gather_account_data(question, credentials, tag_key=None, tag_value=None, me
                 'usage_forecast': _usage_forecast,
                 'recurring_monthly_fees': round(_recurring_monthly, 2),
                 'total_forecast': _total_forecast,
-                'forecast_month': _now_fc.strftime('%Y-%m'),
+                'forecast_month': _now_fc.strftime('%B %Y'),
                 'data_points_used': len(daily_costs),
+                'by_service': _svc_forecast,
             }
 
         # For top-cost services that are hard to explain (VPC, EC2-Other),
