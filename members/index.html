@@ -733,6 +733,9 @@
                         <button class="act-nav-btn" data-section="tag-policy" onclick="_switchConfigSection('tag-policy')">
                             <span style="font-size:1.2em;">🏷️</span> Tag Policy
                         </button>
+                        <button class="act-nav-btn" data-section="ai-vendors" onclick="_switchConfigSection('ai-vendors')">
+                            <span style="font-size:1.2em;">🤖</span> AI Vendors
+                        </button>
 <!-- Spot Mgmt moved to Act > Server Clusters -->
                     </div>
 
@@ -857,6 +860,18 @@
                             </div>
                         </div>
 
+                        <!-- AI Vendors Sub-Section -->
+                        <div id="config-section-ai-vendors" style="display:none;">
+                            <div class="tab-toolbar">
+                                <h2>AI Vendors</h2>
+                                <button id="add-ai-vendor-btn" class="btn btn-primary btn-sm">+ Add AI Vendor</button>
+                            </div>
+                            <div id="ai-vendors-list"></div>
+                            <div id="ai-vendors-empty" class="empty-state" hidden>
+                                <p>No AI vendor connections yet. Click "Add AI Vendor" to connect OpenAI.</p>
+                            </div>
+                        </div>
+
 
                     </div>
                 </div>
@@ -956,6 +971,9 @@
                         <button class="act-nav-btn" data-section="observe-invoices" onclick="_switchObserveSection('observe-invoices')">
                             <span style="font-size:1.2em;">🧾</span> Invoices
                         </button>
+                        <button class="act-nav-btn" data-section="observe-openai" onclick="_switchObserveSection('observe-openai')" id="observe-openai-nav-btn" style="display:none;">
+                            <span style="font-size:1.2em;">🤖</span> OpenAI
+                        </button>
                     </div>
 
                     <!-- Content Area -->
@@ -979,6 +997,11 @@
                         <!-- Health & Score Section -->
                         <div id="observe-section-observe-health" style="display:none;">
                             <div class="observe-widget-grid" style="display:grid;grid-template-columns:repeat(auto-fit, minmax(380px, 1fr));gap:16px;"></div>
+                        </div>
+
+                        <!-- OpenAI Dashboard Section -->
+                        <div id="observe-section-observe-openai" style="display:none;">
+                            <div id="openai-dashboard"></div>
                         </div>
 
                         <!-- Invoices Section -->

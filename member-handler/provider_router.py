@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 ACCOUNTS_TABLE_NAME = os.environ.get('ACCOUNTS_TABLE_NAME', 'MemberPortal-Accounts')
 
 # Supported providers — default to "aws" for backward compatibility
-SUPPORTED_PROVIDERS = {'aws', 'azure', 'gcp'}
+SUPPORTED_PROVIDERS = {'aws', 'azure', 'gcp', 'openai'}
 DEFAULT_PROVIDER = 'aws'
 
 
@@ -102,6 +102,13 @@ def _extract_credentials(provider: str, account: dict, member_email: str) -> dic
             'project_id': stored.get('projectId', ''),
             'private_key_id': stored.get('privateKeyId', ''),
             'encrypted_private_key': stored.get('encryptedPrivateKey', ''),
+        }
+
+    elif provider == 'openai':
+        # OpenAI stores the KMS-encrypted API key in the 'credentials' map
+        stored = account.get('credentials', {})
+        return {
+            'encrypted_api_key': stored.get('encryptedApiKey', ''),
         }
 
     # Fallback — shouldn't reach here given SUPPORTED_PROVIDERS check above

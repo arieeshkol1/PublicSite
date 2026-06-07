@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: 'ViewMyBill - AWS Bill Analysis Tool infrastructure'
-# v25 - Provider Registry table + IAM permissions
+# v26 - OpenAI Sync Lambda + EventBridge schedule + API routes
 
 Parameters:
   BillStorageBucket:
@@ -42,6 +42,11 @@ Parameters:
     Type: String
     Default: 'lambda-packages/member-handler.zip'
     Description: S3 key for Member Handler Lambda deployment package
+
+  OpenAISyncCodeKey:
+    Type: String
+    Default: 'lambda-packages/openai-sync.zip'
+    Description: S3 key for OpenAI Sync Lambda deployment package
 
   AdminUsername:
     Type: String
@@ -1295,6 +1300,7 @@ Resources:
           BEDROCK_REGION: 'us-east-1'
           SES_REGION: 'us-east-1'
           CREDENTIAL_KMS_KEY_ARN: !GetAtt CredentialEncryptionKey.Arn
+          SUPPORTED_PROVIDERS: 'aws,azure,gcp,openai'
       Tags:
         - Key: Project
           Value: ViewMyBill
@@ -1962,6 +1968,129 @@ Resources:
       Action: lambda:InvokeFunction
       Principal: sns.amazonaws.com
       SourceArn: !Ref SpotInterruptionsTopic
+
+  # ============================================================
+  # IAM Role - OpenAI Sync Lambda
+  # ============================================================
+  OpenAISyncRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: slashmybill-openai-sync-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: DynamoDBAccountsReadWrite
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                Resource:
+                  - !GetAtt AccountsTable.Arn
+        - PolicyName: DynamoDBCostCacheWrite
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                  - dynamodb:BatchWriteItem
+                  - dynamodb:Query
+                Resource:
+                  - !GetAtt CostCacheTable.Arn
+        - PolicyName: KMSDecryptCredentials
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - kms:Decrypt
+                Resource:
+                  - !GetAtt CredentialEncryptionKey.Arn
+      Tags:
+        - Key: Project
+          Value: ViewMyBill
+
+  # ============================================================
+  # Lambda Function - OpenAI Nightly Sync
+  # ============================================================
+  OpenAISyncFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: slashmybill-openai-sync
+      Runtime: python3.12
+      Handler: lambda_function.lambda_handler
+      MemorySize: 256
+      Timeout: 900
+      Role: !GetAtt OpenAISyncRole.Arn
+      Code:
+        S3Bucket: !Ref LambdaCodeBucket
+        S3Key: !Ref OpenAISyncCodeKey
+      Environment:
+        Variables:
+          ACCOUNTS_TABLE_NAME: !Ref AccountsTable
+          COST_CACHE_TABLE_NAME: !Ref CostCacheTable
+          CREDENTIAL_KMS_KEY_ARN: !GetAtt CredentialEncryptionKey.Arn
+      Tags:
+        - Key: Project
+          Value: ViewMyBill
+
+  # ============================================================
+  # EventBridge Rule - OpenAI Nightly Sync Schedule (02:00 UTC)
+  # ============================================================
+  OpenAISyncSchedule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: slashmybill-openai-sync-schedule
+      Description: 'Trigger OpenAI usage data sync daily at 02:00 UTC'
+      ScheduleExpression: 'cron(0 2 * * ? *)'
+      State: ENABLED
+      Targets:
+        - Id: OpenAISyncLambdaTarget
+          Arn: !GetAtt OpenAISyncFunction.Arn
+
+  OpenAISyncSchedulePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref OpenAISyncFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt OpenAISyncSchedule.Arn
+
+  # ============================================================
+  # API Gateway - OpenAI Member Routes
+  # ============================================================
+  MemberAddOpenAIRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'POST /members/accounts/add-openai'
+      Target: !Sub 'integrations/${MemberIntegration}'
+
+  MemberOpenAIUsageRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'POST /members/accounts/openai-usage'
+      Target: !Sub 'integrations/${MemberIntegration}'
+
+  MemberTestOpenAIConnectionRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'POST /members/accounts/test-openai-connection'
+      Target: !Sub 'integrations/${MemberIntegration}'
 
 
 Outputs:

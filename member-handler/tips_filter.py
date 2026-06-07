@@ -58,11 +58,25 @@ GCP_SERVICE_MAPPING = {
     'save': 'General', 'efficient': 'General', 'optimize': 'General',
 }
 
+OPENAI_SERVICE_MAPPING = {
+    'gpt-4': 'GPT-4', 'gpt4': 'GPT-4', 'gpt-4o': 'GPT-4o',
+    'gpt-3.5': 'GPT-3.5-Turbo', 'gpt-3': 'GPT-3.5-Turbo',
+    'chatgpt': 'General', 'openai': 'General',
+    'token': 'Token Optimization', 'tokens': 'Token Optimization',
+    'prompt': 'Prompt Optimization', 'embedding': 'Embeddings',
+    'fine-tune': 'Fine-Tuning', 'finetune': 'Fine-Tuning',
+    'batch': 'Batch API', 'cache': 'Caching',
+    'dall-e': 'DALL-E', 'whisper': 'Whisper', 'tts': 'TTS',
+    'general': 'General', 'cost': 'General', 'billing': 'General',
+    'save': 'General', 'efficient': 'General', 'optimize': 'General',
+}
+
 # Maps provider name to corresponding service mapping dictionary
 PROVIDER_MAPPINGS = {
     'aws': AWS_SERVICE_MAPPING,
     'azure': AZURE_SERVICE_MAPPING,
     'gcp': GCP_SERVICE_MAPPING,
+    'openai': OPENAI_SERVICE_MAPPING,
 }
 
 

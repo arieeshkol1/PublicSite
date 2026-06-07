@@ -176,6 +176,27 @@ class TestRouteToConnector:
 
         assert provider == 'aws'
 
+    @patch('provider_router.boto3')
+    def test_openai_account_returns_openai_provider(self, mock_boto3):
+        """WHEN cloudProvider is 'openai', THEN returns ('openai', openai_credentials)."""
+        mock_table = MagicMock()
+        mock_table.get_item.return_value = {
+            'Item': {
+                'memberEmail': 'user@example.com',
+                'accountId': 'openai-org-abc123',
+                'cloudProvider': 'openai',
+                'credentials': {
+                    'encryptedApiKey': 'enc-api-key-ciphertext',
+                },
+            }
+        }
+        mock_boto3.resource.return_value.Table.return_value = mock_table
+
+        provider, creds = _route_to_connector('openai-org-abc123', 'user@example.com')
+
+        assert provider == 'openai'
+        assert creds['encrypted_api_key'] == 'enc-api-key-ciphertext'
+
 
 class TestExtractCredentials:
     """Tests for _extract_credentials helper."""
@@ -250,4 +271,27 @@ class TestExtractCredentials:
             'project_id': '',
             'private_key_id': '',
             'encrypted_private_key': '',
+        }
+
+    def test_openai_credentials_from_stored_credentials(self):
+        """OpenAI credentials extracted from 'credentials' map in account item."""
+        account = {
+            'accountId': 'openai-org-abc123',
+            'credentials': {
+                'encryptedApiKey': 'enc-api-key-ciphertext',
+            }
+        }
+        creds = _extract_credentials('openai', account, 'user@test.com')
+
+        assert creds == {
+            'encrypted_api_key': 'enc-api-key-ciphertext',
+        }
+
+    def test_openai_missing_credentials_returns_empty_string(self):
+        """OpenAI with no credentials map returns empty string default."""
+        account = {'accountId': 'openai-org-abc123'}
+        creds = _extract_credentials('openai', account, 'user@test.com')
+
+        assert creds == {
+            'encrypted_api_key': '',
         }

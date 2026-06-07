@@ -221,6 +221,9 @@ def lambda_handler(event, context):
         'POST /members/terraform/generate': handle_terraform_generate,
         'POST /members/cache/invalidate': handle_cache_invalidate,
         'GET /members/provider-config': handle_get_provider_config,
+        'POST /members/accounts/add-openai': handle_add_openai,
+        'POST /members/accounts/test-openai-connection': handle_test_openai_connection,
+        'POST /members/accounts/openai-usage': handle_openai_usage,
     }
 
     handler = routes.get(route_key)
@@ -10705,6 +10708,523 @@ def _build_otp_email(otp_code):
 # ============================================================
 
 FRONTEND_SAFE_CATEGORIES = ['display', 'validation', 'connection-setup', 'ui-config', 'ai-prompts']
+
+
+@transaction_log('member-handler')
+def handle_add_openai(event):
+    """Add a new OpenAI AI vendor connection."""
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+
+    member_email = auth['sub']
+
+    try:
+        body = json.loads(event.get('body', '{}'))
+    except (json.JSONDecodeError, TypeError):
+        return create_error_response(400, 'InvalidRequest', 'Invalid request body')
+
+    api_key = (body.get('apiKey') or '').strip()
+    connection_name = (body.get('connectionName') or '').strip()
+
+    # Validate connection name length (max 64 chars)
+    if connection_name and len(connection_name) > 64:
+        return create_error_response(400, 'InvalidRequest', 'Connection name must be 64 characters or fewer.')
+
+    # Validate API key format (backend re-validates even though frontend already did)
+    if not api_key:
+        return create_error_response(400, 'InvalidKeyFormat', 'API key is required.')
+
+    try:
+        from connectors.openai_connector import validate_openai_key_format, OpenAIConnector
+    except ImportError as e:
+        logger.error(f"Failed to import OpenAI connector: {e}")
+        return create_error_response(500, 'ServerError', 'OpenAI connector not available.')
+
+    validation = validate_openai_key_format(api_key)
+    if not validation['valid']:
+        return create_error_response(400, 'InvalidKeyFormat', validation['error'])
+
+    # Generate a unique account ID for this OpenAI connection
+    account_id = f"openai-{uuid.uuid4().hex[:12]}"
+
+    # Test the connection by calling OpenAI GET /v1/models
+    connector = OpenAIConnector()
+    auth_context = {'api_key': api_key, 'org_name': ''}
+    test_result = connector.test_connection(auth_context, account_id)
+
+    if not test_result.get('success'):
+        failure_reason = test_result.get('message', 'Connection test failed.')[:200]
+        return create_error_response(400, 'ConnectionFailed', failure_reason)
+
+    # Encrypt API key via KMS with member email + accountId context
+    try:
+        from connectors.openai_kms import encrypt_openai_key, EncryptionError
+    except ImportError as e:
+        logger.error(f"Failed to import openai_kms: {e}")
+        return create_error_response(500, 'ServerError', 'Encryption module not available.')
+
+    try:
+        encrypted_key = encrypt_openai_key(api_key, member_email, account_id)
+    except EncryptionError as e:
+        logger.error(f"KMS encryption failed for OpenAI key: {e}")
+        return create_error_response(500, 'ServerError', 'Unable to save credentials. Please try again.')
+
+    # Store record in MemberPortal-Accounts DynamoDB table
+    now_iso = datetime.now(timezone.utc).isoformat()
+    account_name = connection_name or 'OpenAI Connection'
+
+    account_record = {
+        'memberEmail': member_email,
+        'accountId': account_id,
+        'accountName': account_name,
+        'cloudProvider': 'openai',
+        'vendorType': 'ai_vendor',
+        'connectionStatus': 'connected',
+        'lastTestedAt': now_iso,
+        'addedAt': now_iso,
+        'credentials': {
+            'encryptedApiKey': encrypted_key,
+        },
+    }
+
+    accounts_table = dynamodb.Table(ACCOUNTS_TABLE_NAME)
+    try:
+        accounts_table.put_item(Item=account_record)
+    except ClientError as e:
+        logger.error(f"DynamoDB write error for OpenAI account: {e}")
+        return create_error_response(500, 'ServerError', 'Failed to save connection. Please try again.')
+
+    logger.info(f"OpenAI account {account_id} added for member {member_email}")
+
+    # Return success response (exclude encrypted credentials from response)
+    response_record = {
+        'accountId': account_id,
+        'accountName': account_name,
+        'cloudProvider': 'openai',
+        'vendorType': 'ai_vendor',
+        'connectionStatus': 'connected',
+        'lastTestedAt': now_iso,
+        'addedAt': now_iso,
+    }
+
+    return create_response(201, {
+        'success': True,
+        'message': 'OpenAI connection added successfully.',
+        'account': response_record,
+    })
+
+
+@transaction_log('member-handler')
+def handle_test_openai_connection(event):
+    """Test an existing OpenAI connection by re-validating the stored API key."""
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+
+    member_email = auth['sub']
+
+    try:
+        body = json.loads(event.get('body', '{}'))
+    except (json.JSONDecodeError, TypeError):
+        return create_error_response(400, 'InvalidRequest', 'Invalid request body')
+
+    account_id = (body.get('accountId') or '').strip()
+    if not account_id:
+        return create_error_response(400, 'InvalidAccountId', 'Account ID is required')
+
+    # Verify account ownership
+    ownership = _verify_account_ownership(member_email, [account_id])
+    if isinstance(ownership, dict):
+        return ownership
+
+    accounts_table = dynamodb.Table(ACCOUNTS_TABLE_NAME)
+
+    # Retrieve the existing account record
+    try:
+        result = accounts_table.get_item(Key={'memberEmail': member_email, 'accountId': account_id})
+        account = result.get('Item')
+    except ClientError as e:
+        logger.error(f"DynamoDB read error for OpenAI test connection: {e}")
+        return create_error_response(500, 'ServerError', 'Failed to retrieve account record.')
+
+    if not account:
+        return create_error_response(404, 'NotFound', 'Account not found.')
+
+    # Ensure this is an OpenAI account
+    if account.get('cloudProvider') != 'openai':
+        return create_error_response(400, 'InvalidRequest', 'This endpoint is only for OpenAI connections.')
+
+    # Prevent concurrent tests: if status is currently 'testing', return early
+    if account.get('connectionStatus') == 'testing':
+        return create_error_response(409, 'TestInProgress', 'A connection test is already in progress for this account.')
+
+    # Get the encrypted API key from stored credentials
+    credentials = account.get('credentials', {})
+    encrypted_key = credentials.get('encryptedApiKey', '')
+    if not encrypted_key:
+        return create_error_response(400, 'MissingCredentials', 'No API key stored for this account. Please re-add the connection.')
+
+    # Decrypt stored API key
+    try:
+        from connectors.openai_kms import decrypt_openai_key, DecryptionError
+    except ImportError as e:
+        logger.error(f"Failed to import openai_kms: {e}")
+        return create_error_response(500, 'ServerError', 'Encryption module not available.')
+
+    try:
+        api_key = decrypt_openai_key(encrypted_key, member_email, account_id)
+    except DecryptionError as e:
+        logger.error(f"KMS decryption failed for OpenAI test connection: {e}")
+        now_iso = datetime.now(timezone.utc).isoformat()
+        _update_connection_status(accounts_table, member_email, account_id, 'failed', now_iso)
+        return create_error_response(500, 'DecryptionFailed', 'Credentials inaccessible. Please re-add your OpenAI connection.')
+
+    # Test the connection using the OpenAI connector
+    try:
+        from connectors.openai_connector import OpenAIConnector
+    except ImportError as e:
+        logger.error(f"Failed to import OpenAI connector: {e}")
+        return create_error_response(500, 'ServerError', 'OpenAI connector not available.')
+
+    connector = OpenAIConnector()
+    auth_context = {'api_key': api_key, 'org_name': ''}
+    test_result = connector.test_connection(auth_context, account_id)
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    if test_result.get('success'):
+        # Success: update connectionStatus to 'connected'
+        try:
+            accounts_table.update_item(
+                Key={'memberEmail': member_email, 'accountId': account_id},
+                UpdateExpression='SET connectionStatus = :s, lastTestedAt = :t REMOVE failureReason',
+                ExpressionAttributeValues={':s': 'connected', ':t': now_iso}
+            )
+        except ClientError as e:
+            logger.error(f"Failed to update status after successful OpenAI test: {e}")
+
+        return create_response(200, {
+            'success': True,
+            'message': test_result.get('message', 'OpenAI connection successful.'),
+            'connectionStatus': 'connected',
+            'lastTestedAt': now_iso,
+        })
+    else:
+        # Failure: update connectionStatus to 'failed' with failure reason (max 200 chars)
+        failure_reason = (test_result.get('message') or 'Connection test failed.')[:200]
+        try:
+            accounts_table.update_item(
+                Key={'memberEmail': member_email, 'accountId': account_id},
+                UpdateExpression='SET connectionStatus = :s, lastTestedAt = :t, failureReason = :r',
+                ExpressionAttributeValues={
+                    ':s': 'failed',
+                    ':t': now_iso,
+                    ':r': failure_reason,
+                }
+            )
+        except ClientError as e:
+            logger.error(f"Failed to update status after failed OpenAI test: {e}")
+
+        return create_response(200, {
+            'success': False,
+            'message': failure_reason,
+            'connectionStatus': 'failed',
+            'lastTestedAt': now_iso,
+            'failureReason': failure_reason,
+        })
+
+
+@transaction_log('member-handler')
+def handle_openai_usage(event):
+    """Retrieve OpenAI usage data for the authenticated member's account.
+
+    Accepts JSON body: { "accountId": "...", "dateRange": 7|30|90 }
+    Validates account ownership and that it's an OpenAI connection.
+    Queries Cost_Cache_Table; on cache miss, decrypts key and calls OpenAI Usage API.
+    Returns usage data, cost-by-model breakdown, spend trends, and project breakdown.
+    Must return within 10 seconds or return a timeout error.
+    """
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+
+    member_email = auth['sub']
+
+    try:
+        body = json.loads(event.get('body', '{}'))
+    except (json.JSONDecodeError, TypeError):
+        return create_error_response(400, 'InvalidRequest', 'Invalid request body')
+
+    account_id = (body.get('accountId') or '').strip()
+    date_range = body.get('dateRange', 30)
+
+    if not account_id:
+        return create_error_response(400, 'InvalidRequest', 'accountId is required')
+
+    # Validate dateRange
+    if date_range not in (7, 30, 90):
+        return create_error_response(400, 'InvalidRequest', 'dateRange must be 7, 30, or 90')
+
+    # Verify account belongs to authenticated member
+    ownership = _verify_account_ownership(member_email, [account_id])
+    if isinstance(ownership, dict):
+        return ownership
+
+    # Retrieve account record to confirm it's an OpenAI connection
+    accounts_table = dynamodb.Table(ACCOUNTS_TABLE_NAME)
+    try:
+        result = accounts_table.get_item(Key={'memberEmail': member_email, 'accountId': account_id})
+        account = result.get('Item')
+    except ClientError as e:
+        logger.error(f"DynamoDB read error for openai-usage: {e}")
+        return create_error_response(500, 'ServerError', 'Failed to retrieve account record.')
+
+    if not account:
+        return create_error_response(404, 'NotFound', 'Account not found.')
+
+    if account.get('cloudProvider') != 'openai':
+        return create_error_response(400, 'InvalidRequest', 'This endpoint is only for OpenAI connections.')
+
+    # Determine date range boundaries
+    now = datetime.now(timezone.utc)
+    end_date = now.strftime('%Y-%m-%d')
+    start_date = (now - timedelta(days=date_range)).strftime('%Y-%m-%d')
+
+    # Track execution time for 10-second timeout
+    start_time = time.time()
+
+    # Try to get data from Cost_Cache_Table
+    cache_table = dynamodb.Table(COST_CACHE_TABLE_NAME)
+    pk = f"{member_email}#{account_id}"
+    sk_prefix = 'OPENAI_DAILY#'
+
+    cached_records = []
+    from boto3.dynamodb.conditions import Key as DDBKey
+    try:
+        # Query cache for date range
+        sk_start = f"{sk_prefix}{start_date}"
+        sk_end = f"{sk_prefix}{end_date}"
+
+        response = cache_table.query(
+            KeyConditionExpression=DDBKey('pk').eq(pk) & DDBKey('sk').between(sk_start, sk_end)
+        )
+        cached_records = response.get('Items', [])
+
+        # Handle pagination
+        while 'LastEvaluatedKey' in response:
+            if time.time() - start_time > 8:
+                break
+            response = cache_table.query(
+                KeyConditionExpression=DDBKey('pk').eq(pk) & DDBKey('sk').between(sk_start, sk_end),
+                ExclusiveStartKey=response['LastEvaluatedKey']
+            )
+            cached_records.extend(response.get('Items', []))
+    except ClientError as e:
+        logger.warning(f"Cost cache query failed for {account_id}: {e}")
+        cached_records = []
+
+    # Check timeout
+    if time.time() - start_time > 9:
+        return create_error_response(504, 'Timeout', 'Request timed out. Please try again.')
+
+    normalized_records = []
+
+    if cached_records:
+        # Cache hit: reconstruct normalized records from cache items
+        for item in cached_records:
+            item = _decimal_to_native(item)
+            date_str = str(item.get('sk', '')).replace(sk_prefix, '')
+            cost_amount = float(item.get('cost_amount', 0))
+
+            # If item has service_breakdown, expand into per-model records
+            service_breakdown = item.get('service_breakdown')
+            token_breakdown = item.get('token_breakdown', {})
+            project_breakdown = item.get('project_breakdown', {})
+
+            if service_breakdown and isinstance(service_breakdown, dict):
+                for model, model_cost in service_breakdown.items():
+                    tokens = token_breakdown.get(model, {}) if isinstance(token_breakdown, dict) else {}
+                    record = {
+                        'date': date_str,
+                        'service_name': model,
+                        'cost_amount': float(model_cost),
+                        'currency': 'USD',
+                        'cloud_provider': 'openai',
+                        'account_id': account_id,
+                        'input_tokens': int(tokens.get('input_tokens', 0)) if isinstance(tokens, dict) else 0,
+                        'output_tokens': int(tokens.get('output_tokens', 0)) if isinstance(tokens, dict) else 0,
+                    }
+                    # Add project info from project_breakdown
+                    normalized_records.append(record)
+            else:
+                # Single record per day (no breakdown)
+                normalized_records.append({
+                    'date': date_str,
+                    'service_name': 'unknown',
+                    'cost_amount': cost_amount,
+                    'currency': 'USD',
+                    'cloud_provider': 'openai',
+                    'account_id': account_id,
+                    'input_tokens': 0,
+                    'output_tokens': 0,
+                })
+
+            # Add project-level records if project_breakdown exists
+            if project_breakdown and isinstance(project_breakdown, dict):
+                for proj_id, proj_data in project_breakdown.items():
+                    if isinstance(proj_data, dict):
+                        proj_cost = float(proj_data.get('cost', 0))
+                    else:
+                        proj_cost = float(proj_data)
+                    # Tag existing records or create project-annotated records
+                    for rec in normalized_records:
+                        if rec['date'] == date_str and 'project_id' not in rec:
+                            pass  # Skip: project info will be derived from project_breakdown
+                    # We'll build project records separately for the aggregation
+                    normalized_records.append({
+                        'date': date_str,
+                        'service_name': 'project_cost',
+                        'cost_amount': proj_cost,
+                        'currency': 'USD',
+                        'cloud_provider': 'openai',
+                        'account_id': account_id,
+                        'input_tokens': 0,
+                        'output_tokens': 0,
+                        'project_id': proj_id,
+                    })
+    else:
+        # Cache miss: decrypt key and call OpenAI Usage API
+        if time.time() - start_time > 7:
+            return create_error_response(504, 'Timeout', 'Request timed out. Please try again.')
+
+        # Decrypt the stored API key
+        credentials = account.get('credentials', {})
+        encrypted_key = credentials.get('encryptedApiKey', '')
+        if not encrypted_key:
+            return create_error_response(400, 'MissingCredentials', 'No API key stored for this account. Please re-add the connection.')
+
+        try:
+            from connectors.openai_kms import decrypt_openai_key, DecryptionError
+        except ImportError as e:
+            logger.error(f"Failed to import openai_kms: {e}")
+            return create_error_response(500, 'ServerError', 'Encryption module not available.')
+
+        try:
+            api_key = decrypt_openai_key(encrypted_key, member_email, account_id)
+        except DecryptionError as e:
+            logger.error(f"KMS decryption failed for openai-usage: {e}")
+            return create_error_response(500, 'DecryptionFailed', 'Credentials inaccessible. Please re-add your OpenAI connection.')
+
+        # Call OpenAI Usage API via connector
+        try:
+            from connectors.openai_connector import OpenAIConnector
+            from connectors.base_connector import CostRetrievalError
+        except ImportError as e:
+            logger.error(f"Failed to import OpenAI connector: {e}")
+            return create_error_response(500, 'ServerError', 'OpenAI connector not available.')
+
+        connector = OpenAIConnector()
+        auth_context = {'api_key': api_key, 'org_name': ''}
+
+        try:
+            raw_records = connector.get_cost_data(auth_context, account_id, start_date, end_date)
+        except CostRetrievalError as e:
+            logger.error(f"OpenAI cost data retrieval failed for {account_id}: {e}")
+            # Update connection status if flagged
+            if getattr(e, 'mark_connection_failed', False):
+                now_iso = datetime.now(timezone.utc).isoformat()
+                _update_connection_status(accounts_table, member_email, account_id, 'failed', now_iso)
+            return create_error_response(502, 'UpstreamError', str(e))
+
+        # Check timeout after API call
+        if time.time() - start_time > 9:
+            return create_error_response(504, 'Timeout', 'Request timed out. Please try again.')
+
+        # Normalize the raw OpenAI response
+        try:
+            from cost_normalizer import normalize_openai
+        except ImportError as e:
+            logger.error(f"Failed to import cost_normalizer: {e}")
+            return create_error_response(500, 'ServerError', 'Cost normalizer not available.')
+
+        normalized_records = normalize_openai(raw_records, account_id)
+
+    # Final timeout check before aggregation
+    if time.time() - start_time > 9:
+        return create_error_response(504, 'Timeout', 'Request timed out. Please try again.')
+
+    # Aggregate the data using cost_normalizer functions
+    try:
+        from cost_normalizer import (
+            aggregate_cost_by_model,
+            aggregate_cost_by_project,
+            aggregate_time_buckets,
+            calculate_period_change,
+        )
+    except ImportError as e:
+        logger.error(f"Failed to import aggregation functions: {e}")
+        return create_error_response(500, 'ServerError', 'Aggregation module not available.')
+
+    # Filter records for model/token aggregation (exclude project_cost markers)
+    usage_records = [r for r in normalized_records if r.get('service_name') != 'project_cost']
+    project_records = [r for r in normalized_records if r.get('project_id')]
+
+    # Cost by model
+    cost_by_model = aggregate_cost_by_model(usage_records)
+
+    # Spend trends (daily granularity, then compute period change)
+    spend_trends_buckets = aggregate_time_buckets(usage_records, 'daily')
+
+    # Calculate total spend and period-over-period change
+    total_spend = sum(r.get('cost_amount', 0) for r in usage_records)
+
+    # Previous period for comparison
+    prev_start = (now - timedelta(days=date_range * 2)).strftime('%Y-%m-%d')
+    prev_end = start_date
+    # Current period total
+    current_total = total_spend
+    # Previous period total from records outside current range (if available from cache)
+    # For simplicity, calculate from available data
+    previous_total = 0.0
+    # If we have previous period data in the cache, fetch it
+    try:
+        sk_prev_start = f"{sk_prefix}{prev_start}"
+        sk_prev_end = f"{sk_prefix}{prev_end}"
+        prev_response = cache_table.query(
+            KeyConditionExpression=DDBKey('pk').eq(pk) & DDBKey('sk').between(sk_prev_start, sk_prev_end),
+            ProjectionExpression='cost_amount'
+        )
+        for item in prev_response.get('Items', []):
+            previous_total += float(item.get('cost_amount', 0))
+    except Exception:
+        # If prev period query fails, just use 0
+        previous_total = 0.0
+
+    period_change = calculate_period_change(current_total, previous_total)
+
+    spend_trends = {
+        'buckets': spend_trends_buckets,
+        'total': round(total_spend, 2),
+        'periodChange': period_change if period_change != float('inf') else 'new_spend',
+        'dateRange': date_range,
+    }
+
+    # Project breakdown
+    project_breakdown = aggregate_cost_by_project(project_records)
+
+    # Build response matching the expected schema
+    response_data = {
+        'success': True,
+        'data': {
+            'usage': _decimal_to_native(usage_records),
+            'costByModel': _decimal_to_native(cost_by_model),
+            'spendTrends': _decimal_to_native(spend_trends),
+            'projectBreakdown': _decimal_to_native(project_breakdown),
+        }
+    }
+
+    return create_response(200, response_data)
 
 
 @transaction_log('member-handler')

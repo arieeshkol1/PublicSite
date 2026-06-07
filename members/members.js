@@ -3487,6 +3487,7 @@ var OBSERVE_SECTIONS = [
     { id: 'observe-commitments', label: 'Commitments', icon: '\ud83d\udcb0' },
     { id: 'observe-metrics', label: 'Business Metrics', icon: '\ud83d\udcc8' },
     { id: 'observe-health', label: 'Health & Score', icon: '\ud83c\udfe5' },
+    { id: 'observe-openai', label: 'OpenAI', icon: '\ud83e\udd16' },
     { id: 'observe-invoices', label: 'Invoices', icon: '\ud83e\uddfe' }
 ];
 
@@ -5877,13 +5878,16 @@ function _switchConfigSection(section) {
     var finops = document.getElementById('config-section-finops-settings');
     var tagPolicy = document.getElementById('config-section-tag-policy');
     var spot = document.getElementById('config-section-spot');
+    var aiVendors = document.getElementById('config-section-ai-vendors');
     if (accounts) accounts.style.display = section === 'accounts' ? 'block' : 'none';
     if (finops) finops.style.display = section === 'finops-settings' ? 'block' : 'none';
     if (tagPolicy) tagPolicy.style.display = section === 'tag-policy' ? 'block' : 'none';
     if (spot) spot.style.display = section === 'spot' ? 'block' : 'none';
+    if (aiVendors) aiVendors.style.display = section === 'ai-vendors' ? 'block' : 'none';
     if (section === 'finops-settings') _populateFinOpsAccountSelector();
     if (section === 'tag-policy') _loadTagPolicy();
     if (section === 'spot') _populateSpotAccountSelector();
+    if (section === 'ai-vendors') _renderAIVendorConnections();
 }
 
 function switchToFinOpsSettings() {
@@ -13057,3 +13061,851 @@ function _sqlCopyScript() {
         notify('Script copied!', 'success', 3000);
     });
 }
+
+
+// ============================================================
+// OpenAI AI Vendor Connection Wizard — Configure Tab
+// ============================================================
+
+// --- API Key Format Validation ---
+function _validateOpenAIKey(key) {
+    if (!key) return { valid: false, message: 'API key is required.' };
+    var trimmed = key.trim();
+    if (trimmed.length < 40 || trimmed.length > 200) {
+        return { valid: false, message: 'API key must be between 40 and 200 characters.' };
+    }
+    if (!trimmed.startsWith('sk-org-') && !trimmed.startsWith('sk-proj-')) {
+        return { valid: false, message: 'API key must start with "sk-org-" or "sk-proj-".' };
+    }
+    return { valid: true, message: '' };
+}
+
+// --- Render AI Vendor Connections List (Task 13.2) ---
+function _renderAIVendorConnections() {
+    var listEl = document.getElementById('ai-vendors-list');
+    var emptyEl = document.getElementById('ai-vendors-empty');
+    if (!listEl) return;
+
+    var aiAccounts = allAccounts.filter(function(a) {
+        return a.cloudProvider === 'openai' || a.vendorType === 'ai_vendor';
+    });
+
+    if (!aiAccounts.length) {
+        listEl.innerHTML = '';
+        if (emptyEl) emptyEl.hidden = false;
+        return;
+    }
+    if (emptyEl) emptyEl.hidden = true;
+
+    var html = '<div style="display:flex;flex-direction:column;gap:12px;">';
+    aiAccounts.forEach(function(a) {
+        var statusColor = '#10b981'; // connected
+        var statusLabel = 'Connected';
+        if (a.connectionStatus === 'failed') { statusColor = '#ef4444'; statusLabel = 'Failed'; }
+        else if (a.connectionStatus === 'pending') { statusColor = '#f59e0b'; statusLabel = 'Pending'; }
+
+        html += '<div style="border:1px solid #e5e7eb;border-radius:10px;padding:16px;background:#fff;">';
+        html += '<div style="display:flex;align-items:center;justify-content:space-between;">';
+        html += '<div style="display:flex;align-items:center;gap:12px;">';
+        html += '<div style="width:36px;height:36px;background:#10a37f;border-radius:8px;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:14px;">AI</div>';
+        html += '<div>';
+        html += '<div style="font-weight:600;color:#1f2937;">' + esc(a.accountName || 'OpenAI Connection') + '</div>';
+        html += '<div style="font-size:0.82em;color:#6b7280;">ID: ' + esc(a.accountId || '') + '</div>';
+        html += '</div>';
+        html += '</div>';
+        html += '<div style="display:flex;align-items:center;gap:12px;">';
+        html += '<div style="display:flex;flex-direction:column;align-items:flex-end;">';
+        html += '<span style="display:inline-flex;align-items:center;gap:4px;font-size:0.82em;font-weight:600;color:' + statusColor + ';">';
+        html += '<span style="width:8px;height:8px;border-radius:50%;background:' + statusColor + ';"></span> ' + statusLabel;
+        html += '</span>';
+        if (a.lastTestedAt) {
+            html += '<span style="font-size:0.75em;color:#9ca3af;">Tested: ' + fmtDate(a.lastTestedAt) + '</span>';
+        }
+        html += '</div>';
+        html += '<button class="btn btn-outline btn-sm openai-test-btn" data-account-id="' + ea(a.accountId) + '" style="font-size:0.82em;">⚡ Test Connection</button>';
+        html += '</div>';
+        html += '</div>';
+        // Show failure reason if failed
+        if (a.connectionStatus === 'failed' && a.failureReason) {
+            html += '<div style="margin-top:10px;padding:8px 12px;background:#fef2f2;border:1px solid #fecaca;border-radius:6px;font-size:0.82em;color:#b91c1c;">';
+            html += '⚠️ ' + esc(a.failureReason);
+            html += '</div>';
+        }
+        html += '</div>';
+    });
+    html += '</div>';
+    listEl.innerHTML = html;
+
+    // Wire up test buttons
+    listEl.querySelectorAll('.openai-test-btn').forEach(function(btn) {
+        btn.onclick = function() { _testOpenAIConnection(btn.dataset.accountId, btn); };
+    });
+}
+
+// --- Test OpenAI Connection (Task 13.2) ---
+async function _testOpenAIConnection(accountId, btn) {
+    if (btn.disabled) return;
+    btn.disabled = true;
+    var origText = btn.innerHTML;
+    btn.innerHTML = '<span class="spinner" style="width:14px;height:14px;border-width:2px;"></span> Testing...';
+
+    try {
+        var data = await api('POST', '/members/accounts/test-openai-connection', { accountId: accountId });
+        notify(data.message || 'Connection test passed!', 'success');
+        await loadAccounts();
+        _renderAIVendorConnections();
+    } catch (err) {
+        notify(err.message || 'Connection test failed.', 'error');
+        await loadAccounts();
+        _renderAIVendorConnections();
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = origText;
+    }
+}
+
+// --- Add AI Vendor Button Handler (Task 13.1) ---
+(function() {
+    var btn = document.getElementById('add-ai-vendor-btn');
+    if (btn) btn.onclick = _showAddAIVendorModal;
+})();
+
+function _showAddAIVendorModal() {
+    // Remove any existing modal
+    var existing = document.getElementById('ai-vendor-modal');
+    if (existing) existing.remove();
+
+    var overlay = document.createElement('div');
+    overlay.id = 'ai-vendor-modal';
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:800;display:flex;align-items:center;justify-content:center;';
+    overlay.onclick = function(e) { if (e.target === overlay) overlay.remove(); };
+
+    var html = '<div style="background:#fff;border-radius:14px;padding:28px;max-width:480px;width:95%;box-shadow:0 20px 60px rgba(0,0,0,0.2);">';
+    // Header
+    html += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;">';
+    html += '<h2 style="margin:0;font-size:1.2em;color:#1f2937;">Add AI Vendor</h2>';
+    html += '<button id="ai-vendor-modal-close" style="background:none;border:none;font-size:1.4em;cursor:pointer;color:#6b7280;">&times;</button>';
+    html += '</div>';
+
+    // Step 1: Vendor Selection
+    html += '<div id="ai-vendor-step-select">';
+    html += '<p style="color:#6b7280;font-size:0.9em;margin-bottom:16px;">Select your AI vendor:</p>';
+    html += '<div style="display:grid;grid-template-columns:1fr;gap:10px;">';
+    html += '<button id="ai-vendor-select-openai" style="display:flex;align-items:center;gap:12px;padding:14px 16px;border:2px solid #e5e7eb;border-radius:10px;background:#fff;cursor:pointer;text-align:left;transition:border-color 0.2s;">';
+    html += '<div style="width:40px;height:40px;background:#10a37f;border-radius:8px;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:16px;">AI</div>';
+    html += '<div><div style="font-weight:600;color:#1f2937;">OpenAI</div><div style="font-size:0.8em;color:#6b7280;">ChatGPT, GPT-4, DALL-E, Whisper</div></div>';
+    html += '</button>';
+    html += '</div>';
+    html += '</div>';
+
+    // Step 2: API Key Form (hidden initially)
+    html += '<div id="ai-vendor-step-form" style="display:none;">';
+    html += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:16px;">';
+    html += '<button id="ai-vendor-back-btn" style="background:none;border:none;cursor:pointer;font-size:1.1em;color:#6b7280;">←</button>';
+    html += '<div style="display:flex;align-items:center;gap:8px;"><div style="width:28px;height:28px;background:#10a37f;border-radius:6px;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:11px;">AI</div><span style="font-weight:600;color:#1f2937;">Connect OpenAI</span></div>';
+    html += '</div>';
+
+    // Connection name (optional)
+    html += '<div style="margin-bottom:14px;">';
+    html += '<label style="display:block;font-size:0.85em;color:#374151;font-weight:500;margin-bottom:4px;">Connection Name <span style="color:#9ca3af;font-weight:400;">(optional, max 64 chars)</span></label>';
+    html += '<input id="ai-vendor-conn-name" type="text" maxlength="64" placeholder="e.g. Production OpenAI" style="width:100%;padding:10px 12px;border:1px solid #d1d5db;border-radius:8px;font-size:0.9em;box-sizing:border-box;" />';
+    html += '</div>';
+
+    // API Key input
+    html += '<div style="margin-bottom:6px;">';
+    html += '<label style="display:block;font-size:0.85em;color:#374151;font-weight:500;margin-bottom:4px;">API Key <span style="color:#dc2626;">*</span></label>';
+    html += '<input id="ai-vendor-api-key" type="password" placeholder="sk-org-... or sk-proj-..." style="width:100%;padding:10px 12px;border:1px solid #d1d5db;border-radius:8px;font-size:0.9em;font-family:monospace;box-sizing:border-box;" />';
+    html += '</div>';
+    html += '<div id="ai-vendor-key-error" style="color:#dc2626;font-size:0.82em;min-height:18px;margin-bottom:14px;"></div>';
+
+    // Info note
+    html += '<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:10px 12px;margin-bottom:18px;font-size:0.8em;color:#166534;">';
+    html += '🔒 Your API key will be encrypted with AWS KMS before storage. We never store plaintext keys.';
+    html += '</div>';
+
+    // Submit button
+    html += '<button id="ai-vendor-submit-btn" class="btn btn-primary" style="width:100%;padding:12px;font-size:0.95em;">Connect OpenAI</button>';
+    html += '<div id="ai-vendor-loading" style="display:none;text-align:center;padding:12px;color:#6b7280;font-size:0.88em;">';
+    html += '<div class="spinner" style="margin:0 auto 8px;"></div>Validating API key with OpenAI...';
+    html += '</div>';
+
+    // Result areas
+    html += '<div id="ai-vendor-success" style="display:none;text-align:center;padding:16px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;margin-top:14px;">';
+    html += '<div style="font-size:2em;margin-bottom:8px;">✅</div>';
+    html += '<div style="font-weight:600;color:#166534;margin-bottom:4px;">Connection Successful!</div>';
+    html += '<div style="font-size:0.85em;color:#15803d;">Your OpenAI account has been connected.</div>';
+    html += '<button id="ai-vendor-done-btn" class="btn btn-primary btn-sm" style="margin-top:12px;">Done</button>';
+    html += '</div>';
+
+    html += '<div id="ai-vendor-error" style="display:none;padding:14px;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;margin-top:14px;">';
+    html += '<div style="font-weight:600;color:#991b1b;margin-bottom:4px;">Connection Failed</div>';
+    html += '<div id="ai-vendor-error-msg" style="font-size:0.85em;color:#b91c1c;margin-bottom:10px;"></div>';
+    html += '<button id="ai-vendor-retry-btn" class="btn btn-outline btn-sm" style="color:#b91c1c;border-color:#fca5a5;">Retry</button>';
+    html += '</div>';
+
+    html += '</div>'; // end step-form
+
+    html += '</div>'; // end modal content
+    overlay.innerHTML = html;
+    document.body.appendChild(overlay);
+
+    // Wire up events
+    document.getElementById('ai-vendor-modal-close').onclick = function() { overlay.remove(); };
+    document.getElementById('ai-vendor-select-openai').onclick = function() {
+        document.getElementById('ai-vendor-step-select').style.display = 'none';
+        document.getElementById('ai-vendor-step-form').style.display = 'block';
+    };
+    document.getElementById('ai-vendor-back-btn').onclick = function() {
+        document.getElementById('ai-vendor-step-form').style.display = 'none';
+        document.getElementById('ai-vendor-step-select').style.display = 'block';
+        // Reset form state
+        _resetAIVendorForm();
+    };
+
+    // API key input validation on blur
+    var keyInput = document.getElementById('ai-vendor-api-key');
+    keyInput.oninput = function() {
+        var errEl = document.getElementById('ai-vendor-key-error');
+        if (errEl) errEl.textContent = '';
+    };
+    keyInput.onblur = function() {
+        var val = keyInput.value.trim();
+        if (!val) return;
+        var result = _validateOpenAIKey(val);
+        var errEl = document.getElementById('ai-vendor-key-error');
+        if (!result.valid && errEl) errEl.textContent = result.message;
+    };
+
+    // Submit handler
+    document.getElementById('ai-vendor-submit-btn').onclick = _submitAIVendorConnection;
+
+    // Retry handler
+    document.getElementById('ai-vendor-retry-btn').onclick = function() {
+        document.getElementById('ai-vendor-error').style.display = 'none';
+        document.getElementById('ai-vendor-submit-btn').style.display = '';
+    };
+
+    // Done handler
+    document.getElementById('ai-vendor-done-btn').onclick = function() {
+        overlay.remove();
+        _renderAIVendorConnections();
+    };
+}
+
+function _resetAIVendorForm() {
+    var keyInput = document.getElementById('ai-vendor-api-key');
+    var nameInput = document.getElementById('ai-vendor-conn-name');
+    var errEl = document.getElementById('ai-vendor-key-error');
+    var submitBtn = document.getElementById('ai-vendor-submit-btn');
+    var loadingEl = document.getElementById('ai-vendor-loading');
+    var successEl = document.getElementById('ai-vendor-success');
+    var errorEl = document.getElementById('ai-vendor-error');
+    if (keyInput) keyInput.value = '';
+    if (nameInput) nameInput.value = '';
+    if (errEl) errEl.textContent = '';
+    if (submitBtn) submitBtn.style.display = '';
+    if (loadingEl) loadingEl.style.display = 'none';
+    if (successEl) successEl.style.display = 'none';
+    if (errorEl) errorEl.style.display = 'none';
+}
+
+async function _submitAIVendorConnection() {
+    var keyInput = document.getElementById('ai-vendor-api-key');
+    var nameInput = document.getElementById('ai-vendor-conn-name');
+    var errEl = document.getElementById('ai-vendor-key-error');
+    var submitBtn = document.getElementById('ai-vendor-submit-btn');
+    var loadingEl = document.getElementById('ai-vendor-loading');
+    var successEl = document.getElementById('ai-vendor-success');
+    var errorEl = document.getElementById('ai-vendor-error');
+    var errorMsg = document.getElementById('ai-vendor-error-msg');
+
+    var apiKey = keyInput ? keyInput.value.trim() : '';
+    var connectionName = nameInput ? nameInput.value.trim() : '';
+
+    // Client-side validation
+    var validation = _validateOpenAIKey(apiKey);
+    if (!validation.valid) {
+        if (errEl) errEl.textContent = validation.message;
+        return;
+    }
+
+    // Validate connection name length
+    if (connectionName.length > 64) {
+        if (errEl) errEl.textContent = 'Connection name must be at most 64 characters.';
+        return;
+    }
+
+    // Show loading, hide submit
+    if (submitBtn) submitBtn.style.display = 'none';
+    if (loadingEl) loadingEl.style.display = 'block';
+    if (errEl) errEl.textContent = '';
+    if (errorEl) errorEl.style.display = 'none';
+
+    // 15-second timeout
+    var timeoutId = setTimeout(function() {
+        if (loadingEl) loadingEl.style.display = 'none';
+        if (errorMsg) errorMsg.textContent = 'Request timed out. Please check your network connection and try again.';
+        if (errorEl) errorEl.style.display = 'block';
+    }, 15000);
+
+    try {
+        var payload = { apiKey: apiKey };
+        if (connectionName) payload.connectionName = connectionName;
+
+        var data = await api('POST', '/members/accounts/add-openai', payload);
+        clearTimeout(timeoutId);
+
+        // Success
+        if (loadingEl) loadingEl.style.display = 'none';
+        if (successEl) successEl.style.display = 'block';
+        await loadAccounts();
+    } catch (err) {
+        clearTimeout(timeoutId);
+        if (loadingEl) loadingEl.style.display = 'none';
+
+        var msg = err.message || 'Failed to connect OpenAI account.';
+        if (err.status === 401 || (msg && msg.toLowerCase().indexOf('auth') !== -1)) {
+            msg = 'API key was rejected by OpenAI. Please verify the key is valid and has not been revoked.';
+        } else if (err.status === 0) {
+            msg = 'Network error. Please check your connection and try again.';
+        }
+        if (errorMsg) errorMsg.textContent = msg;
+        if (errorEl) errorEl.style.display = 'block';
+    }
+}
+
+
+// ============================================================
+// OpenAI Usage Dashboard (Tasks 14.1 – 14.6)
+// ============================================================
+
+var _openaiDashState = {
+    data: null,
+    dateRange: 30,
+    granularity: 'daily',
+    loading: false,
+    error: null,
+    accountId: null
+};
+
+/**
+ * Show/hide the OpenAI nav button in the Observe tab depending on whether
+ * there are connected OpenAI accounts.
+ */
+function _updateOpenAINavVisibility() {
+    var navBtn = document.getElementById('observe-openai-nav-btn');
+    if (!navBtn) return;
+    var hasOpenAI = allAccounts.some(function(a) {
+        return (a.cloudProvider === 'openai' || a.vendorType === 'ai_vendor') && a.connectionStatus === 'connected';
+    });
+    navBtn.style.display = hasOpenAI ? '' : 'none';
+}
+
+// Call visibility update whenever accounts are loaded
+var _origLoadAccounts = loadAccounts;
+loadAccounts = async function() {
+    var result = await _origLoadAccounts.apply(this, arguments);
+    _updateOpenAINavVisibility();
+    return result;
+};
+
+/**
+ * Main entry point: renders the OpenAI dashboard inside #openai-dashboard.
+ * Called when the observe-openai section becomes active.
+ */
+function _renderOpenAIDashboard() {
+    var container = document.getElementById('openai-dashboard');
+    if (!container) return;
+
+    // Find the first connected OpenAI account
+    var openaiAccounts = allAccounts.filter(function(a) {
+        return (a.cloudProvider === 'openai' || a.vendorType === 'ai_vendor') && a.connectionStatus === 'connected';
+    });
+
+    if (!openaiAccounts.length) {
+        container.innerHTML = '<div style="text-align:center;padding:60px 20px;color:#6b7280;">' +
+            '<div style="font-size:2.5em;margin-bottom:12px;">🤖</div>' +
+            '<div style="font-size:1em;margin-bottom:6px;color:#1f2937;">No OpenAI accounts connected</div>' +
+            '<div style="font-size:0.9em;color:#6b7280;">Connect an OpenAI account in the Configure tab to see usage analytics.</div>' +
+            '</div>';
+        return;
+    }
+
+    // Use first OpenAI account or selected one
+    var accountId = _openaiDashState.accountId || openaiAccounts[0].accountId;
+    _openaiDashState.accountId = accountId;
+
+    // Build the dashboard shell with account selector and date range
+    var html = '';
+    // Account selector (if multiple OpenAI accounts)
+    html += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:8px;">';
+    html += '<div style="display:flex;align-items:center;gap:8px;">';
+    html += '<h3 style="margin:0;color:#1f2937;">OpenAI Usage Dashboard</h3>';
+    if (openaiAccounts.length > 1) {
+        html += '<select id="openai-dash-account" style="padding:5px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:0.85em;background:#fff;">';
+        openaiAccounts.forEach(function(a) {
+            html += '<option value="' + ea(a.accountId) + '"' + (a.accountId === accountId ? ' selected' : '') + '>' + esc(a.accountName || a.accountId) + '</option>';
+        });
+        html += '</select>';
+    }
+    html += '</div>';
+    // Date range selector
+    html += '<div style="display:flex;align-items:center;gap:6px;">';
+    html += '<span style="font-size:0.82em;color:#6b7280;">Range:</span>';
+    html += '<button class="openai-range-btn' + (_openaiDashState.dateRange === 7 ? ' active' : '') + '" data-range="7">7d</button>';
+    html += '<button class="openai-range-btn' + (_openaiDashState.dateRange === 30 ? ' active' : '') + '" data-range="30">30d</button>';
+    html += '<button class="openai-range-btn' + (_openaiDashState.dateRange === 90 ? ' active' : '') + '" data-range="90">90d</button>';
+    html += '</div>';
+    html += '</div>';
+
+    // Dashboard sections container
+    html += '<div id="openai-dash-content"></div>';
+
+    container.innerHTML = html;
+
+    // Wire up events
+    var rangeBtns = container.querySelectorAll('.openai-range-btn');
+    rangeBtns.forEach(function(btn) {
+        btn.onclick = function() {
+            var range = parseInt(btn.dataset.range);
+            _openaiDashState.dateRange = range;
+            rangeBtns.forEach(function(b) { b.classList.toggle('active', b === btn); });
+            _fetchOpenAIDashboardData();
+        };
+    });
+
+    var acctSelect = document.getElementById('openai-dash-account');
+    if (acctSelect) {
+        acctSelect.onchange = function() {
+            _openaiDashState.accountId = acctSelect.value;
+            _openaiDashState.data = null;
+            _fetchOpenAIDashboardData();
+        };
+    }
+
+    // Fetch data
+    _fetchOpenAIDashboardData();
+}
+
+/**
+ * Fetch OpenAI usage data from backend
+ */
+async function _fetchOpenAIDashboardData() {
+    var contentEl = document.getElementById('openai-dash-content');
+    if (!contentEl) return;
+
+    _openaiDashState.loading = true;
+    _openaiDashState.error = null;
+
+    // Show loading state
+    contentEl.innerHTML = '<div style="text-align:center;padding:40px;color:#6b7280;">' +
+        '<div class="spinner" style="margin:0 auto 12px;width:28px;height:28px;"></div>' +
+        '<div>Loading OpenAI usage data...</div></div>';
+
+    try {
+        var data = await api('POST', '/members/accounts/openai-usage', {
+            accountId: _openaiDashState.accountId,
+            dateRange: _openaiDashState.dateRange
+        });
+        _openaiDashState.data = data;
+        _openaiDashState.loading = false;
+        _renderOpenAIDashboardSections();
+    } catch (err) {
+        _openaiDashState.loading = false;
+        _openaiDashState.error = err.message || 'Failed to load data';
+        contentEl.innerHTML = '<div style="text-align:center;padding:40px;">' +
+            '<div style="color:#ef4444;font-size:1em;margin-bottom:8px;">⚠️ ' + esc(_openaiDashState.error) + '</div>' +
+            '<button class="btn btn-outline btn-sm" onclick="_fetchOpenAIDashboardData()">Retry</button></div>';
+    }
+}
+
+/**
+ * Render all 6 dashboard sections using loaded data
+ */
+function _renderOpenAIDashboardSections() {
+    var contentEl = document.getElementById('openai-dash-content');
+    if (!contentEl) return;
+    var data = _openaiDashState.data;
+    if (!data) return;
+
+    var html = '';
+    // Section 1: Token Usage Time-Series (Task 14.1)
+    html += '<div id="openai-section-tokens" class="openai-dash-section">';
+    html += _renderTokenUsageChart(data);
+    html += '</div>';
+
+    // Section 2: Cost by Model (Task 14.2)
+    html += '<div id="openai-section-cost-model" class="openai-dash-section">';
+    html += _renderCostByModelChart(data);
+    html += '</div>';
+
+    // Section 3: Spend Trends (Task 14.3)
+    html += '<div id="openai-section-trends" class="openai-dash-section">';
+    html += _renderSpendTrendsChart(data);
+    html += '</div>';
+
+    // Section 4: Cost per Project (Task 14.4)
+    html += '<div id="openai-section-projects" class="openai-dash-section">';
+    html += _renderCostPerProjectTable(data);
+    html += '</div>';
+
+    // Section 5: Rate Limit Gauges (Task 14.5)
+    html += '<div id="openai-section-ratelimits" class="openai-dash-section">';
+    html += _renderRateLimitGauges(data);
+    html += '</div>';
+
+    // Section 6: Optimization Recommendations (Task 14.6)
+    html += '<div id="openai-section-recommendations" class="openai-dash-section">';
+    html += _renderOptimizationRecommendations(data);
+    html += '</div>';
+
+    contentEl.innerHTML = html;
+
+    // Wire up granularity toggle buttons
+    _wireGranularityToggle();
+}
+
+// ---- Task 14.1: Token Usage Time-Series Chart ----
+function _renderTokenUsageChart(data) {
+    var usage = data.token_usage || data.tokenUsage || [];
+    if (!usage.length) {
+        return '<div class="openai-widget">' +
+            '<div class="openai-widget-header"><h4>Token Usage Over Time</h4></div>' +
+            '<div class="openai-widget-empty">No token usage data for the selected period.</div></div>';
+    }
+
+    // Find max for scaling
+    var maxTokens = 0;
+    usage.forEach(function(d) {
+        var total = (d.input_tokens || 0) + (d.output_tokens || 0);
+        if (total > maxTokens) maxTokens = total;
+    });
+
+    var html = '<div class="openai-widget">';
+    html += '<div class="openai-widget-header"><h4>📊 Token Usage Over Time</h4></div>';
+    html += '<div class="openai-chart-legend">';
+    html += '<span class="openai-legend-item"><span class="openai-legend-dot" style="background:#6366f1;"></span> Input Tokens</span>';
+    html += '<span class="openai-legend-item"><span class="openai-legend-dot" style="background:#f59e0b;"></span> Output Tokens</span>';
+    html += '</div>';
+    html += '<div class="openai-bar-chart">';
+
+    usage.forEach(function(d) {
+        var inputPct = maxTokens > 0 ? ((d.input_tokens || 0) / maxTokens * 100) : 0;
+        var outputPct = maxTokens > 0 ? ((d.output_tokens || 0) / maxTokens * 100) : 0;
+        var dateLabel = d.date ? d.date.slice(5) : ''; // MM-DD
+        html += '<div class="openai-bar-col" title="' + ea(d.date || '') + '\nInput: ' + _fmtTokens(d.input_tokens || 0) + '\nOutput: ' + _fmtTokens(d.output_tokens || 0) + '">';
+        html += '<div class="openai-bar-stack">';
+        html += '<div class="openai-bar" style="height:' + outputPct + '%;background:#f59e0b;"></div>';
+        html += '<div class="openai-bar" style="height:' + inputPct + '%;background:#6366f1;"></div>';
+        html += '</div>';
+        html += '<div class="openai-bar-label">' + dateLabel + '</div>';
+        html += '</div>';
+    });
+
+    html += '</div></div>';
+    return html;
+}
+
+function _fmtTokens(n) {
+    if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
+    if (n >= 1000) return (n / 1000).toFixed(1) + 'K';
+    return String(n);
+}
+
+// ---- Task 14.2: Cost by Model Bar Chart ----
+function _renderCostByModelChart(data) {
+    var models = data.cost_by_model || data.costByModel || [];
+    if (!models.length) {
+        return '<div class="openai-widget">' +
+            '<div class="openai-widget-header"><h4>Cost by Model</h4></div>' +
+            '<div class="openai-widget-empty">No model usage data for the selected period.</div></div>';
+    }
+
+    // Sort by cost descending, limit to 20
+    models = models.slice().sort(function(a, b) { return (b.cost || 0) - (a.cost || 0); }).slice(0, 20);
+    var totalCost = models.reduce(function(sum, m) { return sum + (m.cost || 0); }, 0);
+    var maxCost = models[0] ? models[0].cost : 1;
+
+    var html = '<div class="openai-widget">';
+    html += '<div class="openai-widget-header"><h4>💰 Cost by Model</h4><span class="openai-widget-subtitle">Top ' + models.length + ' models</span></div>';
+
+    models.forEach(function(m) {
+        var pct = totalCost > 0 ? (m.cost / totalCost * 100) : 0;
+        var barWidth = maxCost > 0 ? (m.cost / maxCost * 100) : 0;
+        html += '<div class="openai-hbar-row">';
+        html += '<div class="openai-hbar-label">' + esc(m.model || m.name || 'Unknown') + '</div>';
+        html += '<div class="openai-hbar-track">';
+        html += '<div class="openai-hbar-fill" style="width:' + barWidth.toFixed(1) + '%;"></div>';
+        html += '</div>';
+        html += '<div class="openai-hbar-value">$' + (m.cost || 0).toFixed(2) + ' <span style="color:#6b7280;font-size:0.82em;">(' + pct.toFixed(1) + '%)</span></div>';
+        html += '</div>';
+    });
+
+    html += '</div>';
+    return html;
+}
+
+// ---- Task 14.3: Spend Trends Chart ----
+function _renderSpendTrendsChart(data) {
+    var daily = data.spend_trends || data.spendTrends || data.daily_costs || [];
+    if (!daily.length) {
+        return '<div class="openai-widget">' +
+            '<div class="openai-widget-header"><h4>Spend Trends</h4></div>' +
+            '<div class="openai-widget-empty">No spend data for the selected period.</div></div>';
+    }
+
+    // Store raw daily data for re-aggregation
+    _openaiDashState._rawDailyCosts = daily;
+
+    var aggregated = _aggregateSpendByGranularity(daily, _openaiDashState.granularity);
+    var totalSpend = daily.reduce(function(s, d) { return s + (d.cost || d.cost_amount || 0); }, 0);
+    var periodChange = data.period_change || data.periodChange || null;
+
+    var html = '<div class="openai-widget">';
+    html += '<div class="openai-widget-header">';
+    html += '<h4>📈 Spend Trends</h4>';
+    html += '<div style="display:flex;align-items:center;gap:6px;">';
+    html += '<button class="openai-gran-btn' + (_openaiDashState.granularity === 'daily' ? ' active' : '') + '" data-gran="daily">Daily</button>';
+    html += '<button class="openai-gran-btn' + (_openaiDashState.granularity === 'weekly' ? ' active' : '') + '" data-gran="weekly">Weekly</button>';
+    html += '<button class="openai-gran-btn' + (_openaiDashState.granularity === 'monthly' ? ' active' : '') + '" data-gran="monthly">Monthly</button>';
+    html += '</div>';
+    html += '</div>';
+
+    // Summary line
+    html += '<div style="display:flex;align-items:center;gap:16px;margin-bottom:12px;">';
+    html += '<span style="font-size:1.4em;font-weight:700;color:#1f2937;">$' + totalSpend.toFixed(2) + '</span>';
+    if (periodChange !== null && periodChange !== undefined) {
+        var changeColor = periodChange <= 0 ? '#10b981' : '#ef4444';
+        var changeArrow = periodChange <= 0 ? '▼' : '▲';
+        html += '<span style="font-size:0.9em;color:' + changeColor + ';font-weight:600;">' + changeArrow + ' ' + Math.abs(periodChange).toFixed(1) + '% vs prior period</span>';
+    }
+    html += '</div>';
+
+    // Render bar chart for spend
+    html += '<div id="openai-spend-bars" class="openai-bar-chart">';
+    html += _renderSpendBars(aggregated);
+    html += '</div>';
+
+    html += '</div>';
+    return html;
+}
+
+function _renderSpendBars(aggregated) {
+    if (!aggregated.length) return '<div class="openai-widget-empty">No data to display.</div>';
+    var maxCost = Math.max.apply(null, aggregated.map(function(d) { return d.cost || 0; }));
+    var html = '';
+    aggregated.forEach(function(d) {
+        var pct = maxCost > 0 ? (d.cost / maxCost * 100) : 0;
+        var label = d.label || d.date || '';
+        html += '<div class="openai-bar-col" title="' + ea(label) + ': $' + (d.cost || 0).toFixed(2) + '">';
+        html += '<div class="openai-bar-stack">';
+        html += '<div class="openai-bar" style="height:' + pct.toFixed(1) + '%;background:#10b981;"></div>';
+        html += '</div>';
+        html += '<div class="openai-bar-label">' + esc(label.slice(-5)) + '</div>';
+        html += '</div>';
+    });
+    return html;
+}
+
+function _aggregateSpendByGranularity(dailyCosts, granularity) {
+    if (!dailyCosts || !dailyCosts.length) return [];
+    if (granularity === 'daily') {
+        return dailyCosts.map(function(d) {
+            return { date: d.date, label: d.date, cost: d.cost || d.cost_amount || 0 };
+        });
+    }
+
+    // Weekly: group by ISO week (starting Monday)
+    if (granularity === 'weekly') {
+        var weeks = {};
+        dailyCosts.forEach(function(d) {
+            var dt = new Date(d.date);
+            var day = dt.getDay() || 7; // Mon=1 ... Sun=7
+            var monday = new Date(dt);
+            monday.setDate(dt.getDate() - day + 1);
+            var weekKey = monday.toISOString().slice(0, 10);
+            if (!weeks[weekKey]) weeks[weekKey] = { date: weekKey, label: 'W ' + weekKey.slice(5), cost: 0 };
+            weeks[weekKey].cost += (d.cost || d.cost_amount || 0);
+        });
+        return Object.values(weeks).sort(function(a, b) { return a.date < b.date ? -1 : 1; });
+    }
+
+    // Monthly: group by calendar month
+    if (granularity === 'monthly') {
+        var months = {};
+        dailyCosts.forEach(function(d) {
+            var monthKey = d.date ? d.date.slice(0, 7) : 'unknown';
+            if (!months[monthKey]) months[monthKey] = { date: monthKey + '-01', label: monthKey, cost: 0 };
+            months[monthKey].cost += (d.cost || d.cost_amount || 0);
+        });
+        return Object.values(months).sort(function(a, b) { return a.date < b.date ? -1 : 1; });
+    }
+
+    return dailyCosts;
+}
+
+function _wireGranularityToggle() {
+    var btns = document.querySelectorAll('.openai-gran-btn');
+    btns.forEach(function(btn) {
+        btn.onclick = function() {
+            var gran = btn.dataset.gran;
+            _openaiDashState.granularity = gran;
+            btns.forEach(function(b) { b.classList.toggle('active', b === btn); });
+            // Re-render just the spend bars (client-side, fast)
+            var daily = _openaiDashState._rawDailyCosts || [];
+            var aggregated = _aggregateSpendByGranularity(daily, gran);
+            var barsEl = document.getElementById('openai-spend-bars');
+            if (barsEl) barsEl.innerHTML = _renderSpendBars(aggregated);
+        };
+    });
+}
+
+// ---- Task 14.4: Cost per Project Table ----
+function _renderCostPerProjectTable(data) {
+    var projects = data.project_costs || data.projectCosts || [];
+    var projectUnavailable = data.project_data_unavailable || data.projectDataUnavailable || false;
+
+    if (projectUnavailable) {
+        return '<div class="openai-widget">' +
+            '<div class="openai-widget-header"><h4>📋 Cost per Project</h4></div>' +
+            '<div class="openai-widget-note">ℹ️ Project-level breakdown requires an Organization-level API key (sk-org-). ' +
+            'Your current key provides aggregate usage only.</div></div>';
+    }
+
+    if (!projects.length) {
+        return '<div class="openai-widget">' +
+            '<div class="openai-widget-header"><h4>Cost per Project</h4></div>' +
+            '<div class="openai-widget-empty">No project data for the selected period.</div></div>';
+    }
+
+    // Sort by cost descending, cap at 50
+    projects = projects.slice().sort(function(a, b) { return (b.cost || 0) - (a.cost || 0); });
+    var totalProjects = projects.length;
+    var truncated = totalProjects > 50;
+    if (truncated) projects = projects.slice(0, 50);
+    var totalCost = projects.reduce(function(s, p) { return s + (p.cost || 0); }, 0);
+
+    var html = '<div class="openai-widget">';
+    html += '<div class="openai-widget-header"><h4>📋 Cost per Project</h4><span class="openai-widget-subtitle">Top ' + projects.length + ' projects</span></div>';
+
+    html += '<table class="openai-table"><thead><tr>';
+    html += '<th>Project</th><th style="text-align:right;">Cost</th><th style="text-align:right;">% of Total</th>';
+    html += '</tr></thead><tbody>';
+
+    projects.forEach(function(p) {
+        var pct = totalCost > 0 ? (p.cost / totalCost * 100) : 0;
+        html += '<tr>';
+        html += '<td>' + esc(p.name || p.project_id || p.projectId || 'Unknown') + '</td>';
+        html += '<td style="text-align:right;font-weight:600;">$' + (p.cost || 0).toFixed(2) + '</td>';
+        html += '<td style="text-align:right;color:#6b7280;">' + pct.toFixed(1) + '%</td>';
+        html += '</tr>';
+    });
+
+    html += '</tbody></table>';
+    if (truncated) {
+        html += '<div style="padding:8px 12px;background:#fef3c7;border-radius:6px;font-size:0.82em;color:#92400e;margin-top:8px;">⚠️ Showing top 50 of ' + totalProjects + ' projects.</div>';
+    }
+    html += '</div>';
+    return html;
+}
+
+// ---- Task 14.5: Rate Limit Utilization Gauges ----
+function _renderRateLimitGauges(data) {
+    var rateLimits = data.rate_limits || data.rateLimits || null;
+
+    if (!rateLimits || (!rateLimits.length && !Object.keys(rateLimits).length)) {
+        return '<div class="openai-widget">' +
+            '<div class="openai-widget-header"><h4>⚡ Rate Limit Utilization</h4></div>' +
+            '<div class="openai-widget-note">Rate limit data is unavailable for this account\'s key type.</div></div>';
+    }
+
+    // Normalize to array
+    var limits = Array.isArray(rateLimits) ? rateLimits : Object.entries(rateLimits).map(function(e) {
+        return Object.assign({ model: e[0] }, e[1]);
+    });
+
+    var html = '<div class="openai-widget">';
+    html += '<div class="openai-widget-header"><h4>⚡ Rate Limit Utilization</h4></div>';
+    html += '<div class="openai-ratelimit-grid">';
+
+    limits.forEach(function(item) {
+        var model = item.model || item.tier || 'Unknown';
+        var rpmPct = item.rpm_utilization || item.rpmUtilization || 0;
+        var tpmPct = item.tpm_utilization || item.tpmUtilization || 0;
+
+        html += '<div class="openai-ratelimit-card">';
+        html += '<div class="openai-ratelimit-model">' + esc(model) + '</div>';
+
+        // RPM gauge
+        html += _renderGauge('RPM', rpmPct);
+        // TPM gauge
+        html += _renderGauge('TPM', tpmPct);
+
+        html += '</div>';
+    });
+
+    html += '</div></div>';
+    return html;
+}
+
+function _renderGauge(label, pct) {
+    var isWarning = pct > 80;
+    var color = isWarning ? '#ef4444' : (pct > 60 ? '#f59e0b' : '#10b981');
+    var html = '<div class="openai-gauge">';
+    html += '<div class="openai-gauge-label">' + label + (isWarning ? ' ⚠️' : '') + '</div>';
+    html += '<div class="openai-gauge-track">';
+    html += '<div class="openai-gauge-fill" style="width:' + Math.min(pct, 100).toFixed(1) + '%;background:' + color + ';"></div>';
+    html += '</div>';
+    html += '<div class="openai-gauge-value" style="color:' + color + ';">' + pct.toFixed(1) + '%</div>';
+    html += '</div>';
+    return html;
+}
+
+// ---- Task 14.6: Optimization Recommendations ----
+function _renderOptimizationRecommendations(data) {
+    var recommendations = data.recommendations || data.optimization_recommendations || [];
+
+    if (!recommendations.length) {
+        return '<div class="openai-widget">' +
+            '<div class="openai-widget-header"><h4>💡 Optimization Recommendations</h4></div>' +
+            '<div class="openai-widget-empty">No optimization recommendations at this time. Your usage patterns look efficient!</div></div>';
+    }
+
+    // Sort by estimated monthly savings descending, max 10
+    recommendations = recommendations.slice().sort(function(a, b) {
+        return (b.estimated_monthly_savings || b.estimatedMonthlySavings || 0) - (a.estimated_monthly_savings || a.estimatedMonthlySavings || 0);
+    }).slice(0, 10);
+
+    var html = '<div class="openai-widget">';
+    html += '<div class="openai-widget-header"><h4>💡 Optimization Recommendations</h4><span class="openai-widget-subtitle">' + recommendations.length + ' suggestion' + (recommendations.length !== 1 ? 's' : '') + '</span></div>';
+
+    recommendations.forEach(function(rec) {
+        var savings = rec.estimated_monthly_savings || rec.estimatedMonthlySavings || 0;
+        var difficulty = (rec.difficulty || 'medium').toLowerCase();
+        var diffColor = difficulty === 'easy' ? '#10b981' : (difficulty === 'hard' ? '#ef4444' : '#f59e0b');
+        var diffLabel = difficulty.charAt(0).toUpperCase() + difficulty.slice(1);
+
+        html += '<div class="openai-rec-card">';
+        html += '<div class="openai-rec-header">';
+        html += '<div class="openai-rec-title">' + esc(rec.title || '') + '</div>';
+        html += '<div class="openai-rec-badges">';
+        html += '<span class="openai-rec-savings">💰 $' + savings.toFixed(2) + '/mo</span>';
+        html += '<span class="openai-rec-difficulty" style="background:' + diffColor + '20;color:' + diffColor + ';border:1px solid ' + diffColor + '40;">' + diffLabel + '</span>';
+        html += '</div>';
+        html += '</div>';
+        html += '<div class="openai-rec-desc">' + esc(rec.description || '') + '</div>';
+        html += '</div>';
+    });
+
+    html += '</div>';
+    return html;
+}
+
+// ---- Hook into Observe Section Switch ----
+var _origSwitchObserveSection = _switchObserveSection;
+_switchObserveSection = function(sectionId) {
+    _origSwitchObserveSection(sectionId);
+    if (sectionId === 'observe-openai') {
+        _renderOpenAIDashboard();
+    }
+};

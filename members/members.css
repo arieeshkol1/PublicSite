@@ -1481,3 +1481,351 @@
         height: 200px;
     }
 }
+
+
+/* ============================================================
+   OpenAI Usage Dashboard Styles (Tasks 14.1–14.6)
+   ============================================================ */
+
+/* Dashboard section containers */
+.openai-dash-section {
+    margin-bottom: 20px;
+}
+
+.openai-widget {
+    background: #fff;
+    border: 1px solid #e5e7eb;
+    border-radius: 12px;
+    padding: 16px 20px;
+    margin-bottom: 16px;
+}
+
+.openai-widget-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.openai-widget-header h4 {
+    margin: 0;
+    font-size: 1em;
+    color: #1f2937;
+    font-weight: 600;
+}
+
+.openai-widget-subtitle {
+    font-size: 0.82em;
+    color: #6b7280;
+}
+
+.openai-widget-empty {
+    text-align: center;
+    padding: 32px 16px;
+    color: #6b7280;
+    font-size: 0.9em;
+}
+
+.openai-widget-note {
+    padding: 12px 16px;
+    background: #f0f9ff;
+    border: 1px solid #bae6fd;
+    border-radius: 8px;
+    font-size: 0.85em;
+    color: #0369a1;
+}
+
+/* Date range buttons */
+.openai-range-btn {
+    background: #fff;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    padding: 4px 12px;
+    font-size: 0.82em;
+    color: #374151;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+.openai-range-btn:hover {
+    background: #f3f4f6;
+}
+.openai-range-btn.active {
+    background: #6366f1;
+    color: #fff;
+    border-color: #6366f1;
+}
+
+/* Granularity toggle buttons */
+.openai-gran-btn {
+    background: #fff;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    padding: 3px 10px;
+    font-size: 0.78em;
+    color: #374151;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+.openai-gran-btn:hover {
+    background: #f3f4f6;
+}
+.openai-gran-btn.active {
+    background: #10b981;
+    color: #fff;
+    border-color: #10b981;
+}
+
+/* Bar chart (token usage & spend trends) */
+.openai-bar-chart {
+    display: flex;
+    align-items: flex-end;
+    gap: 2px;
+    height: 160px;
+    padding: 0 4px;
+    overflow-x: auto;
+}
+
+.openai-bar-col {
+    flex: 1;
+    min-width: 14px;
+    max-width: 40px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    height: 100%;
+}
+
+.openai-bar-stack {
+    flex: 1;
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    gap: 1px;
+}
+
+.openai-bar {
+    width: 100%;
+    border-radius: 2px 2px 0 0;
+    min-height: 1px;
+    transition: height 0.3s ease;
+}
+
+.openai-bar-label {
+    font-size: 0.6em;
+    color: #9ca3af;
+    text-align: center;
+    white-space: nowrap;
+    margin-top: 4px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 100%;
+}
+
+/* Chart legend */
+.openai-chart-legend {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-bottom: 10px;
+    font-size: 0.8em;
+    color: #6b7280;
+}
+
+.openai-legend-item {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.openai-legend-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 3px;
+    display: inline-block;
+}
+
+/* Horizontal bar chart (cost by model) */
+.openai-hbar-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 8px;
+}
+
+.openai-hbar-label {
+    width: 140px;
+    font-size: 0.82em;
+    color: #374151;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    flex-shrink: 0;
+}
+
+.openai-hbar-track {
+    flex: 1;
+    height: 20px;
+    background: #f3f4f6;
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.openai-hbar-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #6366f1, #8b5cf6);
+    border-radius: 4px;
+    transition: width 0.4s ease;
+}
+
+.openai-hbar-value {
+    width: 130px;
+    text-align: right;
+    font-size: 0.82em;
+    font-weight: 600;
+    color: #1f2937;
+    flex-shrink: 0;
+}
+
+/* Table (cost per project) */
+.openai-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.88em;
+}
+
+.openai-table th {
+    text-align: left;
+    padding: 8px 12px;
+    color: #6b7280;
+    font-weight: 600;
+    border-bottom: 2px solid #e5e7eb;
+    font-size: 0.85em;
+}
+
+.openai-table td {
+    padding: 8px 12px;
+    color: #1f2937;
+    border-bottom: 1px solid #f3f4f6;
+}
+
+.openai-table tbody tr:hover {
+    background: #f9fafb;
+}
+
+/* Rate limit gauges */
+.openai-ratelimit-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 12px;
+}
+
+.openai-ratelimit-card {
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    padding: 12px 14px;
+    background: #fafafa;
+}
+
+.openai-ratelimit-model {
+    font-weight: 600;
+    font-size: 0.9em;
+    color: #1f2937;
+    margin-bottom: 10px;
+}
+
+.openai-gauge {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+}
+
+.openai-gauge-label {
+    width: 50px;
+    font-size: 0.78em;
+    color: #6b7280;
+    font-weight: 500;
+}
+
+.openai-gauge-track {
+    flex: 1;
+    height: 8px;
+    background: #e5e7eb;
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.openai-gauge-fill {
+    height: 100%;
+    border-radius: 4px;
+    transition: width 0.4s ease;
+}
+
+.openai-gauge-value {
+    width: 48px;
+    text-align: right;
+    font-size: 0.78em;
+    font-weight: 700;
+}
+
+/* Recommendation cards */
+.openai-rec-card {
+    border: 1px solid #e5e7eb;
+    border-radius: 10px;
+    padding: 14px 16px;
+    margin-bottom: 10px;
+    background: #fff;
+    transition: box-shadow 0.2s;
+}
+
+.openai-rec-card:hover {
+    box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+}
+
+.openai-rec-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 6px;
+    flex-wrap: wrap;
+}
+
+.openai-rec-title {
+    font-weight: 600;
+    font-size: 0.92em;
+    color: #1f2937;
+}
+
+.openai-rec-badges {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+}
+
+.openai-rec-savings {
+    font-size: 0.78em;
+    font-weight: 700;
+    color: #10b981;
+    background: #ecfdf5;
+    border: 1px solid #a7f3d0;
+    border-radius: 100px;
+    padding: 2px 8px;
+}
+
+.openai-rec-difficulty {
+    font-size: 0.72em;
+    font-weight: 600;
+    border-radius: 100px;
+    padding: 2px 8px;
+}
+
+.openai-rec-desc {
+    font-size: 0.85em;
+    color: #4b5563;
+    line-height: 1.4;
+}
