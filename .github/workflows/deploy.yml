@@ -1244,6 +1244,9 @@ jobs:
             "POST /members/terraform/generate"
             "POST /members/cache/invalidate"
             "GET /members/provider-config"
+            "POST /members/accounts/add-openai"
+            "POST /members/accounts/openai-usage"
+            "POST /members/accounts/test-openai-connection"
           )
           echo "MEMBER_INT=$MEMBER_INT"
           echo "Creating/verifying ${#MEMBER_ROUTES[@]} member routes..."
