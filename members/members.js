@@ -12668,8 +12668,14 @@ async function _ddRefresh() {
     var btn = $('dd-refresh-btn');
     if (btn) { btn.disabled = true; btn.textContent = '\u23f3 Refreshing...'; }
 
+    // Build months array: current month and previous month (YYYY-MM format)
+    var now = new Date();
+    var curMonth = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
+    var prevDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    var prevMonth = prevDate.getFullYear() + '-' + String(prevDate.getMonth() + 1).padStart(2, '0');
+
     try {
-        await api('POST', '/members/invoices/refresh', { accountId: _ddState.accountId });
+        await api('POST', '/members/invoices/refresh', { accountId: _ddState.accountId, months: [curMonth, prevMonth] });
         notify('Invoice data refreshed.', 'success');
         _ddClearCache();
         _ddState.page = 1;
