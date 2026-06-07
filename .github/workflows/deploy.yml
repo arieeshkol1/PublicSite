@@ -26,6 +26,7 @@ on:
       - 'members/**'
       - 'agent-action/**'
       - 'audit-evaluator/**'
+      - 'openai-sync-handler/**'
       - 'transaction_logger.py'
       - 'scheduler-executor/**'
       - 'tips-sync/**'
@@ -296,6 +297,9 @@ jobs:
           cp member-handler/tips_filter.py .build-member-handler/
           cp member-handler/tip_citation.py .build-member-handler/
           cp member-handler/cost_cache.py .build-member-handler/
+          cp member-handler/cost_normalizer.py .build-member-handler/
+          cp member-handler/openai_rate_limits.py .build-member-handler/
+          cp member-handler/openai_recommendations.py .build-member-handler/
           cp -r member-handler/hcl_generator .build-member-handler/hcl_generator
           cp -r member-handler/connectors .build-member-handler/connectors
           rm -rf .build-member-handler/connectors/__pycache__
@@ -354,6 +358,16 @@ jobs:
           cd ..
           aws s3 cp audit-evaluator-lambda.zip s3://${{ env.STORAGE_BUCKET }}/lambda-packages/audit-evaluator.zip
           echo "✓ Audit Evaluator packaged"
+
+      - name: Package OpenAI Sync Handler Lambda
+        run: |
+          echo "Packaging OpenAI Sync Handler Lambda..."
+          pip install boto3 -t .build-openai-sync/ --quiet
+          cp openai-sync-handler/lambda_function.py .build-openai-sync/
+          cd .build-openai-sync && zip -r ../openai-sync-lambda.zip . -q
+          cd ..
+          aws s3 cp openai-sync-lambda.zip s3://${{ env.STORAGE_BUCKET }}/lambda-packages/openai-sync.zip
+          echo "✓ OpenAI Sync Handler packaged"
 
       - name: Deploy SlashMyBill CloudFormation stack
         continue-on-error: true
@@ -615,6 +629,8 @@ jobs:
           update_lambda slashmybill-tips-sync lambda-packages/tips-sync.zip
           # Update Audit Evaluator Lambda (skip if not yet created)
           update_lambda audit-evaluator lambda-packages/audit-evaluator.zip
+          # Update OpenAI Sync Lambda (skip if not yet created)
+          update_lambda slashmybill-openai-sync lambda-packages/openai-sync.zip
           # Update audit-evaluator environment variable (model ID fix)
           aws lambda update-function-configuration \
             --function-name audit-evaluator \
