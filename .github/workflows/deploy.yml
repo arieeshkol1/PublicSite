@@ -223,6 +223,7 @@ jobs:
                     "arn:aws:dynamodb:us-east-1:991105135552:table/MemberPortal-Invoices",
                     "arn:aws:dynamodb:us-east-1:991105135552:table/Cost_Cache_Table",
                     "arn:aws:dynamodb:us-east-1:991105135552:table/ProviderRegistry",
+                    "arn:aws:dynamodb:us-east-1:991105135552:table/ViewMyBill-CostOptimizationTips",
                     "arn:aws:dynamodb:us-east-1:991105135552:table/Audit_Transaction_Log",
                     "arn:aws:dynamodb:us-east-1:991105135552:table/Audit_Transaction_Log/index/*"
                   ]
@@ -597,6 +598,13 @@ jobs:
           pip install boto3 --quiet
           python infrastructure/seed-provider-registry.py
           echo "✓ Provider Registry seeded"
+
+      - name: Seed OpenAI optimization tips
+        if: success()
+        continue-on-error: true
+        run: |
+          python scripts/seed_openai_tips.py
+          echo "✓ OpenAI tips seeded"
 
       - name: Update Lambda function code
         run: |
