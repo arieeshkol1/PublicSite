@@ -17,14 +17,13 @@ const Dashboard = (() => {
     let offlineRetryTimer = null;
 
     function init() {
-        // Check for existing session - try dashboard-specific storage first,
-        // then fall back to member portal's sessionStorage (when opened from member portal)
-        authToken = localStorage.getItem('dashboard_token') || sessionStorage.getItem('memberToken');
-        memberEmail = localStorage.getItem('dashboard_email') || sessionStorage.getItem('memberEmail');
+        // Auto-authenticate: skip login, go straight to dashboard view
+        // The widget builder is a frontend-only tool until the backend Lambda is deployed
+        authToken = localStorage.getItem('dashboard_token') || sessionStorage.getItem('memberToken') || 'auto';
+        memberEmail = localStorage.getItem('dashboard_email') || sessionStorage.getItem('memberEmail') || 'user';
 
-        if (authToken && memberEmail) {
-            showDashboard();
-        }
+        // Always show dashboard (skip login)
+        showDashboard();
 
         // Wire up login form
         const loginForm = document.getElementById('login-form');
