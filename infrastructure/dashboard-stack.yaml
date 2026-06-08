@@ -1,0 +1,240 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Widget Builder Dashboard - Infrastructure (Lambda, API Gateway routes, DynamoDB)'
+# v1 - Dashboard Handler Lambda + DashboardLayouts table + API Gateway routes
+
+Parameters:
+  LambdaCodeBucket:
+    Type: String
+    Default: 'aws-bill-analyzer-storage-991105135552'
+    Description: S3 bucket containing Lambda deployment packages
+
+  DashboardHandlerCodeKey:
+    Type: String
+    Default: 'lambda-packages/dashboard-handler.zip'
+    Description: S3 key for Dashboard Handler Lambda deployment package
+
+  ExistingApiId:
+    Type: String
+    Description: ID of the existing ViewMyBill HTTP API Gateway (ViewMyBillApi)
+
+  CostCacheTableArn:
+    Type: String
+    Description: ARN of the existing Cost_Cache_Table DynamoDB table
+
+  InvoicesTableArn:
+    Type: String
+    Description: ARN of the existing MemberPortal-Invoices DynamoDB table
+
+  AccountsTableArn:
+    Type: String
+    Description: ARN of the existing MemberPortal-Accounts DynamoDB table
+
+  CognitoUserPoolId:
+    Type: String
+    Default: 'us-east-1_FlR2CmFu0'
+    Description: Cognito User Pool ID for JWT validation
+
+  CognitoRegion:
+    Type: String
+    Default: 'us-east-1'
+    Description: AWS region of the Cognito User Pool
+
+Resources:
+
+  # ============================================================
+  # DynamoDB Table - Dashboard Layouts
+  # ============================================================
+  DashboardLayoutsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: DashboardLayouts
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+      SSESpecification:
+        SSEEnabled: true
+      Tags:
+        - Key: Project
+          Value: ViewMyBill
+        - Key: Feature
+          Value: WidgetBuilderDashboard
+
+  # ============================================================
+  # IAM Role - Dashboard Handler Lambda
+  # ============================================================
+  DashboardHandlerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: dashboard-handler-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: DynamoDBDashboardLayoutsAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                  - dynamodb:Query
+                Resource:
+                  - !GetAtt DashboardLayoutsTable.Arn
+        - PolicyName: DynamoDBCostCacheReadAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:Query
+                Resource:
+                  - !Ref CostCacheTableArn
+        - PolicyName: DynamoDBInvoicesReadAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:Query
+                Resource:
+                  - !Ref InvoicesTableArn
+                  - !Sub '${InvoicesTableArn}/index/*'
+        - PolicyName: DynamoDBAccountsReadAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:Query
+                Resource:
+                  - !Ref AccountsTableArn
+      Tags:
+        - Key: Project
+          Value: ViewMyBill
+
+  # ============================================================
+  # Lambda Function - Dashboard Handler
+  # ============================================================
+  DashboardHandlerFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: dashboard-handler
+      Runtime: python3.12
+      Handler: lambda_function.lambda_handler
+      MemorySize: 256
+      Timeout: 30
+      Role: !GetAtt DashboardHandlerRole.Arn
+      Code:
+        S3Bucket: !Ref LambdaCodeBucket
+        S3Key: !Ref DashboardHandlerCodeKey
+      Environment:
+        Variables:
+          DASHBOARD_LAYOUTS_TABLE: !Ref DashboardLayoutsTable
+          COST_CACHE_TABLE_NAME: 'Cost_Cache_Table'
+          INVOICES_TABLE_NAME: 'MemberPortal-Invoices'
+          ACCOUNTS_TABLE_NAME: 'MemberPortal-Accounts'
+          COGNITO_USER_POOL_ID: !Ref CognitoUserPoolId
+          COGNITO_REGION: !Ref CognitoRegion
+          PROVIDER_API_TIMEOUT: '30'
+      Tags:
+        - Key: Project
+          Value: ViewMyBill
+        - Key: Feature
+          Value: WidgetBuilderDashboard
+
+  # ============================================================
+  # API Gateway - Dashboard Integration
+  # ============================================================
+  DashboardIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref ExistingApiId
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !GetAtt DashboardHandlerFunction.Arn
+      PayloadFormatVersion: '2.0'
+
+  # ============================================================
+  # API Gateway - Dashboard Routes
+  # ============================================================
+  DashboardQueryRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ExistingApiId
+      RouteKey: 'POST /dashboard/query'
+      Target: !Sub 'integrations/${DashboardIntegration}'
+
+  DashboardGetLayoutsRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ExistingApiId
+      RouteKey: 'GET /dashboard/layouts'
+      Target: !Sub 'integrations/${DashboardIntegration}'
+
+  DashboardSaveLayoutRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ExistingApiId
+      RouteKey: 'PUT /dashboard/layouts'
+      Target: !Sub 'integrations/${DashboardIntegration}'
+
+  DashboardGetLayoutByIdRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ExistingApiId
+      RouteKey: 'GET /dashboard/layouts/{id}'
+      Target: !Sub 'integrations/${DashboardIntegration}'
+
+  DashboardDeleteLayoutRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ExistingApiId
+      RouteKey: 'DELETE /dashboard/layouts/{id}'
+      Target: !Sub 'integrations/${DashboardIntegration}'
+
+  # ============================================================
+  # Lambda Permission - Allow API Gateway to invoke Dashboard Handler
+  # ============================================================
+  DashboardHandlerInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref DashboardHandlerFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ExistingApiId}/*'
+
+Outputs:
+  DashboardHandlerFunctionArn:
+    Description: ARN of the Dashboard Handler Lambda function
+    Value: !GetAtt DashboardHandlerFunction.Arn
+
+  DashboardLayoutsTableArn:
+    Description: ARN of the DashboardLayouts DynamoDB table
+    Value: !GetAtt DashboardLayoutsTable.Arn
+
+  DashboardLayoutsTableName:
+    Description: Name of the DashboardLayouts DynamoDB table
+    Value: !Ref DashboardLayoutsTable
+
+  DashboardApiEndpoint:
+    Description: Dashboard API routes are served via the existing API Gateway
+    Value: !Sub 'https://${ExistingApiId}.execute-api.${AWS::Region}.amazonaws.com'
