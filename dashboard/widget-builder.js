@@ -77,7 +77,9 @@ const WidgetBuilder = (() => {
         if (!widget) return;
 
         document.getElementById('config-panel-title').textContent = `Configure: ${widget.title}`;
-        document.getElementById('config-panel-overlay').hidden = false;
+        const overlay = document.getElementById('config-panel-overlay');
+        overlay.removeAttribute('hidden');
+        overlay.classList.add('active');
 
         // Initialize data source picker for this widget
         DataSourcePicker.show(widget, (updatedConfig) => {
@@ -93,7 +95,9 @@ const WidgetBuilder = (() => {
     }
 
     function closeConfigPanel() {
-        document.getElementById('config-panel-overlay').hidden = true;
+        const overlay = document.getElementById('config-panel-overlay');
+        overlay.classList.remove('active');
+        overlay.setAttribute('hidden', '');
     }
 
     async function fetchAndRender(widgetId) {
