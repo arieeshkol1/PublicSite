@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Widget Builder Dashboard - SlashMyBill</title>
+    <link rel="icon" type="image/png" href="../SlashMyBill.png">
+    <link rel="stylesheet" href="../styles.css">
+    <link rel="stylesheet" href="dashboard.css">
+    <!-- Chart.js CDN (~65KB gzipped) -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <!-- Gridstack.js CDN - lightweight grid layout library -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gridstack@10.1.2/dist/gridstack.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/gridstack@10.1.2/dist/gridstack-all.js"></script>
+</head>
+<body>
+
+    <!-- Login View (reuses same Cognito auth as members portal) -->
+    <div id="login-view" class="login-view">
+        <div class="login-card">
+            <div class="login-logo">
+                <img src="../SlashMyBill.png" alt="SlashMyBill Logo">
+                <h1>Widget Builder</h1>
+                <p>Sign in to build custom dashboards</p>
+            </div>
+            <form id="login-form" novalidate>
+                <div class="form-group">
+                    <label for="login-email">Email</label>
+                    <input type="email" id="login-email" placeholder="you@example.com" autocomplete="email" required>
+                </div>
+                <div class="form-group">
+                    <label for="login-password">Password</label>
+                    <input type="password" id="login-password" placeholder="Enter password" autocomplete="current-password" required>
+                </div>
+                <div id="login-error" class="login-error" role="alert"></div>
+                <button type="submit" class="btn btn-primary btn-full">Login</button>
+            </form>
+            <div class="login-link">
+                <a href="../members/index.html">Back to Member Portal</a>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Dashboard View -->
+    <div id="dashboard-view" class="dashboard-view" hidden>
+        <!-- Header -->
+        <header class="dashboard-header">
+            <div class="header-content">
+                <div class="header-left">
+                    <span class="header-brand">SlashMyBill</span>
+                    <span class="header-section">Widget Builder</span>
+                </div>
+                <div class="header-right">
+                    <select id="layout-selector" class="layout-select" aria-label="Select layout">
+                        <option value="">-- Select Layout --</option>
+                    </select>
+                    <button id="save-layout-btn" class="btn btn-primary btn-sm">💾 Save</button>
+                    <button id="new-layout-btn" class="btn btn-outline btn-sm">+ New Layout</button>
+                    <span id="header-email" class="header-username"></span>
+                    <button id="logout-btn" class="btn btn-outline btn-sm">Logout</button>
+                </div>
+            </div>
+        </header>
+
+        <div class="dashboard-body">
+            <!-- Widget Palette Sidebar -->
+            <aside id="widget-palette" class="widget-palette" aria-label="Widget types">
+                <h3 class="palette-title">Widgets</h3>
+                <div class="palette-items">
+                    <button class="palette-item" data-widget-type="bar" aria-label="Add bar chart widget">
+                        <span class="palette-icon">📊</span>
+                        <span class="palette-label">Bar Chart</span>
+                    </button>
+                    <button class="palette-item" data-widget-type="line" aria-label="Add line chart widget">
+                        <span class="palette-icon">📈</span>
+                        <span class="palette-label">Line Chart</span>
+                    </button>
+                    <button class="palette-item" data-widget-type="pie" aria-label="Add pie chart widget">
+                        <span class="palette-icon">🥧</span>
+                        <span class="palette-label">Pie Chart</span>
+                    </button>
+                    <button class="palette-item" data-widget-type="table" aria-label="Add table widget">
+                        <span class="palette-icon">📋</span>
+                        <span class="palette-label">Table</span>
+                    </button>
+                    <button class="palette-item" data-widget-type="kpi" aria-label="Add KPI card widget">
+                        <span class="palette-icon">🎯</span>
+                        <span class="palette-label">KPI Card</span>
+                    </button>
+                    <button class="palette-item" data-widget-type="gauge" aria-label="Add gauge widget">
+                        <span class="palette-icon">⏱️</span>
+                        <span class="palette-label">Gauge</span>
+                    </button>
+                </div>
+                <div class="palette-footer">
+                    <span id="widget-count">0</span> / 20 widgets
+                </div>
+            </aside>
+
+            <!-- Main Grid Area -->
+            <main id="grid-area" class="grid-area" aria-label="Dashboard grid">
+                <div id="grid-container" class="grid-stack"></div>
+                <div id="grid-empty-state" class="grid-empty-state">
+                    <div class="empty-icon">📊</div>
+                    <h3>Start Building Your Dashboard</h3>
+                    <p>Click a widget type from the sidebar to add it to the grid, then configure its data source.</p>
+                </div>
+            </main>
+        </div>
+
+        <!-- Widget Configuration Panel Overlay -->
+        <div id="config-panel-overlay" class="config-panel-overlay" hidden>
+            <div class="config-panel" role="dialog" aria-label="Widget configuration">
+                <div class="config-panel-header">
+                    <h3 id="config-panel-title">Configure Widget</h3>
+                    <button id="config-panel-close" class="config-panel-close" aria-label="Close configuration panel">&times;</button>
+                </div>
+                <div class="config-panel-body">
+                    <!-- Data Source Section -->
+                    <section class="config-section">
+                        <h4>Data Source</h4>
+                        <div id="data-source-picker-container"></div>
+                    </section>
+
+                    <!-- Filters Section -->
+                    <section class="config-section">
+                        <h4>Filters</h4>
+                        <div id="filter-builder-container"></div>
+                    </section>
+
+                    <!-- Dimensions Section -->
+                    <section class="config-section">
+                        <h4>Dimensions</h4>
+                        <div id="dimension-selector-container"></div>
+                    </section>
+
+                    <!-- Aggregation Section -->
+                    <section class="config-section">
+                        <h4>Aggregation</h4>
+                        <div id="aggregation-selector-container"></div>
+                    </section>
+
+                    <!-- Display Options Section -->
+                    <section class="config-section">
+                        <h4>Display</h4>
+                        <div id="display-options-container"></div>
+                    </section>
+                </div>
+                <div class="config-panel-footer">
+                    <button id="config-apply-btn" class="btn btn-primary">Apply</button>
+                    <button id="config-cancel-btn" class="btn btn-outline">Cancel</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Offline Indicator -->
+        <div id="offline-indicator" class="offline-indicator" hidden>
+            <span>⚠️ Connection lost. Retrying...</span>
+        </div>
+
+        <!-- Re-auth Modal -->
+        <div id="reauth-modal" class="modal-overlay" hidden>
+            <div class="modal-card modal-card-sm">
+                <h3>Session Expired</h3>
+                <p>Your session has expired. Please log in again to continue.</p>
+                <form id="reauth-form" novalidate>
+                    <div class="form-group">
+                        <label for="reauth-password">Password</label>
+                        <input type="password" id="reauth-password" placeholder="Enter password" autocomplete="current-password" required>
+                    </div>
+                    <div id="reauth-error" class="login-error" role="alert"></div>
+                    <button type="submit" class="btn btn-primary btn-full">Re-authenticate</button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Module Scripts -->
+    <script src="data-source-picker.js"></script>
+    <script src="widget-renderer.js"></script>
+    <script src="widget-builder.js"></script>
+    <script src="grid-manager.js"></script>
+    <script src="dashboard.js"></script>
+</body>
+</html>
