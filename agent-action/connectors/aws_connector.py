@@ -47,6 +47,7 @@ class AWSConnector(CloudConnector):
         "getFinOpsSettings",
         "getSpotCandidates",
         "getPricingData",
+        "getCostForecast",
     ]
 
     # ─── Auth Helpers ─────────────────────────────────────────────────────
@@ -131,7 +132,7 @@ class AWSConnector(CloudConnector):
                         services.append({'service': svc, 'cost': round(cost, 2)})
             services.sort(key=lambda x: x['cost'], reverse=True)
 
-            # Daily trend (last 7 days)
+            # Daily trend (last 7 days) — includes current month days
             daily = ce.get_cost_and_usage(
                 TimePeriod={'Start': start_7d, 'End': today},
                 Granularity='DAILY',
@@ -143,13 +144,48 @@ class AWSConnector(CloudConnector):
                 cost = float(period['Total']['UnblendedCost']['Amount'])
                 daily_costs.append({'date': date, 'cost': round(cost, 2)})
 
+            # Current month-to-date spend (from 1st of current month to today)
+            mtd_services = []
+            mtd_total = 0.0
+            if now.day > 1:
+                try:
+                    mtd_resp = ce.get_cost_and_usage(
+                        TimePeriod={'Start': first_of_this_month.strftime('%Y-%m-%d'), 'End': today},
+                        Granularity='MONTHLY',
+                        Metrics=['UnblendedCost'],
+                        GroupBy=[{'Type': 'DIMENSION', 'Key': 'SERVICE'}],
+                    )
+                    for period in mtd_resp.get('ResultsByTime', []):
+                        for group in period.get('Groups', []):
+                            svc = group['Keys'][0]
+                            cost = float(group['Metrics']['UnblendedCost']['Amount'])
+                            if cost > 0.01:
+                                mtd_services.append({'service': svc, 'cost': round(cost, 2)})
+                    mtd_services.sort(key=lambda x: x['cost'], reverse=True)
+                    mtd_total = sum(s['cost'] for s in mtd_services)
+                except Exception:
+                    pass  # MTD is supplemental, don't fail if it errors
+
             total = sum(s['cost'] for s in services)
-            return {
+
+            result = {
                 'totalCost30Days': round(total, 2),
                 'topServices': services[:10],
                 'dailyCosts': daily_costs,
                 'period': f'{start_date} to {end_date} (full previous month)',
             }
+
+            # Include MTD data if available
+            if mtd_total > 0:
+                result['currentMonthMTD'] = round(mtd_total, 2)
+                result['currentMonthServices'] = mtd_services[:10]
+                result['currentMonthPeriod'] = f"{first_of_this_month.strftime('%Y-%m-%d')} to {today} (month-to-date)"
+                # Calculate daily average for forecast context
+                if daily_costs:
+                    recent_avg = sum(d['cost'] for d in daily_costs) / len(daily_costs)
+                    result['dailyAverage7d'] = round(recent_avg, 2)
+
+            return result
         except Exception as e:
             return {'error': str(e)}
 
@@ -707,14 +743,97 @@ class AWSConnector(CloudConnector):
 
     def get_cost_forecast(self, account_id: str, member_email: str, params: dict) -> dict:
         """
-        Stub: Get projected cost forecast.
-        TODO: Implement using Cost Explorer GetCostForecast API.
+        Get projected cost forecast using AWS Cost Explorer GetCostForecast API.
+        Also fetches recent daily costs to provide context for the projection.
         """
-        return {
-            'stub': True,
-            'message': 'get_cost_forecast is not yet fully implemented for AWS',
-            'tool': 'getCostForecast',
-        }
+        forecast_days = int(params.get('forecastDays', 30))
+        try:
+            creds = self._assume_role(account_id, member_email)
+            ce = self._make_client('ce', creds)
+
+            now = datetime.now(timezone.utc)
+            today = now.strftime('%Y-%m-%d')
+
+            # Get recent daily costs (last 7 days) for trend context
+            start_7d = (now - timedelta(days=7)).strftime('%Y-%m-%d')
+            recent_daily = ce.get_cost_and_usage(
+                TimePeriod={'Start': start_7d, 'End': today},
+                Granularity='DAILY',
+                Metrics=['UnblendedCost'],
+            )
+            recent_costs = []
+            for period in recent_daily.get('ResultsByTime', []):
+                date = period['TimePeriod']['Start']
+                cost = float(period['Total']['UnblendedCost']['Amount'])
+                recent_costs.append({'date': date, 'cost': round(cost, 2)})
+
+            # Calculate daily average from recent data
+            total_recent = sum(d['cost'] for d in recent_costs)
+            days_with_data = len(recent_costs) if recent_costs else 1
+            daily_avg = round(total_recent / days_with_data, 2)
+
+            # Get AWS Cost Explorer forecast for the rest of the month
+            # GetCostForecast requires start date >= today
+            forecast_end = (now + timedelta(days=forecast_days)).strftime('%Y-%m-%d')
+
+            try:
+                forecast_resp = ce.get_cost_forecast(
+                    TimePeriod={'Start': today, 'End': forecast_end},
+                    Metric='UNBLENDED_COST',
+                    Granularity='MONTHLY',
+                )
+                forecast_total = float(forecast_resp.get('Total', {}).get('Amount', 0))
+                forecast_mean = float(forecast_resp.get('Total', {}).get('Amount', 0))
+
+                # Get daily forecast breakdown
+                daily_forecast = []
+                for item in forecast_resp.get('ForecastResultsByTime', []):
+                    period_start = item['TimePeriod']['Start']
+                    mean_val = float(item.get('MeanValue', 0))
+                    daily_forecast.append({
+                        'date': period_start,
+                        'forecastedCost': round(mean_val, 2),
+                    })
+            except Exception as forecast_err:
+                # If GetCostForecast fails (e.g., not enough history), fall back to
+                # linear projection from recent daily average
+                logger.warning(f"GetCostForecast failed, using linear projection: {forecast_err}")
+                forecast_total = round(daily_avg * forecast_days, 2)
+                daily_forecast = []
+
+            # Calculate current-month projection
+            # Days elapsed this month
+            day_of_month = now.day
+            # Days remaining in month
+            if now.month == 12:
+                days_in_month = 31
+            else:
+                next_month = now.replace(day=1, month=now.month + 1)
+                days_in_month = (next_month - now.replace(day=1)).days
+
+            # MTD spend (sum of recent days that fall in current month)
+            current_month_str = now.strftime('%Y-%m')
+            mtd_costs = [d['cost'] for d in recent_costs if d['date'].startswith(current_month_str)]
+            mtd_total = sum(mtd_costs) if mtd_costs else daily_avg * day_of_month
+
+            # Project end-of-month
+            days_remaining = days_in_month - day_of_month
+            projected_month_total = round(mtd_total + (daily_avg * days_remaining), 2)
+
+            return {
+                'forecastPeriod': f'{today} to {forecast_end}',
+                'forecastTotalUSD': round(forecast_total, 2) if forecast_total > 0 else projected_month_total,
+                'projectedMonthEndUSD': projected_month_total,
+                'dailyAverage': daily_avg,
+                'daysAnalyzed': days_with_data,
+                'recentDailyCosts': recent_costs,
+                'dailyForecast': daily_forecast[:14],  # Cap at 14 days for readability
+                'currentMonthMTD': round(mtd_total, 2),
+                'daysRemainingInMonth': days_remaining,
+                'method': 'aws_cost_explorer_forecast' if daily_forecast else 'linear_projection',
+            }
+        except Exception as e:
+            return {'error': str(e)}
 
     def get_cost_anomalies(self, account_id: str, member_email: str, params: dict) -> dict:
         """
