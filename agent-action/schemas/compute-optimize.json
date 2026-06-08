@@ -1,0 +1,156 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "SlashMyBill ComputeOptimize Actions",
+    "version": "1.0.0",
+    "description": "Vendor-neutral compute optimization tools for the SlashMyBill Bedrock Agent. Provides compute instance inventory, rightsizing recommendations, spot instance candidates, and licensing analysis across all supported cloud providers."
+  },
+  "paths": {
+    "/get-compute-instances": {
+      "post": {
+        "operationId": "getComputeInstances",
+        "summary": "List compute instances with utilization metrics",
+        "description": "Returns all compute instances for the connected account with instance type, state, region, and utilization metrics. Supports optional filters to narrow results by state, region, or instance type.",
+        "parameters": [
+          {
+            "name": "accountId",
+            "in": "query",
+            "description": "The connected account identifier",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "The connected account identifier"
+            }
+          },
+          {
+            "name": "memberEmail",
+            "in": "query",
+            "description": "The member email address for account resolution",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "The member email address for account resolution"
+            }
+          },
+          {
+            "name": "filters",
+            "in": "query",
+            "description": "Optional comma-separated key=value pairs to filter instances (e.g., state=running,region=us-east-1,instanceType=m5.large)",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "Comma-separated key=value pairs to filter instances"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Compute instances response with normalized instance data"
+          }
+        }
+      }
+    },
+    "/get-rightsizing-recommendations": {
+      "post": {
+        "operationId": "getRightsizingRecommendations",
+        "summary": "Get compute rightsizing recommendations",
+        "description": "Returns rightsizing recommendations for compute instances based on utilization metrics. Identifies over-provisioned and under-utilized instances with suggested target instance types and estimated savings.",
+        "parameters": [
+          {
+            "name": "accountId",
+            "in": "query",
+            "description": "The connected account identifier",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "The connected account identifier"
+            }
+          },
+          {
+            "name": "memberEmail",
+            "in": "query",
+            "description": "The member email address for account resolution",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "The member email address for account resolution"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Rightsizing recommendations response with suggested changes and savings estimates"
+          }
+        }
+      }
+    },
+    "/get-spot-candidates": {
+      "post": {
+        "operationId": "getSpotCandidates",
+        "summary": "Get spot instance candidates",
+        "description": "Identifies compute instances that are good candidates for spot or preemptible pricing based on workload characteristics, interruption tolerance, and potential savings.",
+        "parameters": [
+          {
+            "name": "accountId",
+            "in": "query",
+            "description": "The connected account identifier",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "The connected account identifier"
+            }
+          },
+          {
+            "name": "memberEmail",
+            "in": "query",
+            "description": "The member email address for account resolution",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "The member email address for account resolution"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Spot candidates response with eligible instances and estimated savings"
+          }
+        }
+      }
+    },
+    "/get-licensing-analysis": {
+      "post": {
+        "operationId": "getLicensingAnalysis",
+        "summary": "Get compute licensing analysis",
+        "description": "Analyzes software licensing costs and optimization opportunities for compute instances, including license-included vs bring-your-own-license comparisons and potential savings from license consolidation.",
+        "parameters": [
+          {
+            "name": "accountId",
+            "in": "query",
+            "description": "The connected account identifier",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "The connected account identifier"
+            }
+          },
+          {
+            "name": "memberEmail",
+            "in": "query",
+            "description": "The member email address for account resolution",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "The member email address for account resolution"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Licensing analysis response with optimization opportunities and cost comparisons"
+          }
+        }
+      }
+    }
+  }
+}

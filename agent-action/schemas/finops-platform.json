@@ -1,0 +1,180 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "SlashMyBill FinOpsPlatform Action Group",
+    "version": "1.0.0",
+    "description": "FinOps platform tools for budgets, settings, commitment coverage, tag compliance, and business metrics"
+  },
+  "paths": {
+    "/get-budgets": {
+      "post": {
+        "operationId": "getBudgets",
+        "summary": "Get budget configurations and spend tracking",
+        "description": "Returns budget definitions with current spend, forecasted spend, and alert thresholds for the account",
+        "parameters": [
+          {
+            "name": "accountId",
+            "in": "query",
+            "description": "The connected account identifier",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "The connected account identifier"
+            }
+          },
+          {
+            "name": "memberEmail",
+            "in": "query",
+            "description": "The member email address for account resolution",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "The member email address for account resolution"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Budget data including spend and forecast for each configured budget"
+          }
+        }
+      }
+    },
+    "/get-finops-settings": {
+      "post": {
+        "operationId": "getFinOpsSettings",
+        "summary": "Get FinOps settings and healthcheck status",
+        "description": "Returns FinOps configuration settings and healthcheck scan results for the account including cost allocation tags, billing preferences, and governance controls",
+        "parameters": [
+          {
+            "name": "accountId",
+            "in": "query",
+            "description": "The connected account identifier",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "The connected account identifier"
+            }
+          },
+          {
+            "name": "memberEmail",
+            "in": "query",
+            "description": "The member email address for account resolution",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "The member email address for account resolution"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "FinOps settings healthcheck results including configuration status and recommendations"
+          }
+        }
+      }
+    },
+    "/get-commitment-coverage": {
+      "post": {
+        "operationId": "getCommitmentCoverage",
+        "summary": "Get commitment-based discount coverage analysis",
+        "description": "Returns coverage analysis for commitment-based discounts including reserved instances, savings plans, and committed use discounts showing utilization and coverage gaps",
+        "parameters": [
+          {
+            "name": "accountId",
+            "in": "query",
+            "description": "The connected account identifier",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "The connected account identifier"
+            }
+          },
+          {
+            "name": "memberEmail",
+            "in": "query",
+            "description": "The member email address for account resolution",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "The member email address for account resolution"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Commitment coverage data including utilization rates and coverage gaps"
+          }
+        }
+      }
+    },
+    "/get-tag-compliance": {
+      "post": {
+        "operationId": "getTagCompliance",
+        "summary": "Get resource tagging compliance status",
+        "description": "Returns tagging compliance analysis showing which resources meet tagging policies, untagged resource counts, and compliance percentage by service category",
+        "parameters": [
+          {
+            "name": "accountId",
+            "in": "query",
+            "description": "The connected account identifier",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "The connected account identifier"
+            }
+          },
+          {
+            "name": "memberEmail",
+            "in": "query",
+            "description": "The member email address for account resolution",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "The member email address for account resolution"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Tag compliance data including compliance rates and untagged resource details"
+          }
+        }
+      }
+    },
+    "/get-business-metrics": {
+      "post": {
+        "operationId": "getBusinessMetrics",
+        "summary": "Get business-level cost and efficiency metrics",
+        "description": "Returns high-level business metrics including cost per unit, efficiency ratios, and financial KPIs that map cloud spend to business outcomes",
+        "parameters": [
+          {
+            "name": "accountId",
+            "in": "query",
+            "description": "The connected account identifier",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "The connected account identifier"
+            }
+          },
+          {
+            "name": "memberEmail",
+            "in": "query",
+            "description": "The member email address for account resolution",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "The member email address for account resolution"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Business metrics including cost efficiency KPIs and unit economics"
+          }
+        }
+      }
+    }
+  }
+}

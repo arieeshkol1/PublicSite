@@ -1,0 +1,112 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "SlashMyBill DatabaseStorage Actions",
+    "version": "1.0.0",
+    "description": "DatabaseStorage action group for SlashMyBill Bedrock Agent - provides vendor-neutral database and storage resource visibility"
+  },
+  "paths": {
+    "/get-database-instances": {
+      "post": {
+        "operationId": "getDatabaseInstances",
+        "summary": "List database instances with status and configuration",
+        "description": "Returns all database instances for the connected account including engine type, instance class, storage size, and availability configuration",
+        "parameters": [
+          {
+            "name": "accountId",
+            "in": "query",
+            "description": "The connected account identifier",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "The connected account identifier"
+            }
+          },
+          {
+            "name": "memberEmail",
+            "in": "query",
+            "description": "The member email address for account resolution",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "The member email address for account resolution"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Database instances response with normalized instance data"
+          }
+        }
+      }
+    },
+    "/get-storage-volumes": {
+      "post": {
+        "operationId": "getStorageVolumes",
+        "summary": "List block storage volumes with attachment status",
+        "description": "Returns all block storage volumes for the connected account including volume type, size, state, and whether the volume is attached to a compute instance",
+        "parameters": [
+          {
+            "name": "accountId",
+            "in": "query",
+            "description": "The connected account identifier",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "The connected account identifier"
+            }
+          },
+          {
+            "name": "memberEmail",
+            "in": "query",
+            "description": "The member email address for account resolution",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "The member email address for account resolution"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Storage volumes response with normalized volume data"
+          }
+        }
+      }
+    },
+    "/get-object-storage": {
+      "post": {
+        "operationId": "getObjectStorage",
+        "summary": "List object storage buckets and containers",
+        "description": "Returns all object storage buckets or containers for the connected account including lifecycle policy status and storage configuration",
+        "parameters": [
+          {
+            "name": "accountId",
+            "in": "query",
+            "description": "The connected account identifier",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "The connected account identifier"
+            }
+          },
+          {
+            "name": "memberEmail",
+            "in": "query",
+            "description": "The member email address for account resolution",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "The member email address for account resolution"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Object storage response with normalized bucket/container data"
+          }
+        }
+      }
+    }
+  }
+}

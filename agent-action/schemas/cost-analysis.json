@@ -1,0 +1,196 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "SlashMyBill CostAnalysis Action Group",
+    "version": "1.0.0",
+    "description": "Vendor-neutral cost analysis tools for the SlashMyBill Bedrock Agent. Provides cost breakdown, monthly trends, forecasting, and anomaly detection across all supported cloud providers."
+  },
+  "paths": {
+    "/get-cost-breakdown": {
+      "post": {
+        "operationId": "getCostBreakdown",
+        "summary": "Get cost breakdown by service and daily trend",
+        "description": "Returns cost breakdown by service category and daily cost trend for the specified date range. Works across all connected cloud providers.",
+        "parameters": [
+          {
+            "name": "accountId",
+            "in": "query",
+            "description": "The connected account identifier",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "The connected account identifier"
+            }
+          },
+          {
+            "name": "memberEmail",
+            "in": "query",
+            "description": "The member email address associated with the account",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "The member email address associated with the account"
+            }
+          },
+          {
+            "name": "startDate",
+            "in": "query",
+            "description": "Start date for the cost analysis period in ISO 8601 format (YYYY-MM-DD)",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "Start date for the cost analysis period in ISO 8601 format (YYYY-MM-DD)"
+            }
+          },
+          {
+            "name": "endDate",
+            "in": "query",
+            "description": "End date for the cost analysis period in ISO 8601 format (YYYY-MM-DD)",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "End date for the cost analysis period in ISO 8601 format (YYYY-MM-DD)"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Cost breakdown response with service-level costs and daily trend"
+          }
+        }
+      }
+    },
+    "/get-monthly-trend": {
+      "post": {
+        "operationId": "getMonthlyTrend",
+        "summary": "Get monthly cost trend comparison",
+        "description": "Returns monthly cost comparison across recent months showing service-level spend trends. Works across all connected cloud providers.",
+        "parameters": [
+          {
+            "name": "accountId",
+            "in": "query",
+            "description": "The connected account identifier",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "The connected account identifier"
+            }
+          },
+          {
+            "name": "memberEmail",
+            "in": "query",
+            "description": "The member email address associated with the account",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "The member email address associated with the account"
+            }
+          },
+          {
+            "name": "startDate",
+            "in": "query",
+            "description": "Start date for the trend period in ISO 8601 format (YYYY-MM-DD)",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "Start date for the trend period in ISO 8601 format (YYYY-MM-DD)"
+            }
+          },
+          {
+            "name": "endDate",
+            "in": "query",
+            "description": "End date for the trend period in ISO 8601 format (YYYY-MM-DD)",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "End date for the trend period in ISO 8601 format (YYYY-MM-DD)"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Monthly trend response with per-month service-level costs"
+          }
+        }
+      }
+    },
+    "/get-cost-forecast": {
+      "post": {
+        "operationId": "getCostForecast",
+        "summary": "Get cost forecast for upcoming period",
+        "description": "Returns projected costs for the specified number of days ahead based on historical spending patterns. Works across all connected cloud providers.",
+        "parameters": [
+          {
+            "name": "accountId",
+            "in": "query",
+            "description": "The connected account identifier",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "The connected account identifier"
+            }
+          },
+          {
+            "name": "memberEmail",
+            "in": "query",
+            "description": "The member email address associated with the account",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "The member email address associated with the account"
+            }
+          },
+          {
+            "name": "forecastDays",
+            "in": "query",
+            "description": "Number of days to forecast ahead",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "Number of days to forecast ahead"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Cost forecast response with projected spend"
+          }
+        }
+      }
+    },
+    "/get-cost-anomalies": {
+      "post": {
+        "operationId": "getCostAnomalies",
+        "summary": "Detect cost anomalies and unexpected spending",
+        "description": "Returns detected cost anomalies and unexpected spending spikes for the account. Works across all connected cloud providers.",
+        "parameters": [
+          {
+            "name": "accountId",
+            "in": "query",
+            "description": "The connected account identifier",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "The connected account identifier"
+            }
+          },
+          {
+            "name": "memberEmail",
+            "in": "query",
+            "description": "The member email address associated with the account",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "The member email address associated with the account"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Cost anomalies response with detected spending anomalies"
+          }
+        }
+      }
+    }
+  }
+}

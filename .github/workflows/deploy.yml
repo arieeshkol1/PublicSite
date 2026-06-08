@@ -35,7 +35,10 @@ on:
       - 'knowledge-base/**'
       - 'infrastructure/update-bedrock-agent.py'
       - 'infrastructure/register-action-group.py'
+      - 'infrastructure/deploy-agent-action-groups.py'
       - 'agent-action/agent-instructions.md'
+      - 'agent-action/agent-instructions.txt'
+      - 'agent-action/schemas/**'
       - 'agent-action/openapi-schema.json'
       - 'dashboard-handler/**'
       - 'dashboard/**'
@@ -316,14 +319,30 @@ jobs:
       - name: Package Agent Action Lambda
         run: |
           echo "Packaging Agent Action Lambda..."
-          mkdir -p .build-agent-action
+          mkdir -p .build-agent-action/connectors
+          mkdir -p .build-agent-action/schemas
+          # Core modules
           cp agent-action/lambda_function.py .build-agent-action/
-          cp member-handler/provider_registry.py .build-agent-action/
-          cp member-handler/sts_assume_role.py .build-agent-action/
+          cp agent-action/legacy_mapper.py .build-agent-action/
+          cp agent-action/provider_router.py .build-agent-action/
+          cp agent-action/response_normalizer.py .build-agent-action/
+          # Connectors package
+          cp agent-action/connectors/__init__.py .build-agent-action/connectors/
+          cp agent-action/connectors/aws_connector.py .build-agent-action/connectors/
+          cp agent-action/connectors/azure_connector.py .build-agent-action/connectors/
+          cp agent-action/connectors/gcp_connector.py .build-agent-action/connectors/
+          cp agent-action/connectors/ai_vendor_connector.py .build-agent-action/connectors/
+          # Schemas (needed by deployment script)
+          cp agent-action/schemas/*.json .build-agent-action/schemas/
+          # Agent instructions
+          cp agent-action/agent-instructions.txt .build-agent-action/
+          # Legacy helpers (still used by some paths)
+          cp member-handler/provider_registry.py .build-agent-action/ 2>/dev/null || true
+          cp member-handler/sts_assume_role.py .build-agent-action/ 2>/dev/null || true
           cd .build-agent-action && zip -r ../agent-action-lambda.zip . -q
           cd ..
           aws s3 cp agent-action-lambda.zip s3://${{ env.STORAGE_BUCKET }}/lambda-packages/agent-action.zip
-          echo "✓ Agent Action packaged"
+          echo "✓ Agent Action packaged (vendor-neutral architecture)"
 
       - name: Package Scheduler Executor Lambda
         run: |
@@ -576,13 +595,13 @@ jobs:
               "Version": "2012-10-17",
               "Statement": [
                 {"Effect": "Allow", "Action": "sts:AssumeRole", "Resource": "*"},
-                {"Effect": "Allow", "Action": ["dynamodb:GetItem","dynamodb:Query","dynamodb:Scan"], "Resource": ["arn:aws:dynamodb:us-east-1:991105135552:table/ViewMyBill-CostOptimizationTips","arn:aws:dynamodb:us-east-1:991105135552:table/Cost_Cache_Table","arn:aws:dynamodb:us-east-1:991105135552:table/MemberPortal-Members"]},
+                {"Effect": "Allow", "Action": ["dynamodb:GetItem","dynamodb:Query","dynamodb:Scan","dynamodb:PutItem"], "Resource": ["arn:aws:dynamodb:us-east-1:991105135552:table/ViewMyBill-CostOptimizationTips","arn:aws:dynamodb:us-east-1:991105135552:table/Cost_Cache_Table","arn:aws:dynamodb:us-east-1:991105135552:table/MemberPortal-Members","arn:aws:dynamodb:us-east-1:991105135552:table/MemberPortal-Accounts"]},
                 {"Effect": "Allow", "Action": ["pricing:GetProducts","pricing:DescribeServices","pricing:GetAttributeValues"], "Resource": "*"},
                 {"Effect": "Allow", "Action": ["kms:Decrypt","kms:DescribeKey"], "Resource": "*"},
                 {"Effect": "Allow", "Action": ["logs:CreateLogGroup","logs:CreateLogStream","logs:PutLogEvents"], "Resource": "arn:aws:logs:us-east-1:991105135552:log-group:/aws/lambda/SlashMyBill-AgentAction:*"}
               ]
             }'
-          echo "✓ AgentAction role permissions updated (includes kms:Decrypt)"
+          echo "✓ AgentAction role permissions updated (includes MemberPortal-Accounts + PutItem for cache)"
 
       - name: Remove env vars and KMS key from AgentAction Lambda
         continue-on-error: true
@@ -1340,10 +1359,10 @@ jobs:
           python knowledge-base/seed-dynamodb.py
           echo "✓ DynamoDB seeded"
 
-      - name: Register Bedrock Agent Action Group
+      - name: Deploy Vendor-Neutral Bedrock Agent Action Groups
         continue-on-error: true
         run: |
-          echo "=== Registering FinOpsActions on agent G5VJGUOZ5W ==="
+          echo "=== Deploying 6 vendor-neutral action groups to agent G5VJGUOZ5W ==="
           # Ensure the role has both bedrock: and bedrock-agent: permissions
           aws iam put-role-policy \
             --role-name GitHubDeployRole \
@@ -1359,7 +1378,7 @@ jobs:
           echo "Waiting 15s for IAM propagation..."
           sleep 15
           pip install boto3 -q
-          python infrastructure/register-action-group.py
+          python infrastructure/deploy-agent-action-groups.py
 
       - name: Get API Gateway URL
         id: api-url

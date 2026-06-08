@@ -1,0 +1,92 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "SlashMyBill Knowledge Actions",
+    "version": "1.0.0",
+    "description": "Knowledge action group for SlashMyBill Bedrock Agent - provides optimization tips, pricing data, and AI vendor usage information"
+  },
+  "paths": {
+    "/get-optimization-tips": {
+      "post": {
+        "operationId": "getOptimizationTips",
+        "summary": "Get cost optimization tips and recommendations",
+        "description": "Returns platform-wide optimization tips and best practices. Optionally scoped to a specific service category.",
+        "parameters": [
+          {
+            "name": "service",
+            "in": "query",
+            "description": "Optional service category to scope results (e.g., compute, database, storage, network, serverless)",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "Optional service category to scope results (e.g., compute, database, storage, network, serverless)"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Optimization tips response"
+          }
+        }
+      }
+    },
+    "/get-pricing-data": {
+      "post": {
+        "operationId": "getPricingData",
+        "summary": "Get pricing data for cloud services",
+        "description": "Returns platform-wide pricing information for cloud services. Optionally scoped to a specific service category.",
+        "parameters": [
+          {
+            "name": "service",
+            "in": "query",
+            "description": "Optional service category to scope pricing results (e.g., compute, database, storage, network, serverless)",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "Optional service category to scope pricing results (e.g., compute, database, storage, network, serverless)"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Pricing data response"
+          }
+        }
+      }
+    },
+    "/get-ai-vendor-usage": {
+      "post": {
+        "operationId": "getAIVendorUsage",
+        "summary": "Get AI vendor usage and cost data",
+        "description": "Returns usage data for a connected AI vendor account including total spend, token usage breakdown, and model-level cost attribution.",
+        "parameters": [
+          {
+            "name": "accountId",
+            "in": "query",
+            "description": "The connected account identifier",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "The connected account identifier"
+            }
+          },
+          {
+            "name": "memberEmail",
+            "in": "query",
+            "description": "The member email address for account resolution",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "The member email address for account resolution"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "AI vendor usage response"
+          }
+        }
+      }
+    }
+  }
+}

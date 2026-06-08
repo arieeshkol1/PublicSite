@@ -1,0 +1,112 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "SlashMyBill NetworkServerless Actions",
+    "version": "1.0.0",
+    "description": "Vendor-neutral action group for network, serverless, and container resource discovery across all supported cloud providers"
+  },
+  "paths": {
+    "/get-network-resources": {
+      "post": {
+        "operationId": "getNetworkResources",
+        "summary": "List network resources",
+        "description": "Lists network resources including NAT gateways, VPC endpoints, elastic IPs, load balancers, and other networking components for the connected account",
+        "parameters": [
+          {
+            "name": "accountId",
+            "in": "query",
+            "description": "The connected account identifier",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "The connected account identifier"
+            }
+          },
+          {
+            "name": "memberEmail",
+            "in": "query",
+            "description": "The member email address for account resolution",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "The member email address for account resolution"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Network resources response with provider-neutral resource listing"
+          }
+        }
+      }
+    },
+    "/get-serverless-functions": {
+      "post": {
+        "operationId": "getServerlessFunctions",
+        "summary": "List serverless functions",
+        "description": "Lists serverless functions with runtime, memory, invocation count, and error metrics for the connected account",
+        "parameters": [
+          {
+            "name": "accountId",
+            "in": "query",
+            "description": "The connected account identifier",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "The connected account identifier"
+            }
+          },
+          {
+            "name": "memberEmail",
+            "in": "query",
+            "description": "The member email address for account resolution",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "The member email address for account resolution"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Serverless functions response with provider-neutral function listing"
+          }
+        }
+      }
+    },
+    "/get-container-clusters": {
+      "post": {
+        "operationId": "getContainerClusters",
+        "summary": "List container clusters",
+        "description": "Lists container orchestration clusters with node count, status, and resource utilization for the connected account",
+        "parameters": [
+          {
+            "name": "accountId",
+            "in": "query",
+            "description": "The connected account identifier",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "The connected account identifier"
+            }
+          },
+          {
+            "name": "memberEmail",
+            "in": "query",
+            "description": "The member email address for account resolution",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "The member email address for account resolution"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Container clusters response with provider-neutral cluster listing"
+          }
+        }
+      }
+    }
+  }
+}
