@@ -406,6 +406,14 @@ jobs:
         continue-on-error: true
         run: |
           echo "Deploying Dashboard Handler infrastructure..."
+          # Delete the stack if stuck in ROLLBACK_COMPLETE (previous create failed)
+          STACK_STATUS=$(aws cloudformation describe-stacks --stack-name dashboard-handler-stack --query "Stacks[0].StackStatus" --output text 2>/dev/null || echo "DOES_NOT_EXIST")
+          if [ "$STACK_STATUS" = "ROLLBACK_COMPLETE" ]; then
+            echo "Stack in ROLLBACK_COMPLETE — deleting before re-create..."
+            aws cloudformation delete-stack --stack-name dashboard-handler-stack
+            aws cloudformation wait stack-delete-complete --stack-name dashboard-handler-stack
+            echo "✓ Old stack deleted"
+          fi
           # Get existing table ARNs
           COST_ARN="arn:aws:dynamodb:us-east-1:991105135552:table/Cost_Cache_Table"
           INV_ARN="arn:aws:dynamodb:us-east-1:991105135552:table/MemberPortal-Invoices"

@@ -40,6 +40,9 @@ const Dashboard = (() => {
                 memberEmail = event.data.email || 'user';
                 if (!document.getElementById('login-view').hidden) {
                     showDashboard();
+                } else {
+                    // Already showing dashboard, just load layouts with new token
+                    loadLayouts();
                 }
             }
         });
@@ -124,9 +127,13 @@ const Dashboard = (() => {
         document.getElementById('dashboard-view').hidden = false;
         document.getElementById('header-email').textContent = memberEmail;
 
-        // Initialize grid and load saved layouts
+        // Initialize grid
         GridManager.init();
-        loadLayouts();
+
+        // Only call API if we have a valid token
+        if (authToken && authToken !== 'auto') {
+            loadLayouts();
+        }
     }
 
     async function loadLayouts() {
