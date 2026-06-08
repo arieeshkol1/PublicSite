@@ -41,7 +41,10 @@ const Dashboard = (() => {
                 if (!document.getElementById('login-view').hidden) {
                     showDashboard();
                 }
-                // Don't call loadLayouts — backend may not be deployed
+            }
+            // Receive cost data from parent to auto-populate widgets
+            if (event.data && event.data.type === 'dashboard-data') {
+                _autoPopulateWidgets(event.data.payload);
             }
         });
 
@@ -128,8 +131,18 @@ const Dashboard = (() => {
         // Initialize grid
         GridManager.init();
 
-        // Skip API calls — backend may not be deployed yet.
-        // Layouts will load when backend is available.
+        // Load saved layout from localStorage if available
+        const savedLayout = localStorage.getItem('smb_widget_layouts');
+        if (savedLayout) {
+            try {
+                const layoutData = JSON.parse(savedLayout);
+                if (layoutData && layoutData.widgets && layoutData.widgets.length > 0) {
+                    GridManager.loadLayout(layoutData);
+                }
+            } catch (e) {
+                console.warn('Failed to load saved layout:', e);
+            }
+        }
     }
 
     async function loadLayouts() {
@@ -155,6 +168,14 @@ const Dashboard = (() => {
         const layoutName = prompt('Layout name:', 'My Dashboard');
         if (!layoutName) return;
 
+        // Save to localStorage
+        const layoutData = {
+            layout_name: layoutName,
+            widgets: widgets,
+            savedAt: new Date().toISOString()
+        };
+        localStorage.setItem('smb_widget_layouts', JSON.stringify(layoutData));
+
         try {
             const payload = {
                 layout_id: currentLayoutId || undefined,
@@ -167,15 +188,17 @@ const Dashboard = (() => {
                 await loadLayouts();
             }
         } catch (err) {
-            console.error('Failed to save layout:', err);
-            alert('Failed to save layout: ' + (err.message || 'Unknown error'));
+            // API save failed but localStorage save succeeded
+            console.warn('API save failed, layout saved locally:', err);
         }
     }
 
     function newLayout() {
         currentLayoutId = null;
         GridManager.clearGrid();
-        document.getElementById('layout-selector').value = '';
+        const selector = document.getElementById('layout-selector');
+        if (selector) selector.value = '';
+        localStorage.removeItem('smb_widget_layouts');
     }
 
     async function onLayoutSelected(e) {
@@ -345,6 +368,123 @@ const Dashboard = (() => {
 
     function getEmail() {
         return memberEmail;
+    }
+
+    function _autoPopulateWidgets(data) {
+        if (!data || GridManager.getWidgetCount() > 0) return; // Don't overwrite existing widgets
+
+        // Build widgets from parent's dashboard-data response
+        var dailyTrend = data.dailyTrend || [];
+        var costByService = data.costByService || [];
+        var costByRegion = data.costByRegion || [];
+        var summary = data.summary || {};
+
+        // 1. Daily Cost Trend (line chart)
+        if (dailyTrend.length > 0) {
+            var lineConfig = {
+                id: 'auto-daily-' + Date.now(),
+                type: 'line',
+                title: 'Daily Cost Trend',
+                dataSource: { source: 'cost_cache' },
+                dimensions: ['date'],
+                filters: [],
+                aggregation: 'sum',
+                display: { showLegend: false },
+                gridPosition: { x: 0, y: 0, w: 6, h: 4 }
+            };
+            GridManager.addWidget(lineConfig);
+            setTimeout(function() {
+                var container = document.querySelector('[data-widget-id="' + lineConfig.id + '"] .widget-card-body');
+                if (container) {
+                    WidgetRenderer.render(container, lineConfig, {
+                        labels: dailyTrend.map(function(d) { return d.date || d.day || ''; }),
+                        datasets: [{ label: 'Daily Cost', data: dailyTrend.map(function(d) { return d.cost || d.amount || 0; }) }]
+                    });
+                }
+            }, 200);
+        }
+
+        // 2. Cost by Service (pie chart)
+        if (costByService.length > 0) {
+            var pieConfig = {
+                id: 'auto-service-' + Date.now(),
+                type: 'pie',
+                title: 'Cost by Service',
+                dataSource: { source: 'cost_cache' },
+                dimensions: ['service'],
+                filters: [],
+                aggregation: 'sum',
+                display: { showLegend: true },
+                gridPosition: { x: 6, y: 0, w: 6, h: 4 }
+            };
+            GridManager.addWidget(pieConfig);
+            setTimeout(function() {
+                var top8 = costByService.slice(0, 8);
+                var container = document.querySelector('[data-widget-id="' + pieConfig.id + '"] .widget-card-body');
+                if (container) {
+                    WidgetRenderer.render(container, pieConfig, {
+                        labels: top8.map(function(s) { return s.service || s.name || ''; }),
+                        datasets: [{ label: 'Cost', data: top8.map(function(s) { return s.cost || s.amount || 0; }) }]
+                    });
+                }
+            }, 200);
+        }
+
+        // 3. KPI - Total This Month
+        var kpiConfig = {
+            id: 'auto-kpi-' + Date.now(),
+            type: 'kpi',
+            title: 'Total This Month',
+            dataSource: { source: 'cost_cache' },
+            dimensions: [],
+            filters: [],
+            aggregation: 'sum',
+            display: {},
+            gridPosition: { x: 0, y: 4, w: 4, h: 3 }
+        };
+        GridManager.addWidget(kpiConfig);
+        setTimeout(function() {
+            var container = document.querySelector('[data-widget-id="' + kpiConfig.id + '"] .widget-card-body');
+            if (container) {
+                WidgetRenderer.render(container, kpiConfig, {
+                    labels: ['Total'],
+                    datasets: [{ label: 'Monthly Cost ($)', data: [summary.currentMonthTotal || 0] }]
+                });
+            }
+        }, 200);
+
+        // 4. Cost by Region (bar chart)
+        if (costByRegion.length > 0) {
+            var barConfig = {
+                id: 'auto-region-' + Date.now(),
+                type: 'bar',
+                title: 'Cost by Region',
+                dataSource: { source: 'cost_cache' },
+                dimensions: ['region'],
+                filters: [],
+                aggregation: 'sum',
+                display: { showLegend: false },
+                gridPosition: { x: 4, y: 4, w: 8, h: 3 }
+            };
+            GridManager.addWidget(barConfig);
+            setTimeout(function() {
+                var top6 = costByRegion.slice(0, 6);
+                var container = document.querySelector('[data-widget-id="' + barConfig.id + '"] .widget-card-body');
+                if (container) {
+                    WidgetRenderer.render(container, barConfig, {
+                        labels: top6.map(function(r) { return r.region || r.name || ''; }),
+                        datasets: [{ label: 'Cost', data: top6.map(function(r) { return r.cost || r.amount || 0; }) }]
+                    });
+                }
+            }, 200);
+        }
+
+        // Hide empty state
+        var emptyState = document.getElementById('grid-empty-state');
+        if (emptyState) emptyState.hidden = true;
+        // Update count
+        var countEl = document.getElementById('widget-count');
+        if (countEl) countEl.textContent = GridManager.getWidgetCount();
     }
 
     // Initialize on DOM ready

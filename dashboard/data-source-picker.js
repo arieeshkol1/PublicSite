@@ -108,6 +108,36 @@ const DataSourcePicker = (() => {
 
         html += '</div>';
         container.insertAdjacentHTML('beforeend', html);
+
+        // Wire range-type toggle buttons
+        container.querySelectorAll('.range-type-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                container.querySelectorAll('.range-type-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                const type = btn.getAttribute('data-range-type');
+                const relOpts = document.getElementById('relative-range-options');
+                const absOpts = document.getElementById('absolute-range-options');
+                if (relOpts) relOpts.style.display = type === 'relative' ? 'block' : 'none';
+                if (absOpts) absOpts.style.display = type === 'absolute' ? 'block' : 'none';
+                if (!currentWidget.dataSource) {
+                    currentWidget.dataSource = { source: '', accountIds: [], dateRange: { type: 'relative', relative: '30d' } };
+                }
+                currentWidget.dataSource.dateRange.type = type;
+            });
+        });
+
+        // Wire relative range option clicks
+        container.querySelectorAll('.range-option').forEach(btn => {
+            btn.addEventListener('click', () => {
+                container.querySelectorAll('.range-option').forEach(b => b.classList.remove('selected'));
+                btn.classList.add('selected');
+                const range = btn.getAttribute('data-range');
+                if (!currentWidget.dataSource) {
+                    currentWidget.dataSource = { source: '', accountIds: [], dateRange: { type: 'relative', relative: '30d' } };
+                }
+                currentWidget.dataSource.dateRange.relative = range;
+            });
+        });
     }
 
     function renderFilterBuilder() {

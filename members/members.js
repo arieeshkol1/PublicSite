@@ -113,165 +113,8 @@ var dashboardCharts = [];
 var _selectedAccountProvider = 'aws';
 
 // ============================================================
-// Analyze Tab - Pre-built Analytics Dashboard
+// Helpers
 // ============================================================
-var _analyzeDataCache = null;
-var _analyzeChartInstances = {};
-
-async function _loadAnalyzeTab() {
-    // Reuse dashDataCache if available (from Observe tab)
-    if (dashDataCache) {
-        _analyzeDataCache = dashDataCache;
-        _renderAnalyzeCharts(dashDataCache);
-        return;
-    }
-    // Otherwise fetch fresh data
-    try {
-        var selectedIds = [];
-        var connected = allAccounts.filter(function(a) { return a.connectionStatus === 'connected'; });
-        connected.forEach(function(a) { selectedIds.push(a.accountId); });
-        var url = '/members/dashboard-data';
-        if (selectedIds.length > 0) url += '?accountIds=' + selectedIds.join(',');
-        var data = await api('GET', url);
-        _analyzeDataCache = data;
-        dashDataCache = data;
-        dashDataCacheTime = Date.now();
-        _renderAnalyzeCharts(data);
-    } catch (e) {
-        document.getElementById('analyze-kpi-total').textContent = 'Error';
-        console.error('Analyze tab load error:', e);
-    }
-}
-
-function _analyzeRefresh() {
-    _analyzeDataCache = null;
-    dashDataCache = null;
-    _loadAnalyzeTab();
-}
-
-function _renderAnalyzeCharts(data) {
-    if (!data) return;
-    var s = data.summary || {};
-    // KPIs
-    var totalEl = document.getElementById('analyze-kpi-total');
-    var momEl = document.getElementById('analyze-kpi-mom');
-    var topSvcEl = document.getElementById('analyze-kpi-top-svc');
-    var savingsEl = document.getElementById('analyze-kpi-savings');
-    if (totalEl) totalEl.textContent = '$' + (s.currentMonthTotal || 0).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2});
-    if (momEl) {
-        var pct = s.monthOverMonthChange || 0;
-        var arrow = pct <= 0 ? '\u25bc' : '\u25b2';
-        momEl.textContent = arrow + ' ' + Math.abs(pct) + '%';
-        momEl.style.color = pct <= 0 ? '#10b981' : '#ef4444';
-    }
-    if (topSvcEl) {
-        var services = data.costByService || [];
-        if (services.length > 0) {
-            topSvcEl.textContent = services[0].service + ' ($' + services[0].cost.toFixed(0) + ')';
-        }
-    }
-    if (savingsEl) savingsEl.textContent = '$' + (s.potentialSavings || 0).toLocaleString(undefined, {minimumFractionDigits: 0});
-
-    // Daily Trend Line Chart
-    _renderAnalyzeDailyChart(data.dailyTrend || []);
-    // Cost by Service Pie Chart
-    _renderAnalyzeServiceChart(data.costByService || []);
-    // Monthly Trend Bar Chart
-    _renderAnalyzeMonthlyChart(data.monthlyTrend || {});
-    // Cost by Region Pie Chart
-    _renderAnalyzeRegionChart(data.costByRegion || []);
-}
-
-function _renderAnalyzeDailyChart(dailyTrend) {
-    var el = document.getElementById('analyze-chart-daily');
-    if (!el) return;
-    if (_analyzeChartInstances.daily) _analyzeChartInstances.daily.dispose();
-    var chart = echarts.init(el);
-    _analyzeChartInstances.daily = chart;
-    var dates = dailyTrend.map(function(d) { return d.date || d.day || ''; });
-    var costs = dailyTrend.map(function(d) { return d.cost || d.amount || 0; });
-    chart.setOption({
-        tooltip: { trigger: 'axis', formatter: function(p) { return p[0].name + '<br/>$' + p[0].value.toFixed(2); } },
-        xAxis: { type: 'category', data: dates, axisLabel: { fontSize: 10, rotate: 45 } },
-        yAxis: { type: 'value', axisLabel: { formatter: '${value}' } },
-        series: [{ type: 'line', data: costs, smooth: true, areaStyle: { opacity: 0.15 }, lineStyle: { color: '#6366f1', width: 2 }, itemStyle: { color: '#6366f1' } }],
-        grid: { left: 50, right: 16, top: 16, bottom: 50 }
-    });
-}
-
-function _renderAnalyzeServiceChart(costByService) {
-    var el = document.getElementById('analyze-chart-service');
-    if (!el) return;
-    if (_analyzeChartInstances.service) _analyzeChartInstances.service.dispose();
-    var chart = echarts.init(el);
-    _analyzeChartInstances.service = chart;
-    var top8 = costByService.slice(0, 8);
-    var pieData = top8.map(function(item) { return { name: item.service || item.name || '', value: item.cost || item.amount || 0 }; });
-    chart.setOption({
-        tooltip: { trigger: 'item', formatter: '{b}: ${c} ({d}%)' },
-        series: [{ type: 'pie', radius: ['30%', '70%'], data: pieData, label: { fontSize: 10 }, emphasis: { itemStyle: { shadowBlur: 10 } } }]
-    });
-}
-
-function _renderAnalyzeMonthlyChart(monthlyTrend) {
-    var el = document.getElementById('analyze-chart-monthly');
-    if (!el) return;
-    if (_analyzeChartInstances.monthly) _analyzeChartInstances.monthly.dispose();
-    var chart = echarts.init(el);
-    _analyzeChartInstances.monthly = chart;
-    // monthlyTrend can be { months: [...], costs: [...] } or an array
-    var months = [], costs = [];
-    if (Array.isArray(monthlyTrend)) {
-        months = monthlyTrend.map(function(m) { return m.month || m.date || ''; });
-        costs = monthlyTrend.map(function(m) { return m.cost || m.amount || 0; });
-    } else if (monthlyTrend.months) {
-        months = monthlyTrend.months || [];
-        costs = monthlyTrend.costs || [];
-    }
-    chart.setOption({
-        tooltip: { trigger: 'axis', formatter: function(p) { return p[0].name + '<br/>$' + p[0].value.toFixed(2); } },
-        xAxis: { type: 'category', data: months, axisLabel: { fontSize: 10 } },
-        yAxis: { type: 'value', axisLabel: { formatter: '${value}' } },
-        series: [{ type: 'bar', data: costs, itemStyle: { color: '#f59e0b', borderRadius: [4, 4, 0, 0] } }],
-        grid: { left: 50, right: 16, top: 16, bottom: 36 }
-    });
-}
-
-function _renderAnalyzeRegionChart(costByRegion) {
-    var el = document.getElementById('analyze-chart-region');
-    if (!el) return;
-    if (_analyzeChartInstances.region) _analyzeChartInstances.region.dispose();
-    var chart = echarts.init(el);
-    _analyzeChartInstances.region = chart;
-    var pieData = costByRegion.slice(0, 8).map(function(item) { return { name: item.region || item.name || '', value: item.cost || item.amount || 0 }; });
-    chart.setOption({
-        tooltip: { trigger: 'item', formatter: '{b}: ${c} ({d}%)' },
-        series: [{ type: 'pie', radius: ['30%', '70%'], data: pieData, label: { fontSize: 10 }, emphasis: { itemStyle: { shadowBlur: 10 } } }]
-    });
-}
-
-var _widgetBuilderOpen = false;
-function _toggleWidgetBuilder() {
-    var container = document.getElementById('widget-builder-container');
-    var icon = document.getElementById('widget-builder-toggle-icon');
-    var iframe = document.getElementById('widget-builder-iframe');
-    if (!container) return;
-    _widgetBuilderOpen = !_widgetBuilderOpen;
-    container.style.display = _widgetBuilderOpen ? 'block' : 'none';
-    if (icon) icon.style.transform = _widgetBuilderOpen ? 'rotate(180deg)' : '';
-    // Lazy-load iframe on first open
-    if (_widgetBuilderOpen && iframe && !iframe.src) {
-        iframe.src = iframe.getAttribute('data-src') || '/dashboard/';
-        // Send auth token after iframe loads
-        iframe.onload = function() {
-            var token = sessionStorage.getItem('memberToken');
-            var email = sessionStorage.getItem('memberEmail');
-            if (iframe.contentWindow) {
-                iframe.contentWindow.postMessage({ type: 'dashboard-auth', token: token, email: email }, '*');
-            }
-        };
-    }
-}
 
 // ============================================================
 // Helpers
@@ -1810,10 +1653,6 @@ function activateMemberTab(tabId) {
     // Clear drilldown cache when navigating away from Observe tab
     if (tabId !== 'dash-tab' && typeof _ddClearCache === 'function') {
         _ddClearCache();
-    }
-    if (tabId === 'temp-tab') {
-        // Load analyze charts using existing dashboard data API
-        _loadAnalyzeTab();
     }
 }
 
@@ -3738,6 +3577,32 @@ function _switchObserveSection(sectionId) {
         var ddSel = document.getElementById('dd-account-select');
         if (ddSel && ddSel.value && typeof loadInvoiceDrilldown === 'function') {
             loadInvoiceDrilldown(ddSel.value);
+        }
+    }
+
+    // Step 5c: Load Widget Builder iframe when Custom Dashboard section is activated
+    if (sectionId === 'observe-custom-dashboard') {
+        var wbIframe = document.getElementById('observe-widget-builder-iframe');
+        if (wbIframe && !wbIframe.src) {
+            wbIframe.src = '/dashboard/';
+            wbIframe.onload = function() {
+                var token = sessionStorage.getItem('memberToken');
+                var email = sessionStorage.getItem('memberEmail');
+                if (wbIframe.contentWindow) {
+                    wbIframe.contentWindow.postMessage({ type: 'dashboard-auth', token: token, email: email }, '*');
+                    setTimeout(function() {
+                        var data = dashDataCache;
+                        if (data && wbIframe.contentWindow) {
+                            wbIframe.contentWindow.postMessage({ type: 'dashboard-data', payload: data }, '*');
+                        }
+                    }, 500);
+                }
+            };
+        } else if (wbIframe && wbIframe.contentWindow) {
+            var data = dashDataCache;
+            if (data) {
+                wbIframe.contentWindow.postMessage({ type: 'dashboard-data', payload: data }, '*');
+            }
         }
     }
 

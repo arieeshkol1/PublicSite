@@ -95,7 +95,7 @@ const GridManager = (() => {
     function createWidgetContent(widgetConfig) {
         return `
             <div class="widget-card-header">
-                <span class="widget-card-title">${widgetConfig.title || 'Widget'}</span>
+                <span class="widget-card-title" onclick="GridManager.renameWidget('${widgetConfig.id}')" style="cursor:pointer;" title="Click to rename">${widgetConfig.title || 'Widget'}</span>
                 <div class="widget-card-actions">
                     <button onclick="WidgetBuilder.openConfigPanel('${widgetConfig.id}')" title="Configure">⚙️</button>
                     <button onclick="WidgetBuilder.removeWidget('${widgetConfig.id}')" title="Remove">🗑️</button>
@@ -159,6 +159,23 @@ const GridManager = (() => {
         if (countEl) countEl.textContent = '0';
     }
 
+    function renameWidget(widgetId) {
+        const widget = widgets[widgetId];
+        if (!widget) return;
+        const newName = prompt('Rename widget:', widget.title);
+        if (newName === null || newName.trim() === '') return;
+        widget.title = newName.trim();
+        // Update the title in the DOM
+        const el = document.querySelector(`[data-widget-id="${widgetId}"] .widget-card-title`);
+        if (!el) {
+            // Try parent grid item
+            const gridEl = document.querySelector(`.grid-stack-item[data-widget-id="${widgetId}"] .widget-card-title`);
+            if (gridEl) gridEl.textContent = widget.title;
+        } else {
+            el.textContent = widget.title;
+        }
+    }
+
     function loadLayout(layoutData) {
         clearGrid();
 
@@ -183,6 +200,7 @@ const GridManager = (() => {
         init,
         addWidget,
         removeWidget,
+        renameWidget,
         getWidgets,
         getWidgetCount,
         getWidgetConfig,

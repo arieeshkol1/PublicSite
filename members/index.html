@@ -169,7 +169,6 @@
                 <button class="member-tab" data-tab="dash-tab">Observe</button>
                 <button class="member-tab" data-tab="ai-tab">Chat</button>
                 <button class="member-tab" data-tab="act-tab">Act</button>
-                <button class="member-tab" data-tab="temp-tab">Analyze</button>
             </div>
 
             <!-- Plan Tab -->
@@ -1010,16 +1009,11 @@
 
                         <!-- Custom Dashboard Section (Widget Builder) -->
                         <div id="observe-section-observe-custom-dashboard" style="display:none;">
-                            <div style="text-align:center;padding:60px 20px;">
-                                <div style="font-size:3em;margin-bottom:16px;">🧩</div>
-                                <h3 style="margin:0 0 8px;color:#1f2937;">Custom Widget Builder</h3>
-                                <p style="color:#6b7280;margin:0 0 24px;max-width:420px;margin-left:auto;margin-right:auto;">
-                                    Build custom dashboards with drag-and-drop widgets. Choose from bar charts, line charts, pie charts, tables, KPI cards, and gauges — all powered by your connected cost data.
-                                </p>
-                                <button onclick="window.open('/dashboard/?autoauth=1','_blank')" class="btn btn-primary" style="padding:12px 28px;font-size:1em;cursor:pointer;">
-                                    🚀 Open Widget Builder
-                                </button>
-                                <p style="color:#9ca3af;font-size:0.8em;margin-top:16px;">Opens in a new tab with full-screen workspace</p>
+                            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+                                <h3 style="margin:0;color:#1f2937;">🧩 Custom Widget Builder</h3>
+                            </div>
+                            <div style="border:1px solid #e5e7eb;border-radius:12px;overflow:hidden;height:600px;">
+                                <iframe id="observe-widget-builder-iframe" style="width:100%;height:100%;border:none;"></iframe>
                             </div>
                         </div>
 
@@ -1081,72 +1075,6 @@
                             </div>
                         </div>
                     </div>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Analyze Tab: Pre-built Analytics Dashboard -->
-    <div id="temp-tab" class="member-tab-content" hidden>
-        <div style="padding:20px;">
-            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
-                <h2 style="margin:0;color:#1f2937;">📊 Cost Analytics</h2>
-                <div style="display:flex;align-items:center;gap:8px;">
-                    <button id="analyze-refresh-btn" class="btn btn-outline btn-sm" onclick="_analyzeRefresh()">🔄 Refresh</button>
-                </div>
-            </div>
-            <!-- KPI Summary Row -->
-            <div id="analyze-kpi-row" style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px;">
-                <div style="background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:16px;text-align:center;">
-                    <div style="color:#6b7280;font-size:0.75em;text-transform:uppercase;">Total This Month</div>
-                    <div id="analyze-kpi-total" style="font-size:1.5em;font-weight:700;color:#1f2937;">--</div>
-                </div>
-                <div style="background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:16px;text-align:center;">
-                    <div style="color:#6b7280;font-size:0.75em;text-transform:uppercase;">Month-over-Month</div>
-                    <div id="analyze-kpi-mom" style="font-size:1.5em;font-weight:700;color:#6b7280;">--</div>
-                </div>
-                <div style="background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:16px;text-align:center;">
-                    <div style="color:#6b7280;font-size:0.75em;text-transform:uppercase;">Top Service</div>
-                    <div id="analyze-kpi-top-svc" style="font-size:1.1em;font-weight:600;color:#1f2937;">--</div>
-                </div>
-                <div style="background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:16px;text-align:center;">
-                    <div style="color:#6b7280;font-size:0.75em;text-transform:uppercase;">Potential Savings</div>
-                    <div id="analyze-kpi-savings" style="font-size:1.5em;font-weight:700;color:#f59e0b;">--</div>
-                </div>
-            </div>
-            <!-- Charts Grid -->
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
-                <div style="background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:16px;">
-                    <h4 style="margin:0 0 12px;font-size:0.9em;color:#374151;">Daily Cost Trend (30 days)</h4>
-                    <div id="analyze-chart-daily" style="width:100%;height:260px;"></div>
-                </div>
-                <div style="background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:16px;">
-                    <h4 style="margin:0 0 12px;font-size:0.9em;color:#374151;">Cost by Service</h4>
-                    <div id="analyze-chart-service" style="width:100%;height:260px;"></div>
-                </div>
-                <div style="background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:16px;">
-                    <h4 style="margin:0 0 12px;font-size:0.9em;color:#374151;">Monthly Trend</h4>
-                    <div id="analyze-chart-monthly" style="width:100%;height:260px;"></div>
-                </div>
-                <div style="background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:16px;">
-                    <h4 style="margin:0 0 12px;font-size:0.9em;color:#374151;">Cost by Region</h4>
-                    <div id="analyze-chart-region" style="width:100%;height:260px;"></div>
-                </div>
-            </div>
-            <!-- Widget Builder Section -->
-            <div style="margin-top:24px;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden;">
-                <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 20px;background:#f9fafb;border-bottom:1px solid #e5e7eb;cursor:pointer;" onclick="_toggleWidgetBuilder()">
-                    <div style="display:flex;align-items:center;gap:10px;">
-                        <span style="font-size:1.3em;">🧩</span>
-                        <div>
-                            <div style="font-weight:700;color:#1f2937;font-size:0.95em;">Custom Widget Builder</div>
-                            <div style="color:#6b7280;font-size:0.8em;">Drag-and-drop dashboard builder — create custom charts and KPIs</div>
-                        </div>
-                    </div>
-                    <span id="widget-builder-toggle-icon" style="font-size:1.2em;color:#6b7280;transition:transform 0.2s;">▼</span>
-                </div>
-                <div id="widget-builder-container" style="display:none;height:600px;">
-                    <iframe id="widget-builder-iframe" style="width:100%;height:100%;border:none;" data-src="/dashboard/"></iframe>
                 </div>
             </div>
         </div>
@@ -1438,7 +1366,7 @@
         <span id="notification-message"></span>
     </div>
 
-    <script src="members.js?v=110"></script>
+    <script src="members.js?v=111"></script>
     <script src="help.js?v=8"></script>
 </body>
 </html>

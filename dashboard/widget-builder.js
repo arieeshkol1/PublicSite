@@ -32,11 +32,16 @@ const WidgetBuilder = (() => {
             return null;
         }
 
+        // Prompt user for a widget name
+        const defaultTitle = getDefaultTitle(type) + ' ' + (currentCount + 1);
+        const userTitle = prompt('Widget name:', defaultTitle);
+        if (userTitle === null) return null; // User cancelled
+
         // Create widget config
         const widgetConfig = {
             id: crypto.randomUUID(),
             type: type,
-            title: getDefaultTitle(type),
+            title: userTitle.trim() || defaultTitle,
             dataSource: null,
             dimensions: [],
             filters: [],
