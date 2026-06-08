@@ -27,6 +27,8 @@ on:
       - 'agent-action/**'
       - 'audit-evaluator/**'
       - 'openai-sync-handler/**'
+      - 'dashboard-handler/**'
+      - 'dashboard/**'
       - 'transaction_logger.py'
       - 'scheduler-executor/**'
       - 'tips-sync/**'
@@ -370,6 +372,16 @@ jobs:
           aws s3 cp openai-sync-lambda.zip s3://${{ env.STORAGE_BUCKET }}/lambda-packages/openai-sync.zip
           echo "✓ OpenAI Sync Handler packaged"
 
+      - name: Package Dashboard Handler Lambda
+        run: |
+          echo "Packaging Dashboard Handler Lambda..."
+          pip install -r dashboard-handler/requirements.txt -t .build-dashboard-handler/ --quiet
+          cp dashboard-handler/*.py .build-dashboard-handler/
+          cd .build-dashboard-handler && zip -r ../dashboard-handler-lambda.zip . -q
+          cd ..
+          aws s3 cp dashboard-handler-lambda.zip s3://${{ env.STORAGE_BUCKET }}/lambda-packages/dashboard-handler.zip
+          echo "✓ Dashboard Handler packaged"
+
       - name: Deploy SlashMyBill CloudFormation stack
         continue-on-error: true
         run: |
@@ -639,6 +651,8 @@ jobs:
           update_lambda audit-evaluator lambda-packages/audit-evaluator.zip
           # Update OpenAI Sync Lambda (skip if not yet created)
           update_lambda slashmybill-openai-sync lambda-packages/openai-sync.zip
+          # Update Dashboard Handler Lambda (skip if not yet created)
+          update_lambda dashboard-handler lambda-packages/dashboard-handler.zip
           # Update audit-evaluator environment variable (model ID fix)
           aws lambda update-function-configuration \
             --function-name audit-evaluator \
