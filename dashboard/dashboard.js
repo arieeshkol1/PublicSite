@@ -40,10 +40,8 @@ const Dashboard = (() => {
                 memberEmail = event.data.email || 'user';
                 if (!document.getElementById('login-view').hidden) {
                     showDashboard();
-                } else {
-                    // Already showing dashboard, just load layouts with new token
-                    loadLayouts();
                 }
+                // Don't call loadLayouts — backend may not be deployed
             }
         });
 
@@ -130,10 +128,8 @@ const Dashboard = (() => {
         // Initialize grid
         GridManager.init();
 
-        // Only call API if we have a valid token
-        if (authToken && authToken !== 'auto') {
-            loadLayouts();
-        }
+        // Skip API calls — backend may not be deployed yet.
+        // Layouts will load when backend is available.
     }
 
     async function loadLayouts() {
@@ -241,9 +237,7 @@ const Dashboard = (() => {
         }
 
         if (resp.status === 401) {
-            // Token expired - show re-auth modal without navigation
-            preserveUnsavedWork();
-            document.getElementById('reauth-modal').hidden = false;
+            // Token expired or backend not deployed — just throw error, don't show modal
             throw new Error('Session expired');
         }
 
