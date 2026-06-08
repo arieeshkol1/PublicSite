@@ -5,7 +5,7 @@
  */
 
 const Dashboard = (() => {
-    const API_BASE = 'https://api.slashmybill.com';
+    const API_BASE = 'https://l2fd4h481h.execute-api.us-east-1.amazonaws.com';
     const OFFLINE_RETRY_INTERVAL_MS = 15000; // 15 seconds
     const OFFLINE_MAX_RETRIES = 3;
 
@@ -17,13 +17,47 @@ const Dashboard = (() => {
     let offlineRetryTimer = null;
 
     function init() {
-        // Auto-authenticate: skip login, go straight to dashboard view
-        // The widget builder is a frontend-only tool until the backend Lambda is deployed
-        authToken = localStorage.getItem('dashboard_token') || sessionStorage.getItem('memberToken') || 'auto';
-        memberEmail = localStorage.getItem('dashboard_email') || sessionStorage.getItem('memberEmail') || 'user';
+        // Try to get auth token from multiple sources:
+        // 1. URL parameter (passed by parent iframe)
+        // 2. sessionStorage (if same browsing context)
+        // 3. Listen for postMessage from parent (iframe scenario)
+        const urlParams = new URLSearchParams(window.location.search);
+        const urlToken = urlParams.get('token');
+        const urlEmail = urlParams.get('email');
 
-        // Always show dashboard (skip login)
-        showDashboard();
+        if (urlToken) {
+            authToken = urlToken;
+            memberEmail = urlEmail || 'user';
+        } else {
+            authToken = sessionStorage.getItem('memberToken') || localStorage.getItem('dashboard_token') || null;
+            memberEmail = sessionStorage.getItem('memberEmail') || localStorage.getItem('dashboard_email') || 'user';
+        }
+
+        // Listen for token from parent window (iframe embed)
+        window.addEventListener('message', (event) => {
+            if (event.data && event.data.type === 'dashboard-auth') {
+                authToken = event.data.token;
+                memberEmail = event.data.email || 'user';
+                if (!document.getElementById('login-view').hidden) {
+                    showDashboard();
+                }
+            }
+        });
+
+        if (authToken) {
+            showDashboard();
+        } else {
+            // Show login view only if not embedded
+            if (window === window.parent) {
+                document.getElementById('login-view').hidden = false;
+                document.getElementById('dashboard-view').hidden = true;
+            } else {
+                // Embedded — request token from parent
+                window.parent.postMessage({ type: 'dashboard-request-token' }, '*');
+                // Meanwhile show dashboard in loading state
+                showDashboard();
+            }
+        }
 
         // Wire up login form
         const loginForm = document.getElementById('login-form');
@@ -90,9 +124,9 @@ const Dashboard = (() => {
         document.getElementById('dashboard-view').hidden = false;
         document.getElementById('header-email').textContent = memberEmail;
 
-        // Initialize grid only - skip API calls until backend Lambda is deployed
+        // Initialize grid and load saved layouts
         GridManager.init();
-        // loadLayouts(); // Disabled: backend not yet deployed
+        loadLayouts();
     }
 
     async function loadLayouts() {

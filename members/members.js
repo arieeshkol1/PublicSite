@@ -113,6 +113,20 @@ var dashboardCharts = [];
 var _selectedAccountProvider = 'aws';
 
 // ============================================================
+// Dashboard iframe token bridge
+// ============================================================
+window.addEventListener('message', function(event) {
+    if (event.data && event.data.type === 'dashboard-request-token') {
+        var iframe = document.getElementById('temp-dashboard-iframe');
+        if (iframe && iframe.contentWindow) {
+            var token = sessionStorage.getItem('memberToken');
+            var email = sessionStorage.getItem('memberEmail');
+            iframe.contentWindow.postMessage({ type: 'dashboard-auth', token: token, email: email }, '*');
+        }
+    }
+});
+
+// ============================================================
 // Helpers
 // ============================================================
 
@@ -1649,6 +1663,15 @@ function activateMemberTab(tabId) {
     // Clear drilldown cache when navigating away from Observe tab
     if (tabId !== 'dash-tab' && typeof _ddClearCache === 'function') {
         _ddClearCache();
+    }
+    if (tabId === 'temp-tab') {
+        // Pass auth token to dashboard iframe via postMessage
+        var iframe = document.getElementById('temp-dashboard-iframe');
+        if (iframe && iframe.contentWindow) {
+            var token = sessionStorage.getItem('memberToken');
+            var email = sessionStorage.getItem('memberEmail');
+            iframe.contentWindow.postMessage({ type: 'dashboard-auth', token: token, email: email }, '*');
+        }
     }
 }
 
@@ -3488,7 +3511,8 @@ var OBSERVE_SECTIONS = [
     { id: 'observe-metrics', label: 'Business Metrics', icon: '\ud83d\udcc8' },
     { id: 'observe-health', label: 'Health & Score', icon: '\ud83c\udfe5' },
     { id: 'observe-openai', label: 'OpenAI', icon: '\ud83e\udd16' },
-    { id: 'observe-invoices', label: 'Invoices', icon: '\ud83e\uddfe' }
+    { id: 'observe-invoices', label: 'Invoices', icon: '\ud83e\uddfe' },
+    { id: 'observe-custom-dashboard', label: 'Custom Dashboard', icon: '\ud83e\udde9' }
 ];
 
 // Widget-to-section mapping: each section ID maps to an array of widget IDs

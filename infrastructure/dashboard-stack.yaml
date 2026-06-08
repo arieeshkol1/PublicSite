@@ -39,6 +39,11 @@ Parameters:
     Default: 'us-east-1'
     Description: AWS region of the Cognito User Pool
 
+  JWTSecret:
+    Type: String
+    NoEcho: true
+    Description: JWT signing secret for legacy HS256 token validation
+
 Resources:
 
   # ============================================================
@@ -155,6 +160,7 @@ Resources:
           ACCOUNTS_TABLE_NAME: 'MemberPortal-Accounts'
           COGNITO_USER_POOL_ID: !Ref CognitoUserPoolId
           COGNITO_REGION: !Ref CognitoRegion
+          JWT_SECRET: !Ref JWTSecret
           PROVIDER_API_TIMEOUT: '30'
       Tags:
         - Key: Project
