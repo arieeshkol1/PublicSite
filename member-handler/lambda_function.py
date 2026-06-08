@@ -7737,6 +7737,24 @@ def handle_ai_query(event):
 
     # Use a timeout to prevent API Gateway 29s timeout from returning 503
     def _run_ai_query():
+        # Try new modular pipeline first (single-account only), fallback to existing behavior
+        if len(account_ids) == 1:
+            try:
+                from agent.pipeline import execute_pipeline as _execute_pipeline
+                pipeline_event = {
+                    "question": ai_question,
+                    "account_id": account_ids[0],
+                    "member_email": member_email,
+                    "interaction_id": interaction_id,
+                }
+                pipeline_result = _execute_pipeline(pipeline_event)
+                if pipeline_result and not pipeline_result.get("metadata", {}).get("error"):
+                    return create_response(200, pipeline_result)
+            except ImportError:
+                pass  # agent package not available, use existing path
+            except Exception as e:
+                logger.warning(f"Pipeline failed, falling back to direct model: {e}")
+
         if len(account_ids) > 1:
             return _invoke_multi_account(ai_question, account_ids, member_email, interaction_id)
         else:
