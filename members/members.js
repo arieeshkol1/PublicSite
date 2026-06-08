@@ -250,6 +250,29 @@ function _renderAnalyzeRegionChart(costByRegion) {
     });
 }
 
+var _widgetBuilderOpen = false;
+function _toggleWidgetBuilder() {
+    var container = document.getElementById('widget-builder-container');
+    var icon = document.getElementById('widget-builder-toggle-icon');
+    var iframe = document.getElementById('widget-builder-iframe');
+    if (!container) return;
+    _widgetBuilderOpen = !_widgetBuilderOpen;
+    container.style.display = _widgetBuilderOpen ? 'block' : 'none';
+    if (icon) icon.style.transform = _widgetBuilderOpen ? 'rotate(180deg)' : '';
+    // Lazy-load iframe on first open
+    if (_widgetBuilderOpen && iframe && !iframe.src) {
+        iframe.src = iframe.getAttribute('data-src') || '/dashboard/';
+        // Send auth token after iframe loads
+        iframe.onload = function() {
+            var token = sessionStorage.getItem('memberToken');
+            var email = sessionStorage.getItem('memberEmail');
+            if (iframe.contentWindow) {
+                iframe.contentWindow.postMessage({ type: 'dashboard-auth', token: token, email: email }, '*');
+            }
+        };
+    }
+}
+
 // ============================================================
 // Helpers
 // ============================================================
