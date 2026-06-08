@@ -2047,6 +2047,86 @@ Resources:
           Value: ViewMyBill
 
   # ============================================================
+  # Daily Cost Cache Refresh + Invoice Sync (03:00 UTC)
+  # ============================================================
+  DailyRefreshFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: slashmybill-daily-refresh
+      Runtime: python3.12
+      Handler: lambda_function.lambda_handler
+      Timeout: 300
+      MemorySize: 512
+      ReservedConcurrentExecutions: 1
+      Role: !GetAtt DailyRefreshRole.Arn
+      Code:
+        S3Bucket: !Sub 'aws-bill-analyzer-storage-${AWS::AccountId}'
+        S3Key: lambda-packages/daily-refresh.zip
+      Tags:
+        - Key: Project
+          Value: ViewMyBill
+
+  DailyRefreshRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: slashmybill-daily-refresh-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: DailyRefreshPermissions
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: sts:AssumeRole
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - dynamodb:Scan
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:Query
+                  - dynamodb:BatchWriteItem
+                Resource:
+                  - !Sub 'arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/MemberPortal-Accounts'
+                  - !Sub 'arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/Cost_Cache_Table'
+                  - !Sub 'arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/MemberPortal-Invoices'
+              - Effect: Allow
+                Action:
+                  - ce:GetCostAndUsage
+                  - ce:GetCostForecast
+                Resource: '*'
+      Tags:
+        - Key: Project
+          Value: ViewMyBill
+
+  DailyRefreshSchedule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: slashmybill-daily-cost-refresh
+      Description: 'Refresh cost cache and sync invoices daily at 03:00 UTC'
+      ScheduleExpression: 'cron(0 3 * * ? *)'
+      State: ENABLED
+      Targets:
+        - Id: DailyRefreshLambdaTarget
+          Arn: !GetAtt DailyRefreshFunction.Arn
+
+  DailyRefreshSchedulePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref DailyRefreshFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt DailyRefreshSchedule.Arn
+
+  # ============================================================
   # EventBridge Rule - OpenAI Nightly Sync Schedule (02:00 UTC)
   # ============================================================
   OpenAISyncSchedule:

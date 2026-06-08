@@ -29,6 +29,7 @@ on:
       - 'openai-sync-handler/**'
       - 'transaction_logger.py'
       - 'scheduler-executor/**'
+      - 'daily-refresh-handler/**'
       - 'tips-sync/**'
       - '_gen_ug.py'
       - '_gen_hld.py'
@@ -403,6 +404,16 @@ jobs:
           aws s3 cp dashboard-handler-lambda.zip s3://${{ env.STORAGE_BUCKET }}/lambda-packages/dashboard-handler.zip
           echo "✓ Dashboard Handler packaged"
 
+      - name: Package Daily Refresh Lambda
+        run: |
+          echo "Packaging Daily Refresh Lambda..."
+          mkdir -p .build-daily-refresh
+          cp daily-refresh-handler/lambda_function.py .build-daily-refresh/
+          cd .build-daily-refresh && zip -r ../daily-refresh-lambda.zip . -q
+          cd ..
+          aws s3 cp daily-refresh-lambda.zip s3://${{ env.STORAGE_BUCKET }}/lambda-packages/daily-refresh.zip
+          echo "✓ Daily Refresh packaged"
+
       - name: Deploy SlashMyBill CloudFormation stack
         continue-on-error: true
         run: |
@@ -707,6 +718,8 @@ jobs:
           update_lambda slashmybill-openai-sync lambda-packages/openai-sync.zip
           # Update Dashboard Handler Lambda (skip if not yet created)
           update_lambda dashboard-handler lambda-packages/dashboard-handler.zip
+          # Update Daily Refresh Lambda (skip if not yet created)
+          update_lambda slashmybill-daily-refresh lambda-packages/daily-refresh.zip
           # Update audit-evaluator environment variable (model ID fix)
           aws lambda update-function-configuration \
             --function-name audit-evaluator \
