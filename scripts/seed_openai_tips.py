@@ -349,7 +349,10 @@ def seed_openai_tips():
         with table.batch_writer(overwrite_by_pkeys=["service", "tipId"]) as batch:
             for tip in OPENAI_TIPS:
                 try:
-                    batch.put_item(Item=tip)
+                    # Ensure the 'cloud' field is set to 'OpenAI' for proper filtering
+                    item = dict(tip)
+                    item["cloud"] = "OpenAI"
+                    batch.put_item(Item=item)
                     loaded += 1
                 except ClientError as e:
                     logger.error(
