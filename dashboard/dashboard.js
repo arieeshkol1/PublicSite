@@ -90,9 +90,9 @@ const Dashboard = (() => {
         document.getElementById('dashboard-view').hidden = false;
         document.getElementById('header-email').textContent = memberEmail;
 
-        // Initialize grid and load layouts
+        // Initialize grid only - skip API calls until backend Lambda is deployed
         GridManager.init();
-        loadLayouts();
+        // loadLayouts(); // Disabled: backend not yet deployed
     }
 
     async function loadLayouts() {
