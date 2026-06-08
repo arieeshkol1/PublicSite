@@ -1527,6 +1527,16 @@ jobs:
               --content-type "application/javascript; charset=utf-8"
           done
 
+          # Widget Builder Dashboard
+          aws s3 sync dashboard/ s3://${{ env.SMB_BUCKET }}/dashboard/ \
+            --cache-control "no-cache, no-store, must-revalidate" \
+            --exclude "*.js"
+          for jsfile in dashboard/*.js; do
+            [ -f "$jsfile" ] && aws s3 cp "$jsfile" "s3://${{ env.SMB_BUCKET }}/$jsfile" \
+              --cache-control "no-cache, no-store, must-revalidate" \
+              --content-type "application/javascript; charset=utf-8"
+          done
+
           # Legal Pages
           aws s3 sync terms-and-conditions/ s3://${{ env.SMB_BUCKET }}/terms-and-conditions/ \
             --cache-control "no-cache, no-store, must-revalidate"
