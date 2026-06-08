@@ -17,9 +17,10 @@ const Dashboard = (() => {
     let offlineRetryTimer = null;
 
     function init() {
-        // Check for existing session
-        authToken = localStorage.getItem('dashboard_token');
-        memberEmail = localStorage.getItem('dashboard_email');
+        // Check for existing session - try dashboard-specific storage first,
+        // then fall back to member portal's sessionStorage (when opened from member portal)
+        authToken = localStorage.getItem('dashboard_token') || sessionStorage.getItem('memberToken');
+        memberEmail = localStorage.getItem('dashboard_email') || sessionStorage.getItem('memberEmail');
 
         if (authToken && memberEmail) {
             showDashboard();
