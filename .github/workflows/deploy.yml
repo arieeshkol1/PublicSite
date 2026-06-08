@@ -726,6 +726,82 @@ jobs:
             --environment "Variables={TABLE_NAME=Audit_Transaction_Log,BEDROCK_MODEL_ID=us.amazon.nova-lite-v1:0}" > /dev/null 2>&1 || true
           echo "✓ Lambda functions updated"
 
+      - name: Ensure Daily Refresh Lambda exists with EventBridge schedule
+        continue-on-error: true
+        run: |
+          FUNC_NAME="slashmybill-daily-refresh"
+          ROLE_NAME="slashmybill-daily-refresh-role"
+          RULE_NAME="slashmybill-daily-cost-refresh"
+
+          # Create IAM role if missing
+          if ! aws iam get-role --role-name "$ROLE_NAME" > /dev/null 2>&1; then
+            echo "Creating $ROLE_NAME..."
+            aws iam create-role \
+              --role-name "$ROLE_NAME" \
+              --assume-role-policy-document '{
+                "Version": "2012-10-17",
+                "Statement": [{
+                  "Effect": "Allow",
+                  "Principal": {"Service": "lambda.amazonaws.com"},
+                  "Action": "sts:AssumeRole"
+                }]
+              }' > /dev/null
+            aws iam attach-role-policy --role-name "$ROLE_NAME" \
+              --policy-arn arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+            aws iam put-role-policy --role-name "$ROLE_NAME" --policy-name DailyRefreshPerms \
+              --policy-document '{
+                "Version": "2012-10-17",
+                "Statement": [
+                  {"Effect": "Allow", "Action": "sts:AssumeRole", "Resource": "*"},
+                  {"Effect": "Allow", "Action": ["dynamodb:Scan","dynamodb:GetItem","dynamodb:PutItem","dynamodb:Query","dynamodb:BatchWriteItem"], "Resource": ["arn:aws:dynamodb:us-east-1:991105135552:table/MemberPortal-Accounts","arn:aws:dynamodb:us-east-1:991105135552:table/Cost_Cache_Table","arn:aws:dynamodb:us-east-1:991105135552:table/MemberPortal-Invoices"]},
+                  {"Effect": "Allow", "Action": ["ce:GetCostAndUsage","ce:GetCostForecast"], "Resource": "*"}
+                ]
+              }'
+            echo "Waiting 10s for role propagation..."
+            sleep 10
+          fi
+          ROLE_ARN="arn:aws:iam::991105135552:role/$ROLE_NAME"
+
+          # Create Lambda if missing
+          if ! aws lambda get-function --function-name "$FUNC_NAME" > /dev/null 2>&1; then
+            echo "Creating $FUNC_NAME Lambda..."
+            aws lambda create-function \
+              --function-name "$FUNC_NAME" \
+              --runtime python3.12 \
+              --handler lambda_function.lambda_handler \
+              --role "$ROLE_ARN" \
+              --timeout 300 \
+              --memory-size 512 \
+              --code S3Bucket=${{ env.STORAGE_BUCKET }},S3Key=lambda-packages/daily-refresh.zip \
+              --tags Project=ViewMyBill > /dev/null
+            echo "✓ Lambda created"
+          else
+            echo "✓ Lambda already exists"
+          fi
+
+          # Create EventBridge rule if missing
+          aws events put-rule \
+            --name "$RULE_NAME" \
+            --schedule-expression "cron(0 3 * * ? *)" \
+            --state ENABLED \
+            --description "Daily cost cache refresh + invoice sync at 03:00 UTC" > /dev/null 2>&1
+          echo "✓ EventBridge rule created/updated"
+
+          # Add Lambda permission for EventBridge
+          aws lambda add-permission \
+            --function-name "$FUNC_NAME" \
+            --statement-id "EventBridgeDailyRefresh" \
+            --action "lambda:InvokeFunction" \
+            --principal "events.amazonaws.com" \
+            --source-arn "arn:aws:events:us-east-1:991105135552:rule/$RULE_NAME" > /dev/null 2>&1 || true
+
+          # Set the target
+          LAMBDA_ARN="arn:aws:lambda:us-east-1:991105135552:function:$FUNC_NAME"
+          aws events put-targets \
+            --rule "$RULE_NAME" \
+            --targets "Id=DailyRefreshTarget,Arn=$LAMBDA_ARN" > /dev/null 2>&1
+          echo "✓ EventBridge target set — daily refresh will run at 03:00 UTC"
+
       - name: Update Lambda memory and timeout (CF stack may fail to apply these)
         continue-on-error: true
         run: |
