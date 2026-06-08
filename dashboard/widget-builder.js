@@ -107,41 +107,20 @@ const WidgetBuilder = (() => {
         const container = document.querySelector(`[data-widget-id="${widgetId}"] .widget-card-body`);
         if (!container) return;
 
-        // Don't attempt fetch if offline
-        if (Dashboard.isNetworkOffline()) {
-            container.innerHTML = `
-                <div class="widget-empty-state">
-                    <div class="empty-icon">📡</div>
-                    <div>Offline – waiting for connection</div>
-                </div>`;
-            return;
-        }
-
         try {
             container.innerHTML = '<div class="widget-loading">Loading...</div>';
 
-            const data = await Dashboard.apiRequest('POST', '/dashboard/query', {
-                widget_config: widget
-            });
+            // Use the working member-handler API instead of the non-existent dashboard-handler
+            const data = await Dashboard.apiRequest('GET', '/members/dashboard-data');
 
-            // Check for empty data (no results for period)
-            if (isEmptyResponse(data)) {
-                container.innerHTML = `
-                    <div class="widget-empty-state">
-                        <div class="empty-icon">📭</div>
-                        <div>No data available</div>
-                        <button class="btn btn-outline btn-sm" onclick="WidgetBuilder.fetchAndRender('${widgetId}')" style="margin-top:8px;">Retry</button>
-                    </div>`;
+            if (!data) {
+                container.innerHTML = '<div class="widget-empty-state"><div class="empty-icon">📭</div><div>No data available</div></div>';
                 return;
             }
 
-            // Render available data
-            WidgetRenderer.render(container, widget, data);
+            // Render based on widget type and selected data source
+            _renderWidgetFromDashData(container, widget, data);
 
-            // Check for partial response (some providers failed)
-            if (data.metadata && data.metadata.failed_providers && data.metadata.failed_providers.length > 0) {
-                renderPartialDataWarning(container, data.metadata.failed_providers);
-            }
         } catch (err) {
             container.innerHTML = `
                 <div class="widget-empty-state">
@@ -152,36 +131,67 @@ const WidgetBuilder = (() => {
         }
     }
 
-    /**
-     * Checks if the API response contains no usable data.
-     */
-    function isEmptyResponse(data) {
-        if (!data) return true;
-        if (!data.labels || data.labels.length === 0) return true;
-        if (!data.datasets || data.datasets.length === 0) return true;
-        // Check if all dataset data arrays are empty or all zeroes
-        const allEmpty = data.datasets.every(ds =>
-            !ds.data || ds.data.length === 0 || ds.data.every(v => v === 0)
-        );
-        return allEmpty;
-    }
+    function _renderWidgetFromDashData(container, widget, data) {
+        const source = widget.dataSource ? widget.dataSource.source : 'cost_cache';
+        const type = widget.type;
 
-    /**
-     * Renders an inline warning banner below the chart when some providers failed.
-     * The widget still shows partial data from successful providers.
-     */
-    function renderPartialDataWarning(container, failedProviders) {
-        const providerNames = failedProviders.map(fp =>
-            typeof fp === 'string' ? fp : (fp.provider || fp.source || 'Unknown')
-        ).join(', ');
+        // Extract data based on source
+        let chartData = { labels: [], values: [] };
+        if (source === 'cost_cache' || source === 'business_metrics') {
+            const daily = data.dailyTrend || [];
+            chartData.labels = daily.map(d => d.date || d.day || '');
+            chartData.values = daily.map(d => d.cost || d.amount || 0);
+        } else if (source === 'invoices') {
+            const services = data.costByService || [];
+            chartData.labels = services.slice(0, 10).map(s => s.service || s.name || '');
+            chartData.values = services.slice(0, 10).map(s => s.cost || s.amount || 0);
+        } else if (source === 'commitments') {
+            const monthly = data.monthlyTrend || {};
+            if (Array.isArray(monthly)) {
+                chartData.labels = monthly.map(m => m.month || m.date || '');
+                chartData.values = monthly.map(m => m.cost || m.amount || 0);
+            } else if (monthly.months) {
+                chartData.labels = monthly.months;
+                chartData.values = monthly.costs || [];
+            }
+        } else if (source === 'openai_usage') {
+            const regions = data.costByRegion || [];
+            chartData.labels = regions.slice(0, 8).map(r => r.region || r.name || '');
+            chartData.values = regions.slice(0, 8).map(r => r.cost || r.amount || 0);
+        }
 
-        const warningEl = document.createElement('div');
-        warningEl.className = 'widget-partial-warning';
-        warningEl.setAttribute('role', 'alert');
-        warningEl.innerHTML = `
-            <span class="partial-warning-icon">⚠️</span>
-            <span class="partial-warning-text">Some data unavailable: <strong>${providerNames}</strong></span>`;
-        container.appendChild(warningEl);
+        if (chartData.labels.length === 0) {
+            container.innerHTML = '<div class="widget-empty-state"><div class="empty-icon">📭</div><div>No data for this source</div></div>';
+            return;
+        }
+
+        // Render chart using Chart.js
+        container.innerHTML = '<canvas style="width:100%;height:100%;"></canvas>';
+        const canvas = container.querySelector('canvas');
+        const ctx = canvas.getContext('2d');
+
+        const chartType = (type === 'pie') ? 'pie' : (type === 'line') ? 'line' : (type === 'kpi') ? 'bar' : 'bar';
+        const bgColors = ['#6366f1','#f59e0b','#10b981','#ef4444','#8b5cf6','#ec4899','#14b8a6','#f97316','#06b6d4','#84cc16'];
+
+        new Chart(ctx, {
+            type: chartType,
+            data: {
+                labels: chartData.labels,
+                datasets: [{
+                    label: source.replace('_', ' '),
+                    data: chartData.values,
+                    backgroundColor: chartType === 'pie' ? bgColors : 'rgba(99,102,241,0.6)',
+                    borderColor: chartType === 'pie' ? bgColors : '#6366f1',
+                    borderWidth: 1,
+                    fill: type === 'line'
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { display: type === 'pie' } }
+            }
+        });
     }
 
     function updateWidgetCount() {

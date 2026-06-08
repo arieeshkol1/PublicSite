@@ -57,13 +57,8 @@ const DataSourcePicker = (() => {
         });
         html += '</div>';
 
-        // Account selector placeholder
-        html += '<label class="config-label" style="margin-top:12px;">Accounts</label>';
-        html += '<div id="account-selector-container">';
-        html += '<select id="account-select" multiple class="config-select" aria-label="Select accounts">';
-        html += '<option value="">Loading accounts...</option>';
-        html += '</select>';
-        html += '</div>';
+        // Info: accounts are inherited from the member portal
+        html += '<p style="margin-top:12px;font-size:0.8em;color:#6b7280;">Data is fetched from all your connected accounts.</p>';
 
         html += '</div>';
         container.innerHTML = html;
