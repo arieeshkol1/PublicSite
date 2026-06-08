@@ -1268,6 +1268,13 @@ jobs:
               }]
             }' --no-cli-pager
 
+      - name: Enrich tips with providerRouting metadata
+        continue-on-error: true
+        run: |
+          echo "Running providerRouting enrichment on tips table..."
+          pip install boto3 -q
+          python scripts/enrich_tips_provider_routing.py --region us-east-1 || echo "⚠ Tips enrichment failed (non-fatal)"
+
       - name: Setup Tips Sync Schedule
         continue-on-error: true
         run: |
