@@ -169,6 +169,7 @@
                 <button class="member-tab" data-tab="dash-tab">Observe</button>
                 <button class="member-tab" data-tab="ai-tab">Chat</button>
                 <button class="member-tab" data-tab="act-tab">Act</button>
+                <button class="member-tab" data-tab="temp-tab">Temp</button>
             </div>
 
             <!-- Plan Tab -->
@@ -1085,6 +1086,19 @@
         </div>
     </div>
 
+    <!-- Temp Tab: Custom Dashboard (Widget Builder) -->
+    <div id="temp-tab" class="member-tab-content" hidden>
+        <div style="padding:20px;">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;">
+                <h2 style="margin:0;color:#1f2937;">🧩 Custom Widget Builder</h2>
+                <span style="color:#6b7280;font-size:0.85em;">Drag-and-drop dashboard builder</span>
+            </div>
+            <div style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:0;overflow:hidden;height:calc(100vh - 180px);">
+                <iframe src="/dashboard/" style="width:100%;height:100%;border:none;" id="temp-dashboard-iframe"></iframe>
+            </div>
+        </div>
+    </div>
+
     <!-- Add/Edit Account Modal -->
     <div id="account-modal" class="modal-overlay" hidden>
         <div class="modal-card">
@@ -1371,7 +1385,7 @@
         <span id="notification-message"></span>
     </div>
 
-    <script src="members.js?v=105"></script>
+    <script src="members.js?v=106"></script>
     <script src="help.js?v=8"></script>
 </body>
 </html>
