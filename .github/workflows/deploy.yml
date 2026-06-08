@@ -142,7 +142,8 @@ jobs:
                   ],
                   "Resource": [
                     "arn:aws:cloudformation:us-east-1:991105135552:stack/slashmycloudbill-site/*",
-                    "arn:aws:cloudformation:us-east-1:991105135552:stack/aws-bill-analyzer-*/*"
+                    "arn:aws:cloudformation:us-east-1:991105135552:stack/aws-bill-analyzer-*/*",
+                    "arn:aws:cloudformation:us-east-1:991105135552:stack/dashboard-handler-stack/*"
                   ]
                 },
                 {
@@ -387,6 +388,30 @@ jobs:
               JWTSecret='${{ secrets.JWT_SECRET }}' \
             --tags Project=ViewMyBill || echo "⚠ CloudFormation deploy failed (stack in UPDATE_ROLLBACK_COMPLETE) — continuing with direct CLI steps"
           echo "✓ Infrastructure step complete"
+
+      - name: Deploy Dashboard Handler CloudFormation stack
+        continue-on-error: true
+        run: |
+          echo "Deploying Dashboard Handler infrastructure..."
+          # Get existing table ARNs
+          COST_ARN="arn:aws:dynamodb:us-east-1:991105135552:table/Cost_Cache_Table"
+          INV_ARN="arn:aws:dynamodb:us-east-1:991105135552:table/MemberPortal-Invoices"
+          ACC_ARN="arn:aws:dynamodb:us-east-1:991105135552:table/MemberPortal-Accounts"
+          API_ID=$(aws cloudformation describe-stacks --stack-name ${{ env.STACK_NAME }} --query "Stacks[0].Outputs[?OutputKey=='ApiId'].OutputValue" --output text 2>/dev/null || echo "l2fd4h481h")
+          aws cloudformation deploy \
+            --template-file infrastructure/dashboard-stack.yaml \
+            --stack-name dashboard-handler-stack \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --no-fail-on-empty-changeset \
+            --parameter-overrides \
+              ExistingApiId="$API_ID" \
+              CostCacheTableArn="$COST_ARN" \
+              InvoicesTableArn="$INV_ARN" \
+              AccountsTableArn="$ACC_ARN" \
+              CognitoUserPoolId=us-east-1_FlR2CmFu0 \
+              CognitoRegion=us-east-1 \
+            --tags Project=ViewMyBill Feature=WidgetBuilderDashboard || echo "⚠ Dashboard stack deploy failed (non-fatal)"
+          echo "✓ Dashboard Handler infrastructure step complete"
 
       - name: Ensure MemberPortal-Invoices DynamoDB table exists
         continue-on-error: true
