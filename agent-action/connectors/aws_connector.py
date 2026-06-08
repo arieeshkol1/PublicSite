@@ -185,6 +185,49 @@ class AWSConnector(CloudConnector):
                     recent_avg = sum(d['cost'] for d in daily_costs) / len(daily_costs)
                     result['dailyAverage7d'] = round(recent_avg, 2)
 
+            # Usage-type breakdown for specific service questions
+            # When usageTypeBreakdown=true and serviceFilter is provided,
+            # fetch granular usage type data (e.g., FaceSearchImageCount, LabelDetection)
+            usage_type_breakdown = params.get('usageTypeBreakdown', '')
+            service_filter = params.get('serviceFilter', '')
+            if usage_type_breakdown in ('true', 'True', '1', True) and service_filter:
+                try:
+                    time_period = {'Start': start_date, 'End': end_date}
+                    # If we have MTD data requested and the service is in current month
+                    if mtd_total > 0:
+                        time_period = {'Start': first_of_this_month.strftime('%Y-%m-%d'), 'End': today}
+
+                    usage_resp = ce.get_cost_and_usage(
+                        TimePeriod=time_period,
+                        Granularity='MONTHLY',
+                        Metrics=['UnblendedCost', 'UsageQuantity'],
+                        GroupBy=[{'Type': 'DIMENSION', 'Key': 'USAGE_TYPE'}],
+                        Filter={
+                            'Dimensions': {
+                                'Key': 'SERVICE',
+                                'Values': [service_filter],
+                            }
+                        },
+                    )
+                    usage_types = []
+                    for period in usage_resp.get('ResultsByTime', []):
+                        for group in period.get('Groups', []):
+                            usage_type = group['Keys'][0]
+                            cost = float(group['Metrics']['UnblendedCost']['Amount'])
+                            quantity = float(group['Metrics'].get('UsageQuantity', {}).get('Amount', 0))
+                            if cost > 0.001:
+                                usage_types.append({
+                                    'usageType': usage_type,
+                                    'cost': round(cost, 4),
+                                    'quantity': round(quantity, 2),
+                                })
+                    usage_types.sort(key=lambda x: x['cost'], reverse=True)
+                    if usage_types:
+                        result['usageTypeBreakdown'] = usage_types
+                        result['serviceFilter'] = service_filter
+                except Exception as e:
+                    logger.warning(f"Usage type breakdown failed for {service_filter}: {e}")
+
             return result
         except Exception as e:
             return {'error': str(e)}

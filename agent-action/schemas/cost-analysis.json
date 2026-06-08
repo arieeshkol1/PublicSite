@@ -51,6 +51,26 @@
               "type": "string",
               "description": "End date for the cost analysis period in ISO 8601 format (YYYY-MM-DD)"
             }
+          },
+          {
+            "name": "usageTypeBreakdown",
+            "in": "query",
+            "description": "Set to 'true' to get granular usage-type breakdown for a specific service (requires serviceFilter). Use this when asking about a specific service's cost to identify which API or feature generated the charges.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "Set to 'true' for usage-type level cost breakdown"
+            }
+          },
+          {
+            "name": "serviceFilter",
+            "in": "query",
+            "description": "Filter cost breakdown to a specific service name (e.g., 'Amazon Rekognition', 'Amazon S3', 'Amazon EC2'). Use with usageTypeBreakdown=true to see which API operations generated the cost.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "Service name to filter and get usage-type breakdown for"
+            }
           }
         ],
         "responses": {
