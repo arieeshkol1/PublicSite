@@ -1308,6 +1308,12 @@ jobs:
           echo "Running drilldown API enrichment on tips table..."
           python scripts/enrich_tips_drilldown.py || echo "⚠ Tips drilldown enrichment failed (non-fatal)"
 
+      - name: Tips table maintenance (cleanup + dedup + add missing)
+        continue-on-error: true
+        run: |
+          echo "Running tips table maintenance..."
+          python scripts/tips_table_maintenance.py || echo "⚠ Tips maintenance failed (non-fatal)"
+
       - name: Setup Tips Sync Schedule
         continue-on-error: true
         run: |
