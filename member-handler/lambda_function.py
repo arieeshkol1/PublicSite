@@ -7825,7 +7825,9 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
     # Auto-detect service-specific questions and inject serviceFilter instruction
     # This ensures the agent calls getCostBreakdown with usageTypeBreakdown=true
     _SERVICE_KEYWORDS = {
-        'rekognition': 'Amazon Rekognition', 'ec2': 'Amazon Elastic Compute Cloud - Compute',
+        'ec2 - other': 'EC2 - Other', 'ec2-other': 'EC2 - Other', 'ec2 other': 'EC2 - Other',
+        'rekognition': 'Amazon Rekognition',
+        'ec2': 'Amazon Elastic Compute Cloud - Compute',
         's3': 'Amazon Simple Storage Service', 'rds': 'Amazon Relational Database Service',
         'lambda': 'AWS Lambda', 'dynamodb': 'Amazon DynamoDB',
         'cloudfront': 'Amazon CloudFront', 'elasticache': 'Amazon ElastiCache',
@@ -7840,11 +7842,13 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
     }
     question_lower = question.lower()
     detected_service = None
-    for keyword, aws_service_name in _SERVICE_KEYWORDS.items():
+    # Check longer/more-specific keywords first to avoid partial matches
+    for keyword in sorted(_SERVICE_KEYWORDS.keys(), key=len, reverse=True):
         if keyword in question_lower:
-            detected_service = aws_service_name
+            detected_service = _SERVICE_KEYWORDS[keyword]
             break
 
+    _svc_precomputed = False  # Track if we pre-computed the service answer (skip tips if so)
     if detected_service:
         # Detect if user is asking about individual resources (servers, instances, functions, etc.)
         _RESOURCE_DETAIL_KEYWORDS = ['servers', 'instances', 'each server', 'each instance', 'per server',
@@ -7861,7 +7865,6 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
             )
         else:
             # PRE-COMPUTE: Query Invoices table for usage-type breakdown (agent can't reliably call getCostBreakdown)
-            _svc_precomputed = False
             try:
                 from datetime import datetime as _svc_dt
                 from boto3.dynamodb.conditions import Key as _SvcKey
@@ -8066,10 +8069,10 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
                 "\n\n[FORECAST: Use last 3 current-month dailyCosts (exclude day-1). avg×30/0.73 = estimate.]"
             )
 
-    # Skip tips for forecast/estimate and comparison questions — they add irrelevant savings advice
+    # Skip tips for forecast/estimate, comparison, and pre-computed service questions
     is_forecast_question = any(kw in question_lower for kw in _FORECAST_KEYWORDS)
     is_comparison_question = any(kw in question_lower for kw in _COMPARISON_KEYWORDS)
-    if tips_context and not is_forecast_question and not is_comparison_question:
+    if tips_context and not is_forecast_question and not is_comparison_question and not _svc_precomputed:
         from tip_citation import build_tip_citation_prompt
         tips_text = build_tip_citation_prompt(tips_context)
         enriched_prompt += f"\n\n{tips_text}"
