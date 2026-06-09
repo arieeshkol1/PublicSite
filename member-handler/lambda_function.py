@@ -7851,13 +7851,45 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
             f"Then call getPricingData for real pricing. Show math: cost/unit_price=quantity.]"
         )
 
-    # Detect forecast/estimate questions and inject correct methodology
-    _FORECAST_KEYWORDS = ['forecast', 'estimate', 'predict', 'projection', 'will be', 'expected', 'end of month']
+    # Detect forecast/estimate questions and compute the answer in code (agent can't do math reliably)
+    _FORECAST_KEYWORDS = ['forecast', 'estimate', 'predict', 'projection', 'will be', 'expected', 'end of month', 'june bill', 'monthly bill']
     if any(kw in question_lower for kw in _FORECAST_KEYWORDS):
-        enriched_prompt += (
-            "\n\n[FORECAST METHOD: Use dailyCosts from current month (exclude day-1 spike). "
-            "Avg last 3 days × 30 × 1.37 (adds ~27% for Tax+Support which are % of total). Show the math.]"
-        )
+        # Pre-compute the forecast from cache — agent makes math errors, so we do it here
+        try:
+            from datetime import datetime as _dt
+            from boto3.dynamodb.conditions import Key as _Key
+            now = _dt.now()
+            current_month = now.strftime('%Y-%m')
+            cache_table = dynamodb.Table(os.environ.get('COST_CACHE_TABLE_NAME', 'Cost_Cache_Table'))
+            pk = f"{member_email}#{account_id}"
+            start_sk = f"DAILY#{current_month}-02"  # Skip day 1
+            end_sk = f"DAILY#{current_month}-{now.day:02d}"
+            resp = cache_table.query(
+                KeyConditionExpression=_Key('pk').eq(pk) & _Key('sk').between(start_sk, end_sk)
+            )
+            items = resp.get('Items', [])
+            if len(items) >= 3:
+                # Get last 3 days' costs
+                items.sort(key=lambda x: x['sk'])
+                last_3 = items[-3:]
+                costs = [float(i.get('cost_amount', 0)) for i in last_3]
+                dates = [i['sk'].replace('DAILY#', '') for i in last_3]
+                avg_daily = sum(costs) / len(costs)
+                # Use taxAndSupportPercent from previous month data or estimate at 27%
+                # (Tax ~17% + Support ~10% of total)
+                tax_support_pct = 27.0
+                forecast = avg_daily * 30 / (1 - tax_support_pct / 100)
+                days_str = ', '.join(f"{d}=${c:.2f}" for d, c in zip(dates, costs))
+                enriched_prompt += (
+                    f"\n\n[PRE-COMPUTED: Days used: {days_str}. Avg=${avg_daily:.2f}/day. "
+                    f"Forecast=${avg_daily:.2f}×30/0.73=${forecast:.0f}/mo (includes 27% for Tax+Support). "
+                    f"Report THIS number as the estimate.]"
+                )
+        except Exception as e:
+            logger.warning(f"Forecast pre-computation failed: {e}")
+            enriched_prompt += (
+                "\n\n[FORECAST: Use last 3 current-month dailyCosts (exclude day-1). avg×30/0.73 = estimate.]"
+            )
 
     if tips_context:
         from tip_citation import build_tip_citation_prompt
