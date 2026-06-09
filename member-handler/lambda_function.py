@@ -7758,9 +7758,8 @@ def handle_ai_query(event):
         if len(account_ids) > 1:
             return _invoke_multi_account(ai_question, account_ids, member_email, interaction_id)
         else:
-            # Always use direct model path — has curated prompts, anti-hallucination rules,
-            # and the intent classifier controls which APIs are called.
-            return _invoke_direct_model(ai_question, account_ids[0], member_email, interaction_id)
+            # Route ALL single-account chat queries exclusively through Bedrock Agent
+            return _invoke_bedrock_agent(ai_question, account_ids[0], member_email, interaction_id)
 
     try:
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
@@ -9045,9 +9044,11 @@ def _gather_account_data(question, credentials, tag_key=None, tag_value=None, me
             actions.append('ce:GetCostAndUsage (monthly by service, last 30 days)')
 
         # Daily cost trend â€” cost only
+        # Daily cost trend - always use today as end date (monthly end_date may be 1st of month)
+        _today_str = datetime.now(timezone.utc).strftime('%Y-%m-%d')
         start_7d = (datetime.now(timezone.utc) - timedelta(days=7)).strftime('%Y-%m-%d')
         _daily_params = {
-            'TimePeriod': {'Start': start_7d, 'End': end_date},
+            'TimePeriod': {'Start': start_7d, 'End': _today_str},
             'Granularity': 'DAILY',
             'Metrics': ['UnblendedCost'],
         }
