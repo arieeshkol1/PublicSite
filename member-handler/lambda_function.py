@@ -7804,26 +7804,6 @@ def handle_ai_query(event):
         except Exception:
             pass
 
-    # DIAGNOSTIC: direct DynamoDB write to verify audit logging works from AI query path
-    try:
-        _diag_table = dynamodb.Table('Audit_Transaction_Log')
-        _diag_table.put_item(Item={
-            'transaction_id': f'diag-ai-{interaction_id}',
-            'start_timestamp': datetime.now(timezone.utc).isoformat(),
-            'user_email': member_email,
-            'function_name': 'DIAGNOSTIC-ai-query-direct-write',
-            'duration_ms': 0,
-            'source_handler': 'member-handler',
-            'status': 'diagnostic',
-            'audit_status': 'pending',
-            'request_payload': json.dumps({'question': question[:200]}),
-            'response_payload': '{"diagnostic": true}',
-            'expiry_ttl': int(time.time()) + (90 * 24 * 60 * 60),
-        })
-        logger.info("DIAGNOSTIC: AI query direct DynamoDB write succeeded")
-    except Exception as diag_err:
-        logger.error(f"DIAGNOSTIC: AI query direct DynamoDB write FAILED: {type(diag_err).__name__}: {diag_err}")
-
     return result
 
 

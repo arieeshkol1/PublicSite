@@ -879,7 +879,6 @@ def _scan_all_pages(table, max_items=500):
         scan_kwargs['ExclusiveStartKey'] = response['LastEvaluatedKey']
         response = table.scan(**scan_kwargs)
         items.extend(response.get('Items', []))
-        items.extend(response.get('Items', []))
     return items
 
 
@@ -906,13 +905,16 @@ def _apply_filters(items, status_filter, score_min, score_max, date_from, date_t
         if status_filter and item.get('status', '') != status_filter:
             continue
 
-        # Score range filter
+        # Score range filter (treat None/pending scores as passing when min is 0)
         item_score = item.get('audit_score')
         if score_min_val is not None:
-            if item_score is None or int(item_score) < score_min_val:
+            if item_score is not None and int(item_score) < score_min_val:
+                continue
+            # If item_score is None (not yet scored), only exclude if min > 0
+            if item_score is None and score_min_val > 0:
                 continue
         if score_max_val is not None:
-            if item_score is None or int(item_score) > score_max_val:
+            if item_score is not None and int(item_score) > score_max_val:
                 continue
 
         # Date range filter (only if not already applied via key condition)
