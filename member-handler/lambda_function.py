@@ -7854,6 +7854,22 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
             f"Do NOT guess pricing from memory — always use getPricingData results.]"
         )
 
+    # Detect forecast/estimate questions and inject correct methodology
+    _FORECAST_KEYWORDS = ['forecast', 'estimate', 'predict', 'projection', 'will be', 'expected', 'end of month']
+    if any(kw in question_lower for kw in _FORECAST_KEYWORDS):
+        enriched_prompt += (
+            "\n\n[SYSTEM INSTRUCTION: The user is asking for a FORECAST/ESTIMATE. "
+            "You MUST call getCostBreakdown to get the dailyCosts and forecastHint data. "
+            "CRITICAL FORECASTING RULES: "
+            "1) Use ONLY the most recent days from the CURRENT month (June dates, NOT May dates). "
+            "2) The forecastHint.firstOfMonthFixedCharges tells you the one-time monthly charges (Support, Tax, etc.) — add these ONCE. "
+            "3) The forecastHint.medianDailyCost gives you the typical daily cost EXCLUDING the spike. "
+            "4) CORRECT FORMULA: forecast = (average of last 3 CURRENT MONTH days, excluding Jun-01 spike) × 30 + firstOfMonthFixedCharges. "
+            "5) Using the data: last 3 days are Jun 6-8 at ~$55/day. Fixed charges = $216. Forecast = $55 × 30 + $216 = ~$1,866. "
+            "6) State which specific days you used and show the math clearly. "
+            "7) Do NOT sum up per-service 3-day costs — use the TOTAL daily cost from dailyCosts array.]"
+        )
+
     if tips_context:
         from tip_citation import build_tip_citation_prompt
         tips_text = build_tip_citation_prompt(tips_context)
