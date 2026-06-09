@@ -418,7 +418,9 @@ def route_tool(tool_name: str, account_id: str, member_email: str, params: dict)
         }
 
     # For cacheable cost tools, check Cost_Cache_Table first
-    if tool_name in CACHEABLE_TOOLS:
+    # Skip cache when usageTypeBreakdown is requested — cache doesn't have this granularity
+    usage_breakdown_requested = params.get('usageTypeBreakdown', '') in ('true', 'True', '1', True)
+    if tool_name in CACHEABLE_TOOLS and not usage_breakdown_requested:
         cached_data, is_fresh = _read_cost_cache(member_email, account_id, tool_name, params)
         if cached_data and is_fresh:
             logger.info(

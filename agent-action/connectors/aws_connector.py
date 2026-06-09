@@ -223,7 +223,9 @@ class AWSConnector(CloudConnector):
                                 })
                     usage_types.sort(key=lambda x: x['cost'], reverse=True)
                     if usage_types:
-                        result['usageTypeBreakdown'] = usage_types
+                        # Limit to top 5 usage types to prevent response truncation
+                        # (large payloads cause Bedrock EventStreamError)
+                        result['usageTypeBreakdown'] = usage_types[:5]
                         result['serviceFilter'] = service_filter
                 except Exception as e:
                     logger.warning(f"Usage type breakdown failed for {service_filter}: {e}")
