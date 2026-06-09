@@ -7860,10 +7860,74 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
                 f"to show which usage types generated the cost. Do NOT just show total service cost.]"
             )
         else:
-            enriched_prompt += (
-                f"\n\n[MUST USE: getCostBreakdown with usageTypeBreakdown=true, serviceFilter={detected_service}. "
-                f"Then call getPricingData for real pricing. Show math: cost/unit_price=quantity.]"
-            )
+            # PRE-COMPUTE: Query Invoices table for usage-type breakdown (agent can't reliably call getCostBreakdown)
+            _svc_precomputed = False
+            try:
+                from datetime import datetime as _svc_dt
+                from boto3.dynamodb.conditions import Key as _SvcKey
+                _svc_now = _svc_dt.now()
+                # Detect which month the user is asking about
+                _target_month = _svc_now.strftime('%Y-%m')  # default: current month
+                import re as _svc_re
+                # Check for explicit month references in question
+                _MONTH_NAMES = {'january': '01', 'february': '02', 'march': '03', 'april': '04',
+                                'may': '05', 'june': '06', 'july': '07', 'august': '08',
+                                'september': '09', 'october': '10', 'november': '11', 'december': '12',
+                                'jan': '01', 'feb': '02', 'mar': '03', 'apr': '04',
+                                'jun': '06', 'jul': '07', 'aug': '08', 'sep': '09', 'oct': '10', 'nov': '11', 'dec': '12'}
+                for mname, mnum in _MONTH_NAMES.items():
+                    if mname in question_lower:
+                        # Check for year mention, default to current year
+                        _year_match = _svc_re.search(r'20\d{2}', question)
+                        _year = _year_match.group() if _year_match else str(_svc_now.year)
+                        _target_month = f"{_year}-{mnum}"
+                        break
+                if 'last month' in question_lower or 'previous month' in question_lower:
+                    _prev = (_svc_now.replace(day=1) - timedelta(days=1))
+                    _target_month = _prev.strftime('%Y-%m')
+
+                # Query invoice cache for service record
+                invoices_tbl = dynamodb.Table(INVOICES_TABLE_NAME)
+                _svc_pk = f"{member_email}#{account_id}"
+                _svc_sk = f"{_target_month}#{detected_service}"
+                _svc_resp = invoices_tbl.get_item(Key={'pk': _svc_pk, 'sk': _svc_sk})
+                _svc_item = _svc_resp.get('Item')
+
+                if _svc_item:
+                    _svc_cost = float(_svc_item.get('cost', 0))
+                    _usage_types = _svc_item.get('usageTypes', [])
+                    if _usage_types and _svc_cost > 0:
+                        # Build usage-type breakdown string
+                        _ut_lines = []
+                        for ut in _usage_types[:8]:  # Top 8 usage types
+                            ut_type = ut.get('type', 'Unknown')
+                            ut_cost = float(ut.get('cost', 0))
+                            ut_qty = float(ut.get('quantity', 0))
+                            ut_unit = ut.get('unit', '')
+                            ut_pct = (ut_cost / _svc_cost * 100) if _svc_cost > 0 else 0
+                            if ut_qty > 0:
+                                _ut_lines.append(f"{ut_type}: ${ut_cost:.2f} ({ut_pct:.0f}%, {ut_qty:.1f} {ut_unit})")
+                            else:
+                                _ut_lines.append(f"{ut_type}: ${ut_cost:.2f} ({ut_pct:.0f}%)")
+                        _ut_str = " | ".join(_ut_lines)
+                        enriched_prompt += (
+                            f"\n\n[PRE-COMPUTED SERVICE BREAKDOWN — ANSWER DIRECTLY from this data, NO tool calls needed: "
+                            f"{detected_service} in {_target_month}: Total=${_svc_cost:.2f}. "
+                            f"Usage type breakdown: {_ut_str}. "
+                            f"Present as a table with columns: Usage Type | Cost | % of Total | Implied Quantity. "
+                            f"Use the pricing model from your instructions (e.g. per 1000 images, per minute, per request) "
+                            f"to calculate: cost ÷ unit_price = quantity consumed. "
+                            f"Do NOT call getCostData or any other tool. This data IS the answer.]"
+                        )
+                        _svc_precomputed = True
+            except Exception as _svc_err:
+                logger.warning(f"Service pre-computation failed for {detected_service}: {_svc_err}")
+
+            if not _svc_precomputed:
+                enriched_prompt += (
+                    f"\n\n[MUST USE: getCostBreakdown with usageTypeBreakdown=true, serviceFilter={detected_service}. "
+                    f"Then call getPricingData for real pricing. Show math: cost/unit_price=quantity.]"
+                )
 
     # Detect comparison/trend questions and pre-compute the answer from cache
     _COMPARISON_KEYWORDS = ['compare', 'comparison', 'instead of', 'versus', 'vs', 'difference between',
