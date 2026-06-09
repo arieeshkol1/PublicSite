@@ -7846,15 +7846,18 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
             break
 
     if detected_service:
-        # Special case: EC2 per-instance questions need getEC2Instances, not just cost breakdown
-        _EC2_INSTANCE_KEYWORDS = ['servers', 'instances', 'each server', 'each instance', 'per server',
-                                  'per instance', 'list down', 'list the']
-        if detected_service == 'Amazon Elastic Compute Cloud - Compute' and any(kw in question_lower for kw in _EC2_INSTANCE_KEYWORDS):
+        # Detect if user is asking about individual resources (servers, instances, functions, etc.)
+        _RESOURCE_DETAIL_KEYWORDS = ['servers', 'instances', 'each server', 'each instance', 'per server',
+                                     'per instance', 'list down', 'list the', 'details for', 'functions',
+                                     'databases', 'each database', 'per database', 'buckets', 'volumes']
+        if any(kw in question_lower for kw in _RESOURCE_DETAIL_KEYWORDS):
+            # User wants per-resource breakdown — tell agent to call resource inventory tool
             enriched_prompt += (
-                "\n\n[EC2 PER-INSTANCE QUESTION: Call getEC2Instances to list individual servers with their type and hourly rate. "
-                "For each instance, calculate daily cost = hourly_rate × 24. AWS does not provide per-instance daily cost "
-                "without resource-level Cost Allocation Tags. Show: instance ID, name, type, state, estimated daily cost. "
-                "Do NOT just show total EC2 cost — the user wants PER-SERVER breakdown.]"
+                f"\n\n[PER-RESOURCE QUESTION for {detected_service}: Call the resource inventory tool (getComputeInstances, "
+                f"getDatabaseInstances, getServerlessFunctions, etc.) to list individual resources. "
+                f"For each resource, calculate estimated daily cost from its type/size and pricing. "
+                f"Also call getCostBreakdown with usageTypeBreakdown=true and serviceFilter={detected_service} "
+                f"to show which usage types generated the cost. Do NOT just show total service cost.]"
             )
         else:
             enriched_prompt += (
