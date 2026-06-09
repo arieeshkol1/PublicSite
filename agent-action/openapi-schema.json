@@ -10,10 +10,12 @@
       "post": {
         "operationId": "getCostData",
         "summary": "Get cost breakdown by service and daily trend",
-        "description": "Gets cost by service for last 30 days and daily trend for last 7 days",
+        "description": "Gets cost by service for last 30 days and daily trend. Use usageTypeBreakdown=true with serviceFilter for specific service deep-dive.",
         "parameters": [
           {"name": "accountId", "in": "query", "description": "The 12-digit AWS account ID", "required": true, "schema": {"type": "string", "description": "The 12-digit AWS account ID"}},
-          {"name": "memberEmail", "in": "query", "description": "Member email for role assumption", "required": true, "schema": {"type": "string", "description": "Member email for role assumption"}}
+          {"name": "memberEmail", "in": "query", "description": "Member email for role assumption", "required": true, "schema": {"type": "string", "description": "Member email for role assumption"}},
+          {"name": "usageTypeBreakdown", "in": "query", "description": "Set to true to get usage type level breakdown for a specific service", "required": false, "schema": {"type": "string", "description": "Set to true to get usage type level breakdown"}},
+          {"name": "serviceFilter", "in": "query", "description": "AWS service name to filter usage types e.g. Amazon Rekognition or Amazon Simple Storage Service", "required": false, "schema": {"type": "string", "description": "AWS service name to filter for usage type breakdown"}}
         ],
         "responses": {"200": {"description": "Cost data response"}}
       }

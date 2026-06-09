@@ -193,6 +193,22 @@ def main():
         print(f"✗ Failed to list existing action groups: {e}")
         sys.exit(1)
 
+    # Remove legacy 'FinOpsActions' group if it exists (superseded by vendor-neutral groups)
+    if 'FinOpsActions' in existing_groups:
+        try:
+            print("Removing legacy 'FinOpsActions' action group (superseded by CostAnalysis)...")
+            client.delete_agent_action_group(
+                agentId=AGENT_ID,
+                agentVersion='DRAFT',
+                actionGroupId=existing_groups['FinOpsActions'],
+                skipResourceInUseCheck=True,
+            )
+            print("✓ Removed legacy 'FinOpsActions' group")
+            del existing_groups['FinOpsActions']
+        except Exception as e:
+            print(f"  Warning: Could not remove legacy FinOpsActions: {e}")
+            # Non-fatal — continue with deployment
+
     # Deploy each action group
     print("Deploying action groups...")
     print("-" * 40)
