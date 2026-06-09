@@ -7860,14 +7860,19 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
         enriched_prompt += (
             "\n\n[SYSTEM INSTRUCTION: The user is asking for a FORECAST/ESTIMATE. "
             "You MUST call getCostBreakdown to get the dailyCosts and forecastHint data. "
-            "CRITICAL FORECASTING RULES: "
-            "1) Use ONLY the most recent days from the CURRENT month (June dates, NOT May dates). "
-            "2) The forecastHint.firstOfMonthFixedCharges tells you the one-time monthly charges (Support, Tax, etc.) — add these ONCE. "
-            "3) The forecastHint.medianDailyCost gives you the typical daily cost EXCLUDING the spike. "
-            "4) CORRECT FORMULA: forecast = (average of last 3 CURRENT MONTH days, excluding Jun-01 spike) × 30 + firstOfMonthFixedCharges. "
-            "5) Using the data: last 3 days are Jun 6-8 at ~$55/day. Fixed charges = $216. Forecast = $55 × 30 + $216 = ~$1,866. "
-            "6) State which specific days you used and show the math clearly. "
-            "7) Do NOT sum up per-service 3-day costs — use the TOTAL daily cost from dailyCosts array.]"
+            "CRITICAL FORECASTING METHOD: "
+            "1) Look at the dailyCosts array from the CURRENT month (June dates). "
+            "2) EXCLUDE Jun-01 (it has a lump-sum spike for Tax + Support which are % of monthly spend). "
+            "3) Take the average of the last 3 non-spike current-month days. "
+            "4) These daily costs EXCLUDE Tax and Support (which bill as lump sums on day 1). "
+            "5) CORRECT FORMULA: base_daily = avg(last 3 current-month days excluding day-1). "
+            "   Tax is ~17% of total spend. Support (Business) is ~10% of total spend. "
+            "   forecast = base_daily × 30 / (1 - 0.17 - 0.10) = base_daily × 30 / 0.73. "
+            "   OR simpler: forecast = base_daily × 30 × 1.37 (to account for tax+support). "
+            "6) Example with data: base=$55/day → $55 × 30 = $1,650 base → $1,650 × 1.37 = ~$2,260 total. "
+            "   But verify against last month: if last month was $3,852 and current trend is lower, explain why (fewer days with high EC2 usage, etc.). "
+            "7) State clearly which days you used, the daily average, and how you applied the tax+support multiplier. "
+            "8) Do NOT list per-service breakdowns unless asked — give ONE total estimate first.]"
         )
 
     if tips_context:

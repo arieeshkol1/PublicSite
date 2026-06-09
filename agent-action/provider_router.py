@@ -283,7 +283,8 @@ def _aggregate_cost_breakdown(items, start_date, end_date):
         "forecastHint": {
             "firstOfMonthFixedCharges": first_of_month_charges,
             "medianDailyCost": round(median_cost, 2),
-            "note": "When forecasting, exclude first-of-month spike from daily average. Add fixed charges once per month separately."
+            "taxAndSupportPercent": round((first_of_month_charges / (median_cost * 30 + first_of_month_charges)) * 100, 1) if median_cost > 0 else 0,
+            "note": "For forecasting: daily costs on non-1st days EXCLUDE tax/support (billed as lump sum on 1st). To estimate total month: (avg_daily × 30) / (1 - taxSupportPercent/100). Tax and Support are percentages of total spend, not fixed amounts."
         },
     }
 
