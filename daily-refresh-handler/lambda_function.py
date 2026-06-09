@@ -194,7 +194,13 @@ def _refresh_cost_cache(member_email, account_id, cache_table):
 
 
 def _sync_latest_invoice(member_email, account_id, invoices_table):
-    """Sync the most recent month's invoice if not already cached."""
+    """Sync the most recent month's invoice if not already cached.
+
+    Matches the member-handler invoice_sync.py schema:
+    - pk: {memberEmail}#{accountId}
+    - sk: {YYYY-MM}#{serviceName}
+    - One record per service per month
+    """
     now = datetime.now(timezone.utc)
 
     # Determine the latest closed month (previous month)
@@ -202,16 +208,17 @@ def _sync_latest_invoice(member_email, account_id, invoices_table):
     last_month_end = first_of_this_month - timedelta(days=1)
     invoice_month = last_month_end.strftime('%Y-%m')
 
-    # Check if this invoice is already cached
+    # Check if this invoice is already cached (check for any record with this month prefix)
     pk = f"{member_email}#{account_id}"
-    sk = f"{invoice_month}-monthly"
 
     try:
-        existing = invoices_table.get_item(
-            Key={'pk': pk, 'sk': sk},
+        from boto3.dynamodb.conditions import Key
+        existing = invoices_table.query(
+            KeyConditionExpression=Key('pk').eq(pk) & Key('sk').begins_with(f"{invoice_month}#"),
+            Limit=1,
             ProjectionExpression='pk',
         )
-        if existing.get('Item'):
+        if existing.get('Items'):
             logger.info(f"Invoice {invoice_month} already synced for {account_id}")
             return
     except ClientError:
@@ -238,38 +245,33 @@ def _sync_latest_invoice(member_email, account_id, invoices_table):
         GroupBy=[{'Type': 'DIMENSION', 'Key': 'SERVICE'}],
     )
 
-    # Calculate total and service breakdown
-    services = []
-    total_cost = 0.0
+    # Write one record per service (matching member-handler schema)
+    now_iso = now.isoformat()
+    ttl_value = int(now.timestamp()) + (90 * 24 * 3600)  # 90 days TTL
+    records_written = 0
+
     for period in response.get('ResultsByTime', []):
         for group in period.get('Groups', []):
             service_name = group['Keys'][0]
             cost = float(group['Metrics']['UnblendedCost']['Amount'])
-            if cost > 0.01:
-                services.append({'service': service_name, 'cost': round(cost, 2)})
-                total_cost += cost
+            if abs(cost) < 0.005:
+                continue
 
-    services.sort(key=lambda x: x['cost'], reverse=True)
+            invoices_table.put_item(
+                Item={
+                    'pk': pk,
+                    'sk': f'{invoice_month}#{service_name}',
+                    'memberEmail': member_email,
+                    'accountId': account_id,
+                    'month': invoice_month,
+                    'service': service_name,
+                    'cost': Decimal(str(round(cost, 2))),
+                    'currency': 'USD',
+                    'region': 'global',
+                    'lastSyncedAt': now_iso,
+                    'ttl': ttl_value,
+                }
+            )
+            records_written += 1
 
-    # Write invoice record
-    ttl_value = int(now.timestamp()) + (365 * 24 * 3600)  # 1 year TTL
-    payment_date = f"{last_month_end.replace(day=15).strftime('%Y-%m-%d')}"
-
-    invoices_table.put_item(
-        Item={
-            'pk': pk,
-            'sk': sk,
-            'month': invoice_month,
-            'invoiceId': sk,
-            'issuedBy': 'Amazon Web Services',
-            'paymentDate': payment_date,
-            'status': 'Paid',
-            'totalAmount': Decimal(str(round(total_cost, 2))),
-            'currency': 'USD',
-            'services': json.dumps(services[:20]),
-            'synced_at': now.isoformat(),
-            'ttl': ttl_value,
-        }
-    )
-
-    logger.info(f"Invoice {invoice_month} synced for {account_id}: ${total_cost:.2f}")
+    logger.info(f"Invoice {invoice_month} synced for {account_id}: {records_written} service records")
