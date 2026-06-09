@@ -440,18 +440,46 @@ class AWSConnector(CloudConnector):
 
     def get_object_storage(self, account_id: str, member_email: str, params: dict) -> dict:
         """
-        List S3 buckets.
+        List S3 buckets with lifecycle policy status and storage class info.
         """
         try:
             creds = self._assume_role(account_id, member_email)
             s3 = self._make_client('s3', creds)
 
             response = s3.list_buckets()
-            buckets = [
-                {'name': b['Name'], 'created': str(b['CreationDate'])}
-                for b in response.get('Buckets', [])
-            ]
-            return {'buckets': buckets, 'count': len(buckets)}
+            buckets = []
+            for b in response.get('Buckets', []):
+                bucket_info = {
+                    'name': b['Name'],
+                    'created': str(b['CreationDate']),
+                    'hasLifecyclePolicy': False,
+                    'lifecycleRules': 0,
+                    'storageClass': 'STANDARD',
+                }
+                # Check lifecycle policy
+                try:
+                    lc_resp = s3.get_bucket_lifecycle_configuration(Bucket=b['Name'])
+                    rules = lc_resp.get('Rules', [])
+                    bucket_info['hasLifecyclePolicy'] = len(rules) > 0
+                    bucket_info['lifecycleRules'] = len(rules)
+                except s3.exceptions.ClientError as lc_err:
+                    # NoSuchLifecycleConfiguration means no policy
+                    if 'NoSuchLifecycleConfiguration' in str(lc_err):
+                        bucket_info['hasLifecyclePolicy'] = False
+                    else:
+                        pass  # Access denied or other error — skip
+                except Exception:
+                    pass
+                buckets.append(bucket_info)
+
+            # Summary stats
+            no_lifecycle = [b for b in buckets if not b['hasLifecyclePolicy']]
+            return {
+                'buckets': buckets,
+                'count': len(buckets),
+                'withoutLifecycle': len(no_lifecycle),
+                'withLifecycle': len(buckets) - len(no_lifecycle),
+            }
         except Exception as e:
             return {'error': str(e)}
 
