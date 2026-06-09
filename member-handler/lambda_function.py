@@ -7889,10 +7889,33 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
                 tax_support_pct = 27.0
                 forecast = avg_daily * 30 / (1 - tax_support_pct / 100)
                 days_str = ', '.join(f"{d}=${c:.2f}" for d, c in zip(dates, costs))
+
+                # Build service breakdown if user asked for "by service" / "split by" / "breakdown"
+                service_breakdown_str = ""
+                _BREAKDOWN_KEYWORDS = ['by service', 'split by', 'breakdown', 'break it down', 'per service', 'each service']
+                if any(kw in question_lower for kw in _BREAKDOWN_KEYWORDS):
+                    # Aggregate service_breakdown across last 3 days to get proportions
+                    svc_totals = {}
+                    for item in last_3:
+                        for svc, svc_cost in item.get('service_breakdown', {}).items():
+                            svc_totals[svc] = svc_totals.get(svc, 0) + float(svc_cost)
+                    if svc_totals:
+                        # Calculate each service's share of the forecast
+                        total_3d = sum(svc_totals.values())
+                        svc_forecasts = []
+                        for svc, cost_3d in sorted(svc_totals.items(), key=lambda x: x[1], reverse=True):
+                            if cost_3d > 0.01:
+                                pct = cost_3d / total_3d if total_3d > 0 else 0
+                                svc_forecast = round(forecast * pct, 2)
+                                svc_forecasts.append(f"{svc}: ${svc_forecast:.0f}")
+                        service_breakdown_str = " | Service forecast: " + ", ".join(svc_forecasts[:10])
+
                 enriched_prompt += (
                     f"\n\n[PRE-COMPUTED FORECAST — ANSWER ONLY THIS: Days used: {days_str}. Avg=${avg_daily:.2f}/day. "
-                    f"Forecast=${avg_daily:.2f}×30/0.73=${forecast:.0f}/mo (includes 27% for Tax+Support). "
-                    f"Report THIS number as the estimate. Do NOT add savings recommendations — only answer the forecast question.]"
+                    f"Forecast=${avg_daily:.2f}×30/0.73=${forecast:.0f}/mo (includes 27% for Tax+Support)."
+                    f"{service_breakdown_str} "
+                    f"Report THESE numbers as the estimate. Do NOT add savings recommendations — only answer the forecast question. "
+                    f"Do NOT invent or guess service amounts — use ONLY the breakdown provided above.]"
                 )
         except Exception as e:
             logger.warning(f"Forecast pre-computation failed: {e}")
