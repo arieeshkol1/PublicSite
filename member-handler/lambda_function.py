@@ -7881,9 +7881,9 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
                 forecast = avg_daily * 30 / (1 - tax_support_pct / 100)
                 days_str = ', '.join(f"{d}=${c:.2f}" for d, c in zip(dates, costs))
                 enriched_prompt += (
-                    f"\n\n[PRE-COMPUTED: Days used: {days_str}. Avg=${avg_daily:.2f}/day. "
+                    f"\n\n[PRE-COMPUTED FORECAST — ANSWER ONLY THIS: Days used: {days_str}. Avg=${avg_daily:.2f}/day. "
                     f"Forecast=${avg_daily:.2f}×30/0.73=${forecast:.0f}/mo (includes 27% for Tax+Support). "
-                    f"Report THIS number as the estimate.]"
+                    f"Report THIS number as the estimate. Do NOT add savings recommendations — only answer the forecast question.]"
                 )
         except Exception as e:
             logger.warning(f"Forecast pre-computation failed: {e}")
@@ -7891,7 +7891,9 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
                 "\n\n[FORECAST: Use last 3 current-month dailyCosts (exclude day-1). avg×30/0.73 = estimate.]"
             )
 
-    if tips_context:
+    # Skip tips for forecast/estimate questions — they add irrelevant savings advice
+    is_forecast_question = any(kw in question_lower for kw in _FORECAST_KEYWORDS)
+    if tips_context and not is_forecast_question:
         from tip_citation import build_tip_citation_prompt
         tips_text = build_tip_citation_prompt(tips_context)
         enriched_prompt += f"\n\n{tips_text}"
