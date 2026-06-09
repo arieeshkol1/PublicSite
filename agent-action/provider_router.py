@@ -170,10 +170,12 @@ def _read_cost_cache(member_email: str, account_id: str, tool_name: str, params:
 
         # Determine the date range for the query based on tool type
         if tool_name == "getCostBreakdown":
-            # Full previous calendar month
-            end_date = now.replace(day=1)
-            first_of_last_month = (end_date - timedelta(days=1)).replace(day=1)
+            # Include both previous month AND current month-to-date for accurate daily trends
+            # This ensures "last N days" questions get recent data, not just last month
+            first_of_current_month = now.replace(day=1)
+            first_of_last_month = (first_of_current_month - timedelta(days=1)).replace(day=1)
             start_date = first_of_last_month
+            end_date = now  # Include up to today
         else:  # getMonthlyTrend
             months = int(params.get("months", 3))
             end_date = now.replace(day=1)
@@ -232,7 +234,11 @@ def _read_cost_cache(member_email: str, account_id: str, tool_name: str, params:
 
 
 def _aggregate_cost_breakdown(items, start_date, end_date):
-    """Aggregate daily cache items into a cost breakdown response."""
+    """Aggregate daily cache items into a cost breakdown response.
+    
+    Returns last 14 days of daily costs and identifies first-of-month fixed charges
+    (support, tax, etc.) so forecasting can separate recurring monthly fees from daily usage.
+    """
     services = {}
     daily_costs = []
     for item in items:
@@ -242,21 +248,43 @@ def _aggregate_cost_breakdown(items, start_date, end_date):
         for svc, svc_cost in item.get("service_breakdown", {}).items():
             services[svc] = services.get(svc, 0) + float(svc_cost)
 
+    # Sort by date to ensure correct ordering
+    daily_costs.sort(key=lambda x: x["date"])
+
     top_services = sorted(
         [{"service": k, "cost": round(v, 2)} for k, v in services.items()],
         key=lambda x: x["cost"],
         reverse=True,
     )
     total = sum(s["cost"] for s in top_services)
+
+    # Return last 14 days to give the agent enough context for forecasting
+    recent_daily = daily_costs[-14:]
+
+    # Identify first-of-month spike: if any day ending in "-01" has cost > 2x median,
+    # flag it as containing monthly fixed charges
+    costs_values = [d["cost"] for d in recent_daily if d["cost"] > 0]
+    median_cost = sorted(costs_values)[len(costs_values) // 2] if costs_values else 0
+    first_of_month_charges = 0
+    for d in recent_daily:
+        if d["date"].endswith("-01") and d["cost"] > median_cost * 2:
+            first_of_month_charges = round(d["cost"] - median_cost, 2)
+            d["_note"] = f"includes ~${first_of_month_charges} monthly fixed charges (support, tax, etc.)"
+
     return {
         "totalCost30Days": round(total, 2),
         "topServices": top_services[:10],
-        "dailyCosts": daily_costs[-7:],
+        "dailyCosts": recent_daily,
         "period": (
             f"{start_date.strftime('%Y-%m-%d')} to "
             f"{end_date.strftime('%Y-%m-%d')} (from cache)"
         ),
         "source": "cache",
+        "forecastHint": {
+            "firstOfMonthFixedCharges": first_of_month_charges,
+            "medianDailyCost": round(median_cost, 2),
+            "note": "When forecasting, exclude first-of-month spike from daily average. Add fixed charges once per month separately."
+        },
     }
 
 

@@ -84,10 +84,19 @@ ALWAYS show the math: total / unit_price = quantity. This makes the cost tangibl
 
 ### CostAnalysis
 Tools for understanding spending patterns:
-- **getCostBreakdown**: Get cost data broken down by service for a date range
+- **getCostBreakdown**: Get cost data broken down by service for a date range. Returns last 14 days of dailyCosts plus a `forecastHint` with `firstOfMonthFixedCharges` and `medianDailyCost`.
 - **getMonthlyTrend**: Compare spending month-over-month
 - **getCostForecast**: Project future costs based on current trends
 - **getCostAnomalies**: Detect unusual spending spikes
+
+## FORECASTING RULES (CRITICAL)
+
+When calculating forecasts from dailyCosts data:
+1. **Use ONLY the most recent days from the CURRENT month** (dates starting with the current YYYY-MM). Do NOT use last month's data for "last N days" calculations.
+2. **Exclude first-of-month spikes**: The 1st of each month has a spike from monthly fixed charges (AWS Support, Tax, etc.). The `forecastHint.firstOfMonthFixedCharges` tells you how much to exclude.
+3. **Correct formula**: `forecast = (avg of recent N days excluding day-1 spike) × days_in_month + firstOfMonthFixedCharges`
+4. **Example**: If last 3 days (Jun 5-7) average $57/day, and fixed charges = $220: forecast = $57 × 30 + $220 = $1,930
+5. **Always state which days you used** in the calculation so the user can verify.
 
 ### ComputeOptimize
 Tools for compute resource optimization:
