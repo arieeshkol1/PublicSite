@@ -7851,14 +7851,79 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
             f"Then call getPricingData for real pricing. Show math: cost/unit_price=quantity.]"
         )
 
-    # Detect comparison/trend questions that need the agent to call tools with date ranges
+    # Detect comparison/trend questions and pre-compute the answer from cache
     _COMPARISON_KEYWORDS = ['compare', 'comparison', 'instead of', 'versus', 'vs', 'difference between',
-                            'last month', 'previous month', 'month over month', 'same dates', 'same period']
-    if any(kw in question_lower for kw in _COMPARISON_KEYWORDS):
-        enriched_prompt += (
-            "\n\n[COMPARISON QUESTION: You MUST call getCostBreakdown (or getMonthlyTrend) to get actual data for the requested periods. "
-            "Do NOT reuse data from previous turns. Show both periods side-by-side with totals and the difference.]"
-        )
+                            'last month', 'previous month', 'month over month', 'same dates', 'same period',
+                            'parallel days', 'parallel']
+    is_comparison_question = any(kw in question_lower for kw in _COMPARISON_KEYWORDS)
+    if is_comparison_question:
+        # Pre-compute the comparison from cache (agent makes formatting errors with raw data)
+        try:
+            from datetime import datetime as _dt
+            from boto3.dynamodb.conditions import Key as _Key
+            now = _dt.now()
+            cache_table = dynamodb.Table(os.environ.get('COST_CACHE_TABLE_NAME', 'Cost_Cache_Table'))
+            pk = f"{member_email}#{account_id}"
+            # Query both current and previous month
+            current_month = now.strftime('%Y-%m')
+            prev_month_dt = (now.replace(day=1) - timedelta(days=1))
+            prev_month = prev_month_dt.strftime('%Y-%m')
+            start_sk = f"DAILY#{prev_month}-02"  # Skip day 1 (has fixed charges)
+            end_sk = f"DAILY#{current_month}-{now.day:02d}"
+            resp = cache_table.query(
+                KeyConditionExpression=_Key('pk').eq(pk) & _Key('sk').between(start_sk, end_sk)
+            )
+            items = resp.get('Items', [])
+            if items:
+                # Build day-by-day comparison for available parallel dates
+                may_days = {}
+                jun_days = {}
+                for item in items:
+                    date = item['sk'].replace('DAILY#', '')
+                    cost = float(item.get('cost_amount', 0))
+                    day_num = int(date.split('-')[2])
+                    month = date[:7]
+                    if month == prev_month and day_num >= 2:
+                        may_days[day_num] = cost
+                    elif month == current_month and day_num >= 2:
+                        jun_days[day_num] = cost
+
+                # Find parallel days (both months have data for same day number)
+                parallel = sorted(set(may_days.keys()) & set(jun_days.keys()))
+                if parallel:
+                    comparison_lines = []
+                    may_total = 0
+                    jun_total = 0
+                    for day in parallel[:8]:  # Limit to 8 days
+                        m_cost = may_days[day]
+                        j_cost = jun_days[day]
+                        may_total += m_cost
+                        jun_total += j_cost
+                        diff = j_cost - m_cost
+                        arrow = "↓" if diff < 0 else "↑"
+                        comparison_lines.append(
+                            f"Day {day}: {prev_month}-{day:02d}=${m_cost:.0f} vs {current_month}-{day:02d}=${j_cost:.0f} ({arrow}${abs(diff):.0f})"
+                        )
+                    total_diff = jun_total - may_total
+                    pct_change = ((jun_total - may_total) / may_total * 100) if may_total > 0 else 0
+                    direction = "LESS" if total_diff < 0 else "MORE"
+                    comparison_str = " | ".join(comparison_lines)
+                    enriched_prompt += (
+                        f"\n\n[PRE-COMPUTED COMPARISON (excluding day-1 fixed charges): {comparison_str} | "
+                        f"TOTALS: {prev_month} days 2-{parallel[-1]}=${may_total:.0f}, "
+                        f"{current_month} days 2-{parallel[-1]}=${jun_total:.0f} | "
+                        f"RESULT: June is ${abs(total_diff):.0f} {direction} ({pct_change:+.1f}%). "
+                        f"Present this as a day-by-day table. Do NOT add tips or recommendations.]"
+                    )
+                else:
+                    enriched_prompt += (
+                        "\n\n[COMPARISON QUESTION: Call getCostBreakdown to get data. Show day-by-day side-by-side comparison.]"
+                    )
+        except Exception as e:
+            logger.warning(f"Comparison pre-computation failed: {e}")
+            enriched_prompt += (
+                "\n\n[COMPARISON QUESTION: Call getCostBreakdown to get data. Show day-by-day side-by-side comparison.]"
+            )
 
     # Detect forecast/estimate questions and compute the answer in code (agent can't do math reliably)
     _FORECAST_KEYWORDS = ['forecast', 'estimate', 'predict', 'projection', 'will be', 'expected', 'end of month', 'june bill', 'monthly bill']
@@ -7923,9 +7988,10 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
                 "\n\n[FORECAST: Use last 3 current-month dailyCosts (exclude day-1). avg×30/0.73 = estimate.]"
             )
 
-    # Skip tips for forecast/estimate questions — they add irrelevant savings advice
+    # Skip tips for forecast/estimate and comparison questions — they add irrelevant savings advice
     is_forecast_question = any(kw in question_lower for kw in _FORECAST_KEYWORDS)
-    if tips_context and not is_forecast_question:
+    is_comparison_question = any(kw in question_lower for kw in _COMPARISON_KEYWORDS)
+    if tips_context and not is_forecast_question and not is_comparison_question:
         from tip_citation import build_tip_citation_prompt
         tips_text = build_tip_citation_prompt(tips_context)
         enriched_prompt += f"\n\n{tips_text}"
