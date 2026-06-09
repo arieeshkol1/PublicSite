@@ -8165,8 +8165,12 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
             follow_ups = []
 
         # Build chart data and data sources
+        # Skip for forecast/comparison questions — generic charts aren't relevant to those answers
         try:
-            if '_account_data' in dir():
+            _q_lower = question.lower()
+            _is_forecast_q = any(kw in _q_lower for kw in ['forecast', 'estimate', 'predict', 'projection', 'will be', 'expected', 'end of month', 'bill for', 'monthly bill'])
+            _is_comparison_q = any(kw in _q_lower for kw in ['compare', 'comparison', 'versus', 'vs', 'month over month', 'parallel'])
+            if not _is_forecast_q and not _is_comparison_q and '_account_data' in locals():
                 chart_data = _build_chart_data(_account_data)
             data_sources = _extract_data_sources(chart_data)
         except Exception as e:
@@ -8840,12 +8844,10 @@ Answer the user's question directly using the actual data above. Quote specific 
 
 
 def _generate_follow_ups(account_data, answer, question):
-    """Generate 2-3 contextual follow-up questions from analyzed data.
+    """Generate 2-3 contextual follow-up questions based on the question type.
 
-    Adaptive count:
-    - 3 questions when multi-service data (3+ services with cost > $1)
-    - 2 questions when single-service or limited data
-    - Empty array when no meaningful data context
+    Context-aware: uses the original question to determine what follow-ups
+    are relevant rather than always showing generic service drill-downs.
 
     Args:
         account_data: Dict with keys like cost_by_service, daily_cost_trend, total_cost.
@@ -8855,37 +8857,84 @@ def _generate_follow_ups(account_data, answer, question):
     Returns:
         List of follow-up question strings, each <= 100 characters.
     """
+    question_lower = question.lower()
     cost_by_service = account_data.get('cost_by_service', [])
     significant_services = [s for s in cost_by_service if s.get('cost_usd', 0) > 1.0]
 
     if not significant_services:
         return []
 
-    is_rich_data = len(significant_services) >= 3
-    target_count = 3 if is_rich_data else 2
+    # Detect question type and generate appropriate follow-ups
+    _FORECAST_KW = ['forecast', 'estimate', 'predict', 'projection', 'will be', 'expected', 'end of month', 'monthly bill']
+    _COMPARISON_KW = ['compare', 'comparison', 'versus', 'vs', 'last month', 'previous month', 'month over month']
+    _BREAKDOWN_KW = ['breakdown', 'bill per service', 'list.*bill', 'per service', 'service type', 'split by']
+    _SERVICE_KW = ['rekognition', 'ec2', 's3', 'rds', 'lambda', 'dynamodb', 'cloudfront',
+                   'elasticache', 'redshift', 'sagemaker', 'bedrock', 'cloudwatch', 'kms',
+                   'cost explorer', 'amplify', 'support', 'vpc', 'nat gateway']
+
+    is_forecast = any(kw in question_lower for kw in _FORECAST_KW)
+    is_comparison = any(kw in question_lower for kw in _COMPARISON_KW)
+    is_breakdown = any(kw in question_lower for kw in _BREAKDOWN_KW)
+    detected_svc = None
+    for kw in _SERVICE_KW:
+        if kw in question_lower:
+            detected_svc = kw
+            break
 
     follow_ups = []
 
-    # Template 1: Top cost driver drill-down
-    top_service = significant_services[0]
-    top_name = top_service.get('service', 'Unknown')
-    follow_ups.append(f"What is driving my {top_name} costs?")
+    if is_forecast:
+        # Forecast-specific follow-ups
+        follow_ups.append("Break down the forecast by service")
+        follow_ups.append("How does this compare to last month's actual bill?")
+        if significant_services:
+            top_name = significant_services[0].get('service', '').replace('Amazon ', '').replace('AWS ', '')
+            follow_ups.append(f"What is driving my {top_name} costs?")
 
-    # Template 2: Comparison/trend question
-    daily_costs = account_data.get('daily_cost_trend', [])
-    if daily_costs and len(daily_costs) >= 2:
-        follow_ups.append("How does this month compare to last month?")
+    elif is_comparison:
+        # Comparison-specific follow-ups
+        follow_ups.append("Which services increased the most?")
+        follow_ups.append("What is the forecasted bill for this month?")
+        if len(significant_services) >= 2:
+            top_name = significant_services[0].get('service', '').replace('Amazon ', '').replace('AWS ', '')
+            follow_ups.append(f"Why did {top_name} increase?")
+
+    elif is_breakdown:
+        # Bill breakdown follow-ups — drill into top cost drivers
+        if significant_services:
+            top = significant_services[0]
+            top_name = top.get('service', '').replace('Amazon ', '').replace('AWS ', '')
+            follow_ups.append(f"Break down {top_name} by usage type")
+        if len(significant_services) >= 2:
+            second = significant_services[1]
+            second_name = second.get('service', '').replace('Amazon ', '').replace('AWS ', '')
+            follow_ups.append(f"What is driving my {second_name} costs?")
+        follow_ups.append("How can I reduce my overall spending?")
+
+    elif detected_svc:
+        # Service-specific follow-ups
+        follow_ups.append(f"How can I reduce my {detected_svc} costs?")
+        follow_ups.append(f"Show me the daily trend for {detected_svc}")
+        follow_ups.append("What is my total forecasted bill this month?")
+
     else:
-        follow_ups.append("Show me the daily cost trend for this account")
+        # Generic fallback — original behavior
+        top_service = significant_services[0]
+        top_name = top_service.get('service', 'Unknown').replace('Amazon ', '').replace('AWS ', '')
+        follow_ups.append(f"What is driving my {top_name} costs?")
 
-    # Template 3: Optimization opportunity from second-highest service (only for rich data)
-    if is_rich_data and len(significant_services) >= 2:
-        second_service = significant_services[1]
-        second_name = second_service.get('service', 'Unknown')
-        follow_ups.append(f"How can I reduce my {second_name} spending?")
+        daily_costs = account_data.get('daily_cost_trend', [])
+        if daily_costs and len(daily_costs) >= 2:
+            follow_ups.append("How does this month compare to last month?")
+        else:
+            follow_ups.append("Show me the daily cost trend")
 
-    # Enforce constraints: target count and 100-char limit
-    follow_ups = [q[:100] for q in follow_ups[:target_count]]
+        if len(significant_services) >= 2:
+            second_name = significant_services[1].get('service', 'Unknown').replace('Amazon ', '').replace('AWS ', '')
+            follow_ups.append(f"How can I reduce my {second_name} spending?")
+
+    # Enforce 3 max and 100-char limit
+    follow_ups = [q[:100] for q in follow_ups[:3]]
     return follow_ups
 
 
