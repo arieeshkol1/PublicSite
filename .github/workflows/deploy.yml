@@ -802,6 +802,31 @@ jobs:
             --targets "Id=DailyRefreshTarget,Arn=$LAMBDA_ARN" > /dev/null 2>&1
           echo "✓ EventBridge target set — daily refresh will run at 03:00 UTC"
 
+          # Invoke immediately to backfill missing data
+          echo "Invoking daily-refresh Lambda now to backfill cache + invoices..."
+          # Ensure deploy role can invoke
+          aws iam put-role-policy \
+            --role-name GitHubDeployRole \
+            --policy-name InvokeDailyRefresh \
+            --policy-document '{
+              "Version": "2012-10-17",
+              "Statement": [{
+                "Effect": "Allow",
+                "Action": "lambda:InvokeFunction",
+                "Resource": "arn:aws:lambda:us-east-1:991105135552:function:slashmybill-daily-refresh"
+              }]
+            }' 2>/dev/null || true
+          sleep 5
+          aws lambda invoke \
+            --function-name "$FUNC_NAME" \
+            --payload '{}' \
+            --region us-east-1 \
+            /tmp/daily-refresh-result.json > /dev/null 2>&1 || echo "⚠ Invoke failed (Lambda may still be initializing)"
+          if [ -f /tmp/daily-refresh-result.json ]; then
+            cat /tmp/daily-refresh-result.json
+          fi
+          echo "✓ Daily refresh invoked"
+
       - name: Update Lambda memory and timeout (CF stack may fail to apply these)
         continue-on-error: true
         run: |
