@@ -7809,6 +7809,8 @@ def handle_ai_query(event):
 
 def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
     """Invoke the Bedrock Agent for a conversational FinOps query."""
+    from trace_collector import TraceCollector, serialize_trace
+
     agent_runtime = boto3.client('bedrock-agent-runtime', region_name=os.environ.get('BEDROCK_REGION', os.environ.get('AWS_REGION', 'us-east-1')))
 
     # Search tips table for relevant pricing/optimization data
@@ -7822,27 +7824,44 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
         tips_text = build_tip_citation_prompt(tips_context)
         enriched_prompt += f"\n\n{tips_text}"
 
+    collector = TraceCollector()
+
     try:
         response = agent_runtime.invoke_agent(
             agentId=BEDROCK_AGENT_ID,
             agentAliasId=BEDROCK_AGENT_ALIAS_ID,
             sessionId=re.sub(r'[^0-9a-zA-Z._:-]', '_', f'{member_email}-{account_id}')[:100],
             inputText=enriched_prompt,
+            enableTrace=True,
         )
 
-        # Stream the response
+        # Stream the response, capturing both chunks and trace events
         answer_parts = []
         for event_stream in response.get('completion', []):
             if 'chunk' in event_stream:
                 chunk = event_stream['chunk']
                 if 'bytes' in chunk:
                     answer_parts.append(chunk['bytes'].decode('utf-8'))
+            if 'trace' in event_stream:
+                try:
+                    collector.capture_event(event_stream)
+                except Exception as trace_err:
+                    logger.warning(f"Trace capture error (non-fatal): {trace_err}")
 
         answer = ''.join(answer_parts)
         if not answer:
             answer = 'The agent did not return a response. Please try rephrasing your question.'
 
-        return create_response(200, {
+        # Build structured trace — errors here are non-fatal
+        inference_trace = None
+        try:
+            structured_trace = collector.build_structured_trace()
+            inference_trace = serialize_trace(structured_trace)
+        except Exception as trace_err:
+            logger.error(f"Trace serialization failed (non-fatal): {trace_err}")
+            inference_trace = None
+
+        result = create_response(200, {
             'answer': answer,
             'interactionId': interaction_id,
             'commands': ['Bedrock Agent orchestrated the analysis'],
@@ -7850,6 +7869,12 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
             'tipFound': tip_found,
             'agentUsed': True,
         })
+
+        # Attach trace to result for the transaction logger to pick up
+        if inference_trace:
+            result['_inference_trace'] = inference_trace
+
+        return result
     except Exception as e:
         logger.error(f"Bedrock Agent invocation failed: {e}")
         # Fall back to direct model
@@ -19239,8 +19264,19 @@ def handle_refresh_invoices(event):
         return create_error_response(400, 'InvalidRequest', 'months must be an array')
     if len(months) > 6:
         return create_error_response(400, 'InvalidRequest', 'Maximum 6 months per refresh request')
+
+    # Auto-fill: if no months specified, sync the last 3 closed months
     if len(months) == 0:
-        return create_error_response(400, 'InvalidRequest', 'At least one month is required')
+        from datetime import datetime as dt, timedelta as td
+        now = dt.now(timezone.utc)
+        auto_months = []
+        for i in range(1, 4):  # Last 3 months (e.g., May, Apr, Mar if now is June)
+            first_of_this = now.replace(day=1)
+            target = first_of_this - td(days=i * 28)
+            auto_months.append(target.strftime('%Y-%m'))
+        # Deduplicate and sort
+        months = sorted(set(auto_months), reverse=True)
+        logger.info(f"Auto-filled months for refresh: {months}")
 
     # Validate each month format
     from invoice_validation import validate_month

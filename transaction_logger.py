@@ -263,6 +263,12 @@ def transaction_log(source_handler):
                 }
                 status = 'error'
 
+            # Extract inference_trace from response if present (set by _invoke_bedrock_agent)
+            # Pop it so it's not returned to the caller via API Gateway
+            inference_trace = None
+            if isinstance(response, dict) and '_inference_trace' in response:
+                inference_trace = response.pop('_inference_trace')
+
             end_time = time.time()
             duration_ms = int((end_time - start_time) * 1000)
 
@@ -280,6 +286,11 @@ def transaction_log(source_handler):
                 'expiry_ttl': int(start_time) + (90 * 24 * 60 * 60),
                 'audit_status': 'pending',
             }
+
+            # Add inference_trace to entry only when present (non-None)
+            # This keeps the field absent for non-agent paths
+            if inference_trace is not None:
+                entry['inference_trace'] = inference_trace
 
             try:
                 _persist_async(entry)

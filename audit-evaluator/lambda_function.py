@@ -114,6 +114,17 @@ def _evaluate_with_bedrock(entry):
     Retries up to 3 times with exponential backoff (2s, 4s, 8s) on failure.
     Returns a dict with audit fields.
     """
+    inference_trace_raw = entry.get('inference_trace')
+
+    # Pre-validate trace JSON if present
+    trace_malformed = False
+    if inference_trace_raw:
+        try:
+            json.loads(inference_trace_raw)
+        except (json.JSONDecodeError, TypeError):
+            logger.warning(f"Malformed inference_trace in {entry.get('transaction_id')}")
+            trace_malformed = True
+
     prompt = _build_prompt(entry)
     last_error = None
 
@@ -163,6 +174,16 @@ def _evaluate_with_bedrock(entry):
 
             evaluation = _parse_bedrock_response(content_text)
             evaluation['audit_status'] = 'completed'
+
+            # Override trace_assessment for malformed traces
+            if trace_malformed:
+                evaluation['audit_trace_assessment'] = "Trace data malformed - skipping trace evaluation"
+            elif not inference_trace_raw:
+                evaluation['audit_trace_assessment'] = evaluation.get(
+                    'audit_trace_assessment',
+                    "No inference trace available - non-agent path or trace capture unavailable"
+                )
+
             return evaluation
 
         except Exception as e:
@@ -186,12 +207,103 @@ def _evaluate_with_bedrock(entry):
     }
 
 
+def _build_trace_scoring_section(inference_trace_raw, request_payload):
+    """Build trace-based scoring rules if inference_trace is available.
+
+    Returns None if no trace data or malformed JSON, otherwise a prompt section string.
+    """
+    if not inference_trace_raw:
+        return None
+
+    try:
+        trace_data = json.loads(inference_trace_raw)
+    except (json.JSONDecodeError, TypeError):
+        logger.warning("Malformed inference_trace — skipping trace evaluation")
+        return None
+
+    tools_selected = trace_data.get('tools_selected', [])
+    tool_invocations = trace_data.get('tool_invocations', [])
+    reasoning_steps = trace_data.get('reasoning_steps', [])
+
+    # Extract user question from request payload
+    user_question = ''
+    if isinstance(request_payload, str):
+        try:
+            req = json.loads(request_payload)
+            user_question = req.get('body', '')
+            if isinstance(user_question, str):
+                try:
+                    body = json.loads(user_question)
+                    user_question = body.get('question', '')
+                except (json.JSONDecodeError, TypeError):
+                    pass
+        except (json.JSONDecodeError, TypeError):
+            pass
+    elif isinstance(request_payload, dict):
+        body_str = request_payload.get('body', '')
+        if isinstance(body_str, str):
+            try:
+                body = json.loads(body_str)
+                user_question = body.get('question', '')
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+    section = f"""
+
+TRACE-BASED SCORING (Agent Reasoning Audit):
+The agent made the following decisions during this interaction:
+- Tools selected: {json.dumps(tools_selected)}
+- Tool invocations: {len(tool_invocations)} calls made
+- Reasoning steps: {len(reasoning_steps)} steps recorded
+
+Trace Scoring Rules:
+1. TOOL SELECTION: Assess whether the agent selected appropriate tools for the question type. Penalize if obvious tools were missed.
+"""
+
+    # Service-specific penalization rules
+    service_keywords = {
+        'ec2': 'EC2', 's3': 'S3', 'rds': 'RDS', 'lambda': 'Lambda',
+        'ebs': 'EBS', 'cloudfront': 'CloudFront', 'dynamodb': 'DynamoDB',
+        'ecs': 'ECS', 'eks': 'EKS', 'elasticache': 'ElastiCache',
+        'redshift': 'Redshift', 'route53': 'Route53',
+    }
+
+    question_lower = user_question.lower()
+    detected_service = None
+    for keyword, service in service_keywords.items():
+        if keyword in question_lower:
+            detected_service = service
+            break
+
+    if detected_service:
+        tool_names_lower = [t.lower() for t in tools_selected]
+        section += f"""2. SERVICE-SPECIFIC CHECK: The question mentions {detected_service}. The agent MUST have invoked 'usageTypeBreakdown' to provide accurate service-level cost data. Tools actually used: {tools_selected}. {"PENALTY: usageTypeBreakdown was NOT called — deduct 15 points." if 'usagetypebreakdown' not in tool_names_lower else "OK: usageTypeBreakdown was called."}
+"""
+
+    # Pricing/cost calculation check
+    pricing_keywords = ['cost', 'price', 'pricing', 'compare', 'cheaper', 'expensive', 'savings', 'calculate']
+    if any(kw in question_lower for kw in pricing_keywords):
+        tool_names_lower = [t.lower() for t in tools_selected]
+        section += f"""3. PRICING DATA CHECK: The question involves cost/pricing. The agent SHOULD have invoked 'getPricingData' before performing calculations. Tools used: {tools_selected}. {"PENALTY: getPricingData was NOT called before calculations — deduct 10 points." if 'getpricingdata' not in tool_names_lower else "OK: getPricingData was called."}
+"""
+
+    section += f"""
+4. REASONING QUALITY: Were the reasoning steps logical and relevant to the question? Brief reasoning summaries:
+{chr(10).join(f'  - {step[:200]}' for step in reasoning_steps[:5])}
+
+Include your trace-based assessment in the "trace_assessment" field of your response.
+"""
+
+    return section
+
+
 def _build_prompt(entry):
     """Build the evaluation prompt from a transaction entry."""
     function_name = entry.get('function_name', 'unknown')
     duration_ms = entry.get('duration_ms', 0)
     request_payload = entry.get('request_payload', {})
     response_payload = entry.get('response_payload', {})
+    inference_trace_raw = entry.get('inference_trace')
 
     # Convert payloads to readable strings
     if isinstance(request_payload, dict):
@@ -204,7 +316,7 @@ def _build_prompt(entry):
     else:
         response_str = str(response_payload)
 
-    return f"""You are a strict audit agent evaluating API transaction quality. Your job is to find flaws, not to be generous.
+    base_prompt = f"""You are a strict audit agent evaluating API transaction quality. Your job is to find flaws, not to be generous.
 
 Transaction Context:
 - Function: {function_name}
@@ -221,14 +333,24 @@ CRITICAL EVALUATION RULES:
 6. A score below 50 means the question was NOT answered or the response is misleading.
 7. For LIST/SCAN endpoints (budgets/list, tips, transactions, list-instances, etc.): an empty request body or minimal filters means "return all". If the response returns data successfully, score 85+. Do NOT penalize for empty request body — that is the intended "get all" behavior.
 8. For successful data responses (statusCode 200 with actual data), focus your evaluation on data quality and completeness rather than questioning whether a query was present.
+"""
 
+    # Append trace-based scoring if inference_trace is present
+    trace_section = _build_trace_scoring_section(inference_trace_raw, request_payload)
+    if trace_section:
+        base_prompt += trace_section
+
+    base_prompt += """
 Evaluate and return JSON:
-{{
+{
   "score": <0-100>,
   "accuracy_assessment": "<text explaining whether the response actually answers the question>",
   "timing_assessment": "<text>",
-  "improvement_suggestions": "<text with specific actionable fixes>"
-}}"""
+  "improvement_suggestions": "<text with specific actionable fixes>",
+  "trace_assessment": "<text explaining trace-based scoring decision>"
+}"""
+
+    return base_prompt
 
 
 def _parse_bedrock_response(content_text):
@@ -263,6 +385,7 @@ def _parse_bedrock_response(content_text):
             'audit_accuracy_assessment': data.get('accuracy_assessment'),
             'audit_timing_assessment': data.get('timing_assessment'),
             'audit_improvement_suggestions': data.get('improvement_suggestions'),
+            'audit_trace_assessment': data.get('trace_assessment'),
         }
 
     except (json.JSONDecodeError, ValueError, IndexError) as e:
@@ -327,6 +450,14 @@ def _update_entry_with_evaluation(transaction_id, start_timestamp, evaluation):
         update_expr_parts.append('#err = :err')
         expr_attr_names['#err'] = 'audit_error'
         expr_attr_values[':err'] = error
+
+    # Set trace assessment
+    trace_assessment = evaluation.get('audit_trace_assessment')
+    if trace_assessment is None:
+        trace_assessment = "No inference trace available - non-agent path or trace capture unavailable"
+    update_expr_parts.append('#atr = :atr')
+    expr_attr_names['#atr'] = 'audit_trace_assessment'
+    expr_attr_values[':atr'] = trace_assessment
 
     update_expression = 'SET ' + ', '.join(update_expr_parts)
 
