@@ -309,6 +309,7 @@ jobs:
           cp member-handler/cost_normalizer.py .build-member-handler/
           cp member-handler/openai_rate_limits.py .build-member-handler/
           cp member-handler/openai_recommendations.py .build-member-handler/
+          cp member-handler/trace_collector.py .build-member-handler/
           cp -r member-handler/hcl_generator .build-member-handler/hcl_generator
           cp -r member-handler/connectors .build-member-handler/connectors
           rm -rf .build-member-handler/connectors/__pycache__
