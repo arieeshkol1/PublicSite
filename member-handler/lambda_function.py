@@ -7823,30 +7823,40 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
     enriched_prompt = f"[Account: {account_id}, Member: {member_email}] {question}"
 
     # Auto-detect service-specific questions and inject serviceFilter instruction
-    # This ensures the agent calls getCostBreakdown with usageTypeBreakdown=true
-    _SERVICE_KEYWORDS = {
-        'ec2 - other': 'EC2 - Other', 'ec2-other': 'EC2 - Other', 'ec2 other': 'EC2 - Other',
-        'rekognition': 'Amazon Rekognition',
-        'ec2': 'Amazon Elastic Compute Cloud - Compute',
-        's3': 'Amazon Simple Storage Service', 'rds': 'Amazon Relational Database Service',
-        'lambda': 'AWS Lambda', 'dynamodb': 'Amazon DynamoDB',
-        'cloudfront': 'Amazon CloudFront', 'elasticache': 'Amazon ElastiCache',
-        'redshift': 'Amazon Redshift', 'sagemaker': 'Amazon SageMaker',
-        'bedrock': 'Amazon Bedrock', 'glue': 'AWS Glue', 'athena': 'Amazon Athena',
-        'cloudwatch': 'AmazonCloudWatch', 'kms': 'AWS Key Management Service',
-        'nat gateway': 'Amazon Virtual Private Cloud', 'vpc': 'Amazon Virtual Private Cloud',
-        'cost explorer': 'AWS Cost Explorer', 'amplify': 'AWS Amplify',
-        'sns': 'Amazon Simple Notification Service', 'ses': 'Amazon Simple Email Service',
-        'ecs': 'Amazon Elastic Container Service', 'eks': 'Amazon Elastic Kubernetes Service',
-        'support': 'AWS Support (Business)',
-    }
+    # Dynamically detect service-specific questions by matching against actual service names in cache
     question_lower = question.lower()
     detected_service = None
-    # Check longer/more-specific keywords first to avoid partial matches
-    for keyword in sorted(_SERVICE_KEYWORDS.keys(), key=len, reverse=True):
-        if keyword in question_lower:
-            detected_service = _SERVICE_KEYWORDS[keyword]
-            break
+    try:
+        from boto3.dynamodb.conditions import Key as _DetKey
+        _det_cache = dynamodb.Table(os.environ.get('COST_CACHE_TABLE_NAME', 'Cost_Cache_Table'))
+        _det_pk = f"{member_email}#{account_id}"
+        _det_now = datetime.now()
+        _det_sk = f"DAILY#{_det_now.strftime('%Y-%m')}-{max(2, _det_now.day - 1):02d}"
+        # Get one recent cache item to extract service names
+        _det_resp = _det_cache.query(
+            KeyConditionExpression=_DetKey('pk').eq(_det_pk) & _DetKey('sk').begins_with('DAILY#'),
+            ScanIndexForward=False, Limit=1
+        )
+        _det_items = _det_resp.get('Items', [])
+        if _det_items:
+            _known_services = list((_det_items[0].get('service_breakdown') or {}).keys())
+            # Sort by length descending so longer/more-specific names match first
+            # (e.g. "EC2 - Other" before "EC2")
+            _known_services.sort(key=len, reverse=True)
+            for svc_name in _known_services:
+                # Match if the service name (or a recognizable substring) appears in the question
+                svc_lower = svc_name.lower()
+                # Try exact service name match
+                if svc_lower in question_lower:
+                    detected_service = svc_name
+                    break
+                # Try common short forms: strip "Amazon ", "AWS ", " - Compute" etc.
+                short = svc_lower.replace('amazon ', '').replace('aws ', '').replace(' - compute', '')
+                if len(short) >= 3 and short in question_lower:
+                    detected_service = svc_name
+                    break
+    except Exception as _det_err:
+        logger.warning(f"Dynamic service detection failed (non-fatal): {_det_err}")
 
     _svc_precomputed = False  # Track if we pre-computed the service answer (skip tips if so)
     if detected_service:
