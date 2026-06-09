@@ -18,6 +18,16 @@ from models import compute_content_hash
 logger = logging.getLogger(__name__)
 
 
+# ============================================================
+# Drilldown enrichment lookup for newly synced tips
+# ============================================================
+def _get_drilldown_for_tip(service: str, cloud: str) -> Dict[str, Any]:
+    """Return drilldown APIs and instructions for a given service+cloud combo.
+    Returns empty dict if no mapping exists."""
+    from drilldown_data import get_drilldown_data
+    return get_drilldown_data(service, cloud)
+
+
 def merge_sources(
     baseline: List[Dict[str, Any]],
     coh: List[Dict[str, Any]],
@@ -334,6 +344,14 @@ def apply_deltas(
                     item["cloud"] = "AWS"
                 if "createdAt" not in item:
                     item["createdAt"] = now_iso
+                # Enrich with drilldown instructions if available
+                try:
+                    drilldown = _get_drilldown_for_tip(s, item.get("cloud", "AWS"))
+                    if drilldown:
+                        item["drilldownApis"] = drilldown.get("apis", [])
+                        item["drilldownInstructions"] = drilldown.get("drilldownInstructions", "")
+                except Exception:
+                    pass  # Non-fatal: skip enrichment if module not available
                 table.put_item(
                     Item=item,
                     ConditionExpression="attribute_not_exists(tipId)",

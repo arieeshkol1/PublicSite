@@ -225,6 +225,258 @@ SERVICE_DRILLDOWN_MAP = {
 }
 
 
+# ============================================================
+# AZURE API mapping per service for cost investigation
+# ============================================================
+AZURE_DRILLDOWN_MAP = {
+    "Virtual Machines": {
+        "apis": [
+            "az advisor recommendation list --category Cost",
+            "az vm list --query '[].{name:name,size:hardwareProfile.vmSize,state:powerState}'",
+            "az monitor metrics list --resource <vm_id> --metric 'Percentage CPU' --interval P14D --aggregation Average",
+            "az reservations reservation-order list",
+            "az consumption usage list --start-date <30d_ago> --end-date <today> --query '[?meterCategory==\"Virtual Machines\"]'"
+        ],
+        "drilldownInstructions": "1. Run Azure Advisor cost recommendations to get VM rightsizing suggestions with specific savings amounts. 2. List all VMs with their sizes and power states — deallocated VMs still incur disk costs. 3. Check 14-day CPU average via Monitor metrics — if <10%, recommend B-series (burstable) or smaller size. 4. Check reservation coverage — unreserved steady-state VMs should use Azure Savings Plans (up to 65% savings). 5. For dev/test: recommend Azure Dev/Test pricing (up to 55% off Windows VMs) or auto-shutdown schedules."
+    },
+    "App Service": {
+        "apis": [
+            "az webapp list --query '[].{name:name,sku:sku.name,state:state,resourceGroup:resourceGroup}'",
+            "az monitor metrics list --resource <app_id> --metric 'CpuPercentage' --interval P7D --aggregation Average",
+            "az monitor metrics list --resource <app_id> --metric 'Requests' --interval P7D --aggregation Total",
+            "az appservice plan list --query '[].{name:name,sku:sku.name,workers:numberOfWorkers}'"
+        ],
+        "drilldownInstructions": "1. List all App Service Plans with their SKU tiers and worker counts. 2. Check CPU utilization — plans at <20% can be downsized. 3. Check request volume — apps with near-zero requests may be unused. 4. For low-traffic apps: consider moving from Premium to Basic/Free tier, or consolidate multiple apps into one plan. 5. Use deployment slots only when needed (each slot = separate instance). 6. Show: 'Plan X runs 3 workers at Premium P1v3 ($295/mo each). CPU avg 8% — downsize to B1 ($54/mo) or consolidate saves $720/mo.'"
+    },
+    "Azure SQL": {
+        "apis": [
+            "az sql db list --server <server> --query '[].{name:name,sku:currentSku.name,maxSizeBytes:maxSizeBytes,status:status}'",
+            "az monitor metrics list --resource <db_id> --metric 'dtu_consumption_percent' --interval P14D --aggregation Average",
+            "az monitor metrics list --resource <db_id> --metric 'cpu_percent' --interval P14D --aggregation Average",
+            "az sql db list-usages --server <server> --database-name <db>",
+            "az advisor recommendation list --category Cost --resource-type 'Microsoft.Sql/servers/databases'"
+        ],
+        "drilldownInstructions": "1. List all SQL databases with their pricing tier (DTU or vCore model). 2. Check DTU/CPU utilization over 14 days — if <20% average, recommend downsizing. 3. For intermittent workloads (<5% off-hours): switch to Serverless tier (auto-pause after idle period, pay only for compute used). 4. For steady-state: check Azure Hybrid Benefit (BYOL saves up to 55%) and Reserved Capacity (up to 33% off). 5. Check if databases can be consolidated into Elastic Pools for shared resources."
+    },
+    "Storage": {
+        "apis": [
+            "az storage account list --query '[].{name:name,sku:sku.name,kind:kind,accessTier:accessTier}'",
+            "az storage blob service-properties show --account-name <each>",
+            "az monitor metrics list --resource <account_id> --metric 'UsedCapacity' --interval P30D",
+            "az storage account management-policy show --account-name <each>",
+            "az advisor recommendation list --category Cost --resource-type 'Microsoft.Storage/storageAccounts'"
+        ],
+        "drilldownInstructions": "1. List all storage accounts — check access tier (Hot/Cool/Archive). 2. Get used capacity per account from Monitor metrics. 3. Check if lifecycle management policies exist — accounts without policies keep all data in Hot tier (most expensive). 4. For infrequently accessed data: move to Cool tier (50% cheaper) or Archive (90% cheaper). 5. Check for accounts with Premium/GRS redundancy that could use Standard/LRS. 6. Show: 'Account X has Y TB in Hot tier with no lifecycle policy. Moving to Cool saves $Z/mo.'"
+    },
+    "Cosmos DB": {
+        "apis": [
+            "az cosmosdb list --query '[].{name:name,kind:kind,locations:locations[0].locationName}'",
+            "az cosmosdb sql database list --account-name <each>",
+            "az cosmosdb sql container throughput show --account-name <acct> --database-name <db> --name <container>",
+            "az monitor metrics list --resource <account_id> --metric 'NormalizedRUConsumption' --interval P7D --aggregation Average"
+        ],
+        "drilldownInstructions": "1. List all Cosmos DB accounts and databases. 2. Check provisioned RU/s vs consumed RU/s (NormalizedRUConsumption metric). 3. If consumption <20%: reduce provisioned throughput or switch to Autoscale (pay for actual usage, max out at provisioned). 4. For low-traffic workloads: switch to Serverless mode (pay per request, no minimum). 5. Check for Reserved Capacity (up to 65% savings on 3-year commitment for steady-state). 6. Review multi-region writes — disable if not needed (doubles RU costs)."
+    },
+    "Azure Database for PostgreSQL": {
+        "apis": [
+            "az postgres flexible-server list --query '[].{name:name,sku:sku.name,tier:sku.tier,state:state}'",
+            "az monitor metrics list --resource <server_id> --metric 'cpu_percent' --interval P14D --aggregation Average",
+            "az monitor metrics list --resource <server_id> --metric 'active_connections' --interval P14D --aggregation Maximum",
+            "az postgres flexible-server show --name <server> --query '{storage:storage.storageSizeGb,backup:backup.backupRetentionDays}'"
+        ],
+        "drilldownInstructions": "1. List all Flexible Servers with SKU tier (Burstable/General Purpose/Memory Optimized). 2. Check 14-day CPU average — servers <20% CPU on General Purpose should move to Burstable tier (B-series). 3. Check active connections — 0 connections over 14 days means server is unused. 4. Use stop/start capability for dev/test servers during off-hours. 5. Check backup retention — reduce from 35 to 7 days if not needed. 6. Reserved capacity (1yr/3yr) for steady-state production servers."
+    },
+    "Azure Kubernetes Service": {
+        "apis": [
+            "az aks list --query '[].{name:name,nodeResourceGroup:nodeResourceGroup,kubernetesVersion:kubernetesVersion}'",
+            "az aks nodepool list --cluster-name <cluster> --resource-group <rg>",
+            "az aks nodepool show --cluster-name <cluster> --resource-group <rg> --name <pool> --query '{vmSize:vmSize,count:count,minCount:minCount,maxCount:maxCount,enableAutoScaling:enableAutoScaling}'",
+            "az monitor metrics list --resource <cluster_id> --metric 'node_cpu_usage_percentage' --interval P7D --aggregation Average"
+        ],
+        "drilldownInstructions": "1. List all AKS clusters and their node pools. 2. Check if autoscaling is enabled — fixed-size pools waste capacity during off-hours. 3. Check node CPU usage — if <30% average, the cluster is over-provisioned. 4. For non-production: use Spot node pools (up to 90% savings). 5. Check if cluster autoscaler is configured with appropriate min/max. 6. Consider scale-to-zero for dev/test during off-hours. 7. Use Azure Advisor for specific node pool sizing recommendations."
+    },
+    "Azure Cache for Redis": {
+        "apis": [
+            "az redis list --query '[].{name:name,sku:sku.name,family:sku.family,capacity:sku.capacity}'",
+            "az monitor metrics list --resource <redis_id> --metric 'usedmemorypercentage' --interval P14D --aggregation Average",
+            "az monitor metrics list --resource <redis_id> --metric 'connectedclients' --interval P14D --aggregation Maximum",
+            "az advisor recommendation list --category Cost --resource-type 'Microsoft.Cache/redis'"
+        ],
+        "drilldownInstructions": "1. List all Redis caches with tier (Basic/Standard/Premium) and capacity. 2. Check memory utilization — if <30%, downsize capacity. 3. Check connected clients — 0 clients means unused cache. 4. For dev/test: switch from Standard (replicated) to Basic (no SLA, much cheaper). 5. For steady-state: check Reserved Capacity (up to 55% savings). 6. Consider Azure Cache for Redis Enterprise for better price-performance ratio at scale."
+    },
+    "Azure Firewall": {
+        "apis": [
+            "az network firewall list --query '[].{name:name,sku:sku.name,threat:threatIntelMode}'",
+            "az monitor metrics list --resource <firewall_id> --metric 'Throughput' --interval P7D --aggregation Average",
+            "az monitor metrics list --resource <firewall_id> --metric 'DataProcessed' --interval P30D --aggregation Total"
+        ],
+        "drilldownInstructions": "1. List all Azure Firewalls — each Premium instance costs ~$1,752/mo + data processing. 2. Check if Standard tier is sufficient (Premium adds IDPS, TLS inspection — not always needed). 3. Check data processed volume — low throughput may indicate the firewall can be shared across VNets. 4. For dev/test environments: consider NSGs instead of Firewall (free vs $1,752/mo). 5. Consolidate multiple firewalls using Azure Firewall Manager hub architecture."
+    },
+    "Application Gateway": {
+        "apis": [
+            "az network application-gateway list --query '[].{name:name,sku:sku.name,tier:sku.tier,capacity:sku.capacity}'",
+            "az monitor metrics list --resource <gw_id> --metric 'TotalRequests' --interval P7D --aggregation Total",
+            "az monitor metrics list --resource <gw_id> --metric 'CurrentConnections' --interval P7D --aggregation Average"
+        ],
+        "drilldownInstructions": "1. List all Application Gateways — check SKU tier (Standard_v2, WAF_v2) and capacity units. 2. Check request volume and connections — gateways with near-zero traffic are waste. 3. If fixed capacity: switch to autoscale (pay for actual CU usage, not reserved). 4. Consolidate multiple gateways behind a single gateway with path-based routing. 5. WAF_v2 costs 2x Standard_v2 — evaluate if WAF is needed on all gateways."
+    },
+    "Azure AD": {
+        "apis": [
+            "az ad user list --query '[].{displayName:displayName,accountEnabled:accountEnabled,userType:userType}'",
+            "az rest --method get --url 'https://graph.microsoft.com/v1.0/subscribedSkus'",
+            "az ad group list --query '[].{displayName:displayName,memberCount:length(members)}'",
+            "az rest --method get --url 'https://graph.microsoft.com/v1.0/reports/getOffice365ActiveUserDetail(period=\"D30\")'"
+        ],
+        "drilldownInstructions": "1. List all licensed users — identify accounts that haven't signed in for 90+ days. 2. Check subscribed SKUs to see P1/P2 license assignments. 3. Remove P2 licenses from users who don't need Privileged Identity Management or Identity Protection. 4. Downgrade inactive users from P2 to P1, or P1 to Free. 5. Use group-based licensing to auto-manage assignments. 6. Show: 'X users have P2 license ($9/user/mo) but only Y use PIM features. Downgrade X-Y users to P1 saves $Z/mo.'"
+    },
+    "Azure Backup": {
+        "apis": [
+            "az backup vault list --query '[].{name:name,resourceGroup:resourceGroup}'",
+            "az backup item list --vault-name <vault> --resource-group <rg> --query '[].{name:name,protectionState:properties.protectionState,policyName:properties.policyId}'",
+            "az backup policy list --vault-name <vault> --resource-group <rg>"
+        ],
+        "drilldownInstructions": "1. List all Recovery Services vaults and protected items. 2. Check for items in 'ProtectionStopped' state — they still incur storage costs. 3. Review backup retention policies — reducing from 30 to 7 daily backups saves significant storage. 4. Check for redundant backups (same VM backed up in multiple vaults). 5. Switch from GRS (geo-redundant) to LRS (locally redundant) storage for non-critical workloads (50% cheaper)."
+    },
+}
+
+# ============================================================
+# GCP API mapping per service for cost investigation
+# ============================================================
+GCP_DRILLDOWN_MAP = {
+    "Compute Engine": {
+        "apis": [
+            "gcloud recommender recommendations list --recommender=google.compute.instance.MachineTypeRecommender --location=<zone>",
+            "gcloud recommender recommendations list --recommender=google.compute.instance.IdleResourceRecommender --location=<zone>",
+            "gcloud compute instances list --format='table(name,machineType,status,zone)'",
+            "gcloud monitoring metrics list --filter='metric.type=\"compute.googleapis.com/instance/cpu/utilization\"' --interval=P14D",
+            "gcloud billing budgets list"
+        ],
+        "drilldownInstructions": "1. Run GCP Recommender for Machine Type recommendations (specific instance + suggested size + savings). 2. Run Idle Resource Recommender to find unused VMs. 3. List all instances with machine types and status. 4. Check CPU utilization over 14 days from Cloud Monitoring. 5. For steady-state: apply Committed Use Discounts (CUDs) — 1yr=37% off, 3yr=57% off. 6. For fault-tolerant: use Preemptible/Spot VMs (60-91% savings). 7. Show: 'VM X is n2-standard-8 at 5% CPU. Recommender suggests e2-medium saving $Y/mo.'"
+    },
+    "Cloud Storage": {
+        "apis": [
+            "gsutil ls -L gs://<bucket>/ | grep 'Storage class\\|Location\\|Size'",
+            "gcloud storage buckets list --format='table(name,location,storageClass,lifecycle)'",
+            "gcloud recommender recommendations list --recommender=google.storage.bucket.Recommender",
+            "gsutil lifecycle get gs://<bucket>"
+        ],
+        "drilldownInstructions": "1. List all buckets with storage class and lifecycle configuration. 2. Run Storage Recommender for specific bucket-level suggestions. 3. Buckets without lifecycle rules keep all objects in the same class forever — add Object Lifecycle Management to auto-transition to Nearline (30+ days, 50% cheaper) or Coldline (90+ days, 75% cheaper). 4. Check for Autoclass feature (auto-moves objects between classes based on access patterns). 5. Show: 'Bucket X has Y TB in Standard with no lifecycle. Enabling Autoclass estimated to save $Z/mo.'"
+    },
+    "BigQuery": {
+        "apis": [
+            "bq show --format=prettyjson --project_id=<project> --dataset_id=<dataset>",
+            "gcloud recommender recommendations list --recommender=google.bigquery.table.PartitionClusterRecommender",
+            "SELECT total_bytes_billed, total_slot_ms FROM `region-us`.INFORMATION_SCHEMA.JOBS_BY_PROJECT WHERE creation_time > TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 30 DAY)",
+            "bq ls --format=prettyjson --max_results=100 <dataset>"
+        ],
+        "drilldownInstructions": "1. Check billing model: on-demand ($6.25/TB scanned) vs flat-rate/editions (committed slots). 2. Run Partition/Cluster Recommender to find tables that would benefit from partitioning (reduces scanned bytes). 3. Query INFORMATION_SCHEMA for total bytes billed over 30 days to understand spend patterns. 4. For predictable workloads >$500/mo: switch to BigQuery Editions with autoscaling slots. 5. Check for tables without expiration — set partition expiration to auto-delete old data. 6. Use materialized views for repeated queries (cached results, no re-scan cost)."
+    },
+    "Cloud SQL": {
+        "apis": [
+            "gcloud sql instances list --format='table(name,databaseVersion,tier,region,state)'",
+            "gcloud recommender recommendations list --recommender=google.cloudsql.instance.IdleRecommender",
+            "gcloud recommender recommendations list --recommender=google.cloudsql.instance.OverprovisionedRecommender",
+            "gcloud monitoring metrics list --filter='metric.type=\"cloudsql.googleapis.com/database/cpu/utilization\"' --interval=P14D"
+        ],
+        "drilldownInstructions": "1. List all Cloud SQL instances with tier and state. 2. Run Idle Recommender to find instances with no connections. 3. Run Overprovisioned Recommender for specific downsizing suggestions. 4. Check CPU utilization — instances <20% should downsize machine type. 5. For dev/test: use start/stop scheduling (stopped instances only incur storage costs). 6. Enable automatic storage increase to avoid over-provisioning disk. 7. For steady-state: apply Committed Use Discounts (1yr or 3yr)."
+    },
+    "Cloud Run": {
+        "apis": [
+            "gcloud run services list --format='table(name,region,lastModifier,status.conditions[0].status)'",
+            "gcloud monitoring metrics list --filter='metric.type=\"run.googleapis.com/request_count\"' --interval=P30D",
+            "gcloud run services describe <service> --format='yaml(spec.template.spec.containers[0].resources)'"
+        ],
+        "drilldownInstructions": "1. List all Cloud Run services. 2. Check request counts over 30 days — services with 0 requests are waste. 3. Check resource allocation: reduce CPU/memory limits if over-provisioned. 4. Set min-instances to 0 for non-latency-critical services (scales to zero = no cost when idle). 5. Use CPU throttling (cpu-throttled) for background jobs — 50% cheaper. 6. Set concurrency appropriately — higher concurrency = fewer instances needed."
+    },
+    "Cloud Spanner": {
+        "apis": [
+            "gcloud spanner instances list --format='table(name,config,nodeCount,processingUnits)'",
+            "gcloud monitoring metrics list --filter='metric.type=\"spanner.googleapis.com/instance/cpu/utilization\"' --interval=P7D",
+            "gcloud spanner databases list --instance=<instance>"
+        ],
+        "drilldownInstructions": "1. List all Spanner instances with processing units. 2. Check CPU utilization — Spanner recommends staying <65% for single-region, <45% for multi-region. 3. If CPU is <20%: reduce processing units (minimum 100 PU = ~$65/mo). 4. Check if multi-region is needed — regional instances are 3x cheaper than multi-region. 5. For predictable workloads: apply Committed Use Discounts (up to 50% savings on 3yr). 6. Use Autoscaler to dynamically adjust capacity based on load."
+    },
+    "GKE": {
+        "apis": [
+            "gcloud container clusters list --format='table(name,location,currentNodeCount,status)'",
+            "gcloud container node-pools list --cluster=<cluster> --format='table(name,config.machineType,autoscaling.enabled,autoscaling.minNodeCount,autoscaling.maxNodeCount)'",
+            "gcloud recommender recommendations list --recommender=google.container.DiagnosisRecommender --location=<zone>"
+        ],
+        "drilldownInstructions": "1. List all GKE clusters and node pools with machine types. 2. Check if node autoscaling is enabled — fixed pools waste capacity. 3. Use GKE Recommender for cluster optimization suggestions. 4. For non-critical workloads: use Spot VMs in node pools (60-91% savings). 5. Enable cluster autoscaler with appropriate min (0 for dev) and max. 6. Consider GKE Autopilot (pay per pod, no node management, auto-optimized). 7. Check for idle namespaces consuming reserved resources."
+    },
+    "Cloud Logging": {
+        "apis": [
+            "gcloud logging sinks list",
+            "gcloud logging metrics list",
+            "gcloud logging read 'timestamp>=\"<30d_ago>\"' --format='summary' --limit=0 --freshness=30d"
+        ],
+        "drilldownInstructions": "1. Check log ingestion volume — Cloud Logging charges $0.50/GiB after free 50 GiB/mo. 2. List log sinks — route verbose logs to Cloud Storage ($0.02/GiB) instead of Logging. 3. Create exclusion filters for noisy log entries (debug, trace) that don't need real-time analysis. 4. Set log retention to minimum needed (default 30 days for _Default bucket). 5. Use log-based metrics instead of storing raw logs for monitoring use cases."
+    },
+    "Cloud Functions": {
+        "apis": [
+            "gcloud functions list --format='table(name,runtime,status,entryPoint)'",
+            "gcloud monitoring metrics list --filter='metric.type=\"cloudfunctions.googleapis.com/function/execution_count\"' --interval=P30D",
+            "gcloud functions describe <function> --format='yaml(availableMemoryMb,timeout)'"
+        ],
+        "drilldownInstructions": "1. List all Cloud Functions with their runtime and memory settings. 2. Check execution count over 30 days — functions with 0 invocations are waste. 3. Check memory allocation — over-provisioned memory increases cost per invocation. 4. For Gen1 functions: migrate to Gen2 (Cloud Run based, better pricing for sustained traffic). 5. Set min-instances to 0 unless cold start is unacceptable. 6. Reduce timeout from default 540s to actual needed duration — prevents runaway executions."
+    },
+    "Networking": {
+        "apis": [
+            "gcloud compute forwarding-rules list",
+            "gcloud compute addresses list --filter='status=RESERVED'",
+            "gcloud compute routers list",
+            "gcloud compute vpn-tunnels list"
+        ],
+        "drilldownInstructions": "1. List all static external IPs — unused reserved IPs cost $0.01/hr ($7.30/mo). 2. Check NAT gateways — each processes data at $0.045/GiB. Use Private Google Access for GCP service traffic (free). 3. List load balancers — unused forwarding rules still incur hourly charges. 4. For cross-region traffic: keep resources co-located to avoid egress ($0.01-0.08/GiB inter-region). 5. Use Cloud CDN for internet-facing content (cheaper egress + caching)."
+    },
+}
+
+# ============================================================
+# OpenAI API mapping for cost investigation
+# ============================================================
+OPENAI_DRILLDOWN_MAP = {
+    "Token Optimization": {
+        "apis": [
+            "GET https://api.openai.com/v1/organization/usage?date=<YYYY-MM-DD>",
+            "GET https://api.openai.com/v1/organization/costs?start_time=<unix>&end_time=<unix>&group_by=line_item",
+            "GET https://api.openai.com/v1/organization/usage?date=<YYYY-MM-DD>&group_by=model"
+        ],
+        "drilldownInstructions": "1. Query OpenAI Usage API grouped by model to identify which models consume most tokens. 2. Check input vs output token ratio — high output suggests verbose completions (set max_tokens). 3. Compare model costs: GPT-4o ($2.50/1M input) vs GPT-4o-mini ($0.15/1M input) — use mini for simple tasks. 4. Implement prompt caching (repeated system prompts cached at 50% off). 5. Batch API for non-real-time tasks (50% cheaper). 6. Show: 'Last 30 days: X tokens on GPT-4o ($Y), Z tokens on GPT-4o-mini ($W). Moving 60% of GPT-4o calls to mini saves $V/mo.'"
+    },
+    "Model Selection": {
+        "apis": [
+            "GET https://api.openai.com/v1/organization/costs?start_time=<unix>&end_time=<unix>&group_by=model",
+            "GET https://api.openai.com/v1/organization/usage?date=<YYYY-MM-DD>&group_by=model",
+            "GET https://api.openai.com/v1/models"
+        ],
+        "drilldownInstructions": "1. Query costs grouped by model to see which models drive spend. 2. Identify tasks currently using GPT-4o that could use GPT-4o-mini (classification, extraction, summarization). 3. For embedding workloads: compare text-embedding-3-small ($0.02/1M tokens) vs text-embedding-3-large ($0.13/1M). 4. For image generation: DALL-E 3 vs DALL-E 2 (3x price difference). 5. Evaluate fine-tuned models: training cost amortized over volume may be cheaper than base model for repetitive tasks."
+    },
+    "API Usage": {
+        "apis": [
+            "GET https://api.openai.com/v1/organization/usage?date=<YYYY-MM-DD>",
+            "GET https://api.openai.com/v1/organization/costs?start_time=<unix>&end_time=<unix>&bucket_width=1d",
+            "GET https://api.openai.com/v1/organization/limits"
+        ],
+        "drilldownInstructions": "1. Query daily usage to identify traffic patterns and peak hours. 2. Check if rate limits are being hit (429 errors → wasted retries). 3. Implement request batching for bulk operations. 4. Use streaming for long completions (no cost difference but better UX). 5. Set up usage alerts at 80% of monthly budget. 6. Review if any API keys are making unexpected calls (compromised key audit)."
+    },
+    "Assistants": {
+        "apis": [
+            "GET https://api.openai.com/v1/organization/costs?start_time=<unix>&end_time=<unix>&group_by=line_item",
+            "GET https://api.openai.com/v1/assistants",
+            "GET https://api.openai.com/v1/vector_stores"
+        ],
+        "drilldownInstructions": "1. Check Assistants API costs — file_search and code_interpreter incur additional charges beyond base model. 2. Vector store storage costs: $0.10/GB/day — delete unused vector stores. 3. Code interpreter sessions: $0.03/session — ensure sessions are cleaned up. 4. For retrieval-heavy use cases: compare Assistants API file_search cost vs self-hosted RAG (one-time embedding cost). 5. Audit thread lifecycle — long-lived threads with large context consume more tokens per turn."
+    },
+    "Fine-tuning": {
+        "apis": [
+            "GET https://api.openai.com/v1/fine_tuning/jobs",
+            "GET https://api.openai.com/v1/organization/costs?start_time=<unix>&end_time=<unix>&group_by=line_item"
+        ],
+        "drilldownInstructions": "1. List all fine-tuning jobs and their training token counts. 2. Calculate amortized training cost: training_cost / expected_inference_calls. 3. Compare fine-tuned model inference cost vs base model with long prompts (fine-tuning eliminates repeated instructions). 4. Delete unused fine-tuned model checkpoints (storage costs). 5. For tasks with <1000 calls/month: few-shot prompting may be cheaper than maintaining a fine-tuned model."
+    },
+}
+
+
 def enrich_tips():
     """Update existing tips in DynamoDB with drilldown API instructions."""
     table = dynamodb.Table(TIPS_TABLE)
@@ -245,12 +497,24 @@ def enrich_tips():
         tip_id = item.get('tipId', '')
         cloud = item.get('cloud', '')
         
-        # Skip non-AWS tips and SYNC_LOG entries
-        if cloud != 'AWS' or tip_id.startswith('SYNC_'):
+        # Skip SYNC_LOG entries
+        if tip_id.startswith('SYNC_'):
+            continue
+        
+        # Select the right map based on cloud provider
+        if cloud == 'AWS':
+            drilldown_map = SERVICE_DRILLDOWN_MAP
+        elif cloud == 'AZURE':
+            drilldown_map = AZURE_DRILLDOWN_MAP
+        elif cloud == 'GCP':
+            drilldown_map = GCP_DRILLDOWN_MAP
+        elif cloud == 'OpenAI':
+            drilldown_map = OPENAI_DRILLDOWN_MAP
+        else:
             continue
         
         # Find matching drilldown data
-        drilldown = SERVICE_DRILLDOWN_MAP.get(service)
+        drilldown = drilldown_map.get(service)
         if not drilldown:
             continue
         

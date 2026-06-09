@@ -365,6 +365,7 @@ jobs:
           cp tips-sync/lambda_function.py .build-tips-sync/
           cp tips-sync/models.py .build-tips-sync/
           cp tips-sync/sync_engine.py .build-tips-sync/
+          cp tips-sync/drilldown_data.py .build-tips-sync/
           cp tips-sync/metrics.py .build-tips-sync/
           cp tips-sync/sources/*.py .build-tips-sync/sources/
           cp knowledge-base/aws-cost-optimization-tips.json .build-tips-sync/knowledge-base/
