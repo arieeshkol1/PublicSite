@@ -64,7 +64,7 @@ def lambda_handler(event, context):
     # Step 3: Return Bedrock Agent response envelope (always HTTP 200)
     # Cap response size to prevent Bedrock EventStreamError on oversized tool responses
     result_json = json.dumps(result, default=str)
-    if len(result_json) > 20000:
+    if len(result_json) > 12000:
         # Trim large responses: remove daily costs and limit services to keep under limit
         logger.warning(f"Tool response too large ({len(result_json)} chars), trimming...")
         if 'dailyCosts' in result:

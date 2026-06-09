@@ -170,7 +170,7 @@ class AWSConnector(CloudConnector):
 
             result = {
                 'totalCost30Days': round(total, 2),
-                'topServices': services[:10],
+                'topServices': services[:7],
                 'dailyCosts': daily_costs,
                 'period': f'{start_date} to {end_date} (full previous month)',
             }
@@ -178,7 +178,7 @@ class AWSConnector(CloudConnector):
             # Include MTD data if available
             if mtd_total > 0:
                 result['currentMonthMTD'] = round(mtd_total, 2)
-                result['currentMonthServices'] = mtd_services[:10]
+                result['currentMonthServices'] = mtd_services[:7]
                 result['currentMonthPeriod'] = f"{first_of_this_month.strftime('%Y-%m-%d')} to {today} (month-to-date)"
                 # Calculate daily average for forecast context
                 if daily_costs:

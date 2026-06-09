@@ -258,9 +258,9 @@ def _aggregate_cost_breakdown(items, start_date, end_date):
     )
     total = sum(s["cost"] for s in top_services)
 
-    # Return up to 40 days to support month-over-month comparison questions
-    # (e.g., "compare first week of May vs first week of June")
-    recent_daily = daily_costs[-40:]
+    # Return up to 21 days — enough for week-over-week comparison
+    # while keeping response within Bedrock's token limits
+    recent_daily = daily_costs[-21:]
 
     # Identify first-of-month spike: if any day ending in "-01" has cost > 2x median,
     # flag it as containing monthly fixed charges
@@ -274,7 +274,7 @@ def _aggregate_cost_breakdown(items, start_date, end_date):
 
     return {
         "totalCost30Days": round(total, 2),
-        "topServices": top_services[:10],
+        "topServices": top_services[:7],
         "dailyCosts": recent_daily,
         "period": (
             f"{start_date.strftime('%Y-%m-%d')} to "
