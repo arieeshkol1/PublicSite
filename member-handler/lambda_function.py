@@ -7846,10 +7846,21 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
             break
 
     if detected_service:
-        enriched_prompt += (
-            f"\n\n[MUST USE: getCostBreakdown with usageTypeBreakdown=true, serviceFilter={detected_service}. "
-            f"Then call getPricingData for real pricing. Show math: cost/unit_price=quantity.]"
-        )
+        # Special case: EC2 per-instance questions need getEC2Instances, not just cost breakdown
+        _EC2_INSTANCE_KEYWORDS = ['servers', 'instances', 'each server', 'each instance', 'per server',
+                                  'per instance', 'list down', 'list the']
+        if detected_service == 'Amazon Elastic Compute Cloud - Compute' and any(kw in question_lower for kw in _EC2_INSTANCE_KEYWORDS):
+            enriched_prompt += (
+                "\n\n[EC2 PER-INSTANCE QUESTION: Call getEC2Instances to list individual servers with their type and hourly rate. "
+                "For each instance, calculate daily cost = hourly_rate × 24. AWS does not provide per-instance daily cost "
+                "without resource-level Cost Allocation Tags. Show: instance ID, name, type, state, estimated daily cost. "
+                "Do NOT just show total EC2 cost — the user wants PER-SERVER breakdown.]"
+            )
+        else:
+            enriched_prompt += (
+                f"\n\n[MUST USE: getCostBreakdown with usageTypeBreakdown=true, serviceFilter={detected_service}. "
+                f"Then call getPricingData for real pricing. Show math: cost/unit_price=quantity.]"
+            )
 
     # Detect comparison/trend questions and pre-compute the answer from cache
     _COMPARISON_KEYWORDS = ['compare', 'comparison', 'instead of', 'versus', 'vs', 'difference between',
