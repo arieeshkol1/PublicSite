@@ -7847,38 +7847,31 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
 
     if detected_service:
         enriched_prompt += (
-            f"\n\n[SYSTEM INSTRUCTION: The user is asking about a SPECIFIC service: {detected_service}. "
-            f"You MUST call getCostBreakdown with usageTypeBreakdown=true AND serviceFilter={detected_service}. "
-            f"This will return the usage type breakdown (e.g., FaceSearchImageCount, DetectLabels) "
-            f"that explains WHY the cost is what it is. Also call getPricingData to get REAL pricing. "
-            f"Do NOT guess pricing from memory — always use getPricingData results.]"
+            f"\n\n[MUST USE: getCostBreakdown with usageTypeBreakdown=true, serviceFilter={detected_service}. "
+            f"Then call getPricingData for real pricing. Show math: cost/unit_price=quantity.]"
         )
 
     # Detect forecast/estimate questions and inject correct methodology
     _FORECAST_KEYWORDS = ['forecast', 'estimate', 'predict', 'projection', 'will be', 'expected', 'end of month']
     if any(kw in question_lower for kw in _FORECAST_KEYWORDS):
         enriched_prompt += (
-            "\n\n[SYSTEM INSTRUCTION: The user is asking for a FORECAST/ESTIMATE. "
-            "You MUST call getCostBreakdown to get the dailyCosts and forecastHint data. "
-            "CRITICAL FORECASTING METHOD: "
-            "1) Look at the dailyCosts array from the CURRENT month (June dates). "
-            "2) EXCLUDE Jun-01 (it has a lump-sum spike for Tax + Support which are % of monthly spend). "
-            "3) Take the average of the last 3 non-spike current-month days. "
-            "4) These daily costs EXCLUDE Tax and Support (which bill as lump sums on day 1). "
-            "5) CORRECT FORMULA: base_daily = avg(last 3 current-month days excluding day-1). "
-            "   Tax is ~17% of total spend. Support (Business) is ~10% of total spend. "
-            "   forecast = base_daily × 30 / (1 - 0.17 - 0.10) = base_daily × 30 / 0.73. "
-            "   OR simpler: forecast = base_daily × 30 × 1.37 (to account for tax+support). "
-            "6) Example with data: base=$55/day → $55 × 30 = $1,650 base → $1,650 × 1.37 = ~$2,260 total. "
-            "   But verify against last month: if last month was $3,852 and current trend is lower, explain why (fewer days with high EC2 usage, etc.). "
-            "7) State clearly which days you used, the daily average, and how you applied the tax+support multiplier. "
-            "8) Do NOT list per-service breakdowns unless asked — give ONE total estimate first.]"
+            "\n\n[FORECAST METHOD: Use dailyCosts from current month (exclude day-1 spike). "
+            "Avg last 3 days × 30 × 1.37 (adds ~27% for Tax+Support which are % of total). Show the math.]"
         )
 
     if tips_context:
         from tip_citation import build_tip_citation_prompt
         tips_text = build_tip_citation_prompt(tips_context)
         enriched_prompt += f"\n\n{tips_text}"
+
+    # Cap prompt length to prevent Bedrock EventStreamError (max ~4000 chars for inputText)
+    if len(enriched_prompt) > 3500:
+        # Trim tips section if prompt is too long (keep the question + system instructions)
+        base_end = enriched_prompt.find('\n\nRELEVANT OPTIMIZATION TIPS:')
+        if base_end > 0:
+            enriched_prompt = enriched_prompt[:base_end]
+        else:
+            enriched_prompt = enriched_prompt[:3500]
 
     collector = TraceCollector()
 
