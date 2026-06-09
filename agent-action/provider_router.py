@@ -258,8 +258,9 @@ def _aggregate_cost_breakdown(items, start_date, end_date):
     )
     total = sum(s["cost"] for s in top_services)
 
-    # Return last 14 days to give the agent enough context for forecasting
-    recent_daily = daily_costs[-14:]
+    # Return up to 40 days to support month-over-month comparison questions
+    # (e.g., "compare first week of May vs first week of June")
+    recent_daily = daily_costs[-40:]
 
     # Identify first-of-month spike: if any day ending in "-01" has cost > 2x median,
     # flag it as containing monthly fixed charges

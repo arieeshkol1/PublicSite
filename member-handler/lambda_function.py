@@ -7851,6 +7851,15 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
             f"Then call getPricingData for real pricing. Show math: cost/unit_price=quantity.]"
         )
 
+    # Detect comparison/trend questions that need the agent to call tools with date ranges
+    _COMPARISON_KEYWORDS = ['compare', 'comparison', 'instead of', 'versus', 'vs', 'difference between',
+                            'last month', 'previous month', 'month over month', 'same dates', 'same period']
+    if any(kw in question_lower for kw in _COMPARISON_KEYWORDS):
+        enriched_prompt += (
+            "\n\n[COMPARISON QUESTION: You MUST call getCostBreakdown (or getMonthlyTrend) to get actual data for the requested periods. "
+            "Do NOT reuse data from previous turns. Show both periods side-by-side with totals and the difference.]"
+        )
+
     # Detect forecast/estimate questions and compute the answer in code (agent can't do math reliably)
     _FORECAST_KEYWORDS = ['forecast', 'estimate', 'predict', 'projection', 'will be', 'expected', 'end of month', 'june bill', 'monthly bill']
     if any(kw in question_lower for kw in _FORECAST_KEYWORDS):

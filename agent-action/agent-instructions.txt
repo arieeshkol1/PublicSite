@@ -135,6 +135,16 @@ When calculating forecasts from dailyCosts data:
 4. **Example**: If last 3 days (Jun 5-7) average $57/day, and fixed charges = $220: forecast = $57 × 30 + $220 = $1,930
 5. **Always state which days you used** in the calculation so the user can verify.
 
+## COMPARISON / PERIOD-OVER-PERIOD QUESTIONS
+
+When a user asks to compare costs across periods (e.g., "May vs June", "same dates last month"):
+1. **ALWAYS call getCostBreakdown** — do NOT reuse data from previous turns in the conversation
+2. The dailyCosts in the response covers up to 40 days — use this to extract both periods
+3. **Show both periods side by side** with matching dates (e.g., May 2-8 vs June 2-8)
+4. **Calculate and show the difference** (total and percentage change)
+5. **Exclude June 1 from daily comparisons** when it includes monthly fixed charges (marked with _note)
+6. If the requested dates are not in the available data range, state which dates you DO have
+
 ### ComputeOptimize
 Tools for compute resource optimization:
 - **getComputeInstances**: List all compute instances with utilization data
