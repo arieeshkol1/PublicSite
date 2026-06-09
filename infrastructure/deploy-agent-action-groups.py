@@ -168,6 +168,36 @@ def prepare_agent(client, agent_id):
     return False
 
 
+def update_agent_alias(client, agent_id, alias_id):
+    """Update agent alias to point to the latest prepared version."""
+    print(f"\nUpdating agent alias {alias_id} to latest version...")
+    try:
+        # List versions to find the latest
+        versions_resp = client.list_agent_versions(agentId=agent_id, maxResults=10)
+        versions = versions_resp.get('agentVersionSummaries', [])
+        # Find the highest numeric version (skip DRAFT)
+        numeric_versions = [v for v in versions if v['agentVersion'] not in ('DRAFT',)]
+        if not numeric_versions:
+            print("  No prepared versions found, skipping alias update")
+            return False
+        latest = max(numeric_versions, key=lambda v: int(v['agentVersion']))
+        latest_version = latest['agentVersion']
+        print(f"  Latest prepared version: {latest_version}")
+
+        # Update the alias to point to the latest version
+        client.update_agent_alias(
+            agentId=agent_id,
+            agentAliasId=alias_id,
+            agentAliasName='live',
+            routingConfiguration=[{'agentVersion': latest_version}],
+        )
+        print(f"✓ Alias {alias_id} updated to version {latest_version}")
+        return True
+    except Exception as e:
+        print(f"  Warning: Could not update alias: {e}")
+        return False
+
+
 def main():
     """Main deployment flow."""
     print("=" * 60)
@@ -268,12 +298,19 @@ def main():
         print(f"  Instructions: updated")
         sys.exit(1)
 
+    # Update the alias to point to the new version
+    ALIAS_ID = os.environ.get('BEDROCK_AGENT_ALIAS_ID', '3TI0ZATFFV')
+    try:
+        update_agent_alias(client, AGENT_ID, ALIAS_ID)
+    except Exception as e:
+        print(f"  Warning: Alias update failed (non-fatal): {e}")
+
     # All done
     print(f"\n{'=' * 60}")
     print("✓ Deployment complete!")
     print(f"  - {len(succeeded)} action groups deployed")
     print(f"  - Agent instructions updated")
-    print(f"  - Agent prepared (new version ready)")
+    print(f"  - Agent prepared and alias updated")
     print("=" * 60)
 
 
