@@ -189,7 +189,7 @@ def _persist_async(entry):
             entry['response_payload'] = json.dumps(entry['response_payload'], default=str)
 
         # Remove any empty string values (DynamoDB doesn't allow empty strings in some contexts)
-        clean_entry = {k: v for k, v in entry.items() if v != ''}
+        clean_entry = {k: v for k, v in entry.items() if v != '' and v is not None}
         # Ensure required keys are present even if empty
         if 'user_email' not in clean_entry:
             clean_entry['user_email'] = 'unknown'
@@ -202,13 +202,30 @@ def _persist_async(entry):
             if isinstance(v, float):
                 clean_entry[k] = _Decimal(str(v))
 
-        table.put_item(
-            Item=clean_entry,
-            ConditionExpression='attribute_not_exists(transaction_id)'
-        )
+        table.put_item(Item=clean_entry)
         logger.info(f"Transaction logged: {clean_entry.get('transaction_id', 'N/A')} - {clean_entry.get('function_name', 'N/A')}")
     except Exception as e:
         logger.error(f"Failed to persist transaction log entry: {type(e).__name__}: {e}")
+        # Fallback: try to persist a minimal entry without payload fields
+        try:
+            minimal = {
+                'transaction_id': entry.get('transaction_id', str(uuid.uuid4())),
+                'start_timestamp': entry.get('start_timestamp', datetime.now(timezone.utc).isoformat()),
+                'user_email': entry.get('user_email', 'unknown'),
+                'function_name': entry.get('function_name', 'unknown'),
+                'duration_ms': int(entry.get('duration_ms', 0)),
+                'source_handler': entry.get('source_handler', 'unknown'),
+                'status': entry.get('status', 'unknown'),
+                'expiry_ttl': int(entry.get('expiry_ttl', 0)),
+                'audit_status': 'pending',
+                'request_payload': '{"_error": "payload_persist_failed"}',
+                'response_payload': '{"_error": "payload_persist_failed"}',
+                '_persist_error': f"{type(e).__name__}: {str(e)[:200]}",
+            }
+            table.put_item(Item=minimal)
+            logger.info(f"Minimal transaction logged after error: {minimal['transaction_id']}")
+        except Exception as e2:
+            logger.error(f"Even minimal persist failed: {type(e2).__name__}: {e2}")
 
 
 def transaction_log(source_handler):
