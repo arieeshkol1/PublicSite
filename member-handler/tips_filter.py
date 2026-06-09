@@ -20,14 +20,59 @@ logger = logging.getLogger(__name__)
 # ============================================================
 
 AWS_SERVICE_MAPPING = {
-    'ec2': 'EC2', 's3': 'S3', 'rds': 'RDS', 'lambda': 'Lambda',
-    'cloudfront': 'CloudFront', 'dynamodb': 'DynamoDB', 'ebs': 'EBS',
-    'elb': 'ELB', 'ecs': 'ECS', 'eks': 'EKS', 'redshift': 'Redshift',
-    'elasticache': 'ElastiCache', 'route53': 'Route53', 'route 53': 'Route53',
-    'cloudwatch': 'CloudWatch', 'iam': 'IAM', 'vpc': 'VPC', 'nat': 'NAT Gateway',
-    'kms': 'KMS', 'general': 'General', 'cost': 'General', 'billing': 'General',
+    # EC2 variants
+    'ec2': 'EC2', 'ec 2': 'EC2', 'elastic compute': 'EC2', 'compute cloud': 'EC2', 'instances': 'EC2',
+    # S3 variants
+    's3': 'S3', 's 3': 'S3', 'simple storage': 'S3', 'bucket': 'S3', 'buckets': 'S3',
+    # RDS variants
+    'rds': 'RDS', 'relational database': 'RDS', 'database service': 'RDS', 'aurora': 'RDS',
+    # Lambda variants
+    'lambda': 'Lambda', 'lamda': 'Lambda', 'lamba': 'Lambda',
+    # CloudFront
+    'cloudfront': 'CloudFront', 'cloud front': 'CloudFront', 'cdn': 'CloudFront',
+    # DynamoDB variants
+    'dynamodb': 'DynamoDB', 'dynamo': 'DynamoDB', 'dynammo': 'DynamoDB', 'dynamo db': 'DynamoDB',
+    # EBS
+    'ebs': 'EBS', 'elastic block': 'EBS', 'volumes': 'EBS',
+    # ELB
+    'elb': 'ELB', 'load balancer': 'ELB', 'alb': 'ELB', 'nlb': 'ELB',
+    # Container services
+    'ecs': 'ECS', 'fargate': 'ECS', 'eks': 'EKS', 'kubernetes': 'EKS',
+    # Redshift
+    'redshift': 'Redshift', 'red shift': 'Redshift',
+    # ElastiCache
+    'elasticache': 'ElastiCache', 'elasti cache': 'ElastiCache', 'redis': 'ElastiCache', 'memcached': 'ElastiCache',
+    # Route53
+    'route53': 'Route53', 'route 53': 'Route53',
+    # CloudWatch
+    'cloudwatch': 'CloudWatch', 'cloud watch': 'CloudWatch', 'cloudwatch logs': 'CloudWatch Logs', 'logs': 'CloudWatch Logs',
+    # IAM / VPC / NAT
+    'iam': 'IAM', 'vpc': 'VPC', 'nat': 'NAT Gateway', 'nat gateway': 'NAT Gateway',
+    # KMS
+    'kms': 'KMS', 'key management': 'KMS', 'encryption': 'KMS',
+    # Rekognition variants (common misspellings)
+    'rekognition': 'Rekognition', 'recognition': 'Rekognition', 'recoknition': 'Rekognition',
+    'rekogn': 'Rekognition', 'rekog': 'Rekognition', 'recog': 'Rekognition',
+    'face detection': 'Rekognition', 'image analysis': 'Rekognition',
+    # SageMaker / Bedrock / AI
+    'sagemaker': 'SageMaker', 'sage maker': 'SageMaker', 'bedrock': 'Bedrock',
+    # Glue / Athena
+    'glue': 'Glue', 'athena': 'Athena',
+    # General / billing keywords
+    'general': 'General', 'cost': 'General', 'billing': 'General',
     'save': 'General', 'efficient': 'General', 'optimize': 'General',
-    'data transfer': 'Data Transfer', 'efs': 'EFS',
+    'support': 'General', 'tax': 'General',
+    'forecast': 'General', 'budget': 'General',
+    # Other services
+    'data transfer': 'Data Transfer', 'transfer': 'Data Transfer',
+    'efs': 'EFS', 'elastic file': 'EFS',
+    'amplify': 'Amplify', 'cognito': 'Cognito',
+    'guardduty': 'GuardDuty', 'guard duty': 'GuardDuty',
+    'waf': 'WAF', 'firewall': 'WAF',
+    'sns': 'SNS', 'ses': 'SES', 'email': 'SES',
+    'step functions': 'Step Functions', 'step function': 'Step Functions',
+    'auto scaling': 'Auto Scaling', 'autoscaling': 'Auto Scaling',
+    'cost explorer': 'General',
 }
 
 AZURE_SERVICE_MAPPING = {

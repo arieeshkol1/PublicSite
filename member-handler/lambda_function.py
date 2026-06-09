@@ -7756,7 +7756,10 @@ def handle_ai_query(event):
                 logger.warning(f"Pipeline failed, falling back to direct model: {e}")
 
         if len(account_ids) > 1:
-            return _invoke_multi_account(ai_question, account_ids, member_email, interaction_id)
+            # Route multi-account queries through Bedrock Agent too
+            # Pass all account IDs in the prompt context for the agent to orchestrate
+            multi_context = f"[Multi-Account Query: accounts={','.join(account_ids)}] {ai_question}"
+            return _invoke_bedrock_agent(multi_context, account_ids[0], member_email, interaction_id)
         else:
             # Route ALL single-account chat queries exclusively through Bedrock Agent
             return _invoke_bedrock_agent(ai_question, account_ids[0], member_email, interaction_id)
@@ -7818,6 +7821,39 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
 
     # Include account context and tips in the prompt so the Agent has accurate pricing
     enriched_prompt = f"[Account: {account_id}, Member: {member_email}] {question}"
+
+    # Auto-detect service-specific questions and inject serviceFilter instruction
+    # This ensures the agent calls getCostBreakdown with usageTypeBreakdown=true
+    _SERVICE_KEYWORDS = {
+        'rekognition': 'Amazon Rekognition', 'ec2': 'Amazon Elastic Compute Cloud - Compute',
+        's3': 'Amazon Simple Storage Service', 'rds': 'Amazon Relational Database Service',
+        'lambda': 'AWS Lambda', 'dynamodb': 'Amazon DynamoDB',
+        'cloudfront': 'Amazon CloudFront', 'elasticache': 'Amazon ElastiCache',
+        'redshift': 'Amazon Redshift', 'sagemaker': 'Amazon SageMaker',
+        'bedrock': 'Amazon Bedrock', 'glue': 'AWS Glue', 'athena': 'Amazon Athena',
+        'cloudwatch': 'AmazonCloudWatch', 'kms': 'AWS Key Management Service',
+        'nat gateway': 'Amazon Virtual Private Cloud', 'vpc': 'Amazon Virtual Private Cloud',
+        'cost explorer': 'AWS Cost Explorer', 'amplify': 'AWS Amplify',
+        'sns': 'Amazon Simple Notification Service', 'ses': 'Amazon Simple Email Service',
+        'ecs': 'Amazon Elastic Container Service', 'eks': 'Amazon Elastic Kubernetes Service',
+        'support': 'AWS Support (Business)',
+    }
+    question_lower = question.lower()
+    detected_service = None
+    for keyword, aws_service_name in _SERVICE_KEYWORDS.items():
+        if keyword in question_lower:
+            detected_service = aws_service_name
+            break
+
+    if detected_service:
+        enriched_prompt += (
+            f"\n\n[SYSTEM INSTRUCTION: The user is asking about a SPECIFIC service: {detected_service}. "
+            f"You MUST call getCostBreakdown with usageTypeBreakdown=true AND serviceFilter={detected_service}. "
+            f"This will return the usage type breakdown (e.g., FaceSearchImageCount, DetectLabels) "
+            f"that explains WHY the cost is what it is. Also call getPricingData to get REAL pricing. "
+            f"Do NOT guess pricing from memory — always use getPricingData results.]"
+        )
+
     if tips_context:
         from tip_citation import build_tip_citation_prompt
         tips_text = build_tip_citation_prompt(tips_context)
@@ -7876,8 +7912,15 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
         return result
     except Exception as e:
         logger.error(f"Bedrock Agent invocation failed: {e}")
-        # Fall back to direct model
-        return _invoke_direct_model(question, account_id, member_email, interaction_id)
+        # No fallback — all chat queries must go through Bedrock Agent exclusively
+        return create_response(200, {
+            'answer': f'The AI agent encountered an error processing your request. Please try again in a moment. (Error: {type(e).__name__})',
+            'interactionId': interaction_id,
+            'commands': [],
+            'results': [],
+            'tipFound': False,
+            'agentUsed': True,
+        })
 
 
 def _invoke_direct_model(question, account_id, member_email, interaction_id):
