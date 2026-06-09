@@ -863,13 +863,12 @@ def _query_all_pages(table, query_kwargs):
     return items
 
 
-def _scan_all_pages(table, max_items=500):
+def _scan_all_pages(table, max_items=2000):
     """Execute a DynamoDB scan with a cap to prevent Lambda timeout.
     Excludes large payload fields to keep memory under control."""
     items = []
     # Project only summary fields — payloads excluded to avoid 6MB response limit
     scan_kwargs = {
-        'Limit': 200,
         'ProjectionExpression': 'transaction_id, start_timestamp, end_timestamp, function_name, #s, user_email, source_handler, duration_ms, audit_status, audit_score, audit_accuracy_assessment, audit_timing_assessment, audit_improvement_suggestions',
         'ExpressionAttributeNames': {'#s': 'status'},
     }
