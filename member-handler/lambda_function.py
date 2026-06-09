@@ -8116,7 +8116,7 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
         response = agent_runtime.invoke_agent(
             agentId=BEDROCK_AGENT_ID,
             agentAliasId=BEDROCK_AGENT_ALIAS_ID,
-            sessionId=re.sub(r'[^0-9a-zA-Z._:-]', '_', f'{member_email}-{account_id}')[:100],
+            sessionId=re.sub(r'[^0-9a-zA-Z._:-]', '_', f'{member_email}-{account_id}-{interaction_id}')[:100],
             inputText=enriched_prompt,
             enableTrace=True,
         )
