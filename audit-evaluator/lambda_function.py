@@ -225,29 +225,6 @@ def _build_trace_scoring_section(inference_trace_raw, request_payload):
     tool_invocations = trace_data.get('tool_invocations', [])
     reasoning_steps = trace_data.get('reasoning_steps', [])
 
-    # Extract user question from request payload
-    user_question = ''
-    if isinstance(request_payload, str):
-        try:
-            req = json.loads(request_payload)
-            user_question = req.get('body', '')
-            if isinstance(user_question, str):
-                try:
-                    body = json.loads(user_question)
-                    user_question = body.get('question', '')
-                except (json.JSONDecodeError, TypeError):
-                    pass
-        except (json.JSONDecodeError, TypeError):
-            pass
-    elif isinstance(request_payload, dict):
-        body_str = request_payload.get('body', '')
-        if isinstance(body_str, str):
-            try:
-                body = json.loads(body_str)
-                user_question = body.get('question', '')
-            except (json.JSONDecodeError, TypeError):
-                pass
-
     section = f"""
 
 TRACE-BASED SCORING (Agent Reasoning Audit):
@@ -258,38 +235,8 @@ The agent made the following decisions during this interaction:
 
 Trace Scoring Rules:
 1. TOOL SELECTION: Assess whether the agent selected appropriate tools for the question type. Penalize if obvious tools were missed. EXCEPTION: If the response contains pre-computed data (specific dollar amounts, day-by-day tables, service breakdowns with real names), do NOT penalize for zero tool calls — the system pre-computes answers for forecast, comparison, and service-breakdown questions.
-"""
-
-    # Service-specific penalization rules
-    service_keywords = {
-        'ec2': 'EC2', 's3': 'S3', 'rds': 'RDS', 'lambda': 'Lambda',
-        'ebs': 'EBS', 'cloudfront': 'CloudFront', 'dynamodb': 'DynamoDB',
-        'ecs': 'ECS', 'eks': 'EKS', 'elasticache': 'ElastiCache',
-        'redshift': 'Redshift', 'route53': 'Route53',
-    }
-
-    question_lower = user_question.lower()
-    detected_service = None
-    for keyword, service in service_keywords.items():
-        if keyword in question_lower:
-            detected_service = service
-            break
-
-    if detected_service:
-        tool_names_lower = [t.lower() for t in tools_selected]
-        section += f"""2. SERVICE-SPECIFIC CHECK: The question mentions {detected_service}. The agent MUST have invoked 'usageTypeBreakdown' to provide accurate service-level cost data. Tools actually used: {tools_selected}. {"PENALTY: usageTypeBreakdown was NOT called — deduct 15 points." if 'usagetypebreakdown' not in tool_names_lower else "OK: usageTypeBreakdown was called."}
-"""
-
-    # Pricing/cost calculation check
-    pricing_keywords = ['cost', 'price', 'pricing', 'compare', 'cheaper', 'expensive', 'savings', 'calculate']
-    if any(kw in question_lower for kw in pricing_keywords):
-        tool_names_lower = [t.lower() for t in tools_selected]
-        section += f"""3. PRICING DATA CHECK: The question involves cost/pricing. The agent SHOULD have invoked 'getPricingData' before performing calculations. Tools used: {tools_selected}. {"PENALTY: getPricingData was NOT called before calculations — deduct 10 points." if 'getpricingdata' not in tool_names_lower else "OK: getPricingData was called."}
-"""
-
-    section += f"""
-4. REASONING QUALITY: Were the reasoning steps logical and relevant to the question? Brief reasoning summaries:
-{chr(10).join(f'  - {step[:200]}' for step in reasoning_steps[:5])}
+2. REASONING QUALITY: Were the reasoning steps logical and relevant to the question?
+3. Do NOT penalize for missing 'getPricingData' or 'usageTypeBreakdown' on forecast, comparison, or trend questions — these do not require pricing lookups.
 
 Include your trace-based assessment in the "trace_assessment" field of your response.
 """
