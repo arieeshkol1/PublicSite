@@ -62,7 +62,12 @@ def _sanitize(payload):
 
 
 def _extract_user_email(event):
-    """Extract email from JWT claims in headers or from request body. Defaults to 'unknown'."""
+    """Extract email from JWT claims in headers or from request body.
+
+    For Cognito access tokens (which don't contain an 'email' claim),
+    calls Cognito GetUser to resolve the sub UUID to an actual email.
+    Defaults to 'unknown' only if all resolution methods fail.
+    """
     try:
         # Try to get email from JWT token in Authorization header
         headers = event.get('headers') or {}
@@ -74,20 +79,58 @@ def _extract_user_email(event):
             import jwt as pyjwt
             try:
                 claims = pyjwt.decode(token, options={"verify_signature": False})
-                email = claims.get('sub') or claims.get('email') or ''
-                if email:
-                    return email
+                # Prefer 'email' over 'sub' — Cognito access tokens have UUID in 'sub'
+                email = claims.get('email') or claims.get('cognito:username') or ''
+
+                # If we got a real email (contains @), return it immediately
+                if email and '@' in email:
+                    return email.lower()
+
+                # For Cognito access tokens: resolve UUID to email via GetUser API
+                # Access tokens have 'token_use': 'access' and 'sub' but no 'email'
+                token_use = claims.get('token_use', '')
+                cognito_sub = claims.get('sub') or claims.get('username') or ''
+
+                if token_use == 'access' and cognito_sub:
+                    try:
+                        import boto3 as _boto3
+                        cognito_client = _boto3.client('cognito-idp', region_name='us-east-1')
+                        user_resp = cognito_client.get_user(AccessToken=token)
+                        resolved_email = next(
+                            (a['Value'] for a in user_resp.get('UserAttributes', []) if a['Name'] == 'email'),
+                            ''
+                        )
+                        if resolved_email and '@' in resolved_email:
+                            return resolved_email.lower()
+                    except Exception:
+                        pass  # GetUser failed — fall through to other methods
+
+                # If still no email, check request body for memberEmail/email fields
+                body_str = event.get('body') or ''
+                if body_str:
+                    try:
+                        body = json.loads(body_str) if isinstance(body_str, str) else body_str
+                        body_email = body.get('memberEmail') or body.get('email') or body.get('username') or ''
+                        if body_email and '@' in body_email:
+                            return body_email.lower()
+                    except (json.JSONDecodeError, AttributeError):
+                        pass
+
+                # Last resort: return the UUID sub (better than 'unknown' for traceability)
+                if cognito_sub:
+                    return cognito_sub
+
             except Exception:
                 pass
 
-        # Try to get email from the request body
+        # Try to get email from the request body (for unauthenticated endpoints like login)
         body_str = event.get('body') or ''
         if body_str:
             try:
                 body = json.loads(body_str) if isinstance(body_str, str) else body_str
-                email = body.get('email') or body.get('username') or ''
+                email = body.get('email') or body.get('username') or body.get('memberEmail') or ''
                 if email:
-                    return email
+                    return email.lower() if '@' in email else email
             except (json.JSONDecodeError, AttributeError):
                 pass
 
