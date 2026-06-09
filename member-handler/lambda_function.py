@@ -7910,22 +7910,36 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
                     _svc_cost = float(_svc_item.get('cost', 0))
                     _usage_types = _svc_item.get('usageTypes', [])
                     if _usage_types and _svc_cost > 0:
+                        # Detect if this is a forecast question for a partial (current) month
+                        _FORECAST_KW_SVC = ['forecast', 'estimate', 'predict', 'projection', 'will be', 'expected']
+                        _is_forecast_svc = any(kw in question_lower for kw in _FORECAST_KW_SVC)
+                        _is_current_month = (_target_month == _svc_now.strftime('%Y-%m'))
+                        _scale_factor = 1.0
+                        _forecast_note = ""
+                        if _is_forecast_svc and _is_current_month and _svc_now.day >= 3:
+                            # Scale partial month data to full month (30 days)
+                            _days_elapsed = _svc_now.day - 1  # exclude day 1 (fixed charges)
+                            _scale_factor = 30.0 / _days_elapsed
+                            _svc_cost = _svc_cost * _scale_factor
+                            _forecast_note = f" (FORECAST: scaled from {_days_elapsed} days to 30 days)"
+
                         # Build usage-type breakdown string
                         _ut_lines = []
                         for ut in _usage_types[:8]:  # Top 8 usage types
                             ut_type = ut.get('type', 'Unknown')
-                            ut_cost = float(ut.get('cost', 0))
-                            ut_qty = float(ut.get('quantity', 0))
+                            ut_cost = float(ut.get('cost', 0)) * _scale_factor
+                            ut_qty = float(ut.get('quantity', 0)) * _scale_factor
                             ut_unit = ut.get('unit', '')
                             ut_pct = (ut_cost / _svc_cost * 100) if _svc_cost > 0 else 0
                             if ut_qty > 0:
-                                _ut_lines.append(f"{ut_type}: ${ut_cost:.2f} ({ut_pct:.0f}%, {ut_qty:.1f} {ut_unit})")
+                                _ut_lines.append(f"{ut_type}: ${ut_cost:.2f} ({ut_pct:.0f}%, {ut_qty:.0f} {ut_unit})")
                             else:
                                 _ut_lines.append(f"{ut_type}: ${ut_cost:.2f} ({ut_pct:.0f}%)")
                         _ut_str = " | ".join(_ut_lines)
+                        _label = "FORECASTED SERVICE BREAKDOWN" if _is_forecast_svc and _is_current_month else "PRE-COMPUTED SERVICE BREAKDOWN"
                         enriched_prompt += (
-                            f"\n\n[PRE-COMPUTED SERVICE BREAKDOWN — ANSWER DIRECTLY from this data, NO tool calls needed: "
-                            f"{detected_service} in {_target_month}: Total=${_svc_cost:.2f}. "
+                            f"\n\n[{_label} — ANSWER DIRECTLY from this data, NO tool calls needed: "
+                            f"{detected_service} in {_target_month}: Total=${_svc_cost:.2f}{_forecast_note}. "
                             f"Usage type breakdown: {_ut_str}. "
                             f"Present as a table with columns: Usage Type | Cost | % of Total | Implied Quantity. "
                             f"Use the pricing model from your instructions (e.g. per 1000 images, per minute, per request) "
