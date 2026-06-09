@@ -1301,6 +1301,12 @@ jobs:
           pip install boto3 -q
           python scripts/enrich_tips_provider_routing.py --region us-east-1 || echo "⚠ Tips enrichment failed (non-fatal)"
 
+      - name: Enrich tips with drilldown API instructions
+        continue-on-error: true
+        run: |
+          echo "Running drilldown API enrichment on tips table..."
+          python scripts/enrich_tips_drilldown.py || echo "⚠ Tips drilldown enrichment failed (non-fatal)"
+
       - name: Setup Tips Sync Schedule
         continue-on-error: true
         run: |
