@@ -1829,3 +1829,58 @@
     color: #4b5563;
     line-height: 1.4;
 }
+
+/* ============================================================
+   AI Data Source Buttons & Tables
+   ============================================================ */
+
+.ai-datasource-wrapper {
+    margin-bottom: 8px;
+}
+
+.ai-datasource-btn {
+    color: #a78bfa;
+    border-color: #30363d;
+    background: #21262d;
+    cursor: pointer;
+    transition: background 0.2s, border-color 0.2s, color 0.2s;
+}
+.ai-datasource-btn:hover {
+    background: #30363d;
+    color: #c4b5fd;
+    border-color: #484f58;
+}
+.ai-datasource-btn:active {
+    background: #282e36;
+    color: #a78bfa;
+}
+
+.ai-datasource-btn[aria-expanded="true"] {
+    border-color: #6366f1;
+}
+
+.ai-datasource-table {
+    padding: 8px;
+    margin-top: 6px;
+    background: #0d1117;
+    border-radius: 6px;
+}
+
+.ai-source-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85em;
+}
+.ai-source-table thead th {
+    text-align: left;
+    padding: 6px 8px;
+    color: #8b949e;
+    border-bottom: 1px solid #30363d;
+}
+.ai-source-table tbody tr {
+    border-bottom: 1px solid #21262d;
+}
+.ai-source-table tbody td {
+    padding: 6px 8px;
+    color: #c9d1d9;
+}

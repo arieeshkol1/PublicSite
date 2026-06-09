@@ -2052,7 +2052,90 @@ function _addNavLinks(html) {
     return html;
 }
 
-function addAIMessage(type, content, topServices) {
+function _formatCellValue(val, key) {
+    if (val == null) return '-';
+    if (typeof val === 'number') {
+        var keyLower = (key || '').toLowerCase();
+        if (keyLower.indexOf('pct') !== -1 || keyLower.indexOf('percent') !== -1 || keyLower.indexOf('change') !== -1) {
+            return val.toFixed(1) + '%';
+        }
+        if (keyLower.indexOf('cost') !== -1 || keyLower.indexOf('value') !== -1 || keyLower.indexOf('amount') !== -1 || keyLower.indexOf('price') !== -1) {
+            return '$' + val.toFixed(2);
+        }
+        return val.toFixed(2);
+    }
+    return esc(String(val));
+}
+
+function _buildDataTable(rows) {
+    if (!rows || rows.length === 0) return '<p style="color:#8b949e;">No data</p>';
+
+    var keys = Object.keys(rows[0]);
+
+    var html = '<table class="ai-source-table" style="width:100%;border-collapse:collapse;font-size:0.85em;margin-top:8px;">';
+    html += '<thead><tr>';
+    keys.forEach(function(k) {
+        html += '<th style="text-align:left;padding:6px 8px;border-bottom:1px solid #30363d;color:#8b949e;">' + esc(k) + '</th>';
+    });
+    html += '</tr></thead>';
+    html += '<tbody>';
+    rows.forEach(function(row) {
+        html += '<tr>';
+        keys.forEach(function(k) {
+            var val = row[k];
+            var formatted = _formatCellValue(val, k);
+            html += '<td style="padding:6px 8px;border-bottom:1px solid #21262d;color:#c9d1d9;">' + formatted + '</td>';
+        });
+        html += '</tr>';
+    });
+    html += '</tbody></table>';
+    return html;
+}
+
+function _renderDataSourceButtons(tableArea, dataSources) {
+    if (!tableArea || !dataSources || dataSources.length === 0) return;
+
+    dataSources.forEach(function(source, idx) {
+        var wrapper = document.createElement('div');
+        wrapper.className = 'ai-datasource-wrapper';
+        wrapper.style.marginBottom = '8px';
+
+        // Button
+        var btn = document.createElement('button');
+        btn.className = 'btn btn-outline btn-sm ai-datasource-btn';
+        btn.setAttribute('aria-expanded', 'false');
+        btn.innerHTML = '<span class="ai-ds-indicator">\u25B6</span> \uD83D\uDCCB ' + esc(source.label);
+        btn.dataset.dsIndex = idx;
+
+        // Table container (hidden by default)
+        var tableContainer = document.createElement('div');
+        tableContainer.className = 'ai-datasource-table';
+        tableContainer.style.display = 'none';
+        tableContainer.innerHTML = _buildDataTable(source.data);
+
+        // Toggle behavior
+        btn.onclick = function() {
+            var isExpanded = btn.getAttribute('aria-expanded') === 'true';
+            if (isExpanded) {
+                tableContainer.style.display = 'none';
+                btn.setAttribute('aria-expanded', 'false');
+                btn.querySelector('.ai-ds-indicator').textContent = '\u25B6';
+                btn.style.borderColor = '';
+            } else {
+                tableContainer.style.display = 'block';
+                btn.setAttribute('aria-expanded', 'true');
+                btn.querySelector('.ai-ds-indicator').textContent = '\u25BC';
+                btn.style.borderColor = '#6366f1';
+            }
+        };
+
+        wrapper.appendChild(btn);
+        wrapper.appendChild(tableContainer);
+        tableArea.appendChild(wrapper);
+    });
+}
+
+function addAIMessage(type, content, topServices, backendFollowUps) {
     if (!aiChat) return;
     var welcome = aiChat.querySelector('.lab-welcome');
     if (welcome) welcome.remove();
@@ -2075,8 +2158,13 @@ function addAIMessage(type, content, topServices) {
         formatted = _addNavLinks(formatted);
         var questionText = aiQuestionInput && aiQuestionInput.dataset.lastQuestion ? aiQuestionInput.dataset.lastQuestion : '';
 
-        // Generate drill-down follow-up suggestions based on the QUESTION context, not just answer content
+        // Generate drill-down follow-up suggestions
         var followUps = [];
+
+        // Use backend-provided follow-ups if available, otherwise fall back to client-side logic
+        if (backendFollowUps && backendFollowUps.length > 0) {
+            followUps = backendFollowUps;
+        } else {
         var answerLower = content.toLowerCase();
         var questionLower = questionText.toLowerCase();
 
@@ -2139,6 +2227,7 @@ function addAIMessage(type, content, topServices) {
 
         // Limit to 4 most relevant follow-ups
         followUps = followUps.slice(0, 4);
+        } // end else (client-side follow-up fallback)
 
         // Generate service-based follow-up topics from the actual bill
         var serviceTopics = [];
@@ -2282,7 +2371,18 @@ async function askAI() {
         }
 
         // Show the AI answer
-        addAIMessage('answer', data.answer || 'No answer available.', data.topServices || []);
+        addAIMessage('answer', data.answer || 'No answer available.', data.topServices || [], data.followUpQuestions || []);
+
+        // Render data source buttons in the last AI message's table area
+        if (data.dataSources && data.dataSources.length > 0) {
+            var lastMsg = aiChat.lastElementChild;
+            if (lastMsg) {
+                var tableArea = lastMsg.querySelector('.ai-table-area');
+                if (tableArea) {
+                    _renderDataSourceButtons(tableArea, data.dataSources);
+                }
+            }
+        }
 
         // Inject commitment savings chart data if relevant
         var _commitCharts = _buildCommitmentChartData(data.answer || '', data.chartData);

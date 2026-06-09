@@ -8056,6 +8056,60 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
             logger.error(f"Trace serialization failed (non-fatal): {trace_err}")
             inference_trace = None
 
+        # Generate follow-up suggestions and data sources (non-fatal)
+        follow_ups = []
+        chart_data = []
+        data_sources = []
+        try:
+            from boto3.dynamodb.conditions import Key as _FKey
+            cache_table = dynamodb.Table(os.environ.get('COST_CACHE_TABLE_NAME', 'Cost_Cache_Table'))
+            _now = datetime.now()
+            _pk = f"{member_email}#{account_id}"
+            _prev_month = (_now.replace(day=1) - timedelta(days=1)).strftime('%Y-%m')
+            _curr_month = _now.strftime('%Y-%m')
+            _resp = cache_table.query(
+                KeyConditionExpression=_FKey('pk').eq(_pk) & _FKey('sk').between(
+                    f"DAILY#{_prev_month}-01", f"DAILY#{_curr_month}-{_now.day:02d}"
+                ),
+                Limit=60
+            )
+            _items = _resp.get('Items', [])
+
+            # Build account_data from cache
+            _svc_totals = {}
+            _daily = []
+            for item in _items:
+                cost = float(item.get('cost_amount', 0))
+                date = item['sk'].replace('DAILY#', '')
+                _daily.append({'date': date, 'cost': cost})
+                for svc, svc_cost in item.get('service_breakdown', {}).items():
+                    _svc_totals[svc] = _svc_totals.get(svc, 0) + float(svc_cost)
+
+            _cost_by_service = sorted(
+                [{'service': k, 'cost_usd': round(v, 2)} for k, v in _svc_totals.items()],
+                key=lambda x: x['cost_usd'], reverse=True
+            )
+            _account_data = {
+                'cost_by_service': _cost_by_service,
+                'daily_cost_trend': _daily,
+                'total_cost': sum(s['cost_usd'] for s in _cost_by_service),
+            }
+
+            follow_ups = _generate_follow_ups(_account_data, answer, question)
+        except Exception as e:
+            logger.warning(f"Follow-up generation failed (non-fatal): {e}")
+            follow_ups = []
+
+        # Build chart data and data sources
+        try:
+            if '_account_data' in dir():
+                chart_data = _build_chart_data(_account_data)
+            data_sources = _extract_data_sources(chart_data)
+        except Exception as e:
+            logger.warning(f"Data source extraction failed (non-fatal): {e}")
+            chart_data = []
+            data_sources = []
+
         result = create_response(200, {
             'answer': answer,
             'interactionId': interaction_id,
@@ -8063,6 +8117,9 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
             'results': [],
             'tipFound': tip_found,
             'agentUsed': True,
+            'followUpQuestions': follow_ups,
+            'dataSources': data_sources,
+            'chartData': chart_data,
         })
 
         # Attach trace to result for the transaction logger to pick up
@@ -8718,6 +8775,56 @@ Answer the user's question directly using the actual data above. Quote specific 
         return f'AI analysis error: {str(e)}'
 
 
+def _generate_follow_ups(account_data, answer, question):
+    """Generate 2-3 contextual follow-up questions from analyzed data.
+
+    Adaptive count:
+    - 3 questions when multi-service data (3+ services with cost > $1)
+    - 2 questions when single-service or limited data
+    - Empty array when no meaningful data context
+
+    Args:
+        account_data: Dict with keys like cost_by_service, daily_cost_trend, total_cost.
+        answer: The AI agent's response text.
+        question: The original user question.
+
+    Returns:
+        List of follow-up question strings, each <= 100 characters.
+    """
+    cost_by_service = account_data.get('cost_by_service', [])
+    significant_services = [s for s in cost_by_service if s.get('cost_usd', 0) > 1.0]
+
+    if not significant_services:
+        return []
+
+    is_rich_data = len(significant_services) >= 3
+    target_count = 3 if is_rich_data else 2
+
+    follow_ups = []
+
+    # Template 1: Top cost driver drill-down
+    top_service = significant_services[0]
+    top_name = top_service.get('service', 'Unknown')
+    follow_ups.append(f"What is driving my {top_name} costs?")
+
+    # Template 2: Comparison/trend question
+    daily_costs = account_data.get('daily_cost_trend', [])
+    if daily_costs and len(daily_costs) >= 2:
+        follow_ups.append("How does this month compare to last month?")
+    else:
+        follow_ups.append("Show me the daily cost trend for this account")
+
+    # Template 3: Optimization opportunity from second-highest service (only for rich data)
+    if is_rich_data and len(significant_services) >= 2:
+        second_service = significant_services[1]
+        second_name = second_service.get('service', 'Unknown')
+        follow_ups.append(f"How can I reduce my {second_name} spending?")
+
+    # Enforce constraints: target count and 100-char limit
+    follow_ups = [q[:100] for q in follow_ups[:target_count]]
+    return follow_ups
+
+
 def _build_chart_data(account_data):
     """Build chart data structures from gathered account data for frontend rendering."""
     charts = []
@@ -8886,6 +8993,41 @@ def _build_chart_data(account_data):
         })
 
     return charts if charts else None
+
+
+def _extract_data_sources(chart_data):
+    """Extract tabular data sources from chart data for frontend display.
+
+    Each source has:
+    - label: descriptive title matching the chart data title
+    - data: array of row dicts with column keys and values
+    """
+    sources = []
+
+    if not chart_data:
+        return sources
+
+    for chart in chart_data:
+        title = chart.get('title', '')
+        labels = chart.get('labels', [])
+        data_values = chart.get('data', [])
+
+        if not labels or not data_values:
+            continue
+
+        rows = []
+        for i, label in enumerate(labels):
+            row = {'name': label}
+            if i < len(data_values):
+                row['value'] = data_values[i]
+            # Include secondary dataset if present (e.g., month comparison)
+            if 'data2' in chart and i < len(chart['data2']):
+                row['value2'] = chart['data2'][i]
+            rows.append(row)
+
+        sources.append({'label': title, 'data': rows})
+
+    return sources
 
 
 def _search_tips(question, provider='aws'):
