@@ -598,7 +598,7 @@ class AWSConnector(CloudConnector):
 
     def get_serverless_functions(self, account_id: str, member_email: str, params: dict) -> dict:
         """
-        List Lambda functions with invocation metrics.
+        List Lambda functions with invocation metrics and estimated cost.
         """
         try:
             creds = self._assume_role(account_id, member_email)
@@ -609,11 +609,13 @@ class AWSConnector(CloudConnector):
             functions = []
             end_time = datetime.now(timezone.utc)
             start_time = end_time - timedelta(days=30)
+            total_invocations = 0
 
             for fn in resp.get('Functions', []):
                 fn_name = fn['FunctionName']
                 invocations = 0
                 errors = 0
+                avg_duration_ms = 0
 
                 try:
                     inv_resp = cw.get_metric_statistics(
@@ -627,7 +629,7 @@ class AWSConnector(CloudConnector):
                     )
                     points = inv_resp.get('Datapoints', [])
                     if points:
-                        invocations = int(points[0].get('Sum', 0))
+                        invocations = int(sum(p.get('Sum', 0) for p in points))
                 except Exception:
                     pass
 
@@ -643,10 +645,36 @@ class AWSConnector(CloudConnector):
                     )
                     points = err_resp.get('Datapoints', [])
                     if points:
-                        errors = int(points[0].get('Sum', 0))
+                        errors = int(sum(p.get('Sum', 0) for p in points))
                 except Exception:
                     pass
 
+                # Get average duration for cost estimation
+                try:
+                    dur_resp = cw.get_metric_statistics(
+                        Namespace='AWS/Lambda',
+                        MetricName='Duration',
+                        Dimensions=[{'Name': 'FunctionName', 'Value': fn_name}],
+                        StartTime=start_time,
+                        EndTime=end_time,
+                        Period=2592000,
+                        Statistics=['Average'],
+                    )
+                    points = dur_resp.get('Datapoints', [])
+                    if points:
+                        avg_duration_ms = points[0].get('Average', 0)
+                except Exception:
+                    pass
+
+                # Calculate estimated monthly cost
+                memory_gb = fn.get('MemorySize', 128) / 1024.0
+                duration_sec = avg_duration_ms / 1000.0 if avg_duration_ms else 0.1  # default 100ms
+                gb_seconds = invocations * memory_gb * duration_sec
+                compute_cost = gb_seconds * 0.0000166667
+                request_cost = invocations * 0.0000002  # $0.20 per 1M requests
+                estimated_cost = round(compute_cost + request_cost, 4)
+
+                total_invocations += invocations
                 functions.append({
                     'name': fn_name,
                     'runtime': fn.get('Runtime', 'unknown'),
@@ -654,9 +682,21 @@ class AWSConnector(CloudConnector):
                     'architecture': fn.get('Architectures', ['x86_64'])[0],
                     'invocations30d': invocations,
                     'errors30d': errors,
+                    'avgDurationMs': round(avg_duration_ms, 1),
+                    'estimatedMonthlyCost': estimated_cost,
                 })
 
-            return {'functions': functions, 'count': len(functions)}
+            # Sort by invocations descending (most active first)
+            functions.sort(key=lambda f: f['invocations30d'], reverse=True)
+
+            total_cost = sum(f['estimatedMonthlyCost'] for f in functions)
+            return {
+                'functions': functions,
+                'count': len(functions),
+                'totalInvocations30d': total_invocations,
+                'estimatedTotalCost': round(total_cost, 2),
+                'note': 'Cost estimated from CloudWatch metrics. Free tier (1M requests + 400K GB-sec) not deducted.' if total_invocations > 0 else 'All functions show 0 invocations in the last 30 days. Lambda cost is $0 (functions are idle). Consider deleting unused functions.',
+            }
         except Exception as e:
             return {'error': str(e)}
 
