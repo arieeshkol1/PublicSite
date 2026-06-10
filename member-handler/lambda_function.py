@@ -7948,162 +7948,11 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
     # Include account context and tips in the prompt so the Agent has accurate pricing
     enriched_prompt = f"[Account: {account_id}, Member: {member_email}] {question}"
 
-    # Auto-detect service-specific questions and inject serviceFilter instruction
-    # Dynamically detect service-specific questions by matching against actual service names in cache
+    # Service detection removed — the AI agent handles tool selection autonomously.
+    # Quality enforcement is done by the inline audit gate + rewrite path.
     question_lower = question.lower()
     detected_service = None
-    try:
-        from boto3.dynamodb.conditions import Key as _DetKey
-        _det_cache = dynamodb.Table(os.environ.get('COST_CACHE_TABLE_NAME', 'Cost_Cache_Table'))
-        _det_pk = f"{member_email}#{account_id}"
-        _det_now = datetime.now()
-        _det_sk = f"DAILY#{_det_now.strftime('%Y-%m')}-{max(2, _det_now.day - 1):02d}"
-        # Get one recent cache item to extract service names
-        _det_resp = _det_cache.query(
-            KeyConditionExpression=_DetKey('pk').eq(_det_pk) & _DetKey('sk').begins_with('DAILY#'),
-            ScanIndexForward=False, Limit=1
-        )
-        _det_items = _det_resp.get('Items', [])
-        if _det_items:
-            _known_services = list((_det_items[0].get('service_breakdown') or {}).keys())
-            # Sort by length descending so longer/more-specific names match first
-            # (e.g. "EC2 - Other" before "EC2")
-            _known_services.sort(key=len, reverse=True)
-            for svc_name in _known_services:
-                # Match if the service name (or a recognizable substring) appears in the question
-                svc_lower = svc_name.lower()
-                # Try exact service name match
-                if svc_lower in question_lower:
-                    detected_service = svc_name
-                    break
-                # Try common short forms: strip "Amazon ", "AWS ", " - Compute" etc.
-                short = svc_lower.replace('amazon ', '').replace('aws ', '').replace(' - compute', '')
-                if len(short) >= 3 and short in question_lower:
-                    detected_service = svc_name
-                    break
-    except Exception as _det_err:
-        logger.warning(f"Dynamic service detection failed (non-fatal): {_det_err}")
-
-    _svc_precomputed = False  # Track if we pre-computed the service answer (skip tips if so)
-    if detected_service:
-        # Detect if user is asking about individual resources (servers, instances, functions, etc.)
-        _RESOURCE_DETAIL_KEYWORDS = ['servers', 'instances', 'each server', 'each instance', 'per server',
-                                     'per instance', 'list down', 'list the', 'details for', 'functions',
-                                     'databases', 'each database', 'per database', 'buckets', 'volumes']
-        if any(kw in question_lower for kw in _RESOURCE_DETAIL_KEYWORDS):
-            # User wants per-resource breakdown — tell agent to call resource inventory tool
-            enriched_prompt += (
-                f"\n\n[PER-RESOURCE QUESTION for {detected_service}: Call the resource inventory tool (getComputeInstances, "
-                f"getDatabaseInstances, getServerlessFunctions, etc.) to list individual resources. "
-                f"For each resource, calculate estimated daily cost from its type/size and pricing. "
-                f"Also call getCostBreakdown with usageTypeBreakdown=true and serviceFilter={detected_service} "
-                f"to show which usage types generated the cost. Do NOT just show total service cost.]"
-            )
-        else:
-            # PRE-COMPUTE: Query Invoices table for usage-type breakdown (agent can't reliably call getCostBreakdown)
-            try:
-                from datetime import datetime as _svc_dt
-                from boto3.dynamodb.conditions import Key as _SvcKey
-                _svc_now = _svc_dt.now()
-                # Detect which month the user is asking about
-                _target_month = _svc_now.strftime('%Y-%m')  # default: current month
-                import re as _svc_re
-                # Check for explicit month references in question
-                _MONTH_NAMES = {'january': '01', 'february': '02', 'march': '03', 'april': '04',
-                                'may': '05', 'june': '06', 'july': '07', 'august': '08',
-                                'september': '09', 'october': '10', 'november': '11', 'december': '12',
-                                'jan': '01', 'feb': '02', 'mar': '03', 'apr': '04',
-                                'jun': '06', 'jul': '07', 'aug': '08', 'sep': '09', 'oct': '10', 'nov': '11', 'dec': '12'}
-                for mname, mnum in _MONTH_NAMES.items():
-                    if mname in question_lower:
-                        # Check for year mention, default to current year
-                        _year_match = _svc_re.search(r'20\d{2}', question)
-                        _year = _year_match.group() if _year_match else str(_svc_now.year)
-                        _target_month = f"{_year}-{mnum}"
-                        break
-                if 'last month' in question_lower or 'previous month' in question_lower:
-                    _prev = (_svc_now.replace(day=1) - timedelta(days=1))
-                    _target_month = _prev.strftime('%Y-%m')
-
-                # Query invoice cache for service record
-                invoices_tbl = dynamodb.Table(INVOICES_TABLE_NAME)
-                _svc_pk = f"{member_email}#{account_id}"
-                _svc_sk = f"{_target_month}#{detected_service}"
-                _svc_resp = invoices_tbl.get_item(Key={'pk': _svc_pk, 'sk': _svc_sk})
-                _svc_item = _svc_resp.get('Item')
-
-                # If exact match fails, try query with begins_with on month to find fuzzy service match
-                if not _svc_item:
-                    try:
-                        _q_resp = invoices_tbl.query(
-                            KeyConditionExpression=_SvcKey('pk').eq(_svc_pk) & _SvcKey('sk').begins_with(f"{_target_month}#"),
-                            Limit=50
-                        )
-                        _det_lower = detected_service.lower().replace(' - ', '-').replace(' ', '')
-                        for _qi in _q_resp.get('Items', []):
-                            _qi_svc = _qi['sk'].split('#', 1)[1] if '#' in _qi['sk'] else ''
-                            _qi_lower = _qi_svc.lower().replace(' - ', '-').replace(' ', '')
-                            if _det_lower in _qi_lower or _qi_lower in _det_lower:
-                                _svc_item = _qi
-                                break
-                            # Also try short-form matching (e.g. "ec2-other" matches "ec2 - other")
-                            _det_short = detected_service.lower().replace(' ', '').replace('-', '')
-                            _qi_short = _qi_svc.lower().replace(' ', '').replace('-', '')
-                            if _det_short in _qi_short or _qi_short in _det_short:
-                                _svc_item = _qi
-                                break
-                    except Exception:
-                        pass
-
-                if _svc_item:
-                    _svc_cost = float(_svc_item.get('cost', 0))
-                    _usage_types = _svc_item.get('usageTypes', [])
-                    if _usage_types and _svc_cost > 0:
-                        # Detect if this is a forecast question for a partial (current) month
-                        _FORECAST_KW_SVC = ['forecast', 'estimate', 'predict', 'projection', 'will be', 'expected']
-                        _is_forecast_svc = any(kw in question_lower for kw in _FORECAST_KW_SVC)
-                        _is_current_month = (_target_month == _svc_now.strftime('%Y-%m'))
-                        _scale_factor = 1.0
-                        _forecast_note = ""
-                        if _is_forecast_svc and _is_current_month and _svc_now.day >= 3:
-                            # Scale partial month data to full month (30 days)
-                            _days_elapsed = _svc_now.day - 1  # exclude day 1 (fixed charges)
-                            _scale_factor = 30.0 / _days_elapsed
-                            _svc_cost = _svc_cost * _scale_factor
-                            _forecast_note = f" (FORECAST: scaled from {_days_elapsed} days to 30 days)"
-
-                        # Build usage-type breakdown string
-                        _ut_lines = []
-                        for ut in _usage_types[:8]:  # Top 8 usage types
-                            ut_type = ut.get('type', 'Unknown')
-                            ut_cost = float(ut.get('cost', 0)) * _scale_factor
-                            ut_qty = float(ut.get('quantity', 0)) * _scale_factor
-                            ut_unit = ut.get('unit', '')
-                            ut_pct = (ut_cost / _svc_cost * 100) if _svc_cost > 0 else 0
-                            if ut_qty > 0:
-                                _ut_lines.append(f"{ut_type}: ${ut_cost:.2f} ({ut_pct:.0f}%, {ut_qty:.0f} {ut_unit})")
-                            else:
-                                _ut_lines.append(f"{ut_type}: ${ut_cost:.2f} ({ut_pct:.0f}%)")
-                        _ut_str = " | ".join(_ut_lines)
-                        _label = "FORECASTED SERVICE BREAKDOWN" if _is_forecast_svc and _is_current_month else "PRE-COMPUTED SERVICE BREAKDOWN"
-                        enriched_prompt += (
-                            f"\n\n[{_label} — ANSWER DIRECTLY from this data, NO tool calls needed: "
-                            f"{detected_service} in {_target_month}: Total=${_svc_cost:.2f}{_forecast_note}. "
-                            f"Usage type breakdown: {_ut_str}. "
-                            f"Present as a table with columns: Usage Type | Cost | % of Total | Implied Quantity. "
-                            f"Use the pricing model from your instructions (e.g. per 1000 images, per minute, per request) "
-                            f"to calculate: cost ÷ unit_price = quantity consumed. "
-                            f"Do NOT call getCostData or any other tool. This data IS the answer.]"
-                        )
-                        _svc_precomputed = True
-            except Exception as _svc_err:
-                logger.warning(f"Service pre-computation failed for {detected_service}: {_svc_err}")
-
-            if not _svc_precomputed:
-                enriched_prompt += (
-                    f"\n\n[MUST: getCostBreakdown usageTypeBreakdown=true serviceFilter={detected_service}. "
-                    f"NOT getEC2Instances. Show UsageType|Cost|%.]"
-                )
+    _svc_precomputed = False
 
     # Detect comparison/trend questions and pre-compute the answer from cache
     # Skip if service-specific breakdown was already pre-computed (e.g., "detail my Lambda last month")
@@ -8322,37 +8171,7 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
 
         answer = ''.join(answer_parts)
         if not answer:
-            # If agent returned empty but we detected a service, provide a direct answer from cache
-            if detected_service and not _svc_precomputed:
-                try:
-                    _cache_tbl = dynamodb.Table(os.environ.get('COST_CACHE_TABLE_NAME', 'Cost_Cache_Table'))
-                    from boto3.dynamodb.conditions import Key as _FallKey
-                    _fall_pk = f"{member_email}#{account_id}"
-                    _fall_resp = _cache_tbl.query(
-                        KeyConditionExpression=_FallKey('pk').eq(_fall_pk) & _FallKey('sk').begins_with('DAILY#'),
-                        ScanIndexForward=False, Limit=30
-                    )
-                    _fall_items = _fall_resp.get('Items', [])
-                    _svc_total = 0.0
-                    for _fi in _fall_items:
-                        _sb = _fi.get('service_breakdown') or {}
-                        for _sn, _sc in _sb.items():
-                            if detected_service.lower() in _sn.lower():
-                                _svc_total += float(_sc)
-                    if _svc_total > 0:
-                        answer = (
-                            f"Your '{detected_service}' cost over the last 30 days is ${_svc_total:.2f}. "
-                            f"This category includes sub-components like EBS volumes, data transfer, snapshots, "
-                            f"CPU credits, and NAT gateway hours. To see the detailed breakdown by usage type, "
-                            f"ask: 'break down {detected_service} by usage type'."
-                        )
-                        _svc_precomputed = True
-                        logger.info(f"Agent empty response — used cache fallback for {detected_service}: ${_svc_total:.2f}")
-                except Exception as _fall_err:
-                    logger.warning(f"Cache fallback for empty agent response failed: {_fall_err}")
-
-            if not answer or answer == '':
-                answer = 'The analysis is taking longer than expected. This can happen with complex queries or during high load. Please try again in a moment.'
+            answer = 'The analysis is taking longer than expected. This can happen with complex queries or during high load. Please try again in a moment.'
 
         # ═══════════════════════════════════════════════════════════════════
         # INLINE AUDIT QUALITY GATE — Score response before returning to user
@@ -8364,7 +8183,7 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
 
         # Skip gate for pre-computed answers (already accurate) or if disabled
         _skip_gate = not _gate_enabled or _svc_precomputed or is_forecast_question
-        if not _skip_gate and answer and not answer.startswith('The agent did not return'):
+        if not _skip_gate and answer and not answer.startswith('The analysis is taking'):
             try:
                 _audit_result = _inline_audit_score(question, answer)
                 inline_audit_score = _audit_result.get('score', 100)
