@@ -7691,6 +7691,43 @@ def _inline_audit_score(question, answer):
     Returns: {"score": int, "can_improve": bool, "improvement": str, "guiding_questions": list}
     On any failure, returns {"score": 100} (graceful pass-through).
     """
+    # ── CODE-LEVEL PRE-CHECKS (instant, no LLM needed) ──
+    # These catch obvious bad patterns that the LLM might miss
+    _q_lower = question.lower()
+    _a_lower = answer.lower()
+
+    # Pattern: User asks "what do I pay for" but response is a generic pricing catalog
+    _cost_question = any(kw in _q_lower for kw in ['what do i pay', 'how much', 'break down', 'breakdown', 'cost of', 'my cost', 'my spend'])
+    if _cost_question:
+        # Check if response has pricing tier language but no account-specific total
+        _has_generic_tiers = any(phrase in _a_lower for phrase in [
+            'per 1000 images', 'per minute for', 'per api call for', 'per gb',
+            'images processed per month', 'streaming calls', 'non free tier',
+            'per 1,000', '0-500k', '500k-3m', '5m-30m', '1m-5m',
+        ])
+        # Check if response has the user's actual spend (a specific total like "$X.XX for")
+        import re as _pre_re
+        _has_account_total = bool(_pre_re.search(r'your total[^$]*\$[\d,]+', _a_lower)) or \
+                             bool(_pre_re.search(r'total[^$]*\$[\d,]+\.\d{2}', _a_lower))
+        if _has_generic_tiers and not _has_account_total:
+            logger.info("Inline audit: CODE-LEVEL REJECT — generic pricing catalog instead of account spend")
+            return {
+                'score': 40,
+                'can_improve': True,
+                'improvement': 'Response shows generic pricing tiers instead of the user actual spend. Must call getCostBreakdown first to get the account total, then explain what generates that cost.',
+                'guiding_questions': []
+            }
+
+    # Pattern: Response talks about Cost Explorer API when user asked about a different service
+    if 'ec2' in _q_lower and 'cost explorer api request' in _a_lower and '$0.01 per cost explorer' in _a_lower:
+        logger.info("Inline audit: CODE-LEVEL REJECT — confused EC2-Other with Cost Explorer")
+        return {
+            'score': 30,
+            'can_improve': True,
+            'improvement': 'Response incorrectly explains EC2 costs as Cost Explorer API requests. EC2-Other includes EBS, data transfer, snapshots — NOT Cost Explorer. Must call getCostBreakdown with usageTypeBreakdown=true.',
+            'guiding_questions': []
+        }
+
     try:
         bedrock_rt = boto3.client(
             'bedrock-runtime',
