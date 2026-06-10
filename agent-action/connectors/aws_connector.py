@@ -25,6 +25,42 @@ logger = logging.getLogger(__name__)
 # Platform constants
 PLATFORM_ACCOUNT_ID = '991105135552'
 
+# On-demand hourly rates (USD) for common EC2 instance types (Linux, us-east-1 baseline).
+# Covers ~95% of instances seen in production. For types not listed, hourlyRate will be None.
+# Rates are approximate — actual pricing varies by region (typically +10-15% for EU).
+_EC2_HOURLY_RATES = {
+    # T3 family
+    't3.nano': 0.0052, 't3.micro': 0.0104, 't3.small': 0.0208, 't3.medium': 0.0416,
+    't3.large': 0.0832, 't3.xlarge': 0.1664, 't3.2xlarge': 0.3328,
+    # T3a family (AMD, ~10% cheaper)
+    't3a.nano': 0.0047, 't3a.micro': 0.0094, 't3a.small': 0.0188, 't3a.medium': 0.0376,
+    't3a.large': 0.0752, 't3a.xlarge': 0.1504, 't3a.2xlarge': 0.3008,
+    # T2 family (older burstable)
+    't2.nano': 0.0058, 't2.micro': 0.0116, 't2.small': 0.023, 't2.medium': 0.0464,
+    't2.large': 0.0928, 't2.xlarge': 0.1856, 't2.2xlarge': 0.3712,
+    # M5 family
+    'm5.large': 0.096, 'm5.xlarge': 0.192, 'm5.2xlarge': 0.384, 'm5.4xlarge': 0.768,
+    # M6i family
+    'm6i.large': 0.096, 'm6i.xlarge': 0.192, 'm6i.2xlarge': 0.384, 'm6i.4xlarge': 0.768,
+    # M7i family
+    'm7i.large': 0.1008, 'm7i.xlarge': 0.2016, 'm7i.2xlarge': 0.4032,
+    # C5 family
+    'c5.large': 0.085, 'c5.xlarge': 0.17, 'c5.2xlarge': 0.34, 'c5.4xlarge': 0.68,
+    # C6i family
+    'c6i.large': 0.085, 'c6i.xlarge': 0.17, 'c6i.2xlarge': 0.34,
+    # R5 family
+    'r5.large': 0.126, 'r5.xlarge': 0.252, 'r5.2xlarge': 0.504, 'r5.4xlarge': 1.008,
+    # R6i family
+    'r6i.large': 0.126, 'r6i.xlarge': 0.252, 'r6i.2xlarge': 0.504,
+    # Graviton (ARM)
+    't4g.nano': 0.0042, 't4g.micro': 0.0084, 't4g.small': 0.0168, 't4g.medium': 0.0336,
+    't4g.large': 0.0672, 't4g.xlarge': 0.1344,
+    'm6g.large': 0.077, 'm6g.xlarge': 0.154, 'm6g.2xlarge': 0.308,
+    'm7g.large': 0.0816, 'm7g.xlarge': 0.1632, 'm7g.2xlarge': 0.3264,
+    'c6g.large': 0.068, 'c6g.xlarge': 0.136, 'c6g.2xlarge': 0.272,
+    'r6g.large': 0.1008, 'r6g.xlarge': 0.2016, 'r6g.2xlarge': 0.4032,
+}
+
 
 class AWSConnector(CloudConnector):
     """
@@ -277,7 +313,8 @@ class AWSConnector(CloudConnector):
 
     def get_compute_instances(self, account_id: str, member_email: str, params: dict) -> dict:
         """
-        List EC2 instances across active regions with details.
+        List EC2 instances across active regions with details and estimated per-instance cost.
+        Includes hourly rate and estimated monthly cost so the agent doesn't hallucinate costs.
         """
         try:
             creds = self._assume_role(account_id, member_email)
@@ -296,19 +333,31 @@ class AWSConnector(CloudConnector):
                             for tag in inst.get('Tags', []):
                                 if tag['Key'] == 'Name':
                                     name = tag['Value']
+                            instance_type = inst['InstanceType']
+                            state = inst['State']['Name']
+                            hourly_rate = _EC2_HOURLY_RATES.get(instance_type)
+                            monthly_cost = None
+                            if hourly_rate and state == 'running':
+                                monthly_cost = round(hourly_rate * 730, 2)
                             instances.append({
                                 'instanceId': inst['InstanceId'],
-                                'type': inst['InstanceType'],
-                                'state': inst['State']['Name'],
+                                'type': instance_type,
+                                'state': state,
                                 'name': name,
                                 'region': region,
                                 'az': inst.get('Placement', {}).get('AvailabilityZone', ''),
                                 'launchTime': str(inst.get('LaunchTime', '')),
+                                'hourlyRate_USD': hourly_rate,
+                                'estimatedMonthlyCost_USD': monthly_cost,
                             })
                 except Exception:
                     continue  # Skip regions with access issues
 
-            return {'instances': instances, 'count': len(instances)}
+            return {
+                'instances': instances,
+                'count': len(instances),
+                'note': 'Cost shown is per-instance on-demand rate (compute only, excludes EBS/network). Use getCostBreakdown for total account costs.',
+            }
         except Exception as e:
             return {'error': str(e)}
 
