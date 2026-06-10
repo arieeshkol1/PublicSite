@@ -8082,11 +8082,16 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
                         service_breakdown_str = " | Service forecast: " + ", ".join(svc_forecasts[:10])
 
                 enriched_prompt += (
-                    f"\n\n[PRE-COMPUTED FORECAST — ANSWER ONLY THIS: Days used: {days_str}. Avg=${avg_daily:.2f}/day. "
-                    f"Forecast=${avg_daily:.2f}×30/0.73=${forecast:.0f}/mo (includes 27% for Tax+Support)."
-                    f"{service_breakdown_str} "
-                    f"Report THESE numbers as the estimate. Do NOT add savings recommendations — only answer the forecast question. "
-                    f"Do NOT invent or guess service amounts — use ONLY the breakdown provided above.]"
+                    f"\n\n[PRE-COMPUTED FORECAST — Present this EXACTLY as structured below:\n"
+                    f"1. State: 'The forecasted bill for {current_month} is **${forecast:,.0f}**'\n"
+                    f"2. Show calculation table:\n"
+                    f"   | Date | Daily Cost |\n"
+                    f"   {days_str}\n"
+                    f"   Average: ${avg_daily:.2f}/day\n"
+                    f"   Formula: ${avg_daily:.2f} × 30 days ÷ 0.73 (27% Tax+Support) = **${forecast:,.0f}**\n"
+                    f"{service_breakdown_str}"
+                    f"3. Do NOT call any tools. Do NOT add savings tips. Do NOT guess services.\n"
+                    f"ONLY present the forecast with the math shown above.]"
                 )
         except Exception as e:
             logger.warning(f"Forecast pre-computation failed: {e}")
