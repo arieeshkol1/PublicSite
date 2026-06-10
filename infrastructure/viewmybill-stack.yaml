@@ -1301,6 +1301,8 @@ Resources:
           SES_REGION: 'us-east-1'
           CREDENTIAL_KMS_KEY_ARN: !GetAtt CredentialEncryptionKey.Arn
           SUPPORTED_PROVIDERS: 'aws,azure,gcp,openai'
+          AUDIT_QUALITY_THRESHOLD: '70'
+          AUDIT_QUALITY_GATE_ENABLED: 'true'
       Tags:
         - Key: Project
           Value: ViewMyBill

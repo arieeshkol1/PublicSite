@@ -2302,6 +2302,18 @@ function addAIMessage(type, content, topServices, backendFollowUps) {
         // Hidden per feedback: keep chat cleaner by not showing commands
         div.style.display = 'none';
         div.innerHTML = '';
+    } else if (type === 'clarification') {
+        // Guiding questions UI for needsClarification responses
+        var clarifyHtml = '<div class="ai-clarification-box">';
+        clarifyHtml += '<div class="ai-clarification-header"><span class="ai-clarification-icon">❓</span><span class="ai-clarification-text">I need a bit more detail to give you an accurate answer.</span></div>';
+        clarifyHtml += '<div class="ai-clarification-questions">';
+        if (Array.isArray(content)) {
+            content.forEach(function(q) {
+                clarifyHtml += '<button class="ai-clarification-btn" data-question="' + ea(q) + '">' + esc(q) + '</button>';
+            });
+        }
+        clarifyHtml += '</div></div>';
+        div.innerHTML = clarifyHtml;
     } else if (type === 'thinking') {
         div.innerHTML = '<div class="lab-msg-info" style="color:#a78bfa;"><img src="../smallninja2.png" alt="" style="height:32px;vertical-align:middle;margin-right:4px;"> ' + esc(content) + '</div>';
         div.id = 'ai-thinking';
@@ -2370,6 +2382,10 @@ async function askAI() {
             addAIMessage('commands', data.commands);
         }
 
+        // Handle needsClarification response — show guiding questions instead of answer
+        if (data.needsClarification === true && data.guidingQuestions && data.guidingQuestions.length > 0) {
+            addAIMessage('clarification', data.guidingQuestions);
+        } else {
         // Show the AI answer
         addAIMessage('answer', data.answer || 'No answer available.', data.topServices || [], data.followUpQuestions || []);
 
@@ -2527,6 +2543,7 @@ async function askAI() {
             var tipNote = $('ai-thinking');
             if (tipNote) tipNote.id = '';
         }
+        } // end else (normal answer flow, not clarification)
     } catch (err) {
         var thinking2 = $('ai-thinking');
         if (thinking2) thinking2.remove();
@@ -3014,6 +3031,16 @@ if (aiChat) aiChat.onclick = function(e) {
         var followUpQ = followUpBtn.getAttribute('data-question');
         if (followUpQ && aiQuestionInput) {
             aiQuestionInput.value = followUpQ;
+            askAI();
+        }
+        return;
+    }
+    // Handle clarification guiding question buttons
+    var clarifyBtn = e.target.closest('.ai-clarification-btn');
+    if (clarifyBtn) {
+        var clarifyQ = clarifyBtn.getAttribute('data-question');
+        if (clarifyQ && aiQuestionInput) {
+            aiQuestionInput.value = clarifyQ;
             askAI();
         }
         return;

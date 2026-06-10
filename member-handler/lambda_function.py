@@ -21,6 +21,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 import boto3
+from botocore.config import Config as BotoConfig
 from botocore.exceptions import ClientError
 import jwt
 import bcrypt
@@ -7691,26 +7692,38 @@ def _inline_audit_score(question, answer):
     On any failure, returns {"score": 100} (graceful pass-through).
     """
     try:
-        bedrock_rt = boto3.client('bedrock-runtime', region_name='us-east-1')
+        bedrock_rt = boto3.client(
+            'bedrock-runtime',
+            region_name='us-east-1',
+            config=BotoConfig(read_timeout=5, connect_timeout=2, retries={'max_attempts': 0})
+        )
 
-        # Compact scoring prompt (under 2000 chars total)
+        # Compact scoring prompt — condensed 14-rule audit criteria (under 2000 chars)
         _q_truncated = question[:300]
         _a_truncated = answer[:800]
         scoring_prompt = (
-            f'Score this AI response 0-100.\n'
-            f'Question: "{_q_truncated}"\n'
-            f'Response: "{_a_truncated}"\n\n'
-            f'Rules:\n'
-            f'- 80+: directly answers with specific data/numbers\n'
-            f'- 50-79: partially answers or is vague\n'
-            f'- <50: does not answer, shows error, or is completely wrong\n'
-            f'- If response says "account not connected" or shows an error, score <40\n'
-            f'- If response lists real services/resources with $ amounts, score 80+\n'
-            f'- If all values are $0 but question asked to list resources, score 75+ (truthful zero-activity)\n\n'
+            f'You are a STRICT audit evaluator. Score this AI response 0-100.\n'
+            f'QUESTION: "{_q_truncated}"\n'
+            f'RESPONSE: "{_a_truncated}"\n\n'
+            f'SCORING RULES (apply ALL):\n'
+            f'1. Does RESPONSE actually answer the QUESTION? If vague/generic/unrelated, score BELOW 50.\n'
+            f'2. If response contradicts itself or mixes up services, major accuracy failure — score <40.\n'
+            f'3. Score 80+ = accurate, complete, directly addresses question with specific data.\n'
+            f'4. Score 50-79 = partially answered or has notable issues.\n'
+            f'5. Score <50 = question NOT answered, response is misleading, or shows error.\n'
+            f'6. LIST/SCAN endpoints: empty request means "return all". If data returned, score 85+.\n'
+            f'7. Successful data (200 with real data): focus on data quality/completeness.\n'
+            f'8. PRE-COMPUTED ANSWERS: Specific $ amounts, day-by-day tables, real service names — score on whether it answers the question. Don\'t penalize for no tools.\n'
+            f'9. COMPARISONS: Formatted table with dates, totals, difference % — score 80+.\n'
+            f'10. FORECAST+SERVICE BREAKDOWN: Real service names with $ that sum to total — score 80+.\n'
+            f'11. USAGE-TYPE BREAKDOWNS: Sub-categories within a service (EBS, data transfer, etc.) — score 80+.\n'
+            f'12. FORECAST: Specific $ with visible calculation (avg*days+tax) — score 80+.\n'
+            f'13. ZERO-ACTIVITY: All resources with $0/zero activity IS correct if data was fetched. Score 75+.\n\n'
             f'Return ONLY valid JSON:\n'
             f'{{"score": N, "can_improve": true/false, "improvement": "brief reason", "guiding_questions": ["q1", "q2"]}}\n'
-            f'- can_improve=true: data exists but was poorly presented (rewrite would fix it)\n'
-            f'- can_improve=false: question is ambiguous or system cannot answer (ask user to clarify)'
+            f'- can_improve=true: data exists but poorly presented (rewrite would fix)\n'
+            f'- can_improve=false: question is ambiguous or system lacks data to answer\n'
+            f'- guiding_questions: 2-3 clarifying questions (only when can_improve=false)'
         )
 
         request_body = {
@@ -7745,6 +7758,8 @@ def _inline_audit_score(question, answer):
         result.setdefault('can_improve', False)
         result.setdefault('improvement', '')
         result.setdefault('guiding_questions', [])
+
+        logger.info(f"Inline audit score: {result['score']} | can_improve={result['can_improve']} | improvement={result.get('improvement', '')}")
         return result
 
     except Exception as e:
