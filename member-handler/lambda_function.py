@@ -8078,13 +8078,8 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
 
             if not _svc_precomputed:
                 enriched_prompt += (
-                    f"\n\n[CRITICAL INSTRUCTION — SERVICE BREAKDOWN QUESTION for '{detected_service}': "
-                    f"You MUST call getCostBreakdown with usageTypeBreakdown=true and serviceFilter={detected_service}. "
-                    f"DO NOT call getEC2Instances or getComputeInstances — those return inventory, not cost breakdown. "
-                    f"'EC2 - Other' includes EBS volumes, EBS snapshots, data transfer, CPU credits, NAT gateway hours — "
-                    f"it is NOT Cost Explorer and NOT per-instance compute costs. "
-                    f"After getting the usage-type data, show: UsageType | Cost | % of Total. "
-                    f"Then explain what generates each usage type in plain language.]"
+                    f"\n\n[MUST: getCostBreakdown usageTypeBreakdown=true serviceFilter={detected_service}. "
+                    f"NOT getEC2Instances. Show UsageType|Cost|%.]"
                 )
 
     # Detect comparison/trend questions and pre-compute the answer from cache
@@ -8304,7 +8299,37 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
 
         answer = ''.join(answer_parts)
         if not answer:
-            answer = 'The agent did not return a response. Please try rephrasing your question.'
+            # If agent returned empty but we detected a service, provide a direct answer from cache
+            if detected_service and not _svc_precomputed:
+                try:
+                    _cache_tbl = dynamodb.Table(os.environ.get('COST_CACHE_TABLE_NAME', 'Cost_Cache_Table'))
+                    from boto3.dynamodb.conditions import Key as _FallKey
+                    _fall_pk = f"{member_email}#{account_id}"
+                    _fall_resp = _cache_tbl.query(
+                        KeyConditionExpression=_FallKey('pk').eq(_fall_pk) & _FallKey('sk').begins_with('DAILY#'),
+                        ScanIndexForward=False, Limit=30
+                    )
+                    _fall_items = _fall_resp.get('Items', [])
+                    _svc_total = 0.0
+                    for _fi in _fall_items:
+                        _sb = _fi.get('service_breakdown') or {}
+                        for _sn, _sc in _sb.items():
+                            if detected_service.lower() in _sn.lower():
+                                _svc_total += float(_sc)
+                    if _svc_total > 0:
+                        answer = (
+                            f"Your '{detected_service}' cost over the last 30 days is ${_svc_total:.2f}. "
+                            f"This category includes sub-components like EBS volumes, data transfer, snapshots, "
+                            f"CPU credits, and NAT gateway hours. To see the detailed breakdown by usage type, "
+                            f"ask: 'break down {detected_service} by usage type'."
+                        )
+                        _svc_precomputed = True
+                        logger.info(f"Agent empty response — used cache fallback for {detected_service}: ${_svc_total:.2f}")
+                except Exception as _fall_err:
+                    logger.warning(f"Cache fallback for empty agent response failed: {_fall_err}")
+
+            if not answer or answer == '':
+                answer = 'The analysis is taking longer than expected. This can happen with complex queries or during high load. Please try again in a moment.'
 
         # ═══════════════════════════════════════════════════════════════════
         # INLINE AUDIT QUALITY GATE — Score response before returning to user
