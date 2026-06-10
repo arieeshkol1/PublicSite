@@ -7683,6 +7683,75 @@ def handle_ai_feedback(event):
 # AI Agent Query Handler
 # ============================================================
 
+def _inline_audit_score(question, answer):
+    """Inline quality gate: score a response before returning to user.
+
+    Uses Amazon Nova Lite for fast scoring (~1-3s).
+    Returns: {"score": int, "can_improve": bool, "improvement": str, "guiding_questions": list}
+    On any failure, returns {"score": 100} (graceful pass-through).
+    """
+    try:
+        bedrock_rt = boto3.client('bedrock-runtime', region_name='us-east-1')
+
+        # Compact scoring prompt (under 2000 chars total)
+        _q_truncated = question[:300]
+        _a_truncated = answer[:800]
+        scoring_prompt = (
+            f'Score this AI response 0-100.\n'
+            f'Question: "{_q_truncated}"\n'
+            f'Response: "{_a_truncated}"\n\n'
+            f'Rules:\n'
+            f'- 80+: directly answers with specific data/numbers\n'
+            f'- 50-79: partially answers or is vague\n'
+            f'- <50: does not answer, shows error, or is completely wrong\n'
+            f'- If response says "account not connected" or shows an error, score <40\n'
+            f'- If response lists real services/resources with $ amounts, score 80+\n'
+            f'- If all values are $0 but question asked to list resources, score 75+ (truthful zero-activity)\n\n'
+            f'Return ONLY valid JSON:\n'
+            f'{{"score": N, "can_improve": true/false, "improvement": "brief reason", "guiding_questions": ["q1", "q2"]}}\n'
+            f'- can_improve=true: data exists but was poorly presented (rewrite would fix it)\n'
+            f'- can_improve=false: question is ambiguous or system cannot answer (ask user to clarify)'
+        )
+
+        request_body = {
+            'messages': [{'role': 'user', 'content': [{'text': scoring_prompt}]}],
+            'inferenceConfig': {'maxTokens': 256}
+        }
+
+        resp = bedrock_rt.invoke_model(
+            modelId='us.amazon.nova-lite-v1:0',
+            contentType='application/json',
+            accept='application/json',
+            body=json.dumps(request_body)
+        )
+
+        resp_body = json.loads(resp['body'].read())
+        content_text = resp_body['output']['message']['content'][0]['text']
+
+        # Parse JSON from response (handle markdown wrapping)
+        json_str = content_text
+        if '```json' in content_text:
+            json_str = content_text.split('```json')[1].split('```')[0].strip()
+        elif '```' in content_text:
+            json_str = content_text.split('```')[1].split('```')[0].strip()
+        elif '{' in content_text:
+            start = content_text.index('{')
+            end = content_text.rindex('}') + 1
+            json_str = content_text[start:end]
+
+        result = json.loads(json_str)
+        # Validate and clamp
+        result['score'] = max(0, min(100, int(result.get('score', 100))))
+        result.setdefault('can_improve', False)
+        result.setdefault('improvement', '')
+        result.setdefault('guiding_questions', [])
+        return result
+
+    except Exception as e:
+        logger.warning(f"Inline audit scoring failed (pass-through): {e}")
+        return {'score': 100, 'can_improve': False, 'improvement': '', 'guiding_questions': []}
+
+
 @transaction_log('member-handler')
 def handle_ai_query(event):
     """Handle natural language questions â€” uses Bedrock Agent or falls back to direct model API."""
@@ -8175,6 +8244,81 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
         if not answer:
             answer = 'The agent did not return a response. Please try rephrasing your question.'
 
+        # ═══════════════════════════════════════════════════════════════════
+        # INLINE AUDIT QUALITY GATE — Score response before returning to user
+        # ═══════════════════════════════════════════════════════════════════
+        _gate_enabled = os.environ.get('AUDIT_QUALITY_GATE_ENABLED', 'true').lower() == 'true'
+        _gate_threshold = int(os.environ.get('AUDIT_QUALITY_THRESHOLD', '70'))
+        inline_audit_score = None
+        inline_audit_action = 'pass'
+
+        # Skip gate for pre-computed answers (already accurate) or if disabled
+        _skip_gate = not _gate_enabled or _svc_precomputed or is_forecast_question
+        if not _skip_gate and answer and not answer.startswith('The agent did not return'):
+            try:
+                _audit_result = _inline_audit_score(question, answer)
+                inline_audit_score = _audit_result.get('score', 100)
+                logger.info(f"Inline audit: score={inline_audit_score}, can_improve={_audit_result.get('can_improve')}")
+
+                if inline_audit_score < _gate_threshold:
+                    if _audit_result.get('can_improve'):
+                        # Option 2: Re-invoke with improvement instructions (single retry)
+                        inline_audit_action = 'rewrite'
+                        logger.info(f"Quality gate: rewriting (score={inline_audit_score}, improvement={_audit_result.get('improvement', '')[:100]})")
+                        _retry_prompt = enriched_prompt + (
+                            f"\n\n[QUALITY IMPROVEMENT: Your previous answer scored {inline_audit_score}/100. "
+                            f"Issue: {_audit_result.get('improvement', 'Answer was vague or incomplete')}. "
+                            f"Rewrite your answer to directly address the user's question with specific data.]"
+                        )
+                        # Cap retry prompt
+                        if len(_retry_prompt) > 3500:
+                            _retry_prompt = _retry_prompt[:3500]
+                        try:
+                            _retry_resp = agent_runtime.invoke_agent(
+                                agentId=BEDROCK_AGENT_ID,
+                                agentAliasId=BEDROCK_AGENT_ALIAS_ID,
+                                sessionId=re.sub(r'[^0-9a-zA-Z._:-]', '_', f'{member_email}-{account_id}-{interaction_id}-retry')[:100],
+                                inputText=_retry_prompt,
+                                enableTrace=False,
+                            )
+                            _retry_parts = []
+                            for _evt in _retry_resp.get('completion', []):
+                                if 'chunk' in _evt and 'bytes' in _evt['chunk']:
+                                    _retry_parts.append(_evt['chunk']['bytes'].decode('utf-8'))
+                            _retry_answer = ''.join(_retry_parts)
+                            if _retry_answer and len(_retry_answer) > 20:
+                                answer = _retry_answer
+                        except Exception as _retry_err:
+                            logger.warning(f"Quality gate retry failed (using original): {_retry_err}")
+                    else:
+                        # Option 3: Ask guiding questions
+                        inline_audit_action = 'clarify'
+                        _guiding_qs = _audit_result.get('guiding_questions', [])
+                        if not _guiding_qs:
+                            _guiding_qs = ['Could you specify which account you want to analyze?',
+                                           'What specific service or resource are you asking about?']
+                        logger.info(f"Quality gate: clarification needed (score={inline_audit_score})")
+                        # Return clarification response immediately
+                        return create_response(200, {
+                            'answer': 'I need a bit more detail to give you an accurate answer.',
+                            'needsClarification': True,
+                            'guidingQuestions': _guiding_qs[:3],
+                            'interactionId': interaction_id,
+                            'commands': [],
+                            'results': [],
+                            'tipFound': False,
+                            'agentUsed': True,
+                            'inlineAuditScore': inline_audit_score,
+                            'inlineAuditAction': inline_audit_action,
+                            'followUpQuestions': [],
+                            'dataSources': [],
+                            'chartData': [],
+                        })
+            except Exception as _gate_err:
+                logger.warning(f"Inline audit gate failed (passing through): {_gate_err}")
+                inline_audit_score = None
+                inline_audit_action = 'error'
+
         # Build structured trace — errors here are non-fatal
         inference_trace = None
         try:
@@ -8252,6 +8396,8 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
             'followUpQuestions': follow_ups,
             'dataSources': data_sources,
             'chartData': chart_data,
+            'inlineAuditScore': inline_audit_score,
+            'inlineAuditAction': inline_audit_action,
         })
 
         # Attach trace to result for the transaction logger to pick up
