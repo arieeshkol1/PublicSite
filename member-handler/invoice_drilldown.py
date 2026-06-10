@@ -675,6 +675,10 @@ def fetch_invoice_list(member_email, account_id):
     Falls back to Cost Explorer monthly aggregation if the Invoicing API
     is unavailable or returns AccessDenied.
 
+    Always supplements with Cost Explorer data for any recent months
+    that are missing from the Invoicing API response (AWS can take 7-10
+    days to generate the previous month's invoice).
+
     Args:
         member_email: Authenticated member's email address.
         account_id: Target AWS account ID (12 digits).
@@ -725,6 +729,33 @@ def fetch_invoice_list(member_email, account_id):
                 'period': period,
                 'source': 'billing_api',
             })
+
+        # Supplement missing recent months from Cost Explorer
+        # AWS Invoicing API can take 7-10 days to generate previous month's invoice
+        existing_periods = {r['period'] for r in records if r.get('period')}
+        now = datetime.now(timezone.utc)
+
+        # Check if previous month is missing (e.g., May 2026 when today is June 8)
+        prev_month_date = datetime(now.year, now.month, 1, tzinfo=timezone.utc) - timedelta(days=1)
+        prev_period = prev_month_date.strftime('%Y-%m')
+
+        if prev_period not in existing_periods:
+            logger.info(
+                f"Invoicing API missing {prev_period} for {account_id}, "
+                f"supplementing from Cost Explorer"
+            )
+            try:
+                ce_records = _fetch_invoices_from_cost_explorer(creds, account_id)
+                # Only add months that are missing from the Invoicing API response
+                for ce_record in ce_records:
+                    if ce_record.get('period') not in existing_periods:
+                        ce_record['paymentStatus'] = 'pending'  # Mark as pending since not yet invoiced
+                        records.append(ce_record)
+                        existing_periods.add(ce_record.get('period'))
+            except Exception as ce_err:
+                logger.warning(
+                    f"Cost Explorer supplement failed for {account_id}: {ce_err}"
+                )
 
         return records
 
