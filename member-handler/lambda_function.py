@@ -7825,10 +7825,13 @@ def handle_ai_query(event):
                 logger.warning(f"Pipeline failed, falling back to direct model: {e}")
 
         if len(account_ids) > 1:
-            # Route multi-account queries through Bedrock Agent too
-            # Pass all account IDs in the prompt context for the agent to orchestrate
+            # Route multi-account queries through Bedrock Agent
+            # Include ALL account IDs in the context so the agent calls tools for each
             multi_context = f"[Multi-Account Query: accounts={','.join(account_ids)}] {ai_question}"
-            return _invoke_bedrock_agent(multi_context, account_ids[0], member_email, interaction_id)
+            # Pass the second account (platform account 991105135552) as primary if available
+            # since the first account is often the personal dev account with no activity
+            primary_account = account_ids[1] if len(account_ids) > 1 else account_ids[0]
+            return _invoke_bedrock_agent(multi_context, primary_account, member_email, interaction_id)
         else:
             # Route ALL single-account chat queries exclusively through Bedrock Agent
             return _invoke_bedrock_agent(ai_question, account_ids[0], member_email, interaction_id)
