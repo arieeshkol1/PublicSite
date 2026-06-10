@@ -7957,11 +7957,12 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
                 )
 
     # Detect comparison/trend questions and pre-compute the answer from cache
+    # Skip if service-specific breakdown was already pre-computed (e.g., "detail my Lambda last month")
     _COMPARISON_KEYWORDS = ['compare', 'comparison', 'instead of', 'versus', 'vs', 'difference between',
                             'last month', 'previous month', 'month over month', 'same dates', 'same period',
                             'parallel days', 'parallel']
     is_comparison_question = any(kw in question_lower for kw in _COMPARISON_KEYWORDS)
-    if is_comparison_question:
+    if is_comparison_question and not _svc_precomputed:
         # Pre-compute the comparison from cache (agent makes formatting errors with raw data)
         try:
             from datetime import datetime as _dt
@@ -19837,6 +19838,12 @@ def handle_refresh_invoices(event):
         logger.error(f"Unexpected error during invoice refresh: {e}")
         return create_error_response(500, 'ServerError', 'Invoice refresh failed')
 
+    # --- Also refresh the daily cost cache (Cost_Cache_Table) ---
+    try:
+        _refresh_cost_cache_for_account(member_email, account_id)
+    except Exception as e:
+        logger.warning(f"Cost cache refresh failed during manual refresh (non-fatal): {e}")
+
     # --- Update rate limit record ---
     try:
         invoices_table.put_item(Item={
@@ -19855,6 +19862,72 @@ def handle_refresh_invoices(event):
         'months': result.get('synced_months', []),
         'recordCount': result.get('record_count', 0),
     })
+
+
+def _refresh_cost_cache_for_account(member_email, account_id):
+    """Refresh Cost_Cache_Table with last 7 days of daily costs for one account.
+
+    Called during manual invoice refresh to also update the daily cost cache
+    that the AI chat and dashboard read from.
+    """
+    import hashlib as _hlib
+    role_arn = f'arn:aws:iam::{account_id}:role/SlashMyBill-{account_id}'
+    external_id = _hlib.sha256(member_email.encode('utf-8')).hexdigest()
+
+    sts_client = boto3.client('sts')
+    assume_resp = sts_client.assume_role(
+        RoleArn=role_arn, RoleSessionName='CacheRefresh', ExternalId=external_id
+    )
+    creds = assume_resp['Credentials']
+
+    ce = boto3.client(
+        'ce',
+        aws_access_key_id=creds['AccessKeyId'],
+        aws_secret_access_key=creds['SecretAccessKey'],
+        aws_session_token=creds['SessionToken'],
+        region_name='us-east-1',
+    )
+
+    now = datetime.now(timezone.utc)
+    end_date = now.strftime('%Y-%m-%d')
+    start_date = (now - timedelta(days=7)).strftime('%Y-%m-%d')
+
+    resp = ce.get_cost_and_usage(
+        TimePeriod={'Start': start_date, 'End': end_date},
+        Granularity='DAILY',
+        Metrics=['UnblendedCost'],
+        GroupBy=[{'Type': 'DIMENSION', 'Key': 'SERVICE'}],
+    )
+
+    cache_table = dynamodb.Table(COST_CACHE_TABLE_NAME)
+    pk = f"{member_email}#{account_id}"
+    ttl_epoch = int(time.time()) + (90 * 24 * 60 * 60)
+
+    with cache_table.batch_writer() as batch:
+        for period in resp.get('ResultsByTime', []):
+            date_str = period['TimePeriod']['Start']
+            service_breakdown = {}
+            total_cost = 0.0
+
+            for group in period.get('Groups', []):
+                service = group['Keys'][0]
+                cost = float(group['Metrics']['UnblendedCost']['Amount'])
+                if cost > 0.001:
+                    service_breakdown[service] = Decimal(str(round(cost, 4)))
+                    total_cost += cost
+
+            if total_cost > 0.001:
+                batch.put_item(Item={
+                    'pk': pk,
+                    'sk': f'DAILY#{date_str}',
+                    'cost_amount': Decimal(str(round(total_cost, 4))),
+                    'currency': 'USD',
+                    'service_breakdown': service_breakdown,
+                    'refreshed_at': now.isoformat(),
+                    'ttl': ttl_epoch,
+                })
+
+    logger.info(f"Cost cache refreshed for {account_id}: {start_date} to {end_date}")
 
 
 @transaction_log('member-handler')
