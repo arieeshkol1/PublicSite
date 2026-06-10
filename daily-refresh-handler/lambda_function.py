@@ -1,22 +1,18 @@
 """
-Daily Cost Cache Refresh & Invoice Sync Lambda.
+Daily Cost Cache Refresh + Invoice Sync Lambda.
 
-Triggered daily at 03:00 UTC via EventBridge. Scans all connected accounts
-in MemberPortal-Accounts table and for each:
-1. Refreshes cost cache (last 30 days daily data + service breakdown)
-2. Syncs the latest invoice if not already cached
+Triggered by EventBridge at 03:00 UTC daily.
+Scans all member accounts and refreshes:
+1. Cost_Cache_Table — daily cost data with service_breakdown
+2. MemberPortal-Invoices — per-service usage-type breakdowns
 
-Execution constraints:
-- Memory: 512 MB
-- Timeout: 300s (5 min)
-- Concurrency: 1 (avoid parallel CE calls hitting rate limits)
+Uses STS AssumeRole to access each customer's AWS account.
 """
 
-import hashlib
-import json
-import logging
 import os
 import time
+import hashlib
+import logging
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
@@ -26,252 +22,239 @@ from botocore.exceptions import ClientError
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-# Environment / Constants
-ACCOUNTS_TABLE_NAME = os.environ.get('ACCOUNTS_TABLE_NAME', 'MemberPortal-Accounts')
-COST_CACHE_TABLE_NAME = os.environ.get('COST_CACHE_TABLE_NAME', 'Cost_Cache_Table')
-INVOICES_TABLE_NAME = os.environ.get('INVOICES_TABLE_NAME', 'MemberPortal-Invoices')
-PLATFORM_ACCOUNT_ID = '991105135552'
+ACCOUNTS_TABLE = os.environ.get('ACCOUNTS_TABLE_NAME', 'MemberPortal-Accounts')
+CACHE_TABLE = os.environ.get('COST_CACHE_TABLE_NAME', 'Cost_Cache_Table')
+INVOICES_TABLE = os.environ.get('INVOICES_TABLE_NAME', 'MemberPortal-Invoices')
+REGION = os.environ.get('AWS_REGION', 'us-east-1')
 
-# Rate limiting: 5 CE API calls/sec max
-CE_CALL_DELAY = 0.25
-
-dynamodb = boto3.resource('dynamodb')
+dynamodb = boto3.resource('dynamodb', region_name=REGION)
 
 
 def lambda_handler(event, context):
-    """Entry point — scan accounts and refresh cost cache + invoices."""
-    logger.info(f"Daily refresh triggered: {json.dumps(event)}")
+    """Main entry point — refresh all accounts."""
+    logger.info("Daily refresh starting...")
 
-    accounts_table = dynamodb.Table(ACCOUNTS_TABLE_NAME)
-    cache_table = dynamodb.Table(COST_CACHE_TABLE_NAME)
-    invoices_table = dynamodb.Table(INVOICES_TABLE_NAME)
+    accounts_table = dynamodb.Table(ACCOUNTS_TABLE)
 
-    # 1. Scan all connected AWS accounts
-    accounts = _get_all_connected_accounts(accounts_table)
-    logger.info(f"Found {len(accounts)} connected accounts to refresh")
+    # Scan all accounts
+    all_accounts = []
+    scan_kwargs = {'ProjectionExpression': 'memberEmail, accountId'}
+    while True:
+        resp = accounts_table.scan(**scan_kwargs)
+        all_accounts.extend(resp.get('Items', []))
+        if 'LastEvaluatedKey' not in resp:
+            break
+        scan_kwargs['ExclusiveStartKey'] = resp['LastEvaluatedKey']
 
-    results = {
-        'accounts_processed': 0,
-        'cache_refreshed': 0,
-        'cache_failed': 0,
-        'invoices_synced': 0,
-        'invoices_failed': 0,
-    }
+    logger.info(f"Found {len(all_accounts)} account(s) to refresh")
 
-    for account in accounts:
-        member_email = account['memberEmail']
-        account_id = account['accountId']
-        cloud_provider = account.get('cloudProvider', 'aws')
+    success_count = 0
+    error_count = 0
 
-        # Only refresh AWS accounts (Azure/GCP/OpenAI have their own sync)
-        if cloud_provider != 'aws':
-            logger.info(f"Skipping {account_id} ({cloud_provider}) — not AWS")
+    for account in all_accounts:
+        member_email = account.get('memberEmail', '')
+        account_id = account.get('accountId', '')
+        if not member_email or not account_id:
             continue
 
-        logger.info(f"Refreshing account {account_id} for {member_email}")
-        results['accounts_processed'] += 1
-
-        # 2. Refresh cost cache
         try:
-            _refresh_cost_cache(member_email, account_id, cache_table)
-            results['cache_refreshed'] += 1
+            _refresh_account(member_email, account_id)
+            success_count += 1
         except Exception as e:
-            logger.error(f"Cache refresh failed for {account_id}: {e}")
-            results['cache_failed'] += 1
+            logger.error(f"Failed to refresh {account_id}: {e}")
+            error_count += 1
 
-        # 3. Sync latest invoice
-        try:
-            _sync_latest_invoice(member_email, account_id, invoices_table)
-            results['invoices_synced'] += 1
-        except Exception as e:
-            logger.error(f"Invoice sync failed for {account_id}: {e}")
-            results['invoices_failed'] += 1
-
-        # Brief pause between accounts to stay within CE rate limits
+        # Rate limit between accounts
         time.sleep(1)
 
-    logger.info(f"Daily refresh complete: {json.dumps(results)}")
+    logger.info(f"Daily refresh complete: {success_count} succeeded, {error_count} failed")
     return {
         'statusCode': 200,
-        'body': json.dumps(results),
+        'body': f'Refreshed {success_count}/{len(all_accounts)} accounts'
     }
 
 
-def _get_all_connected_accounts(accounts_table):
-    """Scan MemberPortal-Accounts for all accounts with connectionStatus='connected'."""
-    accounts = []
-    scan_kwargs = {
-        'FilterExpression': '#status = :connected',
-        'ExpressionAttributeNames': {'#status': 'connectionStatus'},
-        'ExpressionAttributeValues': {':connected': 'connected'},
-        'ProjectionExpression': 'memberEmail, accountId, cloudProvider',
-    }
+def _refresh_account(member_email, account_id):
+    """Refresh cost cache and invoice data for one account."""
+    logger.info(f"Refreshing {account_id} for {member_email}")
 
-    try:
-        response = accounts_table.scan(**scan_kwargs)
-        accounts.extend(response.get('Items', []))
-        while 'LastEvaluatedKey' in response:
-            scan_kwargs['ExclusiveStartKey'] = response['LastEvaluatedKey']
-            response = accounts_table.scan(**scan_kwargs)
-            accounts.extend(response.get('Items', []))
-    except ClientError as e:
-        logger.error(f"Failed to scan accounts: {e}")
-
-    return accounts
-
-
-def _assume_role(account_id, member_email):
-    """Assume cross-account role for Cost Explorer access."""
+    # Assume role
     role_arn = f'arn:aws:iam::{account_id}:role/SlashMyBill-{account_id}'
     external_id = hashlib.sha256(member_email.encode('utf-8')).hexdigest()
 
-    sts = boto3.client('sts')
-    response = sts.assume_role(
-        RoleArn=role_arn,
-        RoleSessionName='DailyRefresh',
-        ExternalId=external_id,
-    )
-    return response['Credentials']
+    sts = boto3.client('sts', region_name=REGION)
+    try:
+        assume_resp = sts.assume_role(
+            RoleArn=role_arn,
+            RoleSessionName='DailyRefresh',
+            ExternalId=external_id,
+        )
+        creds = assume_resp['Credentials']
+    except ClientError as e:
+        logger.warning(f"STS AssumeRole failed for {account_id}: {e}")
+        raise
 
-
-def _refresh_cost_cache(member_email, account_id, cache_table):
-    """Fetch last 30 days of daily cost data and write to Cost_Cache_Table."""
-    credentials = _assume_role(account_id, member_email)
-
+    # Create CE client with assumed credentials
     ce = boto3.client(
         'ce',
-        aws_access_key_id=credentials['AccessKeyId'],
-        aws_secret_access_key=credentials['SecretAccessKey'],
-        aws_session_token=credentials['SessionToken'],
+        aws_access_key_id=creds['AccessKeyId'],
+        aws_secret_access_key=creds['SecretAccessKey'],
+        aws_session_token=creds['SessionToken'],
         region_name='us-east-1',
     )
 
     now = datetime.now(timezone.utc)
     today = now.strftime('%Y-%m-%d')
-    start_date = (now - timedelta(days=30)).strftime('%Y-%m-%d')
 
-    # Fetch daily costs with service breakdown
-    time.sleep(CE_CALL_DELAY)
-    response = ce.get_cost_and_usage(
-        TimePeriod={'Start': start_date, 'End': today},
+    # Refresh last 7 days of daily costs (to catch any late-arriving data)
+    start_date = (now - timedelta(days=7)).strftime('%Y-%m-%d')
+
+    try:
+        _refresh_daily_cache(ce, member_email, account_id, start_date, today)
+    except Exception as e:
+        logger.error(f"Daily cache refresh failed for {account_id}: {e}")
+
+    # Refresh current month invoice data
+    current_month = now.strftime('%Y-%m')
+    try:
+        _refresh_invoices(ce, member_email, account_id, current_month)
+    except Exception as e:
+        logger.error(f"Invoice refresh failed for {account_id}: {e}")
+
+
+def _refresh_daily_cache(ce, member_email, account_id, start_date, end_date):
+    """Refresh Cost_Cache_Table with daily costs + service breakdown."""
+    cache_table = dynamodb.Table(CACHE_TABLE)
+    pk = f"{member_email}#{account_id}"
+
+    # Get daily costs grouped by service
+    resp = ce.get_cost_and_usage(
+        TimePeriod={'Start': start_date, 'End': end_date},
         Granularity='DAILY',
         Metrics=['UnblendedCost'],
         GroupBy=[{'Type': 'DIMENSION', 'Key': 'SERVICE'}],
     )
 
-    pk = f"{member_email}#{account_id}"
-    now_iso = now.isoformat()
-    ttl_value = int(now.timestamp()) + (90 * 24 * 3600)  # 90 days TTL
-    items_written = 0
+    ttl_epoch = int(time.time()) + (90 * 24 * 60 * 60)  # 90 days
 
-    for period in response.get('ResultsByTime', []):
-        date = period['TimePeriod']['Start']
-        service_breakdown = {}
-        total_cost = 0.0
+    with cache_table.batch_writer() as batch:
+        for period in resp.get('ResultsByTime', []):
+            date_str = period['TimePeriod']['Start']
+            service_breakdown = {}
+            total_cost = 0.0
 
-        for group in period.get('Groups', []):
-            service_name = group['Keys'][0]
-            cost = float(group['Metrics']['UnblendedCost']['Amount'])
-            if cost > 0.001:
-                service_breakdown[service_name] = str(round(cost, 4))
-                total_cost += cost
+            for group in period.get('Groups', []):
+                service = group['Keys'][0]
+                cost = float(group['Metrics']['UnblendedCost']['Amount'])
+                if cost > 0.001:
+                    service_breakdown[service] = Decimal(str(round(cost, 4)))
+                    total_cost += cost
 
-        # Write to cache
-        cache_table.put_item(
-            Item={
-                'pk': pk,
-                'sk': f'DAILY#{date}',
-                'cost_amount': str(round(total_cost, 4)),
-                'service_breakdown': service_breakdown,
-                'fetched_at': now_iso,
-                'cached_at': now_iso,
-                'ttl': ttl_value,
-            }
-        )
-        items_written += 1
+            if total_cost > 0.001:
+                batch.put_item(Item={
+                    'pk': pk,
+                    'sk': f'DAILY#{date_str}',
+                    'cost_amount': Decimal(str(round(total_cost, 4))),
+                    'currency': 'USD',
+                    'service_breakdown': service_breakdown,
+                    'refreshed_at': datetime.now(timezone.utc).isoformat(),
+                    'ttl': ttl_epoch,
+                })
 
-    logger.info(f"Cache refreshed for {account_id}: {items_written} daily records written")
+    logger.info(f"  Cache refreshed: {start_date} to {end_date}")
 
 
-def _sync_latest_invoice(member_email, account_id, invoices_table):
-    """Sync the most recent month's invoice if not already cached.
-
-    Matches the member-handler invoice_sync.py schema:
-    - pk: {memberEmail}#{accountId}
-    - sk: {YYYY-MM}#{serviceName}
-    - One record per service per month
-    """
-    now = datetime.now(timezone.utc)
-
-    # Determine the latest closed month (previous month)
-    first_of_this_month = now.replace(day=1)
-    last_month_end = first_of_this_month - timedelta(days=1)
-    invoice_month = last_month_end.strftime('%Y-%m')
-
-    # Check if this invoice is already cached (check for any record with this month prefix)
+def _refresh_invoices(ce, member_email, account_id, month):
+    """Refresh MemberPortal-Invoices with service-level usage-type breakdowns."""
+    invoices_table = dynamodb.Table(INVOICES_TABLE)
     pk = f"{member_email}#{account_id}"
 
-    try:
-        from boto3.dynamodb.conditions import Key
-        existing = invoices_table.query(
-            KeyConditionExpression=Key('pk').eq(pk) & Key('sk').begins_with(f"{invoice_month}#"),
-            Limit=1,
-            ProjectionExpression='pk',
-        )
-        if existing.get('Items'):
-            logger.info(f"Invoice {invoice_month} already synced for {account_id}")
-            return
-    except ClientError:
-        pass  # If we can't check, try to sync anyway
+    year, month_num = month.split('-')
+    start_date = f'{year}-{month_num}-01'
+    # End date = first day of next month
+    if int(month_num) == 12:
+        end_date = f'{int(year) + 1}-01-01'
+    else:
+        end_date = f'{year}-{int(month_num) + 1:02d}-01'
 
-    # Fetch invoice data from Cost Explorer
-    credentials = _assume_role(account_id, member_email)
-    ce = boto3.client(
-        'ce',
-        aws_access_key_id=credentials['AccessKeyId'],
-        aws_secret_access_key=credentials['SecretAccessKey'],
-        aws_session_token=credentials['SessionToken'],
-        region_name='us-east-1',
-    )
+    # If end_date is in the future, use today+1
+    today_plus_1 = (datetime.now(timezone.utc) + timedelta(days=1)).strftime('%Y-%m-%d')
+    if end_date > today_plus_1:
+        end_date = today_plus_1
 
-    start_date = last_month_end.replace(day=1).strftime('%Y-%m-%d')
-    end_date = first_of_this_month.strftime('%Y-%m-%d')
+    time.sleep(0.3)
 
-    time.sleep(CE_CALL_DELAY)
-    response = ce.get_cost_and_usage(
+    # Get service-level costs
+    svc_resp = ce.get_cost_and_usage(
         TimePeriod={'Start': start_date, 'End': end_date},
         Granularity='MONTHLY',
         Metrics=['UnblendedCost'],
         GroupBy=[{'Type': 'DIMENSION', 'Key': 'SERVICE'}],
     )
 
-    # Write one record per service (matching member-handler schema)
-    now_iso = now.isoformat()
-    ttl_value = int(now.timestamp()) + (90 * 24 * 3600)  # 90 days TTL
-    records_written = 0
+    time.sleep(0.3)
 
-    for period in response.get('ResultsByTime', []):
+    # Get usage-type breakdown per service
+    ut_resp = ce.get_cost_and_usage(
+        TimePeriod={'Start': start_date, 'End': end_date},
+        Granularity='MONTHLY',
+        Metrics=['UnblendedCost', 'UsageQuantity'],
+        GroupBy=[
+            {'Type': 'DIMENSION', 'Key': 'SERVICE'},
+            {'Type': 'DIMENSION', 'Key': 'USAGE_TYPE'},
+        ],
+    )
+
+    # Parse service costs
+    service_costs = {}
+    for period in svc_resp.get('ResultsByTime', []):
         for group in period.get('Groups', []):
-            service_name = group['Keys'][0]
+            svc = group['Keys'][0]
             cost = float(group['Metrics']['UnblendedCost']['Amount'])
+            if abs(cost) >= 0.005:
+                service_costs[svc] = round(cost, 2)
+
+    # Parse usage types per service
+    usage_types_by_svc = {}
+    for period in ut_resp.get('ResultsByTime', []):
+        for group in period.get('Groups', []):
+            keys = group['Keys']
+            svc = keys[0]
+            usage_type = keys[1] if len(keys) > 1 else 'Unknown'
+            cost = float(group['Metrics']['UnblendedCost']['Amount'])
+            quantity = float(group['Metrics'].get('UsageQuantity', {}).get('Amount', 0))
+            unit = group['Metrics'].get('UsageQuantity', {}).get('Unit', 'N/A')
+
             if abs(cost) < 0.005:
                 continue
 
-            invoices_table.put_item(
-                Item={
-                    'pk': pk,
-                    'sk': f'{invoice_month}#{service_name}',
-                    'memberEmail': member_email,
-                    'accountId': account_id,
-                    'month': invoice_month,
-                    'service': service_name,
-                    'cost': Decimal(str(round(cost, 2))),
-                    'currency': 'USD',
-                    'region': 'global',
-                    'lastSyncedAt': now_iso,
-                    'ttl': ttl_value,
-                }
-            )
-            records_written += 1
+            if svc not in usage_types_by_svc:
+                usage_types_by_svc[svc] = []
+            usage_types_by_svc[svc].append({
+                'type': usage_type,
+                'cost': Decimal(str(round(cost, 2))),
+                'unit': unit,
+                'quantity': Decimal(str(round(quantity, 4))),
+            })
 
-    logger.info(f"Invoice {invoice_month} synced for {account_id}: {records_written} service records")
+    # Write records
+    ttl_epoch = int(time.time()) + (90 * 24 * 60 * 60)
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    with invoices_table.batch_writer() as batch:
+        for svc, cost in service_costs.items():
+            batch.put_item(Item={
+                'pk': pk,
+                'sk': f'{month}#{svc}',
+                'memberEmail': member_email,
+                'accountId': account_id,
+                'month': month,
+                'service': svc,
+                'cost': Decimal(str(cost)),
+                'currency': 'USD',
+                'usageTypes': usage_types_by_svc.get(svc, []),
+                'lastSyncedAt': now_iso,
+                'ttl': ttl_epoch,
+            })
+
+    logger.info(f"  Invoices refreshed: {month} ({len(service_costs)} services)")
