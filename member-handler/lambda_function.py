@@ -8042,41 +8042,73 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
             current_month = now.strftime('%Y-%m')
             cache_table = dynamodb.Table(os.environ.get('COST_CACHE_TABLE_NAME', 'Cost_Cache_Table'))
             pk = f"{member_email}#{account_id}"
-            start_sk = f"DAILY#{current_month}-02"  # Skip day 1
-            end_sk = f"DAILY#{current_month}-{now.day:02d}"
+            # Exclude day 1 (fixed charges) AND today (always incomplete/partial data)
+            start_sk = f"DAILY#{current_month}-02"
+            yesterday = max(2, now.day - 1)  # Don't include today — data is partial
+            end_sk = f"DAILY#{current_month}-{yesterday:02d}"
             resp = cache_table.query(
                 KeyConditionExpression=_Key('pk').eq(pk) & _Key('sk').between(start_sk, end_sk)
             )
             items = resp.get('Items', [])
-            if len(items) >= 3:
-                # Get last 3 days' costs
+            if len(items) >= 2:
                 items.sort(key=lambda x: x['sk'])
-                last_3 = items[-3:]
-                costs = [float(i.get('cost_amount', 0)) for i in last_3]
-                dates = [i['sk'].replace('DAILY#', '') for i in last_3]
-                avg_daily = sum(costs) / len(costs)
-                # Use taxAndSupportPercent from previous month data or estimate at 27%
-                # (Tax ~17% + Support ~10% of total)
+                all_costs = [(i['sk'].replace('DAILY#', ''), float(i.get('cost_amount', 0))) for i in items]
+
+                # Compute median for outlier detection
+                cost_values = sorted([c for _, c in all_costs])
+                n = len(cost_values)
+                if n % 2 == 0:
+                    median_cost = (cost_values[n // 2 - 1] + cost_values[n // 2]) / 2
+                else:
+                    median_cost = cost_values[n // 2]
+
+                # Outlier filtering: exclude days below 30% of median (likely incomplete sync)
+                threshold = median_cost * 0.30
+                filtered = [(d, c) for d, c in all_costs if c >= threshold]
+                excluded = [(d, c) for d, c in all_costs if c < threshold]
+
+                # Fallback: if filtering removed too much, use all data
+                if len(filtered) < 2:
+                    filtered = all_costs
+                    excluded = []
+
+                # Use median of filtered days for robust daily estimate
+                filtered_costs = sorted([c for _, c in filtered])
+                fn = len(filtered_costs)
+                if fn % 2 == 0:
+                    avg_daily = (filtered_costs[fn // 2 - 1] + filtered_costs[fn // 2]) / 2
+                else:
+                    avg_daily = filtered_costs[fn // 2]
+
+                # Tax + Support = ~27% of total
                 tax_support_pct = 27.0
                 forecast = avg_daily * 30 / (1 - tax_support_pct / 100)
-                days_str = ', '.join(f"{d}=${c:.2f}" for d, c in zip(dates, costs))
+
+                # Show last 5 days for the display table
+                display = all_costs[-5:] if len(all_costs) > 5 else all_costs
+                days_str = ', '.join(f"{d}=${c:.2f}" for d, c in display)
+                excluded_note = ""
+                if excluded:
+                    exc_str = ', '.join(f"{d}=${c:.2f}" for d, c in excluded)
+                    excluded_note = f" | Excluded incomplete days: {exc_str}"
 
                 # Build service breakdown if user asked for "by service" / "split by" / "breakdown"
                 service_breakdown_str = ""
                 _BREAKDOWN_KEYWORDS = ['by service', 'split by', 'breakdown', 'break it down', 'per service', 'each service']
                 if any(kw in question_lower for kw in _BREAKDOWN_KEYWORDS):
-                    # Aggregate service_breakdown across last 3 days to get proportions
                     svc_totals = {}
-                    for item in last_3:
-                        for svc, svc_cost in item.get('service_breakdown', {}).items():
-                            svc_totals[svc] = svc_totals.get(svc, 0) + float(svc_cost)
+                    filtered_dates = set(d for d, _ in filtered)
+                    for item in items:
+                        d = item['sk'].replace('DAILY#', '')
+                        if d in filtered_dates:
+                            for svc, svc_cost in item.get('service_breakdown', {}).items():
+                                svc_totals[svc] = svc_totals.get(svc, 0) + float(svc_cost)
                     if svc_totals:
-                        # Calculate each service's share of the forecast
-                        total_3d = sum(svc_totals.values())
+                        total_filtered = sum(svc_totals.values())
                         svc_forecasts = []
-                        for svc, cost_3d in sorted(svc_totals.items(), key=lambda x: x[1], reverse=True):
-                            if cost_3d > 0.01:
-                                pct = cost_3d / total_3d if total_3d > 0 else 0
+                        for svc, cost_f in sorted(svc_totals.items(), key=lambda x: x[1], reverse=True):
+                            if cost_f > 0.01:
+                                pct = cost_f / total_filtered if total_filtered > 0 else 0
                                 svc_forecast = round(forecast * pct, 2)
                                 svc_forecasts.append(f"{svc}: ${svc_forecast:.0f}")
                         service_breakdown_str = " | Service forecast: " + ", ".join(svc_forecasts[:10])
@@ -8084,10 +8116,9 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
                 enriched_prompt += (
                     f"\n\n[PRE-COMPUTED FORECAST — Present this EXACTLY as structured below:\n"
                     f"1. State: 'The forecasted bill for {current_month} is **${forecast:,.0f}**'\n"
-                    f"2. Show calculation table:\n"
-                    f"   | Date | Daily Cost |\n"
-                    f"   {days_str}\n"
-                    f"   Average: ${avg_daily:.2f}/day\n"
+                    f"2. Show calculation:\n"
+                    f"   Recent days: {days_str}{excluded_note}\n"
+                    f"   Median daily cost: ${avg_daily:.2f}/day (based on {len(filtered)} complete days)\n"
                     f"   Formula: ${avg_daily:.2f} × 30 days ÷ 0.73 (27% Tax+Support) = **${forecast:,.0f}**\n"
                     f"{service_breakdown_str}"
                     f"3. Do NOT call any tools. Do NOT add savings tips. Do NOT guess services.\n"
