@@ -506,14 +506,19 @@ class AWSConnector(CloudConnector):
 
     def get_object_storage(self, account_id: str, member_email: str, params: dict) -> dict:
         """
-        List S3 buckets with lifecycle policy status and storage class info.
+        List S3 buckets with lifecycle policy status, size, and estimated monthly cost.
+        Uses CloudWatch BucketSizeBytes metric for per-bucket sizing.
         """
         try:
             creds = self._assume_role(account_id, member_email)
             s3 = self._make_client('s3', creds)
+            cloudwatch = self._make_client('cloudwatch', creds, 'eu-central-1')
 
             response = s3.list_buckets()
             buckets = []
+            now = datetime.now(timezone.utc)
+            two_days_ago = now - timedelta(days=2)
+
             for b in response.get('Buckets', []):
                 bucket_info = {
                     'name': b['Name'],
@@ -521,6 +526,8 @@ class AWSConnector(CloudConnector):
                     'hasLifecyclePolicy': False,
                     'lifecycleRules': 0,
                     'storageClass': 'STANDARD',
+                    'sizeGB': None,
+                    'estimatedMonthlyCost_USD': None,
                 }
                 # Check lifecycle policy
                 try:
@@ -528,23 +535,50 @@ class AWSConnector(CloudConnector):
                     rules = lc_resp.get('Rules', [])
                     bucket_info['hasLifecyclePolicy'] = len(rules) > 0
                     bucket_info['lifecycleRules'] = len(rules)
-                except s3.exceptions.ClientError as lc_err:
-                    # NoSuchLifecycleConfiguration means no policy
+                except ClientError as lc_err:
                     if 'NoSuchLifecycleConfiguration' in str(lc_err):
                         bucket_info['hasLifecyclePolicy'] = False
-                    else:
-                        pass  # Access denied or other error — skip
                 except Exception:
                     pass
+
+                # Get bucket size from CloudWatch (BucketSizeBytes metric)
+                try:
+                    cw_resp = cloudwatch.get_metric_statistics(
+                        Namespace='AWS/S3',
+                        MetricName='BucketSizeBytes',
+                        Dimensions=[
+                            {'Name': 'BucketName', 'Value': b['Name']},
+                            {'Name': 'StorageType', 'Value': 'StandardStorage'},
+                        ],
+                        StartTime=two_days_ago,
+                        EndTime=now,
+                        Period=86400,
+                        Statistics=['Average'],
+                    )
+                    datapoints = cw_resp.get('Datapoints', [])
+                    if datapoints:
+                        size_bytes = max(dp['Average'] for dp in datapoints)
+                        size_gb = round(size_bytes / (1024 ** 3), 3)
+                        bucket_info['sizeGB'] = size_gb
+                        # S3 Standard: ~$0.023/GB/month
+                        bucket_info['estimatedMonthlyCost_USD'] = round(size_gb * 0.023, 4)
+                except Exception:
+                    pass  # CloudWatch access issue or no data — leave as None
+
                 buckets.append(bucket_info)
 
             # Summary stats
             no_lifecycle = [b for b in buckets if not b['hasLifecyclePolicy']]
+            total_size = sum(b['sizeGB'] or 0 for b in buckets)
+            total_cost = sum(b['estimatedMonthlyCost_USD'] or 0 for b in buckets)
             return {
                 'buckets': buckets,
                 'count': len(buckets),
                 'withoutLifecycle': len(no_lifecycle),
                 'withLifecycle': len(buckets) - len(no_lifecycle),
+                'totalSizeGB': round(total_size, 2),
+                'totalEstimatedMonthlyCost_USD': round(total_cost, 2),
+                'note': 'Cost estimate based on S3 Standard storage rate ($0.023/GB/mo). Actual cost includes requests and data transfer.',
             }
         except Exception as e:
             return {'error': str(e)}
