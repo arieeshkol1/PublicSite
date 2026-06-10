@@ -8041,8 +8041,13 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
 
             if not _svc_precomputed:
                 enriched_prompt += (
-                    f"\n\n[MUST USE: getCostBreakdown with usageTypeBreakdown=true, serviceFilter={detected_service}. "
-                    f"Then call getPricingData for real pricing. Show math: cost/unit_price=quantity.]"
+                    f"\n\n[CRITICAL INSTRUCTION — SERVICE BREAKDOWN QUESTION for '{detected_service}': "
+                    f"You MUST call getCostBreakdown with usageTypeBreakdown=true and serviceFilter={detected_service}. "
+                    f"DO NOT call getEC2Instances or getComputeInstances — those return inventory, not cost breakdown. "
+                    f"'EC2 - Other' includes EBS volumes, EBS snapshots, data transfer, CPU credits, NAT gateway hours — "
+                    f"it is NOT Cost Explorer and NOT per-instance compute costs. "
+                    f"After getting the usage-type data, show: UsageType | Cost | % of Total. "
+                    f"Then explain what generates each usage type in plain language.]"
                 )
 
     # Detect comparison/trend questions and pre-compute the answer from cache
