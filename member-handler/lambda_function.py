@@ -8032,6 +8032,29 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
                 _svc_resp = invoices_tbl.get_item(Key={'pk': _svc_pk, 'sk': _svc_sk})
                 _svc_item = _svc_resp.get('Item')
 
+                # If exact match fails, try query with begins_with on month to find fuzzy service match
+                if not _svc_item:
+                    try:
+                        _q_resp = invoices_tbl.query(
+                            KeyConditionExpression=_SvcKey('pk').eq(_svc_pk) & _SvcKey('sk').begins_with(f"{_target_month}#"),
+                            Limit=50
+                        )
+                        _det_lower = detected_service.lower().replace(' - ', '-').replace(' ', '')
+                        for _qi in _q_resp.get('Items', []):
+                            _qi_svc = _qi['sk'].split('#', 1)[1] if '#' in _qi['sk'] else ''
+                            _qi_lower = _qi_svc.lower().replace(' - ', '-').replace(' ', '')
+                            if _det_lower in _qi_lower or _qi_lower in _det_lower:
+                                _svc_item = _qi
+                                break
+                            # Also try short-form matching (e.g. "ec2-other" matches "ec2 - other")
+                            _det_short = detected_service.lower().replace(' ', '').replace('-', '')
+                            _qi_short = _qi_svc.lower().replace(' ', '').replace('-', '')
+                            if _det_short in _qi_short or _qi_short in _det_short:
+                                _svc_item = _qi
+                                break
+                    except Exception:
+                        pass
+
                 if _svc_item:
                     _svc_cost = float(_svc_item.get('cost', 0))
                     _usage_types = _svc_item.get('usageTypes', [])
