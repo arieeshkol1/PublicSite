@@ -7996,11 +7996,30 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
     agent_runtime = boto3.client('bedrock-agent-runtime', region_name=os.environ.get('BEDROCK_REGION', os.environ.get('AWS_REGION', 'us-east-1')))
 
     # Search tips table for relevant pricing/optimization data
-    tips_context = _search_tips(question)
+    # Detect AI vendor accounts by accountId prefix (e.g., "openai-...")
+    _provider = 'aws'
+    if account_id and account_id.startswith('openai-'):
+        _provider = 'openai'
+    elif account_id and account_id.startswith('azure-'):
+        _provider = 'azure'
+    elif account_id and account_id.startswith('gcp-'):
+        _provider = 'gcp'
+    tips_context = _search_tips(question, provider=_provider)
     tip_found = bool(tips_context)
 
     # Include account context and tips in the prompt so the Agent has accurate pricing
     enriched_prompt = f"[Account: {account_id}, Member: {member_email}] {question}"
+
+    # For AI vendor accounts, inject context about available tools
+    if _provider == 'openai':
+        enriched_prompt += (
+            "\n\n[CONTEXT: This is an OpenAI AI vendor account, NOT an AWS account. "
+            "Only these tools are available: getCostBreakdown (model cost breakdown), "
+            "getAIVendorUsage (token usage per model), getMonthlyTrend (daily spend trend). "
+            "Do NOT call getNetworkResources, getEC2Instances, getFinOpsSettings, or any AWS-specific tools. "
+            "For cost savings, analyze: which models cost the most, output/input token ratio, "
+            "prompt caching efficiency, and whether cheaper models (gpt-4o-mini) can replace expensive ones (gpt-4o).]"
+        )
 
     # Service detection removed — the AI agent handles tool selection autonomously.
     # Quality enforcement is done by the inline audit gate + rewrite path.
@@ -9445,9 +9464,12 @@ def _get_account_provider(member_email, account_id):
         )
         item = resp.get('Item', {})
         provider = item.get('cloudProvider', '').strip().lower()
-        return provider if provider in ('aws', 'azure', 'gcp') else 'aws'
+        return provider if provider in ('aws', 'azure', 'gcp', 'openai') else 'aws'
     except Exception as e:
         logger.warning(f"Failed to get provider for account {account_id}: {e}")
+        # Fallback: detect from accountId prefix
+        if account_id and account_id.startswith('openai-'):
+            return 'openai'
         return 'aws'
 
 
