@@ -317,9 +317,9 @@ class OpenAIConnector(ProviderConnector):
                         all_results.extend(data.get('data', []))
                         _page_count += 1
 
-                    # Also fetch token usage from /v1/organization/usage (provides input/output token counts)
+                    # Also fetch token usage from /v1/organization/usage/completions (provides input/output token counts)
                     try:
-                        _usage_url = f"{OPENAI_BASE_URL}/organization/usage?start_time={_start_epoch}&end_time={_end_epoch}&group_by=line_item&bucket_width=1d"
+                        _usage_url = f"{OPENAI_BASE_URL}/organization/usage/completions?start_time={_start_epoch}&end_time={_end_epoch}&group_by=model&bucket_width=1d"
                         _usage_req = urllib.request.Request(
                             _usage_url, method='GET',
                             headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'}
@@ -328,28 +328,53 @@ class OpenAIConnector(ProviderConnector):
                         _usage_data = json.loads(_usage_resp.read().decode('utf-8'))
                         # Merge token data into cost buckets by matching start_time
                         if _usage_data.get('object') == 'page' and 'data' in _usage_data:
-                            _token_map = {}  # start_time -> {line_item -> {input_tokens, output_tokens}}
+                            _token_map = {}  # start_time -> {model -> {input_tokens, output_tokens}}
                             for bucket in _usage_data.get('data', []):
                                 st = bucket.get('start_time')
                                 for result in bucket.get('results', []):
-                                    line = result.get('line_item') or 'unknown'
+                                    model = result.get('model') or result.get('line_item') or 'unknown'
                                     input_t = result.get('input_tokens', 0) or 0
                                     output_t = result.get('output_tokens', 0) or 0
                                     if st not in _token_map:
                                         _token_map[st] = {}
-                                    if line not in _token_map[st]:
-                                        _token_map[st][line] = {'input_tokens': 0, 'output_tokens': 0}
-                                    _token_map[st][line]['input_tokens'] += input_t
-                                    _token_map[st][line]['output_tokens'] += output_t
+                                    if model not in _token_map[st]:
+                                        _token_map[st][model] = {'input_tokens': 0, 'output_tokens': 0}
+                                    _token_map[st][model]['input_tokens'] += input_t
+                                    _token_map[st][model]['output_tokens'] += output_t
                             # Enrich cost buckets with token counts
                             for bucket in all_results:
                                 st = bucket.get('start_time')
                                 if st in _token_map:
                                     for result in bucket.get('results', []):
                                         line = result.get('line_item') or 'unknown'
+                                        # Try exact match first, then partial match (costs use short names, usage uses full model IDs)
+                                        matched = False
                                         if line in _token_map[st]:
                                             result['input_tokens'] = _token_map[st][line]['input_tokens']
                                             result['output_tokens'] = _token_map[st][line]['output_tokens']
+                                            matched = True
+                                        if not matched:
+                                            # Try matching cost line_item as prefix of usage model name
+                                            for model_key, tokens in _token_map[st].items():
+                                                if line and (line.lower() in model_key.lower() or model_key.lower().startswith(line.lower())):
+                                                    result['input_tokens'] = tokens['input_tokens']
+                                                    result['output_tokens'] = tokens['output_tokens']
+                                                    break
+                                # Also inject token-only records for models that appear in usage but not in costs
+                                if st in _token_map:
+                                    existing_lines = {(r.get('line_item') or '').lower() for r in bucket.get('results', [])}
+                                    for model_key, tokens in _token_map[st].items():
+                                        if model_key.lower() not in existing_lines:
+                                            # Check no partial match either
+                                            already_matched = any(model_key.lower().startswith(el) for el in existing_lines if el)
+                                            if not already_matched and (tokens['input_tokens'] > 0 or tokens['output_tokens'] > 0):
+                                                bucket.get('results', []).append({
+                                                    'object': 'organization.usage.result',
+                                                    'amount': {'value': 0, 'currency': 'usd'},
+                                                    'line_item': model_key,
+                                                    'input_tokens': tokens['input_tokens'],
+                                                    'output_tokens': tokens['output_tokens'],
+                                                })
                     except Exception as _usage_err:
                         logger.warning(f"Token usage fetch failed (non-fatal): {_usage_err}")
 
