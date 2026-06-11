@@ -7816,7 +7816,7 @@ def _inline_audit_score(question, answer):
             f'{{"score": N, "can_improve": true/false, "improvement": "brief reason", "guiding_questions": ["q1", "q2"]}}\n'
             f'- can_improve=true: data exists but poorly presented (rewrite would fix)\n'
             f'- can_improve=false: question is ambiguous or system lacks data to answer\n'
-            f'- guiding_questions: ALWAYS provide 1-3 simple, non-technical questions to ask the USER that would help get a better answer (e.g. 'What operating system does your Databases server run?' or 'Are you looking at costs for all servers or a specific one?'). Write them as if talking to a non-technical business user.'
+            f"- guiding_questions: ALWAYS provide 1-3 simple, non-technical questions to ask the USER that would help get a better answer (e.g. 'What operating system does your server run?' or 'Are you looking at costs for all servers or a specific one?'). Write them as if talking to a non-technical business user."
         )
 
         request_body = {
