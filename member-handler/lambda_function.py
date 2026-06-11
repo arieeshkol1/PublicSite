@@ -2645,8 +2645,13 @@ def handle_dashboard_data(event):
                     tag_filter_empty = True
             for svc in acct_data.get('cost_by_service', []):
                 merged_costs[svc['service']] = merged_costs.get(svc['service'], 0) + svc['cost_usd']
-            for d in acct_data.get('daily_cost_trend', []):
-                merged_daily[d['date']] = merged_daily.get(d['date'], 0) + d['cost_usd']
+            # Merge daily cost trend: only merge the 7-day data from _gather_account_data
+            # when we will NOT be fetching the 30-day trend below (which would double-count
+            # the overlapping 7 days). The 30-day fetch supersedes the 7-day data.
+            will_fetch_30d = not (tag_key and tag_value) and not cache_used
+            if not will_fetch_30d:
+                for d in acct_data.get('daily_cost_trend', []):
+                    merged_daily[d['date']] = merged_daily.get(d['date'], 0) + d['cost_usd']
 
             # Fetch 30-day daily trend for dashboard (the standard gather only does 7 days)
             # Note: daily trend is NOT filtered by tag here â€” the per-instance fallback
@@ -2659,7 +2664,7 @@ def handle_dashboard_data(event):
                 end_date = datetime.now(timezone.utc).strftime('%Y-%m-%d')
                 start_30d = (datetime.now(timezone.utc) - timedelta(days=30)).strftime('%Y-%m-%d')
                 # Only fetch unfiltered 30-day trend if no tag filter AND cache was not used (cache already has 30 days)
-                if not (tag_key and tag_value) and not cache_used:
+                if will_fetch_30d:
                     _daily_params = {'TimePeriod': {'Start': start_30d, 'End': end_date}, 'Granularity': 'DAILY', 'Metrics': ['UnblendedCost']}
                     daily_30d = ce_30d.get_cost_and_usage(**_daily_params)
                     for period in daily_30d.get('ResultsByTime', []):
@@ -2667,7 +2672,10 @@ def handle_dashboard_data(event):
                         d_cost = float(period['Total']['UnblendedCost']['Amount'])
                         merged_daily[d_date] = merged_daily.get(d_date, 0) + d_cost
             except Exception:
-                pass  # Fall back to 7-day data from _gather_account_data
+                # 30-day fetch failed - fall back to 7-day data from _gather_account_data
+                if will_fetch_30d:
+                    for d in acct_data.get('daily_cost_trend', []):
+                        merged_daily[d['date']] = merged_daily.get(d['date'], 0) + d['cost_usd']
 
             # Fetch cost by region (last 30 days) - scale proportionally when tag filter is active
             try:
