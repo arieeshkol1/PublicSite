@@ -7816,7 +7816,7 @@ def _inline_audit_score(question, answer):
             f'{{"score": N, "can_improve": true/false, "improvement": "brief reason", "guiding_questions": ["q1", "q2"]}}\n'
             f'- can_improve=true: data exists but poorly presented (rewrite would fix)\n'
             f'- can_improve=false: question is ambiguous or system lacks data to answer\n'
-            f'- guiding_questions: 2-3 clarifying questions (only when can_improve=false)'
+            f'- guiding_questions: ALWAYS provide 1-3 simple, non-technical questions to ask the USER that would help get a better answer (e.g. 'What operating system does your Databases server run?' or 'Are you looking at costs for all servers or a specific one?'). Write them as if talking to a non-technical business user.'
         )
 
         request_body = {
@@ -8290,18 +8290,22 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
                                     inline_audit_action = 'rewrite_clarify'
                                     _retry_guiding_qs = _rescore_result.get('guiding_questions', _retry_guiding_qs)
                                     if not _retry_guiding_qs:
-                                        # Generate contextual question from the improvement suggestion
-                                        _improvement_hint = _rescore_result.get('improvement', '')
-                                        if _improvement_hint:
-                                            _retry_guiding_qs = [_improvement_hint]
-                                        else:
-                                            _retry_guiding_qs = ['Could you provide more details about the specific resource or configuration?']
+                                        # Generate user-friendly questions (never expose raw technical hints)
+                                        _retry_guiding_qs = [
+                                            'Could you tell me more about what specific information you need?',
+                                            'Are there particular servers or services you want me to focus on?',
+                                        ]
                             except Exception as _rescore_err:
                                 logger.warning(f"Quality gate re-score failed: {_rescore_err}")
                                 inline_audit_action = 'rewrite_clarify'
                         else:
                             # Retry produced empty/short answer - ask for clarification
                             inline_audit_action = 'rewrite_clarify'
+                            if not _retry_guiding_qs:
+                                _retry_guiding_qs = [
+                                    'Could you rephrase your question or provide more detail about what you need?',
+                                    'Are there specific servers or services you want me to analyze?',
+                                ]
 
                         # If rewrite still failed scoring, ask the user a clarifying question
                         if inline_audit_action == 'rewrite_clarify':
