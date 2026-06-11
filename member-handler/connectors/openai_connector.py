@@ -279,8 +279,8 @@ class OpenAIConnector(ProviderConnector):
         _start_epoch = int(calendar.timegm(_dt.strptime(start_date, '%Y-%m-%d').timetuple()))
         _end_epoch = int(calendar.timegm(_dt.strptime(end_date, '%Y-%m-%d').timetuple()))
 
-        # Primary: Organization Costs API with line_item breakdown (works with admin keys)
-        url = f"{OPENAI_BASE_URL}/organization/costs?start_time={_start_epoch}&end_time={_end_epoch}&group_by=line_item"
+        # Primary: Organization Costs API with line_item and project breakdown (works with admin keys)
+        url = f"{OPENAI_BASE_URL}/organization/costs?start_time={_start_epoch}&end_time={_end_epoch}&group_by=line_item&group_by=project_id"
         # Fallback: Legacy usage API (works with project keys)
         legacy_url = f"{OPENAI_BASE_URL}/usage?start_date={start_date}&end_date={end_date}"
 
@@ -307,7 +307,7 @@ class OpenAIConnector(ProviderConnector):
                     _page_count = 1
                     _max_pages = 5
                     while data.get('has_more') and data.get('next_page') and _page_count < _max_pages:
-                        _next_url = f"{OPENAI_BASE_URL}/organization/costs?start_time={_start_epoch}&end_time={_end_epoch}&group_by=line_item&page={data['next_page']}"
+                        _next_url = f"{OPENAI_BASE_URL}/organization/costs?start_time={_start_epoch}&end_time={_end_epoch}&group_by=line_item&group_by=project_id&page={data['next_page']}"
                         _next_req = urllib.request.Request(
                             _next_url, method='GET',
                             headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'}
