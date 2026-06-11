@@ -429,9 +429,7 @@ jobs:
           cp schema_sync/migrate_service_ids.py .build-schema-sync/schema_sync/
           cp schema_sync/seed_tool_definitions.py .build-schema-sync/schema_sync/
           # Create a top-level handler that Lambda can invoke
-          cat > .build-schema-sync/lambda_function.py << 'HANDLER_EOF'
-from schema_sync.sync_lambda import lambda_handler
-HANDLER_EOF
+          echo 'from schema_sync.sync_lambda import lambda_handler' > .build-schema-sync/lambda_function.py
           cd .build-schema-sync && zip -r ../schema-sync-lambda.zip . -q
           cd ..
           aws s3 cp schema-sync-lambda.zip s3://${{ env.STORAGE_BUCKET }}/lambda-packages/schema-sync.zip
