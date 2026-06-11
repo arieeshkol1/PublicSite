@@ -23,18 +23,17 @@ MAX_RETRIES = 3
 DEFAULT_BACKOFF_BASE = 1.0  # seconds — used for on-demand calls
 NIGHTLY_SYNC_BACKOFF_BASE = 2.0  # seconds — used for nightly sync (per design)
 
-# Valid API key prefixes (Organization-level and Project-level keys)
-VALID_KEY_PREFIXES = ('sk-org-', 'sk-proj-')
-MIN_KEY_LENGTH = 40
+# Valid API key prefix — any key starting with 'sk-' is accepted
+VALID_KEY_PREFIXES = ('sk-',)
+MIN_KEY_LENGTH = 20
 MAX_KEY_LENGTH = 200
 
 
 def validate_openai_key_format(api_key: str) -> dict:
     """Validate OpenAI API key format without making an external API call.
 
-    Valid keys must start with 'sk-org-' (Organization-level) or 'sk-proj-'
-    (Project-level) and have a total length between 40 and 200 characters
-    inclusive.
+    Valid keys must start with 'sk-' and have a total length between 20
+    and 200 characters inclusive.
 
     Args:
         api_key: The API key string to validate.
@@ -52,7 +51,7 @@ def validate_openai_key_format(api_key: str) -> dict:
     if not api_key.startswith(VALID_KEY_PREFIXES):
         return {
             'valid': False,
-            'error': 'Invalid API key format. Key must start with "sk-org-" or "sk-proj-".'
+            'error': 'Invalid API key format. Key must start with "sk-".'
         }
 
     key_length = len(api_key)
@@ -110,7 +109,7 @@ class OpenAIConnector(ProviderConnector):
                 provider='openai'
             )
 
-        # Validate key format: must start with sk-org- or sk-proj- and be 40-200 chars
+        # Validate key format: must start with sk- and be 20-200 chars
         validation = validate_openai_key_format(api_key)
         if not validation['valid']:
             raise AuthenticationError(
