@@ -271,7 +271,18 @@ class OpenAIConnector(ProviderConnector):
                 the caller should update the connection status to 'failed'.
         """
         api_key = auth_context.get('api_key', '')
-        url = f"{OPENAI_BASE_URL}/usage?start_date={start_date}&end_date={end_date}"
+
+        # Convert date strings to epoch timestamps for the Organization Costs API
+        # Format: /v1/organization/costs?start_time=EPOCH&end_time=EPOCH
+        import calendar
+        from datetime import datetime as _dt
+        _start_epoch = int(calendar.timegm(_dt.strptime(start_date, '%Y-%m-%d').timetuple()))
+        _end_epoch = int(calendar.timegm(_dt.strptime(end_date, '%Y-%m-%d').timetuple()))
+
+        # Primary: Organization Costs API (works with admin keys)
+        url = f"{OPENAI_BASE_URL}/organization/costs?start_time={_start_epoch}&end_time={_end_epoch}"
+        # Fallback: Legacy usage API (works with project keys)
+        legacy_url = f"{OPENAI_BASE_URL}/usage?start_date={start_date}&end_date={end_date}"
 
         last_error = None
         for attempt in range(MAX_RETRIES):
@@ -286,6 +297,25 @@ class OpenAIConnector(ProviderConnector):
                 )
                 response = urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT)
                 data = json.loads(response.read().decode('utf-8'))
+
+                # Handle Organization Costs API response format:
+                # {"object": "page", "data": [{"start_time": N, "end_time": N, "results": [{"amount": {"value": X, "currency": "usd"}}]}]}
+                if data.get('object') == 'page' and 'data' in data:
+                    # Paginated organization costs response — flatten all pages
+                    all_results = data.get('data', [])
+                    # Fetch additional pages if has_more
+                    while data.get('has_more') and data.get('next_page'):
+                        _next_url = f"{OPENAI_BASE_URL}/organization/costs?start_time={_start_epoch}&end_time={_end_epoch}&page={data['next_page']}"
+                        _next_req = urllib.request.Request(
+                            _next_url, method='GET',
+                            headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'}
+                        )
+                        _next_resp = urllib.request.urlopen(_next_req, timeout=REQUEST_TIMEOUT)
+                        data = json.loads(_next_resp.read().decode('utf-8'))
+                        all_results.extend(data.get('data', []))
+                    return all_results
+
+                # Legacy /v1/usage response format
                 return data.get('data', data.get('results', [data] if 'object' in data else []))
 
             except urllib.error.HTTPError as e:
@@ -347,6 +377,13 @@ class OpenAIConnector(ProviderConnector):
                         )
                         err.mark_connection_failed = True
                         raise err
+
+                # Other HTTP errors — for 403, try legacy endpoint before failing
+                if status_code == 403 and url != legacy_url:
+                    # Admin key might not have org costs access, try legacy usage API
+                    logger.info('Organization Costs API returned 403, trying legacy /v1/usage endpoint')
+                    url = legacy_url
+                    continue
 
                 # Other HTTP errors — do NOT retry, connection status unchanged (Req 14.7)
                 err = CostRetrievalError(
