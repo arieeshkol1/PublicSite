@@ -13573,6 +13573,14 @@ loadAccounts = async function() {
     return result;
 };
 
+// Call visibility update whenever accounts are loaded
+var _origLoadAccounts = loadAccounts;
+loadAccounts = async function() {
+    var result = await _origLoadAccounts.apply(this, arguments);
+    _updateOpenAINavVisibility();
+    return result;
+};
+
 /**
  * Main entry point: renders the OpenAI dashboard inside #openai-dashboard.
  * Called when the observe-openai section becomes active.

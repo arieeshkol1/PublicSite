@@ -279,8 +279,8 @@ class OpenAIConnector(ProviderConnector):
         _start_epoch = int(calendar.timegm(_dt.strptime(start_date, '%Y-%m-%d').timetuple()))
         _end_epoch = int(calendar.timegm(_dt.strptime(end_date, '%Y-%m-%d').timetuple()))
 
-        # Primary: Organization Costs API (works with admin keys)
-        url = f"{OPENAI_BASE_URL}/organization/costs?start_time={_start_epoch}&end_time={_end_epoch}"
+        # Primary: Organization Costs API with line_item breakdown (works with admin keys)
+        url = f"{OPENAI_BASE_URL}/organization/costs?start_time={_start_epoch}&end_time={_end_epoch}&group_by=line_item"
         # Fallback: Legacy usage API (works with project keys)
         legacy_url = f"{OPENAI_BASE_URL}/usage?start_date={start_date}&end_date={end_date}"
 
@@ -299,13 +299,15 @@ class OpenAIConnector(ProviderConnector):
                 data = json.loads(response.read().decode('utf-8'))
 
                 # Handle Organization Costs API response format:
-                # {"object": "page", "data": [{"start_time": N, "end_time": N, "results": [{"amount": {"value": X, "currency": "usd"}}]}]}
+                # {"object": "page", "data": [{"start_time": N, "end_time": N, "results": [{"amount": {"value": X, "currency": "usd"}, "line_item": "model-name"}]}]}
                 if data.get('object') == 'page' and 'data' in data:
                     # Paginated organization costs response — flatten all pages
                     all_results = data.get('data', [])
-                    # Fetch additional pages if has_more
-                    while data.get('has_more') and data.get('next_page'):
-                        _next_url = f"{OPENAI_BASE_URL}/organization/costs?start_time={_start_epoch}&end_time={_end_epoch}&page={data['next_page']}"
+                    # Fetch additional pages (max 5 to avoid Lambda timeout)
+                    _page_count = 1
+                    _max_pages = 5
+                    while data.get('has_more') and data.get('next_page') and _page_count < _max_pages:
+                        _next_url = f"{OPENAI_BASE_URL}/organization/costs?start_time={_start_epoch}&end_time={_end_epoch}&group_by=line_item&page={data['next_page']}"
                         _next_req = urllib.request.Request(
                             _next_url, method='GET',
                             headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'}
@@ -313,6 +315,44 @@ class OpenAIConnector(ProviderConnector):
                         _next_resp = urllib.request.urlopen(_next_req, timeout=REQUEST_TIMEOUT)
                         data = json.loads(_next_resp.read().decode('utf-8'))
                         all_results.extend(data.get('data', []))
+                        _page_count += 1
+
+                    # Also fetch token usage from /v1/organization/usage (provides input/output token counts)
+                    try:
+                        _usage_url = f"{OPENAI_BASE_URL}/organization/usage?start_time={_start_epoch}&end_time={_end_epoch}&group_by=line_item&bucket_width=1d"
+                        _usage_req = urllib.request.Request(
+                            _usage_url, method='GET',
+                            headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'}
+                        )
+                        _usage_resp = urllib.request.urlopen(_usage_req, timeout=REQUEST_TIMEOUT)
+                        _usage_data = json.loads(_usage_resp.read().decode('utf-8'))
+                        # Merge token data into cost buckets by matching start_time
+                        if _usage_data.get('object') == 'page' and 'data' in _usage_data:
+                            _token_map = {}  # start_time -> {line_item -> {input_tokens, output_tokens}}
+                            for bucket in _usage_data.get('data', []):
+                                st = bucket.get('start_time')
+                                for result in bucket.get('results', []):
+                                    line = result.get('line_item') or 'unknown'
+                                    input_t = result.get('input_tokens', 0) or 0
+                                    output_t = result.get('output_tokens', 0) or 0
+                                    if st not in _token_map:
+                                        _token_map[st] = {}
+                                    if line not in _token_map[st]:
+                                        _token_map[st][line] = {'input_tokens': 0, 'output_tokens': 0}
+                                    _token_map[st][line]['input_tokens'] += input_t
+                                    _token_map[st][line]['output_tokens'] += output_t
+                            # Enrich cost buckets with token counts
+                            for bucket in all_results:
+                                st = bucket.get('start_time')
+                                if st in _token_map:
+                                    for result in bucket.get('results', []):
+                                        line = result.get('line_item') or 'unknown'
+                                        if line in _token_map[st]:
+                                            result['input_tokens'] = _token_map[st][line]['input_tokens']
+                                            result['output_tokens'] = _token_map[st][line]['output_tokens']
+                    except Exception as _usage_err:
+                        logger.warning(f"Token usage fetch failed (non-fatal): {_usage_err}")
+
                     return all_results
 
                 # Legacy /v1/usage response format
