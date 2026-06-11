@@ -13692,20 +13692,30 @@ function _renderOpenAIDashboardSections() {
     html += _renderSpendTrendsChart(data);
     html += '</div>';
 
-    // Section 4: Cost per Project (Task 14.4)
-    html += '<div id="openai-section-projects" class="openai-dash-section">';
-    html += _renderCostPerProjectTable(data);
-    html += '</div>';
+    // Section 4: Cost per Project (Task 14.4) — only show if project data exists
+    var _projData = data.project_breakdown || data.project_costs || data.projectCosts || {};
+    var _hasProjects = Array.isArray(_projData) ? _projData.length > 0 : ((_projData.projects || []).length > 0);
+    if (_hasProjects) {
+        html += '<div id="openai-section-projects" class="openai-dash-section">';
+        html += _renderCostPerProjectTable(data);
+        html += '</div>';
+    }
 
-    // Section 5: Rate Limit Gauges (Task 14.5)
-    html += '<div id="openai-section-ratelimits" class="openai-dash-section">';
-    html += _renderRateLimitGauges(data);
-    html += '</div>';
+    // Section 5: Rate Limit Gauges (Task 14.5) — hide for admin keys (no data)
+    var _rateLimits = data.rate_limits || data.rateLimits || null;
+    if (_rateLimits && (Array.isArray(_rateLimits) ? _rateLimits.length > 0 : Object.keys(_rateLimits).length > 0)) {
+        html += '<div id="openai-section-ratelimits" class="openai-dash-section">';
+        html += _renderRateLimitGauges(data);
+        html += '</div>';
+    }
 
-    // Section 6: Optimization Recommendations (Task 14.6)
-    html += '<div id="openai-section-recommendations" class="openai-dash-section">';
-    html += _renderOptimizationRecommendations(data);
-    html += '</div>';
+    // Section 6: Optimization Recommendations (Task 14.6) — hide if no recommendations
+    var _recs = data.optimization_recommendations || data.recommendations || [];
+    if (_recs.length > 0) {
+        html += '<div id="openai-section-recommendations" class="openai-dash-section">';
+        html += _renderOptimizationRecommendations(data);
+        html += '</div>';
+    }
 
     contentEl.innerHTML = html;
 
@@ -13722,22 +13732,41 @@ function _renderTokenUsageChart(data) {
             '<div class="openai-widget-empty">No token usage data for the selected period.</div></div>';
     }
 
-    var maxInput = 0, maxOutput = 0;
+    // Aggregate tokens by date (multiple model records per day)
+    var byDate = {};
     usage.forEach(function(d) {
-        if ((d.input_tokens || 0) > maxInput) maxInput = d.input_tokens || 0;
-        if ((d.output_tokens || 0) > maxOutput) maxOutput = d.output_tokens || 0;
+        var dt = d.date || '';
+        if (!dt) return;
+        if (!byDate[dt]) byDate[dt] = {date: dt, input_tokens: 0, output_tokens: 0};
+        byDate[dt].input_tokens += (d.input_tokens || 0);
+        byDate[dt].output_tokens += (d.output_tokens || 0);
+    });
+    var daily = Object.keys(byDate).sort().map(function(k) { return byDate[k]; });
+
+    // Filter out days with zero tokens (no data from usage endpoint)
+    var hasAnyTokens = daily.some(function(d) { return d.input_tokens > 0 || d.output_tokens > 0; });
+    if (!hasAnyTokens) {
+        return '<div class="openai-widget">' +
+            '<div class="openai-widget-header"><h4>\ud83d\udcca Token Usage Over Time</h4></div>' +
+            '<div class="openai-widget-empty">Token usage data is not available for this key type. Cost data is shown in Spend Trends below.</div></div>';
+    }
+
+    var maxInput = 0, maxOutput = 0;
+    daily.forEach(function(d) {
+        if (d.input_tokens > maxInput) maxInput = d.input_tokens;
+        if (d.output_tokens > maxOutput) maxOutput = d.output_tokens;
     });
     var maxY = Math.max(maxInput, maxOutput, 1);
 
-    var W = 800, H = 220, PAD = 40, PADL = 60;
+    var W = 900, H = 260, PAD = 50, PADL = 70;
     var chartW = W - PADL - 20, chartH = H - PAD - 10;
-    var stepX = usage.length > 1 ? chartW / (usage.length - 1) : chartW;
+    var stepX = daily.length > 1 ? chartW / (daily.length - 1) : chartW;
 
     var inputPts = [], outputPts = [];
-    usage.forEach(function(d, i) {
+    daily.forEach(function(d, i) {
         var x = PADL + i * stepX;
-        var yIn = (H - PAD) - ((d.input_tokens || 0) / maxY * chartH);
-        var yOut = (H - PAD) - ((d.output_tokens || 0) / maxY * chartH);
+        var yIn = (H - PAD) - (d.input_tokens / maxY * chartH);
+        var yOut = (H - PAD) - (d.output_tokens / maxY * chartH);
         inputPts.push(x.toFixed(1) + ',' + yIn.toFixed(1));
         outputPts.push(x.toFixed(1) + ',' + yOut.toFixed(1));
     });
@@ -13749,29 +13778,34 @@ function _renderTokenUsageChart(data) {
     html += '<span class="openai-legend-item"><span class="openai-legend-dot" style="background:#f59e0b;"></span> Output Tokens</span>';
     html += '</div>';
     html += '<div style="width:100%;overflow-x:auto;">';
-    html += '<svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;min-width:400px;height:220px;">';
+    html += '<svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;min-width:500px;height:260px;">';
 
+    // Y-axis grid lines and labels
     for (var yi = 0; yi <= 4; yi++) {
         var yPos = (H - PAD) - (yi / 4 * chartH);
         var yVal = Math.round(maxY * yi / 4);
-        html += '<text x="' + (PADL - 8) + '" y="' + (yPos + 3) + '" text-anchor="end" font-size="9" fill="#6b7280">' + _fmtTokens(yVal) + '</text>';
+        html += '<text x="' + (PADL - 8) + '" y="' + (yPos + 4) + '" text-anchor="end" font-size="11" fill="#6b7280">' + _fmtTokens(yVal) + '</text>';
         html += '<line x1="' + PADL + '" y1="' + yPos + '" x2="' + (W - 20) + '" y2="' + yPos + '" stroke="#e5e7eb" stroke-width="0.5"/>';
     }
 
-    var labelEvery = Math.max(1, Math.floor(usage.length / 7));
-    usage.forEach(function(d, i) {
-        if (i % labelEvery === 0 || i === usage.length - 1) {
+    // X-axis labels — show every Nth label to avoid overlap, DD-MM format
+    var labelEvery = daily.length <= 7 ? 1 : Math.max(1, Math.floor(daily.length / 10));
+    daily.forEach(function(d, i) {
+        if (i % labelEvery === 0 || i === daily.length - 1) {
             var x = PADL + i * stepX;
-            var monthDay = d.date ? d.date.substring(5) : '';
-            html += '<text x="' + x + '" y="' + (H - 5) + '" text-anchor="middle" font-size="9" fill="#6b7280">' + monthDay + '</text>';
+            var parts = d.date ? d.date.split('-') : [];
+            var label = parts.length === 3 ? parts[2] + '-' + parts[1] : '';
+            html += '<text x="' + x + '" y="' + (H - 8) + '" text-anchor="middle" font-size="11" fill="#374151">' + label + '</text>';
         }
     });
 
-    html += '<polyline points="' + inputPts.join(' ') + '" fill="none" stroke="#6366f1" stroke-width="2" stroke-linejoin="round"/>';
-    html += '<polyline points="' + outputPts.join(' ') + '" fill="none" stroke="#f59e0b" stroke-width="2" stroke-linejoin="round"/>';
+    // Lines
+    html += '<polyline points="' + inputPts.join(' ') + '" fill="none" stroke="#6366f1" stroke-width="2.5" stroke-linejoin="round"/>';
+    html += '<polyline points="' + outputPts.join(' ') + '" fill="none" stroke="#f59e0b" stroke-width="2.5" stroke-linejoin="round"/>';
 
+    // Fill areas
     var baseY = H - PAD;
-    var lastX = (PADL + (usage.length - 1) * stepX).toFixed(1);
+    var lastX = (PADL + (daily.length - 1) * stepX).toFixed(1);
     html += '<polygon points="' + inputPts.join(' ') + ' ' + lastX + ',' + baseY + ' ' + PADL + ',' + baseY + '" fill="#6366f1" opacity="0.08"/>';
     html += '<polygon points="' + outputPts.join(' ') + ' ' + lastX + ',' + baseY + ' ' + PADL + ',' + baseY + '" fill="#f59e0b" opacity="0.08"/>';
 
@@ -13880,17 +13914,60 @@ function _renderSpendTrendsChart(data) {
 function _renderSpendBars(aggregated) {
     if (!aggregated.length) return '<div class="openai-widget-empty">No data to display.</div>';
     var maxCost = Math.max.apply(null, aggregated.map(function(d) { return d.cost || 0; }));
-    var html = '';
-    aggregated.forEach(function(d) {
-        var pct = maxCost > 0 ? (d.cost / maxCost * 100) : 0;
-        var label = d.label || d.date || '';
-        html += '<div class="openai-bar-col" title="' + ea(label) + ': $' + (d.cost || 0).toFixed(2) + '">';
-        html += '<div class="openai-bar-stack">';
-        html += '<div class="openai-bar" style="height:' + pct.toFixed(1) + '%;background:#10b981;"></div>';
-        html += '</div>';
-        html += '<div class="openai-bar-label">' + esc(label.slice(-5)) + '</div>';
-        html += '</div>';
+
+    // Render as SVG line chart with Y-axis grid and DD-MM labels
+    var W = 900, H = 220, PAD = 45, PADL = 65;
+    var chartW = W - PADL - 20, chartH = H - PAD - 10;
+    var stepX = aggregated.length > 1 ? chartW / (aggregated.length - 1) : chartW;
+
+    var pts = [];
+    aggregated.forEach(function(d, i) {
+        var x = PADL + i * stepX;
+        var y = (H - PAD) - ((d.cost || 0) / (maxCost || 1) * chartH);
+        pts.push(x.toFixed(1) + ',' + y.toFixed(1));
     });
+
+    var html = '<svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;min-width:500px;height:220px;">';
+
+    // Y-axis grid lines and labels
+    for (var yi = 0; yi <= 4; yi++) {
+        var yPos = (H - PAD) - (yi / 4 * chartH);
+        var yVal = (maxCost * yi / 4);
+        var yLabel = yVal >= 1 ? '$' + yVal.toFixed(0) : '$' + yVal.toFixed(2);
+        html += '<text x="' + (PADL - 6) + '" y="' + (yPos + 4) + '" text-anchor="end" font-size="11" fill="#6b7280">' + yLabel + '</text>';
+        html += '<line x1="' + PADL + '" y1="' + yPos + '" x2="' + (W - 20) + '" y2="' + yPos + '" stroke="#e5e7eb" stroke-width="0.5"/>';
+    }
+
+    // X-axis labels (DD-MM format)
+    var labelEvery = aggregated.length <= 10 ? 1 : Math.max(1, Math.floor(aggregated.length / 10));
+    aggregated.forEach(function(d, i) {
+        if (i % labelEvery === 0 || i === aggregated.length - 1) {
+            var x = PADL + i * stepX;
+            var dateStr = d.date || d.label || '';
+            var parts = dateStr.split('-');
+            var label = parts.length >= 3 ? parts[2] + '-' + parts[1] : dateStr.slice(-5);
+            html += '<text x="' + x + '" y="' + (H - 8) + '" text-anchor="middle" font-size="11" fill="#374151">' + label + '</text>';
+        }
+    });
+
+    // Line
+    html += '<polyline points="' + pts.join(' ') + '" fill="none" stroke="#10b981" stroke-width="2.5" stroke-linejoin="round"/>';
+
+    // Fill area
+    var baseY = H - PAD;
+    var lastX = (PADL + (aggregated.length - 1) * stepX).toFixed(1);
+    html += '<polygon points="' + pts.join(' ') + ' ' + lastX + ',' + baseY + ' ' + PADL + ',' + baseY + '" fill="#10b981" opacity="0.1"/>';
+
+    // Dots on data points (only if < 15 points)
+    if (aggregated.length <= 14) {
+        aggregated.forEach(function(d, i) {
+            var x = PADL + i * stepX;
+            var y = (H - PAD) - ((d.cost || 0) / (maxCost || 1) * chartH);
+            html += '<circle cx="' + x.toFixed(1) + '" cy="' + y.toFixed(1) + '" r="3" fill="#10b981"/>';
+        });
+    }
+
+    html += '</svg>';
     return html;
 }
 

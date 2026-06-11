@@ -326,10 +326,24 @@ class OpenAIConnector(ProviderConnector):
                         )
                         _usage_resp = urllib.request.urlopen(_usage_req, timeout=REQUEST_TIMEOUT)
                         _usage_data = json.loads(_usage_resp.read().decode('utf-8'))
+                        # Paginate usage endpoint (max 5 pages to cover 30 days)
+                        _all_usage_buckets = _usage_data.get('data', []) if _usage_data.get('object') == 'page' else []
+                        _usage_page = 1
+                        while _usage_data.get('has_more') and _usage_data.get('next_page') and _usage_page < 5:
+                            _next_usage_url = f"{OPENAI_BASE_URL}/organization/usage/completions?start_time={_start_epoch}&end_time={_end_epoch}&group_by=model&bucket_width=1d&page={_usage_data['next_page']}"
+                            _next_usage_req = urllib.request.Request(
+                                _next_usage_url, method='GET',
+                                headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'}
+                            )
+                            _next_usage_resp = urllib.request.urlopen(_next_usage_req, timeout=REQUEST_TIMEOUT)
+                            _usage_data = json.loads(_next_usage_resp.read().decode('utf-8'))
+                            _all_usage_buckets.extend(_usage_data.get('data', []))
+                            _usage_page += 1
+
                         # Merge token data into cost buckets by matching start_time
-                        if _usage_data.get('object') == 'page' and 'data' in _usage_data:
+                        if _all_usage_buckets:
                             _token_map = {}  # start_time -> {model -> {input_tokens, output_tokens}}
-                            for bucket in _usage_data.get('data', []):
+                            for bucket in _all_usage_buckets:
                                 st = bucket.get('start_time')
                                 for result in bucket.get('results', []):
                                     model = result.get('model') or result.get('line_item') or 'unknown'
