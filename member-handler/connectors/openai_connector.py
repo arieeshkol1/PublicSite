@@ -368,9 +368,10 @@ class OpenAIConnector(ProviderConnector):
                                             result['output_tokens'] = _token_map[st][line]['output_tokens']
                                             matched = True
                                         if not matched:
-                                            # Try matching cost line_item as prefix of usage model name
+                                            # Try matching: model_key is prefix of cost line_item
+                                            # e.g., model_key="gpt-5.1-2025-11-13" matches line="gpt-5.1-2025-11-13, input"
                                             for model_key, tokens in _token_map[st].items():
-                                                if line and (line.lower() in model_key.lower() or model_key.lower().startswith(line.lower())):
+                                                if line and (model_key.lower() in line.lower() or line.lower().startswith(model_key.lower())):
                                                     result['input_tokens'] = tokens['input_tokens']
                                                     result['output_tokens'] = tokens['output_tokens']
                                                     break
@@ -378,17 +379,16 @@ class OpenAIConnector(ProviderConnector):
                                 if st in _token_map:
                                     existing_lines = {(r.get('line_item') or '').lower() for r in bucket.get('results', [])}
                                     for model_key, tokens in _token_map[st].items():
-                                        if model_key.lower() not in existing_lines:
-                                            # Check no partial match either
-                                            already_matched = any(model_key.lower().startswith(el) for el in existing_lines if el)
-                                            if not already_matched and (tokens['input_tokens'] > 0 or tokens['output_tokens'] > 0):
-                                                bucket.get('results', []).append({
-                                                    'object': 'organization.usage.result',
-                                                    'amount': {'value': 0, 'currency': 'usd'},
-                                                    'line_item': model_key,
-                                                    'input_tokens': tokens['input_tokens'],
-                                                    'output_tokens': tokens['output_tokens'],
-                                                })
+                                        # Check if this model already matched any cost line_item
+                                        already_matched = any(model_key.lower() in el for el in existing_lines if el)
+                                        if not already_matched and (tokens['input_tokens'] > 0 or tokens['output_tokens'] > 0):
+                                            bucket.get('results', []).append({
+                                                'object': 'organization.usage.result',
+                                                'amount': {'value': 0, 'currency': 'usd'},
+                                                'line_item': model_key,
+                                                'input_tokens': tokens['input_tokens'],
+                                                'output_tokens': tokens['output_tokens'],
+                                            })
                     except Exception as _usage_err:
                         logger.warning(f"Token usage fetch failed (non-fatal): {_usage_err}")
 
