@@ -13911,7 +13911,7 @@ function _renderSpendTrendsChart(data) {
     html += '</div>';
 
     // Render bar chart for spend
-    html += '<div id="openai-spend-bars" class="openai-bar-chart">';
+    html += '<div id="openai-spend-bars" class="openai-line-chart">';
     html += _renderSpendBars(aggregated);
     html += '</div>';
 

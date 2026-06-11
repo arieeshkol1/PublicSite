@@ -1578,6 +1578,12 @@
 }
 
 /* Bar chart (token usage & spend trends) */
+.openai-line-chart {
+    width: 100%;
+    padding: 0;
+    overflow: visible;
+}
+
 .openai-bar-chart {
     display: flex;
     align-items: flex-end;
