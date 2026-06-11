@@ -168,6 +168,14 @@ def _read_cost_cache(member_email: str, account_id: str, tool_name: str, params:
         cache_table = _get_cache_table()
         now = datetime.now(timezone.utc)
 
+        # Determine SK prefix based on provider (OpenAI uses OPENAI_DAILY#, AWS uses DAILY#)
+        # Resolve provider to pick correct prefix
+        try:
+            provider = resolve_provider(account_id, member_email)
+        except Exception:
+            provider = "aws"
+        sk_prefix = "OPENAI_DAILY#" if provider == "openai" else "DAILY#"
+
         # Determine the date range for the query based on tool type
         if tool_name == "getCostBreakdown":
             # Include both previous month AND current month-to-date for accurate daily trends
@@ -182,8 +190,8 @@ def _read_cost_cache(member_email: str, account_id: str, tool_name: str, params:
             start_date = (end_date - timedelta(days=months * 31)).replace(day=1)
 
         pk = f"{member_email}#{account_id}"
-        start_sk = f"DAILY#{start_date.strftime('%Y-%m-%d')}"
-        end_sk = f"DAILY#{end_date.strftime('%Y-%m-%d')}"
+        start_sk = f"{sk_prefix}{start_date.strftime('%Y-%m-%d')}"
+        end_sk = f"{sk_prefix}{end_date.strftime('%Y-%m-%d')}"
 
         resp = cache_table.query(
             KeyConditionExpression=Key("pk").eq(pk) & Key("sk").between(start_sk, end_sk)
@@ -213,7 +221,13 @@ def _read_cost_cache(member_email: str, account_id: str, tool_name: str, params:
             # Assume fresh if items exist (backward compat with data that has no cached_at)
             is_fresh = True
         else:
-            is_fresh = most_recent_cached_at >= staleness_threshold
+            # For OpenAI accounts, use a much longer staleness window (7 days)
+            # since there's no background refresh — cache is populated on dashboard view
+            if provider == "openai":
+                openai_staleness = now - timedelta(days=7)
+                is_fresh = most_recent_cached_at >= openai_staleness
+            else:
+                is_fresh = most_recent_cached_at >= staleness_threshold
 
         if not is_fresh:
             return None, False
@@ -243,7 +257,9 @@ def _aggregate_cost_breakdown(items, start_date, end_date):
     daily_costs = []
     for item in items:
         cost = float(item.get("cost_amount", 0))
-        date = item["sk"].replace("DAILY#", "")
+        sk = item["sk"]
+        # Strip both DAILY# and OPENAI_DAILY# prefixes to get the date
+        date = sk.replace("OPENAI_DAILY#", "").replace("DAILY#", "")
         daily_costs.append({"date": date, "cost": round(cost, 2)})
         for svc, svc_cost in item.get("service_breakdown", {}).items():
             services[svc] = services.get(svc, 0) + float(svc_cost)
@@ -294,7 +310,8 @@ def _aggregate_monthly_trend(items):
     """Aggregate daily cache items into a monthly trend response."""
     monthly_data = {}
     for item in items:
-        date = item["sk"].replace("DAILY#", "")
+        sk = item["sk"]
+        date = sk.replace("OPENAI_DAILY#", "").replace("DAILY#", "")
         month = date[:7]  # YYYY-MM
         if month not in monthly_data:
             monthly_data[month] = {}
@@ -318,6 +335,7 @@ def _write_cost_cache(member_email: str, account_id: str, tool_name: str, result
 
     Writes daily cost items with the current timestamp as cached_at.
     Only writes if the result contains usable cost data.
+    Uses OPENAI_DAILY# prefix for OpenAI accounts, DAILY# for others.
     """
     try:
         cache_table = _get_cache_table()
@@ -325,11 +343,22 @@ def _write_cost_cache(member_email: str, account_id: str, tool_name: str, result
         pk = f"{member_email}#{account_id}"
         cached_at = now.isoformat()
 
+        # Determine SK prefix based on provider
+        try:
+            provider = resolve_provider(account_id, member_email)
+        except Exception:
+            provider = "aws"
+        sk_prefix = "OPENAI_DAILY#" if provider == "openai" else "DAILY#"
+
         if tool_name == "getCostBreakdown":
             daily_costs = result.get("dailyCosts", [])
             service_breakdown = {}
-            for svc in result.get("topServices", []):
-                service_breakdown[svc.get("service", "")] = str(svc.get("cost", 0))
+            # For OpenAI, service breakdown comes from serviceBreakdown field
+            for svc in result.get("topServices", result.get("serviceBreakdown", [])):
+                svc_name = svc.get("service", svc.get("serviceName", ""))
+                svc_cost = svc.get("cost", 0)
+                if svc_name:
+                    service_breakdown[svc_name] = str(svc_cost)
 
             for day_entry in daily_costs:
                 date = day_entry.get("date", "")
@@ -338,7 +367,7 @@ def _write_cost_cache(member_email: str, account_id: str, tool_name: str, result
                     cache_table.put_item(
                         Item={
                             "pk": pk,
-                            "sk": f"DAILY#{date}",
+                            "sk": f"{sk_prefix}{date}",
                             "cost_amount": str(cost),
                             "service_breakdown": service_breakdown,
                             "cached_at": cached_at,
@@ -353,7 +382,7 @@ def _write_cost_cache(member_email: str, account_id: str, tool_name: str, result
                 cache_table.put_item(
                     Item={
                         "pk": pk,
-                        "sk": f"DAILY#{month}-01",
+                        "sk": f"{sk_prefix}{month}-01",
                         "cost_amount": str(round(total_cost, 2)),
                         "service_breakdown": service_breakdown,
                         "cached_at": cached_at,

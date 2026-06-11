@@ -11966,6 +11966,32 @@ def handle_openai_usage(event):
         for b in spend_trends_buckets
     ]
 
+    # Write to Cost_Cache_Table so the AI chat can access this data
+    try:
+        now_iso = datetime.now(timezone.utc).isoformat()
+        # Group costs by date for cache write
+        _daily_cache = {}
+        for rec in usage_records:
+            d = rec.get('date', '')
+            if not d:
+                continue
+            if d not in _daily_cache:
+                _daily_cache[d] = {'cost': 0.0, 'services': {}}
+            _daily_cache[d]['cost'] += float(rec.get('cost_amount', 0))
+            svc = rec.get('service_name', 'unknown')
+            _daily_cache[d]['services'][svc] = _daily_cache[d]['services'].get(svc, 0) + float(rec.get('cost_amount', 0))
+
+        for date_key, day_data in _daily_cache.items():
+            cache_table.put_item(Item={
+                'pk': pk,
+                'sk': f"{sk_prefix}{date_key}",
+                'cost_amount': str(round(day_data['cost'], 4)),
+                'service_breakdown': {k: str(round(v, 4)) for k, v in day_data['services'].items()},
+                'cached_at': now_iso,
+            })
+    except Exception as _cache_err:
+        logger.warning(f"OpenAI cache write failed (non-fatal): {_cache_err}")
+
     # Build response matching the frontend expected schema
     # Frontend reads: data.token_usage, data.cost_by_model, data.spend_trends, data.project_breakdown
     response_data = {
