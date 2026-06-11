@@ -13235,11 +13235,11 @@ function _sqlCopyScript() {
 function _validateOpenAIKey(key) {
     if (!key) return { valid: false, message: 'API key is required.' };
     var trimmed = key.trim();
-    if (trimmed.length < 40 || trimmed.length > 200) {
-        return { valid: false, message: 'API key must be between 40 and 200 characters.' };
+    if (trimmed.length < 20 || trimmed.length > 200) {
+        return { valid: false, message: 'API key must be between 20 and 200 characters.' };
     }
-    if (!trimmed.startsWith('sk-org-') && !trimmed.startsWith('sk-proj-')) {
-        return { valid: false, message: 'API key must start with "sk-org-" or "sk-proj-".' };
+    if (!trimmed.startsWith('sk-')) {
+        return { valid: false, message: 'API key must start with "sk-".' };
     }
     return { valid: true, message: '' };
 }
@@ -13347,13 +13347,13 @@ function _showAddAIVendorModal() {
     var html = '<div style="background:#fff;border-radius:14px;padding:28px;max-width:480px;width:95%;box-shadow:0 20px 60px rgba(0,0,0,0.2);">';
     // Header
     html += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;">';
-    html += '<h2 style="margin:0;font-size:1.2em;color:#1f2937;">Add AI Vendor</h2>';
+    html += '<h2 style="margin:0;font-size:1.2em;color:#1f2937;">Add AI Connection</h2>';
     html += '<button id="ai-vendor-modal-close" style="background:none;border:none;font-size:1.4em;cursor:pointer;color:#6b7280;">&times;</button>';
     html += '</div>';
 
     // Step 1: Vendor Selection
     html += '<div id="ai-vendor-step-select">';
-    html += '<p style="color:#6b7280;font-size:0.9em;margin-bottom:16px;">Select your AI vendor:</p>';
+    html += '<p style="color:#6b7280;font-size:0.9em;margin-bottom:16px;">Select your AI provider:</p>';
     html += '<div style="display:grid;grid-template-columns:1fr;gap:10px;">';
     html += '<button id="ai-vendor-select-openai" style="display:flex;align-items:center;gap:12px;padding:14px 16px;border:2px solid #e5e7eb;border-radius:10px;background:#fff;cursor:pointer;text-align:left;transition:border-color 0.2s;">';
     html += '<div style="width:40px;height:40px;background:#10a37f;border-radius:8px;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:16px;">AI</div>';
@@ -13378,7 +13378,7 @@ function _showAddAIVendorModal() {
     // API Key input
     html += '<div style="margin-bottom:6px;">';
     html += '<label style="display:block;font-size:0.85em;color:#374151;font-weight:500;margin-bottom:4px;">API Key <span style="color:#dc2626;">*</span></label>';
-    html += '<input id="ai-vendor-api-key" type="password" placeholder="sk-org-... or sk-proj-..." style="width:100%;padding:10px 12px;border:1px solid #d1d5db;border-radius:8px;font-size:0.9em;font-family:monospace;box-sizing:border-box;" />';
+    html += '<input id="ai-vendor-api-key" type="password" placeholder="sk-..." style="width:100%;padding:10px 12px;border:1px solid #d1d5db;border-radius:8px;font-size:0.9em;font-family:monospace;box-sizing:border-box;" />';
     html += '</div>';
     html += '<div id="ai-vendor-key-error" style="color:#dc2626;font-size:0.82em;min-height:18px;margin-bottom:14px;"></div>';
 
