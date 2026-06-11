@@ -13924,9 +13924,11 @@ function _renderSpendBars(aggregated) {
     var maxCost = Math.max.apply(null, aggregated.map(function(d) { return d.cost || 0; }));
 
     // Render as SVG line chart with Y-axis grid and DD-MM labels
-    var W = 960, H = 280, PAD = 55, PADL = 75, PADT = 15;
+    var W = 960, H = 300, PAD = 55, PADL = 75, PADT = 35;
     var chartW = W - PADL - 20, chartH = H - PAD - PADT;
     var stepX = aggregated.length > 1 ? chartW / (aggregated.length - 1) : chartW;
+    // Add 10% headroom so line never touches top edge
+    maxCost = maxCost * 1.1;
 
     var pts = [];
     aggregated.forEach(function(d, i) {
@@ -13935,7 +13937,7 @@ function _renderSpendBars(aggregated) {
         pts.push(x.toFixed(1) + ',' + y.toFixed(1));
     });
 
-    var html = '<svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;min-width:600px;height:280px;" preserveAspectRatio="xMidYMid meet">';
+    var html = '<svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;min-width:600px;height:300px;" preserveAspectRatio="xMidYMid meet">';
 
     // Y-axis grid lines and labels
     for (var yi = 0; yi <= 5; yi++) {
@@ -14034,7 +14036,8 @@ function _wireGranularityToggle() {
 
 // ---- Task 14.4: Cost per Project Table ----
 function _renderCostPerProjectTable(data) {
-    var projects = data.project_costs || data.projectCosts || [];
+    var _pb = data.project_breakdown || {};
+    var projects = data.project_costs || data.projectCosts || _pb.projects || [];
     var projectUnavailable = data.project_data_unavailable || data.projectDataUnavailable || false;
 
     if (projectUnavailable) {
