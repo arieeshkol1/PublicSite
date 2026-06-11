@@ -305,7 +305,7 @@ class OpenAIConnector(ProviderConnector):
                     all_results = data.get('data', [])
                     # Fetch additional pages (max 5 to avoid Lambda timeout)
                     _page_count = 1
-                    _max_pages = 5
+                    _max_pages = 3
                     while data.get('has_more') and data.get('next_page') and _page_count < _max_pages:
                         _next_url = f"{OPENAI_BASE_URL}/organization/costs?start_time={_start_epoch}&end_time={_end_epoch}&group_by=line_item&group_by=project_id&page={data['next_page']}"
                         _next_req = urllib.request.Request(

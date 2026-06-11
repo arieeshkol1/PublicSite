@@ -13626,7 +13626,7 @@ function _renderOpenAIDashboard() {
     html += '<span style="font-size:0.82em;color:#6b7280;">Range:</span>';
     html += '<button class="openai-range-btn' + (_openaiDashState.dateRange === 7 ? ' active' : '') + '" data-range="7">7d</button>';
     html += '<button class="openai-range-btn' + (_openaiDashState.dateRange === 30 ? ' active' : '') + '" data-range="30">30d</button>';
-    html += '<button class="openai-range-btn' + (_openaiDashState.dateRange === 90 ? ' active' : '') + '" data-range="90">90d</button>';
+    // 90d removed - causes timeout with paginated API
     html += '</div>';
     html += '</div>';
 
@@ -13737,7 +13737,7 @@ function _renderOpenAIDashboardSections() {
     _wireGranularityToggle();
 }
 
-// ---- Task 14.1: Token Usage Time-Series Chart ----
+// ---- Task 14.1: Token Usage Time-Series (Line Chart) ----
 function _renderTokenUsageChart(data) {
     var usage = data.token_usage || data.tokenUsage || [];
     if (!usage.length) {
@@ -13746,35 +13746,60 @@ function _renderTokenUsageChart(data) {
             '<div class="openai-widget-empty">No token usage data for the selected period.</div></div>';
     }
 
-    // Find max for scaling
-    var maxTokens = 0;
+    var maxInput = 0, maxOutput = 0;
     usage.forEach(function(d) {
-        var total = (d.input_tokens || 0) + (d.output_tokens || 0);
-        if (total > maxTokens) maxTokens = total;
+        if ((d.input_tokens || 0) > maxInput) maxInput = d.input_tokens || 0;
+        if ((d.output_tokens || 0) > maxOutput) maxOutput = d.output_tokens || 0;
+    });
+    var maxY = Math.max(maxInput, maxOutput, 1);
+
+    var W = 800, H = 220, PAD = 40, PADL = 60;
+    var chartW = W - PADL - 20, chartH = H - PAD - 10;
+    var stepX = usage.length > 1 ? chartW / (usage.length - 1) : chartW;
+
+    var inputPts = [], outputPts = [];
+    usage.forEach(function(d, i) {
+        var x = PADL + i * stepX;
+        var yIn = (H - PAD) - ((d.input_tokens || 0) / maxY * chartH);
+        var yOut = (H - PAD) - ((d.output_tokens || 0) / maxY * chartH);
+        inputPts.push(x.toFixed(1) + ',' + yIn.toFixed(1));
+        outputPts.push(x.toFixed(1) + ',' + yOut.toFixed(1));
     });
 
     var html = '<div class="openai-widget">';
-    html += '<div class="openai-widget-header"><h4>📊 Token Usage Over Time</h4></div>';
+    html += '<div class="openai-widget-header"><h4>\ud83d\udcca Token Usage Over Time</h4></div>';
     html += '<div class="openai-chart-legend">';
     html += '<span class="openai-legend-item"><span class="openai-legend-dot" style="background:#6366f1;"></span> Input Tokens</span>';
     html += '<span class="openai-legend-item"><span class="openai-legend-dot" style="background:#f59e0b;"></span> Output Tokens</span>';
     html += '</div>';
-    html += '<div class="openai-bar-chart">';
+    html += '<div style="width:100%;overflow-x:auto;">';
+    html += '<svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;min-width:400px;height:220px;">';
 
-    usage.forEach(function(d) {
-        var inputPct = maxTokens > 0 ? ((d.input_tokens || 0) / maxTokens * 100) : 0;
-        var outputPct = maxTokens > 0 ? ((d.output_tokens || 0) / maxTokens * 100) : 0;
-        var dateLabel = d.date ? d.date.slice(5) : ''; // MM-DD
-        html += '<div class="openai-bar-col" title="' + ea(d.date || '') + '\nInput: ' + _fmtTokens(d.input_tokens || 0) + '\nOutput: ' + _fmtTokens(d.output_tokens || 0) + '">';
-        html += '<div class="openai-bar-stack">';
-        html += '<div class="openai-bar" style="height:' + outputPct + '%;background:#f59e0b;"></div>';
-        html += '<div class="openai-bar" style="height:' + inputPct + '%;background:#6366f1;"></div>';
-        html += '</div>';
-        html += '<div class="openai-bar-label">' + dateLabel + '</div>';
-        html += '</div>';
+    for (var yi = 0; yi <= 4; yi++) {
+        var yPos = (H - PAD) - (yi / 4 * chartH);
+        var yVal = Math.round(maxY * yi / 4);
+        html += '<text x="' + (PADL - 8) + '" y="' + (yPos + 3) + '" text-anchor="end" font-size="9" fill="#6b7280">' + _fmtTokens(yVal) + '</text>';
+        html += '<line x1="' + PADL + '" y1="' + yPos + '" x2="' + (W - 20) + '" y2="' + yPos + '" stroke="#e5e7eb" stroke-width="0.5"/>';
+    }
+
+    var labelEvery = Math.max(1, Math.floor(usage.length / 7));
+    usage.forEach(function(d, i) {
+        if (i % labelEvery === 0 || i === usage.length - 1) {
+            var x = PADL + i * stepX;
+            var monthDay = d.date ? d.date.substring(5) : '';
+            html += '<text x="' + x + '" y="' + (H - 5) + '" text-anchor="middle" font-size="9" fill="#6b7280">' + monthDay + '</text>';
+        }
     });
 
-    html += '</div></div>';
+    html += '<polyline points="' + inputPts.join(' ') + '" fill="none" stroke="#6366f1" stroke-width="2" stroke-linejoin="round"/>';
+    html += '<polyline points="' + outputPts.join(' ') + '" fill="none" stroke="#f59e0b" stroke-width="2" stroke-linejoin="round"/>';
+
+    var baseY = H - PAD;
+    var lastX = (PADL + (usage.length - 1) * stepX).toFixed(1);
+    html += '<polygon points="' + inputPts.join(' ') + ' ' + lastX + ',' + baseY + ' ' + PADL + ',' + baseY + '" fill="#6366f1" opacity="0.08"/>';
+    html += '<polygon points="' + outputPts.join(' ') + ' ' + lastX + ',' + baseY + ' ' + PADL + ',' + baseY + '" fill="#f59e0b" opacity="0.08"/>';
+
+    html += '</svg></div></div>';
     return html;
 }
 
@@ -13820,6 +13845,18 @@ function _renderCostByModelChart(data) {
 // ---- Task 14.3: Spend Trends Chart ----
 function _renderSpendTrendsChart(data) {
     var daily = data.spend_trends || data.spendTrends || data.daily_costs || [];
+    // Fallback: build spend trends from token_usage records (each has date + cost_amount)
+    if (!daily.length && (data.token_usage || data.tokenUsage || []).length) {
+        var _records = data.token_usage || data.tokenUsage || [];
+        var _byDate = {};
+        _records.forEach(function(r) {
+            var d = r.date || '';
+            if (!d) return;
+            if (!_byDate[d]) _byDate[d] = 0;
+            _byDate[d] += (r.cost_amount || r.cost || 0);
+        });
+        daily = Object.keys(_byDate).sort().map(function(d) { return {date: d, cost: _byDate[d]}; });
+    }
     if (!daily.length) {
         return '<div class="openai-widget">' +
             '<div class="openai-widget-header"><h4>Spend Trends</h4></div>' +
