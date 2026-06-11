@@ -297,6 +297,10 @@ class AWSConnector(CloudConnector):
                             for tag in inst.get('Tags', []):
                                 if tag['Key'] == 'Name':
                                     name = tag['Value']
+                            # Detect OS platform from instance metadata
+                            # Platform='windows' for Windows instances, absent for Linux
+                            platform = inst.get('Platform', '')  # 'windows' or ''
+                            os_name = 'Windows' if platform.lower() == 'windows' else 'Linux'
                             instances.append({
                                 'instanceId': inst['InstanceId'],
                                 'type': inst['InstanceType'],
@@ -305,33 +309,35 @@ class AWSConnector(CloudConnector):
                                 'region': region,
                                 'az': inst.get('Placement', {}).get('AvailabilityZone', ''),
                                 'launchTime': str(inst.get('LaunchTime', '')),
+                                'platform': os_name,
                             })
                 except Exception:
                     continue  # Skip regions with access issues
 
             # Enrich with per-instance pricing from the Pricing API (vendor-generic pattern)
-            # Group instance types by region for accurate regional pricing
-            types_by_region: dict[str, set] = {}
+            # Group by (instance_type, region, os) for accurate pricing including Windows/SQL
+            pricing_keys: dict[tuple, set] = {}  # (region, os) -> set of instance types
             for inst in instances:
                 if inst['state'] == 'running':
-                    r = inst['region']
-                    if r not in types_by_region:
-                        types_by_region[r] = set()
-                    types_by_region[r].add(inst['type'])
+                    key = (inst['region'], inst['platform'])
+                    if key not in pricing_keys:
+                        pricing_keys[key] = set()
+                    pricing_keys[key].add(inst['type'])
 
-            # Build a combined pricing map across all regions
-            pricing_map: dict[str, float | None] = {}
-            for r, types in types_by_region.items():
-                region_prices = self._lookup_instance_pricing(types, r)
-                # Merge — prefer region-specific prices
+            # Build a combined pricing map: (instance_type, os) -> price
+            pricing_map: dict[tuple, float | None] = {}
+            for (r, os_name), types in pricing_keys.items():
+                region_prices = self._lookup_instance_pricing(types, r, os_name)
                 for itype, price in region_prices.items():
+                    map_key = (itype, os_name)
                     if price is not None:
-                        pricing_map[itype] = price
-                    elif itype not in pricing_map:
-                        pricing_map[itype] = None
+                        pricing_map[map_key] = price
+                    elif map_key not in pricing_map:
+                        pricing_map[map_key] = None
 
             for inst in instances:
-                hourly = pricing_map.get(inst['type'])
+                map_key = (inst['type'], inst.get('platform', 'Linux'))
+                hourly = pricing_map.get(map_key)
                 inst['hourlyRate_USD'] = hourly
                 inst['estimatedMonthlyCost_USD'] = round(hourly * 730, 2) if hourly and inst['state'] == 'running' else None
 
@@ -343,11 +349,17 @@ class AWSConnector(CloudConnector):
         except Exception as e:
             return {'error': str(e)}
 
-    def _lookup_instance_pricing(self, instance_types: set, region: str) -> dict:
+    def _lookup_instance_pricing(self, instance_types: set, region: str, operating_system: str = 'Linux') -> dict:
         """
         Query AWS Pricing API for on-demand hourly rates of given instance types.
         Returns {instance_type: hourly_rate_usd} dict. Unknown types map to None.
         This is a generic provider-level pricing lookup — no hardcoded rates.
+
+        Args:
+            instance_types: Set of instance type strings (e.g., {'t3.medium', 't3a.xlarge'})
+            region: AWS region code (e.g., 'eu-central-1')
+            operating_system: 'Linux' or 'Windows' — determines the pricing tier.
+                Windows instances include the Windows Server license fee in hourly rate.
         """
         pricing_map = {}
         if not instance_types:
@@ -366,7 +378,7 @@ class AWSConnector(CloudConnector):
                         Filters=[
                             {'Type': 'TERM_MATCH', 'Field': 'instanceType', 'Value': itype},
                             {'Type': 'TERM_MATCH', 'Field': 'location', 'Value': location},
-                            {'Type': 'TERM_MATCH', 'Field': 'operatingSystem', 'Value': 'Linux'},
+                            {'Type': 'TERM_MATCH', 'Field': 'operatingSystem', 'Value': operating_system},
                             {'Type': 'TERM_MATCH', 'Field': 'tenancy', 'Value': 'Shared'},
                             {'Type': 'TERM_MATCH', 'Field': 'preInstalledSw', 'Value': 'NA'},
                         ],
@@ -395,7 +407,7 @@ class AWSConnector(CloudConnector):
                             Filters=[
                                 {'Type': 'TERM_MATCH', 'Field': 'instanceType', 'Value': itype},
                                 {'Type': 'TERM_MATCH', 'Field': 'location', 'Value': 'US East (N. Virginia)'},
-                                {'Type': 'TERM_MATCH', 'Field': 'operatingSystem', 'Value': 'Linux'},
+                                {'Type': 'TERM_MATCH', 'Field': 'operatingSystem', 'Value': operating_system},
                                 {'Type': 'TERM_MATCH', 'Field': 'tenancy', 'Value': 'Shared'},
                                 {'Type': 'TERM_MATCH', 'Field': 'preInstalledSw', 'Value': 'NA'},
                             ],

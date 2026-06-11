@@ -8271,8 +8271,30 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
                             _retry_answer = ''.join(_retry_parts)
                             if _retry_answer and len(_retry_answer) > 20:
                                 answer = _retry_answer
+                                inline_audit_action = 'rewrite_accepted'
+                            else:
+                                # Retry produced empty/short answer - block the original
+                                inline_audit_action = 'rewrite_blocked'
                         except Exception as _retry_err:
-                            logger.warning(f"Quality gate retry failed (using original): {_retry_err}")
+                            logger.warning(f"Quality gate retry failed: {_retry_err}")
+                            inline_audit_action = 'rewrite_blocked'
+
+                        # If rewrite failed or produced poor quality, block the response
+                        if inline_audit_action == 'rewrite_blocked':
+                            logger.warning(f"Quality gate: blocking response (score={inline_audit_score}, rewrite failed)")
+                            return create_response(200, {
+                                'answer': 'I could not generate a sufficiently accurate answer for your question. Please try rephrasing or asking about a specific resource.',
+                                'interactionId': interaction_id,
+                                'commands': [],
+                                'results': [],
+                                'tipFound': False,
+                                'agentUsed': True,
+                                'inlineAuditScore': inline_audit_score,
+                                'inlineAuditAction': 'blocked',
+                                'followUpQuestions': ['Show me my EC2 instances', 'What are my top costs this month?', 'How efficient is my account?'],
+                                'dataSources': [],
+                                'chartData': [],
+                            })
                     else:
                         # Option 3: Ask guiding questions
                         inline_audit_action = 'clarify'
