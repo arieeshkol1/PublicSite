@@ -8256,6 +8256,8 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
                         # Cap retry prompt
                         if len(_retry_prompt) > 3500:
                             _retry_prompt = _retry_prompt[:3500]
+                        _retry_answer = None
+                        _retry_guiding_qs = _audit_result.get('guiding_questions', [])
                         try:
                             _retry_resp = agent_runtime.invoke_agent(
                                 agentId=BEDROCK_AGENT_ID,
@@ -8269,29 +8271,53 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
                                 if 'chunk' in _evt and 'bytes' in _evt['chunk']:
                                     _retry_parts.append(_evt['chunk']['bytes'].decode('utf-8'))
                             _retry_answer = ''.join(_retry_parts)
-                            if _retry_answer and len(_retry_answer) > 20:
-                                answer = _retry_answer
-                                inline_audit_action = 'rewrite_accepted'
-                            else:
-                                # Retry produced empty/short answer - block the original
-                                inline_audit_action = 'rewrite_blocked'
                         except Exception as _retry_err:
                             logger.warning(f"Quality gate retry failed: {_retry_err}")
-                            inline_audit_action = 'rewrite_blocked'
 
-                        # If rewrite failed or produced poor quality, block the response
-                        if inline_audit_action == 'rewrite_blocked':
-                            logger.warning(f"Quality gate: blocking response (score={inline_audit_score}, rewrite failed)")
+                        # Re-score the rewritten answer (or fall through to clarification)
+                        if _retry_answer and len(_retry_answer) > 20:
+                            try:
+                                _rescore_result = _inline_audit_score(question, _retry_answer)
+                                _rescore_score = _rescore_result.get('score', 0)
+                                logger.info(f"Quality gate re-score: {_rescore_score} (threshold={_gate_threshold})")
+                                if _rescore_score >= _gate_threshold:
+                                    # Rewrite passed on second scoring - deliver it
+                                    answer = _retry_answer
+                                    inline_audit_score = _rescore_score
+                                    inline_audit_action = 'rewrite_accepted'
+                                else:
+                                    # Rewrite still fails - use guiding questions from second audit
+                                    inline_audit_action = 'rewrite_clarify'
+                                    _retry_guiding_qs = _rescore_result.get('guiding_questions', _retry_guiding_qs)
+                                    if not _retry_guiding_qs:
+                                        # Generate contextual question from the improvement suggestion
+                                        _improvement_hint = _rescore_result.get('improvement', '')
+                                        if _improvement_hint:
+                                            _retry_guiding_qs = [_improvement_hint]
+                                        else:
+                                            _retry_guiding_qs = ['Could you provide more details about the specific resource or configuration?']
+                            except Exception as _rescore_err:
+                                logger.warning(f"Quality gate re-score failed: {_rescore_err}")
+                                inline_audit_action = 'rewrite_clarify'
+                        else:
+                            # Retry produced empty/short answer - ask for clarification
+                            inline_audit_action = 'rewrite_clarify'
+
+                        # If rewrite still failed scoring, ask the user a clarifying question
+                        if inline_audit_action == 'rewrite_clarify':
+                            logger.info(f"Quality gate: asking clarification (score={inline_audit_score}, guiding_qs={_retry_guiding_qs[:1]})")
                             return create_response(200, {
-                                'answer': 'I could not generate a sufficiently accurate answer for your question. Please try rephrasing or asking about a specific resource.',
+                                'answer': 'I need a bit more detail to give you an accurate answer.',
+                                'needsClarification': True,
+                                'guidingQuestions': _retry_guiding_qs[:3],
                                 'interactionId': interaction_id,
                                 'commands': [],
                                 'results': [],
                                 'tipFound': False,
                                 'agentUsed': True,
                                 'inlineAuditScore': inline_audit_score,
-                                'inlineAuditAction': 'blocked',
-                                'followUpQuestions': ['Show me my EC2 instances', 'What are my top costs this month?', 'How efficient is my account?'],
+                                'inlineAuditAction': 'rewrite_clarify',
+                                'followUpQuestions': [],
                                 'dataSources': [],
                                 'chartData': [],
                             })
