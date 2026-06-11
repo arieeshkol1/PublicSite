@@ -310,8 +310,25 @@ class AWSConnector(CloudConnector):
                     continue  # Skip regions with access issues
 
             # Enrich with per-instance pricing from the Pricing API (vendor-generic pattern)
-            unique_types = set(i['type'] for i in instances if i['state'] == 'running')
-            pricing_map = self._lookup_instance_pricing(unique_types, regions[0] if regions else 'us-east-1')
+            # Group instance types by region for accurate regional pricing
+            types_by_region: dict[str, set] = {}
+            for inst in instances:
+                if inst['state'] == 'running':
+                    r = inst['region']
+                    if r not in types_by_region:
+                        types_by_region[r] = set()
+                    types_by_region[r].add(inst['type'])
+
+            # Build a combined pricing map across all regions
+            pricing_map: dict[str, float | None] = {}
+            for r, types in types_by_region.items():
+                region_prices = self._lookup_instance_pricing(types, r)
+                # Merge — prefer region-specific prices
+                for itype, price in region_prices.items():
+                    if price is not None:
+                        pricing_map[itype] = price
+                    elif itype not in pricing_map:
+                        pricing_map[itype] = None
 
             for inst in instances:
                 hourly = pricing_map.get(inst['type'])
@@ -342,6 +359,8 @@ class AWSConnector(CloudConnector):
 
             for itype in instance_types:
                 try:
+                    # Use minimal filters to maximize matches across regions.
+                    # The capacitystatus filter can cause empty results in some regions.
                     resp = pricing_client.get_products(
                         ServiceCode='AmazonEC2',
                         Filters=[
@@ -350,21 +369,52 @@ class AWSConnector(CloudConnector):
                             {'Type': 'TERM_MATCH', 'Field': 'operatingSystem', 'Value': 'Linux'},
                             {'Type': 'TERM_MATCH', 'Field': 'tenancy', 'Value': 'Shared'},
                             {'Type': 'TERM_MATCH', 'Field': 'preInstalledSw', 'Value': 'NA'},
-                            {'Type': 'TERM_MATCH', 'Field': 'capacitystatus', 'Value': 'Used'},
                         ],
-                        MaxResults=1,
+                        MaxResults=5,
                     )
+                    # Find the first on-demand price > 0
                     for price_str in resp.get('PriceList', []):
+                        if itype in pricing_map:
+                            break
                         price_item = json.loads(price_str)
                         on_demand = price_item.get('terms', {}).get('OnDemand', {})
                         for term_val in on_demand.values():
                             for dim in term_val.get('priceDimensions', {}).values():
-                                usd = float(dim.get('pricePerUnit', {}).get('USD', '0'))
+                                usd_str = dim.get('pricePerUnit', {}).get('USD', '0')
+                                usd = float(usd_str)
                                 if usd > 0:
-                                    pricing_map[itype] = usd
+                                    pricing_map[itype] = round(usd, 6)
                                     break
                             if itype in pricing_map:
                                 break
+                    # If the primary location returned nothing, try without location (global fallback)
+                    if itype not in pricing_map:
+                        logger.info(f"No pricing for {itype} in {location}, trying US East (N. Virginia)")
+                        resp2 = pricing_client.get_products(
+                            ServiceCode='AmazonEC2',
+                            Filters=[
+                                {'Type': 'TERM_MATCH', 'Field': 'instanceType', 'Value': itype},
+                                {'Type': 'TERM_MATCH', 'Field': 'location', 'Value': 'US East (N. Virginia)'},
+                                {'Type': 'TERM_MATCH', 'Field': 'operatingSystem', 'Value': 'Linux'},
+                                {'Type': 'TERM_MATCH', 'Field': 'tenancy', 'Value': 'Shared'},
+                                {'Type': 'TERM_MATCH', 'Field': 'preInstalledSw', 'Value': 'NA'},
+                            ],
+                            MaxResults=5,
+                        )
+                        for price_str in resp2.get('PriceList', []):
+                            if itype in pricing_map:
+                                break
+                            price_item = json.loads(price_str)
+                            on_demand = price_item.get('terms', {}).get('OnDemand', {})
+                            for term_val in on_demand.values():
+                                for dim in term_val.get('priceDimensions', {}).values():
+                                    usd_str = dim.get('pricePerUnit', {}).get('USD', '0')
+                                    usd = float(usd_str)
+                                    if usd > 0:
+                                        pricing_map[itype] = round(usd, 6)
+                                        break
+                                if itype in pricing_map:
+                                    break
                 except Exception as e:
                     logger.warning(f"Pricing lookup failed for {itype}: {e}")
                     pricing_map[itype] = None
