@@ -8023,7 +8023,19 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
             "getAIVendorUsage (token usage per model), getMonthlyTrend (daily spend trend). "
             "Do NOT call getNetworkResources, getEC2Instances, getFinOpsSettings, or any AWS-specific tools. "
             "For cost savings, analyze: which models cost the most, output/input token ratio, "
-            "prompt caching efficiency, and whether cheaper models (gpt-4o-mini) can replace expensive ones (gpt-4o).]"
+            "prompt caching efficiency, and whether cheaper models (gpt-4o-mini) can replace expensive ones (gpt-4o). "
+            "OPENAI TOKEN PRICING (per 1M tokens): "
+            "GPT-4o: $2.50 input / $10.00 output. "
+            "GPT-4o-mini: $0.15 input / $0.60 output. "
+            "GPT-4.1: $2.00 input / $8.00 output. "
+            "GPT-4.1-mini: $0.40 input / $1.60 output. "
+            "GPT-4.1-nano: $0.10 input / $0.40 output. "
+            "GPT-5.1: $10.00 input / $30.00 output. "
+            "GPT-5.5: $12.00 input / $40.00 output. "
+            "o3-mini: $1.10 input / $4.40 output. "
+            "Cached input tokens get 50% discount. Batch API gives 50% off for non-urgent jobs (24h processing). "
+            "1 token = ~4 characters or ~0.75 English words. "
+            "When asked about pricing, ALWAYS show the per-million-token rates AND calculate implied tokens from the user's spend.]"
         )
         # Pre-compute OpenAI cost data from cache to avoid agent timeout
         # This ensures the agent has real data without needing to call tools

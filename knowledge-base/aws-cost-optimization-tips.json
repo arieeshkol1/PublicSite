@@ -2117,6 +2117,26 @@
       "serviceKey": "OpenAI",
       "implementedInAct": true,
       "actionTarget": "chat"
+    },
+    {
+      "id": "openai-009",
+      "service": "General",
+      "category": "pricing",
+      "title": "How are OpenAI tokens priced?",
+      "description": "OpenAI charges per million tokens processed, with separate rates for input and output. Output tokens cost 3-4x more than input tokens. Key pricing (per 1M tokens): GPT-4o: $2.50 input / $10.00 output. GPT-4o-mini: $0.15 input / $0.60 output (17x cheaper than GPT-4o). GPT-4.1: $2.00 input / $8.00 output. GPT-4.1-mini: $0.40 input / $1.60 output. GPT-4.1-nano: $0.10 input / $0.40 output. o3-mini: $1.10 input / $4.40 output. Cached input tokens get a 50% discount. The Batch API gives 50% off all prices for non-urgent jobs processed within 24 hours. One token is approximately 4 characters or 0.75 English words. A typical API request with a 500-word prompt uses about 670 input tokens.",
+      "drilldownInstructions": "DRILL-DOWN: Step 1: Use PRE-COMPUTED OPENAI DATA to identify the user's top models by cost. Step 2: For each model, show the per-million-token rate and calculate implied tokens: cost / (rate_per_1M / 1000000). Step 3: Show the ratio of output to input spend. If output > 2x input, recommend setting max_tokens or using streaming with early stopping. Step 4: If using GPT-4o or GPT-4.1, calculate how much they would save by switching applicable workloads to mini variants. Step 5: Show math: 'Your GPT-4o input cost $X. At $2.50/1M tokens, that's Y million tokens. GPT-4o-mini at $0.15/1M would cost $Z for the same volume — saving $W/month.'",
+      "estimatedSavings": "varies",
+      "difficulty": "easy",
+      "automatedCheck": "Match questions about token pricing, cost structure, how billing works for OpenAI.",
+      "checkImplemented": true,
+      "actionType": "advisory",
+      "actionLabel": "Understand Pricing",
+      "level": 1,
+      "serviceKey": "OpenAI",
+      "implementedInAct": true,
+      "actionTarget": "chat",
+      "confidenceTag": "high-confidence",
+      "keywords": ["token", "tokens", "priced", "pricing", "cost per token", "how much", "rate", "per million", "input tokens", "output tokens"]
     }
   ]
 }
