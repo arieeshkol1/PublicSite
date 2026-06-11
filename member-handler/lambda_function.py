@@ -7741,6 +7741,39 @@ def _inline_audit_score(question, answer):
                 'guiding_questions': []
             }
 
+    # Pattern: Vague commitment/savings recommendation without specific dollar amounts
+    _commitment_question = any(kw in _q_lower for kw in [
+        'commitment', 'savings plan', 'reserved instance', 'save money',
+        'reduce cost', 'optimize', 'recommend', 'purchase',
+        'no down payment', 'no upfront', 'one year', '1 year', '3 year',
+        'maximize', 'ri ', 'reserved',
+    ])
+    if _commitment_question:
+        # Check if response is purely advisory without specific dollar amounts or hourly rates
+        _has_specific_amount = bool(re.search(r'\$[\d,]+\.?\d*(/hr|/hour|per hour)?', answer))
+        _has_hourly_rate = bool(re.search(r'[\d.]+\s*/\s*h(ou)?r', _a_lower))
+        _has_savings_calc = bool(re.search(r'sav(e|ing)[^.]*\$[\d,]+', _a_lower))
+        _has_percentage = bool(re.search(r'\d+%\s*(sav|reduc|less|discount)', _a_lower))
+        _has_specific_data = _has_specific_amount or _has_hourly_rate or _has_savings_calc or _has_percentage
+
+        # Vague advisory phrases that indicate generic advice
+        _vague_phrases = [
+            'i recommend', 'i suggest', 'you should consider',
+            'would be a good option', 'benefits include',
+            'provides savings', 'can help reduce', 'typically saves',
+            'generally recommended', 'good candidate for',
+        ]
+        _has_vague_advisory = sum(1 for p in _vague_phrases if p in _a_lower) >= 2
+
+        if _has_vague_advisory and not _has_specific_data:
+            logger.info("Inline audit: CODE-LEVEL REJECT — vague commitment recommendation without specific amounts")
+            return {
+                'score': 45,
+                'can_improve': True,
+                'improvement': 'Response gives generic commitment advice without specific dollar amounts. Must call getCommitmentCoverage or getCostBreakdown to calculate a specific hourly commitment rate (e.g. "$X.XX/hr"), estimated monthly savings in $, and break-even timeline. Show exact numbers, not just "consider Savings Plans".',
+                'guiding_questions': []
+            }
+
     try:
         bedrock_rt = boto3.client(
             'bedrock-runtime',
