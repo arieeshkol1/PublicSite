@@ -303,9 +303,9 @@ class OpenAIConnector(ProviderConnector):
                 if data.get('object') == 'page' and 'data' in data:
                     # Paginated organization costs response — flatten all pages
                     all_results = data.get('data', [])
-                    # Fetch additional pages (max 5 to avoid Lambda timeout)
+                    # Fetch additional pages (max 5 to support 30d range)
                     _page_count = 1
-                    _max_pages = 3
+                    _max_pages = 5
                     while data.get('has_more') and data.get('next_page') and _page_count < _max_pages:
                         _next_url = f"{OPENAI_BASE_URL}/organization/costs?start_time={_start_epoch}&end_time={_end_epoch}&group_by=line_item&group_by=project_id&page={data['next_page']}"
                         _next_req = urllib.request.Request(

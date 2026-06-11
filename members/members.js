@@ -13553,33 +13553,9 @@ var _openaiDashState = {
 };
 
 /**
- * Show/hide the OpenAI nav button in the Observe tab depending on whether
- * there are connected OpenAI accounts.
+ * OpenAI nav button is always visible. The dashboard content handles
+ * the "no account connected" state with a helpful message.
  */
-function _updateOpenAINavVisibility() {
-    var navBtn = document.getElementById('observe-openai-nav-btn');
-    if (!navBtn) return;
-    var hasOpenAI = allAccounts.some(function(a) {
-        return (a.cloudProvider === 'openai' || a.vendorType === 'ai_vendor') && a.connectionStatus === 'connected';
-    });
-    navBtn.style.display = hasOpenAI ? '' : 'none';
-}
-
-// Call visibility update whenever accounts are loaded
-var _origLoadAccounts = loadAccounts;
-loadAccounts = async function() {
-    var result = await _origLoadAccounts.apply(this, arguments);
-    _updateOpenAINavVisibility();
-    return result;
-};
-
-// Call visibility update whenever accounts are loaded
-var _origLoadAccounts = loadAccounts;
-loadAccounts = async function() {
-    var result = await _origLoadAccounts.apply(this, arguments);
-    _updateOpenAINavVisibility();
-    return result;
-};
 
 /**
  * Main entry point: renders the OpenAI dashboard inside #openai-dashboard.
@@ -13883,10 +13859,12 @@ function _renderSpendTrendsChart(data) {
     // Summary line
     html += '<div style="display:flex;align-items:center;gap:16px;margin-bottom:12px;">';
     html += '<span style="font-size:1.4em;font-weight:700;color:#1f2937;">$' + totalSpend.toFixed(2) + '</span>';
-    if (periodChange !== null && periodChange !== undefined) {
+    if (periodChange !== null && periodChange !== undefined && typeof periodChange === 'number' && isFinite(periodChange)) {
         var changeColor = periodChange <= 0 ? '#10b981' : '#ef4444';
         var changeArrow = periodChange <= 0 ? '▼' : '▲';
         html += '<span style="font-size:0.9em;color:' + changeColor + ';font-weight:600;">' + changeArrow + ' ' + Math.abs(periodChange).toFixed(1) + '% vs prior period</span>';
+    } else if (periodChange === 'new_spend') {
+        html += '<span style="font-size:0.9em;color:#6b7280;font-weight:600;">New spend (no prior period)</span>';
     }
     html += '</div>';
 

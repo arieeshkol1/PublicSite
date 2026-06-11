@@ -11738,7 +11738,7 @@ def handle_openai_usage(event):
     end_date = now.strftime('%Y-%m-%d')
     start_date = (now - timedelta(days=date_range)).strftime('%Y-%m-%d')
 
-    # Track execution time for 10-second timeout
+    # Track execution time for Lambda timeout safety (API GW has 29s timeout)
     start_time = time.time()
 
     # Try to get data from Cost_Cache_Table
@@ -11760,7 +11760,7 @@ def handle_openai_usage(event):
 
         # Handle pagination
         while 'LastEvaluatedKey' in response:
-            if time.time() - start_time > 8:
+            if time.time() - start_time > 22:
                 break
             response = cache_table.query(
                 KeyConditionExpression=DDBKey('pk').eq(pk) & DDBKey('sk').between(sk_start, sk_end),
@@ -11771,8 +11771,8 @@ def handle_openai_usage(event):
         logger.warning(f"Cost cache query failed for {account_id}: {e}")
         cached_records = []
 
-    # Check timeout
-    if time.time() - start_time > 9:
+    # Check timeout (25s allows time for paginated 30d API calls)
+    if time.time() - start_time > 25:
         return create_error_response(504, 'Timeout', 'Request timed out. Please try again.')
 
     normalized_records = []
@@ -11842,7 +11842,7 @@ def handle_openai_usage(event):
                     })
     else:
         # Cache miss: decrypt key and call OpenAI Usage API
-        if time.time() - start_time > 7:
+        if time.time() - start_time > 20:
             return create_error_response(504, 'Timeout', 'Request timed out. Please try again.')
 
         # Decrypt the stored API key
@@ -11884,8 +11884,8 @@ def handle_openai_usage(event):
                 _update_connection_status(accounts_table, member_email, account_id, 'failed', now_iso)
             return create_error_response(502, 'UpstreamError', str(e))
 
-        # Check timeout after API call
-        if time.time() - start_time > 9:
+        # Check timeout after API call (25s allows time for paginated 30d API calls)
+        if time.time() - start_time > 25:
             return create_error_response(504, 'Timeout', 'Request timed out. Please try again.')
 
         # Normalize the raw OpenAI response
@@ -11897,8 +11897,8 @@ def handle_openai_usage(event):
 
         normalized_records = normalize_openai(raw_records, account_id)
 
-    # Final timeout check before aggregation
-    if time.time() - start_time > 9:
+    # Final timeout check before aggregation (25s allows time for paginated 30d API calls)
+    if time.time() - start_time > 25:
         return create_error_response(504, 'Timeout', 'Request timed out. Please try again.')
 
     # Aggregate the data using cost_normalizer functions
@@ -11960,13 +11960,19 @@ def handle_openai_usage(event):
     # Project breakdown
     project_breakdown = aggregate_cost_by_project(project_records)
 
+    # Map spend_trends_buckets to frontend format: {date, cost}
+    spend_trends_for_frontend = [
+        {'date': b['period_start'], 'cost': b['total_cost']}
+        for b in spend_trends_buckets
+    ]
+
     # Build response matching the frontend expected schema
     # Frontend reads: data.token_usage, data.cost_by_model, data.spend_trends, data.project_breakdown
     response_data = {
         'success': True,
         'token_usage': _decimal_to_native(usage_records),
         'cost_by_model': _decimal_to_native(cost_by_model),
-        'spend_trends': _decimal_to_native(spend_trends_buckets),
+        'spend_trends': _decimal_to_native(spend_trends_for_frontend),
         'total_spend': round(total_spend, 2),
         'period_change': _decimal_to_native(period_change) if period_change != float('inf') else 'new_spend',
         'project_breakdown': _decimal_to_native(project_breakdown),
