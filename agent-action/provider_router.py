@@ -489,6 +489,16 @@ def route_tool(tool_name: str, account_id: str, member_email: str, params: dict)
             f"Auth/permission error for {tool_name} on {provider} "
             f"account {account_id}: {error_msg}"
         )
+        # For OpenAI accounts, provide specific guidance
+        if provider == "openai":
+            return {
+                "error": "OpenAI cost data not yet cached",
+                "guidance": (
+                    "Please open Observe > OpenAI dashboard first to load your cost data. "
+                    "After loading the dashboard once, the Chat will be able to answer cost questions."
+                ),
+                "provider": "openai",
+            }
         return {
             "authError": True,
             "error": "Authentication or permissions error",
