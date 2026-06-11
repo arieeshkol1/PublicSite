@@ -13602,7 +13602,7 @@ function _renderOpenAIDashboard() {
     html += '<span style="font-size:0.82em;color:#6b7280;">Range:</span>';
     html += '<button class="openai-range-btn' + (_openaiDashState.dateRange === 7 ? ' active' : '') + '" data-range="7">7d</button>';
     html += '<button class="openai-range-btn' + (_openaiDashState.dateRange === 30 ? ' active' : '') + '" data-range="30">30d</button>';
-    // 90d removed - causes timeout with paginated API
+    html += '<button id="openai-refresh-btn" class="btn btn-outline btn-sm" style="margin-left:8px;font-size:0.8em;padding:4px 10px;" title="Force refresh from OpenAI API (bypass cache)">\ud83d\udd04 Refresh</button>';
     html += '</div>';
     html += '</div>';
 
@@ -13631,6 +13631,20 @@ function _renderOpenAIDashboard() {
         };
     }
 
+    // Wire up refresh button
+    var refreshBtn = document.getElementById('openai-refresh-btn');
+    if (refreshBtn) {
+        refreshBtn.onclick = function() {
+            refreshBtn.disabled = true;
+            refreshBtn.textContent = '⏳ Loading...';
+            _openaiDashState.data = null;
+            _fetchOpenAIDashboardData(true).finally(function() {
+                refreshBtn.disabled = false;
+                refreshBtn.textContent = '🔄 Refresh';
+            });
+        };
+    }
+
     // Fetch data
     _fetchOpenAIDashboardData();
 }
@@ -13638,7 +13652,7 @@ function _renderOpenAIDashboard() {
 /**
  * Fetch OpenAI usage data from backend
  */
-async function _fetchOpenAIDashboardData() {
+async function _fetchOpenAIDashboardData(forceRefresh) {
     var contentEl = document.getElementById('openai-dash-content');
     if (!contentEl) return;
 
@@ -13653,7 +13667,8 @@ async function _fetchOpenAIDashboardData() {
     try {
         var data = await api('POST', '/members/accounts/openai-usage', {
             accountId: _openaiDashState.accountId,
-            dateRange: _openaiDashState.dateRange
+            dateRange: _openaiDashState.dateRange,
+            forceRefresh: true
         });
         _openaiDashState.data = data;
         _openaiDashState.loading = false;
@@ -13756,10 +13771,10 @@ function _renderTokenUsageChart(data) {
         if (d.input_tokens > maxInput) maxInput = d.input_tokens;
         if (d.output_tokens > maxOutput) maxOutput = d.output_tokens;
     });
-    var maxY = Math.max(maxInput, maxOutput, 1);
+    var maxY = Math.max(maxInput, maxOutput, 1) * 1.1; // 10% headroom to prevent top truncation
 
-    var W = 900, H = 260, PAD = 50, PADL = 70;
-    var chartW = W - PADL - 20, chartH = H - PAD - 10;
+    var W = 960, H = 300, PAD = 55, PADL = 80, PADT = 20;
+    var chartW = W - PADL - 20, chartH = H - PAD - PADT;
     var stepX = daily.length > 1 ? chartW / (daily.length - 1) : chartW;
 
     var inputPts = [], outputPts = [];
@@ -13778,24 +13793,24 @@ function _renderTokenUsageChart(data) {
     html += '<span class="openai-legend-item"><span class="openai-legend-dot" style="background:#f59e0b;"></span> Output Tokens</span>';
     html += '</div>';
     html += '<div style="width:100%;overflow-x:auto;">';
-    html += '<svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;min-width:500px;height:260px;">';
+    html += '<svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;min-width:600px;height:300px;" preserveAspectRatio="xMidYMid meet">';
 
     // Y-axis grid lines and labels
-    for (var yi = 0; yi <= 4; yi++) {
-        var yPos = (H - PAD) - (yi / 4 * chartH);
-        var yVal = Math.round(maxY * yi / 4);
-        html += '<text x="' + (PADL - 8) + '" y="' + (yPos + 4) + '" text-anchor="end" font-size="11" fill="#6b7280">' + _fmtTokens(yVal) + '</text>';
+    for (var yi = 0; yi <= 5; yi++) {
+        var yPos = (H - PAD) - (yi / 5 * chartH);
+        var yVal = Math.round(maxY * yi / 5);
+        html += '<text x="' + (PADL - 8) + '" y="' + (yPos + 4) + '" text-anchor="end" font-size="12" font-weight="500" fill="#374151">' + _fmtTokens(yVal) + '</text>';
         html += '<line x1="' + PADL + '" y1="' + yPos + '" x2="' + (W - 20) + '" y2="' + yPos + '" stroke="#e5e7eb" stroke-width="0.5"/>';
     }
 
     // X-axis labels — show every Nth label to avoid overlap, DD-MM format
-    var labelEvery = daily.length <= 7 ? 1 : Math.max(1, Math.floor(daily.length / 10));
+    var labelEvery = daily.length <= 7 ? 1 : Math.max(1, Math.floor(daily.length / 8));
     daily.forEach(function(d, i) {
         if (i % labelEvery === 0 || i === daily.length - 1) {
             var x = PADL + i * stepX;
             var parts = d.date ? d.date.split('-') : [];
             var label = parts.length === 3 ? parts[2] + '-' + parts[1] : '';
-            html += '<text x="' + x + '" y="' + (H - 8) + '" text-anchor="middle" font-size="11" fill="#374151">' + label + '</text>';
+            html += '<text x="' + x + '" y="' + (H - 10) + '" text-anchor="middle" font-size="12" font-weight="500" fill="#374151">' + label + '</text>';
         }
     });
 
@@ -13893,13 +13908,6 @@ function _renderSpendTrendsChart(data) {
     // Summary line
     html += '<div style="display:flex;align-items:center;gap:16px;margin-bottom:12px;">';
     html += '<span style="font-size:1.4em;font-weight:700;color:#1f2937;">$' + totalSpend.toFixed(2) + '</span>';
-    if (periodChange !== null && periodChange !== undefined && typeof periodChange === 'number' && isFinite(periodChange)) {
-        var changeColor = periodChange <= 0 ? '#10b981' : '#ef4444';
-        var changeArrow = periodChange <= 0 ? '▼' : '▲';
-        html += '<span style="font-size:0.9em;color:' + changeColor + ';font-weight:600;">' + changeArrow + ' ' + Math.abs(periodChange).toFixed(1) + '% vs prior period</span>';
-    } else if (periodChange === 'new_spend') {
-        html += '<span style="font-size:0.9em;color:#6b7280;font-weight:600;">New spend (no prior period)</span>';
-    }
     html += '</div>';
 
     // Render bar chart for spend
@@ -13916,25 +13924,25 @@ function _renderSpendBars(aggregated) {
     var maxCost = Math.max.apply(null, aggregated.map(function(d) { return d.cost || 0; }));
 
     // Render as SVG line chart with Y-axis grid and DD-MM labels
-    var W = 900, H = 220, PAD = 45, PADL = 65;
-    var chartW = W - PADL - 20, chartH = H - PAD - 10;
+    var W = 960, H = 280, PAD = 55, PADL = 75, PADT = 15;
+    var chartW = W - PADL - 20, chartH = H - PAD - PADT;
     var stepX = aggregated.length > 1 ? chartW / (aggregated.length - 1) : chartW;
 
     var pts = [];
     aggregated.forEach(function(d, i) {
         var x = PADL + i * stepX;
-        var y = (H - PAD) - ((d.cost || 0) / (maxCost || 1) * chartH);
+        var y = PADT + chartH - ((d.cost || 0) / (maxCost || 1) * chartH);
         pts.push(x.toFixed(1) + ',' + y.toFixed(1));
     });
 
-    var html = '<svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;min-width:500px;height:220px;">';
+    var html = '<svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;min-width:600px;height:280px;" preserveAspectRatio="xMidYMid meet">';
 
     // Y-axis grid lines and labels
-    for (var yi = 0; yi <= 4; yi++) {
-        var yPos = (H - PAD) - (yi / 4 * chartH);
-        var yVal = (maxCost * yi / 4);
+    for (var yi = 0; yi <= 5; yi++) {
+        var yPos = PADT + chartH - (yi / 5 * chartH);
+        var yVal = (maxCost * yi / 5);
         var yLabel = yVal >= 1 ? '$' + yVal.toFixed(0) : '$' + yVal.toFixed(2);
-        html += '<text x="' + (PADL - 6) + '" y="' + (yPos + 4) + '" text-anchor="end" font-size="11" fill="#6b7280">' + yLabel + '</text>';
+        html += '<text x="' + (PADL - 6) + '" y="' + (yPos + 4) + '" text-anchor="end" font-size="12" font-weight="500" fill="#374151">' + yLabel + '</text>';
         html += '<line x1="' + PADL + '" y1="' + yPos + '" x2="' + (W - 20) + '" y2="' + yPos + '" stroke="#e5e7eb" stroke-width="0.5"/>';
     }
 
@@ -13946,7 +13954,7 @@ function _renderSpendBars(aggregated) {
             var dateStr = d.date || d.label || '';
             var parts = dateStr.split('-');
             var label = parts.length >= 3 ? parts[2] + '-' + parts[1] : dateStr.slice(-5);
-            html += '<text x="' + x + '" y="' + (H - 8) + '" text-anchor="middle" font-size="11" fill="#374151">' + label + '</text>';
+            html += '<text x="' + x + '" y="' + (H - 10) + '" text-anchor="middle" font-size="12" font-weight="500" fill="#374151">' + label + '</text>';
         }
     });
 
@@ -13954,7 +13962,7 @@ function _renderSpendBars(aggregated) {
     html += '<polyline points="' + pts.join(' ') + '" fill="none" stroke="#10b981" stroke-width="2.5" stroke-linejoin="round"/>';
 
     // Fill area
-    var baseY = H - PAD;
+    var baseY = PADT + chartH;
     var lastX = (PADL + (aggregated.length - 1) * stepX).toFixed(1);
     html += '<polygon points="' + pts.join(' ') + ' ' + lastX + ',' + baseY + ' ' + PADL + ',' + baseY + '" fill="#10b981" opacity="0.1"/>';
 
@@ -13962,7 +13970,7 @@ function _renderSpendBars(aggregated) {
     if (aggregated.length <= 14) {
         aggregated.forEach(function(d, i) {
             var x = PADL + i * stepX;
-            var y = (H - PAD) - ((d.cost || 0) / (maxCost || 1) * chartH);
+            var y = PADT + chartH - ((d.cost || 0) / (maxCost || 1) * chartH);
             html += '<circle cx="' + x.toFixed(1) + '" cy="' + y.toFixed(1) + '" r="3" fill="#10b981"/>';
         });
     }
