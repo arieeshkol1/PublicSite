@@ -11741,6 +11741,9 @@ def handle_openai_usage(event):
     # Track execution time for Lambda timeout safety (API GW has 29s timeout)
     start_time = time.time()
 
+    # Check if force refresh requested (bypasses cache)
+    force_refresh = body.get('forceRefresh', False)
+
     # Try to get data from Cost_Cache_Table
     cache_table = dynamodb.Table(COST_CACHE_TABLE_NAME)
     pk = f"{member_email}#{account_id}"
@@ -11748,28 +11751,30 @@ def handle_openai_usage(event):
 
     cached_records = []
     from boto3.dynamodb.conditions import Key as DDBKey
-    try:
-        # Query cache for date range
-        sk_start = f"{sk_prefix}{start_date}"
-        sk_end = f"{sk_prefix}{end_date}"
 
-        response = cache_table.query(
-            KeyConditionExpression=DDBKey('pk').eq(pk) & DDBKey('sk').between(sk_start, sk_end)
-        )
-        cached_records = response.get('Items', [])
+    if not force_refresh:
+        try:
+            # Query cache for date range
+            sk_start = f"{sk_prefix}{start_date}"
+            sk_end = f"{sk_prefix}{end_date}"
 
-        # Handle pagination
-        while 'LastEvaluatedKey' in response:
-            if time.time() - start_time > 22:
-                break
             response = cache_table.query(
-                KeyConditionExpression=DDBKey('pk').eq(pk) & DDBKey('sk').between(sk_start, sk_end),
-                ExclusiveStartKey=response['LastEvaluatedKey']
+                KeyConditionExpression=DDBKey('pk').eq(pk) & DDBKey('sk').between(sk_start, sk_end)
             )
-            cached_records.extend(response.get('Items', []))
-    except ClientError as e:
-        logger.warning(f"Cost cache query failed for {account_id}: {e}")
-        cached_records = []
+            cached_records = response.get('Items', [])
+
+            # Handle pagination
+            while 'LastEvaluatedKey' in response:
+                if time.time() - start_time > 22:
+                    break
+                response = cache_table.query(
+                    KeyConditionExpression=DDBKey('pk').eq(pk) & DDBKey('sk').between(sk_start, sk_end),
+                    ExclusiveStartKey=response['LastEvaluatedKey']
+                )
+                cached_records.extend(response.get('Items', []))
+        except ClientError as e:
+            logger.warning(f"Cost cache query failed for {account_id}: {e}")
+            cached_records = []
 
     # Check timeout (25s allows time for paginated 30d API calls)
     if time.time() - start_time > 25:
