@@ -11960,15 +11960,16 @@ def handle_openai_usage(event):
     # Project breakdown
     project_breakdown = aggregate_cost_by_project(project_records)
 
-    # Build response matching the expected schema
+    # Build response matching the frontend expected schema
+    # Frontend reads: data.token_usage, data.cost_by_model, data.spend_trends, data.project_breakdown
     response_data = {
         'success': True,
-        'data': {
-            'usage': _decimal_to_native(usage_records),
-            'costByModel': _decimal_to_native(cost_by_model),
-            'spendTrends': _decimal_to_native(spend_trends),
-            'projectBreakdown': _decimal_to_native(project_breakdown),
-        }
+        'token_usage': _decimal_to_native(usage_records),
+        'cost_by_model': _decimal_to_native(cost_by_model),
+        'spend_trends': _decimal_to_native(spend_trends_buckets),
+        'total_spend': round(total_spend, 2),
+        'period_change': _decimal_to_native(period_change) if period_change != float('inf') else 'new_spend',
+        'project_breakdown': _decimal_to_native(project_breakdown),
     }
 
     return create_response(200, response_data)
