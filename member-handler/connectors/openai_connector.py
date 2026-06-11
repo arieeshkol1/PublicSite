@@ -163,37 +163,53 @@ class OpenAIConnector(ProviderConnector):
                 }
             elif status_code == 403:
                 # 403 from /v1/models may just mean the key doesn't have model-listing
-                # permission, but can still work for chat completions. Try a lightweight
-                # chat completion call to confirm the key actually works.
-                try:
-                    fallback_url = f"{OPENAI_BASE_URL}/chat/completions"
-                    fallback_body = json.dumps({
-                        'model': 'gpt-4o-mini',
-                        'messages': [{'role': 'user', 'content': 'ping'}],
-                        'max_tokens': 1,
-                    }).encode('utf-8')
-                    fallback_req = urllib.request.Request(
-                        fallback_url,
-                        method='POST',
-                        headers={
-                            'Authorization': f'Bearer {api_key}',
-                            'Content-Type': 'application/json',
-                        },
-                        data=fallback_body,
-                    )
-                    urllib.request.urlopen(fallback_req, timeout=REQUEST_TIMEOUT)
-                    # If we get here, the key works for completions
-                    return {
-                        'success': True,
-                        'message': 'OpenAI connection successful (restricted key — model listing not available)',
-                        'details': {'models': [], 'note': 'Key works for completions but cannot list models'}
-                    }
-                except Exception:
-                    pass
-                # Both endpoints failed with 403
+                # permission. Admin keys only have billing/org access. Try the org costs
+                # endpoint (what admin keys are designed for), then chat completions.
+                import time as _time
+                _start_ts = int(_time.time()) - (30 * 86400)  # 30 days ago
+                _fallback_endpoints = [
+                    f"{OPENAI_BASE_URL.replace('/v1', '')}/v1/organization/costs?start_time={_start_ts}",
+                    f"{OPENAI_BASE_URL}/chat/completions",
+                ]
+                for _fb_url in _fallback_endpoints:
+                    try:
+                        if 'chat/completions' in _fb_url:
+                            _fb_body = json.dumps({
+                                'model': 'gpt-4o-mini',
+                                'messages': [{'role': 'user', 'content': 'ping'}],
+                                'max_tokens': 1,
+                            }).encode('utf-8')
+                            _fb_req = urllib.request.Request(
+                                _fb_url, method='POST',
+                                headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'},
+                                data=_fb_body,
+                            )
+                        else:
+                            _fb_req = urllib.request.Request(
+                                _fb_url, method='GET',
+                                headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'},
+                            )
+                        urllib.request.urlopen(_fb_req, timeout=REQUEST_TIMEOUT)
+                        return {
+                            'success': True,
+                            'message': 'OpenAI connection successful',
+                            'details': {'models': [], 'note': 'Key verified via organization API'}
+                        }
+                    except urllib.error.HTTPError as _fb_err:
+                        if _fb_err.code in (401, 403):
+                            continue  # Try next fallback
+                        # Other errors (429, 500) mean the key IS valid but rate-limited/server error
+                        return {
+                            'success': True,
+                            'message': 'OpenAI connection successful (key accepted)',
+                            'details': {'models': []}
+                        }
+                    except Exception:
+                        continue
+                # All fallbacks failed
                 return {
                     'success': False,
-                    'message': 'API key lacks required permissions. Ensure the key has access to chat completions.',
+                    'message': 'API key does not have access to OpenAI APIs. Please check key permissions.',
                     'details': {'status_code': 403}
                 }
             elif status_code == 429:
