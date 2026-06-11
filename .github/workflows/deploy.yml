@@ -31,6 +31,8 @@ on:
       - 'scheduler-executor/**'
       - 'daily-refresh-handler/**'
       - 'tips-sync/**'
+      - 'schema_sync/**'
+      - 'infrastructure/schema-sync-stack.yaml'
       - '_gen_ug.py'
       - '_gen_hld.py'
       - 'knowledge-base/**'
@@ -219,22 +221,62 @@ jobs:
                   "Action": [
                     "dynamodb:CreateTable",
                     "dynamodb:DescribeTable",
+                    "dynamodb:UpdateTable",
                     "dynamodb:UpdateTimeToLive",
                     "dynamodb:DescribeTimeToLive",
                     "dynamodb:TagResource",
                     "dynamodb:ListTagsOfResource",
                     "dynamodb:BatchWriteItem",
                     "dynamodb:PutItem",
-                    "dynamodb:Query"
+                    "dynamodb:Query",
+                    "dynamodb:Scan",
+                    "dynamodb:GetItem",
+                    "dynamodb:UpdateItem"
                   ],
                   "Resource": [
                     "arn:aws:dynamodb:us-east-1:991105135552:table/MemberPortal-Invoices",
                     "arn:aws:dynamodb:us-east-1:991105135552:table/Cost_Cache_Table",
                     "arn:aws:dynamodb:us-east-1:991105135552:table/ProviderRegistry",
                     "arn:aws:dynamodb:us-east-1:991105135552:table/ViewMyBill-CostOptimizationTips",
+                    "arn:aws:dynamodb:us-east-1:991105135552:table/ViewMyBill-CostOptimizationTips/stream/*",
                     "arn:aws:dynamodb:us-east-1:991105135552:table/Audit_Transaction_Log",
                     "arn:aws:dynamodb:us-east-1:991105135552:table/Audit_Transaction_Log/index/*"
                   ]
+                },
+                {
+                  "Sid": "SchemaSyncResources",
+                  "Effect": "Allow",
+                  "Action": [
+                    "s3:CreateBucket",
+                    "s3:PutObject",
+                    "s3:GetObject",
+                    "s3:ListBucket",
+                    "s3:PutBucketVersioning",
+                    "s3:HeadBucket"
+                  ],
+                  "Resource": [
+                    "arn:aws:s3:::slashmybill-schema-versions",
+                    "arn:aws:s3:::slashmybill-schema-versions/*"
+                  ]
+                },
+                {
+                  "Sid": "SNSManagement",
+                  "Effect": "Allow",
+                  "Action": [
+                    "sns:CreateTopic",
+                    "sns:GetTopicAttributes"
+                  ],
+                  "Resource": "arn:aws:sns:us-east-1:991105135552:SlashMyBill-SchemaSync-Alerts"
+                },
+                {
+                  "Sid": "LambdaStreamMapping",
+                  "Effect": "Allow",
+                  "Action": [
+                    "lambda:CreateEventSourceMapping",
+                    "lambda:ListEventSourceMappings",
+                    "lambda:GetEventSourceMapping"
+                  ],
+                  "Resource": "*"
                 }
               ]
             }'
@@ -375,6 +417,25 @@ jobs:
           cd ..
           aws s3 cp tips-sync-lambda.zip s3://${{ env.STORAGE_BUCKET }}/lambda-packages/tips-sync.zip
           echo "✓ Tips Sync packaged"
+
+      - name: Package Schema Sync Lambda
+        run: |
+          echo "Packaging Schema Sync Lambda..."
+          mkdir -p .build-schema-sync/schema_sync
+          cp schema_sync/__init__.py .build-schema-sync/schema_sync/
+          cp schema_sync/service_id.py .build-schema-sync/schema_sync/
+          cp schema_sync/schema_generator.py .build-schema-sync/schema_sync/
+          cp schema_sync/sync_lambda.py .build-schema-sync/schema_sync/
+          cp schema_sync/migrate_service_ids.py .build-schema-sync/schema_sync/
+          cp schema_sync/seed_tool_definitions.py .build-schema-sync/schema_sync/
+          # Create a top-level handler that Lambda can invoke
+          cat > .build-schema-sync/lambda_function.py << 'HANDLER_EOF'
+from schema_sync.sync_lambda import lambda_handler
+HANDLER_EOF
+          cd .build-schema-sync && zip -r ../schema-sync-lambda.zip . -q
+          cd ..
+          aws s3 cp schema-sync-lambda.zip s3://${{ env.STORAGE_BUCKET }}/lambda-packages/schema-sync.zip
+          echo "✓ Schema Sync packaged"
 
       - name: Package Audit Evaluator Lambda
         run: |
@@ -722,6 +783,8 @@ jobs:
           update_lambda dashboard-handler lambda-packages/dashboard-handler.zip
           # Update Daily Refresh Lambda (skip if not yet created)
           update_lambda slashmybill-daily-refresh lambda-packages/daily-refresh.zip
+          # Update Schema Sync Lambda (skip if not yet created)
+          update_lambda slashmybill-schema-sync lambda-packages/schema-sync.zip
           # Update audit-evaluator environment variable (model ID fix)
           aws lambda update-function-configuration \
             --function-name audit-evaluator \
@@ -1765,6 +1828,190 @@ jobs:
             --distribution-id ${{ env.CLOUDFRONT_ID }} \
             --paths "/*"
           echo "✓ Cache invalidated"
+
+      - name: Ensure Schema Sync Lambda and infrastructure exists
+        continue-on-error: true
+        run: |
+          FUNCTION_NAME="slashmybill-schema-sync"
+          ROLE_NAME="slashmybill-schema-sync-role"
+          ACCOUNT_ID="991105135552"
+          REGION="us-east-1"
+          TIPS_TABLE="ViewMyBill-CostOptimizationTips"
+          SCHEMA_BUCKET="slashmybill-schema-versions"
+          ALERT_TOPIC_NAME="SlashMyBill-SchemaSync-Alerts"
+
+          # Create S3 bucket for schema versions (if not exists)
+          if aws s3api head-bucket --bucket "$SCHEMA_BUCKET" 2>/dev/null; then
+            echo "✓ S3 bucket $SCHEMA_BUCKET already exists"
+          else
+            echo "Creating S3 bucket $SCHEMA_BUCKET..."
+            aws s3api create-bucket --bucket "$SCHEMA_BUCKET" --region "$REGION"
+            aws s3api put-bucket-versioning --bucket "$SCHEMA_BUCKET" --versioning-configuration Status=Enabled
+            echo "✓ S3 bucket created with versioning"
+          fi
+
+          # Create SNS alert topic (if not exists)
+          ALERT_TOPIC_ARN=$(aws sns create-topic --name "$ALERT_TOPIC_NAME" --query "TopicArn" --output text)
+          echo "✓ SNS topic: $ALERT_TOPIC_ARN"
+
+          # Create IAM role if missing
+          if aws iam get-role --role-name "$ROLE_NAME" > /dev/null 2>&1; then
+            echo "✓ Role $ROLE_NAME already exists"
+          else
+            echo "Creating $ROLE_NAME..."
+            aws iam create-role \
+              --role-name "$ROLE_NAME" \
+              --assume-role-policy-document '{
+                "Version": "2012-10-17",
+                "Statement": [{
+                  "Effect": "Allow",
+                  "Principal": {"Service": "lambda.amazonaws.com"},
+                  "Action": "sts:AssumeRole"
+                }]
+              }' > /dev/null
+            aws iam attach-role-policy --role-name "$ROLE_NAME" \
+              --policy-arn arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+            echo "✓ Role created"
+            sleep 10
+          fi
+
+          # Update role permissions (always, to ensure they're current)
+          aws iam put-role-policy \
+            --role-name "$ROLE_NAME" \
+            --policy-name "SchemaSyncPermissions" \
+            --policy-document '{
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": ["dynamodb:Scan","dynamodb:GetItem","dynamodb:PutItem","dynamodb:UpdateItem","dynamodb:GetRecords","dynamodb:GetShardIterator","dynamodb:DescribeStream","dynamodb:ListStreams"],
+                  "Resource": ["arn:aws:dynamodb:us-east-1:991105135552:table/ViewMyBill-CostOptimizationTips","arn:aws:dynamodb:us-east-1:991105135552:table/ViewMyBill-CostOptimizationTips/stream/*"]
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": ["s3:PutObject","s3:GetObject","s3:ListBucket"],
+                  "Resource": ["arn:aws:s3:::slashmybill-schema-versions","arn:aws:s3:::slashmybill-schema-versions/*"]
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": ["bedrock:UpdateAgentActionGroup","bedrock:GetAgentActionGroup","bedrock-agent:UpdateAgentActionGroup","bedrock-agent:GetAgentActionGroup"],
+                  "Resource": "*"
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": "sns:Publish",
+                  "Resource": "'"$ALERT_TOPIC_ARN"'"
+                }
+              ]
+            }'
+          echo "✓ Role permissions updated"
+
+          ROLE_ARN="arn:aws:iam::${ACCOUNT_ID}:role/${ROLE_NAME}"
+
+          # Get Bedrock Agent ID and Action Group ID
+          AGENT_ID=$(aws bedrock-agent list-agents --query "agentSummaries[?agentName=='SlashMyBill'].agentId" --output text 2>/dev/null || echo "")
+          ACTION_GROUP_ID=""
+          if [ -n "$AGENT_ID" ] && [ "$AGENT_ID" != "None" ]; then
+            ACTION_GROUP_ID=$(aws bedrock-agent list-agent-action-groups --agent-id "$AGENT_ID" --agent-version DRAFT --query "actionGroupSummaries[?actionGroupName=='FinOpsActions'].actionGroupId" --output text 2>/dev/null || echo "")
+          fi
+          echo "Agent ID: $AGENT_ID, Action Group ID: $ACTION_GROUP_ID"
+
+          # Create or update Lambda
+          if aws lambda get-function --function-name "$FUNCTION_NAME" > /dev/null 2>&1; then
+            echo "✓ $FUNCTION_NAME already exists"
+          else
+            echo "Creating $FUNCTION_NAME Lambda..."
+            aws lambda create-function \
+              --function-name "$FUNCTION_NAME" \
+              --runtime python3.12 \
+              --handler lambda_function.lambda_handler \
+              --role "$ROLE_ARN" \
+              --timeout 60 \
+              --memory-size 256 \
+              --reserved-concurrent-executions 1 \
+              --environment "Variables={TIPS_TABLE_NAME=$TIPS_TABLE,SCHEMA_BUCKET=$SCHEMA_BUCKET,AGENT_ID=$AGENT_ID,ACTION_GROUP_ID=$ACTION_GROUP_ID,ACTION_GROUP_NAME=FinOpsActions,ALERT_TOPIC_ARN=$ALERT_TOPIC_ARN}" \
+              --code S3Bucket=${{ env.STORAGE_BUCKET }},S3Key=lambda-packages/schema-sync.zip \
+              --tags Project=ViewMyBill Feature=SchemaDrivenSync > /dev/null
+            echo "✓ Lambda created"
+            aws lambda wait function-active --function-name "$FUNCTION_NAME"
+          fi
+
+          # Update Lambda env vars (in case agent/action group IDs changed)
+          aws lambda wait function-updated --function-name "$FUNCTION_NAME" 2>/dev/null || sleep 5
+          aws lambda update-function-configuration \
+            --function-name "$FUNCTION_NAME" \
+            --environment "Variables={TIPS_TABLE_NAME=$TIPS_TABLE,SCHEMA_BUCKET=$SCHEMA_BUCKET,AGENT_ID=$AGENT_ID,ACTION_GROUP_ID=$ACTION_GROUP_ID,ACTION_GROUP_NAME=FinOpsActions,ALERT_TOPIC_ARN=$ALERT_TOPIC_ARN}" > /dev/null 2>&1 || true
+
+          # Enable DynamoDB Stream on Tips table (if not already)
+          STREAM_STATUS=$(aws dynamodb describe-table --table-name "$TIPS_TABLE" --query "Table.StreamSpecification.StreamEnabled" --output text 2>/dev/null || echo "False")
+          if [ "$STREAM_STATUS" != "True" ]; then
+            echo "Enabling DynamoDB Stream on $TIPS_TABLE..."
+            aws dynamodb update-table \
+              --table-name "$TIPS_TABLE" \
+              --stream-specification StreamEnabled=true,StreamViewType=NEW_AND_OLD_IMAGES > /dev/null
+            echo "Waiting for stream to be active..."
+            sleep 15
+          fi
+
+          # Create event source mapping (DynamoDB Stream → Lambda) if not exists
+          EXISTING_MAPPING=$(aws lambda list-event-source-mappings --function-name "$FUNCTION_NAME" --query "EventSourceMappings[0].UUID" --output text 2>/dev/null || echo "None")
+          if [ "$EXISTING_MAPPING" = "None" ] || [ -z "$EXISTING_MAPPING" ]; then
+            STREAM_ARN=$(aws dynamodb describe-table --table-name "$TIPS_TABLE" --query "Table.LatestStreamArn" --output text)
+            if [ -n "$STREAM_ARN" ] && [ "$STREAM_ARN" != "None" ]; then
+              aws lambda create-event-source-mapping \
+                --function-name "$FUNCTION_NAME" \
+                --event-source-arn "$STREAM_ARN" \
+                --starting-position LATEST \
+                --batch-size 10 \
+                --maximum-batching-window-in-seconds 5 \
+                --maximum-retry-attempts 3 > /dev/null
+              echo "✓ DynamoDB Stream event source mapping created (5s batch window)"
+            fi
+          else
+            echo "✓ Event source mapping already exists"
+          fi
+          echo "✓ Schema Sync infrastructure complete"
+
+      - name: Run Schema Sync migration and seed
+        continue-on-error: true
+        run: |
+          echo "Running Service ID migration + tool definition seed..."
+          pip install boto3 --quiet
+          # Run migration: populate serviceId on existing tip records
+          python -c "
+          import sys, os
+          sys.path.insert(0, '.')
+          os.environ['TIPS_TABLE_NAME'] = 'ViewMyBill-CostOptimizationTips'
+          from schema_sync.migrate_service_ids import migrate_tips_table
+          result = migrate_tips_table()
+          print(f'Migration result: {result}')
+          "
+          echo "✓ Service ID migration complete"
+          # Run seed: populate toolDefinition for 11 existing operations
+          python -c "
+          import sys, os
+          sys.path.insert(0, '.')
+          os.environ['TIPS_TABLE_NAME'] = 'ViewMyBill-CostOptimizationTips'
+          from schema_sync.seed_tool_definitions import seed_tool_definitions
+          result = seed_tool_definitions()
+          print(f'Seed result: {result}')
+          "
+          echo "✓ Tool definitions seeded"
+
+      - name: Trigger initial Schema Sync (dryRun validation)
+        continue-on-error: true
+        run: |
+          echo "Invoking Schema Sync Lambda in dryRun mode..."
+          aws lambda invoke \
+            --function-name slashmybill-schema-sync \
+            --payload '{"action": "sync", "dryRun": true}' \
+            --region us-east-1 \
+            /tmp/schema-sync-result.json > /dev/null 2>&1 || echo "⚠ Invoke failed"
+          if [ -f /tmp/schema-sync-result.json ]; then
+            echo "Schema Sync dryRun result:"
+            cat /tmp/schema-sync-result.json | python3 -c "import sys,json; d=json.load(sys.stdin); print(f'Operations: {d.get(\"operationCount\",\"?\")} | Providers: {d.get(\"providers\",\"?\")} | DryRun: {d.get(\"dryRun\",\"?\")}')" 2>/dev/null || cat /tmp/schema-sync-result.json
+          fi
+          echo "✓ Schema Sync validation complete"
 
       - name: Summary
         run: |
