@@ -45,7 +45,7 @@ class AIVendorConnector(CloudConnector):
 
     def _get_credentials(self, account_id: str, member_email: str) -> dict:
         """
-        Retrieve the encrypted credentials map for the AI vendor account
+        Retrieve and decrypt the API key for the AI vendor account
         from MemberPortal-Accounts DynamoDB table.
 
         Returns:
@@ -74,7 +74,28 @@ class AIVendorConnector(CloudConnector):
             )
 
         credentials = item.get("credentials", {})
+        encrypted_key = credentials.get("encryptedApiKey", "")
         api_key = credentials.get("api_key", "")
+
+        # If we have an encrypted key, decrypt it via KMS
+        if encrypted_key and not api_key:
+            try:
+                import base64
+                kms_client = boto3.client("kms")
+                decrypted = kms_client.decrypt(
+                    CiphertextBlob=base64.b64decode(encrypted_key),
+                    EncryptionContext={
+                        "memberEmail": member_email,
+                        "accountId": account_id,
+                    },
+                )
+                api_key = decrypted["Plaintext"].decode("utf-8")
+            except Exception as e:
+                logger.error(f"KMS decryption failed for AI vendor {account_id}: {e}")
+                raise PermissionError(
+                    "AI vendor API key decryption failed. Please re-add your connection "
+                    "in the Configure tab."
+                )
 
         if not api_key:
             raise PermissionError(
@@ -85,7 +106,7 @@ class AIVendorConnector(CloudConnector):
         return {
             "api_key": api_key,
             "organization_id": credentials.get("organization_id", ""),
-            "vendor": credentials.get("vendor", "openai"),
+            "vendor": item.get("cloudProvider", "openai"),
         }
 
     def _make_openai_request(self, endpoint: str, api_key: str, organization_id: str = "") -> dict:
@@ -165,11 +186,11 @@ class AIVendorConnector(CloudConnector):
             total_cost = usage_data.get("total_cost", 0.0)
 
             return {
-                "totalCost": round(total_cost, 2),
+                "totalCost30Days": round(total_cost, 2),
                 "currency": "USD",
                 "period": f"{start_date} to {end_date}",
-                "serviceBreakdown": [
-                    {"serviceName": item["model"], "cost": round(item["cost"], 4)}
+                "topServices": [
+                    {"service": item["model"], "cost": round(item["cost"], 4)}
                     for item in service_breakdown
                 ],
                 "dailyCosts": daily_costs,
@@ -283,10 +304,10 @@ class AIVendorConnector(CloudConnector):
         start_date: str, end_date: str
     ) -> dict:
         """
-        Fetch usage data from OpenAI's API.
+        Fetch usage data from OpenAI's Organization Costs API.
 
-        Uses the /v1/organization/usage endpoint (or /v1/usage for legacy keys)
-        to retrieve token consumption and cost data grouped by model and day.
+        Uses /v1/organization/costs?start_time=EPOCH&end_time=EPOCH&group_by=line_item
+        to retrieve cost data grouped by model and day.
 
         Returns:
             Normalized usage dict with total_cost, model_costs, daily_costs, etc.
@@ -299,21 +320,78 @@ class AIVendorConnector(CloudConnector):
             tzinfo=timezone.utc
         ).timestamp())
 
-        # Try the organization usage endpoint first
-        endpoint = f"/v1/organization/usage?start_time={start_ts}&end_time={end_ts}"
+        # Use Organization Costs API (works with admin keys)
+        endpoint = f"/v1/organization/costs?start_time={start_ts}&end_time={end_ts}&group_by=line_item"
 
         try:
             data = self._make_openai_request(endpoint, api_key, organization_id)
         except (PermissionError, RuntimeError):
-            # If org endpoint fails, try the legacy /dashboard/billing/usage
-            # endpoint or return estimated data from what we can access
-            logger.warning("OpenAI org usage endpoint failed, attempting fallback")
+            logger.warning("OpenAI org costs endpoint failed, attempting fallback")
             return self._fetch_openai_usage_fallback(
                 api_key, organization_id, start_date, end_date
             )
 
-        # Parse OpenAI usage response
-        return self._parse_openai_usage_response(data, start_date, end_date)
+        # Parse the Organization Costs API response (paginated buckets)
+        return self._parse_org_costs_response(data, api_key, organization_id, start_ts, end_ts)
+
+    def _parse_org_costs_response(self, data: dict, api_key: str, organization_id: str, start_ts: int, end_ts: int) -> dict:
+        """Parse OpenAI Organization Costs API response into normalized format.
+        
+        Response format: {"object": "page", "data": [{"start_time": N, "end_time": N, "results": [...]}], "has_more": bool}
+        """
+        total_cost = 0.0
+        model_costs_map = {}
+        daily_costs_map = {}
+
+        all_buckets = data.get("data", [])
+
+        # Fetch additional pages (max 5)
+        page_count = 1
+        while data.get("has_more") and data.get("next_page") and page_count < 5:
+            next_endpoint = f"/v1/organization/costs?start_time={start_ts}&end_time={end_ts}&group_by=line_item&page={data['next_page']}"
+            try:
+                data = self._make_openai_request(next_endpoint, api_key, organization_id)
+                all_buckets.extend(data.get("data", []))
+                page_count += 1
+            except Exception:
+                break
+
+        for bucket in all_buckets:
+            start_time = bucket.get("start_time")
+            if start_time is None:
+                continue
+            date_str = datetime.fromtimestamp(int(start_time), tz=timezone.utc).strftime("%Y-%m-%d")
+
+            bucket_cost = 0.0
+            for result in bucket.get("results", []):
+                amount_obj = result.get("amount", {})
+                cost = float(amount_obj.get("value", 0))
+                model = result.get("line_item") or "unknown"
+
+                if model not in model_costs_map:
+                    model_costs_map[model] = {"model": model, "cost": 0.0, "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0, "requests": 0}
+                model_costs_map[model]["cost"] += cost
+
+                total_cost += cost
+                bucket_cost += cost
+
+            if date_str:
+                daily_costs_map[date_str] = daily_costs_map.get(date_str, 0.0) + bucket_cost
+
+        # Sort model costs descending
+        model_costs = sorted(model_costs_map.values(), key=lambda x: x["cost"], reverse=True)
+
+        # Build daily costs list sorted by date
+        daily_costs = [{"date": d, "cost": round(c, 4)} for d, c in sorted(daily_costs_map.items())]
+
+        return {
+            "total_cost": total_cost,
+            "total_tokens": 0,
+            "total_prompt_tokens": 0,
+            "total_completion_tokens": 0,
+            "model_costs": model_costs,
+            "daily_costs": daily_costs,
+        }
 
     def _fetch_openai_usage_fallback(
         self, api_key: str, organization_id: str,
