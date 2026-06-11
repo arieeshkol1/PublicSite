@@ -1,0 +1,168 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Tips-Driven Schema Sync - Infrastructure for dynamic OpenAPI generation
+
+Parameters:
+  TipsTableName:
+    Type: String
+    Default: ViewMyBill-CostOptimizationTips
+    Description: Name of the DynamoDB Tips table
+
+  SchemaBucketName:
+    Type: String
+    Default: slashmybill-schema-versions
+    Description: S3 bucket for schema version archive
+
+  BedrockAgentId:
+    Type: String
+    Description: The Bedrock Agent ID
+
+  ActionGroupId:
+    Type: String
+    Description: The Bedrock Action Group ID
+
+  ActionGroupName:
+    Type: String
+    Default: FinOpsActions
+    Description: The Bedrock Action Group name
+
+  AlertEmail:
+    Type: String
+    Default: ''
+    Description: Email for schema sync alerts (optional)
+
+Resources:
+  # S3 Bucket for schema version archive
+  SchemaVersionBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref SchemaBucketName
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireOldVersions
+            Status: Enabled
+            NoncurrentVersionExpiration:
+              NoncurrentDays: 90
+
+  # SNS Topic for alerts
+  SchemaSyncAlertTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: SlashMyBill-SchemaSync-Alerts
+
+  # Optional email subscription
+  AlertEmailSubscription:
+    Type: AWS::SNS::Subscription
+    Condition: HasAlertEmail
+    Properties:
+      TopicArn: !Ref SchemaSyncAlertTopic
+      Protocol: email
+      Endpoint: !Ref AlertEmail
+
+  # IAM Role for the Sync Lambda
+  SyncLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: SlashMyBill-SchemaSyncLambdaRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: SchemaSyncPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # DynamoDB permissions
+              - Effect: Allow
+                Action:
+                  - dynamodb:Scan
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:GetRecords
+                  - dynamodb:GetShardIterator
+                  - dynamodb:DescribeStream
+                  - dynamodb:ListStreams
+                Resource:
+                  - !Sub 'arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${TipsTableName}'
+                  - !Sub 'arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${TipsTableName}/stream/*'
+              # S3 permissions
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                  - s3:ListBucket
+                Resource:
+                  - !Sub 'arn:aws:s3:::${SchemaBucketName}'
+                  - !Sub 'arn:aws:s3:::${SchemaBucketName}/*'
+              # Bedrock Agent permissions
+              - Effect: Allow
+                Action:
+                  - bedrock:UpdateAgentActionGroup
+                  - bedrock:GetAgentActionGroup
+                Resource: '*'
+              # SNS permissions
+              - Effect: Allow
+                Action:
+                  - sns:Publish
+                Resource: !Ref SchemaSyncAlertTopic
+
+  # Sync Lambda Function
+  SyncLambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: SlashMyBill-SchemaSync
+      Runtime: python3.12
+      Handler: schema_sync.sync_lambda.lambda_handler
+      Role: !GetAtt SyncLambdaRole.Arn
+      Timeout: 60
+      MemorySize: 256
+      ReservedConcurrentExecutions: 1
+      Environment:
+        Variables:
+          TIPS_TABLE_NAME: !Ref TipsTableName
+          SCHEMA_BUCKET: !Ref SchemaBucketName
+          AGENT_ID: !Ref BedrockAgentId
+          ACTION_GROUP_ID: !Ref ActionGroupId
+          ACTION_GROUP_NAME: !Ref ActionGroupName
+          ALERT_TOPIC_ARN: !Ref SchemaSyncAlertTopic
+      Code:
+        ZipFile: |
+          # Placeholder - deploy actual code via CI/CD
+          def lambda_handler(event, context):
+              return {"statusCode": 200, "body": "Deploy schema-sync package"}
+
+  # DynamoDB Stream Event Source Mapping
+  StreamEventMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      EventSourceArn: !Sub 'arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${TipsTableName}/stream/*'
+      FunctionName: !GetAtt SyncLambdaFunction.Arn
+      StartingPosition: LATEST
+      BatchSize: 10
+      MaximumBatchingWindowInSeconds: 5
+      MaximumRetryAttempts: 3
+      Enabled: true
+
+Conditions:
+  HasAlertEmail: !Not [!Equals [!Ref AlertEmail, '']]
+
+Outputs:
+  SyncLambdaArn:
+    Description: ARN of the Schema Sync Lambda
+    Value: !GetAtt SyncLambdaFunction.Arn
+
+  SchemaBucketArn:
+    Description: ARN of the schema versions S3 bucket
+    Value: !GetAtt SchemaVersionBucket.Arn
+
+  AlertTopicArn:
+    Description: ARN of the alerts SNS topic
+    Value: !Ref SchemaSyncAlertTopic
