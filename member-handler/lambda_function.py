@@ -7728,6 +7728,19 @@ def _inline_audit_score(question, answer):
             'guiding_questions': []
         }
 
+    # Pattern: Truncated response (agent hit output token limit mid-sentence)
+    if len(answer) > 500 and not answer.rstrip().endswith(('.', '!', '?', ')', ']', '```', '*')):
+        # Response is long but doesn't end with proper punctuation — likely truncated
+        _last_50 = answer[-50:]
+        if not any(end in _last_50 for end in ['. ', '.\n', '!\n', '?\n']):
+            logger.info("Inline audit: CODE-LEVEL REJECT — response appears truncated mid-sentence")
+            return {
+                'score': 45,
+                'can_improve': True,
+                'improvement': 'Response was cut off mid-sentence (token limit hit). Provide a shorter, more concise answer. Show top 5 items in a compact table format instead of listing every item with full details.',
+                'guiding_questions': []
+            }
+
     try:
         bedrock_rt = boto3.client(
             'bedrock-runtime',
