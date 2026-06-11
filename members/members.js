@@ -13937,7 +13937,7 @@ function _renderSpendBars(aggregated) {
         pts.push(x.toFixed(1) + ',' + y.toFixed(1));
     });
 
-    var html = '<svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;min-width:600px;height:300px;" preserveAspectRatio="xMidYMid meet">';
+    var html = '<svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;min-width:600px;" preserveAspectRatio="xMidYMid meet">';
 
     // Y-axis grid lines and labels
     for (var yi = 0; yi <= 5; yi++) {

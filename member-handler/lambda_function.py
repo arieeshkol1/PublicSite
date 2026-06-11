@@ -7936,9 +7936,14 @@ def handle_ai_query(event):
             # Route multi-account queries through Bedrock Agent
             # Include ALL account IDs in the context so the agent calls tools for each
             multi_context = f"[Multi-Account Query: accounts={','.join(account_ids)}] {ai_question}"
-            # Pass the second account (platform account 991105135552) as primary if available
-            # since the first account is often the personal dev account with no activity
+            # Determine primary account: if the question explicitly mentions an openai-* account, use it
+            # Otherwise use the second account (platform account) as primary
             primary_account = account_ids[1] if len(account_ids) > 1 else account_ids[0]
+            _q_lower = ai_question.lower()
+            for _aid in account_ids:
+                if _aid.startswith('openai-') and (_aid in _q_lower or 'openai' in _q_lower):
+                    primary_account = _aid
+                    break
             return _invoke_bedrock_agent(multi_context, primary_account, member_email, interaction_id)
         else:
             # Route ALL single-account chat queries exclusively through Bedrock Agent
@@ -8020,6 +8025,36 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
             "For cost savings, analyze: which models cost the most, output/input token ratio, "
             "prompt caching efficiency, and whether cheaper models (gpt-4o-mini) can replace expensive ones (gpt-4o).]"
         )
+        # Pre-compute OpenAI cost data from cache to avoid agent timeout
+        # This ensures the agent has real data without needing to call tools
+        try:
+            from boto3.dynamodb.conditions import Key as _Key
+            from datetime import datetime as _dt, timedelta as _td
+            _now = _dt.now()
+            _cache_table = dynamodb.Table(os.environ.get('COST_CACHE_TABLE_NAME', 'Cost_Cache_Table'))
+            _pk = f"{member_email}#{account_id}"
+            _start_sk = f"OPENAI_DAILY#{(_now - _td(days=30)).strftime('%Y-%m-%d')}"
+            _end_sk = f"OPENAI_DAILY#{_now.strftime('%Y-%m-%d')}"
+            _resp = _cache_table.query(
+                KeyConditionExpression=_Key('pk').eq(_pk) & _Key('sk').between(_start_sk, _end_sk)
+            )
+            _items = _resp.get('Items', [])
+            if _items:
+                _total = sum(float(i.get('cost_amount', 0)) for i in _items)
+                _svc_totals = {}
+                for _item in _items:
+                    for _svc, _cost in _item.get('service_breakdown', {}).items():
+                        _svc_totals[_svc] = _svc_totals.get(_svc, 0) + float(_cost)
+                _top_svcs = sorted(_svc_totals.items(), key=lambda x: x[1], reverse=True)[:7]
+                _svc_str = ', '.join(f"{s}: ${c:.2f}" for s, c in _top_svcs)
+                enriched_prompt += (
+                    f"\n\n[PRE-COMPUTED OPENAI DATA (from cache, last 30 days): "
+                    f"Total spend: ${_total:.2f} | Top models: {_svc_str} | "
+                    f"Days with data: {len(_items)} | "
+                    f"Use this data to answer. Call getCostBreakdown ONLY if you need more detail.]"
+                )
+        except Exception as _e:
+            logger.warning(f"OpenAI cache pre-compute failed: {_e}")
 
     # Service detection removed — the AI agent handles tool selection autonomously.
     # Quality enforcement is done by the inline audit gate + rewrite path.
