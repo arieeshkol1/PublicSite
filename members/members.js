@@ -12581,6 +12581,23 @@ function _ddRenderInvoices(data) {
     }
 
     var html = '';
+    // Inline forecast-status note: explain when the current-month forecast row
+    // is not shown (so the user isn't left wondering where it went).
+    var diag = (data && data.forecastDiag) || null;
+    if (diag && diag.status && diag.status !== 'shown' && diag.status !== 'superseded' && diag.status !== 'skipped') {
+        var fmsg = '';
+        var fmonth = diag.currentMonth || 'this month';
+        if (diag.status === 'omitted') {
+            fmsg = 'Forecast for ' + fmonth + ' is not shown yet \u2014 no usable month-to-date cost is available for this account.';
+        } else if (diag.status === 'unavailable' || diag.status === 'error') {
+            fmsg = 'Forecast for ' + fmonth + ' is temporarily unavailable (could not retrieve current-month cost). Try Refresh.';
+        } else if (diag.status === 'disabled') {
+            fmsg = 'Forecast is currently unavailable on the server.';
+        }
+        if (fmsg) {
+            html += '<tr><td colspan="6" style="background:#eef2ff;color:#3730a3;font-size:0.85em;padding:8px 12px;">\u2139\ufe0f ' + esc(fmsg) + '</td></tr>';
+        }
+    }
     items.forEach(function(inv) {
         var period = inv.period || '';
         var isExpanded = _ddExpandedInvoices[period];

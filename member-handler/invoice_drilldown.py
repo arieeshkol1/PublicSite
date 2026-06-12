@@ -318,14 +318,42 @@ def handle_invoice_list_request(event, member_email):
     # for AWS accounts and place it at the top, ahead of all real invoices
     # (Req 9.1, 9.6). Any failure leaves the real-invoice list intact (Req 8.11).
     forecast_unavailable = False
+    forecast_diag = {'status': 'none', 'reason': 'not_evaluated'}
     try:
+        now_utc = datetime.now(timezone.utc)
         provider_key = _get_account_provider(member_email, account_id)
+        forecast_diag['provider'] = provider_key
+        forecast_diag['currentMonth'] = now_utc.strftime('%Y-%m')
+        forecast_diag['inWindow'] = (invoice_forecast is not None
+                                     and invoice_forecast.is_in_forecast_window(now_utc))
         forecast, forecast_unavailable = _get_or_refresh_forecast(
-            member_email, account_id, provider_key, items)
+            member_email, account_id, provider_key, items, now=now_utc)
         if forecast:
             items = [forecast] + items
+            forecast_diag = {'status': 'shown', 'reason': 'computed',
+                             'provider': provider_key,
+                             'currentMonth': now_utc.strftime('%Y-%m')}
+        elif forecast_unavailable:
+            forecast_diag['status'] = 'unavailable'
+            forecast_diag['reason'] = 'compute_error'
+        elif invoice_forecast is None:
+            forecast_diag['status'] = 'disabled'
+            forecast_diag['reason'] = 'module_unavailable'
+        elif not invoice_forecast.is_aws_provider(provider_key):
+            forecast_diag['status'] = 'skipped'
+            forecast_diag['reason'] = 'not_aws_provider'
+        elif not forecast_diag.get('inWindow'):
+            forecast_diag['status'] = 'skipped'
+            forecast_diag['reason'] = 'outside_forecast_window'
+        elif now_utc.strftime('%Y-%m') in {str(i.get('period', '')) for i in items if i.get('period')}:
+            forecast_diag['status'] = 'superseded'
+            forecast_diag['reason'] = 'real_invoice_exists_for_current_month'
+        else:
+            forecast_diag['status'] = 'omitted'
+            forecast_diag['reason'] = 'no_usable_month_to_date_cost'
     except Exception as e:
         logger.warning(f"Forecast integration skipped for {account_id}: {e}")
+        forecast_diag = {'status': 'error', 'reason': str(e)[:200]}
 
     # Apply pagination
     total_items = len(items)
@@ -350,6 +378,7 @@ def handle_invoice_list_request(event, member_email):
     return create_response(200, {
         'items': response_items,
         'forecastUnavailable': forecast_unavailable,
+        'forecastDiag': forecast_diag,
         'pagination': {
             'page': page_int,
             'pageSize': page_size_int,
@@ -1799,7 +1828,13 @@ def _forecast_item_to_dict(item):
 
 
 def _get_account_provider(member_email, account_id):
-    """Return the account's cloudProvider (Provider_Key), or '' if unknown."""
+    """Return the account's cloudProvider (Provider_Key).
+
+    Legacy/AWS accounts are frequently stored with a missing or empty
+    cloudProvider; consistent with _backfill_cloud_provider and the rest of
+    the portal, an absent value defaults to 'aws' so AWS accounts still get a
+    forecast. Returns '' only when the account cannot be found at all.
+    """
     accounts_table = dynamodb.Table(ACCOUNTS_TABLE_NAME)
     try:
         result = accounts_table.query(
@@ -1808,7 +1843,7 @@ def _get_account_provider(member_email, account_id):
         )
         for item in result.get('Items', []):
             if item.get('accountId') == account_id:
-                return str(item.get('cloudProvider', '') or '')
+                return str(item.get('cloudProvider', '') or 'aws')
     except ClientError as e:
         logger.warning(f"Failed to read provider for {account_id}: {e}")
     return ''
