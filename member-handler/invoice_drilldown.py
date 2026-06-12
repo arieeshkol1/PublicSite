@@ -26,7 +26,16 @@ import boto3
 from boto3.dynamodb.conditions import Key
 from botocore.exceptions import ClientError
 
-import invoice_forecast
+# Forecast is an additive, best-effort capability. If the module is missing
+# from the deployment package, invoice endpoints must still work — so the
+# import never crashes the module load. (forecast simply disabled when None)
+try:
+    import invoice_forecast
+except Exception as _forecast_import_err:  # pragma: no cover
+    invoice_forecast = None
+    logging.getLogger().warning(
+        f"invoice_forecast unavailable; forecasts disabled: {_forecast_import_err}"
+    )
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -1830,6 +1839,10 @@ def _get_or_refresh_forecast(member_email, account_id, provider_key, items, now=
     now = now or datetime.now(timezone.utc)
     current_month = now.strftime('%Y-%m')
     real_periods = {str(i.get('period', '')) for i in items if i.get('period')}
+
+    # Forecast module not packaged -> silently disable forecasting (best-effort).
+    if invoice_forecast is None:
+        return None, False
 
     cached = _read_forecast_record(member_email, account_id)
 
