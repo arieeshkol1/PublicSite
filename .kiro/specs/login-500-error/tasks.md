@@ -51,7 +51,7 @@ Fix the login 500 error in `member-handler/lambda_function.py` caused by uncondi
   - Mark task complete when test is written, run, and failure is documented
   - _Requirements: 1.1, 1.2, 1.3_
 
-- [ ] 2. Write preservation property tests (BEFORE implementing fix)
+- [x] 2. Write preservation property tests (BEFORE implementing fix)
   - **Property 2: Preservation** - Existing Login Paths Unchanged
   - **IMPORTANT**: Follow observation-first methodology
   - Observe on UNFIXED code: `handle_login()` with wrong password returns `{'statusCode': 401, body: '{"errorCode":"AuthError","message":"Invalid email or password"}'}`
@@ -65,9 +65,9 @@ Fix the login 500 error in `member-handler/lambda_function.py` caused by uncondi
   - Mark task complete when tests are written, run, and passing on unfixed code
   - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5_
 
-- [ ] 3. Fix login 500 error
+- [x] 3. Fix login 500 error
 
-  - [ ] 3.1 Wrap optional top-level imports in try/except blocks
+  - [x] 3.1 Wrap optional top-level imports in try/except blocks
     - Replace bare `import provider_registry` with `try: import provider_registry / except ImportError: provider_registry = None`
     - Replace `from cost_cache import _get_cost_data_cached` with try/except, fallback to `None`
     - Replace `from intent_classifier import _classify_intent, get_apis_for_intent` with try/except, fallback to `None`
@@ -79,7 +79,7 @@ Fix the login 500 error in `member-handler/lambda_function.py` caused by uncondi
     - _Preservation: All existing code paths that USE these modules must check for None before calling_
     - _Requirements: 2.1_
 
-  - [ ] 3.2 Add specific Cognito InvalidParameterException handling in handle_login()
+  - [x] 3.2 Add specific Cognito InvalidParameterException handling in handle_login()
     - Add `except cognito_client.exceptions.InvalidParameterException as e:` BEFORE the generic `ClientError` handler
     - Log: `logger.error(f"Cognito auth flow misconfiguration: {e}\n{traceback.format_exc()}")`
     - Return: `create_error_response(500, "AuthConfigError", "Authentication service misconfigured. Please contact support.")`
@@ -87,7 +87,7 @@ Fix the login 500 error in `member-handler/lambda_function.py` caused by uncondi
     - _Expected_Behavior: Structured 500 with errorCode "AuthConfigError" and descriptive message_
     - _Requirements: 2.2_
 
-  - [ ] 3.3 Improve generic exception handler with traceback logging
+  - [x] 3.3 Improve generic exception handler with traceback logging
     - Update the existing `except ClientError as e:` to include `traceback.format_exc()` in the log message
     - Add reference string to response: `"An unexpected error occurred. Reference: cognito_client_error"`
     - Add a catch-all `except Exception as e:` after the ClientError handler with full traceback logging
@@ -96,7 +96,7 @@ Fix the login 500 error in `member-handler/lambda_function.py` caused by uncondi
     - _Expected_Behavior: Full traceback in CloudWatch logs, structured error response to client_
     - _Requirements: 2.3_
 
-  - [ ] 3.4 Verify bug condition exploration test now passes
+  - [x] 3.4 Verify bug condition exploration test now passes
     - **Property 1: Expected Behavior** - Import Failure and Cognito Misconfiguration
     - **IMPORTANT**: Re-run the SAME test from task 1 - do NOT write a new test
     - The test from task 1 encodes the expected behavior (Lambda loads without crash, InvalidParameterException returns AuthConfigError)
@@ -105,14 +105,14 @@ Fix the login 500 error in `member-handler/lambda_function.py` caused by uncondi
     - **EXPECTED OUTCOME**: Test PASSES (confirms bug is fixed)
     - _Requirements: 2.1, 2.2, 2.3_
 
-  - [ ] 3.5 Verify preservation tests still pass
+  - [x] 3.5 Verify preservation tests still pass
     - **Property 2: Preservation** - Existing Login Paths Unchanged
     - **IMPORTANT**: Re-run the SAME tests from task 2 - do NOT write new tests
     - Run preservation property tests from step 2
     - **EXPECTED OUTCOME**: Tests PASS (confirms no regressions)
     - Confirm: 401 for wrong password, 400 for missing fields, 401 for unconfirmed, legacy fallback 200 — all unchanged
 
-- [ ] 4. Checkpoint - Ensure all tests pass
+- [x] 4. Checkpoint - Ensure all tests pass
   - Run the full test suite for member-handler
   - Verify exploration tests (task 1) now PASS
   - Verify preservation tests (task 2) still PASS

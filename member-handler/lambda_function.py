@@ -538,11 +538,10 @@ def handle_login(event):
             return create_error_response(401, "AuthError", "Invalid email or password")
         except cognito_client.exceptions.UserNotConfirmedException:
             return create_error_response(401, "AuthError", "Please verify your email before logging in")
+        except cognito_client.exceptions.InvalidParameterException as e:
+            logger.error(f"Cognito auth flow misconfiguration: {e}\n{traceback.format_exc()}")
+            return create_error_response(500, "AuthConfigError", "Authentication service misconfigured. Please contact support.")
         except ClientError as e:
-            error_code = e.response.get('Error', {}).get('Code', '')
-            if error_code == 'InvalidParameterException':
-                logger.error(f"Cognito auth flow misconfiguration: {e}\n{traceback.format_exc()}")
-                return create_error_response(500, "AuthConfigError", "Authentication service misconfigured. Please contact support.")
             logger.error(f"Cognito login error: {e}\n{traceback.format_exc()}")
             return create_error_response(500, "ServerError", "An unexpected error occurred. Reference: cognito_client_error")
         except Exception as e:
@@ -20136,6 +20135,32 @@ def handle_refresh_invoices(event):
             with invoices_table.batch_writer() as batch:
                 for item in items_to_delete:
                     batch.delete_item(Key={'pk': item['pk'], 'sk': item['sk']})
+
+        # Also invalidate the drill-down invoice-list cache (INV# records).
+        # The invoice list (GET /members/invoices/list) serves these records
+        # with a 90-day TTL; without clearing them here, a refresh would update
+        # the per-service records but the displayed invoice list would remain
+        # stale (e.g. missing a newly-closed month). Deleting them forces the
+        # next list request to rebuild the cache from AWS.
+        inv_query_kwargs = {
+            'KeyConditionExpression': (
+                boto3.dynamodb.conditions.Key('pk').eq(pk_value)
+                & boto3.dynamodb.conditions.Key('sk').begins_with('INV#')
+            ),
+            'ProjectionExpression': 'pk, sk',
+        }
+        inv_items_to_delete = []
+        while True:
+            inv_resp = invoices_table.query(**inv_query_kwargs)
+            inv_items_to_delete.extend(inv_resp.get('Items', []))
+            inv_last_key = inv_resp.get('LastEvaluatedKey')
+            if not inv_last_key:
+                break
+            inv_query_kwargs['ExclusiveStartKey'] = inv_last_key
+
+        with invoices_table.batch_writer() as batch:
+            for item in inv_items_to_delete:
+                batch.delete_item(Key={'pk': item['pk'], 'sk': item['sk']})
     except ClientError as e:
         logger.error(f"Failed to delete old invoice records: {e}")
         return create_error_response(500, 'ServerError', 'Failed to prepare refresh')

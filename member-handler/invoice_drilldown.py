@@ -20,7 +20,7 @@ import logging
 import math
 import hashlib
 from decimal import Decimal
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 import boto3
 from boto3.dynamodb.conditions import Key
