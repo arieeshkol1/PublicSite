@@ -2129,6 +2129,86 @@ Resources:
       SourceArn: !GetAtt DailyRefreshSchedule.Arn
 
   # ============================================================
+  # Monthly Full Invoice Refresh (7th of month, 04:00 UTC)
+  # ============================================================
+  MonthlyRefreshFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: slashmybill-monthly-refresh
+      Runtime: python3.12
+      Handler: lambda_function.lambda_handler
+      Timeout: 600
+      MemorySize: 512
+      ReservedConcurrentExecutions: 1
+      Role: !GetAtt MonthlyRefreshRole.Arn
+      Code:
+        S3Bucket: !Sub 'aws-bill-analyzer-storage-${AWS::AccountId}'
+        S3Key: lambda-packages/monthly-refresh.zip
+      Tags:
+        - Key: Project
+          Value: ViewMyBill
+
+  MonthlyRefreshRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: slashmybill-monthly-refresh-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: MonthlyRefreshPermissions
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: sts:AssumeRole
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - dynamodb:Scan
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:Query
+                  - dynamodb:BatchWriteItem
+                Resource:
+                  - !Sub 'arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/MemberPortal-Accounts'
+                  - !Sub 'arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/MemberPortal-Invoices'
+              - Effect: Allow
+                Action:
+                  - ce:GetCostAndUsage
+                  - ce:GetCostForecast
+                Resource: '*'
+      Tags:
+        - Key: Project
+          Value: ViewMyBill
+
+  MonthlyRefreshSchedule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: slashmybill-monthly-invoice-refresh
+      Description: 'Full invoice refresh on the 7th of each month at 04:00 UTC'
+      ScheduleExpression: 'cron(0 4 7 * ? *)'
+      State: ENABLED
+      Targets:
+        - Id: MonthlyRefreshLambdaTarget
+          Arn: !GetAtt MonthlyRefreshFunction.Arn
+
+  MonthlyRefreshSchedulePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref MonthlyRefreshFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt MonthlyRefreshSchedule.Arn
+
+
+  # ============================================================
   # EventBridge Rule - OpenAI Nightly Sync Schedule (02:00 UTC)
   # ============================================================
   OpenAISyncSchedule:

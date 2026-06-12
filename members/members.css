@@ -1070,6 +1070,10 @@
     background: #fee2e2;
     color: #991b1b;
 }
+.dd-status-forecast {
+    background: #e0e7ff;
+    color: #3730a3;
+}
 
 /* Resource type badge */
 .dd-resource-type-badge {

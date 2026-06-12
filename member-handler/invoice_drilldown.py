@@ -26,6 +26,8 @@ import boto3
 from boto3.dynamodb.conditions import Key
 from botocore.exceptions import ClientError
 
+import invoice_forecast
+
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
@@ -303,6 +305,19 @@ def handle_invoice_list_request(event, member_email):
     sort_fn = sort_key_map.get(effective_sort_by, sort_key_map['paymentDate'])
     items = sorted(items, key=sort_fn, reverse=(effective_sort_order == 'desc'))
 
+    # Forecast merge/supersede: compute or retrieve the Current_Month forecast
+    # for AWS accounts and place it at the top, ahead of all real invoices
+    # (Req 9.1, 9.6). Any failure leaves the real-invoice list intact (Req 8.11).
+    forecast_unavailable = False
+    try:
+        provider_key = _get_account_provider(member_email, account_id)
+        forecast, forecast_unavailable = _get_or_refresh_forecast(
+            member_email, account_id, provider_key, items)
+        if forecast:
+            items = [forecast] + items
+    except Exception as e:
+        logger.warning(f"Forecast integration skipped for {account_id}: {e}")
+
     # Apply pagination
     total_items = len(items)
     total_pages = math.ceil(total_items / page_size_int) if total_items > 0 else 0
@@ -325,6 +340,7 @@ def handle_invoice_list_request(event, member_email):
 
     return create_response(200, {
         'items': response_items,
+        'forecastUnavailable': forecast_unavailable,
         'pagination': {
             'page': page_int,
             'pageSize': page_size_int,
@@ -1654,7 +1670,7 @@ def _write_invoice_cache(member_email, account_id, records):
                 item = {
                     'pk': pk,
                     'sk': f"INV#{record['invoiceId']}",
-                    'recordType': 'invoice',
+                    'recordType': 'real',
                     'invoiceId': record['invoiceId'],
                     'issuer': record.get('issuer', 'Amazon Web Services'),
                     'paymentDate': record.get('paymentDate', ''),
@@ -1670,6 +1686,197 @@ def _write_invoice_cache(member_email, account_id, records):
     except (ClientError, Exception) as e:
         logger.error(f"DynamoDB cache write failed for invoices: {e}")
         raise
+
+
+# ─── Forecast cache helpers ───────────────────────────────────────────────────
+
+def _read_forecast_record(member_email, account_id, current_month=None):
+    """Read the cached Forecast_Invoice record (sk begins_with FCST#).
+
+    If current_month is given, returns that specific FCST#{month} record;
+    otherwise returns the single most recent forecast record. Returns None
+    when absent or expired by TTL. (Req 12.2)
+    """
+    table = dynamodb.Table(INVOICES_TABLE_NAME)
+    pk = f'{member_email}#{account_id}'
+    now_epoch = int(time.time())
+
+    try:
+        if current_month:
+            resp = table.get_item(
+                Key={'pk': pk, 'sk': f'{invoice_forecast.FORECAST_SK_PREFIX}{current_month}'}
+            )
+            item = resp.get('Item')
+            items = [item] if item else []
+        else:
+            resp = table.query(
+                KeyConditionExpression=Key('pk').eq(pk) & Key('sk').begins_with(
+                    invoice_forecast.FORECAST_SK_PREFIX),
+            )
+            items = resp.get('Items', [])
+    except ClientError as e:
+        logger.error(f"DynamoDB forecast cache read failed: {e}")
+        return None
+
+    valid = [it for it in items if it and int(it.get('ttl', 0)) > now_epoch]
+    if not valid:
+        return None
+    # Most recent forecast month wins if multiple are present
+    valid.sort(key=lambda it: str(it.get('forecastMonth', '')), reverse=True)
+    return _forecast_item_to_dict(valid[0])
+
+
+def _write_forecast_record(member_email, account_id, record):
+    """Persist the forecast record with sk=FCST#{forecastMonth},
+    recordType='forecast', ttl = epoch + 90 days. (Req 12.1)"""
+    table = dynamodb.Table(INVOICES_TABLE_NAME)
+    pk = f'{member_email}#{account_id}'
+    now_iso = datetime.now(timezone.utc).isoformat()
+    ttl_epoch = int(time.time()) + TTL_SECONDS
+    month = record.get('forecastMonth') or record.get('period', '')
+
+    item = {
+        'pk': pk,
+        'sk': f"{invoice_forecast.FORECAST_SK_PREFIX}{month}",
+        'recordType': invoice_forecast.RECORD_TYPE_FORECAST,
+        'invoiceId': record.get('invoiceId', ''),
+        'issuer': record.get('issuer', 'Amazon Web Services'),
+        'paymentDate': record.get('paymentDate', ''),
+        'paymentStatus': record.get('paymentStatus', 'Forecast'),
+        'totalAmount': Decimal(str(record.get('totalAmount', 0))),
+        'currency': record.get('currency', 'USD'),
+        'period': record.get('period', month),
+        'forecastMonth': month,
+        'monthToDateCost': Decimal(str(record.get('monthToDateCost', 0))),
+        'medianDailyCost': Decimal(str(record.get('medianDailyCost', 0))),
+        'variableCostForecast': Decimal(str(record.get('variableCostForecast', 0))),
+        'fixedCostForecast': Decimal(str(record.get('fixedCostForecast', 0))),
+        'elapsedDays': int(record.get('elapsedDays', 0)),
+        'remainingDays': int(record.get('remainingDays', 0)),
+        'source': record.get('source', 'forecast_engine'),
+        'lastSyncedAt': now_iso,
+        'ttl': ttl_epoch,
+    }
+    try:
+        table.put_item(Item=item)
+    except (ClientError, Exception) as e:
+        logger.error(f"DynamoDB forecast cache write failed: {e}")
+        raise
+
+
+def _delete_forecast_record(member_email, account_id, month):
+    """Delete a stale/superseded forecast record (sk=FCST#{month})."""
+    table = dynamodb.Table(INVOICES_TABLE_NAME)
+    pk = f'{member_email}#{account_id}'
+    try:
+        table.delete_item(Key={'pk': pk, 'sk': f'{invoice_forecast.FORECAST_SK_PREFIX}{month}'})
+    except ClientError as e:
+        logger.warning(f"DynamoDB forecast cache delete failed for {month}: {e}")
+
+
+def _forecast_item_to_dict(item):
+    """Convert a stored DynamoDB forecast item to a plain dict."""
+    return {
+        'invoiceId': str(item.get('invoiceId', '')),
+        'issuer': str(item.get('issuer', 'Amazon Web Services')),
+        'paymentDate': str(item.get('paymentDate', '')),
+        'paymentStatus': str(item.get('paymentStatus', 'Forecast')),
+        'totalAmount': float(item.get('totalAmount', 0)),
+        'currency': str(item.get('currency', 'USD')),
+        'period': str(item.get('period', '')),
+        'forecastMonth': str(item.get('forecastMonth', '')),
+        'recordType': str(item.get('recordType', invoice_forecast.RECORD_TYPE_FORECAST)),
+    }
+
+
+def _get_account_provider(member_email, account_id):
+    """Return the account's cloudProvider (Provider_Key), or '' if unknown."""
+    accounts_table = dynamodb.Table(ACCOUNTS_TABLE_NAME)
+    try:
+        result = accounts_table.query(
+            KeyConditionExpression=Key('memberEmail').eq(member_email),
+            ProjectionExpression='accountId, cloudProvider',
+        )
+        for item in result.get('Items', []):
+            if item.get('accountId') == account_id:
+                return str(item.get('cloudProvider', '') or '')
+    except ClientError as e:
+        logger.warning(f"Failed to read provider for {account_id}: {e}")
+    return ''
+
+
+def _latest_real_issuer(items):
+    """Derive the issuer from the most recent Real_Invoice (by period desc),
+    or None when there is no prior real invoice. (Req 9.3, 9.4)"""
+    real = [i for i in items if i.get('period')]
+    if not real:
+        return None
+    real_sorted = sorted(real, key=lambda x: str(x.get('period', '')), reverse=True)
+    return real_sorted[0].get('issuer') or None
+
+
+def _get_or_refresh_forecast(member_email, account_id, provider_key, items, now=None):
+    """Merge/supersede/staleness logic for the Current_Month forecast.
+
+    Returns a tuple (forecast_dict_or_None, forecast_unavailable_bool).
+
+    - Drops/deletes the forecast when a Real_Invoice for the same period exists
+      (Req 10.2, 10.4).
+    - Returns the cached forecast when its month matches the current UTC month
+      (Req 12.2).
+    - Recomputes when stale/missing; deletes stale on None; on compute failure
+      deletes the stale record and signals forecastUnavailable (Req 12.3, 12.4, 8.11).
+    """
+    now = now or datetime.now(timezone.utc)
+    current_month = now.strftime('%Y-%m')
+    real_periods = {str(i.get('period', '')) for i in items if i.get('period')}
+
+    cached = _read_forecast_record(member_email, account_id)
+
+    # Supersession: a real invoice already exists for the current month.
+    if current_month in real_periods:
+        if cached and cached.get('forecastMonth'):
+            _delete_forecast_record(member_email, account_id, cached['forecastMonth'])
+        return None, False
+
+    # Only AWS accounts get a forecast (Req 11).
+    if not invoice_forecast.is_aws_provider(provider_key):
+        if cached and cached.get('forecastMonth'):
+            _delete_forecast_record(member_email, account_id, cached['forecastMonth'])
+        return None, False
+
+    # Outside the forecast window: no forecast, drop any stale record.
+    if not invoice_forecast.is_in_forecast_window(now):
+        if cached and cached.get('forecastMonth') and cached['forecastMonth'] != current_month:
+            _delete_forecast_record(member_email, account_id, cached['forecastMonth'])
+        return None, False
+
+    # Fresh cache hit (Req 12.2).
+    if cached and cached.get('forecastMonth') == current_month:
+        return cached, False
+
+    # Stale record present for a different month — drop before recompute (Req 12.3).
+    if cached and cached.get('forecastMonth') and cached['forecastMonth'] != current_month:
+        _delete_forecast_record(member_email, account_id, cached['forecastMonth'])
+
+    # Recompute.
+    try:
+        record = invoice_forecast.compute_forecast(
+            member_email, account_id, provider_key, now=now,
+            latest_real_issuer=_latest_real_issuer(items),
+        )
+    except Exception as e:
+        logger.warning(f"Forecast recompute failed for {account_id}: {e}")
+        return None, True  # forecastUnavailable (Req 8.11, 12.4)
+
+    if record is None:
+        return None, False
+
+    try:
+        _write_forecast_record(member_email, account_id, record)
+    except Exception as e:
+        logger.warning(f"Forecast write failed for {account_id}: {e}")
+    return record, False
 
 
 def _read_service_cache(member_email, account_id, period):

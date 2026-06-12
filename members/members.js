@@ -788,7 +788,7 @@ function renderAccounts(accounts) {
         var tr = document.createElement('tr');
         tr.innerHTML =
             '<td style="color:#999;font-size:12px">' + (idx + 1) + '</td>' +
-            '<td><span style="background:' + _getProviderColor(a.cloudProvider || 'aws') + ';color:#fff;font-size:10px;padding:2px 6px;border-radius:4px;font-weight:600;">' + (a.cloudProvider || 'AWS').toUpperCase() + '</span></td>' +
+            '<td><span style="background:' + _getProviderColor(a.cloudProvider || 'aws') + ';color:#fff;font-size:10px;padding:2px 6px;border-radius:4px;font-weight:600;">' + (String(a.cloudProvider || '').trim().toLowerCase() === 'openai' ? 'AI Cost' : (a.cloudProvider || 'AWS').toUpperCase()) + '</span></td>' +
             '<td>' + esc(a.accountId || '') + '</td>' +
             '<td>' + esc(a.accountName || '-') + '</td>' +
             '<td>' + (a.cloudProvider === 'azure' ? 'Service Principal' : a.cloudProvider === 'gcp' ? 'Service Account' : esc(a.roleName || '')) + '</td>' +
@@ -1532,7 +1532,7 @@ renderAccounts = function(accounts) {
         var tr = document.createElement('tr');
         tr.innerHTML =
             '<td style="color:#999;font-size:12px">' + (idx + 1) + '</td>' +
-            '<td><span style="background:' + _getProviderColor(a.cloudProvider || 'aws') + ';color:#fff;font-size:10px;padding:2px 6px;border-radius:4px;font-weight:600;">' + (a.cloudProvider || 'AWS').toUpperCase() + '</span></td>' +
+            '<td><span style="background:' + _getProviderColor(a.cloudProvider || 'aws') + ';color:#fff;font-size:10px;padding:2px 6px;border-radius:4px;font-weight:600;">' + (String(a.cloudProvider || '').trim().toLowerCase() === 'openai' ? 'AI Cost' : (a.cloudProvider || 'AWS').toUpperCase()) + '</span></td>' +
             '<td>' + esc(a.accountId || '') + '</td>' +
             '<td>' + esc(a.accountName || '-') + '</td>' +
             '<td>' + (a.cloudProvider === 'azure' ? 'Service Principal' : a.cloudProvider === 'gcp' ? 'Service Account' : esc(a.roleName || '')) + '</td>' +
@@ -3618,7 +3618,7 @@ var OBSERVE_SECTIONS = [
     { id: 'observe-commitments', label: 'Commitments', icon: '\ud83d\udcb0' },
     { id: 'observe-metrics', label: 'Business Metrics', icon: '\ud83d\udcc8' },
     { id: 'observe-health', label: 'Health & Score', icon: '\ud83c\udfe5' },
-    { id: 'observe-openai', label: 'OpenAI', icon: '\ud83e\udd16' },
+    { id: 'observe-openai', label: 'AI Cost', icon: '\ud83e\udd16' },
     { id: 'observe-invoices', label: 'Invoices', icon: '\ud83e\uddfe' },
     { id: 'observe-custom-dashboard', label: 'Custom Dashboard', icon: '\ud83e\udde9' }
 ];
@@ -12454,6 +12454,33 @@ function _ddFormatCurrency(amount) {
     return (neg ? '-$' : '$') + formatted;
 }
 
+// ============================================================
+// AI Cost display label helpers (presentation-layer rename)
+// Maps the internal Provider_Key 'openai' / stored issuer "OpenAI"
+// to the user-facing label "AI Cost". Internal identifiers, routes,
+// Provider_Key values, and stored data are never modified.
+// ============================================================
+var AI_COST_LABEL = 'AI Cost';
+
+// Map an internal Provider_Key to its user-facing provider name.
+// Only 'openai' (trimmed, case-insensitive) is remapped; all other
+// keys pass through unchanged. (Req 3.2, 3.5, 5.1, 5.3)
+function _aiCostProviderLabel(providerKey) {
+    return (String(providerKey == null ? '' : providerKey).trim().toLowerCase() === 'openai')
+        ? AI_COST_LABEL
+        : providerKey;
+}
+
+// Map a stored invoice issuer to its user-facing label for the Invoice
+// Explorer. "OpenAI" -> "AI Cost"; empty/null returns '' so the caller can
+// apply the existing default issuer; all other values pass through
+// unchanged. (Req 4.1–4.5)
+function _aiCostIssuerLabel(issuer) {
+    var v = String(issuer == null ? '' : issuer);
+    if (v.trim().toLowerCase() === 'openai') return AI_COST_LABEL;
+    return v;
+}
+
 function _ddFormatDate(isoDate) {
     if (!isoDate) return '\u2014';
     try {
@@ -12471,8 +12498,11 @@ function _ddStatusBadge(status) {
     if (s === 'paid') cls += 'dd-status-paid';
     else if (s === 'pending') cls += 'dd-status-pending';
     else if (s === 'overdue') cls += 'dd-status-overdue';
+    else if (s === 'forecast') cls += 'dd-status-forecast';
     else cls += 'dd-status-pending';
-    return '<span class="' + cls + '">' + esc(status || 'Unknown') + '</span>';
+    // Forecast badge always shows the exact label "Forecast" (Req 7.4)
+    var label = (s === 'forecast') ? 'Forecast' : (status || 'Unknown');
+    return '<span class="' + cls + '">' + esc(label) + '</span>';
 }
 
 // Populate account selector for drilldown tab
@@ -12558,7 +12588,7 @@ function _ddRenderInvoices(data) {
         html += '<tr class="dd-invoice-row' + (isExpanded ? ' dd-expanded' : '') + '" data-period="' + ea(period) + '" data-invoice-id="' + ea(inv.invoiceId || '') + '">';
         html += '<td class="dd-chevron">' + chevron + '</td>';
         html += '<td>' + esc(inv.invoiceId || '') + '</td>';
-        html += '<td>' + esc(inv.issuer || 'Amazon Web Services') + '</td>';
+        html += '<td>' + esc(_aiCostIssuerLabel(inv.issuer) || 'Amazon Web Services') + '</td>';
         html += '<td>' + _ddFormatDate(inv.paymentDate) + '</td>';
         html += '<td>' + _ddStatusBadge(inv.paymentStatus) + '</td>';
         html += '<td style="font-weight:600;">' + _ddFormatCurrency(inv.totalAmount) + '</td>';
@@ -13273,7 +13303,7 @@ function _renderAIVendorConnections() {
         html += '<div style="display:flex;align-items:center;gap:12px;">';
         html += '<div style="width:36px;height:36px;background:#10a37f;border-radius:8px;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:14px;">AI</div>';
         html += '<div>';
-        html += '<div style="font-weight:600;color:#1f2937;">' + esc(a.accountName || 'OpenAI Connection') + '</div>';
+        html += '<div style="font-weight:600;color:#1f2937;">' + esc(a.accountName || 'AI Cost Connection') + '</div>';
         html += '<div style="font-size:0.82em;color:#6b7280;">ID: ' + esc(a.accountId || '') + '</div>';
         html += '</div>';
         html += '</div>';
@@ -13357,7 +13387,7 @@ function _showAddAIVendorModal() {
     html += '<div style="display:grid;grid-template-columns:1fr;gap:10px;">';
     html += '<button id="ai-vendor-select-openai" style="display:flex;align-items:center;gap:12px;padding:14px 16px;border:2px solid #e5e7eb;border-radius:10px;background:#fff;cursor:pointer;text-align:left;transition:border-color 0.2s;">';
     html += '<div style="width:40px;height:40px;background:#10a37f;border-radius:8px;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:16px;">AI</div>';
-    html += '<div><div style="font-weight:600;color:#1f2937;">OpenAI</div><div style="font-size:0.8em;color:#6b7280;">ChatGPT, GPT-4, DALL-E, Whisper</div></div>';
+    html += '<div><div style="font-weight:600;color:#1f2937;">AI Cost</div><div style="font-size:0.8em;color:#6b7280;">ChatGPT, GPT-4, DALL-E, Whisper</div></div>';
     html += '</button>';
     html += '</div>';
     html += '</div>';
@@ -13366,13 +13396,13 @@ function _showAddAIVendorModal() {
     html += '<div id="ai-vendor-step-form" style="display:none;">';
     html += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:16px;">';
     html += '<button id="ai-vendor-back-btn" style="background:none;border:none;cursor:pointer;font-size:1.1em;color:#6b7280;">←</button>';
-    html += '<div style="display:flex;align-items:center;gap:8px;"><div style="width:28px;height:28px;background:#10a37f;border-radius:6px;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:11px;">AI</div><span style="font-weight:600;color:#1f2937;">Connect OpenAI</span></div>';
+    html += '<div style="display:flex;align-items:center;gap:8px;"><div style="width:28px;height:28px;background:#10a37f;border-radius:6px;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:11px;">AI</div><span style="font-weight:600;color:#1f2937;">Connect AI Cost</span></div>';
     html += '</div>';
 
     // Connection name (optional)
     html += '<div style="margin-bottom:14px;">';
     html += '<label style="display:block;font-size:0.85em;color:#374151;font-weight:500;margin-bottom:4px;">Connection Name <span style="color:#9ca3af;font-weight:400;">(optional, max 64 chars)</span></label>';
-    html += '<input id="ai-vendor-conn-name" type="text" maxlength="64" placeholder="e.g. Production OpenAI" style="width:100%;padding:10px 12px;border:1px solid #d1d5db;border-radius:8px;font-size:0.9em;box-sizing:border-box;" />';
+    html += '<input id="ai-vendor-conn-name" type="text" maxlength="64" placeholder="e.g. Production AI Cost" style="width:100%;padding:10px 12px;border:1px solid #d1d5db;border-radius:8px;font-size:0.9em;box-sizing:border-box;" />';
     html += '</div>';
 
     // API Key input
@@ -13388,16 +13418,16 @@ function _showAddAIVendorModal() {
     html += '</div>';
 
     // Submit button
-    html += '<button id="ai-vendor-submit-btn" class="btn btn-primary" style="width:100%;padding:12px;font-size:0.95em;">Connect OpenAI</button>';
+    html += '<button id="ai-vendor-submit-btn" class="btn btn-primary" style="width:100%;padding:12px;font-size:0.95em;">Connect AI Cost</button>';
     html += '<div id="ai-vendor-loading" style="display:none;text-align:center;padding:12px;color:#6b7280;font-size:0.88em;">';
-    html += '<div class="spinner" style="margin:0 auto 8px;"></div>Validating API key with OpenAI...';
+    html += '<div class="spinner" style="margin:0 auto 8px;"></div>Validating API key with AI Cost...';
     html += '</div>';
 
     // Result areas
     html += '<div id="ai-vendor-success" style="display:none;text-align:center;padding:16px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;margin-top:14px;">';
     html += '<div style="font-size:2em;margin-bottom:8px;">✅</div>';
     html += '<div style="font-weight:600;color:#166534;margin-bottom:4px;">Connection Successful!</div>';
-    html += '<div style="font-size:0.85em;color:#15803d;">Your OpenAI account has been connected.</div>';
+    html += '<div style="font-size:0.85em;color:#15803d;">Your AI Cost account has been connected.</div>';
     html += '<button id="ai-vendor-done-btn" class="btn btn-primary btn-sm" style="margin-top:12px;">Done</button>';
     html += '</div>';
 
@@ -13527,9 +13557,9 @@ async function _submitAIVendorConnection() {
         clearTimeout(timeoutId);
         if (loadingEl) loadingEl.style.display = 'none';
 
-        var msg = err.message || 'Failed to connect OpenAI account.';
+        var msg = err.message || 'Failed to connect AI Cost account.';
         if (err.status === 401 || (msg && msg.toLowerCase().indexOf('auth') !== -1)) {
-            msg = 'API key was rejected by OpenAI. Please verify the key is valid and has not been revoked.';
+            msg = 'API key was rejected by AI Cost. Please verify the key is valid and has not been revoked.';
         } else if (err.status === 0) {
             msg = 'Network error. Please check your connection and try again.';
         }
@@ -13573,8 +13603,8 @@ function _renderOpenAIDashboard() {
     if (!openaiAccounts.length) {
         container.innerHTML = '<div style="text-align:center;padding:60px 20px;color:#6b7280;">' +
             '<div style="font-size:2.5em;margin-bottom:12px;">🤖</div>' +
-            '<div style="font-size:1em;margin-bottom:6px;color:#1f2937;">No OpenAI accounts connected</div>' +
-            '<div style="font-size:0.9em;color:#6b7280;">Connect an OpenAI account in the Configure tab to see usage analytics.</div>' +
+            '<div style="font-size:1em;margin-bottom:6px;color:#1f2937;">No AI Cost accounts connected</div>' +
+            '<div style="font-size:0.9em;color:#6b7280;">Connect an AI Cost account in the Configure tab to see usage analytics.</div>' +
             '</div>';
         return;
     }
@@ -13588,7 +13618,7 @@ function _renderOpenAIDashboard() {
     // Account selector (if multiple OpenAI accounts)
     html += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:8px;">';
     html += '<div style="display:flex;align-items:center;gap:8px;">';
-    html += '<h3 style="margin:0;color:#1f2937;">OpenAI Usage Dashboard</h3>';
+    html += '<h3 style="margin:0;color:#1f2937;">AI Cost Usage Dashboard</h3>';
     if (openaiAccounts.length > 1) {
         html += '<select id="openai-dash-account" style="padding:5px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:0.85em;background:#fff;">';
         openaiAccounts.forEach(function(a) {
@@ -13602,7 +13632,7 @@ function _renderOpenAIDashboard() {
     html += '<span style="font-size:0.82em;color:#6b7280;">Range:</span>';
     html += '<button class="openai-range-btn' + (_openaiDashState.dateRange === 7 ? ' active' : '') + '" data-range="7">7d</button>';
     html += '<button class="openai-range-btn' + (_openaiDashState.dateRange === 30 ? ' active' : '') + '" data-range="30">30d</button>';
-    html += '<button id="openai-refresh-btn" class="btn btn-outline btn-sm" style="margin-left:8px;font-size:0.8em;padding:4px 10px;" title="Force refresh from OpenAI API (bypass cache)">\ud83d\udd04 Refresh</button>';
+    html += '<button id="openai-refresh-btn" class="btn btn-outline btn-sm" style="margin-left:8px;font-size:0.8em;padding:4px 10px;" title="Force refresh from AI Cost API (bypass cache)">\ud83d\udd04 Refresh</button>';
     html += '</div>';
     html += '</div>';
 
