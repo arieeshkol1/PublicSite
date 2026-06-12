@@ -30,6 +30,7 @@ on:
       - 'transaction_logger.py'
       - 'scheduler-executor/**'
       - 'daily-refresh-handler/**'
+      - 'monthly-refresh-handler/**'
       - 'tips-sync/**'
       - 'schema_sync/**'
       - 'infrastructure/schema-sync-stack.yaml'
@@ -338,6 +339,7 @@ jobs:
           cp member-handler/invoice_sync.py .build-member-handler/
           cp member-handler/invoice_validation.py .build-member-handler/
           cp member-handler/invoice_drilldown.py .build-member-handler/
+          cp member-handler/invoice_forecast.py .build-member-handler/
           cp member-handler/cache_service.py .build-member-handler/
           cp member-handler/cache_types.py .build-member-handler/
           cp member-handler/incremental_fetch_engine.py .build-member-handler/
@@ -474,6 +476,18 @@ jobs:
           cd ..
           aws s3 cp daily-refresh-lambda.zip s3://${{ env.STORAGE_BUCKET }}/lambda-packages/daily-refresh.zip
           echo "✓ Daily Refresh packaged"
+
+      - name: Package Monthly Refresh Lambda
+        run: |
+          echo "Packaging Monthly Refresh Lambda..."
+          pip install boto3 -t .build-monthly-refresh/ --quiet
+          cp monthly-refresh-handler/lambda_function.py .build-monthly-refresh/
+          cp member-handler/invoice_drilldown.py .build-monthly-refresh/
+          cp member-handler/invoice_forecast.py .build-monthly-refresh/
+          cd .build-monthly-refresh && zip -r ../monthly-refresh-lambda.zip . -q
+          cd ..
+          aws s3 cp monthly-refresh-lambda.zip s3://${{ env.STORAGE_BUCKET }}/lambda-packages/monthly-refresh.zip
+          echo "✓ Monthly Refresh packaged"
 
       - name: Deploy SlashMyBill CloudFormation stack
         continue-on-error: true
@@ -781,6 +795,10 @@ jobs:
           update_lambda dashboard-handler lambda-packages/dashboard-handler.zip
           # Update Daily Refresh Lambda (skip if not yet created)
           update_lambda slashmybill-daily-refresh lambda-packages/daily-refresh.zip
+          # Update Monthly Refresh Lambda (skip if not yet created)
+          update_lambda slashmybill-monthly-refresh lambda-packages/monthly-refresh.zip
+          # Update Monthly Refresh Lambda (skip if not yet created)
+          update_lambda slashmybill-monthly-refresh lambda-packages/monthly-refresh.zip
           # Update Schema Sync Lambda (skip if not yet created)
           update_lambda slashmybill-schema-sync lambda-packages/schema-sync.zip
           # Update audit-evaluator environment variable (model ID fix)
