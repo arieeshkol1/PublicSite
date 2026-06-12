@@ -7935,14 +7935,9 @@ def handle_ai_query(event):
             # Route multi-account queries through Bedrock Agent
             # Include ALL account IDs in the context so the agent calls tools for each
             multi_context = f"[Multi-Account Query: accounts={','.join(account_ids)}] {ai_question}"
-            # Determine primary account: if the question explicitly mentions an openai-* account, use it
-            # Otherwise use the second account (platform account) as primary
+            # Pass the second account (platform account 991105135552) as primary if available
+            # since the first account is often the personal dev account with no activity
             primary_account = account_ids[1] if len(account_ids) > 1 else account_ids[0]
-            _q_lower = ai_question.lower()
-            for _aid in account_ids:
-                if _aid.startswith('openai-') and (_aid in _q_lower or 'openai' in _q_lower):
-                    primary_account = _aid
-                    break
             return _invoke_bedrock_agent(multi_context, primary_account, member_email, interaction_id)
         else:
             # Route ALL single-account chat queries exclusively through Bedrock Agent
@@ -8000,61 +7995,11 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
     agent_runtime = boto3.client('bedrock-agent-runtime', region_name=os.environ.get('BEDROCK_REGION', os.environ.get('AWS_REGION', 'us-east-1')))
 
     # Search tips table for relevant pricing/optimization data
-    # Detect AI vendor accounts by accountId prefix (e.g., "openai-...")
-    _provider = 'aws'
-    if account_id and account_id.startswith('openai-'):
-        _provider = 'openai'
-    elif account_id and account_id.startswith('azure-'):
-        _provider = 'azure'
-    elif account_id and account_id.startswith('gcp-'):
-        _provider = 'gcp'
-    tips_context = _search_tips(question, provider=_provider)
+    tips_context = _search_tips(question)
     tip_found = bool(tips_context)
 
     # Include account context and tips in the prompt so the Agent has accurate pricing
     enriched_prompt = f"[Account: {account_id}, Member: {member_email}] {question}"
-
-    # For AI vendor accounts, inject context about available tools
-    if _provider == 'openai':
-        enriched_prompt += (
-            "\n\n[CONTEXT: This is an OpenAI AI vendor account, NOT an AWS account. "
-            "Only these tools are available: getCostBreakdown (model cost breakdown), "
-            "getAIVendorUsage (token usage per model), getMonthlyTrend (daily spend trend). "
-            "Do NOT call getNetworkResources, getEC2Instances, getFinOpsSettings, or any AWS-specific tools. "
-            "For cost savings, analyze: which models cost the most, output/input token ratio, "
-            "prompt caching efficiency, and whether cheaper models (gpt-4o-mini) can replace expensive ones (gpt-4o). "
-            "PRICING: GPT-4o=$2.50/$10 per 1M tokens (in/out). GPT-4o-mini=$0.15/$0.60. Cached=50% off. Batch API=50% off.]"
-        )
-        # Pre-compute OpenAI cost data from cache to avoid agent timeout
-        # This ensures the agent has real data without needing to call tools
-        try:
-            from boto3.dynamodb.conditions import Key as _Key
-            from datetime import datetime as _dt, timedelta as _td
-            _now = _dt.now()
-            _cache_table = dynamodb.Table(os.environ.get('COST_CACHE_TABLE_NAME', 'Cost_Cache_Table'))
-            _pk = f"{member_email}#{account_id}"
-            _start_sk = f"OPENAI_DAILY#{(_now - _td(days=30)).strftime('%Y-%m-%d')}"
-            _end_sk = f"OPENAI_DAILY#{_now.strftime('%Y-%m-%d')}"
-            _resp = _cache_table.query(
-                KeyConditionExpression=_Key('pk').eq(_pk) & _Key('sk').between(_start_sk, _end_sk)
-            )
-            _items = _resp.get('Items', [])
-            if _items:
-                _total = sum(float(i.get('cost_amount', 0)) for i in _items)
-                _svc_totals = {}
-                for _item in _items:
-                    for _svc, _cost in _item.get('service_breakdown', {}).items():
-                        _svc_totals[_svc] = _svc_totals.get(_svc, 0) + float(_cost)
-                _top_svcs = sorted(_svc_totals.items(), key=lambda x: x[1], reverse=True)[:7]
-                _svc_str = ', '.join(f"{s}: ${c:.2f}" for s, c in _top_svcs)
-                enriched_prompt += (
-                    f"\n\n[PRE-COMPUTED OPENAI DATA (from cache, last 30 days): "
-                    f"Total spend: ${_total:.2f} | Top models: {_svc_str} | "
-                    f"Days with data: {len(_items)} | "
-                    f"Use this data to answer. Call getCostBreakdown ONLY if you need more detail.]"
-                )
-        except Exception as _e:
-            logger.warning(f"OpenAI cache pre-compute failed: {_e}")
 
     # Service detection removed — the AI agent handles tool selection autonomously.
     # Quality enforcement is done by the inline audit gate + rewrite path.
@@ -9499,12 +9444,9 @@ def _get_account_provider(member_email, account_id):
         )
         item = resp.get('Item', {})
         provider = item.get('cloudProvider', '').strip().lower()
-        return provider if provider in ('aws', 'azure', 'gcp', 'openai') else 'aws'
+        return provider if provider in ('aws', 'azure', 'gcp') else 'aws'
     except Exception as e:
         logger.warning(f"Failed to get provider for account {account_id}: {e}")
-        # Fallback: detect from accountId prefix
-        if account_id and account_id.startswith('openai-'):
-            return 'openai'
         return 'aws'
 
 
