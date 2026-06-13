@@ -3711,7 +3711,9 @@ function _switchObserveSection(sectionId) {
     if (sectionId === 'observe-custom-dashboard') {
         var wbIframe = document.getElementById('observe-widget-builder-iframe');
         if (wbIframe && !wbIframe.src) {
-            wbIframe.src = '/dashboard/';
+            // Cache-bust the iframe document so browsers don't serve a stale
+            // copy of the widget builder after a deploy.
+            wbIframe.src = '/dashboard/?v=' + Date.now();
             wbIframe.onload = function() {
                 var token = sessionStorage.getItem('memberToken');
                 var email = sessionStorage.getItem('memberEmail');
