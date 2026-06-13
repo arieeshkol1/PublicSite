@@ -22,7 +22,7 @@ from decimal import Decimal
 
 import boto3
 from botocore.config import Config as BotoConfig
-from botocore.exceptions import ClientError
+from botocore.exceptions import ClientError, EventStreamError
 import jwt
 import bcrypt
 import yaml
@@ -7841,7 +7841,7 @@ def _inline_audit_score(question, answer):
         }
 
         resp = bedrock_rt.invoke_model(
-            modelId='us.amazon.nova-lite-v1:0',
+            modelId=BEDROCK_MODEL_ID,
             contentType='application/json',
             accept='application/json',
             body=json.dumps(request_body)
@@ -8010,11 +8010,93 @@ def handle_ai_query(event):
     return result
 
 
+def _invoke_agent_with_retry(agent_runtime, *, agentId, agentAliasId, sessionId,
+                             inputText, enableTrace=False, collector=None,
+                             max_attempts=3):
+    """
+    Invoke the Bedrock Agent and consume its completion stream, retrying on
+    transient errors.
+
+    The Bedrock agent emits modeled error events inside the completion
+    EventStream (throttlingException, internalServerException,
+    badGatewayException, dependencyFailedException, ...). When one arrives,
+    botocore raises EventStreamError *while iterating the stream* — boto3's
+    own retry layer can't see it because the initial invoke_agent HTTP call
+    already returned 200. Several of these errors are transient, so we
+    re-invoke the agent up to `max_attempts` times with a short backoff.
+
+    Returns the joined answer string. Raises the last error if all attempts
+    fail so the caller's handler can return its graceful fallback message.
+    """
+    # Error event types that are worth retrying. Validation / access / not-found
+    # errors are deterministic and will fail again, so we don't retry those.
+    _TRANSIENT_TOKENS = (
+        'throttl', 'internalserver', 'badgateway', 'dependencyfailed',
+        'serviceunavailable', 'servicequota', 'timeout',
+    )
+
+    last_err = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            response = agent_runtime.invoke_agent(
+                agentId=agentId,
+                agentAliasId=agentAliasId,
+                sessionId=sessionId,
+                inputText=inputText,
+                enableTrace=enableTrace,
+            )
+
+            answer_parts = []
+            for event_stream in response.get('completion', []):
+                if 'chunk' in event_stream:
+                    chunk = event_stream['chunk']
+                    if 'bytes' in chunk:
+                        answer_parts.append(chunk['bytes'].decode('utf-8'))
+                if 'trace' in event_stream and collector is not None:
+                    try:
+                        collector.capture_event(event_stream)
+                    except Exception as trace_err:
+                        logger.warning(f"Trace capture error (non-fatal): {trace_err}")
+
+            return ''.join(answer_parts)
+
+        except (EventStreamError, ClientError) as e:
+            last_err = e
+            err_text = str(e).lower()
+            is_transient = any(tok in err_text for tok in _TRANSIENT_TOKENS)
+            logger.warning(
+                f"Bedrock agent stream error on attempt {attempt}/{max_attempts} "
+                f"(transient={is_transient}): {type(e).__name__}: {e}"
+            )
+            if not is_transient or attempt == max_attempts:
+                raise
+            # Linear backoff: 1s, 2s. Keeps total well under the Lambda timeout.
+            time.sleep(attempt)
+
+    # Defensive: loop always returns or raises, but guard against fallthrough.
+    if last_err is not None:
+        raise last_err
+    return ''
+
+
 def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
     """Invoke the Bedrock Agent for a conversational FinOps query."""
     from trace_collector import TraceCollector, serialize_trace
 
-    agent_runtime = boto3.client('bedrock-agent-runtime', region_name=os.environ.get('BEDROCK_REGION', os.environ.get('AWS_REGION', 'us-east-1')))
+    agent_runtime = boto3.client(
+        'bedrock-agent-runtime',
+        region_name=os.environ.get('BEDROCK_REGION', os.environ.get('AWS_REGION', 'us-east-1')),
+        config=BotoConfig(
+            # Agent orchestration with action-group Lambda calls can run up to ~120s;
+            # the default 60s read timeout would sever the completion stream prematurely.
+            connect_timeout=10,
+            read_timeout=150,
+            # We retry transient EventStream errors at the application level (see
+            # _invoke_agent_with_retry); disable botocore's own retries to avoid
+            # double-invoking the agent on a streaming failure.
+            retries={'max_attempts': 0},
+        ),
+    )
 
     # Search tips table for relevant pricing/optimization data
     # Detect AI vendor accounts by accountId prefix (e.g., "openai-...")
@@ -8273,28 +8355,16 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
     collector = TraceCollector()
 
     try:
-        response = agent_runtime.invoke_agent(
+        sessionId = re.sub(r'[^0-9a-zA-Z._:-]', '_', f'{member_email}-{account_id}-{interaction_id}')[:100]
+        answer = _invoke_agent_with_retry(
+            agent_runtime,
             agentId=BEDROCK_AGENT_ID,
             agentAliasId=BEDROCK_AGENT_ALIAS_ID,
-            sessionId=re.sub(r'[^0-9a-zA-Z._:-]', '_', f'{member_email}-{account_id}-{interaction_id}')[:100],
+            sessionId=sessionId,
             inputText=enriched_prompt,
             enableTrace=True,
+            collector=collector,
         )
-
-        # Stream the response, capturing both chunks and trace events
-        answer_parts = []
-        for event_stream in response.get('completion', []):
-            if 'chunk' in event_stream:
-                chunk = event_stream['chunk']
-                if 'bytes' in chunk:
-                    answer_parts.append(chunk['bytes'].decode('utf-8'))
-            if 'trace' in event_stream:
-                try:
-                    collector.capture_event(event_stream)
-                except Exception as trace_err:
-                    logger.warning(f"Trace capture error (non-fatal): {trace_err}")
-
-        answer = ''.join(answer_parts)
         if not answer:
             answer = 'The analysis is taking longer than expected. This can happen with complex queries or during high load. Please try again in a moment.'
 
@@ -8330,18 +8400,14 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
                         _retry_answer = None
                         _retry_guiding_qs = _audit_result.get('guiding_questions', [])
                         try:
-                            _retry_resp = agent_runtime.invoke_agent(
+                            _retry_answer = _invoke_agent_with_retry(
+                                agent_runtime,
                                 agentId=BEDROCK_AGENT_ID,
                                 agentAliasId=BEDROCK_AGENT_ALIAS_ID,
                                 sessionId=re.sub(r'[^0-9a-zA-Z._:-]', '_', f'{member_email}-{account_id}-{interaction_id}-retry')[:100],
                                 inputText=_retry_prompt,
                                 enableTrace=False,
                             )
-                            _retry_parts = []
-                            for _evt in _retry_resp.get('completion', []):
-                                if 'chunk' in _evt and 'bytes' in _evt['chunk']:
-                                    _retry_parts.append(_evt['chunk']['bytes'].decode('utf-8'))
-                            _retry_answer = ''.join(_retry_parts)
                         except Exception as _retry_err:
                             logger.warning(f"Quality gate retry failed: {_retry_err}")
 
@@ -8512,7 +8578,7 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
 
         return result
     except Exception as e:
-        logger.error(f"Bedrock Agent invocation failed: {e}")
+        logger.error(f"Bedrock Agent invocation failed: {type(e).__name__}: {e}", exc_info=True)
         # No fallback — all chat queries must go through Bedrock Agent exclusively
         return create_response(200, {
             'answer': f'The AI agent encountered an error processing your request. Please try again in a moment. (Error: {type(e).__name__})',

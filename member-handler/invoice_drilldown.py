@@ -41,9 +41,15 @@ except Exception as _forecast_import_err:  # pragma: no cover
 # the module is missing from the deployment package, the import must not crash
 # the module load — non-AWS generation simply degrades to "unavailable".
 try:
-    from provider_invoices import generate_provider_invoices
+    from provider_invoices import (
+        generate_provider_invoices,
+        generate_openai_forecast,
+        generate_openai_service_breakdown,
+    )
 except Exception as _provider_invoices_import_err:  # pragma: no cover
     generate_provider_invoices = None
+    generate_openai_forecast = None
+    generate_openai_service_breakdown = None
     logging.getLogger().warning(
         "provider_invoices unavailable; non-AWS invoice generation disabled: "
         f"{_provider_invoices_import_err}"
@@ -438,6 +444,35 @@ def handle_invoice_list_request(event, member_email):
         logger.warning(f"Forecast integration skipped for {account_id}: {e}")
         forecast_diag = {'status': 'error', 'reason': str(e)[:200]}
 
+    # OpenAI current-month forecast. The AWS-only path above never produces a
+    # forecast for OpenAI, so emit one here and place it at the top (newest).
+    # It supersedes any in-progress real invoice for the same month so the
+    # current month is represented as a single "Forecast" row instead of a
+    # misleading partial "paid" invoice. Any failure leaves the real list intact.
+    if (provider_key == 'openai'
+            and generate_openai_forecast is not None
+            and not any(str(i.get('paymentStatus', '')).lower() == 'forecast'
+                        for i in items)):
+        try:
+            now_oa = datetime.now(timezone.utc)
+            current_month_oa = now_oa.strftime('%Y-%m')
+            oa_forecast = generate_openai_forecast(member_email, account_id, now=now_oa)
+            if oa_forecast:
+                fc_period = oa_forecast.get('period', current_month_oa)
+                # Drop the in-progress real invoice for the forecast month so the
+                # forecast does not duplicate a real row for the same period.
+                items = [
+                    i for i in items
+                    if not (str(i.get('period', '')) == fc_period
+                            and str(i.get('paymentStatus', '')).lower() != 'forecast')
+                ]
+                items = [oa_forecast] + items
+                forecast_diag = {'status': 'shown', 'reason': 'openai_forecast',
+                                 'provider': provider_key,
+                                 'currentMonth': current_month_oa}
+        except Exception as e:
+            logger.warning(f"OpenAI forecast integration skipped for {account_id}: {e}")
+
     # Apply pagination
     total_items = len(items)
     total_pages = math.ceil(total_items / page_size_int) if total_items > 0 else 0
@@ -522,12 +557,23 @@ def handle_service_breakdown_request(event, member_email):
 
     if cached_records:
         services = cached_records
+    elif provider_key == 'openai':
+        # OpenAI exposes per-model cost data, so build a real service breakdown
+        # (each "service" row is a model/line-item) instead of a graceful empty
+        # one. Failures degrade to [] without raising. Cache populated results
+        # using the same mechanism the AWS path uses, keyed by period.
+        if generate_openai_service_breakdown is None:
+            services = []
+        else:
+            services = generate_openai_service_breakdown(member_email, account_id, period)
+            if services:
+                _write_service_cache(member_email, account_id, period, services)
     elif provider_key != 'aws':
         # Service-level breakdown is derived from AWS Cost Explorer, which is
-        # AWS-only. Non-AWS providers (azure/gcp/openai) have no equivalent
-        # per-service drill-down source here, so return a graceful empty
-        # breakdown instead of attempting a Cost Explorer call (which would
-        # fail with a 502). The synthetic monthly invoice total still renders.
+        # AWS-only. Azure/GCP have no equivalent per-service drill-down source
+        # here, so return a graceful empty breakdown instead of attempting a
+        # Cost Explorer call (which would fail with a 502). The synthetic monthly
+        # invoice total still renders.
         services = []
     else:
         # Task 5.2/5.6: Cache miss — fetch from Cost Explorer
