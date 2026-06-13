@@ -12481,6 +12481,28 @@ function _aiCostIssuerLabel(issuer) {
     return v;
 }
 
+// Map an internal Provider_Key to its user-facing Provider_Display_Name for
+// the Invoice Explorer "Issued By" column: aws -> "Amazon Web Services",
+// azure -> "Microsoft Azure", gcp -> "Google Cloud", openai -> "AI Cost".
+// Unknown/empty keys default to "Amazon Web Services". (Req 3.4, 3.6, 11.4)
+function _providerDisplayName(key) {
+    var k = String(key == null ? '' : key).trim().toLowerCase();
+    if (k === 'azure') return 'Microsoft Azure';
+    if (k === 'gcp') return 'Google Cloud';
+    if (k === 'openai') return AI_COST_LABEL;
+    return 'Amazon Web Services';
+}
+
+// Resolve the Provider_Display_Name for the account currently selected in the
+// Invoice Explorer, used as the empty-issuer fallback. (Req 11.4)
+function _ddSelectedProviderDisplayName() {
+    var acct = null;
+    if (_ddState && _ddState.accountId && typeof allAccounts !== 'undefined' && allAccounts) {
+        acct = allAccounts.find(function(a) { return a.accountId === _ddState.accountId; });
+    }
+    return _providerDisplayName(acct && acct.cloudProvider);
+}
+
 function _ddFormatDate(isoDate) {
     if (!isoDate) return '\u2014';
     try {
@@ -12581,6 +12603,9 @@ function _ddRenderInvoices(data) {
     }
 
     var html = '';
+    // Empty-issuer fallback resolves to the selected account's
+    // Provider_Display_Name rather than always "Amazon Web Services". (Req 11.4)
+    var providerFallback = _ddSelectedProviderDisplayName();
     // Inline forecast-status note: explain when the current-month forecast row
     // is not shown (so the user isn't left wondering where it went).
     var diag = (data && data.forecastDiag) || null;
@@ -12605,7 +12630,7 @@ function _ddRenderInvoices(data) {
         html += '<tr class="dd-invoice-row' + (isExpanded ? ' dd-expanded' : '') + '" data-period="' + ea(period) + '" data-invoice-id="' + ea(inv.invoiceId || '') + '">';
         html += '<td class="dd-chevron">' + chevron + '</td>';
         html += '<td>' + esc(inv.invoiceId || '') + '</td>';
-        html += '<td>' + esc(_aiCostIssuerLabel(inv.issuer) || 'Amazon Web Services') + '</td>';
+        html += '<td>' + esc(_aiCostIssuerLabel(inv.issuer) || providerFallback) + '</td>';
         html += '<td>' + _ddFormatDate(inv.paymentDate) + '</td>';
         html += '<td>' + _ddStatusBadge(inv.paymentStatus) + '</td>';
         html += '<td style="font-weight:600;">' + _ddFormatCurrency(inv.totalAmount) + '</td>';

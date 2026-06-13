@@ -340,6 +340,7 @@ jobs:
           cp member-handler/invoice_validation.py .build-member-handler/
           cp member-handler/invoice_drilldown.py .build-member-handler/
           cp member-handler/invoice_forecast.py .build-member-handler/
+          cp member-handler/provider_invoices.py .build-member-handler/
           cp member-handler/cache_service.py .build-member-handler/
           cp member-handler/cache_types.py .build-member-handler/
           cp member-handler/incremental_fetch_engine.py .build-member-handler/

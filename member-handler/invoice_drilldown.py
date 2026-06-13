@@ -37,6 +37,18 @@ except Exception as _forecast_import_err:  # pragma: no cover
         f"invoice_forecast unavailable; forecasts disabled: {_forecast_import_err}"
     )
 
+# Provider router for non-AWS invoice generation. Additive and best-effort: if
+# the module is missing from the deployment package, the import must not crash
+# the module load — non-AWS generation simply degrades to "unavailable".
+try:
+    from provider_invoices import generate_provider_invoices
+except Exception as _provider_invoices_import_err:  # pragma: no cover
+    generate_provider_invoices = None
+    logging.getLogger().warning(
+        "provider_invoices unavailable; non-AWS invoice generation disabled: "
+        f"{_provider_invoices_import_err}"
+    )
+
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
@@ -284,21 +296,56 @@ def handle_invoice_list_request(event, member_email):
     page_int = int(page)
     page_size_int = int(page_size)
 
+    # Resolve the account's provider once for both the generation branch below
+    # and the AWS-only forecast merge further down (absent/empty -> 'aws').
+    provider_key = _get_account_provider(member_email, account_id)
+
+    # invoiceDataUnavailable surfaces a non-AWS provider cost-retrieval failure
+    # to the client alongside the existing forecast flags. It stays False for
+    # the AWS path and on cache hits (Req 6.4, 7.2).
+    invoice_data_unavailable = False
+
     # Task 4.1: Check DynamoDB cache first
     cached_records = _read_invoice_cache(member_email, account_id)
 
     if cached_records:
         items = cached_records
     else:
-        # Task 4.2/4.4: Cache miss — fetch from AWS APIs
-        try:
-            items = fetch_invoice_list(member_email, account_id)
-            logger.info(f"Invoice drilldown: fetched {len(items)} invoices for {account_id}")
-        except Exception as e:
-            logger.error(f"Failed to fetch invoice list for {account_id}: {type(e).__name__}: {e}")
-            return create_error_response(502, 'FetchError', f'Failed to retrieve invoice data: {str(e)}')
+        # Cache miss — branch on provider. AWS keeps its existing path
+        # unchanged; every other provider routes through the additive
+        # generate_provider_invoices generator (Req 1.1-1.3, 4.1).
+        if provider_key == 'aws':
+            # Task 4.2/4.4: Cache miss — fetch from AWS APIs
+            try:
+                items = fetch_invoice_list(member_email, account_id)
+                logger.info(f"Invoice drilldown: fetched {len(items)} invoices for {account_id}")
+            except Exception as e:
+                logger.error(f"Failed to fetch invoice list for {account_id}: {type(e).__name__}: {e}")
+                return create_error_response(502, 'FetchError', f'Failed to retrieve invoice data: {str(e)}')
+        else:
+            # Non-AWS providers (azure/gcp/openai). generate_provider_invoices is
+            # the failure boundary: it never raises for provider failures, instead
+            # returning ([], True). On failure we preserve any cached rows (already
+            # empty here) and surface the unavailable indication, keeping the
+            # response 200 (Req 5.1-5.5, 6.4, 7.1, 7.2, 7.4, 8.2).
+            if generate_provider_invoices is None:
+                items = []
+                invoice_data_unavailable = True
+                logger.warning(
+                    "provider_invoices module unavailable; cannot generate "
+                    f"invoices for {account_id} provider={provider_key}"
+                )
+            else:
+                items, invoice_data_unavailable = generate_provider_invoices(
+                    member_email, account_id, provider_key)
+                logger.info(
+                    f"Invoice drilldown: generated {len(items)} invoices for "
+                    f"{account_id} provider={provider_key} unavailable={invoice_data_unavailable}"
+                )
 
-        # Task 4.3: Store fetched records in cache
+        # Task 4.3: Store fetched/generated records in cache. A failing provider
+        # fetch returns no records, so nothing is written and no cached rows are
+        # overwritten (Req 5.1-5.3, 7.3).
         if items:
             _write_invoice_cache(member_email, account_id, items)
 
@@ -321,7 +368,6 @@ def handle_invoice_list_request(event, member_email):
     forecast_diag = {'status': 'none', 'reason': 'not_evaluated'}
     try:
         now_utc = datetime.now(timezone.utc)
-        provider_key = _get_account_provider(member_email, account_id)
         forecast_diag['provider'] = provider_key
         forecast_diag['currentMonth'] = now_utc.strftime('%Y-%m')
         forecast_diag['inWindow'] = (invoice_forecast is not None
@@ -379,6 +425,7 @@ def handle_invoice_list_request(event, member_email):
         'items': response_items,
         'forecastUnavailable': forecast_unavailable,
         'forecastDiag': forecast_diag,
+        'invoiceDataUnavailable': invoice_data_unavailable,
         'pagination': {
             'page': page_int,
             'pageSize': page_size_int,
@@ -613,6 +660,44 @@ def handle_drilldown_refresh_request(event, member_email):
         logger.warning(f"Failed to check refresh cooldown: {e}")
         # Proceed with refresh if we can't check cooldown
 
+    # Resolve the account's provider so the clear-and-regenerate step below can
+    # branch: AWS keeps its existing path; non-AWS routes through the additive
+    # generate_provider_invoices generator (absent/empty -> 'aws') (Req 9.1).
+    provider_key = _get_account_provider(member_email, account_id)
+
+    # For non-AWS accounts, regenerate the invoice records BEFORE clearing any
+    # cached rows so that a regeneration failure leaves the prior cached INV#
+    # rows intact (Req 9.3). On failure we return an error indication and never
+    # reach the deletion block below. AWS keeps its existing clear-then-refetch
+    # behavior unchanged.
+    regenerated_invoices = None
+    if provider_key != 'aws':
+        if generate_provider_invoices is None:
+            logger.error(
+                "provider_invoices module unavailable; cannot refresh "
+                f"{account_id} provider={provider_key}; prior cache retained")
+            return create_error_response(
+                502, 'FetchError',
+                'Failed to refresh invoice data; previously cached invoices retained')
+        try:
+            regenerated_invoices, regen_unavailable = generate_provider_invoices(
+                member_email, account_id, provider_key)
+        except Exception as e:
+            logger.error(
+                "Provider invoice regeneration raised during refresh for "
+                f"{account_id} provider={provider_key}: {type(e).__name__}")
+            regenerated_invoices, regen_unavailable = [], True
+        # A failed or empty regeneration must not wipe the existing cache: only
+        # clear-and-replace after a successful regeneration produced records
+        # (Req 9.3).
+        if regen_unavailable or not regenerated_invoices:
+            logger.warning(
+                "Provider invoice regeneration unavailable during refresh for "
+                f"{account_id} provider={provider_key}; prior cache retained")
+            return create_error_response(
+                502, 'FetchError',
+                'Failed to refresh invoice data; previously cached invoices retained')
+
     # Delete all records for account+period (INV#, SVC#, RES# prefixes)
     try:
         # Query all records for this account
@@ -671,13 +756,19 @@ def handle_drilldown_refresh_request(event, member_email):
 
     # Re-fetch all three levels
     try:
-        # Level 1: Invoice list
-        invoice_records = fetch_invoice_list(member_email, account_id)
+        # Level 1: Invoice list — provider-aware (Req 9.1). AWS uses its existing
+        # fetch path unchanged; non-AWS uses the records already regenerated
+        # above (guaranteed non-empty and available at this point).
+        if provider_key == 'aws':
+            invoice_records = fetch_invoice_list(member_email, account_id)
+        else:
+            invoice_records = regenerated_invoices
         if invoice_records:
             _write_invoice_cache(member_email, account_id, invoice_records)
 
-        # Level 2: Service breakdown (only if period specified)
-        if period:
+        # Level 2/3 service & resource breakdowns are AWS Cost Explorer paths and
+        # only apply to AWS accounts (non-AWS providers have no SVC#/RES# cache).
+        if provider_key == 'aws' and period:
             service_records = fetch_service_breakdown(member_email, account_id, period)
             if service_records:
                 _write_service_cache(member_email, account_id, period, service_records)
