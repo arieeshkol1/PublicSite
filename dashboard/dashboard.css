@@ -371,6 +371,33 @@
     margin-left: 4px;
 }
 
+/* Save Indication Toast (non-blocking) */
+.save-toast {
+    position: fixed;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 8px 16px;
+    border-radius: 8px;
+    font-size: 0.85em;
+    font-weight: 500;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    z-index: 2000;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.save-toast-success {
+    background: #dcfce7;
+    color: #166534;
+}
+
+.save-toast-error {
+    background: #fee2e2;
+    color: #991b1b;
+}
+
 /* Widget Partial Data Warning */
 .widget-partial-warning {
     position: absolute;

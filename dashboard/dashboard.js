@@ -79,12 +79,6 @@ const Dashboard = (() => {
         const saveBtn = document.getElementById('save-layout-btn');
         if (saveBtn) saveBtn.addEventListener('click', saveLayout);
 
-        const newBtn = document.getElementById('new-layout-btn');
-        if (newBtn) newBtn.addEventListener('click', newLayout);
-
-        const layoutSelector = document.getElementById('layout-selector');
-        if (layoutSelector) layoutSelector.addEventListener('change', onLayoutSelected);
-
         // Wire up re-auth form
         const reauthForm = document.getElementById('reauth-form');
         if (reauthForm) reauthForm.addEventListener('submit', handleReauth);
@@ -131,89 +125,82 @@ const Dashboard = (() => {
         // Initialize grid
         GridManager.init();
 
-        // Load saved layout from localStorage if available
-        const savedLayout = localStorage.getItem('smb_widget_layouts');
-        if (savedLayout) {
-            try {
-                const layoutData = JSON.parse(savedLayout);
-                if (layoutData && layoutData.widgets && layoutData.widgets.length > 0) {
-                    GridManager.loadLayout(layoutData);
-                }
-            } catch (e) {
-                console.warn('Failed to load saved layout:', e);
-            }
+        // Auto-load the member's single Current_Layout from localStorage.
+        const raw = localStorage.getItem('smb_widget_layouts');
+        const result = LayoutModel.parseStoredLayout(raw);
+        if (result.status === 'ok' && result.validWidgets.length > 0) {
+            GridManager.loadLayout({ widgets: result.validWidgets });
         }
-    }
-
-    async function loadLayouts() {
-        try {
-            const resp = await apiRequest('GET', '/dashboard/layouts');
-            if (resp && resp.layouts) {
-                const selector = document.getElementById('layout-selector');
-                selector.innerHTML = '<option value="">-- Select Layout --</option>';
-                resp.layouts.forEach(layout => {
-                    const opt = document.createElement('option');
-                    opt.value = layout.layout_id;
-                    opt.textContent = layout.layout_name;
-                    selector.appendChild(opt);
-                });
-            }
-        } catch (err) {
-            console.error('Failed to load layouts:', err);
-        }
+        // empty / unparseable / all-invalid: leave the existing empty grid state
+        // with no error banner. An unparseable raw value is left untouched in
+        // localStorage so it can be inspected/recovered later.
     }
 
     async function saveLayout() {
         const widgets = GridManager.getWidgets();
-        const layoutName = prompt('Layout name:', 'My Dashboard');
-        if (!layoutName) return;
 
-        // Save to localStorage
+        // 1. Local-first persistence: write the single Current_Layout to
+        // localStorage under `smb_widget_layouts`, overwriting any prior value.
         const layoutData = {
-            layout_name: layoutName,
+            layout_name: LayoutModel.DEFAULT_LAYOUT_NAME,
             widgets: widgets,
             savedAt: new Date().toISOString()
         };
-        localStorage.setItem('smb_widget_layouts', JSON.stringify(layoutData));
-
         try {
-            const payload = {
-                layout_id: currentLayoutId || undefined,
-                layout_name: layoutName,
-                widgets: widgets
-            };
-            const resp = await apiRequest('PUT', '/dashboard/layouts', payload);
+            localStorage.setItem('smb_widget_layouts', JSON.stringify(layoutData));
+        } catch (e) {
+            // Local write failed (e.g. quota exceeded): surface a local-save
+            // error, retain the grid unchanged, and skip the PUT entirely.
+            showSaveError('Could not save your dashboard on this device.');
+            return;
+        }
+
+        // 2. Backend persistence with a 10s timeout. A stalled PUT is aborted
+        // and treated as a failure, leaving the local copy intact.
+        try {
+            const payload = LayoutModel.buildSavePayload(widgets, currentLayoutId);
+            const resp = await apiRequest('PUT', '/dashboard/layouts', payload, 10000);
             if (resp && resp.layout_id) {
+                // Retain the id so subsequent saves target the same single layout.
                 currentLayoutId = resp.layout_id;
-                await loadLayouts();
             }
+            showSaveSuccess('Dashboard saved.');
         } catch (err) {
-            // API save failed but localStorage save succeeded
-            console.warn('API save failed, layout saved locally:', err);
+            // PUT failed or timed out: the local copy is retained, and the
+            // member can continue editing without a blocking error.
+            showSaveError('Saved on this device, but the save did not reach the server.');
         }
     }
 
-    function newLayout() {
-        currentLayoutId = null;
-        GridManager.clearGrid();
-        const selector = document.getElementById('layout-selector');
-        if (selector) selector.value = '';
-        localStorage.removeItem('smb_widget_layouts');
+    // Non-blocking save indications. A single transient toast element is
+    // reused; it never blocks interaction and auto-dismisses.
+    let saveToastTimer = null;
+
+    function showSaveToast(message, variant) {
+        let toast = document.getElementById('save-toast');
+        if (!toast) {
+            toast = document.createElement('div');
+            toast.id = 'save-toast';
+            document.body.appendChild(toast);
+        }
+        toast.className = 'save-toast save-toast-' + variant;
+        toast.textContent = message;
+        toast.hidden = false;
+        toast.style.display = 'flex';
+
+        if (saveToastTimer) clearTimeout(saveToastTimer);
+        saveToastTimer = setTimeout(() => {
+            toast.hidden = true;
+            toast.style.display = 'none';
+        }, 3000);
     }
 
-    async function onLayoutSelected(e) {
-        const layoutId = e.target.value;
-        if (!layoutId) return;
+    function showSaveSuccess(message) {
+        showSaveToast(message || 'Dashboard saved.', 'success');
+    }
 
-        try {
-            const resp = await apiRequest('GET', `/dashboard/layouts?layout_id=${layoutId}`);
-            if (resp) {
-                currentLayoutId = layoutId;
-                GridManager.loadLayout(resp);
-            }
-        } catch (err) {
-            console.error('Failed to load layout:', err);
-        }
+    function showSaveError(message) {
+        showSaveToast(message || 'Could not save your dashboard.', 'error');
     }
 
     async function handleReauth(e) {
@@ -229,7 +216,7 @@ const Dashboard = (() => {
         }
     }
 
-    async function apiRequest(method, path, body) {
+    async function apiRequest(method, path, body, timeoutMs) {
         // Check if we're offline before making a request
         if (!navigator.onLine) {
             handleOffline();
@@ -245,13 +232,27 @@ const Dashboard = (() => {
         };
         if (body) opts.body = JSON.stringify(body);
 
+        // Optional request timeout via AbortController: a stalled request is
+        // aborted and treated as a failure once timeoutMs elapses.
+        let timeoutId = null;
+        if (typeof timeoutMs === 'number' && timeoutMs > 0 && typeof AbortController !== 'undefined') {
+            const controller = new AbortController();
+            opts.signal = controller.signal;
+            timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+        }
+
         let resp;
         try {
             resp = await fetch(API_BASE + path, opts);
         } catch (fetchErr) {
-            // Network error (offline or server unreachable)
+            // Network error, offline, server unreachable, or aborted by timeout.
+            if (fetchErr && fetchErr.name === 'AbortError') {
+                throw new Error('Request timed out');
+            }
             handleOffline();
             throw new Error('Network error: ' + (fetchErr.message || 'Connection failed'));
+        } finally {
+            if (timeoutId !== null) clearTimeout(timeoutId);
         }
 
         // Successful network response - clear offline state
@@ -494,7 +495,6 @@ const Dashboard = (() => {
         apiRequest,
         getToken,
         getEmail,
-        loadLayouts,
         showDashboard,
         isNetworkOffline: () => isOffline
     };
