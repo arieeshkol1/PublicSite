@@ -12637,6 +12637,18 @@ function _ddRenderInvoices(data) {
         html += '<td>' + _ddStatusBadge(inv.paymentStatus) + '</td>';
         html += '<td style="font-weight:600;">' + _ddFormatCurrency(inv.totalAmount) + '</td>';
         html += '</tr>';
+        // Forecast rows carry a cost explanation and a savings/guidance tip;
+        // surface them inline so the forecasted invoice isn't left blank.
+        if (inv.costExplanation || inv.tips) {
+            html += '<tr class="dd-forecast-note" data-period="' + ea(period) + '"><td></td><td colspan="5" style="background:#f5f3ff;color:#4338ca;font-size:0.85em;padding:8px 12px;line-height:1.5;">';
+            if (inv.costExplanation) {
+                html += '<div>\uD83D\uDCC8 <strong>Cost Explanation:</strong> ' + esc(inv.costExplanation) + '</div>';
+            }
+            if (inv.tips) {
+                html += '<div style="margin-top:4px;">\uD83D\uDCA1 <strong>Tip:</strong> ' + esc(inv.tips) + '</div>';
+            }
+            html += '</td></tr>';
+        }
         // Placeholder for expanded service rows
         if (isExpanded) {
             html += '<tr class="dd-services-container" data-period="' + ea(period) + '"><td colspan="6" style="padding:0;">';

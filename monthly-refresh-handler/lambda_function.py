@@ -62,7 +62,7 @@ def lambda_handler(event, context):
     for account in all_accounts:
         member_email = account.get('memberEmail', '')
         account_id = account.get('accountId', '')
-        provider_key = str(account.get('cloudProvider', '') or '')
+        provider_key = str(account.get('cloudProvider', '') or 'aws')
         if not member_email or not account_id:
             continue
         try:

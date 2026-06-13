@@ -126,6 +126,24 @@ def build_forecast_record(current_month, total, issuer, mtd, median_daily,
                           variable, fixed, elapsed_days, remaining_days):
     """Assemble the Forecast_Invoice record dict. (Req 7.1, 7.3, 8.10, 9.5)"""
     year, month = current_month.split('-')
+
+    # Human-readable explanation of how the projection was derived, so the
+    # forecast row can surface a populated cost explanation (not blank).
+    cost_explanation = (
+        f"Projected total for {current_month}. Based on ${float(mtd):,.2f} "
+        f"month-to-date over {int(elapsed_days)} day(s), plus a median daily "
+        f"run-rate of ${float(median_daily):,.2f} across the {int(remaining_days)} "
+        f"remaining day(s). Fixed/recurring: ${float(fixed):,.2f}; "
+        f"variable/usage-based: ${float(variable):,.2f}."
+    )
+
+    # Actionable guidance for the in-progress month.
+    tips = (
+        "This is an estimate for the in-progress month and will be replaced by "
+        "the final invoice once the month closes. Expand the rows below to see "
+        "which services are driving the projected spend and where to optimize."
+    )
+
     return {
         'recordType': RECORD_TYPE_FORECAST,
         'invoiceId': forecast_invoice_id(year, month),
@@ -142,6 +160,8 @@ def build_forecast_record(current_month, total, issuer, mtd, median_daily,
         'fixedCostForecast': round(float(fixed), 2),
         'elapsedDays': int(elapsed_days),
         'remainingDays': int(remaining_days),
+        'costExplanation': cost_explanation,
+        'tips': tips,
         'source': 'forecast_engine',
     }
 

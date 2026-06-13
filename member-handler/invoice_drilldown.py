@@ -78,6 +78,12 @@ dynamodb = boto3.resource('dynamodb')
 
 # Validation constants
 ACCOUNT_ID_REGEX = re.compile(r'^\d{12}$')
+# Non-AWS providers (azure/gcp/openai) use their own identifier formats —
+# Azure subscription/tenant UUIDs, GCP project IDs, OpenAI org/account IDs —
+# which are not 12-digit AWS account numbers. This bounded, permissive pattern
+# is input hygiene only; account ownership verification is the real security
+# gate.
+NON_AWS_ACCOUNT_ID_REGEX = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._:\-]{0,127}$')
 PERIOD_REGEX = re.compile(r'^\d{4}-(0[1-9]|1[0-2])$')
 VALID_SORT_BY = ['paymentDate', 'amount', 'status']
 VALID_SORT_ORDER = ['asc', 'desc']
@@ -134,6 +140,29 @@ def validate_account_id(account_id):
         return ('ValidationError', 'Account ID is required')
     if not ACCOUNT_ID_REGEX.match(str(account_id)):
         return ('ValidationError', 'Account ID must be exactly 12 digits')
+    return None
+
+
+def validate_account_id_for_provider(account_id, provider_key):
+    """Validate account_id using a provider-appropriate format.
+
+    AWS accounts keep the strict 12-digit rule (unchanged behaviour and error
+    message). Non-AWS providers (azure/gcp/openai) use a bounded permissive
+    identifier format because their account identifiers are UUIDs, project IDs,
+    or organisation IDs rather than 12-digit AWS account numbers. An absent or
+    empty provider defaults to 'aws'.
+
+    Returns:
+        None on success, or a tuple (error_code, message) on failure.
+    """
+    if not account_id:
+        return ('ValidationError', 'Account ID is required')
+    if str(provider_key or 'aws').strip().lower() == 'aws':
+        if not ACCOUNT_ID_REGEX.match(str(account_id)):
+            return ('ValidationError', 'Account ID must be exactly 12 digits')
+        return None
+    if not NON_AWS_ACCOUNT_ID_REGEX.match(str(account_id)):
+        return ('ValidationError', 'Account ID format is invalid for this provider')
     return None
 
 
@@ -272,8 +301,17 @@ def handle_invoice_list_request(event, member_email):
     sort_by = params.get('sortBy')
     sort_order = params.get('sortOrder')
 
-    # Validate accountId
-    validation_error = validate_account_id(account_id)
+    # Validate accountId presence
+    if not account_id:
+        return create_error_response(400, 'ValidationError', 'Account ID is required')
+
+    # Resolve the account's provider early so account-id validation can be
+    # provider-aware: AWS keeps the strict 12-digit rule; non-AWS providers
+    # (azure/gcp/openai) use their own identifier formats. Absent/empty -> 'aws'.
+    provider_key = _get_account_provider(member_email, account_id) or 'aws'
+
+    # Validate accountId format per provider
+    validation_error = validate_account_id_for_provider(account_id, provider_key)
     if validation_error:
         return create_error_response(400, validation_error[0], validation_error[1])
 
@@ -296,9 +334,8 @@ def handle_invoice_list_request(event, member_email):
     page_int = int(page)
     page_size_int = int(page_size)
 
-    # Resolve the account's provider once for both the generation branch below
-    # and the AWS-only forecast merge further down (absent/empty -> 'aws').
-    provider_key = _get_account_provider(member_email, account_id)
+    # provider_key resolved above (used for both the generation branch below
+    # and the AWS-only forecast merge further down).
 
     # invoiceDataUnavailable surfaces a non-AWS provider cost-retrieval failure
     # to the client alongside the existing forecast flags. It stays False for
@@ -411,7 +448,7 @@ def handle_invoice_list_request(event, member_email):
     # Build response items (strip internal DynamoDB fields)
     response_items = []
     for item in page_items:
-        response_items.append({
+        shaped = {
             'invoiceId': item.get('invoiceId', ''),
             'issuer': item.get('issuer', 'Amazon Web Services'),
             'paymentDate': item.get('paymentDate', ''),
@@ -419,7 +456,13 @@ def handle_invoice_list_request(event, member_email):
             'totalAmount': float(item.get('totalAmount', 0)),
             'currency': item.get('currency', 'USD'),
             'period': item.get('period', ''),
-        })
+        }
+        # Preserve forecast explanation/tips so the forecast row can render them.
+        if item.get('costExplanation'):
+            shaped['costExplanation'] = item.get('costExplanation')
+        if item.get('tips'):
+            shaped['tips'] = item.get('tips')
+        response_items.append(shaped)
 
     return create_response(200, {
         'items': response_items,
@@ -451,8 +494,16 @@ def handle_service_breakdown_request(event, member_email):
     account_id = params.get('accountId')
     period = params.get('period')
 
-    # Validate accountId
-    validation_error = validate_account_id(account_id)
+    # Validate accountId presence, then resolve the provider so account-id
+    # validation can be provider-aware: AWS keeps the strict 12-digit rule;
+    # non-AWS providers (azure/gcp/openai) use their own identifier formats.
+    # Absent/empty -> 'aws'.
+    if not account_id:
+        return create_error_response(400, 'ValidationError', 'Account ID is required')
+
+    provider_key = _get_account_provider(member_email, account_id) or 'aws'
+
+    validation_error = validate_account_id_for_provider(account_id, provider_key)
     if validation_error:
         return create_error_response(400, validation_error[0], validation_error[1])
 
@@ -471,6 +522,13 @@ def handle_service_breakdown_request(event, member_email):
 
     if cached_records:
         services = cached_records
+    elif provider_key != 'aws':
+        # Service-level breakdown is derived from AWS Cost Explorer, which is
+        # AWS-only. Non-AWS providers (azure/gcp/openai) have no equivalent
+        # per-service drill-down source here, so return a graceful empty
+        # breakdown instead of attempting a Cost Explorer call (which would
+        # fail with a 502). The synthetic monthly invoice total still renders.
+        services = []
     else:
         # Task 5.2/5.6: Cache miss — fetch from Cost Explorer
         try:
@@ -492,10 +550,20 @@ def handle_service_breakdown_request(event, member_email):
     # Build response
     response_services = []
     for svc in services:
+        amount = float(svc.get('amount', 0))
+        # Recompute the percentage from the authoritative period total so it is
+        # always present and correct, regardless of which writer populated the
+        # cache. The AWS invoice-sync refresh path (invoice_sync._normalize_records)
+        # writes per-service records under the same "{period}#{service}" sort key
+        # but WITHOUT a percentage field; reading those back previously surfaced
+        # 0%/missing percentages for recently-refreshed (paid) months while older
+        # drill-down-cached months still showed it. Deriving it here from
+        # amount / total restores the percentage for all invoices.
+        percentage = round((amount / total_amount) * 100, 1) if total_amount > 0 else 0.0
         response_services.append({
             'serviceName': svc.get('serviceName', ''),
-            'amount': float(svc.get('amount', 0)),
-            'percentage': float(svc.get('percentage', 0)),
+            'amount': amount,
+            'percentage': percentage,
             'costExplanation': svc.get('costExplanation', ''),
             'usageTypes': svc.get('usageTypes', []),
         })
@@ -525,8 +593,16 @@ def handle_resource_breakdown_request(event, member_email):
     period = params.get('period')
     service = params.get('service')
 
-    # Validate accountId
-    validation_error = validate_account_id(account_id)
+    # Validate accountId presence, then resolve the provider so account-id
+    # validation can be provider-aware: AWS keeps the strict 12-digit rule;
+    # non-AWS providers (azure/gcp/openai) use their own identifier formats.
+    # Absent/empty -> 'aws'.
+    if not account_id:
+        return create_error_response(400, 'ValidationError', 'Account ID is required')
+
+    provider_key = _get_account_provider(member_email, account_id) or 'aws'
+
+    validation_error = validate_account_id_for_provider(account_id, provider_key)
     if validation_error:
         return create_error_response(400, validation_error[0], validation_error[1])
 
@@ -550,6 +626,14 @@ def handle_resource_breakdown_request(event, member_email):
 
     if cached_records:
         resources = cached_records
+        warnings = []
+    elif provider_key != 'aws':
+        # Resource-level breakdown is derived from AWS Cost Explorer, which is
+        # AWS-only. Non-AWS providers (azure/gcp/openai) have no equivalent
+        # per-resource drill-down source here, so return a graceful empty
+        # breakdown instead of attempting a Cost Explorer call (which would
+        # fail with a 502).
+        resources = []
         warnings = []
     else:
         # Cache miss: fetch resources → enrich metadata → generate AI → store
@@ -620,8 +704,15 @@ def handle_drilldown_refresh_request(event, member_email):
     account_id = body.get('accountId')
     period = body.get('period')
 
-    # Validate accountId
-    validation_error = validate_account_id(account_id)
+    # Validate accountId presence, then resolve the provider so validation can
+    # be provider-aware: AWS keeps the strict 12-digit rule; non-AWS providers
+    # (azure/gcp/openai) use their own identifier formats. Absent/empty -> 'aws'.
+    if not account_id:
+        return create_error_response(400, 'ValidationError', 'Account ID is required')
+
+    provider_key = _get_account_provider(member_email, account_id) or 'aws'
+
+    validation_error = validate_account_id_for_provider(account_id, provider_key)
     if validation_error:
         return create_error_response(400, validation_error[0], validation_error[1])
 
@@ -662,8 +753,8 @@ def handle_drilldown_refresh_request(event, member_email):
 
     # Resolve the account's provider so the clear-and-regenerate step below can
     # branch: AWS keeps its existing path; non-AWS routes through the additive
-    # generate_provider_invoices generator (absent/empty -> 'aws') (Req 9.1).
-    provider_key = _get_account_provider(member_email, account_id)
+    # generate_provider_invoices generator (resolved above, absent/empty ->
+    # 'aws') (Req 9.1).
 
     # For non-AWS accounts, regenerate the invoice records BEFORE clearing any
     # cached rows so that a regeneration failure leaves the prior cached INV#
@@ -945,6 +1036,9 @@ def fetch_service_breakdown(member_email, account_id, period):
     year, month_num = period.split('-')
     start_date = f'{year}-{month_num}-01'
     end_date = _get_next_month_first_day(int(year), int(month_num))
+    # Current (in-progress) month: clamp the future end date to tomorrow so the
+    # Forecast invoice drill-down returns MTD service data instead of erroring.
+    end_date = _clamp_end_date_to_tomorrow(end_date)
 
     try:
         response = ce_client.get_cost_and_usage(
@@ -1054,6 +1148,9 @@ def fetch_resource_breakdown(member_email, account_id, period, service):
     year, month_num = period.split('-')
     start_date = f'{year}-{month_num}-01'
     end_date = _get_next_month_first_day(int(year), int(month_num))
+    # Current (in-progress) month: clamp the future end date to tomorrow so the
+    # Forecast invoice drill-down returns MTD resource data instead of erroring.
+    end_date = _clamp_end_date_to_tomorrow(end_date)
 
     # Call GetCostAndUsageWithResources with service filter
     # Note: This API only supports the last 14 days. For older periods, fall back
@@ -2214,6 +2311,29 @@ def _get_next_month_first_day(year, month):
     return f'{year}-{month + 1:02d}-01'
 
 
+def _clamp_end_date_to_tomorrow(end_date, now=None):
+    """Clamp a Cost Explorer end date so it is never in the future.
+
+    Cost Explorer's GetCostAndUsage rejects a TimePeriod whose End is in the
+    future. For a closed month the first-of-next-month end date is in the past
+    and is returned unchanged. For the current (in-progress) month that end
+    date is in the future, so it is clamped to tomorrow (UTC) — the same bound
+    the dashboard monthly-trend fetch uses — which yields month-to-date (MTD)
+    data instead of an error. This lets the Forecast invoice's drill-down show
+    the current month's service breakdown, cost explanations, and savings tips.
+
+    Args:
+        end_date: Exclusive end date as 'YYYY-MM-DD'.
+        now: Optional reference datetime (defaults to current UTC time).
+
+    Returns:
+        The original end_date, or tomorrow's date when end_date is later.
+    """
+    now = now or datetime.now(timezone.utc)
+    tomorrow = (now + timedelta(days=1)).strftime('%Y-%m-%d')
+    return tomorrow if end_date > tomorrow else end_date
+
+
 def _parse_usage_type(usage_type, service):
     """Parse an AWS usage type string into a human-readable name and type.
 
@@ -2621,27 +2741,26 @@ def _fetch_invoices_from_cost_explorer(creds, account_id):
     logger.info(f"Cost Explorer fallback for {account_id}: {start_date} to {end_date}")
 
     try:
-        # Use SERVICE grouping to get totals consistent with the service breakdown
-        # Use ungrouped query but exclude Tax to match Dashboard numbers
-        # Tax is shown as a service line item but not included in the invoice total
+        # The invoice monthly total MUST match the dashboard "Monthly Cost by
+        # Service" total, which is the source of truth. The dashboard sums
+        # UnblendedCost across ALL services (with Tax appearing as its own
+        # service line) using no RECORD_TYPE filter — see merged_monthly /
+        # monthly_trend in lambda_function.handle_dashboard_data. Previously
+        # this query excluded Tax (RECORD_TYPE != 'Tax'), which made invoice
+        # monthly totals lower than the dashboard (e.g. Apr 2026 $99.85 vs the
+        # dashboard's ~$117). Removing the filter includes all record types
+        # (Usage, Tax, etc.) on the same UnblendedCost basis, so the per-month
+        # invoice totalAmount is consistent with the dashboard monthly total.
         response = ce_client.get_cost_and_usage(
             TimePeriod={'Start': start_date, 'End': end_date},
             Granularity='MONTHLY',
             Metrics=['UnblendedCost'],
-            Filter={
-                'Not': {
-                    'Dimensions': {
-                        'Key': 'RECORD_TYPE',
-                        'Values': ['Tax']
-                    }
-                }
-            },
         )
     except ClientError as e:
         logger.error(f"Cost Explorer fallback failed for {account_id}: {e}")
         raise
 
-    # Extract monthly totals (excluding Tax, matching Dashboard)
+    # Extract monthly totals (all services + Tax, matching the dashboard)
     monthly_totals = {}
     results_count = len(response.get('ResultsByTime', []))
     logger.info(f"Cost Explorer returned {results_count} periods for {account_id}")

@@ -292,6 +292,23 @@ def validate_token(event):
     return create_error_response(401, 'AuthError', 'Authentication required')
 
 
+def _is_valid_account_identifier(account_id):
+    """Lightweight format check for a provider account identifier.
+
+    Accepts identifiers from all supported providers rather than AWS-only:
+      - AWS: 12-digit account ID (e.g. 123456789012)
+      - Azure: subscription/tenant UUID
+      - GCP: project ID (lowercase letters, digits, hyphens)
+      - AI/OpenAI: organisation/account IDs (e.g. org-XXXX, openai:...)
+
+    This is input hygiene only; account ownership verification is the real
+    security gate, so we keep the charset permissive but bounded.
+    """
+    if not account_id or not isinstance(account_id, str):
+        return False
+    return re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._:\-]{0,127}', account_id) is not None
+
+
 def _verify_account_ownership(member_email, account_ids):
     """Verify that all given account IDs belong to the authenticated member.
     Returns True if all accounts are owned, or an error response dict if not.
@@ -20047,7 +20064,27 @@ def handle_refresh_invoices(event):
     if not account_id:
         return create_error_response(400, 'MissingParam', 'accountId is required')
 
-    # Validate accountId format (12 digits)
+    # Validate accountId format. Accept any provider identifier (AWS 12-digit,
+    # Azure subscription UUID, GCP project ID, AI/OpenAI org ID). Account
+    # ownership verification below is the actual security gate.
+    if not _is_valid_account_identifier(account_id):
+        return create_error_response(400, 'InvalidAccountId', 'Invalid account identifier')
+
+    # Provider-aware routing. The AWS path below re-syncs invoice data from
+    # Cost Explorer (invoice_sync.sync_invoice_data), which requires a 12-digit
+    # AWS account and the cross-account SlashMyBill role. Non-AWS providers
+    # (azure/gcp/openai) have no Cost Explorer; they regenerate + cache their
+    # synthetic invoices via the provider-aware drill-down refresh handler
+    # (which uses provider_invoices.generate_provider_invoices). Routing here
+    # keeps the existing AWS behaviour untouched while making refresh work for
+    # non-AWS accounts.
+    provider_key = _get_account_provider(member_email, account_id)
+    if provider_key != 'aws':
+        from invoice_drilldown import handle_drilldown_refresh_request
+        return handle_drilldown_refresh_request(event, member_email)
+
+    # AWS path: enforce the strict 12-digit account format the Cost Explorer
+    # sync depends on (preserves the previous AWS-only validation/error).
     if not re.fullmatch(r'\d{12}', account_id):
         return create_error_response(400, 'InvalidAccountId', 'Account ID must be a 12-digit number')
 
@@ -20284,9 +20321,10 @@ def handle_get_invoices_summary(event):
     if not account_id:
         return create_error_response(400, 'MissingParam', 'accountId query parameter is required')
 
-    # Validate accountId format (12 digits)
-    if not re.fullmatch(r'\d{12}', account_id):
-        return create_error_response(400, 'InvalidAccountId', 'Account ID must be a 12-digit number')
+    # Validate accountId format. Accept any provider identifier; account
+    # ownership verification below is the actual security gate.
+    if not _is_valid_account_identifier(account_id):
+        return create_error_response(400, 'InvalidAccountId', 'Invalid account identifier')
 
     # Verify account ownership
     ownership = _verify_account_ownership(member_email, [account_id])
@@ -20402,9 +20440,10 @@ def handle_get_invoices_services(event):
     if not account_id:
         return create_error_response(400, 'MissingParam', 'accountId query parameter is required')
 
-    # Validate accountId format (12 digits)
-    if not re.fullmatch(r'\d{12}', account_id):
-        return create_error_response(400, 'InvalidAccountId', 'Account ID must be a 12-digit number')
+    # Validate accountId format. Accept any provider identifier; account
+    # ownership verification below is the actual security gate.
+    if not _is_valid_account_identifier(account_id):
+        return create_error_response(400, 'InvalidAccountId', 'Invalid account identifier')
 
     # Verify account ownership
     ownership = _verify_account_ownership(member_email, [account_id])
