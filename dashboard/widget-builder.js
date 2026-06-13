@@ -138,31 +138,39 @@ const WidgetBuilder = (() => {
 
     function _renderWidgetFromDashData(container, widget, data) {
         const source = widget.dataSource ? widget.dataSource.source : 'cost_cache';
+        const metric = widget.dataSource && widget.dataSource.metric ? widget.dataSource.metric : 'cost';
         const type = widget.type;
 
-        // Extract data based on source
+        const metricLabels = {
+            cost: 'Cost ($)', amount: 'Amount ($)', tokens: 'Tokens',
+            requests: 'Requests', coverage: 'Coverage (%)',
+            utilization: 'Utilization (%)', units: 'Units'
+        };
+        const metricLabel = metricLabels[metric] || metric;
+
+        // Pull a numeric metric value from a record, falling back across the
+        // common field names so the selected metric drives the Y values.
+        const valueOf = (rec) => {
+            if (rec == null) return 0;
+            if (rec[metric] != null) return rec[metric];
+            if (rec.cost != null) return rec.cost;
+            if (rec.amount != null) return rec.amount;
+            return 0;
+        };
+
+        const isPie = type === 'pie';
         let chartData = { labels: [], values: [] };
-        if (source === 'cost_cache' || source === 'business_metrics') {
-            const daily = data.dailyTrend || [];
-            chartData.labels = daily.map(d => d.date || d.day || '');
-            chartData.values = daily.map(d => d.cost || d.amount || 0);
-        } else if (source === 'invoices') {
+
+        if (isPie) {
+            // Pie stays a categorical breakdown (by service).
             const services = data.costByService || [];
             chartData.labels = services.slice(0, 10).map(s => s.service || s.name || '');
-            chartData.values = services.slice(0, 10).map(s => s.cost || s.amount || 0);
-        } else if (source === 'commitments') {
-            const monthly = data.monthlyTrend || {};
-            if (Array.isArray(monthly)) {
-                chartData.labels = monthly.map(m => m.month || m.date || '');
-                chartData.values = monthly.map(m => m.cost || m.amount || 0);
-            } else if (monthly.months) {
-                chartData.labels = monthly.months;
-                chartData.values = monthly.costs || [];
-            }
-        } else if (source === 'openai_usage') {
-            const regions = data.costByRegion || [];
-            chartData.labels = regions.slice(0, 8).map(r => r.region || r.name || '');
-            chartData.values = regions.slice(0, 8).map(r => r.cost || r.amount || 0);
+            chartData.values = services.slice(0, 10).map(valueOf);
+        } else {
+            // X axis is always DATE; the metric (data itself) is flexible.
+            const daily = data.dailyTrend || [];
+            chartData.labels = daily.map(d => d.date || d.day || '');
+            chartData.values = daily.map(valueOf);
         }
 
         if (chartData.labels.length === 0) {
@@ -175,26 +183,46 @@ const WidgetBuilder = (() => {
         const canvas = container.querySelector('canvas');
         const ctx = canvas.getContext('2d');
 
-        const chartType = (type === 'pie') ? 'pie' : (type === 'line') ? 'line' : (type === 'kpi') ? 'bar' : 'bar';
+        const chartType = (type === 'pie') ? 'pie' : (type === 'line') ? 'line' : 'bar';
         const bgColors = ['#6366f1','#f59e0b','#10b981','#ef4444','#8b5cf6','#ec4899','#14b8a6','#f97316','#06b6d4','#84cc16'];
+        const isLine = type === 'line';
+
+        let dataset;
+        if (isLine) {
+            // Real lines: no fill, solid stroke, visible points.
+            dataset = {
+                label: metricLabel,
+                data: chartData.values,
+                backgroundColor: '#6366f1',
+                borderColor: '#6366f1',
+                borderWidth: 2,
+                fill: false,
+                tension: 0.3,
+                pointRadius: 2,
+                pointHoverRadius: 4,
+                spanGaps: true
+            };
+        } else {
+            dataset = {
+                label: metricLabel,
+                data: chartData.values,
+                backgroundColor: isPie ? bgColors : 'rgba(99,102,241,0.6)',
+                borderColor: isPie ? bgColors : '#6366f1',
+                borderWidth: 1
+            };
+        }
 
         new Chart(ctx, {
             type: chartType,
-            data: {
-                labels: chartData.labels,
-                datasets: [{
-                    label: source.replace('_', ' '),
-                    data: chartData.values,
-                    backgroundColor: chartType === 'pie' ? bgColors : 'rgba(99,102,241,0.6)',
-                    borderColor: chartType === 'pie' ? bgColors : '#6366f1',
-                    borderWidth: 1,
-                    fill: type === 'line'
-                }]
-            },
+            data: { labels: chartData.labels, datasets: [dataset] },
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
-                plugins: { legend: { display: type === 'pie' } }
+                plugins: { legend: { display: isPie } },
+                scales: !isPie ? {
+                    x: { title: { display: true, text: 'Date' } },
+                    y: { beginAtZero: true, title: { display: true, text: metricLabel } }
+                } : undefined
             }
         });
     }

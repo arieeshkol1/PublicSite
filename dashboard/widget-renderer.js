@@ -5,6 +5,11 @@
 
 const WidgetRenderer = (() => {
     const chartInstances = {};
+    const PALETTE = [
+        '#6366f1', '#f59e0b', '#10b981', '#ef4444',
+        '#3b82f6', '#8b5cf6', '#ec4899', '#14b8a6',
+        '#f97316', '#06b6d4', '#84cc16', '#a855f7'
+    ];
 
     function render(containerEl, widgetConfig, data) {
         // Destroy existing chart if present
@@ -42,17 +47,39 @@ const WidgetRenderer = (() => {
         canvas.style.height = '100%';
 
         const ctx = canvas.getContext('2d');
+        const isLine = widgetConfig.type === 'line';
+        const isPie = widgetConfig.type === 'pie';
+        const labelCount = data.labels ? data.labels.length : 0;
+
         const chart = new Chart(ctx, {
             type: widgetConfig.type,
             data: {
                 labels: data.labels || [],
-                datasets: (data.datasets || []).map(ds => ({
-                    label: ds.label || '',
-                    data: ds.data || [],
-                    backgroundColor: ds.backgroundColor || getDefaultColors(data.labels ? data.labels.length : 0),
-                    borderColor: ds.borderColor || undefined,
-                    borderWidth: ds.borderWidth || 1
-                }))
+                datasets: (data.datasets || []).map((ds, i) => {
+                    const lineColor = ds.borderColor || PALETTE[i % PALETTE.length];
+                    if (isLine) {
+                        // Real lines: no fill, solid stroke, visible points.
+                        return {
+                            label: ds.label || '',
+                            data: ds.data || [],
+                            backgroundColor: lineColor,
+                            borderColor: lineColor,
+                            borderWidth: ds.borderWidth || 2,
+                            fill: false,
+                            tension: 0.3,
+                            pointRadius: 2,
+                            pointHoverRadius: 4,
+                            spanGaps: true
+                        };
+                    }
+                    return {
+                        label: ds.label || '',
+                        data: ds.data || [],
+                        backgroundColor: ds.backgroundColor || (isPie ? getDefaultColors(labelCount) : PALETTE[i % PALETTE.length]),
+                        borderColor: ds.borderColor || undefined,
+                        borderWidth: ds.borderWidth || 1
+                    };
+                })
             },
             options: {
                 responsive: true,
@@ -62,7 +89,11 @@ const WidgetRenderer = (() => {
                         display: widgetConfig.display ? widgetConfig.display.showLegend : true
                     }
                 },
-                scales: widgetConfig.type !== 'pie' ? {
+                scales: !isPie ? {
+                    x: {
+                        // X axis is always the date dimension.
+                        title: { display: true, text: 'Date' }
+                    },
                     y: { beginAtZero: true }
                 } : undefined
             }
@@ -148,12 +179,7 @@ const WidgetRenderer = (() => {
     }
 
     function getDefaultColors(count) {
-        const palette = [
-            '#6366f1', '#f59e0b', '#10b981', '#ef4444',
-            '#3b82f6', '#8b5cf6', '#ec4899', '#14b8a6',
-            '#f97316', '#06b6d4', '#84cc16', '#a855f7'
-        ];
-        return Array.from({ length: count }, (_, i) => palette[i % palette.length]);
+        return Array.from({ length: count }, (_, i) => PALETTE[i % PALETTE.length]);
     }
 
     function formatNumber(val) {

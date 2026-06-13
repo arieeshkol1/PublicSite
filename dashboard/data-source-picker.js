@@ -12,6 +12,31 @@ const DataSourcePicker = (() => {
         { id: 'business_metrics', label: 'Business Metrics', icon: '📊' }
     ];
 
+    // Metrics available per data source. The first attribute (data source)
+    // drives which metric (the data itself) can be selected next.
+    const METRICS_BY_SOURCE = {
+        cost_cache: [
+            { id: 'cost', label: 'Cost ($)' }
+        ],
+        invoices: [
+            { id: 'amount', label: 'Amount ($)' }
+        ],
+        openai_usage: [
+            { id: 'cost', label: 'Cost ($)' },
+            { id: 'tokens', label: 'Tokens' },
+            { id: 'requests', label: 'Requests' }
+        ],
+        commitments: [
+            { id: 'cost', label: 'Cost ($)' },
+            { id: 'coverage', label: 'Coverage (%)' },
+            { id: 'utilization', label: 'Utilization (%)' }
+        ],
+        business_metrics: [
+            { id: 'cost', label: 'Cost ($)' },
+            { id: 'units', label: 'Units' }
+        ]
+    };
+
     const RELATIVE_RANGES = ['7d', '30d', '90d', '12m'];
     const AGGREGATION_TYPES = ['sum', 'avg', 'max', 'min', 'count'];
     const FILTER_OPERATORS = ['eq', 'neq', 'gt', 'lt', 'contains'];
@@ -25,6 +50,7 @@ const DataSourcePicker = (() => {
         onApplyCallback = callback;
 
         renderSourcePicker();
+        renderMetricSelector();
         renderDateRange();
         renderFilterBuilder();
         renderDimensionSelector();
@@ -72,6 +98,47 @@ const DataSourcePicker = (() => {
                     currentWidget.dataSource = { source: '', accountIds: [], dateRange: { type: 'relative', relative: '30d' } };
                 }
                 currentWidget.dataSource.source = btn.getAttribute('data-source');
+                // Selecting the data source resets and repopulates the metric
+                // choices, so the next selection (the data itself) reflects the
+                // chosen source.
+                currentWidget.dataSource.metric = null;
+                renderMetricSelector();
+            });
+        });
+    }
+
+    function renderMetricSelector() {
+        const container = document.getElementById('metric-selector-container');
+        if (!container) return;
+
+        const source = currentWidget.dataSource ? currentWidget.dataSource.source : '';
+        const metrics = METRICS_BY_SOURCE[source] || [];
+
+        if (!source) {
+            container.innerHTML = '<p class="config-hint" style="color:#6b7280;font-size:0.8em;">Select a data source first to choose a metric.</p>';
+            return;
+        }
+
+        // Default the metric to the first available option for this source.
+        let currentMetric = currentWidget.dataSource.metric;
+        if (!currentMetric || !metrics.some(m => m.id === currentMetric)) {
+            currentMetric = metrics.length ? metrics[0].id : null;
+            currentWidget.dataSource.metric = currentMetric;
+        }
+
+        let html = '<div class="source-options">';
+        metrics.forEach(m => {
+            const selected = m.id === currentMetric ? 'selected' : '';
+            html += `<button class="source-option ${selected}" data-metric="${m.id}">${m.label}</button>`;
+        });
+        html += '</div>';
+        container.innerHTML = html;
+
+        container.querySelectorAll('.source-option').forEach(btn => {
+            btn.addEventListener('click', () => {
+                container.querySelectorAll('.source-option').forEach(b => b.classList.remove('selected'));
+                btn.classList.add('selected');
+                currentWidget.dataSource.metric = btn.getAttribute('data-metric');
             });
         });
     }
