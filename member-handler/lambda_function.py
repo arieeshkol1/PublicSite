@@ -8366,7 +8366,9 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
             collector=collector,
         )
         if not answer:
-            answer = 'The analysis is taking longer than expected. This can happen with complex queries or during high load. Please try again in a moment.'
+            answer = ("I couldn't generate a response for that question. Try "
+                      "rephrasing it — for example, ask about a specific service, "
+                      "cost, or time period.")
 
         # ═══════════════════════════════════════════════════════════════════
         # INLINE AUDIT QUALITY GATE — Score response before returning to user
@@ -8378,7 +8380,7 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
 
         # Skip gate for pre-computed answers (already accurate) or if disabled
         _skip_gate = not _gate_enabled or _svc_precomputed or is_forecast_question
-        if not _skip_gate and answer and not answer.startswith('The analysis is taking'):
+        if not _skip_gate and answer and not answer.startswith(('The analysis is taking', "I couldn't generate a response")):
             try:
                 _audit_result = _inline_audit_score(question, answer)
                 inline_audit_score = _audit_result.get('score', 100)
