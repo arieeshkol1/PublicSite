@@ -10,8 +10,8 @@ Parameters:
 
   BedrockModelId:
     Type: String
-    Default: 'amazon.nova-lite-v1:0'
-    Description: Bedrock model ID for bill analysis
+    Default: 'us.amazon.nova-2-lite-v1:0'
+    Description: Bedrock model ID for bill analysis (Nova 2 Lite cross-region inference profile)
 
   LambdaCodeBucket:
     Type: String
@@ -154,7 +154,11 @@ Resources:
                 Action:
                   - bedrock:InvokeModel
                 Resource:
-                  - !Sub 'arn:aws:bedrock:us-east-1::foundation-model/${BedrockModelId}'
+                  # Nova 2 Lite is a cross-region inference profile, so grant
+                  # both the inference-profile resource and the underlying
+                  # foundation-model resources in every region it can route to.
+                  - !Sub 'arn:aws:bedrock:*:${AWS::AccountId}:inference-profile/us.amazon.nova-2-lite-v1:0'
+                  - 'arn:aws:bedrock:*::foundation-model/amazon.nova-2-lite-v1:0'
         - PolicyName: DynamoDBReadAccess
           PolicyDocument:
             Version: '2012-10-17'
@@ -1100,8 +1104,10 @@ Resources:
                   - bedrock:InvokeModel
                   - bedrock:InvokeAgent
                 Resource:
-                  - !Sub 'arn:aws:bedrock:us-east-1::foundation-model/${BedrockModelId}'
-                  - 'arn:aws:bedrock:us-east-1::foundation-model/amazon.nova-lite-v1:0'
+                  # Nova 2 Lite cross-region inference profile + underlying
+                  # foundation models across the regions it routes to.
+                  - !Sub 'arn:aws:bedrock:*:${AWS::AccountId}:inference-profile/us.amazon.nova-2-lite-v1:0'
+                  - 'arn:aws:bedrock:*::foundation-model/amazon.nova-2-lite-v1:0'
                   - !Sub 'arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:agent/*'
                   - !Sub 'arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:agent-alias/*'
         - PolicyName: DynamoDBTipsAccess

@@ -164,7 +164,7 @@ def generate_tips_with_bedrock(bedrock_client, existing_tips: list, num_tips: in
 
         # Call Bedrock - use Amazon Nova Lite (available in this account)
         response = bedrock_client.invoke_model(
-            modelId="us.amazon.nova-lite-v1:0",
+            modelId="us.amazon.nova-2-lite-v1:0",
             contentType="application/json",
             accept="application/json",
             body=json.dumps({
