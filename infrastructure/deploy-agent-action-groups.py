@@ -24,7 +24,13 @@ import time
 # Configuration
 REGION = 'us-east-1'
 AGENT_ID = 'G5VJGUOZ5W'
-LAMBDA_ARN = 'arn:aws:lambda:us-east-1:991105135552:function:Agent_Action_Lambda'
+# The action-group executor MUST be the function the deploy pipeline keeps
+# updated with the vendor-neutral agent-action code. That function is
+# SlashMyBill-AgentAction (see deploy.yml `update_lambda SlashMyBill-AgentAction`
+# and the CFN templates) — "Agent_Action_Lambda" is only the conceptual name
+# used in the spec glossary, not a real function. Pointing the groups anywhere
+# else would invoke a Lambda that never receives code updates.
+LAMBDA_ARN = 'arn:aws:lambda:us-east-1:991105135552:function:SlashMyBill-AgentAction'
 
 # Action group definitions: (name, schema filename, description)
 ACTION_GROUPS = [
