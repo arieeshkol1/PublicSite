@@ -806,6 +806,30 @@ jobs:
             --environment "Variables={TABLE_NAME=Audit_Transaction_Log,BEDROCK_MODEL_ID=us.amazon.nova-lite-v1:0}" > /dev/null 2>&1 || true
           echo "✓ Lambda functions updated"
 
+      - name: Ensure GroundCover API routes exist
+        continue-on-error: true
+        run: |
+          API_ID=$(aws cloudformation describe-stacks --stack-name ${{ env.STACK_NAME }} --query "Stacks[0].Outputs[?OutputKey=='ApiId'].OutputValue" --output text 2>/dev/null || echo "l2fd4h481h")
+          INTEGRATION_ID=$(aws apigatewayv2 get-integrations --api-id "$API_ID" --query "Items[0].IntegrationId" --output text 2>/dev/null || echo "")
+          if [ -z "$INTEGRATION_ID" ] || [ "$INTEGRATION_ID" = "None" ]; then
+            echo "⚠ Could not find integration ID, skipping route creation"
+          else
+            # Create add-groundcover route if it doesn't exist
+            EXISTING=$(aws apigatewayv2 get-routes --api-id "$API_ID" --query "Items[?RouteKey=='POST /members/accounts/add-groundcover'].RouteId" --output text 2>/dev/null || echo "")
+            if [ -z "$EXISTING" ] || [ "$EXISTING" = "None" ]; then
+              aws apigatewayv2 create-route --api-id "$API_ID" --route-key "POST /members/accounts/add-groundcover" --target "integrations/$INTEGRATION_ID" > /dev/null 2>&1 && echo "✓ add-groundcover route created" || echo "⚠ add-groundcover route creation failed"
+            else
+              echo "✓ add-groundcover route already exists"
+            fi
+            # Create test-groundcover-connection route if it doesn't exist
+            EXISTING=$(aws apigatewayv2 get-routes --api-id "$API_ID" --query "Items[?RouteKey=='POST /members/accounts/test-groundcover-connection'].RouteId" --output text 2>/dev/null || echo "")
+            if [ -z "$EXISTING" ] || [ "$EXISTING" = "None" ]; then
+              aws apigatewayv2 create-route --api-id "$API_ID" --route-key "POST /members/accounts/test-groundcover-connection" --target "integrations/$INTEGRATION_ID" > /dev/null 2>&1 && echo "✓ test-groundcover-connection route created" || echo "⚠ test-groundcover-connection route creation failed"
+            else
+              echo "✓ test-groundcover-connection route already exists"
+            fi
+          fi
+
       - name: Ensure Daily Refresh Lambda exists with EventBridge schedule
         continue-on-error: true
         run: |

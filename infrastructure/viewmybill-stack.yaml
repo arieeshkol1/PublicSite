@@ -2260,6 +2260,22 @@ Resources:
       RouteKey: 'POST /members/accounts/test-openai-connection'
       Target: !Sub 'integrations/${MemberIntegration}'
 
+  # API Gateway - GroundCover Member Routes
+  # ============================================================
+  MemberAddGroundcoverRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'POST /members/accounts/add-groundcover'
+      Target: !Sub 'integrations/${MemberIntegration}'
+
+  MemberTestGroundcoverConnectionRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ViewMyBillApi
+      RouteKey: 'POST /members/accounts/test-groundcover-connection'
+      Target: !Sub 'integrations/${MemberIntegration}'
+
 
 Outputs:
   ApiEndpoint:
