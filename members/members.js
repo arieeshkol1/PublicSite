@@ -14270,10 +14270,19 @@ function _renderSpendTrendsChart(data) {
     var html = '<div class="openai-widget">';
     html += '<div class="openai-widget-header">';
     html += '<h4>📈 Spend Trends</h4>';
+    html += '<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">';
     html += '<div style="display:flex;align-items:center;gap:6px;">';
     html += '<button class="openai-gran-btn' + (_openaiDashState.granularity === 'daily' ? ' active' : '') + '" data-gran="daily">Daily</button>';
     html += '<button class="openai-gran-btn' + (_openaiDashState.granularity === 'weekly' ? ' active' : '') + '" data-gran="weekly">Weekly</button>';
     html += '<button class="openai-gran-btn' + (_openaiDashState.granularity === 'monthly' ? ' active' : '') + '" data-gran="monthly">Monthly</button>';
+    html += '</div>';
+    html += '<div style="display:flex;align-items:center;gap:6px;border-left:1px solid #e5e7eb;padding-left:10px;">';
+    html += '<span style="font-size:0.78em;color:#6b7280;">View:</span>';
+    var _viewBy = _openaiDashState.spendViewBy || 'total';
+    html += '<button class="openai-gran-btn' + (_viewBy === 'total' ? ' active' : '') + '" data-viewby="total">Total</button>';
+    html += '<button class="openai-gran-btn' + (_viewBy === 'users' ? ' active' : '') + '" data-viewby="users">Users</button>';
+    html += '<button class="openai-gran-btn' + (_viewBy === 'models' ? ' active' : '') + '" data-viewby="models">Models</button>';
+    html += '</div>';
     html += '</div>';
     html += '</div>';
 
@@ -14284,30 +14293,60 @@ function _renderSpendTrendsChart(data) {
 
     // Render bar chart for spend
     html += '<div id="openai-spend-bars" class="openai-line-chart">';
-    html += _renderSpendBars(aggregated);
+    html += _renderSpendBars(aggregated, data);
     html += '</div>';
 
     html += '</div>';
     return html;
 }
 
-function _renderSpendBars(aggregated) {
+function _renderSpendBars(aggregated, data) {
     if (!aggregated.length) return '<div class="openai-widget-empty">No data to display.</div>';
+    var viewBy = _openaiDashState.spendViewBy || 'total';
     var maxCost = Math.max.apply(null, aggregated.map(function(d) { return d.cost || 0; }));
 
-    // Render as SVG line chart with Y-axis grid and DD-MM labels
+    // For stacked view, build per-dimension breakdown
+    var STACK_COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4', '#ec4899', '#84cc16'];
+    var stacked = null;
+    var dimensions = [];
+
+    if (viewBy !== 'total' && data) {
+        var records = data.token_usage || data.tokenUsage || [];
+        var perUserDaily = data.per_user_daily || data.perUserDaily || [];
+        var srcRecords = (viewBy === 'users' && perUserDaily.length) ? perUserDaily : records;
+        var dimField = viewBy === 'users' ? 'user_id' : 'service_name';
+        // Group by date and dimension
+        var byDateDim = {};
+        var dimSet = {};
+        srcRecords.forEach(function(r) {
+            var dt = r.date || '';
+            var dim = (r[dimField] || '').trim();
+            if (!dt || !dim || dim === 'unknown') return;
+            dimSet[dim] = true;
+            var key = dt + '|' + dim;
+            var cost = parseFloat(r.cost_amount || 0);
+            if (!cost && (r.input_tokens || r.output_tokens)) {
+                cost = ((r.input_tokens || 0) * 2.5 + (r.output_tokens || 0) * 10) / 1000000;
+            }
+            byDateDim[key] = (byDateDim[key] || 0) + cost;
+        });
+        dimensions = Object.keys(dimSet).sort();
+        // Build stacked data aligned to aggregated dates
+        stacked = {};
+        dimensions.forEach(function(dim) { stacked[dim] = []; });
+        aggregated.forEach(function(bucket) {
+            var dt = bucket.date || bucket.label || '';
+            dimensions.forEach(function(dim) {
+                stacked[dim].push(byDateDim[dt + '|' + dim] || 0);
+            });
+        });
+    }
+
+    // Render as SVG
     var W = 960, H = 300, PAD = 55, PADL = 75, PADT = 35;
     var chartW = W - PADL - 20, chartH = H - PAD - PADT;
     var stepX = aggregated.length > 1 ? chartW / (aggregated.length - 1) : chartW;
-    // Add 10% headroom so line never touches top edge
     maxCost = maxCost * 1.1;
-
-    var pts = [];
-    aggregated.forEach(function(d, i) {
-        var x = PADL + i * stepX;
-        var y = PADT + chartH - ((d.cost || 0) / (maxCost || 1) * chartH);
-        pts.push(x.toFixed(1) + ',' + y.toFixed(1));
-    });
 
     var html = '<svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;min-width:600px;" preserveAspectRatio="xMidYMid meet">';
 
@@ -14320,7 +14359,7 @@ function _renderSpendBars(aggregated) {
         html += '<line x1="' + PADL + '" y1="' + yPos + '" x2="' + (W - 20) + '" y2="' + yPos + '" stroke="#e5e7eb" stroke-width="0.5"/>';
     }
 
-    // X-axis labels (DD-MM format)
+    // X-axis labels
     var labelEvery = aggregated.length <= 10 ? 1 : Math.max(1, Math.floor(aggregated.length / 10));
     aggregated.forEach(function(d, i) {
         if (i % labelEvery === 0 || i === aggregated.length - 1) {
@@ -14332,12 +14371,45 @@ function _renderSpendBars(aggregated) {
         }
     });
 
-    // Line
-    html += '<polyline points="' + pts.join(' ') + '" fill="none" stroke="#10b981" stroke-width="2.5" stroke-linejoin="round"/>';
-
-    // Fill area
-    var baseY = PADT + chartH;
-    var lastX = (PADL + (aggregated.length - 1) * stepX).toFixed(1);
+    if (stacked && dimensions.length > 0) {
+        // Stacked bar chart
+        var barW = Math.max(8, Math.min(40, chartW / aggregated.length * 0.7));
+        aggregated.forEach(function(d, i) {
+            var x = PADL + i * stepX - barW / 2;
+            var baseY = PADT + chartH;
+            var yOffset = 0;
+            dimensions.forEach(function(dim, di) {
+                var val = stacked[dim][i] || 0;
+                var barH = (val / (maxCost || 1)) * chartH;
+                if (barH < 0.5) return;
+                var color = STACK_COLORS[di % STACK_COLORS.length];
+                html += '<rect x="' + x.toFixed(1) + '" y="' + (baseY - yOffset - barH).toFixed(1) + '" width="' + barW.toFixed(1) + '" height="' + barH.toFixed(1) + '" fill="' + color + '" opacity="0.85"/>';
+                yOffset += barH;
+            });
+        });
+        // Legend
+        html += '</svg>';
+        html += '<div style="display:flex;flex-wrap:wrap;gap:8px 16px;margin-top:8px;">';
+        dimensions.slice(0, 10).forEach(function(dim, di) {
+            var color = STACK_COLORS[di % STACK_COLORS.length];
+            var shortDim = dim.length > 20 ? dim.substring(0, 18) + '…' : dim;
+            html += '<span style="display:inline-flex;align-items:center;gap:4px;font-size:0.8em;color:#374151;">';
+            html += '<span style="width:10px;height:10px;border-radius:50%;background:' + color + ';flex-shrink:0;"></span>';
+            html += shortDim + '</span>';
+        });
+        if (dimensions.length > 10) html += '<span style="font-size:0.8em;color:#6b7280;">+' + (dimensions.length - 10) + ' more</span>';
+        html += '</div>';
+    } else {
+        // Single line (total view)
+        var pts = [];
+        aggregated.forEach(function(d, i) {
+            var x = PADL + i * stepX;
+            var y = PADT + chartH - ((d.cost || 0) / (maxCost || 1) * chartH);
+            pts.push(x.toFixed(1) + ',' + y.toFixed(1));
+        });
+        html += '<polyline points="' + pts.join(' ') + '" fill="none" stroke="#10b981" stroke-width="2.5" stroke-linejoin="round"/>';
+        var baseY = PADT + chartH;
+        var lastX = (PADL + (aggregated.length - 1) * stepX).toFixed(1);
     html += '<polygon points="' + pts.join(' ') + ' ' + lastX + ',' + baseY + ' ' + PADL + ',' + baseY + '" fill="#10b981" opacity="0.1"/>';
 
     // Dots on data points (only if < 15 points)
@@ -14395,13 +14467,22 @@ function _wireGranularityToggle() {
     btns.forEach(function(btn) {
         btn.onclick = function() {
             var gran = btn.dataset.gran;
-            _openaiDashState.granularity = gran;
-            btns.forEach(function(b) { b.classList.toggle('active', b === btn); });
+            var viewby = btn.dataset.viewby;
+            if (gran) {
+                _openaiDashState.granularity = gran;
+                // Update active state for granularity buttons only
+                document.querySelectorAll('.openai-gran-btn[data-gran]').forEach(function(b) { b.classList.toggle('active', b === btn); });
+            }
+            if (viewby) {
+                _openaiDashState.spendViewBy = viewby;
+                // Update active state for viewby buttons only
+                document.querySelectorAll('.openai-gran-btn[data-viewby]').forEach(function(b) { b.classList.toggle('active', b === btn); });
+            }
             // Re-render just the spend bars (client-side, fast)
             var daily = _openaiDashState._rawDailyCosts || [];
-            var aggregated = _aggregateSpendByGranularity(daily, gran);
+            var aggregated = _aggregateSpendByGranularity(daily, _openaiDashState.granularity);
             var barsEl = document.getElementById('openai-spend-bars');
-            if (barsEl) barsEl.innerHTML = _renderSpendBars(aggregated);
+            if (barsEl) barsEl.innerHTML = _renderSpendBars(aggregated, _openaiDashState.data);
         };
     });
 }
