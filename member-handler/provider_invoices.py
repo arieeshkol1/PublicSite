@@ -89,8 +89,15 @@ def _is_unusable_cost_data(cost_data):
     return False
 
 
-def generate_provider_invoices(member_email, account_id, provider_key):
+def generate_provider_invoices(member_email, account_id, provider_key, cached_periods=None):
     """Return (invoice_records, unavailable_flag) for a non-AWS account.
+
+    Args:
+        member_email: Authenticated member email.
+        account_id: Account identifier.
+        provider_key: Internal provider key ('azure', 'gcp', 'openai').
+        cached_periods: Optional set of period strings ('YYYY-MM') already in cache.
+            If provided, these months are skipped (closed months don't change).
 
     invoice_records are dicts in the canonical invoice shape ready for
     _write_invoice_cache. unavailable_flag is True when cost retrieval failed
@@ -155,7 +162,10 @@ def generate_provider_invoices(member_email, account_id, provider_key):
     _loop_start = _time.time()
     _TIME_BUDGET_SECONDS = 20  # Leave ~9s headroom for response shaping
 
-    for month in _reporting_window():
+    # Iterate newest-first so fresh data is fetched before historical months.
+    # If the time budget expires, we lose old months (less important) rather
+    # than the current/recent months the user cares about most.
+    for month in reversed(_reporting_window()):
         # Check time budget before each month fetch
         if _time.time() - _loop_start > _TIME_BUDGET_SECONDS:
             logger.warning(
@@ -168,6 +178,11 @@ def generate_provider_invoices(member_email, account_id, provider_key):
         period = month['period']
         start_date = month['start_date']
         end_date = month['end_date']
+
+        # Skip closed months that are already cached — their data doesn't change.
+        # The current month (in-progress) is always re-fetched.
+        if cached_periods and period in cached_periods:
+            continue
 
         try:
             cost_data = connector.get_cost_data(
