@@ -7928,6 +7928,31 @@ def handle_ai_query(event):
     if tag_key and tag_value:
         ai_question = f"[FILTER ACTIVE: Showing data filtered by tag {tag_key}={tag_value}] {question}"
 
+    # Non-AWS accounts (Azure/GCP/OpenAI) are NOT served by the AWS-oriented
+    # Bedrock agent action group. Routing them through it makes the agent's
+    # AWS Cost Explorer / STS tool calls hang until the 27s executor cap fires,
+    # returning a useless "taking longer than expected" timeout (agentUsed=false,
+    # ~29s). Short-circuit fast with an honest pointer to the Invoices view,
+    # which has provider-aware (cached) per-month + per-model/service cost data
+    # for these accounts. AWS accounts (12-digit IDs) are unaffected.
+    _aws_acct_re = re.compile(r'^\d{12}$')
+    if account_ids and all(not _aws_acct_re.match(a) for a in account_ids):
+        return create_response(200, {
+            'answer': (
+                "AI-chat analysis currently covers AWS accounts. For this "
+                "account (OpenAI/Azure/GCP), open the Invoices view to see the "
+                "month-by-month total and the per-model/service breakdown — "
+                "including an April-vs-May comparison — from cached cost data."
+            ),
+            'interactionId': interaction_id,
+            'commands': [],
+            'results': [],
+            'tipFound': False,
+            'agentUsed': False,
+            'chartData': [],
+            'topServices': [],
+        })
+
     # Use a timeout to prevent API Gateway 29s timeout from returning 503
     def _run_ai_query():
         # Try new modular pipeline first (single-account only), fallback to existing behavior
