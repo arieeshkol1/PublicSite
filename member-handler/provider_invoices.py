@@ -720,8 +720,8 @@ def _enrich_daily_token_usage(member_email, account_id, api_key, organization_id
             end_date = f'{year_val:04d}-{month_val + 1:02d}-01'
 
         # Instantiate connector and fetch per-user daily usage
-        from connectors.ai_vendor_connector import AIVendorConnector
-        connector = AIVendorConnector()
+        from connectors.openai_connector import OpenAIConnector
+        connector = OpenAIConnector()
         records = connector.fetch_per_user_daily_usage(
             api_key, organization_id, start_date, end_date
         )

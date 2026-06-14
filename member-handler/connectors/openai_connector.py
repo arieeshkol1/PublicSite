@@ -514,6 +514,117 @@ class OpenAIConnector(ProviderConnector):
         """
         return base * (2 ** attempt)
 
+    def fetch_per_user_daily_usage(self, api_key, organization_id, start_date, end_date):
+        """Fetch per-user, per-model daily token consumption from OpenAI Usage API.
+
+        Calls GET /v1/organization/usage/completions with group_by=user_id,
+        group_by=model, bucket_width=1d. Handles pagination up to 100 pages.
+
+        Args:
+            api_key: Decrypted OpenAI admin API key.
+            organization_id: OpenAI organization ID (may be empty).
+            start_date: Start date as YYYY-MM-DD string (inclusive).
+            end_date: End date as YYYY-MM-DD string (exclusive).
+
+        Returns:
+            List of dicts with keys: date, user_id, model, input_tokens,
+            output_tokens, input_cached_tokens, num_model_requests.
+            Returns [] on any error (never raises).
+        """
+        from datetime import datetime, timezone
+
+        try:
+            start_ts = int(
+                datetime.strptime(start_date, "%Y-%m-%d")
+                .replace(tzinfo=timezone.utc)
+                .timestamp()
+            )
+            end_ts = int(
+                datetime.strptime(end_date, "%Y-%m-%d")
+                .replace(tzinfo=timezone.utc)
+                .timestamp()
+            )
+
+            all_records = []
+            page_token = None
+            max_pages = 100
+            base_url = OPENAI_BASE_URL.replace('/v1', '')
+
+            for page_num in range(max_pages):
+                url = (
+                    f"{base_url}/v1/organization/usage/completions"
+                    f"?group_by=user_id&group_by=model&bucket_width=1d"
+                    f"&start_time={start_ts}&end_time={end_ts}"
+                )
+                if page_token:
+                    url += f"&page={page_token}"
+
+                headers = {
+                    'Authorization': f'Bearer {api_key}',
+                    'Content-Type': 'application/json',
+                }
+                if organization_id:
+                    headers['OpenAI-Organization'] = organization_id
+
+                try:
+                    req = urllib.request.Request(url, method='GET', headers=headers)
+                    resp = urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT)
+                    response = json.loads(resp.read().decode('utf-8'))
+                except urllib.error.HTTPError as e:
+                    if e.code in (401, 403):
+                        logger.warning(
+                            "OpenAI Usage API auth failed (%d) during "
+                            "fetch_per_user_daily_usage", e.code
+                        )
+                        return []
+                    logger.warning(
+                        "OpenAI Usage API error (%d) during "
+                        "fetch_per_user_daily_usage page %d", e.code, page_num
+                    )
+                    return all_records
+                except (urllib.error.URLError, OSError) as e:
+                    logger.warning(
+                        "OpenAI Usage API network error during "
+                        "fetch_per_user_daily_usage: %s", e
+                    )
+                    return all_records
+
+                for bucket in response.get("data", []):
+                    bucket_start = bucket.get("start_time")
+                    if bucket_start is None:
+                        continue
+                    date_str = datetime.fromtimestamp(
+                        int(bucket_start), tz=timezone.utc
+                    ).strftime("%Y-%m-%d")
+
+                    for result in bucket.get("results", []):
+                        record = {
+                            "date": date_str,
+                            "user_id": result.get("user_id") or "unknown",
+                            "model": result.get("model") or "unknown",
+                            "input_tokens": max(0, int(result.get("input_tokens") or 0)),
+                            "output_tokens": max(0, int(result.get("output_tokens") or 0)),
+                            "input_cached_tokens": max(0, int(result.get("input_cached_tokens") or 0)),
+                            "num_model_requests": max(0, int(result.get("num_model_requests") or 0)),
+                        }
+                        all_records.append(record)
+
+                if not response.get("has_more"):
+                    break
+                page_token = response.get("next_page")
+                if not page_token:
+                    break
+            else:
+                logger.warning(
+                    "fetch_per_user_daily_usage hit pagination cap of %d pages", max_pages
+                )
+
+            return all_records
+
+        except Exception as e:
+            logger.warning("fetch_per_user_daily_usage failed: %s", e)
+            return []
+
 
 # Auto-register when module is imported
 register_connector('openai', OpenAIConnector, vendor_type='ai_vendor')
