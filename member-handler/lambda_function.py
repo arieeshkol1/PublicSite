@@ -225,6 +225,8 @@ def lambda_handler(event, context):
         'POST /members/accounts/add-openai': handle_add_openai,
         'POST /members/accounts/test-openai-connection': handle_test_openai_connection,
         'POST /members/accounts/openai-usage': handle_openai_usage,
+        'POST /members/accounts/add-groundcover': handle_add_groundcover,
+        'POST /members/accounts/test-groundcover-connection': handle_test_groundcover_connection,
     }
 
     handler = routes.get(route_key)
@@ -12137,6 +12139,235 @@ def handle_test_openai_connection(event):
         })
 
 
+# ============================================================
+# GroundCover (Anthropic) AI Vendor Connection Handlers
+# ============================================================
+
+@transaction_log('member-handler')
+def handle_add_groundcover(event):
+    """Add a new GroundCover (Anthropic) AI vendor connection."""
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+
+    member_email = auth['sub']
+
+    try:
+        body = json.loads(event.get('body', '{}'))
+    except (json.JSONDecodeError, TypeError):
+        return create_error_response(400, 'InvalidRequest', 'Invalid request body')
+
+    api_key = (body.get('apiKey') or '').strip()
+    connection_name = (body.get('connectionName') or '').strip()
+
+    # Validate connection name length (max 64 chars)
+    if connection_name and len(connection_name) > 64:
+        return create_error_response(400, 'InvalidRequest', 'Connection name must be 64 characters or fewer.')
+
+    # Validate API token format (backend re-validates even though frontend already did)
+    if not api_key:
+        return create_error_response(400, 'InvalidKeyFormat', 'API token is required.')
+
+    try:
+        from connectors.groundcover_connector import validate_groundcover_token_format, GroundcoverConnector
+    except ImportError as e:
+        logger.error(f"Failed to import GroundCover connector: {e}")
+        return create_error_response(500, 'ServerError', 'GroundCover connector not available.')
+
+    validation = validate_groundcover_token_format(api_key)
+    if not validation['valid']:
+        return create_error_response(400, 'InvalidKeyFormat', validation['error'])
+
+    # Generate a unique account ID for this GroundCover connection
+    account_id = f"groundcover-{uuid.uuid4().hex[:12]}"
+
+    # Test the connection by POSTing to GroundCover API
+    connector = GroundcoverConnector()
+    auth_context = {'api_key': api_key}
+    test_result = connector.test_connection(auth_context, account_id)
+
+    if not test_result.get('success'):
+        failure_reason = test_result.get('message', 'Connection test failed.')[:200]
+        return create_error_response(400, 'ConnectionFailed', failure_reason)
+
+    # Encrypt API token via KMS with member email + accountId context
+    try:
+        from connectors.openai_kms import encrypt_openai_key, EncryptionError
+    except ImportError as e:
+        logger.error(f"Failed to import openai_kms: {e}")
+        return create_error_response(500, 'ServerError', 'Encryption module not available.')
+
+    try:
+        encrypted_key = encrypt_openai_key(api_key, member_email, account_id)
+    except EncryptionError as e:
+        logger.error(f"KMS encryption failed for GroundCover token: {e}")
+        return create_error_response(500, 'ServerError', 'Unable to save credentials. Please try again.')
+
+    # Store record in MemberPortal-Accounts DynamoDB table
+    now_iso = datetime.now(timezone.utc).isoformat()
+    account_name = connection_name or 'Anthropic (via GroundCover)'
+
+    account_record = {
+        'memberEmail': member_email,
+        'accountId': account_id,
+        'accountName': account_name,
+        'cloudProvider': 'groundcover',
+        'vendorType': 'ai_vendor',
+        'connectionStatus': 'connected',
+        'lastTestedAt': now_iso,
+        'addedAt': now_iso,
+        'credentials': {
+            'encryptedApiKey': encrypted_key,
+        },
+    }
+
+    accounts_table = dynamodb.Table(ACCOUNTS_TABLE_NAME)
+    try:
+        accounts_table.put_item(Item=account_record)
+    except ClientError as e:
+        logger.error(f"DynamoDB write error for GroundCover account: {e}")
+        return create_error_response(500, 'ServerError', 'Failed to save connection. Please try again.')
+
+    logger.info(f"GroundCover account {account_id} added for member {member_email}")
+
+    # Return success response (exclude encrypted credentials from response)
+    response_record = {
+        'accountId': account_id,
+        'accountName': account_name,
+        'cloudProvider': 'groundcover',
+        'vendorType': 'ai_vendor',
+        'connectionStatus': 'connected',
+        'lastTestedAt': now_iso,
+        'addedAt': now_iso,
+    }
+
+    return create_response(201, {
+        'success': True,
+        'message': 'Anthropic (via GroundCover) connection added successfully.',
+        'account': response_record,
+    })
+
+
+@transaction_log('member-handler')
+def handle_test_groundcover_connection(event):
+    """Test an existing GroundCover connection by re-validating the stored token."""
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+
+    member_email = auth['sub']
+
+    try:
+        body = json.loads(event.get('body', '{}'))
+    except (json.JSONDecodeError, TypeError):
+        return create_error_response(400, 'InvalidRequest', 'Invalid request body')
+
+    account_id = (body.get('accountId') or '').strip()
+    if not account_id:
+        return create_error_response(400, 'InvalidAccountId', 'Account ID is required')
+
+    # Verify account ownership
+    ownership = _verify_account_ownership(member_email, [account_id])
+    if isinstance(ownership, dict):
+        return ownership
+
+    accounts_table = dynamodb.Table(ACCOUNTS_TABLE_NAME)
+
+    # Retrieve the existing account record
+    try:
+        result = accounts_table.get_item(Key={'memberEmail': member_email, 'accountId': account_id})
+        account = result.get('Item')
+    except ClientError as e:
+        logger.error(f"DynamoDB read error for GroundCover test connection: {e}")
+        return create_error_response(500, 'ServerError', 'Failed to retrieve account record.')
+
+    if not account:
+        return create_error_response(404, 'NotFound', 'Account not found.')
+
+    # Ensure this is a GroundCover account
+    if account.get('cloudProvider') != 'groundcover':
+        return create_error_response(400, 'InvalidRequest', 'This endpoint is only for GroundCover connections.')
+
+    # Prevent concurrent tests: if status is currently 'testing', return early
+    if account.get('connectionStatus') == 'testing':
+        return create_error_response(409, 'TestInProgress', 'A connection test is already in progress for this account.')
+
+    # Get the encrypted API token from stored credentials
+    credentials = account.get('credentials', {})
+    encrypted_key = credentials.get('encryptedApiKey', '')
+    if not encrypted_key:
+        return create_error_response(400, 'MissingCredentials', 'No API token stored for this account. Please re-add the connection.')
+
+    # Decrypt stored API token
+    try:
+        from connectors.openai_kms import decrypt_openai_key, DecryptionError
+    except ImportError as e:
+        logger.error(f"Failed to import openai_kms: {e}")
+        return create_error_response(500, 'ServerError', 'Encryption module not available.')
+
+    try:
+        api_key = decrypt_openai_key(encrypted_key, member_email, account_id)
+    except DecryptionError as e:
+        logger.error(f"KMS decryption failed for GroundCover test connection: {e}")
+        now_iso = datetime.now(timezone.utc).isoformat()
+        _update_connection_status(accounts_table, member_email, account_id, 'failed', now_iso)
+        return create_error_response(500, 'DecryptionFailed', 'Credentials inaccessible. Please re-add your GroundCover connection.')
+
+    # Test the connection using the GroundCover connector
+    try:
+        from connectors.groundcover_connector import GroundcoverConnector
+    except ImportError as e:
+        logger.error(f"Failed to import GroundCover connector: {e}")
+        return create_error_response(500, 'ServerError', 'GroundCover connector not available.')
+
+    connector = GroundcoverConnector()
+    auth_context = {'api_key': api_key}
+    test_result = connector.test_connection(auth_context, account_id)
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    if test_result.get('success'):
+        # Success: update connectionStatus to 'connected'
+        try:
+            accounts_table.update_item(
+                Key={'memberEmail': member_email, 'accountId': account_id},
+                UpdateExpression='SET connectionStatus = :s, lastTestedAt = :t REMOVE failureReason',
+                ExpressionAttributeValues={':s': 'connected', ':t': now_iso}
+            )
+        except ClientError as e:
+            logger.error(f"Failed to update status after successful GroundCover test: {e}")
+
+        return create_response(200, {
+            'success': True,
+            'message': test_result.get('message', 'GroundCover connection successful.'),
+            'connectionStatus': 'connected',
+            'lastTestedAt': now_iso,
+        })
+    else:
+        # Failure: update connectionStatus to 'failed' with failure reason (max 200 chars)
+        failure_reason = (test_result.get('message') or 'Connection test failed.')[:200]
+        try:
+            accounts_table.update_item(
+                Key={'memberEmail': member_email, 'accountId': account_id},
+                UpdateExpression='SET connectionStatus = :s, lastTestedAt = :t, failureReason = :r',
+                ExpressionAttributeValues={
+                    ':s': 'failed',
+                    ':t': now_iso,
+                    ':r': failure_reason,
+                }
+            )
+        except ClientError as e:
+            logger.error(f"Failed to update status after failed GroundCover test: {e}")
+
+        return create_response(200, {
+            'success': False,
+            'message': failure_reason,
+            'connectionStatus': 'failed',
+            'lastTestedAt': now_iso,
+            'failureReason': failure_reason,
+        })
+
+
 @transaction_log('member-handler')
 def handle_openai_usage(event):
     """Retrieve OpenAI usage data for the authenticated member's account.
@@ -12452,6 +12683,32 @@ def handle_openai_usage(event):
     except Exception as _cache_err:
         logger.warning(f"OpenAI cache write failed (non-fatal): {_cache_err}")
 
+    # Fetch per-user daily token records (DAILY# sk prefix) from Invoices table
+    per_user_records = []
+    try:
+        invoices_table = dynamodb.Table(INVOICES_TABLE_NAME)
+        pk_val = f"{member_email}#{account_id}"
+        daily_response = invoices_table.query(
+            KeyConditionExpression=DDBKey('pk').eq(pk_val) & DDBKey('sk').begins_with('DAILY#'),
+            ProjectionExpression='#d, user_id, model, input_tokens, output_tokens, input_cached_tokens, num_model_requests',
+            ExpressionAttributeNames={'#d': 'date'}
+        )
+        per_user_records = daily_response.get('Items', [])
+        # Handle pagination
+        while 'LastEvaluatedKey' in daily_response:
+            if time.time() - start_time > 25:
+                break
+            daily_response = invoices_table.query(
+                KeyConditionExpression=DDBKey('pk').eq(pk_val) & DDBKey('sk').begins_with('DAILY#'),
+                ProjectionExpression='#d, user_id, model, input_tokens, output_tokens, input_cached_tokens, num_model_requests',
+                ExpressionAttributeNames={'#d': 'date'},
+                ExclusiveStartKey=daily_response['LastEvaluatedKey']
+            )
+            per_user_records.extend(daily_response.get('Items', []))
+    except Exception as e:
+        logger.warning(f"Failed to fetch per-user daily records: {e}")
+        per_user_records = []
+
     # Build response matching the frontend expected schema
     # Frontend reads: data.token_usage, data.cost_by_model, data.spend_trends, data.project_breakdown
     response_data = {
@@ -12462,6 +12719,7 @@ def handle_openai_usage(event):
         'total_spend': round(total_spend, 2),
         'period_change': _decimal_to_native(period_change) if period_change != float('inf') else 'new_spend',
         'project_breakdown': _decimal_to_native(project_breakdown),
+        'per_user_daily': _decimal_to_native(per_user_records),
     }
 
     return create_response(200, response_data)

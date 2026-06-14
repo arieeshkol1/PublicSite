@@ -46,6 +46,10 @@ def _load_connectors():
         from . import openai_connector  # noqa: F401
     except ImportError:
         pass
+    try:
+        from . import groundcover_connector  # noqa: F401
+    except ImportError:
+        pass
 
 
 def list_providers(vendor_type=None):

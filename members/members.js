@@ -13330,6 +13330,16 @@ function _validateOpenAIKey(key) {
     return { valid: true, message: '' };
 }
 
+function _validateGroundcoverKey(key) {
+    if (!key) return { valid: false, message: 'API token is required.' };
+    var trimmed = key.trim();
+    if (trimmed.length < 20 || trimmed.length > 200)
+        return { valid: false, message: 'Token must be between 20 and 200 characters.' };
+    if (!trimmed.startsWith('gcsa_'))
+        return { valid: false, message: 'Token must start with "gcsa_".' };
+    return { valid: true, message: '' };
+}
+
 // --- Render AI Vendor Connections List (Task 13.2) ---
 function _renderAIVendorConnections() {
     var listEl = document.getElementById('ai-vendors-list');
@@ -13337,7 +13347,7 @@ function _renderAIVendorConnections() {
     if (!listEl) return;
 
     var aiAccounts = allAccounts.filter(function(a) {
-        return a.cloudProvider === 'openai' || a.vendorType === 'ai_vendor';
+        return a.cloudProvider === 'openai' || a.cloudProvider === 'groundcover' || a.vendorType === 'ai_vendor';
     });
 
     if (!aiAccounts.length) {
@@ -13354,12 +13364,18 @@ function _renderAIVendorConnections() {
         if (a.connectionStatus === 'failed') { statusColor = '#ef4444'; statusLabel = 'Failed'; }
         else if (a.connectionStatus === 'pending') { statusColor = '#f59e0b'; statusLabel = 'Pending'; }
 
+        var isGroundcover = a.cloudProvider === 'groundcover';
+        var iconBg = isGroundcover ? '#6366f1' : '#10a37f';
+        var iconText = isGroundcover ? 'GC' : 'AI';
+        var iconSize = isGroundcover ? '12px' : '14px';
+        var defaultName = isGroundcover ? 'Anthropic (via GroundCover)' : 'AI Cost Connection';
+
         html += '<div style="border:1px solid #e5e7eb;border-radius:10px;padding:16px;background:#fff;">';
         html += '<div style="display:flex;align-items:center;justify-content:space-between;">';
         html += '<div style="display:flex;align-items:center;gap:12px;">';
-        html += '<div style="width:36px;height:36px;background:#10a37f;border-radius:8px;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:14px;">AI</div>';
+        html += '<div style="width:36px;height:36px;background:' + iconBg + ';border-radius:8px;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:' + iconSize + ';">' + iconText + '</div>';
         html += '<div>';
-        html += '<div style="font-weight:600;color:#1f2937;">' + esc(a.accountName || 'AI Cost Connection') + '</div>';
+        html += '<div style="font-weight:600;color:#1f2937;">' + esc(a.accountName || defaultName) + '</div>';
         html += '<div style="font-size:0.82em;color:#6b7280;">ID: ' + esc(a.accountId || '') + '</div>';
         html += '</div>';
         html += '</div>';
@@ -13372,7 +13388,7 @@ function _renderAIVendorConnections() {
             html += '<span style="font-size:0.75em;color:#9ca3af;">Tested: ' + fmtDate(a.lastTestedAt) + '</span>';
         }
         html += '</div>';
-        html += '<button class="btn btn-outline btn-sm openai-test-btn" data-account-id="' + ea(a.accountId) + '" style="font-size:0.82em;">⚡ Test Connection</button>';
+        html += '<button class="btn btn-outline btn-sm ai-vendor-test-btn" data-account-id="' + ea(a.accountId) + '" data-provider="' + ea(a.cloudProvider || 'openai') + '" style="font-size:0.82em;">⚡ Test Connection</button>';
         html += '</div>';
         html += '</div>';
         // Show failure reason if failed
@@ -13387,8 +13403,15 @@ function _renderAIVendorConnections() {
     listEl.innerHTML = html;
 
     // Wire up test buttons
-    listEl.querySelectorAll('.openai-test-btn').forEach(function(btn) {
-        btn.onclick = function() { _testOpenAIConnection(btn.dataset.accountId, btn); };
+    listEl.querySelectorAll('.ai-vendor-test-btn').forEach(function(btn) {
+        btn.onclick = function() {
+            var provider = btn.dataset.provider || 'openai';
+            if (provider === 'groundcover') {
+                _testGroundcoverConnection(btn.dataset.accountId, btn);
+            } else {
+                _testOpenAIConnection(btn.dataset.accountId, btn);
+            }
+        };
     });
 }
 
@@ -13414,7 +13437,30 @@ async function _testOpenAIConnection(accountId, btn) {
     }
 }
 
+// --- Test GroundCover Connection ---
+async function _testGroundcoverConnection(accountId, btn) {
+    if (btn.disabled) return;
+    btn.disabled = true;
+    var origText = btn.innerHTML;
+    btn.innerHTML = '<span class="spinner" style="width:14px;height:14px;border-width:2px;"></span> Testing...';
+
+    try {
+        var data = await api('POST', '/members/accounts/test-groundcover-connection', { accountId: accountId });
+        notify(data.message || 'GroundCover connection test passed!', 'success');
+        await loadAccounts();
+        _renderAIVendorConnections();
+    } catch (err) {
+        notify(err.message || 'GroundCover connection test failed.', 'error');
+        await loadAccounts();
+        _renderAIVendorConnections();
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = origText;
+    }
+}
+
 // --- Add AI Vendor Button Handler (Task 13.1) ---
+var _aiVendorSelectedProvider = 'openai';
 (function() {
     var btn = document.getElementById('add-ai-vendor-btn');
     if (btn) btn.onclick = _showAddAIVendorModal;
@@ -13444,6 +13490,10 @@ function _showAddAIVendorModal() {
     html += '<button id="ai-vendor-select-openai" style="display:flex;align-items:center;gap:12px;padding:14px 16px;border:2px solid #e5e7eb;border-radius:10px;background:#fff;cursor:pointer;text-align:left;transition:border-color 0.2s;">';
     html += '<div style="width:40px;height:40px;background:#10a37f;border-radius:8px;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:16px;">AI</div>';
     html += '<div><div style="font-weight:600;color:#1f2937;">AI Cost</div><div style="font-size:0.8em;color:#6b7280;">ChatGPT, GPT-4, DALL-E, Whisper</div></div>';
+    html += '</button>';
+    html += '<button id="ai-vendor-select-groundcover" style="display:flex;align-items:center;gap:12px;padding:14px 16px;border:2px solid #e5e7eb;border-radius:10px;background:#fff;cursor:pointer;text-align:left;transition:border-color 0.2s;">';
+    html += '<div style="width:40px;height:40px;background:#6366f1;border-radius:8px;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:14px;">GC</div>';
+    html += '<div><div style="font-weight:600;color:#1f2937;">Anthropic (via GroundCover)</div><div style="font-size:0.8em;color:#6b7280;">AI usage monitoring via GroundCover</div></div>';
     html += '</button>';
     html += '</div>';
     html += '</div>';
@@ -13502,8 +13552,16 @@ function _showAddAIVendorModal() {
     // Wire up events
     document.getElementById('ai-vendor-modal-close').onclick = function() { overlay.remove(); };
     document.getElementById('ai-vendor-select-openai').onclick = function() {
+        _aiVendorSelectedProvider = 'openai';
         document.getElementById('ai-vendor-step-select').style.display = 'none';
         document.getElementById('ai-vendor-step-form').style.display = 'block';
+        _updateAIVendorFormForProvider('openai');
+    };
+    document.getElementById('ai-vendor-select-groundcover').onclick = function() {
+        _aiVendorSelectedProvider = 'groundcover';
+        document.getElementById('ai-vendor-step-select').style.display = 'none';
+        document.getElementById('ai-vendor-step-form').style.display = 'block';
+        _updateAIVendorFormForProvider('groundcover');
     };
     document.getElementById('ai-vendor-back-btn').onclick = function() {
         document.getElementById('ai-vendor-step-form').style.display = 'none';
@@ -13511,6 +13569,35 @@ function _showAddAIVendorModal() {
         // Reset form state
         _resetAIVendorForm();
     };
+
+    function _updateAIVendorFormForProvider(provider) {
+        var keyInput = document.getElementById('ai-vendor-api-key');
+        var nameInput = document.getElementById('ai-vendor-conn-name');
+        var submitBtn = document.getElementById('ai-vendor-submit-btn');
+        var loadingEl = document.getElementById('ai-vendor-loading');
+        // Update the form header (back button sibling)
+        var backBtn = document.getElementById('ai-vendor-back-btn');
+        var headerContainer = backBtn ? backBtn.parentElement : null;
+        if (provider === 'groundcover') {
+            if (keyInput) keyInput.placeholder = 'gcsa_...';
+            if (nameInput) nameInput.placeholder = 'e.g. Production GroundCover';
+            if (submitBtn) submitBtn.textContent = 'Connect Anthropic (via GroundCover)';
+            if (loadingEl) loadingEl.innerHTML = '<div class="spinner" style="margin:0 auto 8px;"></div>Validating token with GroundCover...';
+            if (headerContainer) {
+                var headerInfo = headerContainer.querySelector('div:last-child');
+                if (headerInfo) headerInfo.innerHTML = '<div style="width:28px;height:28px;background:#6366f1;border-radius:6px;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:10px;">GC</div><span style="font-weight:600;color:#1f2937;">Connect Anthropic (via GroundCover)</span>';
+            }
+        } else {
+            if (keyInput) keyInput.placeholder = 'sk-...';
+            if (nameInput) nameInput.placeholder = 'e.g. Production AI Cost';
+            if (submitBtn) submitBtn.textContent = 'Connect AI Cost';
+            if (loadingEl) loadingEl.innerHTML = '<div class="spinner" style="margin:0 auto 8px;"></div>Validating API key with AI Cost...';
+            if (headerContainer) {
+                var headerInfo = headerContainer.querySelector('div:last-child');
+                if (headerInfo) headerInfo.innerHTML = '<div style="width:28px;height:28px;background:#10a37f;border-radius:6px;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:11px;">AI</div><span style="font-weight:600;color:#1f2937;">Connect AI Cost</span>';
+            }
+        }
+    }
 
     // API key input validation on blur
     var keyInput = document.getElementById('ai-vendor-api-key');
@@ -13521,7 +13608,7 @@ function _showAddAIVendorModal() {
     keyInput.onblur = function() {
         var val = keyInput.value.trim();
         if (!val) return;
-        var result = _validateOpenAIKey(val);
+        var result = _aiVendorSelectedProvider === 'groundcover' ? _validateGroundcoverKey(val) : _validateOpenAIKey(val);
         var errEl = document.getElementById('ai-vendor-key-error');
         if (!result.valid && errEl) errEl.textContent = result.message;
     };
@@ -13573,7 +13660,7 @@ async function _submitAIVendorConnection() {
     var connectionName = nameInput ? nameInput.value.trim() : '';
 
     // Client-side validation
-    var validation = _validateOpenAIKey(apiKey);
+    var validation = _aiVendorSelectedProvider === 'groundcover' ? _validateGroundcoverKey(apiKey) : _validateOpenAIKey(apiKey);
     if (!validation.valid) {
         if (errEl) errEl.textContent = validation.message;
         return;
@@ -13602,7 +13689,8 @@ async function _submitAIVendorConnection() {
         var payload = { apiKey: apiKey };
         if (connectionName) payload.connectionName = connectionName;
 
-        var data = await api('POST', '/members/accounts/add-openai', payload);
+        var endpoint = _aiVendorSelectedProvider === 'groundcover' ? '/members/accounts/add-groundcover' : '/members/accounts/add-openai';
+        var data = await api('POST', endpoint, payload);
         clearTimeout(timeoutId);
 
         // Success
@@ -13654,7 +13742,7 @@ function _renderOpenAIDashboard() {
 
     // Find the first connected OpenAI account
     var openaiAccounts = allAccounts.filter(function(a) {
-        return (a.cloudProvider === 'openai' || a.vendorType === 'ai_vendor') && a.connectionStatus === 'connected';
+        return a.cloudProvider === 'openai' && a.connectionStatus === 'connected';
     });
 
     if (!openaiAccounts.length) {
