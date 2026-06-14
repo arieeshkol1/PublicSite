@@ -790,14 +790,14 @@ jobs:
           update_lambda slashmybill-tips-sync lambda-packages/tips-sync.zip
           # Update Audit Evaluator Lambda (skip if not yet created)
           update_lambda audit-evaluator lambda-packages/audit-evaluator.zip
-          # Update OpenAI Sync Lambda (skip if not yet created)
-          update_lambda slashmybill-openai-sync lambda-packages/openai-sync.zip || true
+          # Update OpenAI Sync Lambda (skip — not yet created in AWS)
+          # update_lambda slashmybill-openai-sync lambda-packages/openai-sync.zip || true
           # Update Dashboard Handler Lambda (skip if not yet created)
           update_lambda dashboard-handler lambda-packages/dashboard-handler.zip
           # Update Daily Refresh Lambda (skip if not yet created)
           update_lambda slashmybill-daily-refresh lambda-packages/daily-refresh.zip
-          # Update Monthly Refresh Lambda (skip if not yet created)
-          update_lambda slashmybill-monthly-refresh lambda-packages/monthly-refresh.zip || true
+          # Update Monthly Refresh Lambda (skip — not yet created in AWS)
+          # update_lambda slashmybill-monthly-refresh lambda-packages/monthly-refresh.zip || true
           # Update Schema Sync Lambda (skip if not yet created)
           update_lambda slashmybill-schema-sync lambda-packages/schema-sync.zip
           # Update audit-evaluator environment variable (model ID fix)
