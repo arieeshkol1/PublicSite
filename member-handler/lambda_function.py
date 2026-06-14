@@ -7958,16 +7958,95 @@ def _openai_period_label(period):
     return datetime(int(y), int(m), 1).strftime('%B %Y')
 
 
+def _answer_openai_forecast(member_email, account_id, question, interaction_id, now=None):
+    """Compute and return an OpenAI month-end forecast in chat.
+
+    Formula: MTD_cost + (remaining_days × last_month_daily_avg)
+    - MTD = current month's total from cached/live service data
+    - last_month_daily_avg = last month's total / days_in_last_month
+    - remaining_days = days_in_current_month - current_day
+    """
+    import calendar
+    now = now or datetime.now(timezone.utc)
+    cur_period = f"{now.year:04d}-{now.month:02d}"
+    day_of_month = now.day
+    days_in_month = calendar.monthrange(now.year, now.month)[1]
+    remaining_days = days_in_month - day_of_month
+
+    # Previous month period
+    if now.month == 1:
+        prev_period = f"{now.year - 1:04d}-12"
+        days_in_prev = 31
+    else:
+        prev_period = f"{now.year:04d}-{now.month - 1:02d}"
+        days_in_prev = calendar.monthrange(now.year, now.month - 1)[1]
+
+    # Get data
+    mtd_total, mtd_services = _openai_period_data(member_email, account_id, cur_period)
+    prev_total, _ = _openai_period_data(member_email, account_id, prev_period)
+
+    # Calculate
+    last_month_daily_avg = prev_total / days_in_prev if days_in_prev > 0 else 0.0
+    projected = round(mtd_total + (remaining_days * last_month_daily_avg), 2)
+
+    lines = [
+        f"**OpenAI cost forecast for {_openai_period_label(cur_period)}**",
+        "",
+        f"- Month-to-date (day {day_of_month}/{days_in_month}): **${mtd_total:,.2f}**",
+        f"- Last month ({_openai_period_label(prev_period)}): ${prev_total:,.2f} "
+        f"(${last_month_daily_avg:,.2f}/day avg)",
+        f"- Remaining days: {remaining_days}",
+        f"- **Projected end-of-month: ${projected:,.2f}**",
+        "",
+        f"_Formula: ${mtd_total:,.2f} + ({remaining_days} days × "
+        f"${last_month_daily_avg:,.2f}/day) = ${projected:,.2f}_",
+        "",
+        "_Usage only, excludes tax. Based on cached invoice data._",
+    ]
+
+    # Per-model MTD breakdown
+    if mtd_services:
+        top = sorted(mtd_services, key=lambda s: float(s.get('amount', 0) or 0), reverse=True)[:5]
+        lines.append("\nTop models month-to-date:")
+        lines.append("| Model | MTD Cost |")
+        lines.append("|---|---|")
+        for s in top:
+            lines.append(f"| {s.get('serviceName', '')} | ${float(s.get('amount', 0) or 0):,.2f} |")
+
+    return create_response(200, {
+        'answer': "\n".join(lines),
+        'interactionId': interaction_id,
+        'commands': ['OpenAI forecast (cached invoice data)'],
+        'results': [],
+        'tipFound': False,
+        'agentUsed': False,
+        'chartData': [],
+        'topServices': [],
+    })
+
+
 def _answer_openai_query(member_email, account_id, question, interaction_id):
     """Build an in-chat answer for an OpenAI account from cached per-model data.
 
     Single period  -> total + per-model breakdown.
     Two periods    -> comparison with delta and the top per-model drivers.
+    Forecast       -> MTD + (remaining_days × last_month_daily_avg).
     No period found -> defaults to the previous calendar month.
     Mirrors the AWS chat surface (headline total + breakdown). Tax is excluded
     (OpenAI exposes usage cost only).
     """
     now = datetime.now(timezone.utc)
+
+    # Detect forecast intent
+    q_lower = (question or '').lower()
+    _is_forecast = any(w in q_lower for w in (
+        'forecast', 'predict', 'projection', 'project', 'end of month',
+        'expect', 'estimate', 'will i spend', 'going to cost',
+    ))
+
+    if _is_forecast:
+        return _answer_openai_forecast(member_email, account_id, question, interaction_id, now)
+
     periods = _parse_periods_from_question(question, now=now)
     if not periods:
         idx = now.year * 12 + (now.month - 1) - 1
