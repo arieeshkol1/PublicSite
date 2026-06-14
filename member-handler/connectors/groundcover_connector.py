@@ -95,6 +95,7 @@ class GroundcoverConnector(ProviderConnector):
             'X-Backend-Id': 'groundcover',
             'Content-Type': 'application/json',
         }
+        import uuid as _uuid
         body = json.dumps({
             'conditions': [],
             'limit': 1,
@@ -102,6 +103,7 @@ class GroundcoverConnector(ProviderConnector):
             'skip': 0,
             'sortBy': 'rps',
             'sources': [],
+            'sessionId': str(_uuid.uuid4()),
         }).encode('utf-8')
 
         try:
