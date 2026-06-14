@@ -148,7 +148,23 @@ def generate_provider_invoices(member_email, account_id, provider_key):
     # used only to decide the final unavailable flag — it never aborts the loop.
     had_retrieval_error = False
 
+    # Time budget: abort the reporting window loop if we're approaching the
+    # API Gateway 29s timeout. This prevents OpenAI 429 retries from causing
+    # the entire refresh to time out with "Service Unavailable".
+    import time as _time
+    _loop_start = _time.time()
+    _TIME_BUDGET_SECONDS = 20  # Leave ~9s headroom for response shaping
+
     for month in _reporting_window():
+        # Check time budget before each month fetch
+        if _time.time() - _loop_start > _TIME_BUDGET_SECONDS:
+            logger.warning(
+                f"Aborting reporting window loop for provider '{provider_key}' "
+                f"account {account_id}: time budget ({_TIME_BUDGET_SECONDS}s) exceeded"
+            )
+            had_retrieval_error = True
+            break
+
         period = month['period']
         start_date = month['start_date']
         end_date = month['end_date']
