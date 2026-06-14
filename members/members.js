@@ -13881,7 +13881,13 @@ function _groupTokensByDateAndUser(tokenUsage, visibleUsers) {
         if (!dt) return;
         dateSet[dt] = true;
         var key = dt + '|' + uid;
-        byDateUser[key] = (byDateUser[key] || 0) + (r.input_tokens || 0) + (r.output_tokens || 0);
+        // Use cost_amount if available, otherwise estimate from tokens
+        var cost = parseFloat(r.cost_amount || 0);
+        if (!cost && (r.input_tokens || r.output_tokens)) {
+            // Rough estimate: $2.50/1M input + $10/1M output (GPT-4o average)
+            cost = ((r.input_tokens || 0) * 2.5 + (r.output_tokens || 0) * 10) / 1000000;
+        }
+        byDateUser[key] = (byDateUser[key] || 0) + cost;
     });
     var dates = Object.keys(dateSet).sort();
     var series = {};
@@ -13918,8 +13924,9 @@ function _renderPerUserSVG(grouped, userColors, visibleUsers) {
     // Y-axis grid
     for (var yi = 0; yi <= 5; yi++) {
         var yPos = (H - PAD) - (yi / 5 * chartH);
-        var yVal = Math.round(maxY * yi / 5);
-        svg += '<text x="' + (PADL - 8) + '" y="' + (yPos + 4) + '" text-anchor="end" font-size="12" font-weight="500" fill="#374151">' + _fmtTokens(yVal) + '</text>';
+        var yVal = maxY * yi / 5;
+        var yLabel = yVal >= 1000 ? '$' + (yVal / 1000).toFixed(1) + 'K' : '$' + yVal.toFixed(0);
+        svg += '<text x="' + (PADL - 8) + '" y="' + (yPos + 4) + '" text-anchor="end" font-size="12" font-weight="500" fill="#374151">' + yLabel + '</text>';
         svg += '<line x1="' + PADL + '" y1="' + yPos + '" x2="' + (W - 20) + '" y2="' + yPos + '" stroke="#e5e7eb" stroke-width="0.5"/>';
     }
 
@@ -13968,7 +13975,7 @@ function _renderPerUserTokenChart(data) {
     var grouped = _groupTokensByDateAndUser(tokenUsage, visibleUsers);
 
     var html = '<div class="openai-widget">';
-    html += '<div class="openai-widget-header"><h4>👥 Per-User Token Consumption</h4><span class="openai-widget-subtitle">Daily tokens (input + output) by user</span></div>';
+    html += '<div class="openai-widget-header"><h4>👥 Per-User Cost</h4><span class="openai-widget-subtitle">Estimated daily cost ($) by user</span></div>';
 
     // Filter area
     html += '<div id="peruser-token-filter-area" class="peruser-filter-area">';
