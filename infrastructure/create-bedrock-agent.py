@@ -12,7 +12,7 @@ import time
 REGION = 'us-east-1'
 ACCOUNT_ID = '991105135552'
 AGENT_NAME = 'SlashMyBill-FinOps-Agent'
-MODEL_ID = 'amazon.nova-2-lite-v1:0'
+MODEL_ID = 'amazon.nova-lite-v1:0'
 AGENT_ROLE_NAME = 'SlashMyBill-BedrockAgent-Role'
 
 bedrock_agent = boto3.client('bedrock-agent', region_name=REGION)
@@ -127,6 +127,18 @@ When answering questions:
 - Use bullet points for clarity
 - If you find optimization opportunities, explain the steps to implement them
 - Be concise but thorough
+
+ANSWER THE QUESTION THAT WAS ASKED (intent routing):
+- A direct spend question — "how much did I spend last month / this month / in <period>" —
+  asks for ONE period total plus the breakdown that explains it. Call getCostData,
+  then answer with: (1) the period total as a single headline figure, and
+  (2) the service-level breakdown (top services with their dollar amounts) that
+  sums to that total. Do NOT return a day-by-day or month-over-month comparison
+  unless the user explicitly asks to "compare", "trend", or names two periods.
+- Only use getMonthlyComparison when the user explicitly asks to compare periods
+  or about a trend. A single-period spend question is NOT a comparison.
+- Always include the service breakdown for any "how much / what did I spend"
+  question — a bare total without the contributing services is an incomplete answer.
 
 You have access to the member's AWS account via cross-account role assumption. Use the provided action group to gather real data before answering."""
 
