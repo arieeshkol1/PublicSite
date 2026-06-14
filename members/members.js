@@ -14410,18 +14410,20 @@ function _renderSpendBars(aggregated, data) {
         html += '<polyline points="' + pts.join(' ') + '" fill="none" stroke="#10b981" stroke-width="2.5" stroke-linejoin="round"/>';
         var baseY = PADT + chartH;
         var lastX = (PADL + (aggregated.length - 1) * stepX).toFixed(1);
-    html += '<polygon points="' + pts.join(' ') + ' ' + lastX + ',' + baseY + ' ' + PADL + ',' + baseY + '" fill="#10b981" opacity="0.1"/>';
+        html += '<polygon points="' + pts.join(' ') + ' ' + lastX + ',' + baseY + ' ' + PADL + ',' + baseY + '" fill="#10b981" opacity="0.1"/>';
 
-    // Dots on data points (only if < 15 points)
-    if (aggregated.length <= 14) {
-        aggregated.forEach(function(d, i) {
-            var x = PADL + i * stepX;
-            var y = PADT + chartH - ((d.cost || 0) / (maxCost || 1) * chartH);
-            html += '<circle cx="' + x.toFixed(1) + '" cy="' + y.toFixed(1) + '" r="3" fill="#10b981"/>';
-        });
+        // Dots on data points (only if < 15 points)
+        if (aggregated.length <= 14) {
+            aggregated.forEach(function(d, i) {
+                var x = PADL + i * stepX;
+                var y = PADT + chartH - ((d.cost || 0) / (maxCost || 1) * chartH);
+                html += '<circle cx="' + x.toFixed(1) + '" cy="' + y.toFixed(1) + '" r="3" fill="#10b981"/>';
+            });
+        }
+
+        html += '</svg>';
     }
 
-    html += '</svg>';
     return html;
 }
 
