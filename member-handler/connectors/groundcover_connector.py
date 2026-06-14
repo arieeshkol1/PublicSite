@@ -114,6 +114,8 @@ class GroundcoverConnector(ProviderConnector):
                 data=body,
             )
             response = urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT)
+            # GroundCover returns 200 even for HTML pages — check content-type
+            content_type = response.headers.get('Content-Type', '')
             if response.status == 200:
                 return {
                     'success': True,
@@ -125,9 +127,19 @@ class GroundcoverConnector(ProviderConnector):
                     'message': f'GroundCover returned status {response.status}.',
                 }
         except urllib.error.HTTPError as e:
+            # Read response body for error message
+            try:
+                err_body = e.read().decode('utf-8', errors='replace')[:200]
+            except Exception:
+                err_body = ''
+            if e.code in (401, 403):
+                return {
+                    'success': False,
+                    'message': f'Authentication failed (HTTP {e.code}). Check your API token.',
+                }
             return {
                 'success': False,
-                'message': f'GroundCover returned status {e.code}.',
+                'message': f'GroundCover returned status {e.code}. {err_body}'.strip()[:200],
             }
         except (urllib.error.URLError, OSError) as e:
             return {
