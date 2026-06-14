@@ -8152,17 +8152,48 @@ def handle_ai_query(event):
                 logger.warning(f"Pipeline failed, falling back to direct model: {e}")
 
         if len(account_ids) > 1:
-            # Route multi-account queries through Bedrock Agent
-            # Include ALL account IDs in the context so the agent calls tools for each
-            multi_context = f"[Multi-Account Query: accounts={','.join(account_ids)}] {ai_question}"
-            # Determine primary account: if the question explicitly mentions an openai-* account, use it
-            # Otherwise use the second account (platform account) as primary
-            primary_account = account_ids[1] if len(account_ids) > 1 else account_ids[0]
-            _q_lower = ai_question.lower()
-            for _aid in account_ids:
-                if _aid.startswith('openai-') and (_aid in _q_lower or 'openai' in _q_lower):
-                    primary_account = _aid
-                    break
+            # Split: handle non-AWS accounts from cache; send only AWS IDs to the agent
+            _nonaws_ids = [a for a in account_ids if not _aws_acct_re.match(a)]
+            _aws_ids = [a for a in account_ids if _aws_acct_re.match(a)]
+
+            # Answer OpenAI accounts from cached invoice data (fast, deterministic)
+            _nonaws_parts = []
+            for _naid in _nonaws_ids:
+                if _naid.lower().startswith('openai'):
+                    try:
+                        _oa_resp = _answer_openai_query(member_email, _naid, ai_question, interaction_id)
+                        _oa_body = json.loads(_oa_resp.get('body', '{}'))
+                        _oa_ans = _oa_body.get('answer', '')
+                        if _oa_ans:
+                            _nonaws_parts.append(f"**OpenAI ({_naid})**:\n{_oa_ans}")
+                    except Exception as _e:
+                        logger.warning(f"OpenAI cached answer for {_naid} in multi-account: {_e}")
+                        _nonaws_parts.append(f"**OpenAI ({_naid})**: cost data unavailable — open Invoices to refresh.")
+
+            # If no AWS accounts remain, return the non-AWS answers directly
+            if not _aws_ids:
+                _combined = "\n\n---\n\n".join(_nonaws_parts) if _nonaws_parts else (
+                    "No cost data available for the selected accounts.")
+                return create_response(200, {
+                    'answer': _combined,
+                    'interactionId': interaction_id,
+                    'commands': [],
+                    'results': [],
+                    'tipFound': False,
+                    'agentUsed': False,
+                    'chartData': [],
+                    'topServices': [],
+                })
+
+            # Route only AWS accounts through Bedrock Agent
+            multi_context = f"[Multi-Account Query: accounts={','.join(_aws_ids)}] {ai_question}"
+            # Determine primary account from AWS-only list
+            primary_account = _aws_ids[1] if len(_aws_ids) > 1 else _aws_ids[0]
+
+            # Prepend non-AWS answers (if any) to the agent's response context
+            if _nonaws_parts:
+                multi_context = "\n\n".join(_nonaws_parts) + "\n\n---\n\n" + multi_context
+
             return _invoke_bedrock_agent(multi_context, primary_account, member_email, interaction_id)
         else:
             # Route ALL single-account chat queries exclusively through Bedrock Agent
