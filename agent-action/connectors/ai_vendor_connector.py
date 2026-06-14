@@ -393,6 +393,126 @@ class AIVendorConnector(CloudConnector):
             "daily_costs": daily_costs,
         }
 
+    def fetch_per_user_daily_usage(
+        self,
+        api_key: str,
+        organization_id: str,
+        start_date: str,
+        end_date: str,
+    ) -> list[dict]:
+        """
+        Fetch per-user, per-model daily token consumption from the OpenAI
+        Organization Usage API.
+
+        Calls GET /v1/organization/usage/completions with group_by=user_id,
+        group_by=model, and bucket_width=1d. Handles pagination up to 100 pages.
+
+        Args:
+            api_key: OpenAI admin API key.
+            organization_id: OpenAI organization ID.
+            start_date: Start date as YYYY-MM-DD string (inclusive).
+            end_date: End date as YYYY-MM-DD string (exclusive).
+
+        Returns:
+            List of flat dicts with keys: date, user_id, model, input_tokens,
+            output_tokens, input_cached_tokens, num_model_requests.
+            Returns [] on any error (never raises).
+        """
+        try:
+            # Convert date strings to Unix timestamps (midnight UTC)
+            start_ts = int(
+                datetime.strptime(start_date, "%Y-%m-%d")
+                .replace(tzinfo=timezone.utc)
+                .timestamp()
+            )
+            end_ts = int(
+                datetime.strptime(end_date, "%Y-%m-%d")
+                .replace(tzinfo=timezone.utc)
+                .timestamp()
+            )
+
+            all_records: list[dict] = []
+            page_token: str | None = None
+            max_pages = 100
+
+            for page_num in range(max_pages):
+                # Build endpoint with pagination
+                endpoint = (
+                    f"/v1/organization/usage/completions"
+                    f"?group_by=user_id&group_by=model&bucket_width=1d"
+                    f"&start_time={start_ts}&end_time={end_ts}"
+                )
+                if page_token:
+                    endpoint += f"&page={page_token}"
+
+                try:
+                    response = self._make_openai_request(
+                        endpoint, api_key, organization_id
+                    )
+                except PermissionError:
+                    logger.warning(
+                        "OpenAI Usage API auth failed (401/403) during "
+                        "fetch_per_user_daily_usage"
+                    )
+                    return []
+                except RuntimeError as e:
+                    logger.warning(
+                        f"OpenAI Usage API error during fetch_per_user_daily_usage "
+                        f"(page {page_num}): {e}"
+                    )
+                    # On 5xx mid-pagination, return records collected so far
+                    return all_records
+
+                # Parse buckets from this page
+                for bucket in response.get("data", []):
+                    bucket_start = bucket.get("start_time")
+                    if bucket_start is None:
+                        continue
+                    # Convert epoch back to YYYY-MM-DD (UTC)
+                    date_str = datetime.fromtimestamp(
+                        int(bucket_start), tz=timezone.utc
+                    ).strftime("%Y-%m-%d")
+
+                    for result in bucket.get("results", []):
+                        record = {
+                            "date": date_str,
+                            "user_id": result.get("user_id") or "unknown",
+                            "model": result.get("model") or "unknown",
+                            "input_tokens": max(
+                                0, int(result.get("input_tokens") or 0)
+                            ),
+                            "output_tokens": max(
+                                0, int(result.get("output_tokens") or 0)
+                            ),
+                            "input_cached_tokens": max(
+                                0, int(result.get("input_cached_tokens") or 0)
+                            ),
+                            "num_model_requests": max(
+                                0, int(result.get("num_model_requests") or 0)
+                            ),
+                        }
+                        all_records.append(record)
+
+                # Check pagination
+                if not response.get("has_more"):
+                    break
+                page_token = response.get("next_page")
+                if not page_token:
+                    break
+            else:
+                # Reached max_pages cap
+                logger.warning(
+                    f"fetch_per_user_daily_usage hit pagination cap of {max_pages} pages"
+                )
+
+            return all_records
+
+        except Exception as e:
+            logger.warning(
+                f"fetch_per_user_daily_usage failed unexpectedly: {e}"
+            )
+            return []
+
     def _fetch_openai_usage_fallback(
         self, api_key: str, organization_id: str,
         start_date: str, end_date: str

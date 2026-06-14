@@ -25,6 +25,7 @@ Decrypted secrets live only in local variables and are never returned, stored, o
 """
 
 import os
+import time
 import logging
 import calendar
 from datetime import datetime, timezone, timedelta
@@ -55,6 +56,7 @@ logger = logging.getLogger()
 # Account records live in the same MemberPortal-Accounts table the rest of the
 # portal reads from; the env var override mirrors invoice_drilldown.py.
 ACCOUNTS_TABLE_NAME = os.environ.get('ACCOUNTS_TABLE_NAME', 'MemberPortal-Accounts')
+INVOICES_TABLE_NAME = os.environ.get('INVOICES_TABLE_NAME', 'MemberPortal-Invoices')
 
 # ─── Shared constants ─────────────────────────────────────────────────────────
 
@@ -662,4 +664,101 @@ def generate_openai_service_breakdown(member_email, account_id, period):
         })
 
     rows.sort(key=lambda x: x['amount'], reverse=True)
+
+    # Enrich daily token usage after breakdown completes (Req 9.1, 9.4).
+    # Wrapped in try/except so enrichment failure never affects the breakdown
+    # return value (Req 9.2).
+    try:
+        enrich_api_key = auth_context.get('api_key', '')
+        enrich_org_id = auth_context.get('org_name', '') or credentials.get('org_name', '')
+        if enrich_api_key:
+            enrich_count = _enrich_daily_token_usage(
+                member_email, account_id, enrich_api_key, enrich_org_id, period
+            )
+            logger.debug(
+                f"Daily token enrichment for account {account_id} period {period}: "
+                f"{enrich_count} records written"
+            )
+    except Exception as e:
+        logger.debug(
+            f"Daily token enrichment skipped for account {account_id} period {period}: "
+            f"{type(e).__name__}: {e}"
+        )
+
     return rows
+
+
+# ─── Per-user daily token usage enrichment ─────────────────────────────────────
+
+def _enrich_daily_token_usage(member_email, account_id, api_key, organization_id, period):
+    """Fetch per-user daily token usage from OpenAI and persist to DynamoDB.
+
+    Calls the AIVendorConnector's fetch_per_user_daily_usage method to retrieve
+    per-user, per-model, per-day token consumption, then batch-writes the records
+    to the MemberPortal-Invoices table as DAILY# sort-key entries.
+
+    Args:
+        member_email: The authenticated member's email.
+        account_id: The OpenAI account identifier.
+        api_key: Decrypted OpenAI admin API key.
+        organization_id: OpenAI organization ID.
+        period: Billing period as a 'YYYY-MM' string.
+
+    Returns:
+        Integer count of records written. Returns 0 on any failure (never raises).
+    """
+    try:
+        # Parse period into start_date and end_date
+        year_val = int(period[:4])
+        month_val = int(period[5:7])
+        start_date = f'{year_val:04d}-{month_val:02d}-01'
+
+        # Compute first day of NEXT month, handling December→January roll
+        if month_val == 12:
+            end_date = f'{year_val + 1:04d}-01-01'
+        else:
+            end_date = f'{year_val:04d}-{month_val + 1:02d}-01'
+
+        # Instantiate connector and fetch per-user daily usage
+        from connectors.ai_vendor_connector import AIVendorConnector
+        connector = AIVendorConnector()
+        records = connector.fetch_per_user_daily_usage(
+            api_key, organization_id, start_date, end_date
+        )
+
+        # If no records returned, skip DynamoDB writes
+        if not records:
+            return 0
+
+        # Batch-write records to MemberPortal-Invoices
+        table = boto3.resource('dynamodb').Table(INVOICES_TABLE_NAME)
+        pk = f'{member_email}#{account_id}'
+        ttl_value = int(time.time()) + 2_592_000  # 30 days
+
+        written_count = 0
+        with table.batch_writer() as batch:
+            for record in records:
+                sk = f"DAILY#{record['date']}#{record['user_id']}#{record['model']}"
+                batch.put_item(Item={
+                    'pk': pk,
+                    'sk': sk,
+                    'input_tokens': record['input_tokens'],
+                    'output_tokens': record['output_tokens'],
+                    'input_cached_tokens': record['input_cached_tokens'],
+                    'num_model_requests': record['num_model_requests'],
+                    'date': record['date'],
+                    'user_id': record['user_id'],
+                    'model': record['model'],
+                    'account_id': account_id,
+                    'ttl': ttl_value,
+                })
+                written_count += 1
+
+        return written_count
+
+    except Exception as e:
+        logger.warning(
+            f"_enrich_daily_token_usage failed for account {account_id} "
+            f"period {period}: {type(e).__name__}: {e}"
+        )
+        return 0
