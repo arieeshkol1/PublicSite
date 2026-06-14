@@ -13635,7 +13635,8 @@ var _openaiDashState = {
     granularity: 'daily',
     loading: false,
     error: null,
-    accountId: null
+    accountId: null,
+    selectedUsers: null
 };
 
 /**
@@ -13768,6 +13769,179 @@ async function _fetchOpenAIDashboardData(forceRefresh) {
     }
 }
 
+// ---- Per-User Token Consumption Chart ----
+var PER_USER_COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4', '#ec4899', '#84cc16'];
+
+function _extractUsersFromTokenUsage(tokenUsage) {
+    var seen = {};
+    (tokenUsage || []).forEach(function(r) {
+        var uid = (r.user_id || '').trim();
+        if (uid && uid !== 'unknown') seen[uid] = true;
+    });
+    return Object.keys(seen).sort();
+}
+
+function _groupTokensByDateAndUser(tokenUsage, visibleUsers) {
+    var visibleSet = {};
+    visibleUsers.forEach(function(u) { visibleSet[u] = true; });
+    var dateSet = {};
+    var byDateUser = {};
+    (tokenUsage || []).forEach(function(r) {
+        var uid = (r.user_id || '').trim();
+        if (!uid || uid === 'unknown' || !visibleSet[uid]) return;
+        var dt = r.date || '';
+        if (!dt) return;
+        dateSet[dt] = true;
+        var key = dt + '|' + uid;
+        byDateUser[key] = (byDateUser[key] || 0) + (r.input_tokens || 0) + (r.output_tokens || 0);
+    });
+    var dates = Object.keys(dateSet).sort();
+    var series = {};
+    visibleUsers.forEach(function(uid) {
+        series[uid] = dates.map(function(dt) { return byDateUser[dt + '|' + uid] || 0; });
+    });
+    return { dates: dates, series: series };
+}
+
+function _assignUserColors(users) {
+    var map = {};
+    users.forEach(function(u, i) { map[u] = PER_USER_COLORS[i % PER_USER_COLORS.length]; });
+    return map;
+}
+
+function _renderPerUserSVG(grouped, userColors, visibleUsers) {
+    if (!visibleUsers.length || !grouped.dates.length) {
+        return '<div style="text-align:center;padding:30px;color:#6b7280;">Select at least one user to display the chart.</div>';
+    }
+    var dates = grouped.dates, series = grouped.series;
+    var maxY = 0;
+    visibleUsers.forEach(function(uid) {
+        (series[uid] || []).forEach(function(v) { if (v > maxY) maxY = v; });
+    });
+    if (maxY === 0) maxY = 1;
+    maxY *= 1.1;
+
+    var W = 960, H = 300, PADL = 80, PAD = 55, PADT = 20;
+    var chartW = W - PADL - 20, chartH = H - PAD - PADT;
+    var stepX = dates.length > 1 ? chartW / (dates.length - 1) : chartW;
+
+    var svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;min-width:600px;height:300px;" preserveAspectRatio="xMidYMid meet">';
+
+    // Y-axis grid
+    for (var yi = 0; yi <= 5; yi++) {
+        var yPos = (H - PAD) - (yi / 5 * chartH);
+        var yVal = Math.round(maxY * yi / 5);
+        svg += '<text x="' + (PADL - 8) + '" y="' + (yPos + 4) + '" text-anchor="end" font-size="12" font-weight="500" fill="#374151">' + _fmtTokens(yVal) + '</text>';
+        svg += '<line x1="' + PADL + '" y1="' + yPos + '" x2="' + (W - 20) + '" y2="' + yPos + '" stroke="#e5e7eb" stroke-width="0.5"/>';
+    }
+
+    // X-axis labels
+    var labelEvery = dates.length <= 7 ? 1 : Math.max(1, Math.floor(dates.length / 8));
+    dates.forEach(function(d, i) {
+        if (i % labelEvery === 0 || i === dates.length - 1) {
+            var x = PADL + i * stepX;
+            var parts = d.split('-');
+            var label = parts.length === 3 ? parts[2] + '-' + parts[1] : '';
+            svg += '<text x="' + x + '" y="' + (H - 10) + '" text-anchor="middle" font-size="12" font-weight="500" fill="#374151">' + label + '</text>';
+        }
+    });
+
+    // Polylines
+    visibleUsers.forEach(function(uid) {
+        var pts = [];
+        (series[uid] || []).forEach(function(val, i) {
+            var x = PADL + i * stepX;
+            var y = (H - PAD) - (val / maxY * chartH);
+            pts.push(x.toFixed(1) + ',' + y.toFixed(1));
+        });
+        if (pts.length) {
+            svg += '<polyline points="' + pts.join(' ') + '" fill="none" stroke="' + (userColors[uid] || '#6366f1') + '" stroke-width="2.5" stroke-linejoin="round"/>';
+        }
+    });
+
+    svg += '</svg>';
+    return svg;
+}
+
+function _renderPerUserTokenChart(data) {
+    var tokenUsage = data.token_usage || data.tokenUsage || [];
+    var allUsers = _extractUsersFromTokenUsage(tokenUsage);
+
+    if (!allUsers.length) {
+        return '<div class="openai-widget">' +
+            '<div class="openai-widget-header"><h4>👥 Per-User Token Consumption</h4></div>' +
+            '<div class="openai-widget-empty">No per-user data available.</div></div>';
+    }
+
+    var visibleUsers = _openaiDashState.perUserVisible || allUsers.slice();
+    if (!_openaiDashState.perUserVisible) _openaiDashState.perUserVisible = allUsers.slice();
+    var userColors = _assignUserColors(allUsers);
+    var grouped = _groupTokensByDateAndUser(tokenUsage, visibleUsers);
+
+    var html = '<div class="openai-widget">';
+    html += '<div class="openai-widget-header"><h4>👥 Per-User Token Consumption</h4><span class="openai-widget-subtitle">Daily tokens (input + output) by user</span></div>';
+
+    // Filter area
+    html += '<div id="peruser-token-filter-area" class="peruser-filter-area">';
+    html += '<div class="peruser-filter-actions">';
+    html += '<button id="peruser-select-all" class="btn btn-outline btn-sm" style="font-size:0.78em;padding:3px 8px;">Select All</button>';
+    html += '<button id="peruser-deselect-all" class="btn btn-outline btn-sm" style="font-size:0.78em;padding:3px 8px;">Deselect All</button>';
+    html += '</div>';
+    html += '<div class="peruser-filter-checkboxes">';
+    allUsers.forEach(function(uid) {
+        var checked = visibleUsers.indexOf(uid) >= 0 ? ' checked' : '';
+        var color = userColors[uid];
+        var shortId = uid.length > 20 ? uid.substring(0, 18) + '…' : uid;
+        html += '<label class="peruser-cb-label" title="' + ea(uid) + '">';
+        html += '<input type="checkbox" class="peruser-cb" value="' + ea(uid) + '"' + checked + '>';
+        html += '<span class="peruser-color-dot" style="background:' + color + ';"></span>';
+        html += '<span>' + esc(shortId) + '</span>';
+        html += '</label>';
+    });
+    html += '</div></div>';
+
+    // Chart SVG
+    html += '<div id="peruser-token-chart-svg" style="width:100%;overflow-x:auto;">';
+    html += _renderPerUserSVG(grouped, userColors, visibleUsers);
+    html += '</div>';
+
+    html += '</div>';
+    return html;
+}
+
+function _wirePerUserTokenFilter(data) {
+    var filterArea = document.getElementById('peruser-token-filter-area');
+    if (!filterArea) return;
+
+    var tokenUsage = data.token_usage || data.tokenUsage || [];
+    var allUsers = _extractUsersFromTokenUsage(tokenUsage);
+    var userColors = _assignUserColors(allUsers);
+
+    function _reRenderPerUserSVG() {
+        var checked = [];
+        filterArea.querySelectorAll('.peruser-cb:checked').forEach(function(cb) { checked.push(cb.value); });
+        _openaiDashState.perUserVisible = checked;
+        var grouped = _groupTokensByDateAndUser(tokenUsage, checked);
+        var svgArea = document.getElementById('peruser-token-chart-svg');
+        if (svgArea) svgArea.innerHTML = _renderPerUserSVG(grouped, userColors, checked);
+    }
+
+    filterArea.addEventListener('change', function(e) {
+        if (e.target.classList.contains('peruser-cb')) _reRenderPerUserSVG();
+    });
+
+    var selectAllBtn = document.getElementById('peruser-select-all');
+    var deselectAllBtn = document.getElementById('peruser-deselect-all');
+    if (selectAllBtn) selectAllBtn.onclick = function() {
+        filterArea.querySelectorAll('.peruser-cb').forEach(function(cb) { cb.checked = true; });
+        _reRenderPerUserSVG();
+    };
+    if (deselectAllBtn) deselectAllBtn.onclick = function() {
+        filterArea.querySelectorAll('.peruser-cb').forEach(function(cb) { cb.checked = false; });
+        _reRenderPerUserSVG();
+    };
+}
+
 /**
  * Render all 6 dashboard sections using loaded data
  */
@@ -13781,6 +13955,11 @@ function _renderOpenAIDashboardSections() {
     // Section 1: Token Usage Time-Series (Task 14.1)
     html += '<div id="openai-section-tokens" class="openai-dash-section">';
     html += _renderTokenUsageChart(data);
+    html += '</div>';
+
+    // Section: Per-User Token Consumption
+    html += '<div id="openai-section-peruser-token" class="openai-dash-section">';
+    html += _renderPerUserTokenChart(data);
     html += '</div>';
 
     // Section 2: Cost by Model (Task 14.2)
@@ -13818,10 +13997,21 @@ function _renderOpenAIDashboardSections() {
         html += '</div>';
     }
 
+    // Section 7: Per-User Daily Consumption (Token + Cost breakdown by user)
+    html += '<div id="openai-section-peruser" class="openai-dash-section">';
+    html += _renderPerUserConsumptionChart(data);
+    html += '</div>';
+
     contentEl.innerHTML = html;
 
     // Wire up granularity toggle buttons
     _wireGranularityToggle();
+
+    // Wire up per-user token filter
+    _wirePerUserTokenFilter(data);
+
+    // Wire up per-user filter
+    _wirePerUserFilter(data);
 }
 
 // ---- Task 14.1: Token Usage Time-Series (Line Chart) ----
@@ -14118,6 +14308,221 @@ function _wireGranularityToggle() {
             if (barsEl) barsEl.innerHTML = _renderSpendBars(aggregated);
         };
     });
+}
+
+// ---- Section 7: Per-User Daily Consumption ----
+function _renderPerUserConsumptionChart(data) {
+    var records = data.per_user_daily || [];
+    if (!records.length) {
+        return '<div class="openai-widget">' +
+            '<div class="openai-widget-header"><h4>👥 Per-User Token Consumption</h4></div>' +
+            '<div class="openai-widget-empty">No per-user consumption data available. Data appears once the daily enrichment pipeline runs.</div></div>';
+    }
+
+    // Extract unique users
+    var usersSet = {};
+    records.forEach(function(r) { if (r.user_id) usersSet[r.user_id] = true; });
+    var allUsers = Object.keys(usersSet).sort();
+
+    // Determine selected users (default: all)
+    var selectedUsers = _openaiDashState.selectedUsers || allUsers;
+
+    // Aggregate per user per day
+    var aggregated = _aggregatePerUserData(records, selectedUsers);
+
+    var html = '<div class="openai-widget">';
+    html += '<div class="openai-widget-header" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">';
+    html += '<h4>👥 Per-User Token Consumption</h4>';
+    html += '<div style="display:flex;align-items:center;gap:6px;">';
+    html += '<label for="peruser-filter" style="font-size:0.82em;color:#6b7280;">Filter users:</label>';
+    html += '<select id="peruser-filter" multiple style="padding:4px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:0.82em;background:#fff;min-width:160px;max-width:300px;height:auto;max-height:90px;">';
+    allUsers.forEach(function(u) {
+        var sel = selectedUsers.indexOf(u) >= 0 ? ' selected' : '';
+        html += '<option value="' + esc(u) + '"' + sel + '>' + esc(u) + '</option>';
+    });
+    html += '</select>';
+    html += '</div>';
+    html += '</div>';
+
+    // Chart area (re-rendered on filter change)
+    html += '<div id="peruser-chart-area">';
+    html += _renderPerUserBarsAndTable(aggregated);
+    html += '</div>';
+
+    html += '</div>';
+    return html;
+}
+
+function _aggregatePerUserData(records, selectedUsers) {
+    // Aggregate: per user per day sums, and per-user totals
+    var byUserDate = {}; // { user_id: { date: {input, output, requests} } }
+    var userTotals = {}; // { user_id: {input, output, requests} }
+
+    records.forEach(function(r) {
+        var uid = r.user_id || 'unknown';
+        if (selectedUsers.indexOf(uid) < 0) return;
+
+        var d = r.date || '';
+        if (!d) return;
+
+        if (!byUserDate[uid]) byUserDate[uid] = {};
+        if (!byUserDate[uid][d]) byUserDate[uid][d] = { input: 0, output: 0, requests: 0 };
+        byUserDate[uid][d].input += parseInt(r.input_tokens || 0, 10);
+        byUserDate[uid][d].output += parseInt(r.output_tokens || 0, 10);
+        byUserDate[uid][d].requests += parseInt(r.num_model_requests || 0, 10);
+
+        if (!userTotals[uid]) userTotals[uid] = { input: 0, output: 0, requests: 0 };
+        userTotals[uid].input += parseInt(r.input_tokens || 0, 10);
+        userTotals[uid].output += parseInt(r.output_tokens || 0, 10);
+        userTotals[uid].requests += parseInt(r.num_model_requests || 0, 10);
+    });
+
+    // Build sorted date list across all selected users
+    var datesSet = {};
+    Object.keys(byUserDate).forEach(function(uid) {
+        Object.keys(byUserDate[uid]).forEach(function(d) { datesSet[d] = true; });
+    });
+    var dates = Object.keys(datesSet).sort();
+
+    // Build daily totals (sum across selected users per date)
+    var dailyTotals = dates.map(function(d) {
+        var inp = 0, outp = 0;
+        Object.keys(byUserDate).forEach(function(uid) {
+            if (byUserDate[uid][d]) {
+                inp += byUserDate[uid][d].input;
+                outp += byUserDate[uid][d].output;
+            }
+        });
+        return { date: d, input: inp, output: outp };
+    });
+
+    // User totals sorted by total tokens desc
+    var sortedUsers = Object.keys(userTotals).sort(function(a, b) {
+        return (userTotals[b].input + userTotals[b].output) - (userTotals[a].input + userTotals[a].output);
+    });
+
+    return { dailyTotals: dailyTotals, userTotals: userTotals, sortedUsers: sortedUsers, dates: dates };
+}
+
+function _renderPerUserBarsAndTable(agg) {
+    var html = '';
+    var dailyTotals = agg.dailyTotals;
+    var userTotals = agg.userTotals;
+    var sortedUsers = agg.sortedUsers;
+
+    if (!dailyTotals.length) {
+        html += '<div class="openai-widget-empty">No data for selected users.</div>';
+        return html;
+    }
+
+    // --- Stacked bar chart (SVG) ---
+    var W = 960, H = 300, PAD = 55, PADL = 80, PADT = 20;
+    var chartW = W - PADL - 20, chartH = H - PAD - PADT;
+    var barCount = dailyTotals.length;
+    var barGap = Math.max(2, Math.floor(chartW / barCount * 0.15));
+    var barW = Math.max(4, Math.floor((chartW - barGap * barCount) / barCount));
+
+    var maxY = 1;
+    dailyTotals.forEach(function(d) {
+        var total = d.input + d.output;
+        if (total > maxY) maxY = total;
+    });
+    maxY = maxY * 1.1; // 10% headroom
+
+    html += '<div class="openai-chart-legend" style="margin-bottom:8px;">';
+    html += '<span class="openai-legend-item"><span class="openai-legend-dot" style="background:#6366f1;"></span> Input Tokens</span>';
+    html += '<span class="openai-legend-item"><span class="openai-legend-dot" style="background:#f59e0b;"></span> Output Tokens</span>';
+    html += '</div>';
+    html += '<div style="width:100%;overflow-x:auto;">';
+    html += '<svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;min-width:600px;height:300px;" preserveAspectRatio="xMidYMid meet">';
+
+    // Y-axis grid lines and labels
+    for (var yi = 0; yi <= 5; yi++) {
+        var yPos = (H - PAD) - (yi / 5 * chartH);
+        var yVal = Math.round(maxY * yi / 5);
+        html += '<text x="' + (PADL - 8) + '" y="' + (yPos + 4) + '" text-anchor="end" font-size="12" font-weight="500" fill="#374151">' + _fmtTokens(yVal) + '</text>';
+        html += '<line x1="' + PADL + '" y1="' + yPos + '" x2="' + (W - 20) + '" y2="' + yPos + '" stroke="#e5e7eb" stroke-width="0.5"/>';
+    }
+
+    // Bars
+    dailyTotals.forEach(function(d, i) {
+        var x = PADL + i * (barW + barGap) + barGap / 2;
+        var inputH = d.input / maxY * chartH;
+        var outputH = d.output / maxY * chartH;
+        var baseY = H - PAD;
+
+        // Input tokens (bottom, indigo)
+        if (inputH > 0) {
+            html += '<rect x="' + x + '" y="' + (baseY - inputH) + '" width="' + barW + '" height="' + inputH.toFixed(1) + '" fill="#6366f1" rx="2"/>';
+        }
+        // Output tokens (top, amber)
+        if (outputH > 0) {
+            html += '<rect x="' + x + '" y="' + (baseY - inputH - outputH) + '" width="' + barW + '" height="' + outputH.toFixed(1) + '" fill="#f59e0b" rx="2"/>';
+        }
+    });
+
+    // X-axis labels — show every Nth label to avoid overlap
+    var labelEvery = barCount <= 7 ? 1 : Math.max(1, Math.floor(barCount / 8));
+    dailyTotals.forEach(function(d, i) {
+        if (i % labelEvery === 0 || i === barCount - 1) {
+            var x = PADL + i * (barW + barGap) + barGap / 2 + barW / 2;
+            var parts = d.date ? d.date.split('-') : [];
+            var label = parts.length === 3 ? parts[2] + '-' + parts[1] : '';
+            html += '<text x="' + x + '" y="' + (H - 10) + '" text-anchor="middle" font-size="12" font-weight="500" fill="#374151">' + label + '</text>';
+        }
+    });
+
+    html += '</svg></div>';
+
+    // --- Summary table ---
+    html += '<div style="margin-top:16px;overflow-x:auto;">';
+    html += '<table style="width:100%;border-collapse:collapse;font-size:0.85em;">';
+    html += '<thead><tr style="border-bottom:2px solid #e5e7eb;text-align:left;">';
+    html += '<th style="padding:8px 12px;color:#374151;">User ID</th>';
+    html += '<th style="padding:8px 12px;color:#374151;text-align:right;">Input Tokens</th>';
+    html += '<th style="padding:8px 12px;color:#374151;text-align:right;">Output Tokens</th>';
+    html += '<th style="padding:8px 12px;color:#374151;text-align:right;">Est. Cost</th>';
+    html += '<th style="padding:8px 12px;color:#374151;text-align:right;">Requests</th>';
+    html += '</tr></thead><tbody>';
+
+    sortedUsers.forEach(function(uid) {
+        var t = userTotals[uid];
+        var estCost = (t.input * 0.000003 + t.output * 0.000015);
+        html += '<tr style="border-bottom:1px solid #f3f4f6;">';
+        html += '<td style="padding:8px 12px;color:#1f2937;font-family:monospace;font-size:0.92em;">' + esc(uid) + '</td>';
+        html += '<td style="padding:8px 12px;text-align:right;color:#6366f1;font-weight:500;">' + _fmtTokens(t.input) + '</td>';
+        html += '<td style="padding:8px 12px;text-align:right;color:#f59e0b;font-weight:500;">' + _fmtTokens(t.output) + '</td>';
+        html += '<td style="padding:8px 12px;text-align:right;color:#1f2937;">$' + estCost.toFixed(2) + '</td>';
+        html += '<td style="padding:8px 12px;text-align:right;color:#6b7280;">' + _fmtTokens(t.requests) + '</td>';
+        html += '</tr>';
+    });
+
+    html += '</tbody></table></div>';
+    return html;
+}
+
+function _wirePerUserFilter(data) {
+    var filterEl = document.getElementById('peruser-filter');
+    if (!filterEl) return;
+
+    filterEl.onchange = function() {
+        var selected = [];
+        for (var i = 0; i < filterEl.options.length; i++) {
+            if (filterEl.options[i].selected) selected.push(filterEl.options[i].value);
+        }
+        _openaiDashState.selectedUsers = selected.length > 0 ? selected : null;
+
+        // Re-aggregate and re-render just the chart area
+        var records = (data.per_user_daily || []);
+        var allUsers = [];
+        var usersSet = {};
+        records.forEach(function(r) { if (r.user_id) usersSet[r.user_id] = true; });
+        allUsers = Object.keys(usersSet).sort();
+        var activeUsers = _openaiDashState.selectedUsers || allUsers;
+        var aggregated = _aggregatePerUserData(records, activeUsers);
+        var chartArea = document.getElementById('peruser-chart-area');
+        if (chartArea) chartArea.innerHTML = _renderPerUserBarsAndTable(aggregated);
+    };
 }
 
 // ---- Task 14.4: Cost per Project Table ----

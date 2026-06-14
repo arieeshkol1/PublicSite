@@ -1951,3 +1951,42 @@
     background: #1e40af;
     transform: scale(0.98);
 }
+
+/* ============================================================
+   Per-User Token Chart Filter
+   ============================================================ */
+.peruser-filter-area {
+    padding: 10px 0 14px;
+    border-bottom: 1px solid #e5e7eb;
+    margin-bottom: 14px;
+}
+.peruser-filter-actions {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+.peruser-filter-checkboxes {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px 16px;
+}
+.peruser-cb-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    cursor: pointer;
+    font-size: 0.85em;
+    color: #374151;
+}
+.peruser-cb-label input[type="checkbox"] {
+    width: 14px;
+    height: 14px;
+    cursor: pointer;
+}
+.peruser-color-dot {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
