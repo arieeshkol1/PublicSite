@@ -7876,6 +7876,171 @@ def _inline_audit_score(question, answer):
         return {'score': 100, 'can_improve': False, 'improvement': '', 'guiding_questions': []}
 
 
+# ─── OpenAI in-chat cost analysis (non-agent path) ───────────────────────────
+# OpenAI accounts can't use the AWS Bedrock agent (AWS-only action group), so we
+# answer cost/comparison questions directly from the same cached per-model data
+# the Invoices drill-down uses (cache-first, bounded live fallback).
+
+_OPENAI_MONTH_NAMES = {
+    'january': 1, 'february': 2, 'march': 3, 'april': 4, 'may': 5, 'june': 6,
+    'july': 7, 'august': 8, 'september': 9, 'october': 10, 'november': 11,
+    'december': 12, 'jan': 1, 'feb': 2, 'mar': 3, 'apr': 4, 'jun': 6, 'jul': 7,
+    'aug': 8, 'sep': 9, 'sept': 9, 'oct': 10, 'nov': 11, 'dec': 12,
+}
+
+
+def _parse_periods_from_question(question, now=None):
+    """Extract up to two YYYY-MM periods referenced in a question.
+
+    Recognises explicit YYYY-MM, month names (year inferred — a month after the
+    current month is treated as last year), and relative 'last/this month'.
+    Returns a chronologically sorted, de-duplicated list (possibly empty).
+    """
+    now = now or datetime.now(timezone.utc)
+    q = (question or '').lower()
+    periods = set()
+
+    for y, m in re.findall(r'\b(20\d{2})-(0[1-9]|1[0-2])\b', q):
+        periods.add(f"{y}-{m}")
+
+    for name, mon in _OPENAI_MONTH_NAMES.items():
+        if re.search(r'\b' + name + r'\b', q):
+            year = now.year if mon <= now.month else now.year - 1
+            periods.add(f"{year:04d}-{mon:02d}")
+
+    def _shift(year, month, delta):
+        idx = year * 12 + (month - 1) + delta
+        return idx // 12, idx % 12 + 1
+
+    if 'last month' in q or 'previous month' in q:
+        y, mn = _shift(now.year, now.month, -1)
+        periods.add(f"{y:04d}-{mn:02d}")
+    if 'this month' in q or 'current month' in q:
+        periods.add(f"{now.year:04d}-{now.month:02d}")
+
+    return sorted(periods)
+
+
+def _openai_period_data(member_email, account_id, period):
+    """Return (total, services) for one OpenAI period, cache-first.
+
+    Reads the invoice drill-down service cache first; on miss, generates the
+    per-model breakdown for just that one month (bounded) and best-effort caches
+    it. Never raises — returns (0.0, []) on failure.
+    """
+    services = None
+    try:
+        import invoice_drilldown as _idd
+        services = _idd._read_service_cache(member_email, account_id, period)
+    except Exception:
+        services = None
+
+    if not services:
+        try:
+            from provider_invoices import generate_openai_service_breakdown
+            services = generate_openai_service_breakdown(member_email, account_id, period) or []
+            if services:
+                try:
+                    import invoice_drilldown as _idd
+                    _idd._write_service_cache(member_email, account_id, period, services)
+                except Exception:
+                    pass
+        except Exception as e:
+            logger.warning(f"OpenAI breakdown failed for {account_id} {period}: {type(e).__name__}: {e}")
+            services = []
+
+    total = round(sum(float(s.get('amount', 0) or 0) for s in services), 2)
+    return total, services
+
+
+def _openai_period_label(period):
+    y, m = period.split('-')
+    return datetime(int(y), int(m), 1).strftime('%B %Y')
+
+
+def _answer_openai_query(member_email, account_id, question, interaction_id):
+    """Build an in-chat answer for an OpenAI account from cached per-model data.
+
+    Single period  -> total + per-model breakdown.
+    Two periods    -> comparison with delta and the top per-model drivers.
+    No period found -> defaults to the previous calendar month.
+    Mirrors the AWS chat surface (headline total + breakdown). Tax is excluded
+    (OpenAI exposes usage cost only).
+    """
+    now = datetime.now(timezone.utc)
+    periods = _parse_periods_from_question(question, now=now)
+    if not periods:
+        idx = now.year * 12 + (now.month - 1) - 1
+        periods = [f"{idx // 12:04d}-{idx % 12 + 1:02d}"]
+    periods = periods[:2]
+
+    data = {p: _openai_period_data(member_email, account_id, p) for p in periods}
+    lines = []
+
+    if len(periods) == 1:
+        p = periods[0]
+        total, services = data[p]
+        if total <= 0 and not services:
+            answer = (f"No OpenAI usage cost is recorded for {_openai_period_label(p)} "
+                      f"on this account.")
+        else:
+            lines.append(
+                f"Your OpenAI usage cost for **{_openai_period_label(p)}** was "
+                f"**${total:,.2f}** (usage only, excludes tax).")
+            top = sorted(services, key=lambda s: float(s.get('amount', 0) or 0), reverse=True)[:8]
+            if top:
+                lines.append("\n| Model / line item | Cost | % |")
+                lines.append("|---|---|---|")
+                for s in top:
+                    amt = float(s.get('amount', 0) or 0)
+                    pct = float(s.get('percentage', 0) or 0)
+                    lines.append(f"| {s.get('serviceName', '')} | ${amt:,.2f} | {pct:.1f}% |")
+            answer = "\n".join(lines)
+    else:
+        p1, p2 = periods[0], periods[1]
+        t1, s1 = data[p1]
+        t2, s2 = data[p2]
+        delta = round(t2 - t1, 2)
+        pct = (delta / t1 * 100) if t1 > 0 else 0.0
+        direction = "more" if delta > 0 else ("less" if delta < 0 else "the same")
+        headline = (
+            f"Your OpenAI usage cost went from **${t1:,.2f}** in "
+            f"{_openai_period_label(p1)} to **${t2:,.2f}** in "
+            f"{_openai_period_label(p2)} — ${abs(delta):,.2f} {direction}")
+        headline += f" ({pct:+.1f}%)." if t1 > 0 else "."
+        lines.append(headline)
+
+        m1 = {s.get('serviceName', ''): float(s.get('amount', 0) or 0) for s in s1}
+        m2 = {s.get('serviceName', ''): float(s.get('amount', 0) or 0) for s in s2}
+        keys = set(m1) | set(m2)
+        diffs = sorted(((k, m2.get(k, 0.0) - m1.get(k, 0.0)) for k in keys),
+                       key=lambda kv: abs(kv[1]), reverse=True)
+        movers = [d for d in diffs if abs(d[1]) >= 0.01][:6]
+        if movers:
+            lines.append(f"\nTop drivers of the change:")
+            lines.append(f"\n| Model / line item | {_openai_period_label(p1)} | "
+                         f"{_openai_period_label(p2)} | Change |")
+            lines.append("|---|---|---|---|")
+            for k, dv in movers:
+                sign = '+' if dv >= 0 else '-'
+                lines.append(f"| {k} | ${m1.get(k, 0):,.2f} | ${m2.get(k, 0):,.2f} | {sign}${abs(dv):,.2f} |")
+            k0, dv0 = movers[0]
+            lines.append(f"\nThe largest driver was **{k0}** "
+                         f"({'+' if dv0 >= 0 else '-'}${abs(dv0):,.2f}).")
+        answer = "\n".join(lines)
+
+    return create_response(200, {
+        'answer': answer,
+        'interactionId': interaction_id,
+        'commands': ['OpenAI cost analysis (cached invoice data)'],
+        'results': [],
+        'tipFound': False,
+        'agentUsed': False,
+        'chartData': [],
+        'topServices': [],
+    })
+
+
 @transaction_log('member-handler')
 def handle_ai_query(event):
     """Handle natural language questions â€” uses Bedrock Agent or falls back to direct model API."""
@@ -7927,6 +8092,44 @@ def handle_ai_query(event):
     ai_question = question
     if tag_key and tag_value:
         ai_question = f"[FILTER ACTIVE: Showing data filtered by tag {tag_key}={tag_value}] {question}"
+
+    # Non-AWS accounts are NOT served by the AWS-oriented Bedrock agent action
+    # group (its Cost Explorer / STS tool calls hang until the 27s cap). Handle
+    # them here instead of routing through the agent:
+    #   - OpenAI: answer in-chat from cached invoice/per-model data (same logic
+    #     surface as AWS — total + breakdown, or period comparison).
+    #   - Azure/GCP: no per-service cost source wired here yet, so redirect to
+    #     the Invoices view.
+    # AWS accounts (12-digit IDs) are unaffected.
+    _aws_acct_re = re.compile(r'^\d{12}$')
+    if account_ids and all(not _aws_acct_re.match(a) for a in account_ids):
+        _single = account_ids[0] if len(account_ids) == 1 else None
+        if _single and _single.lower().startswith('openai'):
+            try:
+                # Bound the work so a cold (uncached) multi-month fetch can never
+                # ride to the API Gateway 29s limit — fall back to the redirect.
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as _ex:
+                    _fut = _ex.submit(
+                        _answer_openai_query, member_email, _single, ai_question, interaction_id)
+                    return _fut.result(timeout=20)
+            except concurrent.futures.TimeoutError:
+                logger.warning(f"OpenAI chat answer timed out for {_single}; redirecting")
+            except Exception as e:
+                logger.warning(f"OpenAI chat answer failed for {_single} ({type(e).__name__}: {e}); redirecting")
+        return create_response(200, {
+            'answer': (
+                "AI-chat analysis for this account isn't available yet. Open the "
+                "Invoices view to see the month-by-month total and the "
+                "per-service breakdown from cached cost data."
+            ),
+            'interactionId': interaction_id,
+            'commands': [],
+            'results': [],
+            'tipFound': False,
+            'agentUsed': False,
+            'chartData': [],
+            'topServices': [],
+        })
 
     # Use a timeout to prevent API Gateway 29s timeout from returning 503
     def _run_ai_query():
@@ -8366,7 +8569,9 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
             collector=collector,
         )
         if not answer:
-            answer = 'The analysis is taking longer than expected. This can happen with complex queries or during high load. Please try again in a moment.'
+            answer = ("I couldn't generate a response for that question. Try "
+                      "rephrasing it — for example, ask about a specific service, "
+                      "cost, or time period.")
 
         # ═══════════════════════════════════════════════════════════════════
         # INLINE AUDIT QUALITY GATE — Score response before returning to user
@@ -8378,7 +8583,7 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
 
         # Skip gate for pre-computed answers (already accurate) or if disabled
         _skip_gate = not _gate_enabled or _svc_precomputed or is_forecast_question
-        if not _skip_gate and answer and not answer.startswith('The analysis is taking'):
+        if not _skip_gate and answer and not answer.startswith(('The analysis is taking', "I couldn't generate a response")):
             try:
                 _audit_result = _inline_audit_score(question, answer)
                 inline_audit_score = _audit_result.get('score', 100)

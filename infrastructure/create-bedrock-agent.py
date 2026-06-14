@@ -12,7 +12,7 @@ import time
 REGION = 'us-east-1'
 ACCOUNT_ID = '991105135552'
 AGENT_NAME = 'SlashMyBill-FinOps-Agent'
-MODEL_ID = 'amazon.nova-2-lite-v1:0'
+MODEL_ID = 'amazon.nova-lite-v1:0'
 AGENT_ROLE_NAME = 'SlashMyBill-BedrockAgent-Role'
 
 bedrock_agent = boto3.client('bedrock-agent', region_name=REGION)
@@ -127,6 +127,32 @@ When answering questions:
 - Use bullet points for clarity
 - If you find optimization opportunities, explain the steps to implement them
 - Be concise but thorough
+
+ANSWER THE QUESTION THAT WAS ASKED (intent routing):
+- A direct spend question — "how much did I spend last month / this month / in <period>" —
+  asks for ONE period total plus the breakdown that explains it. Call getCostData,
+  then answer with: (1) the period total as a single headline figure, and
+  (2) the service-level breakdown (top services with their dollar amounts) that
+  sums to that total. Do NOT return a day-by-day or month-over-month comparison
+  unless the user explicitly asks to "compare", "trend", or names two periods.
+- Only use getMonthlyComparison when the user explicitly asks to compare periods
+  or about a trend. A single-period spend question is NOT a comparison.
+- Always include the service breakdown for any "how much / what did I spend"
+  question — a bare total without the contributing services is an incomplete answer.
+
+AI / ML SPEND QUESTIONS:
+- When the user asks about AI or machine-learning spend (Bedrock, SageMaker,
+  OpenAI, Anthropic, Comprehend, Rekognition, Textract, Polly, Transcribe):
+  call getCostData and inspect for AI/ML services. If one or more are present,
+  answer ONLY about those services with their dollar amounts; do not list
+  unrelated services. If NO AI/ML service spend exists for the period, reply
+  exactly: "This account has no AI or machine-learning service spend in the
+  selected period." and stop.
+
+NEVER RETURN AN EMPTY ANSWER:
+- Always end your turn with a final answer. If you cannot answer, state in one
+  sentence what you could not determine. Never end after only tool calls with no
+  text for the user.
 
 You have access to the member's AWS account via cross-account role assumption. Use the provided action group to gather real data before answering."""
 

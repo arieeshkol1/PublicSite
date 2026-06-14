@@ -338,7 +338,7 @@ def _build_invoice_record(provider_key, period, month_total):
         pay_year, pay_month = year_val, month_val + 1
     payment_date = f'{pay_year}-{pay_month:02d}-15'
 
-    return {
+    record = {
         'invoiceId': f'{period}-monthly',
         'issuer': ISSUER_LABELS[provider_key],
         'paymentDate': payment_date,
@@ -348,6 +348,20 @@ def _build_invoice_record(provider_key, period, month_total):
         'period': period,
         'source': f'{provider_key}_connector',
     }
+
+    # Honest tax disclosure (scoped to OpenAI). The OpenAI Organization Costs API
+    # returns pre-tax USAGE charges only — it exposes no tax line item and no
+    # taxed invoice total via API (unlike AWS Cost Explorer, which has a queryable
+    # RECORD_TYPE='Tax'). Surface that explicitly so this "paid" total is not
+    # mistaken for the taxed amount OpenAI actually billed on the receipt.
+    if provider_key == 'openai':
+        record['costExplanation'] = (
+            'Total reflects OpenAI usage charges only and excludes any sales '
+            'tax/VAT. OpenAI does not expose tax or final invoice amounts via '
+            'API, so the taxed total on your OpenAI receipt may be higher.'
+        )
+
+    return record
 
 
 def _load_credentials(member_email, account_id, provider_key):
