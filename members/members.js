@@ -13864,13 +13864,14 @@ function _renderPerUserSVG(grouped, userColors, visibleUsers) {
 }
 
 function _renderPerUserTokenChart(data) {
-    var tokenUsage = data.token_usage || data.tokenUsage || [];
+    // Prefer per_user_daily (DAILY# records with real user_id) over token_usage
+    var tokenUsage = data.per_user_daily || data.perUserDaily || data.token_usage || data.tokenUsage || [];
     var allUsers = _extractUsersFromTokenUsage(tokenUsage);
 
     if (!allUsers.length) {
         return '<div class="openai-widget">' +
             '<div class="openai-widget-header"><h4>👥 Per-User Token Consumption</h4></div>' +
-            '<div class="openai-widget-empty">No per-user data available.</div></div>';
+            '<div class="openai-widget-empty">No per-user consumption data available. Data appears once the daily enrichment pipeline runs.</div></div>';
     }
 
     var visibleUsers = _openaiDashState.perUserVisible || allUsers.slice();
@@ -13913,7 +13914,7 @@ function _wirePerUserTokenFilter(data) {
     var filterArea = document.getElementById('peruser-token-filter-area');
     if (!filterArea) return;
 
-    var tokenUsage = data.token_usage || data.tokenUsage || [];
+    var tokenUsage = data.per_user_daily || data.perUserDaily || data.token_usage || data.tokenUsage || [];
     var allUsers = _extractUsersFromTokenUsage(tokenUsage);
     var userColors = _assignUserColors(allUsers);
 
