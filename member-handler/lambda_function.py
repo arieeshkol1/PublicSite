@@ -12683,6 +12683,20 @@ def handle_openai_usage(event):
     except Exception as _cache_err:
         logger.warning(f"OpenAI cache write failed (non-fatal): {_cache_err}")
 
+    # Trigger per-user daily token enrichment if we have an API key (cache miss path)
+    # This populates the DAILY# records that the per-user graph reads
+    try:
+        _local_api_key = locals().get('api_key', '')
+        if _local_api_key:
+            from provider_invoices import _enrich_daily_token_usage
+            _enrich_period = now.strftime('%Y-%m')
+            _enrich_count = _enrich_daily_token_usage(
+                member_email, account_id, _local_api_key, '', _enrich_period
+            )
+            logger.debug(f"Per-user enrichment during openai-usage: {_enrich_count} records")
+    except Exception as _enrich_err:
+        logger.debug(f"Per-user enrichment skipped during openai-usage: {_enrich_err}")
+
     # Fetch per-user daily token records (DAILY# sk prefix) from Invoices table
     per_user_records = []
     try:
