@@ -166,11 +166,10 @@ class GroundcoverConnector(ProviderConnector):
             end_ts = int(end_dt.timestamp())
             step = '86400'  # 1 day
 
-            # Use increase() to get daily token deltas (not raw gauge snapshots).
-            # The raw metric is a counter; without increase() we'd just get the
-            # cumulative value at each sample point, which drastically undercounts.
+            # Use increase() for input tokens (counter metric) and delta() for output tokens (gauge metric).
+            # increase() doesn't work on gauge metrics and returns empty results.
             input_query = 'sum by (gen_ai_request_model) (increase(groundcover_gen_ai_response_usage_input_tokens[1d]))'
-            output_query = 'sum by (gen_ai_request_model) (increase(groundcover_gen_ai_response_usage_output_tokens[1d]))'
+            output_query = 'sum by (gen_ai_request_model) (delta(groundcover_gen_ai_response_usage_output_tokens[1d]))'
 
             def _prom_range_query(query):
                 """Execute a Prometheus range query and return parsed results."""
@@ -220,7 +219,7 @@ class GroundcoverConnector(ProviderConnector):
                 for ts_val in series.get('values', []):
                     ts = int(float(ts_val[0]))
                     day_ts = ts - (ts % 86400)
-                    tokens = int(float(ts_val[1]))
+                    tokens = max(0, int(float(ts_val[1])))  # clamp negative delta to 0
                     model_data.setdefault(model, {}).setdefault(day_ts, {'input': 0, 'output': 0})
                     model_data[model][day_ts]['output'] += tokens
 
