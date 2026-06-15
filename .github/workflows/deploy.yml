@@ -811,15 +811,11 @@ jobs:
         run: |
           API_ID="l2fd4h481h"
           echo "Using API ID: $API_ID"
-          INTEGRATION_ID=$(aws apigatewayv2 get-integrations --api-id "$API_ID" --query "Items[0].IntegrationId" --output text 2>&1)
-          echo "Integration ID result: $INTEGRATION_ID"
-          if [ -z "$INTEGRATION_ID" ] || [ "$INTEGRATION_ID" = "None" ] || echo "$INTEGRATION_ID" | grep -qi "error"; then
-            echo "⚠ Could not find integration ID, trying to get from existing routes..."
-            INTEGRATION_ID=$(aws apigatewayv2 get-routes --api-id "$API_ID" --query "Items[0].Target" --output text 2>/dev/null | sed 's|integrations/||')
-            echo "Integration ID from routes: $INTEGRATION_ID"
-          fi
+          # Get the MEMBER-HANDLER integration (same one used by /members/login)
+          INTEGRATION_ID=$(aws apigatewayv2 get-routes --api-id "$API_ID" --query "Items[?RouteKey=='POST /members/login'].Target" --output text 2>/dev/null | sed 's|integrations/||')
+          echo "Member-handler Integration ID: $INTEGRATION_ID"
           if [ -z "$INTEGRATION_ID" ] || [ "$INTEGRATION_ID" = "None" ]; then
-            echo "❌ Cannot determine integration ID, skipping route creation"
+            echo "❌ Cannot determine member-handler integration ID, skipping route creation"
             exit 0
           fi
           # Create add-groundcover route
