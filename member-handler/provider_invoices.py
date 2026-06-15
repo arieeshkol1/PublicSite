@@ -130,6 +130,12 @@ def generate_provider_invoices(member_email, account_id, provider_key, cached_pe
         )
         return ([], True)
 
+    # GroundCover accounts are consumed through the AI Cost dashboard
+    # (handle_openai_usage), not the invoice system. Return empty but not
+    # unavailable so the refresh doesn't error out.
+    if provider_key == 'groundcover':
+        return ([], False)
+
     # Load credentials and authenticate. All credential/auth failures degrade to
     # the unavailable flag — they must never propagate to the HTTP handler.
     try:
