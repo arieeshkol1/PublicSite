@@ -166,9 +166,11 @@ class GroundcoverConnector(ProviderConnector):
             end_ts = int(end_dt.timestamp())
             step = '86400'  # 1 day
 
-            # Query input tokens by model
-            input_query = 'sum by (gen_ai_request_model) (groundcover_gen_ai_response_usage_input_tokens)'
-            output_query = 'sum by (gen_ai_request_model) (groundcover_gen_ai_response_usage_output_tokens)'
+            # Use increase() to get daily token deltas (not raw gauge snapshots).
+            # The raw metric is a counter; without increase() we'd just get the
+            # cumulative value at each sample point, which drastically undercounts.
+            input_query = 'sum by (gen_ai_request_model) (increase(groundcover_gen_ai_response_usage_input_tokens[1d]))'
+            output_query = 'sum by (gen_ai_request_model) (increase(groundcover_gen_ai_response_usage_output_tokens[1d]))'
 
             def _prom_range_query(query):
                 """Execute a Prometheus range query and return parsed results."""
@@ -253,8 +255,90 @@ class GroundcoverConnector(ProviderConnector):
             logger.warning(f"GroundCover get_cost_data failed: {type(e).__name__}: {e}")
             return []
 
+    def get_per_user_data(self, auth_context: dict, account_id: str,
+                          start_date: str, end_date: str) -> list:
+        """Fetch per-user token usage from GroundCover's Prometheus API.
+
+        Uses the claude_code_token_usage_tokens_total metric which has user_email
+        and model labels. Returns a list of dicts matching the DAILY# record shape
+        that the Per-User Token Consumption chart expects:
+          {date, user_id, model, input_tokens, output_tokens, num_model_requests}
+        """
+        token = auth_context.get('api_key', '')
+        from datetime import datetime, timezone
+        try:
+            import urllib.parse
+        except ImportError:
+            return []
+
+        try:
+            start_dt = datetime.strptime(start_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+            end_dt = datetime.strptime(end_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+
+            prom_url = f"{GROUNDCOVER_API_BASE}/api/prometheus/api/v1/query_range"
+            headers = {
+                'Authorization': f'Bearer {token}',
+                'X-Backend-Id': 'groundcover',
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'Accept': 'application/json',
+            }
+
+            start_ts = int(start_dt.timestamp())
+            end_ts = int(end_dt.timestamp())
+
+            # Query per-user token usage (daily deltas)
+            query = 'sum by (user_email, model) (increase(claude_code_token_usage_tokens_total[1d]))'
+            params = urllib.parse.urlencode({
+                'query': query,
+                'start': str(start_ts),
+                'end': str(end_ts),
+                'step': '86400',
+            })
+
+            try:
+                req = urllib.request.Request(prom_url, method='POST', headers=headers,
+                                            data=params.encode('utf-8'))
+                resp = urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT)
+                raw = json.loads(resp.read().decode('utf-8'))
+            except Exception as e:
+                logger.warning(f"GroundCover per-user query failed: {type(e).__name__}: {e}")
+                return []
+
+            if raw.get('status') != 'success':
+                return []
+
+            results = raw.get('data', {}).get('result', [])
+            if not results:
+                return []
+
+            # Build per-user daily records
+            per_user_records = []
+            for series in results:
+                user_email = series.get('metric', {}).get('user_email', '')
+                model = series.get('metric', {}).get('model', 'unknown')
+                if not user_email:
+                    continue
+                for ts_val in series.get('values', []):
+                    tokens = int(float(ts_val[1]))
+                    if tokens <= 0:
+                        continue
+                    ts = int(float(ts_val[0]))
+                    day_ts = ts - (ts % 86400)
+                    date_str = datetime.utcfromtimestamp(day_ts).strftime('%Y-%m-%d')
+                    per_user_records.append({
+                        'date': date_str,
+                        'user_id': user_email,
+                        'model': model,
+                        'input_tokens': tokens,
+                        'output_tokens': 0,
+                        'num_model_requests': 1,
+                    })
+
+            logger.info(f"GroundCover: fetched {len(per_user_records)} per-user records")
+            return per_user_records
+
         except Exception as e:
-            logger.warning(f"GroundCover get_cost_data failed: {type(e).__name__}: {e}")
+            logger.warning(f"GroundCover get_per_user_data failed: {type(e).__name__}: {e}")
             return []
 
 

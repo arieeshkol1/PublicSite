@@ -12706,31 +12706,47 @@ def handle_openai_usage(event):
     except Exception as _enrich_err:
         logger.debug(f"Per-user enrichment skipped during openai-usage: {_enrich_err}")
 
-    # Fetch per-user daily token records (DAILY# sk prefix) from Invoices table
+    # Fetch per-user daily token records
     per_user_records = []
-    try:
-        invoices_table = dynamodb.Table(INVOICES_TABLE_NAME)
-        pk_val = f"{member_email}#{account_id}"
-        daily_response = invoices_table.query(
-            KeyConditionExpression=DDBKey('pk').eq(pk_val) & DDBKey('sk').begins_with('DAILY#'),
-            ProjectionExpression='#d, user_id, model, api_key_id, input_tokens, output_tokens, input_cached_tokens, num_model_requests',
-            ExpressionAttributeNames={'#d': 'date'}
-        )
-        per_user_records = daily_response.get('Items', [])
-        # Handle pagination
-        while 'LastEvaluatedKey' in daily_response:
-            if time.time() - start_time > 25:
-                break
+
+    # For GroundCover: fetch per-user data directly from Prometheus API
+    if cloud_provider == 'groundcover':
+        try:
+            _local_api_key = locals().get('api_key', '')
+            if _local_api_key:
+                from connectors.groundcover_connector import GroundcoverConnector
+                _gc_connector = GroundcoverConnector()
+                per_user_records = _gc_connector.get_per_user_data(
+                    {'api_key': _local_api_key}, account_id, start_date, end_date
+                )
+        except Exception as _pu_err:
+            logger.warning(f"GroundCover per-user fetch failed: {_pu_err}")
+            per_user_records = []
+    else:
+        # OpenAI: fetch from MemberPortal-Invoices DAILY# records
+        try:
+            invoices_table = dynamodb.Table(INVOICES_TABLE_NAME)
+            pk_val = f"{member_email}#{account_id}"
             daily_response = invoices_table.query(
                 KeyConditionExpression=DDBKey('pk').eq(pk_val) & DDBKey('sk').begins_with('DAILY#'),
                 ProjectionExpression='#d, user_id, model, api_key_id, input_tokens, output_tokens, input_cached_tokens, num_model_requests',
-                ExpressionAttributeNames={'#d': 'date'},
-                ExclusiveStartKey=daily_response['LastEvaluatedKey']
+                ExpressionAttributeNames={'#d': 'date'}
             )
-            per_user_records.extend(daily_response.get('Items', []))
-    except Exception as e:
-        logger.warning(f"Failed to fetch per-user daily records: {e}")
-        per_user_records = []
+            per_user_records = daily_response.get('Items', [])
+            # Handle pagination
+            while 'LastEvaluatedKey' in daily_response:
+                if time.time() - start_time > 25:
+                    break
+                daily_response = invoices_table.query(
+                    KeyConditionExpression=DDBKey('pk').eq(pk_val) & DDBKey('sk').begins_with('DAILY#'),
+                    ProjectionExpression='#d, user_id, model, api_key_id, input_tokens, output_tokens, input_cached_tokens, num_model_requests',
+                    ExpressionAttributeNames={'#d': 'date'},
+                    ExclusiveStartKey=daily_response['LastEvaluatedKey']
+                )
+                per_user_records.extend(daily_response.get('Items', []))
+        except Exception as e:
+            logger.warning(f"Failed to fetch per-user daily records: {e}")
+            per_user_records = []
 
     # Build response matching the frontend expected schema
     # Frontend reads: data.token_usage, data.cost_by_model, data.spend_trends, data.project_breakdown
