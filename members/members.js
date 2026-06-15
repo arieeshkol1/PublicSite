@@ -13869,30 +13869,43 @@ function _extractUsersFromTokenUsage(tokenUsage) {
     return Object.keys(seen).sort();
 }
 
-function _groupTokensByDateAndUser(tokenUsage, visibleUsers) {
-    var visibleSet = {};
-    visibleUsers.forEach(function(u) { visibleSet[u] = true; });
-    var dateSet = {};
-    var byDateUser = {};
+function _extractEntitiesFromTokenUsage(tokenUsage, dimField) {
+    var seen = {};
     (tokenUsage || []).forEach(function(r) {
-        var uid = (r.user_id || '').trim();
-        if (!uid || uid === 'unknown' || !visibleSet[uid]) return;
+        var val = (r[dimField] || '').trim();
+        if (val && val !== 'unknown') seen[val] = true;
+    });
+    return Object.keys(seen).sort();
+}
+
+function _groupTokensByDateAndUser(tokenUsage, visibleUsers) {
+    return _groupTokensByDateAndEntity(tokenUsage, visibleUsers, 'user_id');
+}
+
+function _groupTokensByDateAndEntity(tokenUsage, visibleEntities, dimField) {
+    var visibleSet = {};
+    visibleEntities.forEach(function(u) { visibleSet[u] = true; });
+    var dateSet = {};
+    var byDateEntity = {};
+    (tokenUsage || []).forEach(function(r) {
+        var entity = (r[dimField] || '').trim();
+        if (!entity || entity === 'unknown' || !visibleSet[entity]) return;
         var dt = r.date || '';
         if (!dt) return;
         dateSet[dt] = true;
-        var key = dt + '|' + uid;
+        var key = dt + '|' + entity;
         // Use cost_amount if available, otherwise estimate from tokens
         var cost = parseFloat(r.cost_amount || 0);
         if (!cost && (r.input_tokens || r.output_tokens)) {
             // Rough estimate: $2.50/1M input + $10/1M output (GPT-4o average)
             cost = ((r.input_tokens || 0) * 2.5 + (r.output_tokens || 0) * 10) / 1000000;
         }
-        byDateUser[key] = (byDateUser[key] || 0) + cost;
+        byDateEntity[key] = (byDateEntity[key] || 0) + cost;
     });
     var dates = Object.keys(dateSet).sort();
     var series = {};
-    visibleUsers.forEach(function(uid) {
-        series[uid] = dates.map(function(dt) { return byDateUser[dt + '|' + uid] || 0; });
+    visibleEntities.forEach(function(entity) {
+        series[entity] = dates.map(function(dt) { return byDateEntity[dt + '|' + entity] || 0; });
     });
     return { dates: dates, series: series };
 }
@@ -13961,21 +13974,29 @@ function _renderPerUserSVG(grouped, userColors, visibleUsers) {
 function _renderPerUserTokenChart(data) {
     // Prefer per_user_daily (DAILY# records with real user_id) over token_usage
     var tokenUsage = data.per_user_daily || data.perUserDaily || data.token_usage || data.tokenUsage || [];
-    var allUsers = _extractUsersFromTokenUsage(tokenUsage);
+    var perUserDim = _openaiDashState.perUserDim || 'user_id';
+    var allEntities = _extractEntitiesFromTokenUsage(tokenUsage, perUserDim);
 
-    if (!allUsers.length) {
+    if (!allEntities.length) {
         return '<div class="openai-widget">' +
             '<div class="openai-widget-header"><h4>👥 Per-User Token Consumption</h4></div>' +
             '<div class="openai-widget-empty">No per-user consumption data available. Data appears once the daily enrichment pipeline runs.</div></div>';
     }
 
-    var visibleUsers = _openaiDashState.perUserVisible || allUsers.slice();
-    if (!_openaiDashState.perUserVisible) _openaiDashState.perUserVisible = allUsers.slice();
-    var userColors = _assignUserColors(allUsers);
-    var grouped = _groupTokensByDateAndUser(tokenUsage, visibleUsers);
+    var visibleUsers = _openaiDashState.perUserVisible || allEntities.slice();
+    if (!_openaiDashState.perUserVisible) _openaiDashState.perUserVisible = allEntities.slice();
+    var userColors = _assignUserColors(allEntities);
+    var grouped = _groupTokensByDateAndEntity(tokenUsage, visibleUsers, perUserDim);
 
+    var dimLabel = perUserDim === 'api_key_id' ? 'API Key' : 'User';
     var html = '<div class="openai-widget">';
-    html += '<div class="openai-widget-header"><h4>👥 Per-User Cost</h4><span class="openai-widget-subtitle">Estimated daily cost ($) by user</span></div>';
+    html += '<div class="openai-widget-header"><h4>👥 Per-' + dimLabel + ' Cost</h4>';
+    html += '<div style="display:flex;align-items:center;gap:6px;">';
+    html += '<span style="font-size:0.78em;color:#6b7280;">By:</span>';
+    html += '<button class="openai-gran-btn' + (perUserDim === 'user_id' ? ' active' : '') + '" data-peruserdim="user_id">Users</button>';
+    html += '<button class="openai-gran-btn' + (perUserDim === 'api_key_id' ? ' active' : '') + '" data-peruserdim="api_key_id">API Keys</button>';
+    html += '</div>';
+    html += '<span class="openai-widget-subtitle">Estimated daily cost ($) by ' + dimLabel.toLowerCase() + '</span></div>';
 
     // Filter area
     html += '<div id="peruser-token-filter-area" class="peruser-filter-area">';
@@ -13984,7 +14005,7 @@ function _renderPerUserTokenChart(data) {
     html += '<button id="peruser-deselect-all" class="btn btn-outline btn-sm" style="font-size:0.78em;padding:3px 8px;">Deselect All</button>';
     html += '</div>';
     html += '<div class="peruser-filter-checkboxes">';
-    allUsers.forEach(function(uid) {
+    allEntities.forEach(function(uid) {
         var checked = visibleUsers.indexOf(uid) >= 0 ? ' checked' : '';
         var color = userColors[uid];
         var shortId = uid.length > 20 ? uid.substring(0, 18) + '…' : uid;
@@ -14010,14 +14031,15 @@ function _wirePerUserTokenFilter(data) {
     if (!filterArea) return;
 
     var tokenUsage = data.per_user_daily || data.perUserDaily || data.token_usage || data.tokenUsage || [];
-    var allUsers = _extractUsersFromTokenUsage(tokenUsage);
-    var userColors = _assignUserColors(allUsers);
+    var perUserDim = _openaiDashState.perUserDim || 'user_id';
+    var allEntities = _extractEntitiesFromTokenUsage(tokenUsage, perUserDim);
+    var userColors = _assignUserColors(allEntities);
 
     function _reRenderPerUserSVG() {
         var checked = [];
         filterArea.querySelectorAll('.peruser-cb:checked').forEach(function(cb) { checked.push(cb.value); });
         _openaiDashState.perUserVisible = checked;
-        var grouped = _groupTokensByDateAndUser(tokenUsage, checked);
+        var grouped = _groupTokensByDateAndEntity(tokenUsage, checked, perUserDim);
         var svgArea = document.getElementById('peruser-token-chart-svg');
         if (svgArea) svgArea.innerHTML = _renderPerUserSVG(grouped, userColors, checked);
     }
@@ -14036,6 +14058,19 @@ function _wirePerUserTokenFilter(data) {
         filterArea.querySelectorAll('.peruser-cb').forEach(function(cb) { cb.checked = false; });
         _reRenderPerUserSVG();
     };
+
+    // Wire dimension toggle (Users / API Keys)
+    var section = document.getElementById('openai-section-peruser-token');
+    if (section) {
+        section.querySelectorAll('[data-peruserdim]').forEach(function(btn) {
+            btn.onclick = function() {
+                _openaiDashState.perUserDim = btn.dataset.peruserdim;
+                _openaiDashState.perUserVisible = null; // reset selection
+                section.innerHTML = _renderPerUserTokenChart(data);
+                _wirePerUserTokenFilter(data);
+            };
+        });
+    }
 }
 
 /**
@@ -14282,6 +14317,7 @@ function _renderSpendTrendsChart(data) {
     html += '<button class="openai-gran-btn' + (_viewBy === 'total' ? ' active' : '') + '" data-viewby="total">Total</button>';
     html += '<button class="openai-gran-btn' + (_viewBy === 'users' ? ' active' : '') + '" data-viewby="users">Users</button>';
     html += '<button class="openai-gran-btn' + (_viewBy === 'models' ? ' active' : '') + '" data-viewby="models">Models</button>';
+    html += '<button class="openai-gran-btn' + (_viewBy === 'apikeys' ? ' active' : '') + '" data-viewby="apikeys">API Keys</button>';
     html += '</div>';
     html += '</div>';
     html += '</div>';
@@ -14315,9 +14351,10 @@ function _renderSpendBars(aggregated, data) {
         var perUserDaily = data.per_user_daily || data.perUserDaily || [];
         // For Users view: combine per_user_daily (has user_id) with token_usage (has service_name)
         // For Models view: use token_usage directly
+        // For API Keys view: use per_user_daily (has api_key_id)
         var srcRecords;
-        var dimField = viewBy === 'users' ? 'user_id' : 'service_name';
-        if (viewBy === 'users') {
+        var dimField = viewBy === 'users' ? 'user_id' : (viewBy === 'apikeys' ? 'api_key_id' : 'service_name');
+        if (viewBy === 'users' || viewBy === 'apikeys') {
             // Merge per_user_daily into token_usage for full coverage
             srcRecords = records.concat(perUserDaily);
         } else {

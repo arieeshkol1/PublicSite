@@ -790,6 +790,7 @@ def _enrich_daily_token_usage(member_email, account_id, api_key, organization_id
                     'date': record['date'],
                     'user_id': record['user_id'],
                     'model': record['model'],
+                    'api_key_id': record.get('api_key_id', 'unknown'),
                     'account_id': account_id,
                     'ttl': ttl_value,
                 })

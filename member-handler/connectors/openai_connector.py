@@ -527,8 +527,8 @@ class OpenAIConnector(ProviderConnector):
             end_date: End date as YYYY-MM-DD string (exclusive).
 
         Returns:
-            List of dicts with keys: date, user_id, model, input_tokens,
-            output_tokens, input_cached_tokens, num_model_requests.
+            List of dicts with keys: date, user_id, model, api_key_id,
+            input_tokens, output_tokens, input_cached_tokens, num_model_requests.
             Returns [] on any error (never raises).
         """
         from datetime import datetime, timezone
@@ -553,7 +553,7 @@ class OpenAIConnector(ProviderConnector):
             for page_num in range(max_pages):
                 url = (
                     f"{base_url}/v1/organization/usage/completions"
-                    f"?group_by=user_id&group_by=model&bucket_width=1d"
+                    f"?group_by=user_id&group_by=model&group_by=api_key_id&bucket_width=1d"
                     f"&start_time={start_ts}&end_time={end_ts}"
                 )
                 if page_token:
@@ -602,6 +602,7 @@ class OpenAIConnector(ProviderConnector):
                             "date": date_str,
                             "user_id": result.get("user_id") or "unknown",
                             "model": result.get("model") or "unknown",
+                            "api_key_id": result.get("api_key_id") or "unknown",
                             "input_tokens": max(0, int(result.get("input_tokens") or 0)),
                             "output_tokens": max(0, int(result.get("output_tokens") or 0)),
                             "input_cached_tokens": max(0, int(result.get("input_cached_tokens") or 0)),

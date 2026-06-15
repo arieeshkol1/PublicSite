@@ -12704,7 +12704,7 @@ def handle_openai_usage(event):
         pk_val = f"{member_email}#{account_id}"
         daily_response = invoices_table.query(
             KeyConditionExpression=DDBKey('pk').eq(pk_val) & DDBKey('sk').begins_with('DAILY#'),
-            ProjectionExpression='#d, user_id, model, input_tokens, output_tokens, input_cached_tokens, num_model_requests',
+            ProjectionExpression='#d, user_id, model, api_key_id, input_tokens, output_tokens, input_cached_tokens, num_model_requests',
             ExpressionAttributeNames={'#d': 'date'}
         )
         per_user_records = daily_response.get('Items', [])
@@ -12714,7 +12714,7 @@ def handle_openai_usage(event):
                 break
             daily_response = invoices_table.query(
                 KeyConditionExpression=DDBKey('pk').eq(pk_val) & DDBKey('sk').begins_with('DAILY#'),
-                ProjectionExpression='#d, user_id, model, input_tokens, output_tokens, input_cached_tokens, num_model_requests',
+                ProjectionExpression='#d, user_id, model, api_key_id, input_tokens, output_tokens, input_cached_tokens, num_model_requests',
                 ExpressionAttributeNames={'#d': 'date'},
                 ExclusiveStartKey=daily_response['LastEvaluatedKey']
             )
