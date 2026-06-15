@@ -9899,12 +9899,14 @@ def _get_account_provider(member_email, account_id):
         )
         item = resp.get('Item', {})
         provider = item.get('cloudProvider', '').strip().lower()
-        return provider if provider in ('aws', 'azure', 'gcp', 'openai') else 'aws'
+        return provider if provider in ('aws', 'azure', 'gcp', 'openai', 'groundcover') else 'aws'
     except Exception as e:
         logger.warning(f"Failed to get provider for account {account_id}: {e}")
         # Fallback: detect from accountId prefix
         if account_id and account_id.startswith('openai-'):
             return 'openai'
+        if account_id and account_id.startswith('groundcover-'):
+            return 'groundcover'
         return 'aws'
 
 
