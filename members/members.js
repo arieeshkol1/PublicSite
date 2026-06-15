@@ -13843,7 +13843,7 @@ async function _fetchOpenAIDashboardData(forceRefresh) {
         var data = await api('POST', '/members/accounts/openai-usage', {
             accountId: _openaiDashState.accountId,
             dateRange: _openaiDashState.dateRange,
-            forceRefresh: true
+            forceRefresh: forceRefresh || false
         });
         _openaiDashState.data = data;
         _openaiDashState.loading = false;

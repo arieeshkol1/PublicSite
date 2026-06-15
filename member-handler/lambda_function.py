@@ -12712,12 +12712,19 @@ def handle_openai_usage(event):
     # For GroundCover: fetch per-user data directly from Prometheus API
     if cloud_provider == 'groundcover':
         try:
-            _local_api_key = locals().get('api_key', '')
-            if _local_api_key:
+            # api_key may not be in locals if we hit the cache path; decrypt if needed
+            _gc_api_key = locals().get('api_key', '')
+            if not _gc_api_key:
+                _gc_creds = account.get('credentials', {})
+                _gc_enc_key = _gc_creds.get('encryptedApiKey', '')
+                if _gc_enc_key:
+                    from connectors.openai_kms import decrypt_openai_key
+                    _gc_api_key = decrypt_openai_key(_gc_enc_key, member_email, account_id)
+            if _gc_api_key:
                 from connectors.groundcover_connector import GroundcoverConnector
                 _gc_connector = GroundcoverConnector()
                 per_user_records = _gc_connector.get_per_user_data(
-                    {'api_key': _local_api_key}, account_id, start_date, end_date
+                    {'api_key': _gc_api_key}, account_id, start_date, end_date
                 )
         except Exception as _pu_err:
             logger.warning(f"GroundCover per-user fetch failed: {_pu_err}")
