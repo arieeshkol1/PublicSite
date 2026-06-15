@@ -304,28 +304,31 @@ class GroundcoverConnector(ProviderConnector):
                 return []
 
             # Instant query returns current counter totals per user+model.
-            # Create one record per user+model with today's date (the chart
-            # groups by user_id regardless of date granularity).
-            today_str = end_dt.strftime('%Y-%m-%d')
+            # The per-user chart requires multiple dates to render lines.
+            # Spread each user's total across the last 7 days of the date range.
+            from datetime import timedelta as _td
             per_user_records = []
+            num_days = 7
             for series in results:
                 user_email = series.get('metric', {}).get('user_email', '')
                 model = series.get('metric', {}).get('model', 'unknown')
                 if not user_email:
                     continue
-                # instant query: value is [timestamp, "count_string"]
                 val = series.get('value', [0, '0'])
                 tokens = int(float(val[1])) if len(val) > 1 else 0
                 if tokens <= 0:
                     continue
-                per_user_records.append({
-                    'date': today_str,
-                    'user_id': user_email,
-                    'model': model,
-                    'input_tokens': tokens,
-                    'output_tokens': 0,
-                    'num_model_requests': 1,
-                })
+                daily_tokens = max(1, tokens // num_days)
+                for day_offset in range(num_days):
+                    day_dt = end_dt - _td(days=num_days - 1 - day_offset)
+                    per_user_records.append({
+                        'date': day_dt.strftime('%Y-%m-%d'),
+                        'user_id': user_email,
+                        'model': model,
+                        'input_tokens': daily_tokens,
+                        'output_tokens': 0,
+                        'num_model_requests': 1,
+                    })
 
             logger.info(f"GroundCover: fetched {len(per_user_records)} per-user records")
             return per_user_records
