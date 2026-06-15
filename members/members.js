@@ -13740,16 +13740,16 @@ function _renderOpenAIDashboard() {
     var container = document.getElementById('openai-dashboard');
     if (!container) return;
 
-    // Find the first connected OpenAI account
+    // Find the first connected AI vendor account (OpenAI or GroundCover)
     var openaiAccounts = allAccounts.filter(function(a) {
-        return a.cloudProvider === 'openai' && a.connectionStatus === 'connected';
+        return (a.cloudProvider === 'openai' || a.cloudProvider === 'groundcover') && a.connectionStatus === 'connected';
     });
 
     if (!openaiAccounts.length) {
         container.innerHTML = '<div style="text-align:center;padding:60px 20px;color:#6b7280;">' +
             '<div style="font-size:2.5em;margin-bottom:12px;">🤖</div>' +
             '<div style="font-size:1em;margin-bottom:6px;color:#1f2937;">No AI Cost accounts connected</div>' +
-            '<div style="font-size:0.9em;color:#6b7280;">Connect an AI Cost account in the Configure tab to see usage analytics.</div>' +
+            '<div style="font-size:0.9em;color:#6b7280;">Connect an AI Cost account (OpenAI or Anthropic via GroundCover) in the Configure tab to see usage analytics.</div>' +
             '</div>';
         return;
     }

@@ -12404,8 +12404,9 @@ def handle_openai_usage(event):
     if not account:
         return create_error_response(404, 'NotFound', 'Account not found.')
 
-    if account.get('cloudProvider') != 'openai':
-        return create_error_response(400, 'InvalidRequest', 'This endpoint is only for OpenAI connections.')
+    cloud_provider = account.get('cloudProvider', '')
+    if cloud_provider not in ('openai', 'groundcover'):
+        return create_error_response(400, 'InvalidRequest', 'This endpoint is only for AI vendor connections (OpenAI or GroundCover).')
 
     # Determine date range boundaries
     now = datetime.now(timezone.utc)
@@ -12542,32 +12543,39 @@ def handle_openai_usage(event):
             logger.error(f"KMS decryption failed for openai-usage: {e}")
             return create_error_response(500, 'DecryptionFailed', 'Credentials inaccessible. Please re-add your OpenAI connection.')
 
-        # Call OpenAI Usage API via connector
+        # Call AI vendor Usage API via connector
         try:
-            from connectors.openai_connector import OpenAIConnector
             from connectors.base_connector import CostRetrievalError
+            if cloud_provider == 'groundcover':
+                from connectors.groundcover_connector import GroundcoverConnector
+                connector = GroundcoverConnector()
+                auth_context = {'api_key': api_key}
+            else:
+                from connectors.openai_connector import OpenAIConnector
+                connector = OpenAIConnector()
+                auth_context = {'api_key': api_key, 'org_name': ''}
         except ImportError as e:
-            logger.error(f"Failed to import OpenAI connector: {e}")
-            return create_error_response(500, 'ServerError', 'OpenAI connector not available.')
-
-        connector = OpenAIConnector()
-        auth_context = {'api_key': api_key, 'org_name': ''}
+            logger.error(f"Failed to import connector: {e}")
+            return create_error_response(500, 'ServerError', 'AI connector not available.')
 
         try:
             raw_records = connector.get_cost_data(auth_context, account_id, start_date, end_date)
         except CostRetrievalError as e:
-            logger.error(f"OpenAI cost data retrieval failed for {account_id}: {e}")
+            logger.error(f"AI cost data retrieval failed for {account_id}: {e}")
             # Update connection status if flagged
             if getattr(e, 'mark_connection_failed', False):
                 now_iso = datetime.now(timezone.utc).isoformat()
                 _update_connection_status(accounts_table, member_email, account_id, 'failed', now_iso)
             return create_error_response(502, 'UpstreamError', str(e))
+        except Exception as e:
+            logger.error(f"AI cost data retrieval failed for {account_id}: {type(e).__name__}: {e}")
+            return create_error_response(502, 'UpstreamError', f'Failed to fetch cost data: {type(e).__name__}')
 
         # Check timeout after API call (25s allows time for paginated 30d API calls)
         if time.time() - start_time > 25:
             return create_error_response(504, 'Timeout', 'Request timed out. Please try again.')
 
-        # Normalize the raw OpenAI response
+        # Normalize the raw response (both OpenAI and GroundCover use the same bucket format)
         try:
             from cost_normalizer import normalize_openai
         except ImportError as e:
