@@ -79,7 +79,13 @@ class GroundcoverConnector(ProviderConnector):
         return {'api_key': api_key}
 
     def test_connection(self, auth_context: dict, account_id: str) -> dict:
-        """Test connectivity to GroundCover API using HEAD request.
+        """Validate GroundCover credentials.
+
+        GroundCover API requires a sessionId for all data endpoints, so we
+        cannot perform a lightweight connectivity check without an active
+        session. Instead we validate the token format — if the token passes
+        format validation, the connection is accepted. Real connectivity is
+        verified on first data fetch.
 
         Args:
             auth_context: Dict containing 'api_key' (gcsa_ token)
@@ -89,53 +95,16 @@ class GroundcoverConnector(ProviderConnector):
             Dict with keys: success (bool), message (str)
         """
         token = auth_context.get('api_key', '')
-        # Use HEAD request — doesn't require sessionId in body
-        url = GROUNDCOVER_API_BASE
-        headers = {
-            'Authorization': f'Bearer {token}',
-            'X-Backend-Id': 'groundcover',
+        validation = validate_groundcover_token_format(token)
+        if not validation['valid']:
+            return {
+                'success': False,
+                'message': validation['error'],
+            }
+        return {
+            'success': True,
+            'message': 'GroundCover token validated and connection saved.',
         }
-
-        try:
-            req = urllib.request.Request(
-                url,
-                method='HEAD',
-                headers=headers,
-            )
-            response = urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT)
-            # Any 2xx/3xx means the token was accepted
-            return {
-                'success': True,
-                'message': 'GroundCover connection verified.',
-            }
-        except urllib.error.HTTPError as e:
-            # 401/403 = bad token
-            if e.code in (401, 403):
-                return {
-                    'success': False,
-                    'message': f'Authentication failed (HTTP {e.code}). Check your API token.',
-                }
-            # 405 Method Not Allowed or other codes = server responded, token accepted
-            # (GroundCover may not support HEAD but responding means network + auth work)
-            if e.code in (405, 400, 404):
-                return {
-                    'success': True,
-                    'message': 'GroundCover connection verified.',
-                }
-            return {
-                'success': False,
-                'message': f'GroundCover returned HTTP {e.code}.',
-            }
-        except (urllib.error.URLError, OSError) as e:
-            return {
-                'success': False,
-                'message': f'Connection error: {str(e)[:100]}',
-            }
-        except Exception as e:
-            return {
-                'success': False,
-                'message': f'Connection test failed: {str(e)[:100]}',
-            }
 
     def get_cost_data(self, auth_context: dict, account_id: str,
                       start_date: str, end_date: str, **kwargs) -> list:
