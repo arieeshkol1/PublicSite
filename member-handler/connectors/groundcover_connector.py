@@ -108,134 +108,134 @@ class GroundcoverConnector(ProviderConnector):
 
     def get_cost_data(self, auth_context: dict, account_id: str,
                       start_date: str, end_date: str, **kwargs) -> list:
-        """Fetch AI cost data from GroundCover's services API.
+        """Fetch AI token usage from GroundCover's Prometheus API.
 
-        Queries the GroundCover API for services with AI/LLM traffic data.
-        Returns data in the same bucket format as OpenAI connector so the
-        existing cost_normalizer and dashboard can consume it.
+        Queries the GroundCover Prometheus-compatible API for gen_ai token metrics,
+        aggregated by model and day. Returns data in the same bucket format as
+        the OpenAI connector so the existing dashboard can consume it.
 
-        Note: GroundCover's API requires a sessionId for data queries.
-        If the API returns an error or no data, returns empty list gracefully.
+        Uses the confirmed working endpoint:
+          POST https://api.groundcover.com/api/prometheus/api/v1/query_range
+        with the metrics:
+          - groundcover_gen_ai_response_usage_input_tokens (by model, daily)
+          - groundcover_gen_ai_response_usage_output_tokens (by model, daily)
         """
         token = auth_context.get('api_key', '')
         from datetime import datetime, timezone, timedelta
+        try:
+            import urllib.parse
+        except ImportError:
+            return []
+
+        # Anthropic model pricing (USD per 1M tokens) - approximate
+        MODEL_PRICING = {
+            'claude-opus-4': {'input': 15.0, 'output': 75.0},
+            'claude-sonnet-4': {'input': 3.0, 'output': 15.0},
+            'claude-haiku-4': {'input': 0.80, 'output': 4.0},
+            'gemini-2.5-pro': {'input': 1.25, 'output': 10.0},
+            'gemini-2.5-flash': {'input': 0.15, 'output': 0.60},
+        }
+
+        def _estimate_cost(model_name, input_tok, output_tok):
+            """Estimate cost in USD from token counts using model pricing."""
+            model_lower = (model_name or '').lower()
+            pricing = None
+            for prefix, p in MODEL_PRICING.items():
+                if prefix in model_lower:
+                    pricing = p
+                    break
+            if not pricing:
+                # Default: use claude-sonnet pricing as fallback
+                pricing = {'input': 3.0, 'output': 15.0}
+            cost = (input_tok * pricing['input'] + output_tok * pricing['output']) / 1_000_000
+            return round(cost, 6)
 
         try:
             start_dt = datetime.strptime(start_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
             end_dt = datetime.strptime(end_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
 
-            url = GROUNDCOVER_API_BASE
+            prom_url = f"{GROUNDCOVER_API_BASE}/api/prometheus/api/v1/query_range"
             headers = {
                 'Authorization': f'Bearer {token}',
                 'X-Backend-Id': 'groundcover',
-                'Content-Type': 'application/json',
+                'Content-Type': 'application/x-www-form-urlencoded',
                 'Accept': 'application/json',
             }
 
-            # Query GroundCover for AI services data with a short timeout
-            # to avoid Lambda timeout (GroundCover may hang if sessionId not provided)
-            payload = json.dumps({
-                "conditions": [],
-                "limit": 100,
-                "order": "desc",
-                "skip": 0,
-                "sortBy": "rps",
-                "sources": [],
-            }).encode('utf-8')
+            start_ts = int(start_dt.timestamp())
+            end_ts = int(end_dt.timestamp())
+            step = '86400'  # 1 day
 
-            try:
-                req = urllib.request.Request(url, method='POST', headers=headers, data=payload)
-                resp = urllib.request.urlopen(req, timeout=8)  # Short timeout
-                raw_data = resp.read().decode('utf-8')
-                data = json.loads(raw_data)
-            except (urllib.error.HTTPError, urllib.error.URLError, OSError) as e:
-                logger.warning(f"GroundCover API call failed: {e}")
-                return []
-            except Exception as e:
-                logger.warning(f"GroundCover API unexpected error: {e}")
-                return []
+            # Query input tokens by model
+            input_query = 'sum by (gen_ai_request_model) (groundcover_gen_ai_response_usage_input_tokens)'
+            output_query = 'sum by (gen_ai_request_model) (groundcover_gen_ai_response_usage_output_tokens)'
 
-            # Parse the response - GroundCover returns service-level data
-            # We look for any AI-related services that have cost/token info
-            services = data if isinstance(data, list) else data.get('services', data.get('data', data.get('results', [])))
-            if not isinstance(services, list):
-                logger.info(f"GroundCover returned non-list data type: {type(data).__name__}")
-                return []
+            def _prom_range_query(query):
+                """Execute a Prometheus range query and return parsed results."""
+                params = urllib.parse.urlencode({
+                    'query': query,
+                    'start': str(start_ts),
+                    'end': str(end_ts),
+                    'step': step,
+                })
+                data = params.encode('utf-8')
+                try:
+                    req = urllib.request.Request(prom_url, method='POST', headers=headers, data=data)
+                    resp = urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT)
+                    raw = json.loads(resp.read().decode('utf-8'))
+                    if raw.get('status') != 'success':
+                        logger.warning(f"GroundCover Prometheus query failed: {raw.get('error', 'unknown')}")
+                        return []
+                    return raw.get('data', {}).get('result', [])
+                except (urllib.error.HTTPError, urllib.error.URLError, OSError) as e:
+                    logger.warning(f"GroundCover Prometheus API call failed: {e}")
+                    return []
+                except Exception as e:
+                    logger.warning(f"GroundCover Prometheus unexpected error: {type(e).__name__}: {e}")
+                    return []
 
-            if not services:
-                logger.info("GroundCover returned empty services list")
-                return []
+            input_results = _prom_range_query(input_query)
+            output_results = _prom_range_query(output_query)
 
-            # Build buckets from service data
-            day_count = max(1, (end_dt - start_dt).days)
-            all_results = []
-
-            for svc in services:
-                if not isinstance(svc, dict):
-                    continue
-
-                # Extract model/service name from various possible fields
-                model_name = (
-                    svc.get('model') or
-                    svc.get('gen_ai.request.model') or
-                    svc.get('name') or
-                    svc.get('serviceName') or
-                    svc.get('service_name') or
-                    'anthropic-unknown'
-                )
-
-                # Extract cost
-                cost = 0.0
-                for cost_field in ('cost', 'totalCost', 'total_cost', 'gc.llm_cost'):
-                    if svc.get(cost_field):
-                        try:
-                            cost = float(svc[cost_field])
-                            break
-                        except (TypeError, ValueError):
-                            pass
-
-                # Extract tokens
-                input_tokens = 0
-                for t_field in ('input_tokens', 'gen_ai.usage.input_tokens', 'inputTokens'):
-                    if svc.get(t_field):
-                        try:
-                            input_tokens = int(svc[t_field])
-                            break
-                        except (TypeError, ValueError):
-                            pass
-
-                output_tokens = 0
-                for t_field in ('output_tokens', 'gen_ai.usage.output_tokens', 'outputTokens'):
-                    if svc.get(t_field):
-                        try:
-                            output_tokens = int(svc[t_field])
-                            break
-                        except (TypeError, ValueError):
-                            pass
-
-                if cost > 0 or input_tokens > 0 or output_tokens > 0:
-                    daily_cost = cost / day_count
-                    daily_input = input_tokens // day_count
-                    daily_output = output_tokens // day_count
-
-                    for day_offset in range(day_count):
-                        day_ts = int((start_dt + timedelta(days=day_offset)).timestamp())
-                        all_results.append({
-                            'day_ts': day_ts,
-                            'amount': {'value': round(daily_cost, 6), 'currency': 'usd'},
-                            'line_item': model_name,
-                            'input_tokens': daily_input,
-                            'output_tokens': daily_output,
-                        })
-
-            if not all_results:
+            if not input_results and not output_results:
+                logger.info("GroundCover Prometheus returned no gen_ai token data")
                 return []
 
-            # Group by day into buckets
+            # Build a lookup: {model: {timestamp: {input_tokens, output_tokens}}}
+            model_data = {}
+            for series in input_results:
+                model = series.get('metric', {}).get('gen_ai_request_model', 'unknown')
+                for ts_val in series.get('values', []):
+                    ts = int(float(ts_val[0]))
+                    # Align to day start
+                    day_ts = ts - (ts % 86400)
+                    tokens = int(float(ts_val[1]))
+                    model_data.setdefault(model, {}).setdefault(day_ts, {'input': 0, 'output': 0})
+                    model_data[model][day_ts]['input'] += tokens
+
+            for series in output_results:
+                model = series.get('metric', {}).get('gen_ai_request_model', 'unknown')
+                for ts_val in series.get('values', []):
+                    ts = int(float(ts_val[0]))
+                    day_ts = ts - (ts % 86400)
+                    tokens = int(float(ts_val[1]))
+                    model_data.setdefault(model, {}).setdefault(day_ts, {'input': 0, 'output': 0})
+                    model_data[model][day_ts]['output'] += tokens
+
+            if not model_data:
+                return []
+
+            # Build buckets in the same format as OpenAI connector
             by_day = {}
-            for r in all_results:
-                day_ts = r.pop('day_ts')
-                by_day.setdefault(day_ts, []).append(r)
+            for model, days in model_data.items():
+                for day_ts, tok in days.items():
+                    cost = _estimate_cost(model, tok['input'], tok['output'])
+                    by_day.setdefault(day_ts, []).append({
+                        'amount': {'value': cost, 'currency': 'usd'},
+                        'line_item': model,
+                        'input_tokens': tok['input'],
+                        'output_tokens': tok['output'],
+                    })
 
             buckets = []
             for day_ts in sorted(by_day.keys()):
@@ -246,7 +246,12 @@ class GroundcoverConnector(ProviderConnector):
                     'results': by_day[day_ts],
                 })
 
+            logger.info(f"GroundCover: fetched {len(buckets)} daily buckets with {len(model_data)} models")
             return buckets
+
+        except Exception as e:
+            logger.warning(f"GroundCover get_cost_data failed: {type(e).__name__}: {e}")
+            return []
 
         except Exception as e:
             logger.warning(f"GroundCover get_cost_data failed: {type(e).__name__}: {e}")
