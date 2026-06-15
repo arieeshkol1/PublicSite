@@ -808,6 +808,24 @@ def handle_drilldown_refresh_request(event, member_email):
     # reach the deletion block below. AWS keeps its existing clear-then-refetch
     # behavior unchanged.
     regenerated_invoices = None
+    if provider_key == 'groundcover':
+        # GroundCover accounts don't use the invoice system — their data is
+        # consumed via the AI Cost dashboard (handle_openai_usage). A refresh
+        # request is a no-op that succeeds silently.
+        # Update cooldown so rapid re-clicks are throttled the same way.
+        try:
+            table.put_item(Item={
+                'pk': pk, 'sk': cooldown_sk,
+                'lastRefreshEpoch': now_epoch,
+                'ttl': now_epoch + REFRESH_COOLDOWN + 300,
+            })
+        except Exception:
+            pass
+        return create_response(200, {
+            'message': 'Refresh complete',
+            'invoices': [],
+            'source': 'groundcover_no_invoices',
+        })
     if provider_key != 'aws':
         if generate_provider_invoices is None:
             logger.error(
