@@ -14313,8 +14313,16 @@ function _renderSpendBars(aggregated, data) {
     if (viewBy !== 'total' && data) {
         var records = data.token_usage || data.tokenUsage || [];
         var perUserDaily = data.per_user_daily || data.perUserDaily || [];
-        var srcRecords = (viewBy === 'users' && perUserDaily.length) ? perUserDaily : records;
+        // For Users view: combine per_user_daily (has user_id) with token_usage (has service_name)
+        // For Models view: use token_usage directly
+        var srcRecords;
         var dimField = viewBy === 'users' ? 'user_id' : 'service_name';
+        if (viewBy === 'users') {
+            // Merge per_user_daily into token_usage for full coverage
+            srcRecords = records.concat(perUserDaily);
+        } else {
+            srcRecords = records;
+        }
         // Group by date and dimension
         var byDateDim = {};
         var dimSet = {};

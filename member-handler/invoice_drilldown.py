@@ -817,8 +817,23 @@ def handle_drilldown_refresh_request(event, member_email):
                 502, 'FetchError',
                 'Failed to refresh invoice data; previously cached invoices retained')
         try:
+            # Read existing cached periods to skip closed months that haven't changed
+            _cached_periods = set()
+            try:
+                from boto3.dynamodb.conditions import Key as _DDBKey
+                _cached_resp = invoices_table.query(
+                    KeyConditionExpression=_DDBKey('pk').eq(f"{member_email}#{account_id}") & _DDBKey('sk').begins_with('INV#'),
+                    ProjectionExpression='period'
+                )
+                for _item in _cached_resp.get('Items', []):
+                    _p = _item.get('period', '')
+                    if _p:
+                        _cached_periods.add(_p)
+            except Exception:
+                _cached_periods = set()
+
             regenerated_invoices, regen_unavailable = generate_provider_invoices(
-                member_email, account_id, provider_key)
+                member_email, account_id, provider_key, cached_periods=_cached_periods)
         except Exception as e:
             logger.error(
                 "Provider invoice regeneration raised during refresh for "

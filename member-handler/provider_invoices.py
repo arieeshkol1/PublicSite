@@ -180,9 +180,19 @@ def generate_provider_invoices(member_email, account_id, provider_key, cached_pe
         end_date = month['end_date']
 
         # Skip closed months that are already cached — their data doesn't change.
-        # The current month (in-progress) is always re-fetched.
+        # Always re-fetch the current month (in-progress) and the immediately
+        # previous month (may have just closed). Older months are skipped if
+        # they were previously fetched (indicated by cached_periods set).
         if cached_periods and period in cached_periods:
-            continue
+            # Determine current and previous month to never skip them
+            _now_period = datetime.now(timezone.utc).strftime('%Y-%m')
+            _now_y, _now_m = int(_now_period[:4]), int(_now_period[5:7])
+            if _now_m == 1:
+                _prev_period = f'{_now_y - 1:04d}-12'
+            else:
+                _prev_period = f'{_now_y:04d}-{_now_m - 1:02d}'
+            if period != _now_period and period != _prev_period:
+                continue
 
         try:
             cost_data = connector.get_cost_data(
