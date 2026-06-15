@@ -2149,6 +2149,12 @@ def handle_dashboard_data(event):
 
         # Multi-cloud routing: handle Azure accounts differently
         cloud_provider = acct.get('cloudProvider', 'aws')
+
+        # Skip AI vendor accounts (OpenAI, GroundCover) — they don't have AWS
+        # cross-account roles. Their data is served via the AI Cost dashboard.
+        if cloud_provider in ('openai', 'groundcover'):
+            continue
+
         if cloud_provider == 'azure':
             try:
                 credentials = acct.get('credentials', {})
@@ -2241,6 +2247,11 @@ def handle_dashboard_data(event):
         elif cloud_provider == 'gcp':
             # GCP cost data not yet implemented - skip gracefully
             per_account.append({'accountId': acct_id, 'accountName': acct_name, 'cloudProvider': 'gcp', 'error': 'GCP cost data coming soon', 'partial_failure': True})
+            continue
+
+        elif cloud_provider in ('openai', 'groundcover'):
+            # AI vendor accounts use the AI Cost dashboard (openai-usage endpoint),
+            # not the main Observe dashboard. Skip them here.
             continue
 
         try:
