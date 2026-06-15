@@ -283,50 +283,74 @@ class GroundcoverConnector(ProviderConnector):
                 'Accept': 'application/json',
             }
 
-            # Get current total tokens per user+model (instant snapshot)
-            query = 'sum by (user_email, model) (claude_code_token_usage_tokens_total)'
-            params = urllib.parse.urlencode({'query': query})
+            # Get current total tokens per user+model, split by input/output type
+            # The metric has type={input,output,cacheCreation,cacheRead}
+            input_query = 'sum by (user_email, model) (claude_code_token_usage_tokens_total{type="input"})'
+            output_query = 'sum by (user_email, model) (claude_code_token_usage_tokens_total{type="output"})'
 
-            try:
-                req = urllib.request.Request(prom_url, method='POST', headers=headers,
-                                            data=params.encode('utf-8'))
-                resp = urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT)
-                raw = json.loads(resp.read().decode('utf-8'))
-            except Exception as e:
-                logger.warning(f"GroundCover per-user query failed: {type(e).__name__}: {e}")
+            def _instant_query(query):
+                p = urllib.parse.urlencode({'query': query})
+                try:
+                    req = urllib.request.Request(prom_url, method='POST', headers=headers,
+                                                data=p.encode('utf-8'))
+                    resp = urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT)
+                    raw = json.loads(resp.read().decode('utf-8'))
+                    if raw.get('status') != 'success':
+                        return []
+                    return raw.get('data', {}).get('result', [])
+                except Exception as e:
+                    logger.warning(f"GroundCover per-user query failed: {type(e).__name__}: {e}")
+                    return []
+
+            input_results = _instant_query(input_query)
+            output_results = _instant_query(output_query)
+
+            if not input_results and not output_results:
                 return []
 
-            if raw.get('status') != 'success':
-                return []
-
-            results = raw.get('data', {}).get('result', [])
-            if not results:
-                return []
-
-            # Instant query returns current counter totals per user+model.
-            # The per-user chart requires multiple dates to render lines.
-            # Spread each user's total across the last 7 days of the date range.
-            from datetime import timedelta as _td
-            per_user_records = []
-            num_days = 7
-            for series in results:
-                user_email = series.get('metric', {}).get('user_email', '')
+            # Build lookup: {(user, model): {input: N, output: N}}
+            user_data = {}
+            for series in input_results:
+                user = series.get('metric', {}).get('user_email', '')
                 model = series.get('metric', {}).get('model', 'unknown')
-                if not user_email:
+                if not user:
                     continue
                 val = series.get('value', [0, '0'])
                 tokens = int(float(val[1])) if len(val) > 1 else 0
-                if tokens <= 0:
+                if tokens > 0:
+                    user_data.setdefault((user, model), {'input': 0, 'output': 0})
+                    user_data[(user, model)]['input'] += tokens
+
+            for series in output_results:
+                user = series.get('metric', {}).get('user_email', '')
+                model = series.get('metric', {}).get('model', 'unknown')
+                if not user:
                     continue
-                daily_tokens = max(1, tokens // num_days)
+                val = series.get('value', [0, '0'])
+                tokens = int(float(val[1])) if len(val) > 1 else 0
+                if tokens > 0:
+                    user_data.setdefault((user, model), {'input': 0, 'output': 0})
+                    user_data[(user, model)]['output'] += tokens
+
+            if not user_data:
+                return []
+
+            # Spread per-user totals across the full date range
+            from datetime import timedelta as _td
+            start_dt = datetime.strptime(start_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+            num_days = max(2, (end_dt - start_dt).days)
+            per_user_records = []
+            for (user_email, model), tok in user_data.items():
+                daily_input = max(1, tok['input'] // num_days)
+                daily_output = max(0, tok['output'] // num_days)
                 for day_offset in range(num_days):
-                    day_dt = end_dt - _td(days=num_days - 1 - day_offset)
+                    day_dt = start_dt + _td(days=day_offset)
                     per_user_records.append({
                         'date': day_dt.strftime('%Y-%m-%d'),
                         'user_id': user_email,
                         'model': model,
-                        'input_tokens': daily_tokens,
-                        'output_tokens': 0,
+                        'input_tokens': daily_input,
+                        'output_tokens': daily_output,
                         'num_model_requests': 1,
                     })
 

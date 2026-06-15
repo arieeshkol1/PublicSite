@@ -12667,6 +12667,7 @@ def handle_openai_usage(event):
     ]
 
     # Write to Cost_Cache_Table so the AI chat can access this data
+    # Also enables fast cache-hit on subsequent page loads (avoids 15-20s API calls)
     try:
         now_iso = datetime.now(timezone.utc).isoformat()
         # Group costs by date for cache write
@@ -12676,21 +12677,31 @@ def handle_openai_usage(event):
             if not d:
                 continue
             if d not in _daily_cache:
-                _daily_cache[d] = {'cost': 0.0, 'services': {}}
+                _daily_cache[d] = {'cost': 0.0, 'services': {}, 'tokens': {}}
             _daily_cache[d]['cost'] += float(rec.get('cost_amount', 0))
             svc = rec.get('service_name', 'unknown')
             _daily_cache[d]['services'][svc] = _daily_cache[d]['services'].get(svc, 0) + float(rec.get('cost_amount', 0))
+            # Track token breakdown per model
+            if svc not in _daily_cache[d]['tokens']:
+                _daily_cache[d]['tokens'][svc] = {'input_tokens': 0, 'output_tokens': 0}
+            _daily_cache[d]['tokens'][svc]['input_tokens'] += int(rec.get('input_tokens', 0))
+            _daily_cache[d]['tokens'][svc]['output_tokens'] += int(rec.get('output_tokens', 0))
 
+        _cache_write_count = 0
         for date_key, day_data in _daily_cache.items():
-            cache_table.put_item(Item={
+            cache_item = {
                 'pk': pk,
                 'sk': f"{sk_prefix}{date_key}",
                 'cost_amount': str(round(day_data['cost'], 4)),
                 'service_breakdown': {k: str(round(v, 4)) for k, v in day_data['services'].items()},
+                'token_breakdown': {k: v for k, v in day_data['tokens'].items()},
                 'cached_at': now_iso,
-            })
+            }
+            cache_table.put_item(Item=cache_item)
+            _cache_write_count += 1
+        logger.info(f"Cache write: {_cache_write_count} records to Cost_Cache_Table for {pk}")
     except Exception as _cache_err:
-        logger.warning(f"OpenAI cache write failed (non-fatal): {_cache_err}")
+        logger.warning(f"Cache write FAILED for {pk}: {type(_cache_err).__name__}: {_cache_err}")
 
     # Trigger per-user daily token enrichment if we have an API key (cache miss path)
     # This populates the DAILY# records that the per-user graph reads
