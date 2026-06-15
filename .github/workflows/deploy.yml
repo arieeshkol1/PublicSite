@@ -809,25 +809,34 @@ jobs:
       - name: Ensure GroundCover API routes exist
         continue-on-error: true
         run: |
-          API_ID=$(aws cloudformation describe-stacks --stack-name ${{ env.STACK_NAME }} --query "Stacks[0].Outputs[?OutputKey=='ApiId'].OutputValue" --output text 2>/dev/null || echo "l2fd4h481h")
-          INTEGRATION_ID=$(aws apigatewayv2 get-integrations --api-id "$API_ID" --query "Items[0].IntegrationId" --output text 2>/dev/null || echo "")
+          API_ID="l2fd4h481h"
+          echo "Using API ID: $API_ID"
+          INTEGRATION_ID=$(aws apigatewayv2 get-integrations --api-id "$API_ID" --query "Items[0].IntegrationId" --output text 2>&1)
+          echo "Integration ID result: $INTEGRATION_ID"
+          if [ -z "$INTEGRATION_ID" ] || [ "$INTEGRATION_ID" = "None" ] || echo "$INTEGRATION_ID" | grep -qi "error"; then
+            echo "⚠ Could not find integration ID, trying to get from existing routes..."
+            INTEGRATION_ID=$(aws apigatewayv2 get-routes --api-id "$API_ID" --query "Items[0].Target" --output text 2>/dev/null | sed 's|integrations/||')
+            echo "Integration ID from routes: $INTEGRATION_ID"
+          fi
           if [ -z "$INTEGRATION_ID" ] || [ "$INTEGRATION_ID" = "None" ]; then
-            echo "⚠ Could not find integration ID, skipping route creation"
+            echo "❌ Cannot determine integration ID, skipping route creation"
+            exit 0
+          fi
+          # Create add-groundcover route
+          EXISTING=$(aws apigatewayv2 get-routes --api-id "$API_ID" --query "Items[?RouteKey=='POST /members/accounts/add-groundcover'].RouteId" --output text 2>/dev/null || echo "")
+          if [ -z "$EXISTING" ] || [ "$EXISTING" = "None" ]; then
+            echo "Creating add-groundcover route with integration $INTEGRATION_ID..."
+            aws apigatewayv2 create-route --api-id "$API_ID" --route-key "POST /members/accounts/add-groundcover" --target "integrations/$INTEGRATION_ID" 2>&1 && echo "✓ add-groundcover route created" || echo "⚠ add-groundcover route creation failed"
           else
-            # Create add-groundcover route if it doesn't exist
-            EXISTING=$(aws apigatewayv2 get-routes --api-id "$API_ID" --query "Items[?RouteKey=='POST /members/accounts/add-groundcover'].RouteId" --output text 2>/dev/null || echo "")
-            if [ -z "$EXISTING" ] || [ "$EXISTING" = "None" ]; then
-              aws apigatewayv2 create-route --api-id "$API_ID" --route-key "POST /members/accounts/add-groundcover" --target "integrations/$INTEGRATION_ID" > /dev/null 2>&1 && echo "✓ add-groundcover route created" || echo "⚠ add-groundcover route creation failed"
-            else
-              echo "✓ add-groundcover route already exists"
-            fi
-            # Create test-groundcover-connection route if it doesn't exist
-            EXISTING=$(aws apigatewayv2 get-routes --api-id "$API_ID" --query "Items[?RouteKey=='POST /members/accounts/test-groundcover-connection'].RouteId" --output text 2>/dev/null || echo "")
-            if [ -z "$EXISTING" ] || [ "$EXISTING" = "None" ]; then
-              aws apigatewayv2 create-route --api-id "$API_ID" --route-key "POST /members/accounts/test-groundcover-connection" --target "integrations/$INTEGRATION_ID" > /dev/null 2>&1 && echo "✓ test-groundcover-connection route created" || echo "⚠ test-groundcover-connection route creation failed"
-            else
-              echo "✓ test-groundcover-connection route already exists"
-            fi
+            echo "✓ add-groundcover route already exists ($EXISTING)"
+          fi
+          # Create test-groundcover-connection route
+          EXISTING=$(aws apigatewayv2 get-routes --api-id "$API_ID" --query "Items[?RouteKey=='POST /members/accounts/test-groundcover-connection'].RouteId" --output text 2>/dev/null || echo "")
+          if [ -z "$EXISTING" ] || [ "$EXISTING" = "None" ]; then
+            echo "Creating test-groundcover-connection route with integration $INTEGRATION_ID..."
+            aws apigatewayv2 create-route --api-id "$API_ID" --route-key "POST /members/accounts/test-groundcover-connection" --target "integrations/$INTEGRATION_ID" 2>&1 && echo "✓ test-groundcover-connection route created" || echo "⚠ test-groundcover-connection route creation failed"
+          else
+            echo "✓ test-groundcover-connection route already exists ($EXISTING)"
           fi
 
       - name: Ensure Daily Refresh Lambda exists with EventBridge schedule
