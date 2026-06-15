@@ -260,8 +260,8 @@ class GroundcoverConnector(ProviderConnector):
         """Fetch per-user token usage from GroundCover's Prometheus API.
 
         Uses the claude_code_token_usage_tokens_total metric which has user_email
-        and model labels. Returns a list of dicts matching the DAILY# record shape
-        that the Per-User Token Consumption chart expects:
+        and model labels. Uses an instant query (fast) to get current totals per user,
+        then returns records the Per-User Token Consumption chart can display.
           {date, user_id, model, input_tokens, output_tokens, num_model_requests}
         """
         token = auth_context.get('api_key', '')
@@ -272,10 +272,10 @@ class GroundcoverConnector(ProviderConnector):
             return []
 
         try:
-            start_dt = datetime.strptime(start_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
             end_dt = datetime.strptime(end_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
 
-            prom_url = f"{GROUNDCOVER_API_BASE}/api/prometheus/api/v1/query_range"
+            # Use instant query (fast, <1s) instead of range query (times out)
+            prom_url = f"{GROUNDCOVER_API_BASE}/api/prometheus/api/v1/query"
             headers = {
                 'Authorization': f'Bearer {token}',
                 'X-Backend-Id': 'groundcover',
@@ -283,17 +283,9 @@ class GroundcoverConnector(ProviderConnector):
                 'Accept': 'application/json',
             }
 
-            start_ts = int(start_dt.timestamp())
-            end_ts = int(end_dt.timestamp())
-
-            # Query per-user token usage (daily deltas)
-            query = 'sum by (user_email, model) (increase(claude_code_token_usage_tokens_total[1d]))'
-            params = urllib.parse.urlencode({
-                'query': query,
-                'start': str(start_ts),
-                'end': str(end_ts),
-                'step': '86400',
-            })
+            # Get current total tokens per user+model (instant snapshot)
+            query = 'sum by (user_email, model) (claude_code_token_usage_tokens_total)'
+            params = urllib.parse.urlencode({'query': query})
 
             try:
                 req = urllib.request.Request(prom_url, method='POST', headers=headers,
@@ -311,28 +303,29 @@ class GroundcoverConnector(ProviderConnector):
             if not results:
                 return []
 
-            # Build per-user daily records
+            # Instant query returns current counter totals per user+model.
+            # Create one record per user+model with today's date (the chart
+            # groups by user_id regardless of date granularity).
+            today_str = end_dt.strftime('%Y-%m-%d')
             per_user_records = []
             for series in results:
                 user_email = series.get('metric', {}).get('user_email', '')
                 model = series.get('metric', {}).get('model', 'unknown')
                 if not user_email:
                     continue
-                for ts_val in series.get('values', []):
-                    tokens = int(float(ts_val[1]))
-                    if tokens <= 0:
-                        continue
-                    ts = int(float(ts_val[0]))
-                    day_ts = ts - (ts % 86400)
-                    date_str = datetime.utcfromtimestamp(day_ts).strftime('%Y-%m-%d')
-                    per_user_records.append({
-                        'date': date_str,
-                        'user_id': user_email,
-                        'model': model,
-                        'input_tokens': tokens,
-                        'output_tokens': 0,
-                        'num_model_requests': 1,
-                    })
+                # instant query: value is [timestamp, "count_string"]
+                val = series.get('value', [0, '0'])
+                tokens = int(float(val[1])) if len(val) > 1 else 0
+                if tokens <= 0:
+                    continue
+                per_user_records.append({
+                    'date': today_str,
+                    'user_id': user_email,
+                    'model': model,
+                    'input_tokens': tokens,
+                    'output_tokens': 0,
+                    'num_model_requests': 1,
+                })
 
             logger.info(f"GroundCover: fetched {len(per_user_records)} per-user records")
             return per_user_records
