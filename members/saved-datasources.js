@@ -1,329 +1,248 @@
 /**
- * Saved Data Sources Panel Module
- * Displays saved data source configurations with run and delete actions.
- * Integrates with ResultTable.js for query result display.
- * Requirements: 8.1, 8.2, 8.3, 8.4, 8.5
+ * Saved Data Sources Module
+ * Displays and manages saved data source configurations
  */
 
 const SavedDataSources = (() => {
-    const CONTAINER_ID = 'saved-datasources-container';
-    const RESULT_TABLE_CONTAINER_ID = 'saved-datasources-result-table';
-    
-    // Instance of ResultTable for displaying query results
-    let resultTable = null;
+  // Support both Act tab and Observe tab containers - use Observe if available
+  const CONTAINER_ID = document.getElementById('observe-saved-datasources-container') ? 'observe-saved-datasources-container' : 'saved-datasources-container';
+  const RESULT_TABLE_CONTAINER_ID = document.getElementById('observe-saved-datasources-result-table') ? 'observe-saved-datasources-result-table' : 'saved-datasources-result-table';
 
-    /**
-     * Initialize the SavedDataSources module.
-     * Sets up the ResultTable instance for displaying query results.
-     */
-    function init() {
-        // Initialize ResultTable for displaying results
-        resultTable = new ResultTable({
-            containerId: RESULT_TABLE_CONTAINER_ID,
-            columns: [],  // Will be populated dynamically from query response
-            pageSize: 25,
-            onRefresh: function() {
-                // Refresh handler can be customized
-            }
-        });
+  /**
+   * Render the saved data sources panel
+   */
+  async function render() {
+    const container = document.getElementById(CONTAINER_ID);
+    if (!container) return;
+
+    try {
+      showLoading();
+      const response = await api('GET', '/dashboard/datasources');
+      hideLoading();
+
+      if (response.error) {
+        container.innerHTML = `
+          <div style="padding: 16px; background: #fee2e2; border: 1px solid #fecaca; border-radius: 6px; color: #991b1b;">
+            <strong>Error:</strong> ${response.error}
+          </div>
+        `;
+        return;
+      }
+
+      const datasources = response.datasources || [];
+
+      if (datasources.length === 0) {
+        container.innerHTML = `
+          <div style="padding: 24px; text-align: center; color: #6b7280;">
+            <div style="font-size: 1.5em; margin-bottom: 8px;">📚</div>
+            <div style="font-weight: 600; color: #1f2937; margin-bottom: 4px;">No saved data sources yet</div>
+            <div style="font-size: 0.9em;">Create your first data source using the wizard above</div>
+          </div>
+        `;
+        return;
+      }
+
+      let html = '<div style="margin-top: 20px;">';
+      html += `
+        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
+          <h3 style="margin: 0; color: #1f2937; font-size: 1.05em;">📚 Saved Data Sources (${datasources.length})</h3>
+          <button onclick="SavedDataSources.render()" class="btn btn-outline btn-sm">🔄 Refresh</button>
+        </div>
+      `;
+
+      html += '<div style="display: grid; gap: 12px;">';
+
+      datasources.forEach(ds => {
+        const createdAt = new Date(ds.created_at).toLocaleDateString();
+        html += `
+          <div style="border: 1px solid #e5e7eb; border-radius: 8px; padding: 16px; background: #fff; hover:shadow: 0 1px 3px rgba(0,0,0,0.1);">
+            <div style="display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 12px;">
+              <div style="flex: 1;">
+                <div style="font-weight: 600; color: #1f2937; font-size: 1em; margin-bottom: 4px;">${escapeHtml(ds.name)}</div>
+                <div style="font-size: 0.85em; color: #6b7280;">
+                  Created: <strong>${createdAt}</strong> | 
+                  ID: <code style="background: #f3f4f6; padding: 2px 6px; border-radius: 3px; font-size: 0.8em;">${ds.datasource_id}</code>
+                </div>
+              </div>
+              <div style="display: flex; gap: 8px;">
+                <button onclick="SavedDataSources.runSaved('${escapeAttr(ds.datasource_id)}')" class="btn btn-primary btn-sm" style="background: #10b981; border-color: #10b981;">
+                  🔍 Run
+                </button>
+                <button onclick="SavedDataSources.deleteSaved('${escapeAttr(ds.datasource_id)}', '${escapeAttr(ds.name)}')" class="btn btn-outline btn-sm" style="color: #ef4444; border-color: #fca5a5;">
+                  🗑️
+                </button>
+              </div>
+            </div>
+
+            <!-- Query Config Summary -->
+            <div style="background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 6px; padding: 12px; font-size: 0.85em; color: #6b7280;">
+              <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px;">
+                <div>
+                  <div style="color: #9ca3af; font-size: 0.75em; text-transform: uppercase;">Accounts</div>
+                  <div style="color: #1f2937; font-weight: 600;">${ds.query_config?.account_ids?.length || 0} account(s)</div>
+                </div>
+                <div>
+                  <div style="color: #9ca3af; font-size: 0.75em; text-transform: uppercase;">Attributes</div>
+                  <div style="color: #1f2937; font-weight: 600;">${ds.query_config?.attributes?.length || 0} column(s)</div>
+                </div>
+                <div>
+                  <div style="color: #9ca3af; font-size: 0.75em; text-transform: uppercase;">Timeframe</div>
+                  <div style="color: #1f2937; font-weight: 600;">${ds.query_config?.timeframe?.preset || 'unknown'}</div>
+                </div>
+                <div>
+                  <div style="color: #9ca3af; font-size: 0.75em; text-transform: uppercase;">Filters</div>
+                  <div style="color: #1f2937; font-weight: 600;">${ds.query_config?.filters?.length || 0} filter(s)</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        `;
+      });
+
+      html += '</div></div>';
+      container.innerHTML = html;
+    } catch (err) {
+      hideLoading();
+      console.error('Error rendering saved datasources:', err);
+      container.innerHTML = `
+        <div style="padding: 16px; background: #fee2e2; border: 1px solid #fecaca; border-radius: 6px; color: #991b1b;">
+          <strong>Error:</strong> Failed to load saved data sources
+        </div>
+      `;
     }
+  }
 
-    /**
-     * Render the saved data sources list.
-     * Fetches GET /dashboard/datasources and displays each item
-     * with name, creation date, Run button, and Delete button.
-     * Validates: Requirement 8.1
-     */
-    async function render() {
-        const container = document.getElementById(CONTAINER_ID);
-        if (!container) return;
+  /**
+   * Run a saved data source query
+   */
+  async function runSaved(datasourceId) {
+    try {
+      showLoading();
 
-        container.innerHTML = '<p class="saved-ds-loading">Loading saved data sources...</p>';
+      // First, get the saved datasource to retrieve its config
+      const response = await api('GET', '/dashboard/datasources');
+      if (response.error) {
+        hideLoading();
+        showError(response.error);
+        return;
+      }
 
-        try {
-            // Fetch saved datasources from backend API
-            const response = await fetch('/dashboard/datasources', {
-                method: 'GET',
-                headers: {
-                    'Authorization': `Bearer ${_getAuthToken()}`,
-                    'Content-Type': 'application/json'
-                }
-            });
+      const datasources = response.datasources || [];
+      const datasource = datasources.find(ds => ds.datasource_id === datasourceId);
 
-            if (response.status === 401) {
-                // Authentication failed - redirect to login
-                _redirectToLogin();
-                return;
-            }
+      if (!datasource) {
+        hideLoading();
+        showError('Data source not found');
+        return;
+      }
 
-            if (!response.ok) {
-                throw new Error(`Failed to fetch datasources: ${response.statusText}`);
-            }
+      // Execute the query with the saved config
+      const queryResponse = await api('POST', '/dashboard/datasources/query', {
+        query_config: datasource.query_config
+      });
+      hideLoading();
 
-            const data = await response.json();
-            const datasources = data.datasources || [];
+      if (queryResponse.error) {
+        showError(queryResponse.error);
+        return;
+      }
 
-            if (datasources.length === 0) {
-                container.innerHTML = '<p class="saved-ds-empty">No saved data sources yet. Create one in the custom dashboard wizard.</p>';
-                return;
-            }
+      // Render results
+      ResultTable.render(
+        queryResponse.rows,
+        queryResponse.columns,
+        datasource.query_config
+      );
 
-            // Build list HTML
-            let html = '<div class="saved-ds-list">';
-            datasources.forEach(ds => {
-                const formattedDate = _formatDate(ds.created_at);
-                const escapedName = _escapeHtml(ds.datasource_name);
-                const datasourceId = _escapeHtml(ds.datasource_id);
-                
-                html += `<div class="saved-ds-item" data-id="${datasourceId}">
-                    <div class="saved-ds-info">
-                        <span class="saved-ds-name">${escapedName}</span>
-                        <span class="saved-ds-date">Created: ${formattedDate}</span>
-                    </div>
-                    <div class="saved-ds-actions">
-                        <button class="btn btn-sm btn-primary saved-ds-run-btn" data-id="${datasourceId}" title="Execute this saved data source">Run</button>
-                        <button class="btn btn-sm btn-danger saved-ds-delete-btn" data-id="${datasourceId}" data-name="${escapedName}" title="Delete this saved data source">Delete</button>
-                    </div>
-                </div>`;
-            });
-            html += '</div>';
-            container.innerHTML = html;
-
-            // Wire up Run buttons
-            container.querySelectorAll('.saved-ds-run-btn').forEach(btn => {
-                btn.addEventListener('click', async (e) => {
-                    e.preventDefault();
-                    const id = btn.getAttribute('data-id');
-                    await runSaved(id);
-                });
-            });
-
-            // Wire up Delete buttons
-            container.querySelectorAll('.saved-ds-delete-btn').forEach(btn => {
-                btn.addEventListener('click', async (e) => {
-                    e.preventDefault();
-                    const id = btn.getAttribute('data-id');
-                    const name = btn.getAttribute('data-name');
-                    await deleteSaved(id, name);
-                });
-            });
-        } catch (err) {
-            const errorMsg = err.message || 'Unknown error';
-            container.innerHTML = `<p class="saved-ds-error">Failed to load data sources: ${_escapeHtml(errorMsg)}</p>`;
-            console.error('SavedDataSources.render() error:', err);
-        }
+      notify(`Executed "${datasource.name}"`, 'success');
+    } catch (err) {
+      hideLoading();
+      console.error('Error running saved datasource:', err);
+      showError('Failed to execute saved data source');
     }
+  }
 
-    /**
-     * Execute a saved data source configuration and display results.
-     * Posts to POST /dashboard/datasources/query with the saved config,
-     * then renders results via ResultTable.
-     * Validates: Requirement 8.2
-     * 
-     * @param {string} datasourceId - The data source ID to run
-     */
-    async function runSaved(datasourceId) {
-        const container = document.getElementById(CONTAINER_ID);
-        const runBtn = container ? container.querySelector(`.saved-ds-run-btn[data-id="${_escapeHtml(datasourceId)}"]`) : null;
-        
-        if (runBtn) {
-            runBtn.disabled = true;
-            runBtn.textContent = 'Running...';
-        }
+  /**
+   * Delete a saved data source
+   */
+  async function deleteSaved(datasourceId, datasourceName) {
+    const confirmed = confirm(`Are you sure you want to delete "${datasourceName}"?\n\nThis cannot be undone.`);
+    if (!confirmed) return;
 
-        try {
-            // Execute the saved datasource query
-            const response = await fetch('/dashboard/datasources/query', {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${_getAuthToken()}`,
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    datasource_id: datasourceId
-                })
-            });
+    try {
+      showLoading();
+      const response = await api('DELETE', `/dashboard/datasources/${datasourceId}`);
+      hideLoading();
 
-            if (response.status === 401) {
-                _redirectToLogin();
-                return;
-            }
+      if (response.error) {
+        showError(response.error);
+        return;
+      }
 
-            if (!response.ok) {
-                const errorData = await response.json();
-                throw new Error(errorData.message || `Query failed with status ${response.status}`);
-            }
-
-            const result = await response.json();
-
-            // Render results using ResultTable
-            if (resultTable && result.rows) {
-                // Dynamically set columns based on result keys
-                const columns = result.columns || (result.rows.length > 0 ? Object.keys(result.rows[0]) : []);
-                resultTable.columns = columns.map(col => ({
-                    key: col,
-                    label: col.replace(/_/g, ' ').toUpperCase(),
-                    sortable: true
-                }));
-
-                // Render the table with result data
-                resultTable.render(result.rows, result.total_count || result.rows.length);
-            } else {
-                console.warn('ResultTable not initialized or no rows in result');
-            }
-        } catch (err) {
-            const errorMsg = err.message || 'Unknown error';
-            console.error('SavedDataSources.runSaved() error:', err);
-            alert(`Query failed: ${errorMsg}`);
-        } finally {
-            // Restore button state
-            if (runBtn) {
-                runBtn.disabled = false;
-                runBtn.textContent = 'Run';
-            }
-        }
+      notify(`Data source "${datasourceName}" deleted`, 'success');
+      render(); // Refresh list
+    } catch (err) {
+      hideLoading();
+      console.error('Error deleting datasource:', err);
+      showError('Failed to delete data source');
     }
+  }
 
-    /**
-     * Delete a saved data source after user confirmation.
-     * Shows confirm() dialog, calls DELETE /dashboard/datasources/{id},
-     * then refreshes the list.
-     * Validates: Requirement 8.3, 8.4, 8.5
-     * 
-     * @param {string} datasourceId - The data source ID to delete
-     * @param {string} name - The display name for the confirmation dialog
-     */
-    async function deleteSaved(datasourceId, name) {
-        // Show confirmation dialog
-        const confirmed = confirm(`Are you sure you want to delete the saved data source "${name}"? This action cannot be undone.`);
-        if (!confirmed) return;
+  /**
+   * Show loading state
+   */
+  function showLoading() {
+    if (window.showLoading) window.showLoading();
+  }
 
-        const container = document.getElementById(CONTAINER_ID);
-        const deleteBtn = container ? container.querySelector(`.saved-ds-delete-btn[data-id="${_escapeHtml(datasourceId)}"]`) : null;
-        
-        if (deleteBtn) {
-            deleteBtn.disabled = true;
-            deleteBtn.textContent = 'Deleting...';
-        }
+  /**
+   * Hide loading state
+   */
+  function hideLoading() {
+    if (window.hideLoading) window.hideLoading();
+  }
 
-        try {
-            // Delete the datasource
-            const response = await fetch(`/dashboard/datasources/${datasourceId}`, {
-                method: 'DELETE',
-                headers: {
-                    'Authorization': `Bearer ${_getAuthToken()}`,
-                    'Content-Type': 'application/json'
-                }
-            });
+  /**
+   * Show error message
+   */
+  function showError(msg) {
+    notify(msg, 'error');
+  }
 
-            if (response.status === 401) {
-                _redirectToLogin();
-                return;
-            }
-
-            if (!response.ok) {
-                const errorData = await response.json();
-                throw new Error(errorData.message || `Delete failed with status ${response.status}`);
-            }
-
-            // Refresh the list after successful deletion
-            await render();
-        } catch (err) {
-            const errorMsg = err.message || 'Unknown error';
-            console.error('SavedDataSources.deleteSaved() error:', err);
-            alert(`Delete failed: ${errorMsg}`);
-            
-            // Restore button state on failure
-            if (deleteBtn) {
-                deleteBtn.disabled = false;
-                deleteBtn.textContent = 'Delete';
-            }
-        }
-    }
-
-    /**
-     * Format an ISO 8601 date string as a human-readable date.
-     * e.g., "2024-06-15T10:30:00Z" → "Jun 15, 2024"
-     * 
-     * @param {string} isoString - ISO 8601 date string
-     * @returns {string} Formatted date or fallback text
-     */
-    function _formatDate(isoString) {
-        if (!isoString) return 'Unknown date';
-        try {
-            const date = new Date(isoString);
-            if (isNaN(date.getTime())) return isoString;
-            return date.toLocaleDateString('en-US', {
-                month: 'short',
-                day: 'numeric',
-                year: 'numeric'
-            });
-        } catch (e) {
-            return isoString;
-        }
-    }
-
-    /**
-     * Escape HTML entities to prevent XSS when inserting user-provided text.
-     * 
-     * @param {string} str - Raw string
-     * @returns {string} Escaped HTML-safe string
-     */
-    function _escapeHtml(str) {
-        if (!str) return '';
-        const div = document.createElement('div');
-        div.textContent = str;
-        return div.innerHTML;
-    }
-
-    /**
-     * Get the authentication token from localStorage or session.
-     * This assumes tokens are stored in the same way as the member portal.
-     * 
-     * @returns {string} JWT token
-     */
-    function _getAuthToken() {
-        // Try to get token from sessionStorage or localStorage
-        let token = sessionStorage.getItem('auth_token') || localStorage.getItem('auth_token');
-        if (!token && window.getAuthToken) {
-            // Fallback to window function if available
-            token = window.getAuthToken();
-        }
-        return token || '';
-    }
-
-    /**
-     * Redirect to login view on authentication failure.
-     * Assumes there's a login view in the DOM.
-     */
-    function _redirectToLogin() {
-        // Try to hide dashboard view and show login view
-        const dashboardView = document.getElementById('dashboard-view');
-        const loginView = document.getElementById('login-view');
-        
-        if (dashboardView) dashboardView.hidden = true;
-        if (loginView) loginView.hidden = false;
-        
-        // Fallback: redirect to login page
-        if (!loginView) {
-            window.location.href = '../index.html?login=required';
-        }
-    }
-
-    // Public API
-    return {
-        init,
-        render,
-        runSaved,
-        deleteSaved
+  /**
+   * Escape HTML special characters
+   */
+  function escapeHtml(text) {
+    const map = {
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+      "'": '&#039;'
     };
+    return text.replace(/[&<>"']/g, m => map[m]);
+  }
+
+  /**
+   * Escape attribute value
+   */
+  function escapeAttr(text) {
+    return text.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  // Public API
+  return {
+    render,
+    runSaved,
+    deleteSaved
+  };
 })();
 
-// Auto-initialize when DOM is ready
+// Render on page load
 if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => {
-        SavedDataSources.init();
-    });
+  document.addEventListener('DOMContentLoaded', () => {
+    setTimeout(() => SavedDataSources.render(), 100);
+  });
 } else {
-    SavedDataSources.init();
+  setTimeout(() => SavedDataSources.render(), 100);
 }

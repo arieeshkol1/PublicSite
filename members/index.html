@@ -1034,13 +1034,29 @@
                             <div id="openai-dashboard"></div>
                         </div>
 
-                        <!-- Custom Dashboard Section (Widget Builder) -->
+                        <!-- Custom Dashboard Section (Data Source Wizard + Results Grid) -->
                         <div id="observe-section-observe-custom-dashboard" style="display:none;">
                             <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
-                                <h3 style="margin:0;color:#1f2937;">🧩 Custom Widget Builder</h3>
+                                <h3 style="margin:0;color:#1f2937;">📊 Custom Data Sources</h3>
+                                <button id="observe-new-datasource-btn" class="btn btn-primary btn-sm" onclick="DataSourceWizard.open()">
+                                    ➕ New Data Source
+                                </button>
                             </div>
-                            <div style="border:1px solid #e5e7eb;border-radius:12px;overflow:hidden;height:600px;">
-                                <iframe id="observe-widget-builder-iframe" style="width:100%;height:100%;border:none;"></iframe>
+                            <p style="color:#6b7280;font-size:0.9em;margin-bottom:16px;">Build custom tabular data views from your cost data. Create, save, and reuse data sources as widgets in your dashboard.</p>
+
+                            <!-- Saved Data Sources Panel -->
+                            <div id="observe-saved-datasources-container" class="saved-ds-panel" style="margin-bottom:16px;"></div>
+
+                            <!-- Results Table Widget Grid -->
+                            <div class="observe-widget-grid" style="display:grid;grid-template-columns:repeat(auto-fit, minmax(380px, 1fr));gap:16px;">
+                                <div id="observe-saved-datasources-result-table" class="result-table-widget" style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:16px;"></div>
+                            </div>
+
+                            <!-- Empty State -->
+                            <div id="observe-custom-data-empty" style="text-align:center;padding:60px 20px;color:#6b7280;">
+                                <div style="font-size:2.5em;margin-bottom:12px;">📊</div>
+                                <div style="font-size:1em;margin-bottom:6px;color:#1f2937;">Create Your First Data Source</div>
+                                <div style="font-size:0.9em;color:#6b7280;">Click "New Data Source" to build a custom tabular view<br>from your cost data with filters, sorting, and pagination.</div>
                             </div>
                         </div>
 
