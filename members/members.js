@@ -3733,33 +3733,12 @@ function _switchObserveSection(sectionId) {
         }
     }
 
-    // Step 5c: Load Widget Builder iframe when Custom Dashboard section is activated
+    // Step 5c: Load Custom Data Sources when Custom Dashboard section is activated
     if (sectionId === 'observe-custom-dashboard') {
-        var wbIframe = document.getElementById('observe-widget-builder-iframe');
-        if (wbIframe && !wbIframe.src) {
-            // Cache-bust the iframe document so browsers don't serve a stale
-            // copy of the widget builder after a deploy.
-            wbIframe.src = '/dashboard/?v=' + Date.now();
-            wbIframe.onload = function() {
-                var token = sessionStorage.getItem('memberToken');
-                var email = sessionStorage.getItem('memberEmail');
-                if (wbIframe.contentWindow) {
-                    wbIframe.contentWindow.postMessage({ type: 'dashboard-auth', token: token, email: email }, '*');
-                    setTimeout(function() {
-                        var data = dashDataCache;
-                        if (data && wbIframe.contentWindow) {
-                            wbIframe.contentWindow.postMessage({ type: 'dashboard-data', payload: data }, '*');
-                        }
-                    }, 500);
-                }
-            };
-        } else if (wbIframe && wbIframe.contentWindow) {
-            var data = dashDataCache;
-            if (data) {
-                wbIframe.contentWindow.postMessage({ type: 'dashboard-data', payload: data }, '*');
-            }
+        // Render saved data sources panel
+        if (typeof SavedDataSources !== 'undefined' && SavedDataSources.render) {
+            SavedDataSources.render();
         }
-    }
 
     // Step 6: Cancel pending resize and schedule new one
     if (_observeResizeTimer) { clearTimeout(_observeResizeTimer); _observeResizeTimer = null; }
