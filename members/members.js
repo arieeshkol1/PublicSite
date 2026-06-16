@@ -3711,12 +3711,15 @@ function _switchObserveSection(sectionId) {
     try { localStorage.setItem('observeActiveSection', sectionId); } catch(e) {}
 
     // Step 5: Build widgets and render charts if section is stale or not yet rendered
-    var sectionContainer = document.querySelector('#observe-section-' + sectionId + ' .observe-widget-grid');
-    if (sectionContainer) {
-        if (_observeStaleSections[sectionId] || sectionContainer.children.length === 0) {
-            _buildObserveSectionWidgets(sectionId, sectionContainer);
-            if (dashDataCache) {
-                _renderVisibleSectionCharts(dashDataCache, sectionId);
+    // Skip widget building for custom dashboard - it has its own data source UI
+    if (sectionId !== 'observe-custom-dashboard') {
+        var sectionContainer = document.querySelector('#observe-section-' + sectionId + ' .observe-widget-grid');
+        if (sectionContainer) {
+            if (_observeStaleSections[sectionId] || sectionContainer.children.length === 0) {
+                _buildObserveSectionWidgets(sectionId, sectionContainer);
+                if (dashDataCache) {
+                    _renderVisibleSectionCharts(dashDataCache, sectionId);
+                }
             }
         }
     }
