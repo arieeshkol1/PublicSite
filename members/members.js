@@ -3739,6 +3739,7 @@ function _switchObserveSection(sectionId) {
         if (typeof SavedDataSources !== 'undefined' && SavedDataSources.render) {
             SavedDataSources.render();
         }
+    }
 
     // Step 6: Cancel pending resize and schedule new one
     if (_observeResizeTimer) { clearTimeout(_observeResizeTimer); _observeResizeTimer = null; }
