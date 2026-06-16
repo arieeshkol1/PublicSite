@@ -1634,6 +1634,14 @@ function activateMemberTab(tabId) {
         var _initSection = _getActiveObserveSection();
         _switchObserveSection(_initSection);
         loadDashboardData();
+        // Initialize saved data sources panel (Task 7.2, Requirement 11.3)
+        if (typeof SavedDataSources !== 'undefined' && SavedDataSources.render) {
+            SavedDataSources.render();
+        }
+        // Initialize data source wizard if not already done (Task 7.2)
+        if (typeof initDataSourceWizard === 'function') {
+            initDataSourceWizard();
+        }
     }
     if (tabId === 'act-tab') {
         _syncAccountSelection('dash'); // save current selection
@@ -1715,11 +1723,29 @@ function renderDashboard() {
     dashboardItems.forEach(function(item) {
         var card = document.createElement('div');
         card.className = 'dashboard-card';
+        
+        // Handle deprecated "table" widget type with migration notice
+        if (item.viewType === 'table') {
+            card.innerHTML =
+                '<h3>' + esc(item.title || 'Saved Query') + '</h3>' +
+                '<div class=\"dashboard-card-meta\" style=\"background:#fef3c7;border:1px solid #fcd34d;border-radius:6px;padding:8px 12px;margin:8px 0;color:#92400e;font-size:0.85em;\">' +
+                    '⚠️ <strong>Deprecated Widget Type</strong><br>' +
+                    'This table widget type has been deprecated. Use the Data Source Wizard instead.' +
+                '</div>' +
+                '<p><strong>Request:</strong> ' + esc(item.prompt || '') + '</p>' +
+                '<p><strong>Response:</strong> ' + esc(item.answer || '-') + '</p>' +
+                '<div class=\"dashboard-actions\">' +
+                    '<button class=\"btn btn-primary btn-sm\" onclick=\"openDataSourceWizard()\" style=\"background:#6366f1;border-color:#6366f1;margin-right:6px;\">📊 Open Data Source Wizard</button>' +
+                    '<button class=\"btn btn-outline btn-sm\" data-dashboard-del=\"' + ea(item.id || '') + '\">Delete</button>' +
+                '</div>';
+            card.style.opacity = '0.85';
+            dashboardGrid.appendChild(card);
+            return;
+        }
+        
         var values = extractValues(item.answer || '');
         var chartId = 'dash-chart-' + (item.id || Math.random().toString(36).slice(2));
-        var visual = item.viewType === 'table'
-            ? renderMiniTable(values)
-            : '<canvas id="' + chartId + '" height="180"></canvas>';
+        var visual = '<canvas id="' + chartId + '" height="180"></canvas>';
         card.innerHTML =
             '<h3>' + esc(item.title || 'Saved Query') + '</h3>' +
             '<div class=\"dashboard-card-meta\">' + esc((item.viewType || 'graph').toUpperCase()) + ' \u2022 ' + esc(fmtDate(item.createdAt)) + '</div>' +

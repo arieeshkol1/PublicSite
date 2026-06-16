@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+ <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -332,7 +332,10 @@
                             <span style="font-size:1.2em;">💰</span> Committed Discounts
                         </button>
                         <button class="act-nav-btn" data-section="sql-compare" onclick="_switchActSection('sql-compare')"><span style="font-size:1.2em;">🔀</span> SQL Compare</button>
-
+                        <hr style="border:none;border-top:1px solid #e5e7eb;margin:8px 0;">
+                        <button class="act-nav-btn" data-section="custom-data" onclick="_switchActSection('custom-data')">
+                            <span style="font-size:1.2em;">📊</span> Custom Dashboard
+                        </button>
                     </div>
 
                     <!-- Right Content Area -->
@@ -680,6 +683,30 @@
                                 <div style="font-size:2.5em;margin-bottom:12px;">🔀</div>
                                 <div style="font-size:1em;margin-bottom:6px;color:#1f2937;">Compare SQL Server Platform Costs</div>
                                 <div style="font-size:0.9em;color:#6b7280;">Select an account and click "Compare Platforms" to discover SQL Server<br>workloads and compare costs across EC2 and RDS deployment options.</div>
+                            </div>
+                        </div>
+
+                        <!-- Custom Data Source Section -->
+                        <div id="act-section-custom-data" style="display:none;">
+                            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;">
+                                <h2 style="margin:0;color:#1f2937;">Custom Dashboard</h2>
+                                <button id="new-datasource-btn" class="btn btn-primary btn-sm" onclick="DataSourceWizard.open()">
+                                    ➕ New Data Source
+                                </button>
+                            </div>
+                            <p style="color:#6b7280;font-size:0.9em;margin-bottom:16px;">Build custom tabular data views from your cost data. Create, save, and reuse data sources across your dashboards.</p>
+
+                            <!-- Saved Data Sources Panel -->
+                            <div id="saved-datasources-container" class="saved-ds-panel"></div>
+
+                            <!-- Results Table Wrapper -->
+                            <div id="saved-datasources-result-table" class="result-table-wrapper"></div>
+
+                            <!-- Empty State -->
+                            <div id="custom-data-empty" style="text-align:center;padding:60px 20px;color:#6b7280;">
+                                <div style="font-size:2.5em;margin-bottom:12px;">📊</div>
+                                <div style="font-size:1em;margin-bottom:6px;color:#1f2937;">Create Your First Data Source</div>
+                                <div style="font-size:0.9em;color:#6b7280;">Click "New Data Source" to build a custom tabular view<br>from your cost data with filters, sorting, and pagination.</div>
                             </div>
                         </div>
 
@@ -1318,7 +1345,6 @@
                     <label for="visualize-type-select">Visual Type</label>
                     <select id="visualize-type-select">
                         <option value="graph">Graph</option>
-                        <option value="table">Table</option>
                     </select>
                 </div>
                 <div class="form-group">
@@ -1366,7 +1392,26 @@
         <span id="notification-message"></span>
     </div>
 
+    <!-- Data Source Wizard Overlay -->
+    <div id="datasource-wizard-overlay" class="modal-overlay" hidden>
+        <div class="modal-card" style="max-width:720px;">
+            <div class="modal-header">
+                <h2>Custom Data Source Wizard</h2>
+                <button onclick="DataSourceWizard.close();" class="modal-close">&times;</button>
+            </div>
+            <div class="modal-body" id="wizard-body" style="min-height:400px;"></div>
+            <div class="modal-footer">
+                <button id="wizard-back-btn" class="btn btn-outline" hidden>Back</button>
+                <button id="wizard-next-btn" class="btn btn-primary">Next</button>
+                <button id="wizard-finish-btn" class="btn btn-primary" hidden>Save Data Source</button>
+            </div>
+        </div>
+    </div>
+
     <script src="members.js?v=113"></script>
     <script src="help.js?v=8"></script>
+    <script src="result-table.js"></script>
+    <script src="saved-datasources.js"></script>
+    <script src="datasource-wizard.js"></script>
 </body>
 </html>

@@ -1990,3 +1990,327 @@
     border-radius: 50%;
     flex-shrink: 0;
 }
+
+
+/* ============================================================
+   Result Table Component Styles
+   ============================================================ */
+
+.result-table-wrapper {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    width: 100%;
+}
+
+.result-table-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 4px;
+    flex-wrap: wrap;
+    gap: 12px;
+}
+
+.result-table-header-left {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+}
+
+.result-table-header-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.result-table-row-count {
+    font-size: 14px;
+    color: #6b7280;
+    font-weight: 500;
+}
+
+.result-table-row-count strong {
+    color: #1f2937;
+    font-weight: 700;
+}
+
+.result-table-refresh-btn {
+    background: transparent;
+    border: 1px solid #e5e7eb;
+    border-radius: 6px;
+    padding: 6px 12px;
+    font-size: 14px;
+    cursor: pointer;
+    transition: all 0.15s;
+    color: #6b7280;
+    font-weight: 500;
+}
+
+.result-table-refresh-btn:hover {
+    background: #f9fafb;
+    border-color: #d1d5db;
+    color: #1f2937;
+}
+
+.result-table-refresh-btn:active {
+    transform: scale(0.98);
+}
+
+/* Result table specific styling */
+.result-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+}
+
+.result-table thead th {
+    background: linear-gradient(180deg, #f0f4ff 0%, #e8ecff 100%);
+    color: #1f2937;
+    font-weight: 600;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    padding: 12px 14px;
+    text-align: left;
+    white-space: nowrap;
+    border-bottom: 2px solid #d0d9ff;
+    user-select: none;
+    position: relative;
+}
+
+.result-table thead th:first-child {
+    border-radius: 12px 0 0 0;
+}
+
+.result-table thead th:last-child {
+    border-radius: 0 12px 0 0;
+}
+
+.result-table thead th[data-sortable="true"] {
+    cursor: pointer;
+    transition: background 0.15s;
+}
+
+.result-table thead th[data-sortable="true"]:hover {
+    background: linear-gradient(180deg, #e8ecff 0%, #dfe8ff 100%);
+}
+
+.result-table-header-cell {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.result-table-sort-indicator {
+    display: inline-block;
+    font-size: 11px;
+    color: #4f46e5;
+    font-weight: 700;
+}
+
+.result-table tbody tr {
+    transition: background 0.15s;
+    border-bottom: 1px solid #f0f0f0;
+}
+
+.result-table tbody tr:nth-child(even) {
+    background: #f9fafb;
+}
+
+.result-table tbody tr:hover {
+    background: #f0f4ff;
+}
+
+.result-table tbody td {
+    padding: 10px 14px;
+    max-width: 300px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: #374151;
+}
+
+/* Loading overlay */
+.result-table-loading-overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(255, 255, 255, 0.8);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    z-index: 100;
+    border-radius: 12px;
+}
+
+.result-table-loading-overlay[hidden] {
+    display: none !important;
+}
+
+.result-table-loading-spinner {
+    width: 40px;
+    height: 40px;
+    border: 4px solid #e5e7eb;
+    border-top-color: #4f46e5;
+    border-radius: 50%;
+    animation: result-table-spin 0.7s linear infinite;
+}
+
+@keyframes result-table-spin {
+    to { transform: rotate(360deg); }
+}
+
+.result-table-loading-text {
+    font-size: 14px;
+    color: #6b7280;
+    font-weight: 500;
+}
+
+/* Empty state */
+.result-table-empty-state {
+    padding: 48px 24px;
+    text-align: center;
+    color: #9ca3af;
+    font-size: 15px;
+    background: #f9fafb;
+    border-radius: 12px;
+    border: 1px dashed #e5e7eb;
+}
+
+.result-table-empty-state[hidden] {
+    display: none !important;
+}
+
+.result-table-empty-state p {
+    margin: 0;
+}
+
+/* Error state */
+.result-table-error-state {
+    padding: 16px 20px;
+    background: #fee2e2;
+    border: 1px solid #fecaca;
+    border-radius: 12px;
+    color: #991b1b;
+    font-size: 14px;
+}
+
+.result-table-error-state[hidden] {
+    display: none !important;
+}
+
+.result-table-error-state p {
+    margin: 0;
+    font-weight: 500;
+}
+
+.result-table-error-message {
+    display: block;
+}
+
+/* Pagination */
+.result-table-pagination {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 16px 0;
+    gap: 8px;
+}
+
+.result-pagination-controls {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.result-pagination-btn {
+    background: transparent;
+    border: 1px solid #e5e7eb;
+    border-radius: 6px;
+    padding: 6px 10px;
+    font-size: 13px;
+    color: #6b7280;
+    cursor: pointer;
+    transition: all 0.15s;
+    font-weight: 500;
+    min-width: 32px;
+    text-align: center;
+}
+
+.result-pagination-btn:hover:not(:disabled) {
+    background: #f0f4ff;
+    border-color: #4f46e5;
+    color: #4f46e5;
+}
+
+.result-pagination-btn.result-pagination-active {
+    background: #4f46e5;
+    border-color: #4f46e5;
+    color: #fff;
+    font-weight: 600;
+}
+
+.result-pagination-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.result-pagination-dots {
+    color: #9ca3af;
+    padding: 0 4px;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .result-table {
+        font-size: 12px;
+    }
+    
+    .result-table thead th {
+        padding: 10px 8px;
+        font-size: 11px;
+    }
+    
+    .result-table tbody td {
+        padding: 8px 8px;
+        max-width: 150px;
+    }
+    
+    .result-table-header {
+        flex-direction: column;
+        align-items: stretch;
+    }
+    
+    .result-table-header-left,
+    .result-table-header-right {
+        justify-content: space-between;
+    }
+    
+    .result-pagination-controls {
+        gap: 4px;
+    }
+    
+    .result-pagination-btn {
+        padding: 4px 8px;
+        font-size: 12px;
+        min-width: 28px;
+    }
+    
+    .result-table-empty-state {
+        padding: 32px 16px;
+        font-size: 14px;
+    }
+}
+
+/* Wrapper for positioning relative to container */
+.table-wrapper {
+    position: relative;
+    overflow-x: auto;
+    background: var(--white);
+    border-radius: 12px;
+    border: 1px solid var(--gray-light);
+}
