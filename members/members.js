@@ -3654,7 +3654,8 @@ var OBSERVE_WIDGET_SECTIONS = {
     'observe-cost': ['dash-treemap', 'dash-daily', 'dash-monthly', 'dash-regional', 'dash-cost-by-tag', 'dash-cost-by-service'],
     'observe-commitments': ['dash-sp-coverage', 'dash-ri-coverage', 'dash-waste'],
     'observe-metrics': ['dash-unit-economics'],
-    'observe-health': ['dash-finops-score']
+    'observe-health': ['dash-finops-score'],
+    'observe-custom-dashboard': ['dash-treemap', 'dash-daily', 'dash-monthly', 'dash-regional', 'dash-cost-by-tag', 'dash-cost-by-service']
 };
 
 // Timer handle for pending ECharts resize on section switch

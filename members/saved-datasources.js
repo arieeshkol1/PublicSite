@@ -245,21 +245,10 @@ const SavedDataSources = (() => {
 })();
 
 // Render on page load (only if container exists and is visible)
+// Note: Don't auto-render on page load - let _switchObserveSection() call render() when needed
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', () => {
-    // Wait for full page to load before attempting render
-    setTimeout(() => {
-      const container = document.getElementById(CONTAINER_ID);
-      if (container && container.offsetParent !== null) { // offsetParent === null means hidden
-        SavedDataSources.render();
-      }
-    }, 500);
+    // Defer initialization until page is fully loaded
+    // render() will be called explicitly by _switchObserveSection() in members.js
   });
-} else {
-  setTimeout(() => {
-    const container = document.getElementById(CONTAINER_ID);
-    if (container && container.offsetParent !== null) {
-      SavedDataSources.render();
-    }
-  }, 500);
 }
