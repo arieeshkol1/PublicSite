@@ -4,9 +4,15 @@
  */
 
 const SavedDataSources = (() => {
-  // Support both Act tab and Observe tab containers - use Observe if available
-  const CONTAINER_ID = document.getElementById('observe-saved-datasources-container') ? 'observe-saved-datasources-container' : 'saved-datasources-container';
-  const RESULT_TABLE_CONTAINER_ID = document.getElementById('observe-saved-datasources-result-table') ? 'observe-saved-datasources-result-table' : 'saved-datasources-result-table';
+  // Determine container based on context (Observe tab or Act tab)
+  let CONTAINER_ID = 'observe-saved-datasources-container';
+  let RESULT_TABLE_CONTAINER_ID = 'observe-saved-datasources-result-table';
+  
+  // If Observe containers don't exist, fall back to Act containers
+  if (!document.getElementById(CONTAINER_ID)) {
+    CONTAINER_ID = 'saved-datasources-container';
+    RESULT_TABLE_CONTAINER_ID = 'saved-datasources-result-table';
+  }
 
   /**
    * Render the saved data sources panel
@@ -238,11 +244,22 @@ const SavedDataSources = (() => {
   };
 })();
 
-// Render on page load
+// Render on page load (only if container exists and is visible)
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', () => {
-    setTimeout(() => SavedDataSources.render(), 100);
+    // Wait for full page to load before attempting render
+    setTimeout(() => {
+      const container = document.getElementById(CONTAINER_ID);
+      if (container && container.offsetParent !== null) { // offsetParent === null means hidden
+        SavedDataSources.render();
+      }
+    }, 500);
   });
 } else {
-  setTimeout(() => SavedDataSources.render(), 100);
+  setTimeout(() => {
+    const container = document.getElementById(CONTAINER_ID);
+    if (container && container.offsetParent !== null) {
+      SavedDataSources.render();
+    }
+  }, 500);
 }

@@ -12,8 +12,11 @@ const ResultTable = (() => {
     pageSize: 50
   };
 
-  // Support both Act tab and Observe tab containers
-  const WRAPPER_ID = document.getElementById('observe-saved-datasources-result-table') ? 'observe-saved-datasources-result-table' : 'saved-datasources-result-table';
+  // Determine wrapper container based on context
+  let WRAPPER_ID = 'observe-saved-datasources-result-table';
+  if (!document.getElementById(WRAPPER_ID)) {
+    WRAPPER_ID = 'saved-datasources-result-table';
+  }
 
   /**
    * Render the result table
