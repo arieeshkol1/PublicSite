@@ -2318,7 +2318,7 @@ function addAIMessage(type, content, topServices, backendFollowUps) {
                 '<button class="ai-fb-btn ai-fb-up" title="Helpful" style="background:#21262d;border:1px solid #30363d;border-radius:4px;color:#8b949e;cursor:pointer;padding:4px 10px;font-size:1em;margin-right:4px;">\ud83d\udc4d</button>' +
                 '<button class="ai-fb-btn ai-fb-down" title="Not helpful" style="background:#21262d;border:1px solid #30363d;border-radius:4px;color:#8b949e;cursor:pointer;padding:4px 10px;font-size:1em;">\ud83d\udc4e</button>' +
                 '<div class="ai-fb-correction" style="display:none;margin-top:8px;">' +
-                    '<input type="text" class="ai-fb-correction-input" placeholder="What was missing or incorrect?" style="background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:8px 10px;color:#c9d1d9;font-size:0.85em;width:70%;margin-right:6px;">' +
+                    '<input type="text" class="ai-fb-correction-input" placeholder="What was missing or incorrect?" style="background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:8px 10px;color:#c9d1d9;font-size:0.85em;width:70%;margin-right:6px;" onkeypress="if(event.key===\'Enter\')event.preventDefault();">' +
                     '<button class="ai-fb-correction-submit btn btn-primary btn-sm" style="font-size:0.8em;">Submit</button>' +
                 '</div>' +
                 '<div class="ai-fb-status" style="display:none;color:#7ee787;font-size:0.85em;margin-top:6px;"></div>' +
