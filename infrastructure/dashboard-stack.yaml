@@ -133,6 +133,14 @@ Resources:
                   - dynamodb:Query
                 Resource:
                   - !Ref AccountsTableArn
+        - PolicyName: CognitoGetUserAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - cognito-idp:GetUser
+                Resource: '*'
       Tags:
         - Key: Project
           Value: ViewMyBill

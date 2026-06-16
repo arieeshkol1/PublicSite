@@ -23,7 +23,7 @@ const SavedDataSources = (() => {
 
     try {
       showLoading();
-      const response = await api('GET', '/dashboard/datasources');
+      const response = await api('GET', '/members/dashboard-datasources');
       hideLoading();
 
       if (response.error) {
@@ -110,11 +110,11 @@ const SavedDataSources = (() => {
     } catch (err) {
       hideLoading();
       console.error('Error rendering saved datasources:', err);
-      container.innerHTML = `
-        <div style="padding: 16px; background: #fee2e2; border: 1px solid #fecaca; border-radius: 6px; color: #991b1b;">
-          <strong>Error:</strong> Failed to load saved data sources
-        </div>
-      `;
+      // Don't show error UI if no container or it's just empty
+      const container = document.getElementById(CONTAINER_ID);
+      if (container) {
+        container.innerHTML = '';
+      }
     }
   }
 
@@ -126,7 +126,7 @@ const SavedDataSources = (() => {
       showLoading();
 
       // First, get the saved datasource to retrieve its config
-      const response = await api('GET', '/dashboard/datasources');
+      const response = await api('GET', '/members/dashboard-datasources');
       if (response.error) {
         hideLoading();
         showError(response.error);
@@ -143,7 +143,7 @@ const SavedDataSources = (() => {
       }
 
       // Execute the query with the saved config
-      const queryResponse = await api('POST', '/dashboard/datasources/query', {
+      const queryResponse = await api('POST', '/members/dashboard-datasources/query', {
         query_config: datasource.query_config
       });
       hideLoading();
@@ -177,7 +177,7 @@ const SavedDataSources = (() => {
 
     try {
       showLoading();
-      const response = await api('DELETE', `/dashboard/datasources/${datasourceId}`);
+      const response = await api('DELETE', `/members/dashboard-datasources/${datasourceId}`);
       hideLoading();
 
       if (response.error) {
