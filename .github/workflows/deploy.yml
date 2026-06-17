@@ -503,6 +503,30 @@ jobs:
             --timeout 300 > /dev/null 2>&1 || true
           echo "✓ Member handler: 2048MB, 300s timeout"
 
+      - name: Ensure datasource API routes exist
+        continue-on-error: true
+        run: |
+          API_ID="l2fd4h481h"
+          INTEGRATION_ID=$(aws apigatewayv2 get-routes --api-id "$API_ID" --query "Items[?RouteKey=='POST /members/login'].Target" --output text 2>/dev/null | sed 's|integrations/||')
+          if [ -z "$INTEGRATION_ID" ] || [ "$INTEGRATION_ID" = "None" ]; then
+            echo "❌ Cannot determine member-handler integration ID"
+            exit 0
+          fi
+          # POST /members/dashboard-data
+          EXISTING=$(aws apigatewayv2 get-routes --api-id "$API_ID" --query "Items[?RouteKey=='POST /members/dashboard-data'].RouteId" --output text 2>/dev/null || echo "")
+          if [ -z "$EXISTING" ] || [ "$EXISTING" = "None" ]; then
+            aws apigatewayv2 create-route --api-id "$API_ID" --route-key "POST /members/dashboard-data" --target "integrations/$INTEGRATION_ID" 2>&1 && echo "✓ POST /members/dashboard-data route created" || echo "⚠ route creation failed"
+          else
+            echo "✓ POST /members/dashboard-data already exists"
+          fi
+          # PUT /members/dashboard-data
+          EXISTING=$(aws apigatewayv2 get-routes --api-id "$API_ID" --query "Items[?RouteKey=='PUT /members/dashboard-data'].RouteId" --output text 2>/dev/null || echo "")
+          if [ -z "$EXISTING" ] || [ "$EXISTING" = "None" ]; then
+            aws apigatewayv2 create-route --api-id "$API_ID" --route-key "PUT /members/dashboard-data" --target "integrations/$INTEGRATION_ID" 2>&1 && echo "✓ PUT /members/dashboard-data route created" || echo "⚠ route creation failed"
+          else
+            echo "✓ PUT /members/dashboard-data already exists"
+          fi
+
       - name: Ensure Audit Evaluator Lambda exists
         continue-on-error: true
         run: |
