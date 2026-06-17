@@ -147,16 +147,8 @@ const DataSourceWizard = (() => {
   async function fetchAndRenderAccounts() {
     try {
       showLoading();
-      const response = await fetch('/members/dashboard', {
-        method: 'GET',
-        path: '/dashboard/accounts',
-        headers: {
-          'Authorization': `Bearer ${getToken()}`,
-          'Content-Type': 'application/json'
-        }
-      });
 
-      // Actually call the API correctly
+      // Call the dashboard-handler API to get connected accounts
       const res = await api('GET', '/dashboard/accounts');
       if (res.error) {
         showError(res.error);
