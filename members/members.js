@@ -1634,10 +1634,7 @@ function activateMemberTab(tabId) {
         var _initSection = _getActiveObserveSection();
         _switchObserveSection(_initSection);
         loadDashboardData();
-        // Initialize saved data sources panel (Task 7.2, Requirement 11.3)
-        if (typeof SavedDataSources !== 'undefined' && SavedDataSources.render) {
-            SavedDataSources.render();
-        }
+        // Data source panel renders on-demand when Custom Dashboard section is activated
         // Initialize data source wizard if not already done (Task 7.2)
         if (typeof initDataSourceWizard === 'function') {
             initDataSourceWizard();
@@ -3752,10 +3749,8 @@ function _switchObserveSection(sectionId) {
 
     // Step 5c: Load Custom Data Sources when Custom Dashboard section is activated
     if (sectionId === 'observe-custom-dashboard') {
-        // Render saved data sources panel
-        if (typeof SavedDataSources !== 'undefined' && SavedDataSources.render) {
-            SavedDataSources.render();
-        }
+        // Data sources panel will load when user interacts with the wizard
+        // (dashboard-handler API requires separate deployment)
     }
 
     // Step 6: Cancel pending resize and schedule new one
