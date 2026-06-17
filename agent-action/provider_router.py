@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 # Cost Cache configuration
 COST_CACHE_TABLE_NAME = "Cost_Cache_Table"
-CACHE_STALENESS_THRESHOLD_HOURS = 24
+CACHE_STALENESS_THRESHOLD_HOURS = 48
 
 # Tools that benefit from cost cache lookup
 CACHEABLE_TOOLS = {"getCostBreakdown", "getMonthlyTrend"}

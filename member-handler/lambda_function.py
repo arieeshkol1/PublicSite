@@ -8487,10 +8487,102 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
     detected_service = None
     _svc_precomputed = False
 
+    # Detect SERVICE-SPECIFIC cost breakdown questions and pre-compute from cache
+    # e.g., "break down Lambda last month", "what is my S3 cost", "cost of EC2"
+    _SERVICE_NAMES = {
+        'lambda': 'AWS Lambda',
+        'ec2': 'Amazon Elastic Compute Cloud - Compute',
+        's3': 'Amazon Simple Storage Service',
+        'rds': 'Amazon Relational Database Service',
+        'dynamodb': 'Amazon DynamoDB',
+        'cloudwatch': 'AmazonCloudWatch',
+        'api gateway': 'Amazon API Gateway',
+        'cloudfront': 'Amazon CloudFront',
+        'kms': 'AWS Key Management Service',
+        'sqs': 'Amazon Simple Queue Service',
+        'sns': 'Amazon Simple Notification Service',
+        'ses': 'Amazon Simple Email Service',
+        'cognito': 'Amazon Cognito',
+        'route 53': 'Amazon Route 53',
+        'ebs': 'Amazon Elastic Block Store',
+        'nat gateway': 'Amazon Virtual Private Cloud',
+        'cost explorer': 'AWS Cost Explorer',
+        'bedrock': 'Amazon Bedrock',
+        'sagemaker': 'Amazon SageMaker',
+    }
+    _BREAKDOWN_WORDS = ['break down', 'breakdown', 'cost of', 'how much', 'spending on', 'spend on', 'charges for']
+    _is_service_breakdown = any(bw in question_lower for bw in _BREAKDOWN_WORDS)
+    _detected_svc_key = None
+    for svc_key in _SERVICE_NAMES:
+        if svc_key in question_lower:
+            _detected_svc_key = svc_key
+            break
+
+    if _is_service_breakdown and _detected_svc_key and not _svc_precomputed:
+        # Pre-compute service-specific cost breakdown from cache
+        try:
+            from boto3.dynamodb.conditions import Key as _Key
+            now = datetime.now(timezone.utc)
+            cache_table = dynamodb.Table(os.environ.get('COST_CACHE_TABLE_NAME', 'Cost_Cache_Table'))
+            pk = f"{member_email}#{account_id}"
+
+            # Determine time period: "last month" = previous calendar month, otherwise current month
+            if 'last month' in question_lower or 'previous month' in question_lower:
+                first_of_current = now.replace(day=1)
+                first_of_prev = (first_of_current - timedelta(days=1)).replace(day=1)
+                start_sk = f"DAILY#{first_of_prev.strftime('%Y-%m-%d')}"
+                end_sk = f"DAILY#{first_of_current.strftime('%Y-%m-%d')}"
+                period_label = f"{first_of_prev.strftime('%Y-%m')} (last month)"
+            else:
+                start_sk = f"DAILY#{now.strftime('%Y-%m')}-01"
+                end_sk = f"DAILY#{now.strftime('%Y-%m-%d')}"
+                period_label = f"{now.strftime('%Y-%m')} (month to date)"
+
+            resp = cache_table.query(
+                KeyConditionExpression=_Key('pk').eq(pk) & _Key('sk').between(start_sk, end_sk)
+            )
+            items = resp.get('Items', [])
+
+            if items:
+                svc_full_name = _SERVICE_NAMES[_detected_svc_key]
+                svc_total = 0.0
+                daily_breakdown = []
+                all_services_total = 0.0
+
+                for item in items:
+                    svc_breakdown = item.get('service_breakdown', {})
+                    day_cost = 0.0
+                    for svc_name, svc_cost in svc_breakdown.items():
+                        cost_val = float(svc_cost)
+                        all_services_total += cost_val
+                        # Match service name (partial match for flexibility)
+                        if svc_full_name.lower() in svc_name.lower() or _detected_svc_key in svc_name.lower():
+                            day_cost += cost_val
+                            svc_total += cost_val
+
+                    if day_cost > 0:
+                        date = item['sk'].replace('DAILY#', '')
+                        daily_breakdown.append(f"{date}: ${day_cost:.2f}")
+
+                if svc_total > 0:
+                    pct_of_total = (svc_total / all_services_total * 100) if all_services_total > 0 else 0
+                    daily_str = ', '.join(daily_breakdown[-10:])  # Show last 10 days
+                    enriched_prompt += (
+                        f"\n\n[PRE-COMPUTED SERVICE BREAKDOWN for {_detected_svc_key.upper()} ({period_label}):\n"
+                        f"Total: ${svc_total:.2f} ({pct_of_total:.1f}% of total spend ${all_services_total:.2f})\n"
+                        f"Daily: {daily_str}\n"
+                        f"Present this data as the answer. Show the total, daily breakdown, and explain the AWS "
+                        f"pricing model for {_detected_svc_key}. Do NOT ask for clarification.]"
+                    )
+                    _svc_precomputed = True
+        except Exception as e:
+            logger.warning(f"Service breakdown pre-computation failed: {e}")
+
     # Detect comparison/trend questions and pre-compute the answer from cache
-    # Skip if service-specific breakdown was already pre-computed (e.g., "detail my Lambda last month")
+    # Skip if service-specific breakdown was already pre-computed
+    # Note: "last month" alone is NOT a comparison — it's a time reference
     _COMPARISON_KEYWORDS = ['compare', 'comparison', 'instead of', 'versus', 'vs', 'difference between',
-                            'last month', 'previous month', 'month over month', 'same dates', 'same period',
+                            'month over month', 'same dates', 'same period',
                             'parallel days', 'parallel']
     is_comparison_question = any(kw in question_lower for kw in _COMPARISON_KEYWORDS)
     if is_comparison_question and not _svc_precomputed:
