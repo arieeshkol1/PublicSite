@@ -462,7 +462,10 @@ const DataSourceWizard = (() => {
 
     try {
       showLoading();
-      const response = await api('POST', '/dashboard/datasources/query', { query_config: wizardConfig });
+      const response = await api('POST', '/members/dashboard-data', { 
+        query_config: wizardConfig,
+        action: 'datasource_query'
+      });
       hideLoading();
 
       if (response.error) {
@@ -499,9 +502,10 @@ const DataSourceWizard = (() => {
 
     try {
       showLoading();
-      const saveResponse = await api('PUT', '/dashboard/datasources', {
+      const saveResponse = await api('PUT', '/members/dashboard-data', {
         name: name,
-        query_config: wizardConfig
+        query_config: wizardConfig,
+        action: 'datasource_save'
       });
       hideLoading();
 
@@ -513,7 +517,10 @@ const DataSourceWizard = (() => {
       notify(`Data source "${name}" saved successfully`, 'success');
 
       // Run the query
-      const response = await api('POST', '/dashboard/datasources/query', { query_config: wizardConfig });
+      const response = await api('POST', '/members/dashboard-data', { 
+        query_config: wizardConfig,
+        action: 'datasource_query'
+      });
       
       if (response.error) {
         showError(response.error);

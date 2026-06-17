@@ -12,10 +12,12 @@ const ResultTable = (() => {
     pageSize: 50
   };
 
-  // Determine wrapper container based on context
-  let WRAPPER_ID = 'observe-saved-datasources-result-table';
-  if (!document.getElementById(WRAPPER_ID)) {
-    WRAPPER_ID = 'saved-datasources-result-table';
+  // Resolve wrapper container at render time, not load time
+  function _getWrapperId() {
+    if (document.getElementById('observe-saved-datasources-result-table')) {
+      return 'observe-saved-datasources-result-table';
+    }
+    return 'saved-datasources-result-table';
   }
 
   /**
@@ -30,7 +32,7 @@ const ResultTable = (() => {
       pageSize: 50
     };
 
-    const wrapper = document.getElementById(WRAPPER_ID);
+    const wrapper = document.getElementById(_getWrapperId());
     if (!wrapper) return;
 
     if (!rows || rows.length === 0) {
@@ -250,7 +252,7 @@ const ResultTable = (() => {
    */
   function goToPage(page) {
     currentData.currentPage = page;
-    const wrapper = document.getElementById(WRAPPER_ID);
+    const wrapper = document.getElementById(_getWrapperId());
     if (wrapper) {
       wrapper.innerHTML = buildTableHTML();
       attachEventListeners();
@@ -319,7 +321,7 @@ const ResultTable = (() => {
    * Show empty state
    */
   function showEmpty() {
-    const wrapper = document.getElementById(WRAPPER_ID);
+    const wrapper = document.getElementById(_getWrapperId());
     if (!wrapper) return;
 
     wrapper.innerHTML = `

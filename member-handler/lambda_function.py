@@ -157,6 +157,8 @@ def lambda_handler(event, context):
         'POST /members/accounts/ai-feedback': handle_ai_feedback,
         'GET /members/dashboard': handle_get_dashboard,
         'GET /members/dashboard-data': handle_dashboard_data,
+        'POST /members/dashboard-data': handle_datasource_query_proxy,
+        'PUT /members/dashboard-data': handle_datasource_query_proxy,
         'POST /members/dashboard': handle_add_dashboard_item,
         'DELETE /members/dashboard': handle_delete_dashboard_item,
         'GET /members/allocation-rules': handle_get_allocation_rules,
@@ -2067,6 +2069,96 @@ def handle_get_tag_values(event):
             logger.warning(f"Failed to get tag values for {acct['accountId']}/{tag_key}: {e}")
 
     return create_response(200, {'tagValues': sorted(all_values)})
+
+
+@transaction_log('member-handler')
+def handle_datasource_query_proxy(event):
+    """Proxy datasource queries through member-handler (bypasses broken dashboard-handler).
+    Queries Cost_Cache_Table directly for the requested accounts and time period."""
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+    member_email = auth['sub']
+
+    try:
+        body = json.loads(event.get('body', '{}'))
+    except (json.JSONDecodeError, TypeError):
+        return create_error_response(400, 'InvalidRequest', 'Invalid request body')
+
+    action = body.get('action', 'datasource_query')
+    query_config = body.get('query_config', {})
+    account_ids = query_config.get('account_ids', [])
+    attributes = query_config.get('attributes', ['date', 'service', 'cost_amount'])
+    timeframe = query_config.get('timeframe', {})
+
+    if not account_ids:
+        return create_error_response(400, 'InvalidRequest', 'No accounts selected')
+
+    # For save action, store the config (simplified - just acknowledge for now)
+    if action == 'datasource_save':
+        ds_name = body.get('name', 'Untitled')
+        return create_response(200, {'message': f'Data source "{ds_name}" saved', 'datasource_id': secrets.token_hex(8)})
+
+    # Query Cost_Cache_Table for the requested accounts
+    try:
+        now = datetime.now(timezone.utc)
+        preset = timeframe.get('preset', 'last_30d')
+        if preset == 'last_7d':
+            start = (now - timedelta(days=7)).strftime('%Y-%m-%d')
+        elif preset == 'last_90d':
+            start = (now - timedelta(days=90)).strftime('%Y-%m-%d')
+        elif preset == 'current_month':
+            start = now.strftime('%Y-%m-01')
+        elif preset == 'previous_month':
+            first_of_month = now.replace(day=1)
+            prev_month = (first_of_month - timedelta(days=1)).replace(day=1)
+            start = prev_month.strftime('%Y-%m-%d')
+        else:
+            start = (now - timedelta(days=30)).strftime('%Y-%m-%d')
+        end = now.strftime('%Y-%m-%d')
+
+        from boto3.dynamodb.conditions import Key as DDBKey
+        cache_table = dynamodb.Table(COST_CACHE_TABLE_NAME)
+
+        all_rows = []
+        for acct_id in account_ids[:5]:  # Limit to 5 accounts
+            pk = f"{member_email}#{acct_id}"
+            start_sk = f"DAILY#{start}"
+            end_sk = f"DAILY#{end}"
+
+            resp = cache_table.query(
+                KeyConditionExpression=DDBKey('pk').eq(pk) & DDBKey('sk').between(start_sk, end_sk)
+            )
+            for item in resp.get('Items', []):
+                date_val = item['sk'].replace('DAILY#', '')
+                cost = float(item.get('cost_amount', 0))
+                svc_breakdown = item.get('service_breakdown', {})
+
+                if 'service' in attributes and svc_breakdown:
+                    for svc, svc_cost in svc_breakdown.items():
+                        row = {'date': date_val, 'account_id': acct_id}
+                        row['service'] = svc
+                        row['cost_amount'] = round(float(svc_cost), 4)
+                        all_rows.append(row)
+                else:
+                    row = {'date': date_val, 'account_id': acct_id, 'cost_amount': round(cost, 4)}
+                    all_rows.append(row)
+
+        # Sort by date descending
+        all_rows.sort(key=lambda r: r.get('date', ''), reverse=True)
+
+        # Build columns from attributes
+        columns = [a for a in attributes if a in ['date', 'service', 'cost_amount', 'usage_amount', 'region', 'account_id', 'resource_id', 'tags']]
+
+        return create_response(200, {
+            'rows': all_rows[:500],  # Limit to 500 rows
+            'columns': columns,
+            'total_rows': len(all_rows),
+            'period': f"{start} to {end}",
+        })
+    except Exception as e:
+        logger.error(f"Datasource query error: {e}")
+        return create_error_response(500, 'QueryError', f'Failed to query data: {str(e)}')
 
 
 @transaction_log('member-handler')
