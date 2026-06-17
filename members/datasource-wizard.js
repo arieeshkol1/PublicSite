@@ -148,8 +148,8 @@ const DataSourceWizard = (() => {
     try {
       showLoading();
 
-      // Call the dashboard-handler API to get connected accounts
-      const res = await api('GET', '/dashboard/accounts');
+      // Call the member-handler API to get connected accounts
+      const res = await api('GET', '/members/accounts');
       if (res.error) {
         showError(res.error);
         return;
@@ -171,13 +171,16 @@ const DataSourceWizard = (() => {
       html += '</div>';
 
       accounts.forEach(acc => {
-        const isChecked = wizardConfig.account_ids.includes(acc.account_id);
+        const accId = acc.accountId || acc.account_id || '';
+        const accName = acc.accountName || acc.account_name || accId;
+        const accProvider = acc.cloudProvider || acc.cloud_provider || 'aws';
+        const isChecked = wizardConfig.account_ids.includes(accId);
         html += `
           <div style="display: flex; align-items: center; gap: 12px; padding: 8px; border-radius: 6px; background: #f9fafb; margin-bottom: 8px;">
-            <input type="checkbox" class="account-checkbox" value="${acc.account_id}" ${isChecked ? 'checked' : ''} style="cursor: pointer;"/>
+            <input type="checkbox" class="account-checkbox" value="${accId}" ${isChecked ? 'checked' : ''} style="cursor: pointer;"/>
             <div style="flex: 1;">
-              <div style="font-weight: 600; color: #1f2937; font-size: 0.9em;">${acc.account_name}</div>
-              <div style="color: #6b7280; font-size: 0.8em;">${acc.account_id} • ${acc.cloud_provider}</div>
+              <div style="font-weight: 600; color: #1f2937; font-size: 0.9em;">${accName}</div>
+              <div style="color: #6b7280; font-size: 0.8em;">${accId} • ${accProvider}</div>
             </div>
           </div>
         `;
