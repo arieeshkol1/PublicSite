@@ -199,6 +199,11 @@ const DataSourceWizard = (() => {
         });
       }
 
+      // Wire up individual checkboxes
+      document.querySelectorAll('.account-checkbox').forEach(cb => {
+        cb.addEventListener('change', updateWizardState);
+      });
+
       hideLoading();
     } catch (err) {
       console.error('Error fetching accounts:', err);
@@ -386,11 +391,17 @@ const DataSourceWizard = (() => {
 
   // Update wizard state from form inputs
   function updateWizardState() {
-    // Update selected accounts
-    wizardConfig.account_ids = Array.from(document.querySelectorAll('.account-checkbox:checked')).map(cb => cb.value);
+    // Update selected accounts (only if on step 1 where checkboxes exist)
+    const accountCheckboxes = document.querySelectorAll('.account-checkbox:checked');
+    if (accountCheckboxes.length > 0 || currentStep === 1) {
+      wizardConfig.account_ids = Array.from(accountCheckboxes).map(cb => cb.value);
+    }
 
-    // Update selected attributes (default to pre-checked if none selected)
-    wizardConfig.attributes = Array.from(document.querySelectorAll('.attribute-checkbox:checked')).map(cb => cb.value);
+    // Update selected attributes (only if on step 2 where checkboxes exist)
+    const attrCheckboxes = document.querySelectorAll('.attribute-checkbox:checked');
+    if (attrCheckboxes.length > 0 || currentStep === 2) {
+      wizardConfig.attributes = Array.from(attrCheckboxes).map(cb => cb.value);
+    }
     if (wizardConfig.attributes.length === 0) {
       wizardConfig.attributes = ATTRIBUTES.filter(a => a.checked).map(a => a.name);
     }
