@@ -46,14 +46,12 @@ const DataSourceWizard = (() => {
 
   // Initialize wizard
   function init() {
-    document.addEventListener('DOMContentLoaded', () => {
-      const overlay = document.getElementById('datasource-wizard-overlay');
-      if (overlay) {
-        overlay.addEventListener('click', (e) => {
-          if (e.target === overlay) close();
-        });
-      }
-    });
+    const overlay = document.getElementById('datasource-wizard-overlay');
+    if (overlay) {
+      overlay.addEventListener('click', (e) => {
+        if (e.target === overlay) close();
+      });
+    }
   }
 
   // Open wizard
@@ -256,7 +254,7 @@ const DataSourceWizard = (() => {
     html += '</div>';
 
     // Custom date range (hidden by default)
-    html += '<div id="custom-date-range" style="display: ${wizardConfig.timeframe.preset === 'custom' ? 'block' : 'none'}; padding: 12px; background: #f3f4f6; border-radius: 6px; margin-top: 12px;">';
+    html += `<div id="custom-date-range" style="display: ${wizardConfig.timeframe.preset === 'custom' ? 'block' : 'none'}; padding: 12px; background: #f3f4f6; border-radius: 6px; margin-top: 12px;">`;
     html += '<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">';
     html += '<div>';
     html += '<label style="font-size: 0.9em; color: #374151; display: block; margin-bottom: 4px;">Start Date</label>';
@@ -558,9 +556,5 @@ const DataSourceWizard = (() => {
   };
 })();
 
-// Initialize on load
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', DataSourceWizard.init);
-} else {
-  DataSourceWizard.init();
-}
+// Initialize immediately — script loads after DOM is ready (at bottom of body)
+DataSourceWizard.init();

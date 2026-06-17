@@ -4,26 +4,32 @@
  */
 
 const SavedDataSources = (() => {
-  // Determine container based on context (Observe tab or Act tab)
-  let CONTAINER_ID = 'observe-saved-datasources-container';
-  let RESULT_TABLE_CONTAINER_ID = 'observe-saved-datasources-result-table';
-  
-  // If Observe containers don't exist, fall back to Act containers
-  if (!document.getElementById(CONTAINER_ID)) {
-    CONTAINER_ID = 'saved-datasources-container';
-    RESULT_TABLE_CONTAINER_ID = 'saved-datasources-result-table';
+  // Container IDs - resolved at render time, not at load time
+  function _getContainerId() {
+    if (document.getElementById('observe-saved-datasources-container')) {
+      return 'observe-saved-datasources-container';
+    }
+    return 'saved-datasources-container';
+  }
+
+  function _getResultTableId() {
+    if (document.getElementById('observe-saved-datasources-result-table')) {
+      return 'observe-saved-datasources-result-table';
+    }
+    return 'saved-datasources-result-table';
   }
 
   /**
    * Render the saved data sources panel
    */
   async function render() {
+    const CONTAINER_ID = _getContainerId();
     const container = document.getElementById(CONTAINER_ID);
     if (!container) return;
 
     try {
       showLoading();
-      const response = await api('GET', '/members/dashboard-datasources');
+      const response = await api('GET', '/dashboard/datasources');
       hideLoading();
 
       if (response.error) {
@@ -110,7 +116,7 @@ const SavedDataSources = (() => {
     } catch (err) {
       hideLoading();
       console.error('Error rendering saved datasources:', err);
-      // Don't show error UI if no container or it's just empty
+      const CONTAINER_ID = _getContainerId();
       const container = document.getElementById(CONTAINER_ID);
       if (container) {
         container.innerHTML = '';
@@ -126,7 +132,7 @@ const SavedDataSources = (() => {
       showLoading();
 
       // First, get the saved datasource to retrieve its config
-      const response = await api('GET', '/members/dashboard-datasources');
+      const response = await api('GET', '/dashboard/datasources');
       if (response.error) {
         hideLoading();
         showError(response.error);
@@ -143,7 +149,7 @@ const SavedDataSources = (() => {
       }
 
       // Execute the query with the saved config
-      const queryResponse = await api('POST', '/members/dashboard-datasources/query', {
+      const queryResponse = await api('POST', '/dashboard/datasources/query', {
         query_config: datasource.query_config
       });
       hideLoading();
@@ -177,7 +183,7 @@ const SavedDataSources = (() => {
 
     try {
       showLoading();
-      const response = await api('DELETE', `/members/dashboard-datasources/${datasourceId}`);
+      const response = await api('DELETE', `/dashboard/datasources/${datasourceId}`);
       hideLoading();
 
       if (response.error) {

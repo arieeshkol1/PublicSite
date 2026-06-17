@@ -3546,13 +3546,14 @@ function renderDashboardWidgets(data) {
 
     // Determine active section and build its widgets
     var activeSection = _getActiveObserveSection();
-    var sectionContainer = document.querySelector('#observe-section-' + activeSection + ' .observe-widget-grid');
-    console.log('[Observe] Active section:', activeSection, 'Container found:', !!sectionContainer);
-    if (sectionContainer) {
-        _buildObserveSectionWidgets(activeSection, sectionContainer);
-        console.log('[Observe] Widgets built, children:', sectionContainer.children.length);
-    } else {
-        console.error('[Observe] Section container not found for:', activeSection);
+    // Skip widget building for custom-dashboard section (it has its own Data Source UI)
+    if (activeSection !== 'observe-custom-dashboard') {
+        var sectionContainer = document.querySelector('#observe-section-' + activeSection + ' .observe-widget-grid');
+        console.log('[Observe] Active section:', activeSection, 'Container found:', !!sectionContainer);
+        if (sectionContainer) {
+            _buildObserveSectionWidgets(activeSection, sectionContainer);
+            console.log('[Observe] Widgets built, children:', sectionContainer.children.length);
+        }
     }
 
     // Render tag filter in Cost Analysis section
