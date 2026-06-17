@@ -2338,7 +2338,9 @@ function addAIMessage(type, content, topServices, backendFollowUps) {
                 clarifyHtml += '<button class="ai-clarification-btn" data-question="' + ea(q) + '">' + esc(q) + '</button>';
             });
         }
-        clarifyHtml += '</div></div>';
+        clarifyHtml += '</div>';
+        clarifyHtml += '<div style="margin-top:12px;display:flex;gap:8px;"><input type="text" class="ai-clarify-input" placeholder="Or type your follow-up here..." style="flex:1;padding:8px 12px;border:1px solid #d1d5db;border-radius:6px;font-size:0.9em;"><button class="btn btn-primary btn-sm ai-clarify-send" style="white-space:nowrap;">Send</button></div>';
+        clarifyHtml += '</div>';
         div.innerHTML = clarifyHtml;
     } else if (type === 'thinking') {
         div.innerHTML = '<div class="lab-msg-info" style="color:#a78bfa;"><img src="../smallninja2.png" alt="" style="height:32px;vertical-align:middle;margin-right:4px;"> ' + esc(content) + '</div>';
@@ -3067,6 +3069,16 @@ if (aiChat) aiChat.onclick = function(e) {
         var clarifyQ = clarifyBtn.getAttribute('data-question');
         if (clarifyQ && aiQuestionInput) {
             aiQuestionInput.value = clarifyQ;
+            askAI();
+        }
+        return;
+    }
+    // Handle clarification free-text send button
+    var clarifySend = e.target.closest('.ai-clarify-send');
+    if (clarifySend) {
+        var clarifyInput = clarifySend.parentElement.querySelector('.ai-clarify-input');
+        if (clarifyInput && clarifyInput.value.trim() && aiQuestionInput) {
+            aiQuestionInput.value = clarifyInput.value.trim();
             askAI();
         }
         return;
