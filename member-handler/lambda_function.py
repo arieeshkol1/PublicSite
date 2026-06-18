@@ -2105,47 +2105,59 @@ def handle_datasource_query_proxy(event):
             from boto3.dynamodb.conditions import Key as DDBKey
             cache_table = dynamodb.Table(COST_CACHE_TABLE_NAME)
             now = datetime.now(timezone.utc)
-            pk = f"{member_email}#{account_ids[0]}"
-            # Scan full 90-day range — no ProjectionExpression so we see ALL fields
-            start_sk = f"DAILY#{(now - timedelta(days=90)).strftime('%Y-%m-%d')}"
-            end_sk = f"DAILY#{now.strftime('%Y-%m-%d')}"
 
-            resp = cache_table.query(
-                KeyConditionExpression=DDBKey('pk').eq(pk) & DDBKey('sk').between(start_sk, end_sk)
-            )
-            items = resp.get('Items', [])
-            # Handle pagination to scan ALL records
-            while 'LastEvaluatedKey' in resp:
-                resp = cache_table.query(
-                    KeyConditionExpression=DDBKey('pk').eq(pk) & DDBKey('sk').between(start_sk, end_sk),
-                    ExclusiveStartKey=resp['LastEvaluatedKey'],
-                )
-                items.extend(resp.get('Items', []))
-
-            # Always include base columns + service (core data model)
+            # Always include base columns
             all_keys = set(['date', 'account_id', 'cost_amount', 'service'])
+            total_scanned = 0
 
-            # Discover ALL additional fields from every record
-            tag_keys_found = set()
-            for item in items:
-                # Check for tag_breakdown
-                tag_breakdown = item.get('tag_breakdown', {})
-                if tag_breakdown:
-                    for tag_key in tag_breakdown.keys():
-                        tag_keys_found.add(tag_key)
-                # Add any top-level fields we haven't seen
-                for key in item.keys():
-                    if key not in ('pk', 'sk', 'ttl', 'cached_at', 'fetched_at', 'service_breakdown', 'tag_breakdown'):
-                        all_keys.add(key)
+            for acct_id in account_ids[:3]:
+                pk = f"{member_email}#{acct_id}"
 
-            # Add tag columns if found
-            if tag_keys_found:
-                all_keys.add('tags')
-                for tk in sorted(tag_keys_found)[:10]:
-                    all_keys.add(f'tag:{tk}')
+                # Scan BOTH DAILY# and OPENAI_DAILY# prefixes (covers AWS + AI vendor accounts)
+                for sk_prefix in ['DAILY#', 'OPENAI_DAILY#']:
+                    start_sk = f"{sk_prefix}{(now - timedelta(days=90)).strftime('%Y-%m-%d')}"
+                    end_sk = f"{sk_prefix}{now.strftime('%Y-%m-%d')}"
+
+                    resp = cache_table.query(
+                        KeyConditionExpression=DDBKey('pk').eq(pk) & DDBKey('sk').between(start_sk, end_sk)
+                    )
+                    items = resp.get('Items', [])
+                    while 'LastEvaluatedKey' in resp:
+                        resp = cache_table.query(
+                            KeyConditionExpression=DDBKey('pk').eq(pk) & DDBKey('sk').between(start_sk, end_sk),
+                            ExclusiveStartKey=resp['LastEvaluatedKey'],
+                        )
+                        items.extend(resp.get('Items', []))
+
+                    total_scanned += len(items)
+
+                    for item in items:
+                        # Discover top-level fields
+                        for key in item.keys():
+                            if key not in ('pk', 'sk', 'ttl', 'cached_at', 'fetched_at', 'service_breakdown', 'tag_breakdown'):
+                                all_keys.add(key)
+
+                        # Discover fields INSIDE service_breakdown values (for OpenAI accounts)
+                        svc_breakdown = item.get('service_breakdown', {})
+                        if svc_breakdown and isinstance(svc_breakdown, dict):
+                            for svc_name, svc_val in svc_breakdown.items():
+                                # If svc_val is a dict (nested structure with tokens, model etc.)
+                                if isinstance(svc_val, dict):
+                                    for nested_key in svc_val.keys():
+                                        all_keys.add(nested_key)
+
+                        # Discover tag keys
+                        tag_breakdown = item.get('tag_breakdown', {})
+                        if tag_breakdown and isinstance(tag_breakdown, dict):
+                            all_keys.add('tags')
+                            for tk in list(tag_breakdown.keys())[:10]:
+                                all_keys.add(f'tag:{tk}')
+
+                    if total_scanned > 0:
+                        break  # Found data with this prefix, no need to try the other
 
             columns = sorted(list(all_keys))
-            return create_response(200, {'columns': columns, 'sample_count': len(items)})
+            return create_response(200, {'columns': columns, 'sample_count': total_scanned})
         except Exception as e:
             logger.error(f"Schema discovery error: {e}")
             return create_response(200, {'columns': ['date', 'service', 'cost_amount', 'account_id'], 'sample_count': 0})
@@ -2174,32 +2186,58 @@ def handle_datasource_query_proxy(event):
         all_rows = []
         for acct_id in account_ids[:5]:  # Limit to 5 accounts
             pk = f"{member_email}#{acct_id}"
-            start_sk = f"DAILY#{start}"
-            end_sk = f"DAILY#{end}"
 
-            resp = cache_table.query(
-                KeyConditionExpression=DDBKey('pk').eq(pk) & DDBKey('sk').between(start_sk, end_sk)
-            )
-            for item in resp.get('Items', []):
-                date_val = item['sk'].replace('DAILY#', '')
+            # Try BOTH prefixes — DAILY# for AWS, OPENAI_DAILY# for AI vendor accounts
+            items_found = []
+            for sk_prefix in ['DAILY#', 'OPENAI_DAILY#']:
+                start_sk = f"{sk_prefix}{start}"
+                end_sk = f"{sk_prefix}{end}"
+
+                resp = cache_table.query(
+                    KeyConditionExpression=DDBKey('pk').eq(pk) & DDBKey('sk').between(start_sk, end_sk)
+                )
+                items_found.extend(resp.get('Items', []))
+                while 'LastEvaluatedKey' in resp:
+                    resp = cache_table.query(
+                        KeyConditionExpression=DDBKey('pk').eq(pk) & DDBKey('sk').between(start_sk, end_sk),
+                        ExclusiveStartKey=resp['LastEvaluatedKey'],
+                    )
+                    items_found.extend(resp.get('Items', []))
+                if items_found:
+                    break  # Found data, stop trying other prefix
+
+            for item in items_found:
+                date_val = item['sk'].replace('DAILY#', '').replace('OPENAI_DAILY#', '')
                 cost = float(item.get('cost_amount', 0))
                 svc_breakdown = item.get('service_breakdown', {})
 
                 if 'service' in attributes and svc_breakdown:
-                    for svc, svc_cost in svc_breakdown.items():
+                    for svc, svc_val in svc_breakdown.items():
                         row = {'date': date_val, 'account_id': acct_id}
                         row['service'] = svc
-                        row['cost_amount'] = round(float(svc_cost), 4)
+                        # svc_val can be a number (cost) or a dict (with nested fields like tokens_in)
+                        if isinstance(svc_val, dict):
+                            row['cost_amount'] = round(float(svc_val.get('cost', svc_val.get('cost_amount', 0))), 4)
+                            # Include all nested fields from the service value
+                            for nk, nv in svc_val.items():
+                                if nk in attributes:
+                                    row[nk] = nv
+                        else:
+                            row['cost_amount'] = round(float(svc_val), 4)
                         all_rows.append(row)
                 else:
                     row = {'date': date_val, 'account_id': acct_id, 'cost_amount': round(cost, 4)}
+                    # Include any top-level fields the user selected
+                    for key in attributes:
+                        if key in item and key not in ('date', 'account_id', 'cost_amount'):
+                            row[key] = item[key]
                     all_rows.append(row)
 
         # Sort by date descending
         all_rows.sort(key=lambda r: r.get('date', ''), reverse=True)
 
-        # Build columns from attributes
-        columns = [a for a in attributes if a in ['date', 'service', 'cost_amount', 'usage_amount', 'region', 'account_id', 'resource_id', 'tags']]
+        # Build columns from actual attributes found in data
+        columns = list(attributes) if attributes else ['date', 'service', 'cost_amount']
 
         return create_response(200, {
             'rows': all_rows[:500],  # Limit to 500 rows
