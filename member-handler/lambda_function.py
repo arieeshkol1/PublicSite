@@ -2204,6 +2204,20 @@ def handle_datasource_query_proxy(event):
         from boto3.dynamodb.conditions import Key as DDBKey
         cache_table = dynamodb.Table(COST_CACHE_TABLE_NAME)
 
+        # Fetch account names for labeling when multiple accounts are queried
+        account_names = {}
+        if len(account_ids) > 1:
+            try:
+                accounts_table = dynamodb.Table(ACCOUNTS_TABLE_NAME)
+                acct_resp = accounts_table.query(
+                    KeyConditionExpression=boto3.dynamodb.conditions.Key('memberEmail').eq(member_email),
+                    ProjectionExpression='accountId, accountName',
+                )
+                for item in acct_resp.get('Items', []):
+                    account_names[item.get('accountId', '')] = item.get('accountName', item.get('accountId', ''))
+            except Exception:
+                pass
+
         all_rows = []
         for acct_id in account_ids[:5]:  # Limit to 5 accounts
             pk = f"{member_email}#{acct_id}"
@@ -2237,6 +2251,8 @@ def handle_datasource_query_proxy(event):
                 if 'service' in attributes and svc_breakdown:
                     for svc, svc_val in svc_breakdown.items():
                         row = {'date': date_val, 'account_id': acct_id}
+                        if account_names:
+                            row['account_name'] = account_names.get(acct_id, acct_id)
                         row['service'] = svc
                         # svc_val can be a number (cost) or a dict (with nested fields like tokens_in)
                         if isinstance(svc_val, dict):
@@ -2270,6 +2286,8 @@ def handle_datasource_query_proxy(event):
                         all_rows.append(row)
                 else:
                     row = {'date': date_val, 'account_id': acct_id, 'cost_amount': round(cost, 4)}
+                    if account_names:
+                        row['account_name'] = account_names.get(acct_id, acct_id)
                     # Include any top-level fields the user selected
                     for key in attributes:
                         if key in item and key not in ('date', 'account_id', 'cost_amount'):
@@ -2281,6 +2299,13 @@ def handle_datasource_query_proxy(event):
 
         # Build columns from actual attributes found in data — exclude columns that are empty in ALL rows
         raw_columns = list(attributes) if attributes else ['date', 'service', 'cost_amount']
+        # When querying multiple accounts, always include account_id so user can distinguish data sources
+        if len(account_ids) > 1 and 'account_id' not in raw_columns:
+            raw_columns.insert(0, 'account_id')
+        if len(account_ids) > 1 and account_names and 'account_name' not in raw_columns:
+            # Insert account_name right after account_id (or at position 0)
+            pos = raw_columns.index('account_id') + 1 if 'account_id' in raw_columns else 0
+            raw_columns.insert(pos, 'account_name')
         columns = []
         for col in raw_columns:
             if any(r.get(col) not in (None, '', {}, []) for r in all_rows[:100]):
