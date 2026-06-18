@@ -8879,8 +8879,7 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
                     _wants_inventory = any(kw in question_lower for kw in ['invoc', 'function', 'list my', 'list the', 'which'])
                     _inventory_instruction = ''
                     if _wants_inventory and _detected_svc_key:
-                        # Derive the correct tool from tips table automatedCheck field
-                        # Tips store the logic: e.g. lambda tips reference "lambda:ListFunctions"
+                        # Use vendor-neutral tool names matching OpenAPI action group schemas
                         _TIPS_TOOL_MAP = {
                             'lambda': 'getServerlessFunctions',
                             'ec2': 'getComputeInstances',
@@ -8892,7 +8891,11 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
                         }
                         _inv_tool = _TIPS_TOOL_MAP.get(_detected_svc_key)
                         if _inv_tool:
-                            _inventory_instruction = f' ALSO call {_inv_tool} to list resource details with usage metrics.'
+                            _inventory_instruction = (
+                                f' ALSO call the {_inv_tool} tool (in the NetworkServerless action group for Lambda, '
+                                f'or the relevant action group) to list resource details with usage metrics. '
+                                f'Do NOT call getComputeInstances for Lambda questions.'
+                            )
 
                     enriched_prompt += (
                         f"\n\n[PRE-COMPUTED SERVICE BREAKDOWN for {_detected_svc_key.upper()} ({period_label}):\n"
