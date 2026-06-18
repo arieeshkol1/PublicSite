@@ -8878,11 +8878,21 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
                     # Check if user also wants resource inventory (invocations, functions list, etc.)
                     _wants_inventory = any(kw in question_lower for kw in ['invoc', 'function', 'list my', 'list the', 'which'])
                     _inventory_instruction = ''
-                    if _wants_inventory and _detected_svc_key == 'lambda':
-                        _inventory_instruction = ' ALSO call getLambdaFunctions to list function names with invocation counts.'
-                    elif _wants_inventory and _detected_svc_key in ('ec2', 's3', 'rds', 'ebs'):
-                        _tool_map = {'ec2': 'getEC2Instances', 's3': 'getS3Buckets', 'rds': 'getRDSInstances', 'ebs': 'getEBSVolumes'}
-                        _inventory_instruction = f' ALSO call {_tool_map.get(_detected_svc_key, "getCostData")} to list resource details.'
+                    if _wants_inventory and _detected_svc_key:
+                        # Derive the correct tool from tips table automatedCheck field
+                        # Tips store the logic: e.g. lambda tips reference "lambda:ListFunctions"
+                        _TIPS_TOOL_MAP = {
+                            'lambda': 'getServerlessFunctions',
+                            'ec2': 'getComputeInstances',
+                            's3': 'getObjectStorage',
+                            'rds': 'getDatabaseInstances',
+                            'ebs': 'getStorageVolumes',
+                            'nat gateway': 'getNetworkResources',
+                            'dynamodb': 'getCostBreakdown',
+                        }
+                        _inv_tool = _TIPS_TOOL_MAP.get(_detected_svc_key)
+                        if _inv_tool:
+                            _inventory_instruction = f' ALSO call {_inv_tool} to list resource details with usage metrics.'
 
                     enriched_prompt += (
                         f"\n\n[PRE-COMPUTED SERVICE BREAKDOWN for {_detected_svc_key.upper()} ({period_label}):\n"
