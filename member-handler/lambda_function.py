@@ -2207,7 +2207,7 @@ def handle_datasource_query_proxy(event):
                     break  # Found data, stop trying other prefix
 
             for item in items_found:
-                date_val = item['sk'].replace('DAILY#', '').replace('OPENAI_DAILY#', '')
+                date_val = item['sk'].replace('OPENAI_DAILY#', '').replace('DAILY#', '')
                 cost = float(item.get('cost_amount', 0))
                 svc_breakdown = item.get('service_breakdown', {})
 

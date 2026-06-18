@@ -63,7 +63,8 @@ const ResultTable = (() => {
         </div>
         <div style="display: flex; gap: 8px;">
           <button onclick="ResultTable.refresh()" class="btn btn-outline btn-sm">🔄 Refresh</button>
-          <button onclick="ResultTable.exportCSV()" class="btn btn-outline btn-sm">📥 Export CSV</button>
+          <button onclick="ResultTable.exportCSV()" class="btn btn-outline btn-sm">📥 CSV</button>
+          <button onclick="ResultTable.exportJSON()" class="btn btn-outline btn-sm">📋 JSON</button>
         </div>
       </div>
     `;
@@ -260,13 +261,39 @@ const ResultTable = (() => {
   }
 
   /**
+   * Export to JSON
+   */
+  function exportJSON() {
+    const data = {
+      columns: currentData.columns,
+      rows: currentData.rows,
+      exported_at: new Date().toISOString(),
+      total_rows: currentData.rows.length
+    };
+
+    const jsonStr = JSON.stringify(data, null, 2);
+    const blob = new Blob([jsonStr], { type: 'application/json;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    link.setAttribute('href', url);
+    link.setAttribute('download', `export_${Date.now()}.json`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+
+    notify('Data exported to JSON', 'success');
+  }
+
+  /**
    * Refresh query
    */
   async function refresh() {
     try {
       showLoading();
-      const response = await api('POST', '/dashboard/datasources/query', {
-        query_config: currentData.config
+      const response = await api('POST', '/members/dashboard-data', {
+        query_config: currentData.config,
+        action: 'datasource_query'
       });
       hideLoading();
 
@@ -370,6 +397,7 @@ const ResultTable = (() => {
     goToPage,
     refresh,
     exportCSV,
+    exportJSON,
     showEmpty
   };
 })();
