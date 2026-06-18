@@ -2099,6 +2099,39 @@ def handle_datasource_query_proxy(event):
         ds_name = body.get('name', 'Untitled')
         return create_response(200, {'message': f'Data source "{ds_name}" saved', 'datasource_id': secrets.token_hex(8)})
 
+    # For schema discovery, fetch 10 sample records and return unique field names
+    if action == 'datasource_schema':
+        try:
+            from boto3.dynamodb.conditions import Key as DDBKey
+            cache_table = dynamodb.Table(COST_CACHE_TABLE_NAME)
+            now = datetime.now(timezone.utc)
+            pk = f"{member_email}#{account_ids[0]}"
+            start_sk = f"DAILY#{(now - timedelta(days=7)).strftime('%Y-%m-%d')}"
+            end_sk = f"DAILY#{now.strftime('%Y-%m-%d')}"
+
+            resp = cache_table.query(
+                KeyConditionExpression=DDBKey('pk').eq(pk) & DDBKey('sk').between(start_sk, end_sk),
+                Limit=10
+            )
+            items = resp.get('Items', [])
+
+            # Discover all unique keys from the records
+            all_keys = set(['date', 'account_id', 'cost_amount'])
+            for item in items:
+                svc_breakdown = item.get('service_breakdown', {})
+                if svc_breakdown:
+                    all_keys.add('service')
+                # Check for any other top-level fields
+                for key in item.keys():
+                    if key not in ('pk', 'sk', 'ttl', 'cached_at', 'fetched_at', 'service_breakdown'):
+                        all_keys.add(key)
+
+            columns = sorted(list(all_keys))
+            return create_response(200, {'columns': columns, 'sample_count': len(items)})
+        except Exception as e:
+            logger.error(f"Schema discovery error: {e}")
+            return create_response(200, {'columns': ['date', 'service', 'cost_amount', 'account_id'], 'sample_count': 0})
+
     # Query Cost_Cache_Table for the requested accounts
     try:
         now = datetime.now(timezone.utc)

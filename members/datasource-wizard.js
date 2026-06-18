@@ -212,27 +212,83 @@ const DataSourceWizard = (() => {
     }
   }
 
-  // Step 2: Choose Attributes
+  // Step 2: Choose Attributes - dynamically discovered from data
   function renderStep2() {
     let html = '<div style="margin-bottom: 16px;">';
     html += '<p style="color: #6b7280; font-size: 0.9em; margin-bottom: 12px;">Select columns to include in your results:</p>';
-    html += '<div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px;">';
+    html += '<div id="attribute-list" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px;"><div style="padding:24px;text-align:center;color:#6b7280;">Loading fields...</div></div>';
+    html += '</div>';
 
-    ATTRIBUTES.forEach(attr => {
-      const isChecked = wizardConfig.attributes.length === 0 ? attr.checked : wizardConfig.attributes.includes(attr.name);
-      html += `
-        <label style="display: flex; align-items: center; gap: 8px; padding: 12px; border: 1px solid #e5e7eb; border-radius: 6px; cursor: pointer; background: ${isChecked ? '#eef2ff' : '#fff'};">
-          <input type="checkbox" class="attribute-checkbox" value="${attr.name}" ${isChecked ? 'checked' : ''} style="cursor: pointer;"/>
-          <div>
-            <div style="font-weight: 600; color: #1f2937; font-size: 0.9em;">${attr.label}</div>
-            <div style="color: #6b7280; font-size: 0.75em;">${attr.type}</div>
-          </div>
-        </label>
-      `;
-    });
-
-    html += '</div></div>';
+    // Fetch sample data to discover fields
+    setTimeout(() => { fetchAndRenderAttributes(); }, 0);
     return html;
+  }
+
+  // Fetch sample records to discover available attributes dynamically
+  async function fetchAndRenderAttributes() {
+    try {
+      const sampleRes = await api('POST', '/members/dashboard-data', {
+        action: 'datasource_schema',
+        query_config: { account_ids: wizardConfig.account_ids, timeframe: { preset: 'last_7d' }, attributes: ['*'] }
+      });
+
+      let discoveredFields = [];
+      if (sampleRes.columns && sampleRes.columns.length > 0) {
+        discoveredFields = sampleRes.columns.map(col => ({ name: col, label: col.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()), type: 'string' }));
+      } else {
+        // Fallback to hardcoded if API doesn't return schema
+        discoveredFields = ATTRIBUTES;
+      }
+
+      // Store discovered fields for use in Step 4 filters
+      wizardConfig._discoveredFields = discoveredFields;
+
+      const container = document.getElementById('attribute-list');
+      if (!container) return;
+
+      let html = '';
+      discoveredFields.forEach(attr => {
+        const isChecked = wizardConfig.attributes.length === 0 ? true : wizardConfig.attributes.includes(attr.name);
+        html += `
+          <label style="display: flex; align-items: center; gap: 8px; padding: 12px; border: 1px solid #e5e7eb; border-radius: 6px; cursor: pointer; background: ${isChecked ? '#eef2ff' : '#fff'};">
+            <input type="checkbox" class="attribute-checkbox" value="${attr.name}" ${isChecked ? 'checked' : ''} style="cursor: pointer;"/>
+            <div>
+              <div style="font-weight: 600; color: #1f2937; font-size: 0.9em;">${attr.label}</div>
+              <div style="color: #6b7280; font-size: 0.75em;">${attr.type}</div>
+            </div>
+          </label>
+        `;
+      });
+      container.innerHTML = html;
+
+      // Wire change listeners
+      document.querySelectorAll('.attribute-checkbox').forEach(cb => {
+        cb.addEventListener('change', updateWizardState);
+      });
+    } catch (err) {
+      // Fallback to static attributes on error
+      const container = document.getElementById('attribute-list');
+      if (!container) return;
+      wizardConfig._discoveredFields = ATTRIBUTES;
+
+      let html = '';
+      ATTRIBUTES.forEach(attr => {
+        const isChecked = wizardConfig.attributes.length === 0 ? attr.checked : wizardConfig.attributes.includes(attr.name);
+        html += `
+          <label style="display: flex; align-items: center; gap: 8px; padding: 12px; border: 1px solid #e5e7eb; border-radius: 6px; cursor: pointer; background: ${isChecked ? '#eef2ff' : '#fff'};">
+            <input type="checkbox" class="attribute-checkbox" value="${attr.name}" ${isChecked ? 'checked' : ''} style="cursor: pointer;"/>
+            <div>
+              <div style="font-weight: 600; color: #1f2937; font-size: 0.9em;">${attr.label}</div>
+              <div style="color: #6b7280; font-size: 0.75em;">${attr.type}</div>
+            </div>
+          </label>
+        `;
+      });
+      container.innerHTML = html;
+      document.querySelectorAll('.attribute-checkbox').forEach(cb => {
+        cb.addEventListener('change', updateWizardState);
+      });
+    }
   }
 
   // Step 3: Set Timeframe
@@ -298,14 +354,18 @@ const DataSourceWizard = (() => {
 
     let html = '';
     wizardConfig.filters.forEach((filter, idx) => {
-      const attribute = ATTRIBUTES.find(a => a.name === filter.attribute);
+      // Use selected attributes from Step 2 for filter field options
+      const selectedAttrs = wizardConfig.attributes.length > 0 
+        ? (wizardConfig._discoveredFields || ATTRIBUTES).filter(a => wizardConfig.attributes.includes(a.name))
+        : (wizardConfig._discoveredFields || ATTRIBUTES);
+      const attribute = selectedAttrs.find(a => a.name === filter.attribute);
       const attributeType = attribute ? attribute.type : 'string';
       const operators = OPERATORS[attributeType] || OPERATORS.string;
 
       html += `
         <div style="display: grid; grid-template-columns: 1fr 1fr 1fr auto; gap: 8px; margin-bottom: 8px; padding: 12px; background: #f9fafb; border-radius: 6px;">
           <select class="filter-attr" data-idx="${idx}" style="padding: 8px; border: 1px solid #d1d5db; border-radius: 4px; font-size: 0.9em;">
-            ${ATTRIBUTES.filter(a => a.name !== 'date').map(a => `<option value="${a.name}" ${a.name === filter.attribute ? 'selected' : ''}>${a.label}</option>`).join('')}
+            ${selectedAttrs.map(a => `<option value="${a.name}" ${a.name === filter.attribute ? 'selected' : ''}>${a.label}</option>`).join('')}
           </select>
           <select class="filter-op" data-idx="${idx}" style="padding: 8px; border: 1px solid #d1d5db; border-radius: 4px; font-size: 0.9em;">
             ${operators.map(op => `<option value="${op}" ${op === filter.operator ? 'selected' : ''}>${op}</option>`).join('')}
