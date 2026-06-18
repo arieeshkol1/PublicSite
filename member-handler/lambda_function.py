@@ -2099,32 +2099,50 @@ def handle_datasource_query_proxy(event):
         ds_name = body.get('name', 'Untitled')
         return create_response(200, {'message': f'Data source "{ds_name}" saved', 'datasource_id': secrets.token_hex(8)})
 
-    # For schema discovery, fetch 10 sample records and return unique field names
+    # For schema discovery, scan ALL records for this account and collect all unique field names
     if action == 'datasource_schema':
         try:
             from boto3.dynamodb.conditions import Key as DDBKey
             cache_table = dynamodb.Table(COST_CACHE_TABLE_NAME)
             now = datetime.now(timezone.utc)
             pk = f"{member_email}#{account_ids[0]}"
-            start_sk = f"DAILY#{(now - timedelta(days=7)).strftime('%Y-%m-%d')}"
+            # Scan full 90-day range — no ProjectionExpression so we see ALL fields
+            start_sk = f"DAILY#{(now - timedelta(days=90)).strftime('%Y-%m-%d')}"
             end_sk = f"DAILY#{now.strftime('%Y-%m-%d')}"
 
             resp = cache_table.query(
-                KeyConditionExpression=DDBKey('pk').eq(pk) & DDBKey('sk').between(start_sk, end_sk),
-                Limit=10
+                KeyConditionExpression=DDBKey('pk').eq(pk) & DDBKey('sk').between(start_sk, end_sk)
             )
             items = resp.get('Items', [])
+            # Handle pagination to scan ALL records
+            while 'LastEvaluatedKey' in resp:
+                resp = cache_table.query(
+                    KeyConditionExpression=DDBKey('pk').eq(pk) & DDBKey('sk').between(start_sk, end_sk),
+                    ExclusiveStartKey=resp['LastEvaluatedKey'],
+                )
+                items.extend(resp.get('Items', []))
 
-            # Discover all unique keys from the records
-            all_keys = set(['date', 'account_id', 'cost_amount'])
+            # Always include base columns + service (core data model)
+            all_keys = set(['date', 'account_id', 'cost_amount', 'service'])
+
+            # Discover ALL additional fields from every record
+            tag_keys_found = set()
             for item in items:
-                svc_breakdown = item.get('service_breakdown', {})
-                if svc_breakdown:
-                    all_keys.add('service')
-                # Check for any other top-level fields
+                # Check for tag_breakdown
+                tag_breakdown = item.get('tag_breakdown', {})
+                if tag_breakdown:
+                    for tag_key in tag_breakdown.keys():
+                        tag_keys_found.add(tag_key)
+                # Add any top-level fields we haven't seen
                 for key in item.keys():
-                    if key not in ('pk', 'sk', 'ttl', 'cached_at', 'fetched_at', 'service_breakdown'):
+                    if key not in ('pk', 'sk', 'ttl', 'cached_at', 'fetched_at', 'service_breakdown', 'tag_breakdown'):
                         all_keys.add(key)
+
+            # Add tag columns if found
+            if tag_keys_found:
+                all_keys.add('tags')
+                for tk in sorted(tag_keys_found)[:10]:
+                    all_keys.add(f'tag:{tk}')
 
             columns = sorted(list(all_keys))
             return create_response(200, {'columns': columns, 'sample_count': len(items)})
