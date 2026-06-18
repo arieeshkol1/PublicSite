@@ -2134,7 +2134,7 @@ def handle_datasource_query_proxy(event):
                     for item in items:
                         # Discover top-level fields
                         for key in item.keys():
-                            if key not in ('pk', 'sk', 'ttl', 'cached_at', 'fetched_at', 'service_breakdown', 'tag_breakdown'):
+                            if key not in ('pk', 'sk', 'ttl', 'cached_at', 'fetched_at', 'service_breakdown', 'tag_breakdown', 'token_breakdown', 'project_breakdown'):
                                 all_keys.add(key)
 
                         # Discover fields INSIDE service_breakdown values (for OpenAI accounts)
@@ -2145,6 +2145,26 @@ def handle_datasource_query_proxy(event):
                                 if isinstance(svc_val, dict):
                                     for nested_key in svc_val.keys():
                                         all_keys.add(nested_key)
+
+                        # Discover fields INSIDE token_breakdown values (input_tokens, output_tokens)
+                        tok_breakdown = item.get('token_breakdown', {})
+                        if tok_breakdown and isinstance(tok_breakdown, dict):
+                            for model_name, tok_val in tok_breakdown.items():
+                                if isinstance(tok_val, dict):
+                                    for nested_key in tok_val.keys():
+                                        all_keys.add(nested_key)
+                                    break  # Only need one model to discover keys
+
+                        # Discover fields INSIDE project_breakdown values
+                        proj_breakdown = item.get('project_breakdown', {})
+                        if proj_breakdown and isinstance(proj_breakdown, dict):
+                            all_keys.add('project')
+                            for proj_id, proj_val in proj_breakdown.items():
+                                if isinstance(proj_val, dict):
+                                    for nested_key in proj_val.keys():
+                                        if nested_key != 'name':
+                                            all_keys.add(nested_key)
+                                    break
 
                         # Discover tag keys
                         tag_breakdown = item.get('tag_breakdown', {})
@@ -2210,6 +2230,8 @@ def handle_datasource_query_proxy(event):
                 date_val = item['sk'].replace('OPENAI_DAILY#', '').replace('DAILY#', '')
                 cost = float(item.get('cost_amount', 0))
                 svc_breakdown = item.get('service_breakdown', {})
+                tok_breakdown = item.get('token_breakdown', {})
+                proj_breakdown = item.get('project_breakdown', {})
 
                 if 'service' in attributes and svc_breakdown:
                     for svc, svc_val in svc_breakdown.items():
@@ -2224,6 +2246,24 @@ def handle_datasource_query_proxy(event):
                                     row[nk] = nv
                         else:
                             row['cost_amount'] = round(float(svc_val), 4)
+
+                        # Add token data for this model if requested
+                        if tok_breakdown and isinstance(tok_breakdown, dict):
+                            model_tokens = tok_breakdown.get(svc, {})
+                            if isinstance(model_tokens, dict):
+                                if 'input_tokens' in attributes:
+                                    row['input_tokens'] = model_tokens.get('input_tokens', 0)
+                                if 'output_tokens' in attributes:
+                                    row['output_tokens'] = model_tokens.get('output_tokens', 0)
+
+                        # Add project data if requested
+                        if 'project' in attributes and proj_breakdown and isinstance(proj_breakdown, dict):
+                            # Find the project for this row (first project with cost > 0, or first available)
+                            for proj_id, proj_val in proj_breakdown.items():
+                                if isinstance(proj_val, dict):
+                                    row['project'] = proj_val.get('name', proj_id)
+                                    break
+
                         all_rows.append(row)
                 else:
                     row = {'date': date_val, 'account_id': acct_id, 'cost_amount': round(cost, 4)}
@@ -2236,8 +2276,14 @@ def handle_datasource_query_proxy(event):
         # Sort by date descending
         all_rows.sort(key=lambda r: r.get('date', ''), reverse=True)
 
-        # Build columns from actual attributes found in data
-        columns = list(attributes) if attributes else ['date', 'service', 'cost_amount']
+        # Build columns from actual attributes found in data — exclude columns that are empty in ALL rows
+        raw_columns = list(attributes) if attributes else ['date', 'service', 'cost_amount']
+        columns = []
+        for col in raw_columns:
+            if any(r.get(col) not in (None, '', {}, []) for r in all_rows[:100]):
+                columns.append(col)
+        if not columns:
+            columns = raw_columns  # Fallback to all requested if nothing has data
 
         return create_response(200, {
             'rows': all_rows[:500],  # Limit to 500 rows

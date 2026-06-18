@@ -193,8 +193,8 @@ const ResultTable = (() => {
     }
 
     const str = String(value);
-    if (str.length > 50) {
-      return `<span title="${str}">${str.substring(0, 50)}...</span>`;
+    if (str.length > 80) {
+      return `<span title="${str}">${str.substring(0, 80)}...</span>`;
     }
 
     return str;
