@@ -2153,6 +2153,7 @@ def handle_datasource_query_proxy(event):
                                 if isinstance(tok_val, dict):
                                     for nested_key in tok_val.keys():
                                         all_keys.add(nested_key)
+                                    all_keys.add('total_tokens')  # computed field
                                     break  # Only need one model to discover keys
 
                         # Discover fields INSIDE project_breakdown values
@@ -2252,9 +2253,11 @@ def handle_datasource_query_proxy(event):
                             model_tokens = tok_breakdown.get(svc, {})
                             if isinstance(model_tokens, dict):
                                 if 'input_tokens' in attributes:
-                                    row['input_tokens'] = model_tokens.get('input_tokens', 0)
+                                    row['input_tokens'] = int(model_tokens.get('input_tokens', 0))
                                 if 'output_tokens' in attributes:
-                                    row['output_tokens'] = model_tokens.get('output_tokens', 0)
+                                    row['output_tokens'] = int(model_tokens.get('output_tokens', 0))
+                                if 'total_tokens' in attributes:
+                                    row['total_tokens'] = int(model_tokens.get('input_tokens', 0)) + int(model_tokens.get('output_tokens', 0))
 
                         # Add project data if requested
                         if 'project' in attributes and proj_breakdown and isinstance(proj_breakdown, dict):
