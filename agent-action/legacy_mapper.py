@@ -9,6 +9,7 @@ Requirements: 7.1, 7.2, 7.3
 
 # Mapping of all 11 legacy API paths to their vendor-neutral handler names
 LEGACY_TO_NEUTRAL = {
+    # Original legacy AWS-specific paths
     '/get-cost-data': 'getCostBreakdown',
     '/get-monthly-comparison': 'getMonthlyTrend',
     '/get-ec2-instances': 'getComputeInstances',
@@ -20,9 +21,27 @@ LEGACY_TO_NEUTRAL = {
     '/get-budgets': 'getBudgets',
     '/get-finops-settings': 'getFinOpsSettings',
     '/get-aws-pricing': 'getPricingData',
-    # Additional legacy paths not in the original 11 but present in the handler
     '/get-optimization-tips': 'getOptimizationTips',
     '/get-spot-placement-score': 'getSpotCandidates',
+    # Vendor-neutral schema paths (from OpenAPI action group schemas)
+    '/get-cost-breakdown': 'getCostBreakdown',
+    '/get-monthly-trend': 'getMonthlyTrend',
+    '/get-cost-forecast': 'getCostForecast',
+    '/get-cost-anomalies': 'getCostAnomalies',
+    '/get-compute-instances': 'getComputeInstances',
+    '/get-rightsizing-recommendations': 'getRightsizingRecommendations',
+    '/get-spot-candidates': 'getSpotCandidates',
+    '/get-licensing-analysis': 'getLicensingAnalysis',
+    '/get-database-instances': 'getDatabaseInstances',
+    '/get-storage-volumes': 'getStorageVolumes',
+    '/get-object-storage': 'getObjectStorage',
+    '/get-serverless-functions': 'getServerlessFunctions',
+    '/get-container-clusters': 'getContainerClusters',
+    '/get-commitment-coverage': 'getCommitmentCoverage',
+    '/get-tag-compliance': 'getTagCompliance',
+    '/get-business-metrics': 'getBusinessMetrics',
+    '/get-pricing-data': 'getPricingData',
+    '/get-ai-vendor-usage': 'getAIVendorUsage',
 }
 
 
