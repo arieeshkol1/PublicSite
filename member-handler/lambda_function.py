@@ -8008,6 +8008,26 @@ def _inline_audit_score(question, answer):
                 'guiding_questions': []
             }
 
+    # Pattern: User asked about a specific month but response answers about a different month
+    import calendar as _audit_cal
+    _month_names_lower = {m.lower() for m in _audit_cal.month_name if m}
+    _month_abbr_lower = {m.lower() for m in _audit_cal.month_abbr if m}
+    _all_months = _month_names_lower | _month_abbr_lower
+    _q_months = [m for m in _all_months if m in _q_lower]
+    if _q_months:
+        # User mentioned specific month(s) in question — check if answer addresses that month
+        _a_mentions_asked_month = any(m in _a_lower for m in _q_months)
+        _a_mentions_different_month = any(m in _a_lower for m in _all_months if m not in _q_months and m in _a_lower)
+        # If the answer mentions "month to date" or a different month but not the asked month, penalize
+        if not _a_mentions_asked_month and ('month to date' in _a_lower or _a_mentions_different_month):
+            logger.info(f"Inline audit: CODE-LEVEL REJECT — user asked about {_q_months} but response answers about a different month")
+            return {
+                'score': 35,
+                'can_improve': True,
+                'improvement': f'User asked about {_q_months[0]} but response provides data for a different time period. Query the cache for the correct month ({_q_months[0]}) and present that data.',
+                'guiding_questions': []
+            }
+
     # Pattern: Vague commitment/savings recommendation without specific dollar amounts
     _commitment_question = any(kw in _q_lower for kw in [
         'commitment', 'savings plan', 'reserved instance', 'save money',
@@ -8756,8 +8776,32 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
             cache_table = dynamodb.Table(os.environ.get('COST_CACHE_TABLE_NAME', 'Cost_Cache_Table'))
             pk = f"{member_email}#{account_id}"
 
-            # Determine time period: "last month" = previous calendar month, otherwise current month
-            if 'last month' in question_lower or 'previous month' in question_lower:
+            # Determine time period from user question
+            # 1) Explicit month names: "in May", "during April", etc.
+            import calendar
+            _month_names = {m.lower(): i for i, m in enumerate(calendar.month_name) if m}
+            _month_abbrevs = {m.lower(): i for i, m in enumerate(calendar.month_abbr) if m}
+            _detected_month_num = None
+            for mname, mnum in {**_month_names, **_month_abbrevs}.items():
+                if mname in question_lower:
+                    _detected_month_num = mnum
+                    break
+
+            if _detected_month_num:
+                # User asked about a specific month — determine the year
+                _year = now.year
+                # If the requested month is in the future for current year, assume previous year
+                if _detected_month_num > now.month:
+                    _year -= 1
+                first_of_month = datetime(_year, _detected_month_num, 1, tzinfo=timezone.utc)
+                if _detected_month_num == 12:
+                    last_of_month = datetime(_year + 1, 1, 1, tzinfo=timezone.utc) - timedelta(days=1)
+                else:
+                    last_of_month = datetime(_year, _detected_month_num + 1, 1, tzinfo=timezone.utc) - timedelta(days=1)
+                start_sk = f"DAILY#{first_of_month.strftime('%Y-%m-%d')}"
+                end_sk = f"DAILY#{last_of_month.strftime('%Y-%m-%d')}"
+                period_label = f"{first_of_month.strftime('%Y-%m')} ({calendar.month_name[_detected_month_num]})"
+            elif 'last month' in question_lower or 'previous month' in question_lower:
                 first_of_current = now.replace(day=1)
                 first_of_prev = (first_of_current - timedelta(days=1)).replace(day=1)
                 start_sk = f"DAILY#{first_of_prev.strftime('%Y-%m-%d')}"
@@ -8772,6 +8816,15 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
                 KeyConditionExpression=_Key('pk').eq(pk) & _Key('sk').between(start_sk, end_sk)
             )
             items = resp.get('Items', [])
+
+            # Also try OPENAI_DAILY# prefix for AI vendor accounts
+            if not items:
+                openai_start_sk = start_sk.replace('DAILY#', 'OPENAI_DAILY#')
+                openai_end_sk = end_sk.replace('DAILY#', 'OPENAI_DAILY#')
+                resp = cache_table.query(
+                    KeyConditionExpression=_Key('pk').eq(pk) & _Key('sk').between(openai_start_sk, openai_end_sk)
+                )
+                items = resp.get('Items', [])
 
             if items:
                 svc_full_name = _SERVICE_NAMES[_detected_svc_key]
@@ -8791,18 +8844,27 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
                             svc_total += cost_val
 
                     if day_cost > 0:
-                        date = item['sk'].replace('DAILY#', '')
+                        date = item['sk'].replace('OPENAI_DAILY#', '').replace('DAILY#', '')
                         daily_breakdown.append(f"{date}: ${day_cost:.2f}")
 
                 if svc_total > 0:
                     pct_of_total = (svc_total / all_services_total * 100) if all_services_total > 0 else 0
                     daily_str = ', '.join(daily_breakdown[-10:])  # Show last 10 days
+                    # Check if user also wants resource inventory (invocations, functions list, etc.)
+                    _wants_inventory = any(kw in question_lower for kw in ['invoc', 'function', 'list my', 'list the', 'which'])
+                    _inventory_instruction = ''
+                    if _wants_inventory and _detected_svc_key == 'lambda':
+                        _inventory_instruction = ' ALSO call getLambdaFunctions to list function names with invocation counts.'
+                    elif _wants_inventory and _detected_svc_key in ('ec2', 's3', 'rds', 'ebs'):
+                        _tool_map = {'ec2': 'getEC2Instances', 's3': 'getS3Buckets', 'rds': 'getRDSInstances', 'ebs': 'getEBSVolumes'}
+                        _inventory_instruction = f' ALSO call {_tool_map.get(_detected_svc_key, "getCostData")} to list resource details.'
+
                     enriched_prompt += (
                         f"\n\n[PRE-COMPUTED SERVICE BREAKDOWN for {_detected_svc_key.upper()} ({period_label}):\n"
                         f"Total: ${svc_total:.2f} ({pct_of_total:.1f}% of total spend ${all_services_total:.2f})\n"
                         f"Daily: {daily_str}\n"
-                        f"Present this data as the answer. Show the total, daily breakdown, and explain the AWS "
-                        f"pricing model for {_detected_svc_key}. Do NOT ask for clarification.]"
+                        f"Present this cost data as part of the answer. Show the total, daily breakdown, and explain the AWS "
+                        f"pricing model for {_detected_svc_key}.{_inventory_instruction} Do NOT ask for clarification.]"
                     )
                     _svc_precomputed = True
         except Exception as e:
