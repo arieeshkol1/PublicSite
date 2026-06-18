@@ -8895,6 +8895,8 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
                                 f' ALSO call the {_inv_tool} tool (in the NetworkServerless action group for Lambda, '
                                 f'or the relevant action group) to list resource details with usage metrics. '
                                 f'Do NOT call getComputeInstances for Lambda questions.'
+                                f' IMPORTANT: Only show functions/resources with invocations > 0. Skip idle ones.'
+                                f' Present as a COMPACT table (name | invocations | cost). Do NOT list verbose multi-line blocks per item.'
                             )
 
                     enriched_prompt += (
@@ -8902,7 +8904,9 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
                         f"Total: ${svc_total:.2f} ({pct_of_total:.1f}% of total spend ${all_services_total:.2f})\n"
                         f"Daily: {daily_str}\n"
                         f"Present this cost data as part of the answer. Show the total, daily breakdown, and explain the AWS "
-                        f"pricing model for {_detected_svc_key}.{_inventory_instruction} Do NOT ask for clarification.]"
+                        f"pricing model for {_detected_svc_key}.{_inventory_instruction}"
+                        f" Answer ONLY about {_detected_svc_key.upper()} — do NOT include data about other services."
+                        f" Do NOT ask for clarification.]"
                     )
                     _svc_precomputed = True
         except Exception as e:
