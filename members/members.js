@@ -3056,17 +3056,20 @@ if (aiChat) aiChat.onclick = function(e) {
         var followUpQ = followUpBtn.getAttribute('data-question');
         if (followUpQ && aiQuestionInput) {
             aiQuestionInput.value = followUpQ;
-            askAI();
+            aiQuestionInput.focus();
+            aiQuestionInput.setSelectionRange(followUpQ.length, followUpQ.length);
         }
         return;
     }
-    // Handle clarification guiding question buttons
+    // Handle clarification guiding question buttons — copy to input, let user edit before sending
     var clarifyBtn = e.target.closest('.ai-clarification-btn');
     if (clarifyBtn) {
         var clarifyQ = clarifyBtn.getAttribute('data-question');
         if (clarifyQ && aiQuestionInput) {
             aiQuestionInput.value = clarifyQ;
-            askAI();
+            aiQuestionInput.focus();
+            // Place cursor at end so user can append more context
+            aiQuestionInput.setSelectionRange(clarifyQ.length, clarifyQ.length);
         }
         return;
     }
