@@ -8782,10 +8782,11 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
         'ebs': 'Amazon Elastic Block Store',
         'nat gateway': 'Amazon Virtual Private Cloud',
         'cost explorer': 'AWS Cost Explorer',
+        'cost management': 'AWS Cost Explorer',
         'bedrock': 'Amazon Bedrock',
         'sagemaker': 'Amazon SageMaker',
     }
-    _BREAKDOWN_WORDS = ['break down', 'breakdown', 'cost of', 'how much', 'spending on', 'spend on', 'charges for', 'what are the', 'what is the', 'list my', 'show my', 'what are my', 'functions i use', 'their costs']
+    _BREAKDOWN_WORDS = ['break down', 'breakdown', 'cost of', 'how much', 'spending on', 'spend on', 'charges for', 'what are the', 'what is the', 'list my', 'show my', 'what are my', 'functions i use', 'their costs', 'split of', 'list down']
     _is_service_breakdown = any(bw in question_lower for bw in _BREAKDOWN_WORDS)
     _detected_svc_key = None
     for svc_key in _SERVICE_NAMES:
