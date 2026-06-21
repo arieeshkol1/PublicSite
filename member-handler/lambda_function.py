@@ -8924,6 +8924,50 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
         except Exception as e:
             logger.warning(f"Service breakdown pre-computation failed: {e}")
 
+    # Detect general savings/optimization questions and pre-compute from cache
+    _SAVINGS_KEYWORDS = ['save money', 'reduce cost', 'cut cost', 'optimize', 'where can i save', 'how to save', 'reduce spend', 'lower my bill', 'too expensive']
+    _is_savings_question = not _svc_precomputed and any(kw in question_lower for kw in _SAVINGS_KEYWORDS)
+
+    if _is_savings_question:
+        try:
+            from boto3.dynamodb.conditions import Key as _Key
+            now = datetime.now(timezone.utc)
+            cache_table = dynamodb.Table(os.environ.get('COST_CACHE_TABLE_NAME', 'Cost_Cache_Table'))
+            pk = f"{member_email}#{account_id}"
+            start_sk = f"DAILY#{(now - timedelta(days=30)).strftime('%Y-%m-%d')}"
+            end_sk = f"DAILY#{now.strftime('%Y-%m-%d')}"
+
+            resp = cache_table.query(
+                KeyConditionExpression=_Key('pk').eq(pk) & _Key('sk').between(start_sk, end_sk)
+            )
+            items = resp.get('Items', [])
+
+            if items:
+                svc_totals = {}
+                total_spend = 0.0
+                for item in items:
+                    for svc, cost in item.get('service_breakdown', {}).items():
+                        c = float(cost)
+                        svc_totals[svc] = svc_totals.get(svc, 0) + c
+                        total_spend += c
+
+                top_services = sorted(svc_totals.items(), key=lambda x: x[1], reverse=True)[:10]
+                svc_lines = ' | '.join(f"{s}: ${c:.2f}" for s, c in top_services if c > 0.50)
+
+                enriched_prompt += (
+                    f"\n\n[PRE-COMPUTED COST DATA (last 30 days, total ${total_spend:.2f}):\n"
+                    f"Top services: {svc_lines}\n"
+                    f"INSTRUCTIONS: Use this cost breakdown to identify the biggest spending areas. "
+                    f"For each top service, explain what drives the cost and how to reduce it. "
+                    f"Focus on the TOP 3 services by spend — those represent the biggest savings opportunity. "
+                    f"Call getCostBreakdown with usageTypeBreakdown=true for the #1 service ONLY if it exceeds $100. "
+                    f"Do NOT call getNetworkResources, getServerlessFunctions, or getTagCompliance. "
+                    f"Present savings as specific dollar amounts. Do NOT ask for clarification.]"
+                )
+                _svc_precomputed = True
+        except Exception as e:
+            logger.warning(f"Savings pre-computation failed: {e}")
+
     # Detect comparison/trend questions and pre-compute the answer from cache
     # Skip if service-specific breakdown was already pre-computed
     # Note: "last month" alone is NOT a comparison — it's a time reference
