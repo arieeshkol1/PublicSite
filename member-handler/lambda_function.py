@@ -5866,8 +5866,12 @@ def _make_client_from_creds(service, creds, region='us-east-1'):
 
 
 
-def _detect_charged_regions(creds_or_client):
-    """Detect regions with actual charges from Cost Explorer. Single API call, returns only active regions."""
+def _detect_charged_regions(creds_or_client, timeout_seconds=10):
+    """Detect regions with actual charges from Cost Explorer. Single API call, returns only active regions.
+    If timeout_seconds is 0, skips CE call and returns default regions for speed."""
+    if timeout_seconds == 0:
+        return ['us-east-1']
+
     PREFIX_TO_REGION = {
         'USE1': 'us-east-1', 'USE2': 'us-east-2', 'USW1': 'us-west-1', 'USW2': 'us-west-2',
         'EUC1': 'eu-central-1', 'EUW1': 'eu-west-1', 'EUW2': 'eu-west-2', 'EUW3': 'eu-west-3',
@@ -13430,9 +13434,14 @@ def handle_tag_scan(event):
                 pass
 
             # Scan resources across charged regions — limit to 3 for API GW timeout safety
-            _scan_tag_regions = _detect_charged_regions(creds)
+            # Skip slow CE region detection if already past 10s — just use us-east-1
+            _remaining_time = _TAG_SCAN_TIMEOUT - (time.time() - _tag_scan_start)
+            if _remaining_time < 12:
+                _scan_tag_regions = ['us-east-1']
+            else:
+                _scan_tag_regions = _detect_charged_regions(creds, timeout_seconds=8)
             if not _scan_tag_regions:
-                _scan_tag_regions = ['us-east-1', 'eu-central-1']
+                _scan_tag_regions = ['us-east-1']
             _scan_tag_regions = _scan_tag_regions[:3]  # Max 3 regions for synchronous scan
 
             # Scan ALL taggable resources per charged region
@@ -19458,7 +19467,7 @@ def handle_server_resize(event):
 def handle_server_list_instances(event):
     """POST /members/servers/list-instances -- List EC2 instances for resize wizard."""
     _list_start = time.time()
-    _LIST_TIMEOUT = 25  # Must finish before API Gateway 29s limit
+    _LIST_TIMEOUT = 20  # Must finish before API Gateway 29s limit
 
     auth = validate_token(event)
     if isinstance(auth, dict) and 'statusCode' in auth:
@@ -19486,8 +19495,12 @@ def handle_server_list_instances(event):
 
     instances = []
     try:
-        # Detect active regions from Cost Explorer (only regions with charges)
-        all_regions = _detect_charged_regions(creds)
+        # Detect active regions — use fast path if running low on time
+        _elapsed = time.time() - _list_start
+        if _elapsed > 3:
+            all_regions = ['us-east-1']
+        else:
+            all_regions = _detect_charged_regions(creds, timeout_seconds=5)
         # If body specifies a region, use only that
         if body.get('region'):
             all_regions = [body['region']]
@@ -19498,6 +19511,7 @@ def handle_server_list_instances(event):
         all_regions = [r for r in all_regions if _valid_region_re.match(r)]
         if not all_regions:
             all_regions = ['us-east-1']
+        all_regions = all_regions[:3]  # Max 3 regions for API GW timeout safety
 
         for _region in all_regions:
             if time.time() - _list_start > _LIST_TIMEOUT:
