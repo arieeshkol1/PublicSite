@@ -13350,7 +13350,7 @@ def create_error_response(status_code, error_type, message, extra=None):
 def handle_tag_scan(event):
     """Scan resources for missing tags using Resource Groups Tagging API."""
     _tag_scan_start = time.time()
-    _TAG_SCAN_TIMEOUT = 25  # seconds — must finish before API Gateway 29s hard limit
+    _TAG_SCAN_TIMEOUT = 20  # seconds — reduced from 25 to account for overhead before loop
 
     auth = validate_token(event)
     if isinstance(auth, dict) and 'statusCode' in auth:
@@ -13429,16 +13429,11 @@ def handle_tag_scan(event):
             except Exception:
                 pass
 
-            # Scan resources across charged regions
+            # Scan resources across charged regions — limit to 3 for API GW timeout safety
             _scan_tag_regions = _detect_charged_regions(creds)
             if not _scan_tag_regions:
                 _scan_tag_regions = ['us-east-1', 'eu-central-1']
-            for _tr_region in _scan_tag_regions:
-                tagging = boto3.client('resourcegroupstaggingapi',
-                    aws_access_key_id=creds['AccessKeyId'],
-                    aws_secret_access_key=creds['SecretAccessKey'],
-                    aws_session_token=creds['SessionToken'],
-                    region_name=_tr_region)
+            _scan_tag_regions = _scan_tag_regions[:3]  # Max 3 regions for synchronous scan
 
             # Scan ALL taggable resources per charged region
             for _tr_region in _scan_tag_regions:
@@ -13469,8 +13464,8 @@ def handle_tag_scan(event):
                             else:
                                 summary['untagged'] += 1
 
-                            # Return all resources (limit to 500)
-                            if len(all_resources) < 500:
+                            # Return all resources (limit to 300 for API GW response size)
+                            if len(all_resources) < 300:
                                 arn_parts = arn.split(':')
                                 service = arn_parts[2] if len(arn_parts) > 2 else 'unknown'
                                 region = arn_parts[3] if len(arn_parts) > 3 and arn_parts[3] else 'global'
