@@ -19418,6 +19418,9 @@ def handle_server_resize(event):
 @transaction_log('member-handler')
 def handle_server_list_instances(event):
     """POST /members/servers/list-instances -- List EC2 instances for resize wizard."""
+    _list_start = time.time()
+    _LIST_TIMEOUT = 25  # Must finish before API Gateway 29s limit
+
     auth = validate_token(event)
     if isinstance(auth, dict) and 'statusCode' in auth:
         return auth
@@ -19458,10 +19461,15 @@ def handle_server_list_instances(event):
             all_regions = ['us-east-1']
 
         for _region in all_regions:
+            if time.time() - _list_start > _LIST_TIMEOUT:
+                logger.warning(f"Instance list timeout after {time.time() - _list_start:.1f}s — returning partial")
+                break
             try:
                 ec2_r = _make_client_from_creds('ec2', creds, _region)
                 paginator = ec2_r.get_paginator('describe_instances')
                 for page in paginator.paginate(Filters=[{'Name': 'instance-state-name', 'Values': ['running', 'stopped']}]):
+                    if time.time() - _list_start > _LIST_TIMEOUT:
+                        break
                     for res in page.get('Reservations', []):
                         for inst in res.get('Instances', []):
                             tags = {t['Key']: t['Value'] for t in inst.get('Tags', [])}
@@ -21778,8 +21786,8 @@ def _discover_sql_workloads(creds, account_id):
         scan_regions = ['us-east-1']
 
     for scan_region in scan_regions:
-        if _time.time() - scan_start > 80:
-            logger.warning("SQL discovery timeout guard triggered after 80s")
+        if _time.time() - scan_start > 20:
+            logger.warning("SQL discovery timeout guard triggered — returning partial results")
             break
 
         # --- EC2 Windows instances with SQL Server ---
@@ -22198,6 +22206,8 @@ def handle_sql_platform_compare(event):
     options per workload, and returns a comparison matrix with savings calculations.
     """
     import time as _time
+    _sql_start = _time.time()
+    _SQL_TIMEOUT = 25  # Must finish before API Gateway 29s limit
 
     auth = validate_token(event)
     if isinstance(auth, dict) and 'statusCode' in auth:
