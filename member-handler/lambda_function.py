@@ -6163,7 +6163,17 @@ def _execute_async_scan(event):
         scanned_at = datetime.now(timezone.utc).isoformat()
 
         # Store completed results in DynamoDB
-        scan_result = {
+        # Convert float values to Decimal (DynamoDB requirement)
+        def _floats_to_decimal(obj):
+            if isinstance(obj, float):
+                return Decimal(str(round(obj, 6)))
+            if isinstance(obj, dict):
+                return {k: _floats_to_decimal(v) for k, v in obj.items()}
+            if isinstance(obj, list):
+                return [_floats_to_decimal(i) for i in obj]
+            return obj
+
+        scan_result = _floats_to_decimal({
             'scanId': scan_id,
             'status': 'complete',
             'cards': all_cards,
@@ -6174,7 +6184,7 @@ def _execute_async_scan(event):
             'scannedAt': scanned_at,
             'accountIds': account_ids,
             'completedAt': datetime.now(timezone.utc).isoformat(),
-        }
+        })
 
         members_table.update_item(
             Key={'email': member_email},
