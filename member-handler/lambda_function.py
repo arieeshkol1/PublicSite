@@ -410,7 +410,7 @@ def handle_register(event):
                     pass
                 return create_response(201, {"message": "Registration successful", "email": email, "preVerified": True})
             else:
-                cognito_client.sign_up(
+                resp = cognito_client.sign_up(
                     ClientId=COGNITO_CLIENT_ID,
                     Username=email,
                     Password=password,
@@ -418,6 +418,7 @@ def handle_register(event):
                         {"Name": "email", "Value": email},
                     ],
                 )
+                logger.info(f"Cognito sign_up successful for {email}. UserConfirmed={resp.get('UserConfirmed')}, CodeDeliveryDetails={resp.get('CodeDeliveryDetails')}")
                 return create_response(200, {"message": "OTP sent successfully", "email": email})
         except cognito_client.exceptions.UsernameExistsException:
             return create_error_response(409, "ConflictError", "An account with this email already exists")
