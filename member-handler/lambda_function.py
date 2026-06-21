@@ -13305,6 +13305,9 @@ def create_error_response(status_code, error_type, message, extra=None):
 @transaction_log('member-handler')
 def handle_tag_scan(event):
     """Scan resources for missing tags using Resource Groups Tagging API."""
+    _tag_scan_start = time.time()
+    _TAG_SCAN_TIMEOUT = 25  # seconds — must finish before API Gateway 29s hard limit
+
     auth = validate_token(event)
     if isinstance(auth, dict) and 'statusCode' in auth:
         return auth
@@ -13353,8 +13356,12 @@ def handle_tag_scan(event):
     all_resources = []
     all_tag_keys = set()
     summary = {'total': 0, 'fullyTagged': 0, 'partiallyTagged': 0, 'untagged': 0}
+    _tag_scan_partial = False
 
     for acct in accounts[:5]:
+        if time.time() - _tag_scan_start > _TAG_SCAN_TIMEOUT:
+            _tag_scan_partial = True
+            break
         acct_id = acct['accountId']
         try:
             assume_resp = sts_client.assume_role(
@@ -13391,6 +13398,10 @@ def handle_tag_scan(event):
 
             # Scan ALL taggable resources per charged region
             for _tr_region in _scan_tag_regions:
+                # Timeout guard — stop scanning more regions if approaching API Gateway limit
+                if time.time() - _tag_scan_start > _TAG_SCAN_TIMEOUT:
+                    logger.warning(f"Tag scan timeout after {time.time() - _tag_scan_start:.1f}s — returning partial results")
+                    break
                 tagging = boto3.client('resourcegroupstaggingapi',
                     aws_access_key_id=creds['AccessKeyId'],
                     aws_secret_access_key=creds['SecretAccessKey'],
@@ -13399,6 +13410,8 @@ def handle_tag_scan(event):
                 paginator = tagging.get_paginator('get_resources')
                 try:
                     for page in paginator.paginate(ResourcesPerPage=100):
+                        if time.time() - _tag_scan_start > _TAG_SCAN_TIMEOUT:
+                            break
                         for res in page.get('ResourceTagMappingList', []):
                             arn = res.get('ResourceARN', '')
                             tags = {t['Key']: t['Value'] for t in res.get('Tags', []) if not t['Key'].startswith('aws:')}
@@ -13921,6 +13934,7 @@ def handle_tag_scan(event):
         'requiredTags': required_tags,
         'discoveredTagKeys': sorted(list(all_tag_keys)),
         'untaggableServices': untaggable_services if untaggable_services else None,
+        'partial': _tag_scan_partial,
     })
 
 
