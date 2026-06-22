@@ -13433,27 +13433,39 @@ def handle_tag_scan(event):
             except Exception:
                 pass
 
-            # Scan resources across charged regions — limit to 3 for API GW timeout safety
-            # Skip slow CE region detection if already past 10s — just use us-east-1
-            _remaining_time = _TAG_SCAN_TIMEOUT - (time.time() - _tag_scan_start)
-            if _remaining_time < 12:
-                _scan_tag_regions = ['us-east-1']
-            else:
-                _scan_tag_regions = _detect_charged_regions(creds, timeout_seconds=8)
-            if not _scan_tag_regions:
-                _scan_tag_regions = ['us-east-1']
-            _scan_tag_regions = _scan_tag_regions[:3]  # Max 3 regions for synchronous scan
-
-            # Scan ALL taggable resources per charged region
-            for _tr_region in _scan_tag_regions:
-                # Timeout guard — stop scanning more regions if approaching API Gateway limit
-                if time.time() - _tag_scan_start > _TAG_SCAN_TIMEOUT:
-                    logger.warning(f"Tag scan timeout after {time.time() - _tag_scan_start:.1f}s — returning partial results")
-                    break
-                tagging = boto3.client('resourcegroupstaggingapi',
+            # API 1: Get relevant regions via ec2.describe_regions (fast <1s)
+            try:
+                _ec2_region_client = boto3.client('ec2',
                     aws_access_key_id=creds['AccessKeyId'],
                     aws_secret_access_key=creds['SecretAccessKey'],
                     aws_session_token=creds['SessionToken'],
+                    region_name='us-east-1')
+                _regions_resp = _ec2_region_client.describe_regions(
+                    Filters=[{'Name': 'opt-in-status', 'Values': ['opt-in-not-required', 'opted-in']}])
+                _scan_tag_regions = [r['RegionName'] for r in _regions_resp.get('Regions', [])]
+            except Exception:
+                _scan_tag_regions = ['us-east-1', 'eu-central-1', 'eu-west-1', 'us-west-2']
+
+            # API 2: Loop per region — re-assume role each time to avoid timeout
+            for _tr_region in _scan_tag_regions:
+                # Timeout guard — stop scanning more regions if approaching API Gateway limit
+                if time.time() - _tag_scan_start > _TAG_SCAN_TIMEOUT:
+                    _tag_scan_partial = True
+                    logger.warning(f"Tag scan timeout after {time.time() - _tag_scan_start:.1f}s — returning partial results")
+                    break
+                # Fresh credentials per region to avoid stale session issues
+                try:
+                    _fresh_assume = sts_client.assume_role(
+                        RoleArn=f'arn:aws:iam::{acct_id}:role/SlashMyBill-{acct_id}',
+                        RoleSessionName='SlashMyBillTagScan', ExternalId=external_id,
+                    )
+                    _fresh_creds = _fresh_assume['Credentials']
+                except Exception:
+                    continue
+                tagging = boto3.client('resourcegroupstaggingapi',
+                    aws_access_key_id=_fresh_creds['AccessKeyId'],
+                    aws_secret_access_key=_fresh_creds['SecretAccessKey'],
+                    aws_session_token=_fresh_creds['SessionToken'],
                     region_name=_tr_region)
                 paginator = tagging.get_paginator('get_resources')
                 try:
@@ -18081,19 +18093,30 @@ def handle_spot_qualify(event):
     except Exception as e:
         return create_error_response(500, 'ServerError', f'Cannot assume role: {e}')
 
-    # List ASGs — scan multiple regions with timeout guard
+    # List ASGs — API 1: get regions, API 2: loop per region with fresh creds
     _asg_start = time.time()
     _ASG_TIMEOUT = 20
     all_asgs = []
-    _asg_regions = ['us-east-1', 'eu-central-1', 'eu-west-1', 'us-west-2']
+
     if body.get('region'):
         _asg_regions = [body['region']]
+    else:
+        # API 1: Get relevant regions
+        try:
+            _ec2_r = _make_client_from_creds('ec2', creds, 'us-east-1')
+            _regions_resp = _ec2_r.describe_regions(
+                Filters=[{'Name': 'opt-in-status', 'Values': ['opt-in-not-required', 'opted-in']}])
+            _asg_regions = [r['RegionName'] for r in _regions_resp.get('Regions', [])]
+        except Exception:
+            _asg_regions = ['us-east-1', 'eu-central-1', 'eu-west-1', 'us-west-2']
 
+    # API 2: Loop per region — re-assume role each time
     for _asg_region in _asg_regions:
         if time.time() - _asg_start > _ASG_TIMEOUT:
             break
         try:
-            _asg_r = _make_client_from_creds('autoscaling', creds, _asg_region)
+            _fresh_creds = _assume_role_for_account(member_email, account_id)
+            _asg_r = _make_client_from_creds('autoscaling', _fresh_creds, _asg_region)
             paginator = _asg_r.get_paginator('describe_auto_scaling_groups')
             for page in paginator.paginate(MaxRecords=50):
                 if time.time() - _asg_start > _ASG_TIMEOUT:
@@ -19512,22 +19535,25 @@ def handle_server_list_instances(event):
 
     instances = []
     try:
-        # For large accounts, skip the slow CE region detection entirely
-        # Instead, scan the most common EC2 regions directly — each describe_instances is ~1-2s
+        # API 1: Get relevant regions via ec2.describe_regions (fast <1s)
         if body.get('region'):
             all_regions = [body['region']]
         else:
-            # Default to the most common EC2 regions — covers 95%+ of accounts
-            all_regions = ['us-east-1', 'eu-central-1', 'eu-west-1', 'us-west-2', 'ap-southeast-1']
+            try:
+                _ec2_regions_resp = ec2.describe_regions(
+                    Filters=[{'Name': 'opt-in-status', 'Values': ['opt-in-not-required', 'opted-in']}])
+                all_regions = [r['RegionName'] for r in _ec2_regions_resp.get('Regions', [])]
+            except Exception:
+                all_regions = ['us-east-1', 'eu-central-1', 'eu-west-1', 'us-west-2']
 
-        all_regions = all_regions[:4]  # Max 4 regions for API GW timeout safety
-
+        # API 2: Loop per region — re-assume role each time to avoid timeout
         for _region in all_regions:
             if time.time() - _list_start > _LIST_TIMEOUT:
                 logger.warning(f"Instance list timeout after {time.time() - _list_start:.1f}s — returning partial")
                 break
             try:
-                ec2_r = _make_client_from_creds('ec2', creds, _region)
+                _fresh_creds = _assume_role_for_account(member_email, account_id)
+                ec2_r = _make_client_from_creds('ec2', _fresh_creds, _region)
                 paginator = ec2_r.get_paginator('describe_instances')
                 for page in paginator.paginate(Filters=[{'Name': 'instance-state-name', 'Values': ['running', 'stopped']}]):
                     if time.time() - _list_start > _LIST_TIMEOUT:
@@ -19598,18 +19624,31 @@ def handle_cluster_analyze(event):
         _asg_start = time.time()
         _ASG_TIMEOUT = 20
         all_asgs = []
-        _asg_regions = [region] if region else ['us-east-1', 'eu-central-1', 'eu-west-1', 'us-west-2']
+
+        # API 1: Get relevant regions
+        if region:
+            _asg_regions = [region]
+        else:
+            try:
+                _ec2_r = _make_client_from_creds('ec2', creds, 'us-east-1')
+                _regions_resp = _ec2_r.describe_regions(
+                    Filters=[{'Name': 'opt-in-status', 'Values': ['opt-in-not-required', 'opted-in']}])
+                _asg_regions = [r['RegionName'] for r in _regions_resp.get('Regions', [])]
+            except Exception:
+                _asg_regions = ['us-east-1', 'eu-central-1', 'eu-west-1', 'us-west-2']
+
+        # API 2: Loop per region — re-assume role each time
         for _asg_region in _asg_regions:
             if time.time() - _asg_start > _ASG_TIMEOUT:
                 break
             try:
-                _asg_r = _make_client_from_creds('autoscaling', creds, _asg_region)
+                _fresh_creds = _assume_role_for_account(member_email, account_id)
+                _asg_r = _make_client_from_creds('autoscaling', _fresh_creds, _asg_region)
                 paginator = _asg_r.get_paginator('describe_auto_scaling_groups')
                 for page in paginator.paginate(MaxRecords=50):
                     if time.time() - _asg_start > _ASG_TIMEOUT:
                         break
                     for asg in page.get('AutoScalingGroups', []):
-                        tags = {t['Key']: t['Value'] for t in asg.get('Tags', [])}
                         all_asgs.append({
                             'asgName': asg['AutoScalingGroupName'],
                             'name': asg['AutoScalingGroupName'],
@@ -19951,10 +19990,16 @@ def handle_licensing_scan(event):
     # --- Phase 2: Discovery (ALL REGIONS) ---
     instances = []
 
-    # Use fast static region list instead of slow Cost Explorer call
-    scan_regions = ['us-east-1', 'eu-central-1', 'eu-west-1', 'us-west-2']
+    # API 1: Get relevant regions via ec2.describe_regions
+    try:
+        _ec2_r = _client('ec2', 'us-east-1')
+        _regions_resp = _ec2_r.describe_regions(
+            Filters=[{'Name': 'opt-in-status', 'Values': ['opt-in-not-required', 'opted-in']}])
+        scan_regions = [r['RegionName'] for r in _regions_resp.get('Regions', [])]
+    except Exception:
+        scan_regions = ['us-east-1', 'eu-central-1', 'eu-west-1', 'us-west-2']
 
-    # EC2 Windows instances â€” scan all regions
+    # API 2: EC2 Windows instances â€” scan all regions
     for _scan_region in scan_regions:
         if _time.time() - scan_start > 20:  # timeout guard for discovery phase
             break
@@ -20486,14 +20531,23 @@ def handle_rds_optimize(event):
     except Exception as e:
         return create_error_response(403, 'AssumeRoleFailed', f'Cannot access account: {str(e)[:200]}')
 
-    # Use fast static region list instead of slow Cost Explorer call
+    # API 1: Get relevant regions via ec2.describe_regions
     _rds_start = time.time()
     _RDS_TIMEOUT = 20
-    rds_regions = ['us-east-1', 'eu-central-1', 'eu-west-1', 'us-west-2']
+
     if body.get('region'):
         rds_regions = [body['region']]
+    else:
+        try:
+            _ec2_r = boto3.client('ec2', aws_access_key_id=creds['AccessKeyId'], aws_secret_access_key=creds['SecretAccessKey'], aws_session_token=creds['SessionToken'], region_name='us-east-1')
+            _regions_resp = _ec2_r.describe_regions(
+                Filters=[{'Name': 'opt-in-status', 'Values': ['opt-in-not-required', 'opted-in']}])
+            rds_regions = [r['RegionName'] for r in _regions_resp.get('Regions', [])]
+        except Exception:
+            rds_regions = ['us-east-1', 'eu-central-1', 'eu-west-1', 'us-west-2']
 
-    # Discover RDS instances across common regions with timeout guard
+    # API 2: Loop per region — re-assume role each time
+    external_id = hashlib.sha256(member_email.encode('utf-8')).hexdigest()
     instances = []
     try:
         for _rds_region in rds_regions:
@@ -20501,7 +20555,9 @@ def handle_rds_optimize(event):
                 logger.warning(f"RDS discovery timeout after {time.time() - _rds_start:.1f}s — returning partial")
                 break
             try:
-                rds = boto3.client('rds', aws_access_key_id=creds['AccessKeyId'], aws_secret_access_key=creds['SecretAccessKey'], aws_session_token=creds['SessionToken'], region_name=_rds_region)
+                _fresh = sts_client.assume_role(RoleArn=f'arn:aws:iam::{account_id}:role/SlashMyBill-{account_id}', RoleSessionName='SlashMyBillRDS', ExternalId=external_id, DurationSeconds=900)
+                _fc = _fresh['Credentials']
+                rds = boto3.client('rds', aws_access_key_id=_fc['AccessKeyId'], aws_secret_access_key=_fc['SecretAccessKey'], aws_session_token=_fc['SessionToken'], region_name=_rds_region)
                 resp = rds.describe_db_instances()
                 for db in resp.get('DBInstances', []):
                     instances.append({
@@ -20682,10 +20738,16 @@ def handle_lambda_optimize(event):
     except Exception as e:
         return create_error_response(403, 'AssumeRoleFailed', f'Cannot access account: {str(e)[:200]}')
 
-    # Use fast static region list instead of slow Cost Explorer call
-    lam_regions = ['us-east-1', 'eu-central-1', 'eu-west-1', 'us-west-2']
+    # API 1: Get relevant regions via ec2.describe_regions
+    try:
+        _ec2_r = boto3.client('ec2', aws_access_key_id=creds['AccessKeyId'], aws_secret_access_key=creds['SecretAccessKey'], aws_session_token=creds['SessionToken'], region_name='us-east-1')
+        _regions_resp = _ec2_r.describe_regions(
+            Filters=[{'Name': 'opt-in-status', 'Values': ['opt-in-not-required', 'opted-in']}])
+        lam_regions = [r['RegionName'] for r in _regions_resp.get('Regions', [])]
+    except Exception:
+        lam_regions = ['us-east-1', 'eu-central-1', 'eu-west-1', 'us-west-2']
 
-    # Discover Lambda functions across common regions with timeout guard
+    # API 2: Loop per region — re-assume role each time
     _lam_start = time.time()
     _LAM_TIMEOUT = 20
     functions = []
@@ -20694,7 +20756,9 @@ def handle_lambda_optimize(event):
             if time.time() - _lam_start > _LAM_TIMEOUT:
                 break
             try:
-                lam = boto3.client('lambda', aws_access_key_id=creds['AccessKeyId'], aws_secret_access_key=creds['SecretAccessKey'], aws_session_token=creds['SessionToken'], region_name=_lam_r)
+                _fresh = sts_client.assume_role(RoleArn=role_arn, RoleSessionName='SlashMyBillLambda', ExternalId=external_id, DurationSeconds=900)
+                _fc = _fresh['Credentials']
+                lam = boto3.client('lambda', aws_access_key_id=_fc['AccessKeyId'], aws_secret_access_key=_fc['SecretAccessKey'], aws_session_token=_fc['SessionToken'], region_name=_lam_r)
                 paginator = lam.get_paginator('list_functions')
                 for page in paginator.paginate():
                     for fn in page.get('Functions', []):
@@ -20841,10 +20905,16 @@ def handle_ebs_optimize(event):
     except Exception as e:
         return create_error_response(403, 'AssumeRoleFailed', f'Cannot access account: {str(e)[:200]}')
 
-    # Use fast static region list instead of slow Cost Explorer call
-    ec2_regions = ['us-east-1', 'eu-central-1', 'eu-west-1', 'us-west-2']
+    # API 1: Get relevant regions via ec2.describe_regions
+    try:
+        _ec2_r = boto3.client('ec2', aws_access_key_id=creds['AccessKeyId'], aws_secret_access_key=creds['SecretAccessKey'], aws_session_token=creds['SessionToken'], region_name='us-east-1')
+        _regions_resp = _ec2_r.describe_regions(
+            Filters=[{'Name': 'opt-in-status', 'Values': ['opt-in-not-required', 'opted-in']}])
+        ec2_regions = [r['RegionName'] for r in _regions_resp.get('Regions', [])]
+    except Exception:
+        ec2_regions = ['us-east-1', 'eu-central-1', 'eu-west-1', 'us-west-2']
 
-    # Discover EBS volumes across common regions with timeout guard
+    # API 2: Loop per region — re-assume role each time
     _ebs_start = time.time()
     _EBS_TIMEOUT = 20
     volumes = []
@@ -20853,7 +20923,9 @@ def handle_ebs_optimize(event):
             if time.time() - _ebs_start > _EBS_TIMEOUT:
                 break
             try:
-                ec2 = boto3.client('ec2', aws_access_key_id=creds['AccessKeyId'], aws_secret_access_key=creds['SecretAccessKey'], aws_session_token=creds['SessionToken'], region_name=_ebs_r)
+                _fresh = sts_client.assume_role(RoleArn=role_arn, RoleSessionName='SlashMyBillEBS', ExternalId=external_id, DurationSeconds=900)
+                _fc = _fresh['Credentials']
+                ec2 = boto3.client('ec2', aws_access_key_id=_fc['AccessKeyId'], aws_secret_access_key=_fc['SecretAccessKey'], aws_session_token=_fc['SessionToken'], region_name=_ebs_r)
                 paginator = ec2.get_paginator('describe_volumes')
                 for page in paginator.paginate():
                     for vol in page.get('Volumes', []):
@@ -21894,9 +21966,16 @@ def _discover_sql_workloads(creds, account_id):
     workloads = []
     scan_start = _time.time()
 
-    # Use fast static region list instead of slow Cost Explorer call
-    scan_regions = ['us-east-1', 'eu-central-1', 'eu-west-1', 'us-west-2']
+    # API 1: Get relevant regions via ec2.describe_regions
+    try:
+        _ec2_r = _client('ec2', 'us-east-1')
+        _regions_resp = _ec2_r.describe_regions(
+            Filters=[{'Name': 'opt-in-status', 'Values': ['opt-in-not-required', 'opted-in']}])
+        scan_regions = [r['RegionName'] for r in _regions_resp.get('Regions', [])]
+    except Exception:
+        scan_regions = ['us-east-1', 'eu-central-1', 'eu-west-1', 'us-west-2']
 
+    # API 2: Loop per region
     for scan_region in scan_regions:
         if _time.time() - scan_start > 20:
             logger.warning("SQL discovery timeout guard triggered — returning partial results")
