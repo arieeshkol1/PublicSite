@@ -13444,7 +13444,7 @@ def handle_tag_scan(event):
                     Filters=[{'Name': 'opt-in-status', 'Values': ['opt-in-not-required', 'opted-in']}])
                 _scan_tag_regions = [r['RegionName'] for r in _regions_resp.get('Regions', [])]
             except Exception:
-                _scan_tag_regions = ['us-east-1', 'eu-central-1', 'eu-west-1', 'us-west-2']
+                _scan_tag_regions = ['us-east-1']
 
             # API 2: Loop per region — re-assume role each time to avoid timeout
             for _tr_region in _scan_tag_regions:
@@ -18108,11 +18108,9 @@ def handle_spot_qualify(event):
                 Filters=[{'Name': 'opt-in-status', 'Values': ['opt-in-not-required', 'opted-in']}])
             _asg_regions = [r['RegionName'] for r in _regions_resp.get('Regions', [])]
         except Exception:
-            _asg_regions = ['us-east-1', 'eu-central-1', 'eu-west-1', 'us-west-2']
+            _asg_regions = ['us-east-1']
 
-    # API 2: Loop per region using existing creds (avoid re-assuming per region)
-    _asg_regions = sorted(_asg_regions, key=lambda r: ['eu-west-1', 'eu-central-1', 'us-east-1', 'us-west-2'].index(r) if r in ['eu-west-1', 'eu-central-1', 'us-east-1', 'us-west-2'] else 99)
-    _asg_regions = _asg_regions[:8]
+    # Scan all regions — timeout guard stops if approaching API GW limit
     for _asg_region in _asg_regions:
         if time.time() - _asg_start > _ASG_TIMEOUT:
             break
@@ -19544,27 +19542,26 @@ def handle_server_list_instances(event):
                 _ec2_regions_resp = ec2.describe_regions(
                     Filters=[{'Name': 'opt-in-status', 'Values': ['opt-in-not-required', 'opted-in']}])
                 all_regions = [r['RegionName'] for r in _ec2_regions_resp.get('Regions', [])]
-                # Prioritize likely regions first for Israeli/European customers
-                _priority = ['eu-west-1', 'eu-central-1', 'us-east-1', 'us-west-2', 'eu-west-2', 'ap-southeast-1']
-                all_regions = sorted(all_regions, key=lambda r: _priority.index(r) if r in _priority else 99)
             except Exception:
-                all_regions = ['eu-west-1', 'eu-central-1', 'us-east-1', 'us-west-2', 'eu-west-2']
-
-        all_regions = all_regions[:8]  # Max 8 regions for API GW timeout safety
+                all_regions = ['us-east-1']
 
         # Scan regions using single set of creds (avoid re-assuming per region)
+        _scanned_regions = []
+        _scan_errors = []
         for _region in all_regions:
             if time.time() - _list_start > _LIST_TIMEOUT:
-                logger.warning(f"Instance list timeout after {time.time() - _list_start:.1f}s — returning partial")
+                logger.warning(f"Instance list timeout after {time.time() - _list_start:.1f}s, scanned {len(_scanned_regions)} regions — returning partial")
                 break
             try:
                 ec2_r = _make_client_from_creds('ec2', creds, _region)
                 paginator = ec2_r.get_paginator('describe_instances')
+                _region_count = 0
                 for page in paginator.paginate(Filters=[{'Name': 'instance-state-name', 'Values': ['running', 'stopped']}]):
                     if time.time() - _list_start > _LIST_TIMEOUT:
                         break
                     for res in page.get('Reservations', []):
                         for inst in res.get('Instances', []):
+                            _region_count += 1
                             tags = {t['Key']: t['Value'] for t in inst.get('Tags', [])}
                             instances.append({
                                 'instanceId': inst['InstanceId'],
@@ -19575,12 +19572,56 @@ def handle_server_list_instances(event):
                                 'region': _region,
                                 'inASG': 'aws:autoscaling:groupName' in tags,
                             })
-            except Exception:
+            except Exception as _scan_err:
+                _scan_errors.append(f"{_region}: {type(_scan_err).__name__}: {_scan_err}")
                 continue
+            _scanned_regions.append(_region)
     except Exception as e:
         return create_error_response(500, 'ServerError', f'Failed to list instances: {e}')
 
-    return create_response(200, {'instances': instances, 'count': len(instances)})
+    logger.info(f"Instance list for {account_id}: scanned {len(_scanned_regions)} regions ({','.join(_scanned_regions[:5])}), found {len(instances)} EC2 instances, errors: {_scan_errors[:3]}")
+
+    # Also discover Lightsail instances (different API, region-agnostic scan)
+    if not instances or True:  # Always check Lightsail too
+        _ls_timeout_remaining = _LIST_TIMEOUT - (time.time() - _list_start)
+        if _ls_timeout_remaining > 3:
+            try:
+                # Lightsail is available in limited regions — get all via get_regions
+                ls_client = _make_client_from_creds('lightsail', creds, 'us-east-1')
+                ls_regions_resp = ls_client.get_regions(includeAvailabilityZones=False)
+                ls_regions = [r['name'] for r in ls_regions_resp.get('regions', []) if r.get('isRelational') is not None]
+                if not ls_regions:
+                    ls_regions = [r['name'] for r in ls_regions_resp.get('regions', [])]
+                for _ls_region in ls_regions:
+                    if time.time() - _list_start > _LIST_TIMEOUT:
+                        break
+                    try:
+                        ls_r = _make_client_from_creds('lightsail', creds, _ls_region)
+                        ls_instances = ls_r.get_instances().get('instances', [])
+                        for ls_inst in ls_instances:
+                            instances.append({
+                                'instanceId': ls_inst.get('name', ''),
+                                'name': ls_inst.get('name', ''),
+                                'instanceType': ls_inst.get('bundleId', ''),
+                                'state': ls_inst.get('state', {}).get('name', ''),
+                                'az': ls_inst.get('location', {}).get('availabilityZone', ''),
+                                'region': ls_inst.get('location', {}).get('regionName', _ls_region),
+                                'inASG': False,
+                                'platform': 'lightsail',
+                            })
+                    except Exception:
+                        continue
+            except Exception as _ls_err:
+                logger.warning(f"Lightsail discovery failed: {_ls_err}")
+
+    return create_response(200, {
+        'instances': instances,
+        'count': len(instances),
+        'regionsScanned': len(_scanned_regions),
+        'regions': _scanned_regions[:10],
+        'errors': _scan_errors[:3],
+        'partial': time.time() - _list_start > _LIST_TIMEOUT,
+    })
 
 
 
@@ -19640,11 +19681,9 @@ def handle_cluster_analyze(event):
                     Filters=[{'Name': 'opt-in-status', 'Values': ['opt-in-not-required', 'opted-in']}])
                 _asg_regions = [r['RegionName'] for r in _regions_resp.get('Regions', [])]
             except Exception:
-                _asg_regions = ['us-east-1', 'eu-central-1', 'eu-west-1', 'us-west-2']
+                _asg_regions = ['us-east-1']
 
-        # API 2: Loop per region using existing creds (avoid re-assuming per region)
-        _asg_regions = sorted(_asg_regions, key=lambda r: ['eu-west-1', 'eu-central-1', 'us-east-1', 'us-west-2'].index(r) if r in ['eu-west-1', 'eu-central-1', 'us-east-1', 'us-west-2'] else 99)
-        _asg_regions = _asg_regions[:8]
+        # Scan all regions — timeout guard stops if approaching API GW limit
         for _asg_region in _asg_regions:
             if time.time() - _asg_start > _ASG_TIMEOUT:
                 break
@@ -20550,10 +20589,9 @@ def handle_rds_optimize(event):
                 Filters=[{'Name': 'opt-in-status', 'Values': ['opt-in-not-required', 'opted-in']}])
             rds_regions = [r['RegionName'] for r in _regions_resp.get('Regions', [])]
         except Exception:
-            rds_regions = ['us-east-1', 'eu-central-1', 'eu-west-1', 'us-west-2']
+            rds_regions = ['us-east-1']
 
-    # API 2: Loop per region — re-assume role each time
-    external_id = hashlib.sha256(member_email.encode('utf-8')).hexdigest()
+    # Scan all regions with timeout guard — use existing creds
     instances = []
     try:
         for _rds_region in rds_regions:
@@ -20561,9 +20599,7 @@ def handle_rds_optimize(event):
                 logger.warning(f"RDS discovery timeout after {time.time() - _rds_start:.1f}s — returning partial")
                 break
             try:
-                _fresh = sts_client.assume_role(RoleArn=f'arn:aws:iam::{account_id}:role/SlashMyBill-{account_id}', RoleSessionName='SlashMyBillRDS', ExternalId=external_id, DurationSeconds=900)
-                _fc = _fresh['Credentials']
-                rds = boto3.client('rds', aws_access_key_id=_fc['AccessKeyId'], aws_secret_access_key=_fc['SecretAccessKey'], aws_session_token=_fc['SessionToken'], region_name=_rds_region)
+                rds = boto3.client('rds', aws_access_key_id=creds['AccessKeyId'], aws_secret_access_key=creds['SecretAccessKey'], aws_session_token=creds['SessionToken'], region_name=_rds_region)
                 resp = rds.describe_db_instances()
                 for db in resp.get('DBInstances', []):
                     instances.append({
@@ -20751,9 +20787,9 @@ def handle_lambda_optimize(event):
             Filters=[{'Name': 'opt-in-status', 'Values': ['opt-in-not-required', 'opted-in']}])
         lam_regions = [r['RegionName'] for r in _regions_resp.get('Regions', [])]
     except Exception:
-        lam_regions = ['us-east-1', 'eu-central-1', 'eu-west-1', 'us-west-2']
+        lam_regions = ['us-east-1']
 
-    # API 2: Loop per region — re-assume role each time
+    # Scan all regions with timeout guard
     _lam_start = time.time()
     _LAM_TIMEOUT = 20
     functions = []
@@ -20762,9 +20798,7 @@ def handle_lambda_optimize(event):
             if time.time() - _lam_start > _LAM_TIMEOUT:
                 break
             try:
-                _fresh = sts_client.assume_role(RoleArn=role_arn, RoleSessionName='SlashMyBillLambda', ExternalId=external_id, DurationSeconds=900)
-                _fc = _fresh['Credentials']
-                lam = boto3.client('lambda', aws_access_key_id=_fc['AccessKeyId'], aws_secret_access_key=_fc['SecretAccessKey'], aws_session_token=_fc['SessionToken'], region_name=_lam_r)
+                lam = boto3.client('lambda', aws_access_key_id=creds['AccessKeyId'], aws_secret_access_key=creds['SecretAccessKey'], aws_session_token=creds['SessionToken'], region_name=_lam_r)
                 paginator = lam.get_paginator('list_functions')
                 for page in paginator.paginate():
                     for fn in page.get('Functions', []):
@@ -20918,9 +20952,9 @@ def handle_ebs_optimize(event):
             Filters=[{'Name': 'opt-in-status', 'Values': ['opt-in-not-required', 'opted-in']}])
         ec2_regions = [r['RegionName'] for r in _regions_resp.get('Regions', [])]
     except Exception:
-        ec2_regions = ['us-east-1', 'eu-central-1', 'eu-west-1', 'us-west-2']
+        ec2_regions = ['us-east-1']
 
-    # API 2: Loop per region — re-assume role each time
+    # Scan all regions with timeout guard — use existing creds
     _ebs_start = time.time()
     _EBS_TIMEOUT = 20
     volumes = []
@@ -20929,9 +20963,7 @@ def handle_ebs_optimize(event):
             if time.time() - _ebs_start > _EBS_TIMEOUT:
                 break
             try:
-                _fresh = sts_client.assume_role(RoleArn=role_arn, RoleSessionName='SlashMyBillEBS', ExternalId=external_id, DurationSeconds=900)
-                _fc = _fresh['Credentials']
-                ec2 = boto3.client('ec2', aws_access_key_id=_fc['AccessKeyId'], aws_secret_access_key=_fc['SecretAccessKey'], aws_session_token=_fc['SessionToken'], region_name=_ebs_r)
+                ec2 = boto3.client('ec2', aws_access_key_id=creds['AccessKeyId'], aws_secret_access_key=creds['SecretAccessKey'], aws_session_token=creds['SessionToken'], region_name=_ebs_r)
                 paginator = ec2.get_paginator('describe_volumes')
                 for page in paginator.paginate():
                     for vol in page.get('Volumes', []):
