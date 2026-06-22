@@ -5992,21 +5992,94 @@ function _syncActSelection() {
 }
 
 function _populatePlanAccounts() {
-    var src = document.getElementById('act-account-select');
     var dst = document.getElementById('plan-account-select');
-    if (!src || !dst) return;
-    // Clone the act account selector into plan
-    dst.innerHTML = src.innerHTML;
-    // Re-wire the toggle button click in the cloned version
-    var wrapper = dst.querySelector('div');
-    if (wrapper) {
-        var btn = wrapper.querySelector('button');
-        var panel = wrapper.querySelectorAll('div')[0];
-        if (btn && panel) {
-            btn.onclick = function(e) { e.stopPropagation(); panel.style.display = panel.style.display === 'none' ? 'block' : 'none'; };
-            document.addEventListener('click', function(e) { if (!wrapper.contains(e.target)) panel.style.display = 'none'; });
+    if (!dst) return;
+    dst.innerHTML = '';
+    var connected = allAccounts.filter(function(a) { return a.connectionStatus === 'connected'; });
+    if (!connected.length) {
+        dst.innerHTML = '<span style="color:#8b949e;font-size:0.85em;">No connected accounts</span>';
+        return;
+    }
+
+    // Single-select dropdown for Plan tab (radio buttons + auto-refresh on change)
+    var wrapper = document.createElement('div');
+    wrapper.style.cssText = 'position:relative;display:inline-block;';
+
+    var toggleBtn = document.createElement('button');
+    toggleBtn.type = 'button';
+    toggleBtn.className = 'btn btn-outline btn-sm';
+    toggleBtn.style.cssText = 'font-size:0.85em;padding:4px 12px;min-width:180px;text-align:left;';
+
+    var panel = document.createElement('div');
+    panel.style.cssText = 'display:none;position:absolute;top:100%;right:0;z-index:200;background:#fff;border:1px solid #d0d7de;border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,0.15);min-width:280px;max-height:200px;overflow-y:auto;padding:6px 0;margin-top:4px;';
+
+    // "All accounts" option
+    var allRow = document.createElement('label');
+    allRow.style.cssText = 'display:flex;align-items:center;gap:8px;padding:6px 12px;cursor:pointer;color:#24292f;font-size:0.85em;white-space:nowrap;';
+    allRow.dataset.label = 'All accounts';
+    allRow.onmouseenter = function() { allRow.style.background = '#f6f8fa'; };
+    allRow.onmouseleave = function() { allRow.style.background = ''; };
+    var allRb = document.createElement('input');
+    allRb.type = 'radio'; allRb.name = 'plan-acct-radio'; allRb.value = '__all__'; allRb.className = 'plan-acct-radio';
+    allRb.checked = true;
+    allRb.style.cssText = 'accent-color:#6366f1;flex-shrink:0;';
+    allRow.appendChild(allRb);
+    allRow.appendChild(document.createTextNode('All accounts'));
+    panel.appendChild(allRow);
+
+    // Individual account options
+    connected.forEach(function(a) {
+        var row = document.createElement('label');
+        row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:6px 12px;cursor:pointer;color:#24292f;font-size:0.85em;white-space:nowrap;';
+        row.dataset.label = a.accountId + ' (' + (a.accountName || 'Account') + ')';
+        row.onmouseenter = function() { row.style.background = '#f6f8fa'; };
+        row.onmouseleave = function() { row.style.background = ''; };
+        var rb = document.createElement('input');
+        rb.type = 'radio'; rb.name = 'plan-acct-radio'; rb.value = a.accountId; rb.className = 'plan-acct-radio';
+        rb.style.cssText = 'accent-color:#6366f1;flex-shrink:0;';
+        row.appendChild(rb);
+        row.appendChild(document.createTextNode(a.accountId + ' (' + (a.accountName || 'Account ' + a.accountId.slice(-4)) + ')'));
+        panel.appendChild(row);
+    });
+
+    function updatePlanLabel() {
+        var selected = panel.querySelector('.plan-acct-radio:checked');
+        if (!selected || selected.value === '__all__') {
+            toggleBtn.textContent = 'All accounts \u25be';
+        } else {
+            var lbl = selected.parentElement.dataset.label || selected.value;
+            toggleBtn.textContent = lbl + ' \u25be';
         }
     }
+
+    // On radio change: update label, close panel, auto-trigger tag scan
+    panel.addEventListener('change', function() {
+        updatePlanLabel();
+        panel.style.display = 'none';
+        // Auto-refresh tag scan with new selection
+        var tagPanel = document.getElementById('plan-tag-panel');
+        if (tagPanel && tagPanel.style.display !== 'none') {
+            var ids = getPlanSelectedAccountIds();
+            _runTagScan(ids);
+        }
+    });
+
+    toggleBtn.onclick = function(e) { e.stopPropagation(); panel.style.display = panel.style.display === 'none' ? 'block' : 'none'; };
+    document.addEventListener('click', function(e) { if (!wrapper.contains(e.target)) panel.style.display = 'none'; });
+
+    wrapper.appendChild(toggleBtn);
+    wrapper.appendChild(panel);
+    dst.appendChild(wrapper);
+    updatePlanLabel();
+}
+
+function getPlanSelectedAccountIds() {
+    var selected = document.querySelector('.plan-acct-radio:checked');
+    if (!selected || selected.value === '__all__') {
+        // Return all connected account IDs
+        return allAccounts.filter(function(a) { return a.connectionStatus === 'connected'; }).map(function(a) { return a.accountId; });
+    }
+    return [selected.value];
 }
 
 function _switchPlanSection(section) {
@@ -7508,8 +7581,7 @@ var _tagSortAsc = true;
 
     tagBtn.onclick = async function() {
         _switchActSection('tagging');
-        _syncActSelection();
-        var accountIds = getActSelectedAccountIds();
+        var accountIds = getPlanSelectedAccountIds();
         await _runTagScan(accountIds);
     };
 
@@ -7930,8 +8002,7 @@ async function _applyTags() {
                 confirmBtn.style.background = '#6366f1'; confirmBtn.style.borderColor = '#6366f1';
                 confirmBtn.textContent = '\ud83c\udff7\ufe0f Apply Tags';
                 confirmBtn.onclick = async function() { await _applyTags(); };
-                _syncActSelection();
-                _runTagScan(getActSelectedAccountIds());
+                _runTagScan(getPlanSelectedAccountIds());
             };
         }
     } catch (e) {
