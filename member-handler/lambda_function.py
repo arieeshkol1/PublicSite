@@ -1356,8 +1356,9 @@ def _get_latest_policy_actions():
         's3:GetBucketLocation', 's3:ListBucketMultipartUploads', 's3:AbortMultipartUpload',
         's3:ListBucket', 's3:GetObject', 's3:HeadObject', 's3:DeleteObject', 's3:DeleteObjects',
         # Idle EC2 / RDS / Snapshot cleanup
-        'ec2:StopInstances', 'ec2:TerminateInstances', 'ec2:DescribeInstanceAttribute', 'ec2:ModifyInstanceAttribute',
-        'autoscaling:DescribeAutoScalingInstances', 'autoscaling:DetachInstances', 'autoscaling:UpdateAutoScalingGroup',
+        'ec2:StopInstances', 'ec2:TerminateInstances', 'ec2:DescribeInstances', 'ec2:DescribeInstanceAttribute', 'ec2:ModifyInstanceAttribute',
+        'ec2:DescribeRegions', 'ec2:DescribeInstanceTypes',
+        'autoscaling:DescribeAutoScalingGroups', 'autoscaling:DescribeAutoScalingInstances', 'autoscaling:DetachInstances', 'autoscaling:UpdateAutoScalingGroup',
         'ec2:DeleteSnapshot', 'rds:DeleteDBInstance', 'rds:DescribeDBInstances',
         # Resource tagging (bulk)
         'tag:GetResources', 'tag:GetTagKeys', 'tag:GetTagValues', 'tag:TagResources', 'tag:UntagResources',
