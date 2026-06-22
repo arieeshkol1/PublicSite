@@ -77,7 +77,7 @@ const SavedDataSources = (() => {
 
     try {
       showLoading();
-      var response = await api('GET', '/dashboard/datasources');
+      var response = await api('POST', '/members/dashboard-data', { action: 'datasource_list' });
       hideLoading();
 
       if (response.error) {
@@ -134,7 +134,7 @@ const SavedDataSources = (() => {
       showLoading();
 
       // First, get the saved datasource to retrieve its config
-      var response = await api('GET', '/dashboard/datasources');
+      var response = await api('POST', '/members/dashboard-data', { action: 'datasource_list' });
       if (response.error) {
         hideLoading();
         showError(response.error);
@@ -151,7 +151,8 @@ const SavedDataSources = (() => {
       }
 
       // Execute the query with the saved config
-      var queryResponse = await api('POST', '/dashboard/datasources/query', {
+      var queryResponse = await api('POST', '/members/dashboard-data', {
+        action: 'datasource_query',
         query_config: datasource.query_config
       });
       hideLoading();
@@ -185,7 +186,10 @@ const SavedDataSources = (() => {
 
     try {
       showLoading();
-      var response = await api('DELETE', '/dashboard/datasources/' + datasourceId);
+      var response = await api('POST', '/members/dashboard-data', {
+        action: 'datasource_delete',
+        datasource_id: datasourceId
+      });
       hideLoading();
 
       if (response.error) {
@@ -252,6 +256,10 @@ const SavedDataSources = (() => {
     editSaved
   };
 })();
+
+// Expose on window so other modules (e.g. datasource-wizard.js) and the
+// Observe section switcher can call SavedDataSources.render() after save.
+window.SavedDataSources = SavedDataSources;
 
 // Render on page load (only if container exists and is visible)
 // Note: Don't auto-render on page load - let _switchObserveSection() call render() when needed

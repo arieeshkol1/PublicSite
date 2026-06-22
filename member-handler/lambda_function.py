@@ -2098,13 +2098,81 @@ def handle_datasource_query_proxy(event):
     attributes = query_config.get('attributes', ['date', 'service', 'cost_amount'])
     timeframe = query_config.get('timeframe', {})
 
-    if not account_ids:
-        return create_error_response(400, 'InvalidRequest', 'No accounts selected')
+    # ── Saved data source CRUD (persisted under the member's record) ──
+    # These actions operate on stored configurations and do not require account_ids.
+    members_table_ds = dynamodb.Table(MEMBERS_TABLE_NAME)
 
-    # For save action, store the config (simplified - just acknowledge for now)
+    def _convert_floats_to_decimal(obj):
+        if isinstance(obj, float):
+            return Decimal(str(obj))
+        if isinstance(obj, dict):
+            return {k: _convert_floats_to_decimal(v) for k, v in obj.items()}
+        if isinstance(obj, list):
+            return [_convert_floats_to_decimal(i) for i in obj]
+        return obj
+
+    if action == 'datasource_list':
+        try:
+            item = members_table_ds.get_item(Key={'email': member_email}).get('Item') or {}
+            saved = _decimal_to_native(item.get('savedDataSources') or [])
+            return create_response(200, {'datasources': saved})
+        except ClientError as e:
+            logger.error(f"Failed to list saved data sources: {e}")
+            return create_error_response(500, 'ServerError', 'Failed to load saved data sources')
+
+    if action == 'datasource_delete':
+        ds_id = body.get('datasource_id', '')
+        if not ds_id:
+            return create_error_response(400, 'InvalidRequest', 'datasource_id required')
+        try:
+            item = members_table_ds.get_item(Key={'email': member_email}).get('Item') or {}
+            saved = item.get('savedDataSources') or []
+            new_saved = [d for d in saved if d.get('datasource_id') != ds_id]
+            members_table_ds.update_item(
+                Key={'email': member_email},
+                UpdateExpression='SET savedDataSources = :s',
+                ExpressionAttributeValues={':s': new_saved},
+            )
+            return create_response(200, {'message': 'Data source deleted', 'datasource_id': ds_id})
+        except ClientError as e:
+            logger.error(f"Failed to delete saved data source: {e}")
+            return create_error_response(500, 'ServerError', 'Failed to delete data source')
+
     if action == 'datasource_save':
         ds_name = body.get('name', 'Untitled')
-        return create_response(200, {'message': f'Data source "{ds_name}" saved', 'datasource_id': secrets.token_hex(8)})
+        ds_id = body.get('datasource_id', '') or secrets.token_hex(8)
+        record = {
+            'datasource_id': ds_id,
+            'name': ds_name,
+            'query_config': _convert_floats_to_decimal(query_config),
+            'updated_at': datetime.now(timezone.utc).isoformat(),
+        }
+        try:
+            item = members_table_ds.get_item(Key={'email': member_email}).get('Item') or {}
+            saved = item.get('savedDataSources') or []
+            # Overwrite existing by id, else append
+            replaced = False
+            for i, d in enumerate(saved):
+                if d.get('datasource_id') == ds_id:
+                    record['created_at'] = d.get('created_at', record['updated_at'])
+                    saved[i] = record
+                    replaced = True
+                    break
+            if not replaced:
+                record['created_at'] = record['updated_at']
+                saved.append(record)
+            members_table_ds.update_item(
+                Key={'email': member_email},
+                UpdateExpression='SET savedDataSources = :s',
+                ExpressionAttributeValues={':s': saved},
+            )
+            return create_response(200, {'message': f'Data source "{ds_name}" saved', 'datasource_id': ds_id})
+        except ClientError as e:
+            logger.error(f"Failed to save data source: {e}")
+            return create_error_response(500, 'ServerError', 'Failed to save data source')
+
+    if not account_ids:
+        return create_error_response(400, 'InvalidRequest', 'No accounts selected')
 
     # For schema discovery, scan ALL records for this account and collect all unique field names
     if action == 'datasource_schema':

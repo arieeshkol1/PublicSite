@@ -3752,8 +3752,10 @@ function _switchObserveSection(sectionId) {
 
     // Step 5c: Load Custom Data Sources when Custom Dashboard section is activated
     if (sectionId === 'observe-custom-dashboard') {
-        // Data sources panel will load when user interacts with the wizard
-        // (dashboard-handler API requires separate deployment)
+        // Render the saved data source cards grid for this section
+        if (window.SavedDataSources && typeof window.SavedDataSources.render === 'function') {
+            window.SavedDataSources.render();
+        }
     }
 
     // Step 6: Cancel pending resize and schedule new one
