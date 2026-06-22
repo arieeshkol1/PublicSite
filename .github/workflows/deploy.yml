@@ -927,6 +927,7 @@ jobs:
             "POST /member/add-tokens"
             "POST /member/update-tier"
             "POST /members/tags/scan"
+            "GET /members/tags/scan-status"
             "POST /members/tags/apply"
             "POST /members/schedules/analyze"
             "GET /members/schedules"

@@ -7538,6 +7538,9 @@ var _tagSortAsc = true;
     if (confirmBtn) confirmBtn.onclick = async function() { await _applyTags(); };
 })();
 
+// Track active tag scan polling interval so it can be cleared on re-scan
+var _tagScanPollInterval = null;
+
 async function _runTagScan(accountIds) {
     var panel = document.getElementById('plan-tag-panel');
     var cardsGrid = document.getElementById('act-cards-grid');
@@ -7551,26 +7554,90 @@ async function _runTagScan(accountIds) {
     var tagStatus = document.getElementById('plan-tag-scan-status');
     if (tagStatus) tagStatus.textContent = 'Scanning for untagged resources...';
 
+    // Clear any previous polling interval
+    if (_tagScanPollInterval) {
+        clearInterval(_tagScanPollInterval);
+        _tagScanPollInterval = null;
+    }
+
+    // Ensure tag policy is loaded before scanning
+    if (!_tagPolicyCache) {
+        try { await _loadTagPolicy(); } catch(e) {}
+    }
+    var policyKeys = (_tagPolicyCache && _tagPolicyCache.requiredKeys) ? _tagPolicyCache.requiredKeys : ['Environment', 'Owner', 'CostCenter', 'Application'];
+
+    // Step 1: Kickoff the async scan
+    var kickoff;
     try {
-        // Ensure tag policy is loaded before scanning
-        if (!_tagPolicyCache) {
-            try { await _loadTagPolicy(); } catch(e) {}
-        }
-        var policyKeys = (_tagPolicyCache && _tagPolicyCache.requiredKeys) ? _tagPolicyCache.requiredKeys : ['Environment', 'Owner', 'CostCenter', 'Application'];
-        var data = await api('POST', '/members/tags/scan', {
+        kickoff = await api('POST', '/members/tags/scan', {
             accountIds: accountIds,
             requiredTags: policyKeys
         });
-        _tagScanResults = data.resources || [];
-        _tagSelectedArns = new Set();
-        if (tagStatus) tagStatus.textContent = 'Tag scan complete \u2014 ' + _tagScanResults.length + ' resources need tagging';
-        _renderTagStats(data);
-        _renderTagList();
-        _renderUntaggableServices(data.untaggableServices || null);
     } catch (e) {
+        // Kickoff error — show immediately without polling
         if (tagStatus) tagStatus.textContent = 'Tag scan failed: ' + (e.message || 'Unknown error');
         notify('Tag scan failed: ' + (e.message || ''), 'error');
+        return;
     }
+
+    // If the response already contains full results (no scanId), render directly (backwards compat)
+    if (!kickoff.scanId) {
+        _tagScanResults = kickoff.resources || [];
+        _tagSelectedArns = new Set();
+        if (tagStatus) tagStatus.textContent = 'Tag scan complete \u2014 ' + _tagScanResults.length + ' resources need tagging';
+        _renderTagStats(kickoff);
+        _renderTagList();
+        _renderUntaggableServices(kickoff.untaggableServices || null);
+        return;
+    }
+
+    // Step 2: Display progress indicator
+    var scanId = kickoff.scanId;
+    if (tagStatus) tagStatus.textContent = 'Scanning for untagged resources...';
+
+    // Step 3: Poll scan-status every 4 seconds with 120-second timeout
+    var pollStart = Date.now();
+    var POLL_TIMEOUT = 120000; // 120 seconds
+    var POLL_INTERVAL = 4000; // 4 seconds
+
+    _tagScanPollInterval = setInterval(async function() {
+        // Check timeout
+        if (Date.now() - pollStart >= POLL_TIMEOUT) {
+            clearInterval(_tagScanPollInterval);
+            _tagScanPollInterval = null;
+            if (tagStatus) tagStatus.textContent = 'Tag scan timed out \u2014 please try again';
+            notify('Tag scan timed out \u2014 please try again', 'warning');
+            return;
+        }
+
+        // Poll the status endpoint
+        try {
+            var pollResp = await api('GET', '/members/tags/scan-status?scanId=' + encodeURIComponent(scanId));
+
+            if (pollResp.status === 'complete') {
+                // Step 4: Scan complete — clear interval and render results
+                clearInterval(_tagScanPollInterval);
+                _tagScanPollInterval = null;
+                _tagScanResults = pollResp.resources || [];
+                _tagSelectedArns = new Set();
+                if (tagStatus) tagStatus.textContent = 'Tag scan complete \u2014 ' + _tagScanResults.length + ' resources need tagging';
+                _renderTagStats(pollResp);
+                _renderTagList();
+                _renderUntaggableServices(pollResp.untaggableServices || null);
+            } else if (pollResp.status === 'failed') {
+                // Step 5: Scan failed — clear interval and show error
+                clearInterval(_tagScanPollInterval);
+                _tagScanPollInterval = null;
+                var errMsg = pollResp.error || 'Scan failed';
+                if (tagStatus) tagStatus.textContent = 'Tag scan failed: ' + errMsg;
+                notify('Tag scan failed: ' + errMsg, 'error');
+            }
+            // If still "in_progress", do nothing — wait for next interval
+        } catch (pollErr) {
+            // Transient poll error (non-200) — retry on next interval
+            // Do not clear the interval; allow next poll attempt
+        }
+    }, POLL_INTERVAL);
 }
 
 function _renderTagStats(data) {
