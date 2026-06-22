@@ -18081,11 +18081,28 @@ def handle_spot_qualify(event):
     except Exception as e:
         return create_error_response(500, 'ServerError', f'Cannot assume role: {e}')
 
-    # List all ASGs in the account
+    # List ASGs — scan multiple regions with timeout guard
+    _asg_start = time.time()
+    _ASG_TIMEOUT = 20
     all_asgs = []
-    paginator = asg_client.get_paginator('describe_auto_scaling_groups')
-    for page in paginator.paginate(MaxRecords=100):
-        all_asgs.extend(page.get('AutoScalingGroups', []))
+    _asg_regions = ['us-east-1', 'eu-central-1', 'eu-west-1', 'us-west-2']
+    if body.get('region'):
+        _asg_regions = [body['region']]
+
+    for _asg_region in _asg_regions:
+        if time.time() - _asg_start > _ASG_TIMEOUT:
+            break
+        try:
+            _asg_r = _make_client_from_creds('autoscaling', creds, _asg_region)
+            paginator = _asg_r.get_paginator('describe_auto_scaling_groups')
+            for page in paginator.paginate(MaxRecords=50):
+                if time.time() - _asg_start > _ASG_TIMEOUT:
+                    break
+                for asg in page.get('AutoScalingGroups', []):
+                    asg['_region'] = _asg_region
+                    all_asgs.append(asg)
+        except Exception:
+            continue
 
     db_keywords = {'database', 'db', 'rds', 'mongo', 'redis', 'elastic', 'mysql', 'postgres', 'sql'}
     qualified = []
@@ -19574,10 +19591,9 @@ def handle_cluster_analyze(event):
     except Exception as e:
         return create_error_response(500, 'ServerError', f'Cannot assume role: {e}')
 
-    # Detect region from billing if not provided
+    # Use default region if not provided (avoid slow Cost Explorer call)
     if not region:
-        detected = _detect_charged_regions(creds)
-        region = detected[0] if detected else 'us-east-1'
+        region = 'us-east-1'
 
     asg_client = _make_client_from_creds('autoscaling', creds, region)
     ec2 = _make_client_from_creds('ec2', creds, region)
@@ -19898,12 +19914,12 @@ def handle_licensing_scan(event):
     # --- Phase 2: Discovery (ALL REGIONS) ---
     instances = []
 
-    # Detect active regions from Cost Explorer (only regions with actual charges)
-    scan_regions = _detect_charged_regions(creds)
+    # Use fast static region list instead of slow Cost Explorer call
+    scan_regions = ['us-east-1', 'eu-central-1', 'eu-west-1', 'us-west-2']
 
     # EC2 Windows instances â€” scan all regions
     for _scan_region in scan_regions:
-        if _time.time() - scan_start > 80:  # timeout guard for discovery phase
+        if _time.time() - scan_start > 20:  # timeout guard for discovery phase
             break
         try:
             ec2 = _client('ec2', _scan_region)
@@ -20433,15 +20449,22 @@ def handle_rds_optimize(event):
     except Exception as e:
         return create_error_response(403, 'AssumeRoleFailed', f'Cannot access account: {str(e)[:200]}')
 
-    rds_regions = _detect_charged_regions(creds)
-    all_rds_clients = []
-    for _r in rds_regions:
-        all_rds_clients.append((_r, boto3.client('rds', aws_access_key_id=creds['AccessKeyId'], aws_secret_access_key=creds['SecretAccessKey'], aws_session_token=creds['SessionToken'], region_name=_r)))
-    # Discover RDS instances across all charged regions
+    # Use fast static region list instead of slow Cost Explorer call
+    _rds_start = time.time()
+    _RDS_TIMEOUT = 20
+    rds_regions = ['us-east-1', 'eu-central-1', 'eu-west-1', 'us-west-2']
+    if body.get('region'):
+        rds_regions = [body['region']]
+
+    # Discover RDS instances across common regions with timeout guard
     instances = []
     try:
-        for _rds_region, rds in all_rds_clients:
+        for _rds_region in rds_regions:
+            if time.time() - _rds_start > _RDS_TIMEOUT:
+                logger.warning(f"RDS discovery timeout after {time.time() - _rds_start:.1f}s — returning partial")
+                break
             try:
+                rds = boto3.client('rds', aws_access_key_id=creds['AccessKeyId'], aws_secret_access_key=creds['SecretAccessKey'], aws_session_token=creds['SessionToken'], region_name=_rds_region)
                 resp = rds.describe_db_instances()
                 for db in resp.get('DBInstances', []):
                     instances.append({
@@ -20622,12 +20645,17 @@ def handle_lambda_optimize(event):
     except Exception as e:
         return create_error_response(403, 'AssumeRoleFailed', f'Cannot access account: {str(e)[:200]}')
 
-    lam_regions = _detect_charged_regions(creds)
+    # Use fast static region list instead of slow Cost Explorer call
+    lam_regions = ['us-east-1', 'eu-central-1', 'eu-west-1', 'us-west-2']
 
-    # Discover Lambda functions across all charged regions
+    # Discover Lambda functions across common regions with timeout guard
+    _lam_start = time.time()
+    _LAM_TIMEOUT = 20
     functions = []
     try:
         for _lam_r in lam_regions:
+            if time.time() - _lam_start > _LAM_TIMEOUT:
+                break
             try:
                 lam = boto3.client('lambda', aws_access_key_id=creds['AccessKeyId'], aws_secret_access_key=creds['SecretAccessKey'], aws_session_token=creds['SessionToken'], region_name=_lam_r)
                 paginator = lam.get_paginator('list_functions')
@@ -20776,12 +20804,17 @@ def handle_ebs_optimize(event):
     except Exception as e:
         return create_error_response(403, 'AssumeRoleFailed', f'Cannot access account: {str(e)[:200]}')
 
-    ec2_regions = _detect_charged_regions(creds)
+    # Use fast static region list instead of slow Cost Explorer call
+    ec2_regions = ['us-east-1', 'eu-central-1', 'eu-west-1', 'us-west-2']
 
-    # Discover EBS volumes across all charged regions
+    # Discover EBS volumes across common regions with timeout guard
+    _ebs_start = time.time()
+    _EBS_TIMEOUT = 20
     volumes = []
     try:
         for _ebs_r in ec2_regions:
+            if time.time() - _ebs_start > _EBS_TIMEOUT:
+                break
             try:
                 ec2 = boto3.client('ec2', aws_access_key_id=creds['AccessKeyId'], aws_secret_access_key=creds['SecretAccessKey'], aws_session_token=creds['SessionToken'], region_name=_ebs_r)
                 paginator = ec2.get_paginator('describe_volumes')
@@ -21824,11 +21857,8 @@ def _discover_sql_workloads(creds, account_id):
     workloads = []
     scan_start = _time.time()
 
-    # Detect active regions — filter out invalid entries like "NoRegion", "global"
-    scan_regions = _detect_charged_regions(creds)
-    scan_regions = [r for r in scan_regions if r and '-' in r and r != 'global']
-    if not scan_regions:
-        scan_regions = ['us-east-1']
+    # Use fast static region list instead of slow Cost Explorer call
+    scan_regions = ['us-east-1', 'eu-central-1', 'eu-west-1', 'us-west-2']
 
     for scan_region in scan_regions:
         if _time.time() - scan_start > 20:
