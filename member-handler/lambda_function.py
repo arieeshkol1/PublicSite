@@ -18110,13 +18110,14 @@ def handle_spot_qualify(event):
         except Exception:
             _asg_regions = ['us-east-1', 'eu-central-1', 'eu-west-1', 'us-west-2']
 
-    # API 2: Loop per region — re-assume role each time
+    # API 2: Loop per region using existing creds (avoid re-assuming per region)
+    _asg_regions = sorted(_asg_regions, key=lambda r: ['eu-west-1', 'eu-central-1', 'us-east-1', 'us-west-2'].index(r) if r in ['eu-west-1', 'eu-central-1', 'us-east-1', 'us-west-2'] else 99)
+    _asg_regions = _asg_regions[:8]
     for _asg_region in _asg_regions:
         if time.time() - _asg_start > _ASG_TIMEOUT:
             break
         try:
-            _fresh_creds = _assume_role_for_account(member_email, account_id)
-            _asg_r = _make_client_from_creds('autoscaling', _fresh_creds, _asg_region)
+            _asg_r = _make_client_from_creds('autoscaling', creds, _asg_region)
             paginator = _asg_r.get_paginator('describe_auto_scaling_groups')
             for page in paginator.paginate(MaxRecords=50):
                 if time.time() - _asg_start > _ASG_TIMEOUT:
@@ -19543,17 +19544,21 @@ def handle_server_list_instances(event):
                 _ec2_regions_resp = ec2.describe_regions(
                     Filters=[{'Name': 'opt-in-status', 'Values': ['opt-in-not-required', 'opted-in']}])
                 all_regions = [r['RegionName'] for r in _ec2_regions_resp.get('Regions', [])]
+                # Prioritize likely regions first for Israeli/European customers
+                _priority = ['eu-west-1', 'eu-central-1', 'us-east-1', 'us-west-2', 'eu-west-2', 'ap-southeast-1']
+                all_regions = sorted(all_regions, key=lambda r: _priority.index(r) if r in _priority else 99)
             except Exception:
-                all_regions = ['us-east-1', 'eu-central-1', 'eu-west-1', 'us-west-2']
+                all_regions = ['eu-west-1', 'eu-central-1', 'us-east-1', 'us-west-2', 'eu-west-2']
 
-        # API 2: Loop per region — re-assume role each time to avoid timeout
+        all_regions = all_regions[:8]  # Max 8 regions for API GW timeout safety
+
+        # Scan regions using single set of creds (avoid re-assuming per region)
         for _region in all_regions:
             if time.time() - _list_start > _LIST_TIMEOUT:
                 logger.warning(f"Instance list timeout after {time.time() - _list_start:.1f}s — returning partial")
                 break
             try:
-                _fresh_creds = _assume_role_for_account(member_email, account_id)
-                ec2_r = _make_client_from_creds('ec2', _fresh_creds, _region)
+                ec2_r = _make_client_from_creds('ec2', creds, _region)
                 paginator = ec2_r.get_paginator('describe_instances')
                 for page in paginator.paginate(Filters=[{'Name': 'instance-state-name', 'Values': ['running', 'stopped']}]):
                     if time.time() - _list_start > _LIST_TIMEOUT:
@@ -19637,13 +19642,14 @@ def handle_cluster_analyze(event):
             except Exception:
                 _asg_regions = ['us-east-1', 'eu-central-1', 'eu-west-1', 'us-west-2']
 
-        # API 2: Loop per region — re-assume role each time
+        # API 2: Loop per region using existing creds (avoid re-assuming per region)
+        _asg_regions = sorted(_asg_regions, key=lambda r: ['eu-west-1', 'eu-central-1', 'us-east-1', 'us-west-2'].index(r) if r in ['eu-west-1', 'eu-central-1', 'us-east-1', 'us-west-2'] else 99)
+        _asg_regions = _asg_regions[:8]
         for _asg_region in _asg_regions:
             if time.time() - _asg_start > _ASG_TIMEOUT:
                 break
             try:
-                _fresh_creds = _assume_role_for_account(member_email, account_id)
-                _asg_r = _make_client_from_creds('autoscaling', _fresh_creds, _asg_region)
+                _asg_r = _make_client_from_creds('autoscaling', creds, _asg_region)
                 paginator = _asg_r.get_paginator('describe_auto_scaling_groups')
                 for page in paginator.paginate(MaxRecords=50):
                     if time.time() - _asg_start > _ASG_TIMEOUT:
