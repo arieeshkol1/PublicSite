@@ -19579,8 +19579,10 @@ def handle_cluster_analyze(event):
     account_id = body.get('accountId', '')
     asg_name = body.get('asgName', '')
     region = body.get('region', '')
-    if not account_id or not asg_name:
-        return create_error_response(400, 'MissingParams', 'accountId and asgName required')
+    list_only = body.get('listOnly', False)
+
+    if not account_id:
+        return create_error_response(400, 'MissingParams', 'accountId required')
 
     ownership = _verify_account_ownership(member_email, [account_id])
     if isinstance(ownership, dict):
@@ -19590,6 +19592,41 @@ def handle_cluster_analyze(event):
         creds = _assume_role_for_account(member_email, account_id)
     except Exception as e:
         return create_error_response(500, 'ServerError', f'Cannot assume role: {e}')
+
+    # --- listOnly mode: return ASG names for dropdown selection ---
+    if list_only:
+        _asg_start = time.time()
+        _ASG_TIMEOUT = 20
+        all_asgs = []
+        _asg_regions = [region] if region else ['us-east-1', 'eu-central-1', 'eu-west-1', 'us-west-2']
+        for _asg_region in _asg_regions:
+            if time.time() - _asg_start > _ASG_TIMEOUT:
+                break
+            try:
+                _asg_r = _make_client_from_creds('autoscaling', creds, _asg_region)
+                paginator = _asg_r.get_paginator('describe_auto_scaling_groups')
+                for page in paginator.paginate(MaxRecords=50):
+                    if time.time() - _asg_start > _ASG_TIMEOUT:
+                        break
+                    for asg in page.get('AutoScalingGroups', []):
+                        tags = {t['Key']: t['Value'] for t in asg.get('Tags', [])}
+                        all_asgs.append({
+                            'asgName': asg['AutoScalingGroupName'],
+                            'name': asg['AutoScalingGroupName'],
+                            'instances': len(asg.get('Instances', [])),
+                            'instanceCount': len(asg.get('Instances', [])),
+                            'desired': asg.get('DesiredCapacity', 0),
+                            'min': asg.get('MinSize', 0),
+                            'max': asg.get('MaxSize', 0),
+                            'region': _asg_region,
+                        })
+            except Exception:
+                continue
+        return create_response(200, {'asgs': all_asgs, 'count': len(all_asgs)})
+
+    # --- Full analyze mode: requires asgName ---
+    if not asg_name:
+        return create_error_response(400, 'MissingParams', 'accountId and asgName required')
 
     # Use default region if not provided (avoid slow Cost Explorer call)
     if not region:
