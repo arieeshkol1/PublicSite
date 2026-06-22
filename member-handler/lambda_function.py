@@ -19495,23 +19495,15 @@ def handle_server_list_instances(event):
 
     instances = []
     try:
-        # Detect active regions — use fast path if running low on time
-        _elapsed = time.time() - _list_start
-        if _elapsed > 3:
-            all_regions = ['us-east-1']
-        else:
-            all_regions = _detect_charged_regions(creds, timeout_seconds=5)
-        # If body specifies a region, use only that
+        # For large accounts, skip the slow CE region detection entirely
+        # Instead, scan the most common EC2 regions directly — each describe_instances is ~1-2s
         if body.get('region'):
             all_regions = [body['region']]
+        else:
+            # Default to the most common EC2 regions — covers 95%+ of accounts
+            all_regions = ['us-east-1', 'eu-central-1', 'eu-west-1', 'us-west-2', 'ap-southeast-1']
 
-        # Filter out invalid region names (CE can return empty, 'global', or display names)
-        import re as _re
-        _valid_region_re = _re.compile(r'^[a-z]{2}(-[a-z]+-\d+)$')
-        all_regions = [r for r in all_regions if _valid_region_re.match(r)]
-        if not all_regions:
-            all_regions = ['us-east-1']
-        all_regions = all_regions[:3]  # Max 3 regions for API GW timeout safety
+        all_regions = all_regions[:4]  # Max 4 regions for API GW timeout safety
 
         for _region in all_regions:
             if time.time() - _list_start > _LIST_TIMEOUT:
