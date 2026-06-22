@@ -18,6 +18,10 @@ const DataSourceWizard = (() => {
     filters: []
   };
 
+  // Edit-mode state
+  var editingDatasourceId = null;
+  var editingDatasourceName = null;
+
   const ATTRIBUTES = [
     { name: 'date', label: 'Date', type: 'date', checked: true },
     { name: 'service', label: 'Service', type: 'string', checked: true },
@@ -54,12 +58,14 @@ const DataSourceWizard = (() => {
     }
   }
 
-  // Open wizard
+  // Open wizard (create mode)
   function open() {
     const overlay = document.getElementById('datasource-wizard-overlay');
     if (overlay) {
       overlay.hidden = false;
       currentStep = 1;
+      editingDatasourceId = null;
+      editingDatasourceName = null;
       wizardConfig = {
         account_ids: [],
         attributes: [],
@@ -70,12 +76,27 @@ const DataSourceWizard = (() => {
     }
   }
 
+  // Open wizard pre-filled for editing an existing datasource
+  function openWithConfig(datasourceId, queryConfig, datasourceName) {
+    editingDatasourceId = datasourceId;
+    editingDatasourceName = datasourceName;
+    // Deep-copy queryConfig into wizardConfig
+    wizardConfig = JSON.parse(JSON.stringify(queryConfig));
+    currentStep = 1;
+
+    const overlay = document.getElementById('datasource-wizard-overlay');
+    if (overlay) overlay.hidden = false;
+    renderStep();
+  }
+
   // Close wizard
   function close() {
     const overlay = document.getElementById('datasource-wizard-overlay');
     if (overlay) {
       overlay.hidden = true;
     }
+    editingDatasourceId = null;
+    editingDatasourceName = null;
   }
 
   // Render current step
@@ -107,9 +128,16 @@ const DataSourceWizard = (() => {
         break;
     }
 
+    // If in edit mode, show datasource name in header
+    var editBanner = '';
+    if (editingDatasourceId) {
+      editBanner = '<div style="margin-bottom: 12px; padding: 8px 12px; background: #eef2ff; border: 1px solid #c7d2fe; border-radius: 6px; font-size: 0.9em; color: #4338ca; font-weight: 600;">Editing: ' + esc(editingDatasourceName || '') + '</div>';
+    }
+
     // Insert step content with title and buttons
     body.innerHTML = `
       <div style="margin-bottom: 20px;">
+        ${editBanner}
         <h3 style="margin: 0 0 16px 0; color: #1f2937; font-size: 1.1em;">${stepTitle}</h3>
         ${content}
       </div>
@@ -544,7 +572,7 @@ const DataSourceWizard = (() => {
     }
   }
 
-  // Save data source
+  // Save data source (handles both create and edit-mode overwrite)
   async function saveDataSource() {
     updateWizardState();
     if (wizardConfig.account_ids.length === 0) {
@@ -552,6 +580,47 @@ const DataSourceWizard = (() => {
       return;
     }
 
+    // Edit mode: overwrite existing datasource
+    if (editingDatasourceId) {
+      try {
+        showLoading();
+        // Strip internal fields before saving
+        var configToSave = JSON.parse(JSON.stringify(wizardConfig));
+        delete configToSave._discoveredFields;
+
+        var saveResponse = await api('PUT', '/members/dashboard-data', {
+          name: editingDatasourceName,
+          datasource_id: editingDatasourceId,
+          query_config: configToSave,
+          action: 'datasource_save'
+        });
+        hideLoading();
+
+        if (saveResponse.error) {
+          showError(saveResponse.error);
+          return;
+        }
+
+        notify('Data source "' + editingDatasourceName + '" updated successfully', 'success');
+
+        // Clear edit state and close
+        editingDatasourceId = null;
+        editingDatasourceName = null;
+        close();
+
+        // Refresh saved datasources card grid
+        if (window.SavedDataSources) {
+          SavedDataSources.render();
+        }
+      } catch (err) {
+        hideLoading();
+        console.error('Edit save error:', err);
+        showError('Failed to save data source');
+      }
+      return;
+    }
+
+    // Create mode: prompt for name
     const name = prompt('Enter a name for this data source:', 'My Data Source');
     if (!name) return;
 
@@ -620,6 +689,7 @@ const DataSourceWizard = (() => {
     init,
     open,
     close,
+    openWithConfig,
     nextStep,
     prevStep,
     addFilter,

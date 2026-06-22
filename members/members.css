@@ -2379,3 +2379,94 @@
     border-radius: 12px;
     border: 1px solid var(--gray-light);
 }
+
+/* ============================================================
+   Saved Datasource Cards – Grid & Card Styles
+   ============================================================ */
+
+.ds-card-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 16px;
+}
+@media (max-width: 767px) {
+    .ds-card-grid { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 479px) {
+    .ds-card-grid { grid-template-columns: 1fr; }
+}
+
+.ds-card {
+    border: 1px solid #e5e7eb;
+    border-radius: 10px;
+    padding: 16px;
+    background: #fff;
+    min-height: 80px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    position: relative;
+    transition: box-shadow 0.15s;
+}
+.ds-card:hover {
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+}
+
+.ds-card-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+.ds-card-icon {
+    font-size: 1.3em;
+}
+.ds-card-name {
+    font-weight: 600;
+    color: #1f2937;
+    font-size: 0.95em;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.ds-card-actions {
+    display: flex;
+    flex-direction: row;
+    gap: 6px;
+    opacity: 0;
+    transition: opacity 0.15s;
+}
+.ds-card:hover .ds-card-actions,
+.ds-card.ds-card-active .ds-card-actions {
+    opacity: 1;
+}
+
+.ds-action-slot-chart {
+    display: inline-block;
+    width: 0;
+    height: 0;
+    overflow: hidden;
+}
+
+.ds-action-edit,
+.ds-action-run,
+.ds-action-delete {
+    cursor: pointer;
+    border: none;
+    background: transparent;
+    width: 24px;
+    height: 24px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 4px;
+    font-size: 14px;
+    padding: 0;
+    transition: background 0.15s;
+}
+.ds-action-edit:hover,
+.ds-action-run:hover,
+.ds-action-delete:hover {
+    background: rgba(0,0,0,0.06);
+}
