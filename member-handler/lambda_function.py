@@ -13474,6 +13474,9 @@ def _execute_async_tag_scan(event):
         logger.error("Async tag scan missing memberEmail or accountIds")
         return {'statusCode': 400, 'body': 'Missing required fields'}
 
+    # Deduplicate account IDs (frontend may send duplicates)
+    account_ids = list(dict.fromkeys(account_ids))
+
     members_table = dynamodb.Table(MEMBERS_TABLE_NAME)
     external_id = hashlib.sha256(member_email.encode('utf-8')).hexdigest()
     sts_client = boto3.client('sts')
@@ -13484,12 +13487,10 @@ def _execute_async_tag_scan(event):
         summary = {'total': 0, 'fullyTagged': 0, 'partiallyTagged': 0, 'untagged': 0}
 
         for acct_id in account_ids:
+            acct_resource_count_before = len(all_resources)
             try:
-                assume_resp = sts_client.assume_role(
-                    RoleArn=f'arn:aws:iam::{acct_id}:role/SlashMyBill-{acct_id}',
-                    RoleSessionName='SlashMyBillTagScan', ExternalId=external_id,
-                )
-                creds = assume_resp['Credentials']
+                creds = _assume_role_for_account(member_email, acct_id)
+                logger.info(f"Async tag scan: successfully assumed role for account {acct_id}")
 
                 # Discover tag keys via Cost Explorer
                 try:
@@ -13610,7 +13611,56 @@ def _execute_async_tag_scan(event):
                                     'missingTags': missing,
                                 })
                     except Exception as e:
-                        logger.warning(f"Async tag scan in {acct_id}/{_tr_region}: {e}")
+                        logger.warning(f"Async tag scan region {acct_id}/{_tr_region}: {type(e).__name__}: {e}")
+
+                # EC2 instance discovery — find instances NOT returned by Resource Groups Tagging API
+                # (The Tagging API only returns resources with at least one tag; untagged instances are invisible)
+                _existing_arns_ec2 = {r['arn'] for r in all_resources if r.get('account') == acct_id}
+                for _ec2_region in scan_regions:
+                    try:
+                        ec2_discover = boto3.client('ec2',
+                            aws_access_key_id=creds['AccessKeyId'],
+                            aws_secret_access_key=creds['SecretAccessKey'],
+                            aws_session_token=creds['SessionToken'],
+                            region_name=_ec2_region)
+                        paginator_ec2 = ec2_discover.get_paginator('describe_instances')
+                        for page in paginator_ec2.paginate(Filters=[{'Name': 'instance-state-name', 'Values': ['running', 'stopped']}]):
+                            for resv in page.get('Reservations', []):
+                                for inst in resv.get('Instances', []):
+                                    inst_id = inst.get('InstanceId', '')
+                                    inst_arn = f"arn:aws:ec2:{_ec2_region}:{acct_id}:instance/{inst_id}"
+                                    if inst_arn in _existing_arns_ec2:
+                                        continue  # Already discovered via Tagging API
+                                    # This instance has no user tags — it was invisible to Tagging API
+                                    inst_tags = {t['Key']: t['Value'] for t in inst.get('Tags', []) if not t['Key'].startswith('aws:')}
+                                    missing = [k for k in required_tags if k not in inst_tags]
+                                    for k in inst_tags:
+                                        if not k.startswith('aws:'):
+                                            all_tag_keys.add(k)
+                                    summary['total'] += 1
+                                    if not missing:
+                                        summary['fullyTagged'] += 1
+                                    elif len(missing) < len(required_tags):
+                                        summary['partiallyTagged'] += 1
+                                    else:
+                                        summary['untagged'] += 1
+                                    name = inst_tags.get('Name', '') or inst_id
+                                    all_resources.append({
+                                        'arn': inst_arn,
+                                        'resourceType': 'EC2 Instance',
+                                        'resourceId': inst_id,
+                                        'name': name,
+                                        'account': acct_id,
+                                        'region': _ec2_region,
+                                        'existingTags': inst_tags,
+                                        'missingTags': missing,
+                                        'state': inst.get('State', {}).get('Name', 'unknown'),
+                                        'instanceType': inst.get('InstanceType', ''),
+                                        'platform': inst.get('PlatformDetails', '') or inst.get('Platform', '') or 'Linux',
+                                    })
+                                    _existing_arns_ec2.add(inst_arn)
+                    except Exception as e:
+                        logger.warning(f"EC2 discovery {acct_id}/{_ec2_region}: {type(e).__name__}: {e}")
 
                 # Service-specific resource discovery (services not indexed by Resource Groups API)
                 try:
@@ -13748,7 +13798,10 @@ def _execute_async_tag_scan(event):
                     logger.warning(f"Service-specific discovery failed for {acct_id}: {e}")
 
             except Exception as e:
-                logger.warning(f"Async tag scan failed for account {acct_id}: {e}")
+                logger.error(f"Async tag scan SKIPPED account {acct_id} entirely: {type(e).__name__}: {e}")
+
+            acct_resource_count = len(all_resources) - acct_resource_count_before
+            logger.info(f"Async tag scan: account {acct_id} contributed {acct_resource_count} resources")
 
         # â”€â”€ Enrichment: EC2 instances with cost estimate and running state â”€â”€
         ec2_instances_by_region = {}
