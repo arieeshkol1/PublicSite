@@ -13662,6 +13662,279 @@ def _execute_async_tag_scan(event):
                     except Exception as e:
                         logger.warning(f"EC2 discovery {acct_id}/{_ec2_region}: {type(e).__name__}: {e}")
 
+                # RDS instance discovery
+                for _rds_region in scan_regions:
+                    try:
+                        rds_client = boto3.client('rds',
+                            aws_access_key_id=creds['AccessKeyId'],
+                            aws_secret_access_key=creds['SecretAccessKey'],
+                            aws_session_token=creds['SessionToken'],
+                            region_name=_rds_region)
+                        rds_paginator = rds_client.get_paginator('describe_db_instances')
+                        for page in rds_paginator.paginate():
+                            for db in page.get('DBInstances', []):
+                                db_id = db.get('DBInstanceIdentifier', '')
+                                db_arn = db.get('DBInstanceArn', '') or f"arn:aws:rds:{_rds_region}:{acct_id}:db:{db_id}"
+                                if db_arn in _existing_arns_ec2:
+                                    continue
+                                try:
+                                    tag_resp = rds_client.list_tags_for_resource(ResourceName=db_arn)
+                                    db_tags = {t['Key']: t['Value'] for t in tag_resp.get('TagList', []) if not t['Key'].startswith('aws:')}
+                                except Exception:
+                                    db_tags = {}
+                                missing = [k for k in required_tags if k not in db_tags]
+                                for k in db_tags:
+                                    if not k.startswith('aws:'):
+                                        all_tag_keys.add(k)
+                                summary['total'] += 1
+                                if not missing:
+                                    summary['fullyTagged'] += 1
+                                elif len(missing) < len(required_tags):
+                                    summary['partiallyTagged'] += 1
+                                else:
+                                    summary['untagged'] += 1
+                                name = db_tags.get('Name', '') or db_id
+                                all_resources.append({
+                                    'arn': db_arn,
+                                    'resourceType': 'RDS Instance',
+                                    'resourceId': db_id,
+                                    'name': name,
+                                    'account': acct_id,
+                                    'region': _rds_region,
+                                    'existingTags': db_tags,
+                                    'missingTags': missing,
+                                })
+                                _existing_arns_ec2.add(db_arn)
+                    except Exception as e:
+                        logger.warning(f"RDS discovery {acct_id}/{_rds_region}: {type(e).__name__}: {e}")
+
+                # ECS clusters and services discovery
+                for _ecs_region in scan_regions:
+                    try:
+                        ecs_client = boto3.client('ecs',
+                            aws_access_key_id=creds['AccessKeyId'],
+                            aws_secret_access_key=creds['SecretAccessKey'],
+                            aws_session_token=creds['SessionToken'],
+                            region_name=_ecs_region)
+                        cluster_arns = []
+                        ecs_paginator = ecs_client.get_paginator('list_clusters')
+                        for page in ecs_paginator.paginate():
+                            cluster_arns.extend(page.get('clusterArns', []))
+                        if cluster_arns:
+                            # describe_clusters supports up to 100 at a time
+                            for i in range(0, len(cluster_arns), 100):
+                                batch = cluster_arns[i:i+100]
+                                desc_resp = ecs_client.describe_clusters(clusters=batch, include=['TAGS'])
+                                for cluster in desc_resp.get('clusters', []):
+                                    c_arn = cluster.get('clusterArn', '')
+                                    if c_arn in _existing_arns_ec2:
+                                        continue
+                                    c_tags = {t['key']: t['value'] for t in cluster.get('tags', []) if not t['key'].startswith('aws:')}
+                                    missing = [k for k in required_tags if k not in c_tags]
+                                    for k in c_tags:
+                                        if not k.startswith('aws:'):
+                                            all_tag_keys.add(k)
+                                    summary['total'] += 1
+                                    if not missing:
+                                        summary['fullyTagged'] += 1
+                                    elif len(missing) < len(required_tags):
+                                        summary['partiallyTagged'] += 1
+                                    else:
+                                        summary['untagged'] += 1
+                                    c_name = cluster.get('clusterName', '') or c_arn.split('/')[-1]
+                                    all_resources.append({
+                                        'arn': c_arn,
+                                        'resourceType': 'ECS Cluster',
+                                        'resourceId': c_arn.split('/')[-1],
+                                        'name': c_name,
+                                        'account': acct_id,
+                                        'region': _ecs_region,
+                                        'existingTags': c_tags,
+                                        'missingTags': missing,
+                                    })
+                                    _existing_arns_ec2.add(c_arn)
+                    except Exception as e:
+                        logger.warning(f"ECS discovery {acct_id}/{_ecs_region}: {type(e).__name__}: {e}")
+
+                # ElastiCache cluster discovery
+                for _ec_region in scan_regions:
+                    try:
+                        ec_client = boto3.client('elasticache',
+                            aws_access_key_id=creds['AccessKeyId'],
+                            aws_secret_access_key=creds['SecretAccessKey'],
+                            aws_session_token=creds['SessionToken'],
+                            region_name=_ec_region)
+                        ec_paginator = ec_client.get_paginator('describe_cache_clusters')
+                        for page in ec_paginator.paginate(ShowCacheNodeInfo=False):
+                            for cluster in page.get('CacheClusters', []):
+                                cluster_id = cluster.get('CacheClusterId', '')
+                                cluster_arn = cluster.get('ARN', '') or f"arn:aws:elasticache:{_ec_region}:{acct_id}:cluster:{cluster_id}"
+                                if cluster_arn in _existing_arns_ec2:
+                                    continue
+                                try:
+                                    tag_resp = ec_client.list_tags_for_resource(ResourceName=cluster_arn)
+                                    ec_tags = {t['Key']: t['Value'] for t in tag_resp.get('TagList', []) if not t['Key'].startswith('aws:')}
+                                except Exception:
+                                    ec_tags = {}
+                                missing = [k for k in required_tags if k not in ec_tags]
+                                for k in ec_tags:
+                                    if not k.startswith('aws:'):
+                                        all_tag_keys.add(k)
+                                summary['total'] += 1
+                                if not missing:
+                                    summary['fullyTagged'] += 1
+                                elif len(missing) < len(required_tags):
+                                    summary['partiallyTagged'] += 1
+                                else:
+                                    summary['untagged'] += 1
+                                name = cluster_id
+                                all_resources.append({
+                                    'arn': cluster_arn,
+                                    'resourceType': 'ElastiCache Cluster',
+                                    'resourceId': cluster_id,
+                                    'name': name,
+                                    'account': acct_id,
+                                    'region': _ec_region,
+                                    'existingTags': ec_tags,
+                                    'missingTags': missing,
+                                })
+                                _existing_arns_ec2.add(cluster_arn)
+                    except Exception as e:
+                        logger.warning(f"ElastiCache discovery {acct_id}/{_ec_region}: {type(e).__name__}: {e}")
+
+                # ELB (Application/Network Load Balancer) discovery
+                for _elb_region in scan_regions:
+                    try:
+                        elb_client = boto3.client('elbv2',
+                            aws_access_key_id=creds['AccessKeyId'],
+                            aws_secret_access_key=creds['SecretAccessKey'],
+                            aws_session_token=creds['SessionToken'],
+                            region_name=_elb_region)
+                        elb_paginator = elb_client.get_paginator('describe_load_balancers')
+                        for page in elb_paginator.paginate():
+                            for lb in page.get('LoadBalancers', []):
+                                lb_arn = lb.get('LoadBalancerArn', '')
+                                if lb_arn in _existing_arns_ec2:
+                                    continue
+                                try:
+                                    tag_resp = elb_client.describe_tags(ResourceArns=[lb_arn])
+                                    elb_tags = {}
+                                    for desc in tag_resp.get('TagDescriptions', []):
+                                        for t in desc.get('Tags', []):
+                                            if not t['Key'].startswith('aws:'):
+                                                elb_tags[t['Key']] = t['Value']
+                                except Exception:
+                                    elb_tags = {}
+                                missing = [k for k in required_tags if k not in elb_tags]
+                                for k in elb_tags:
+                                    if not k.startswith('aws:'):
+                                        all_tag_keys.add(k)
+                                summary['total'] += 1
+                                if not missing:
+                                    summary['fullyTagged'] += 1
+                                elif len(missing) < len(required_tags):
+                                    summary['partiallyTagged'] += 1
+                                else:
+                                    summary['untagged'] += 1
+                                lb_name = lb.get('LoadBalancerName', '') or lb_arn.split('/')[-1]
+                                all_resources.append({
+                                    'arn': lb_arn,
+                                    'resourceType': 'Load Balancer',
+                                    'resourceId': lb_name,
+                                    'name': lb_name,
+                                    'account': acct_id,
+                                    'region': _elb_region,
+                                    'existingTags': elb_tags,
+                                    'missingTags': missing,
+                                })
+                                _existing_arns_ec2.add(lb_arn)
+                    except Exception as e:
+                        logger.warning(f"ELB discovery {acct_id}/{_elb_region}: {type(e).__name__}: {e}")
+
+                # NAT Gateway discovery
+                for _nat_region in scan_regions:
+                    try:
+                        nat_client = boto3.client('ec2',
+                            aws_access_key_id=creds['AccessKeyId'],
+                            aws_secret_access_key=creds['SecretAccessKey'],
+                            aws_session_token=creds['SessionToken'],
+                            region_name=_nat_region)
+                        nat_paginator = nat_client.get_paginator('describe_nat_gateways')
+                        for page in nat_paginator.paginate(Filter=[{'Name': 'state', 'Values': ['available']}]):
+                            for ngw in page.get('NatGateways', []):
+                                ngw_id = ngw.get('NatGatewayId', '')
+                                ngw_arn = f"arn:aws:ec2:{_nat_region}:{acct_id}:natgateway/{ngw_id}"
+                                if ngw_arn in _existing_arns_ec2:
+                                    continue
+                                nat_tags = {t['Key']: t['Value'] for t in ngw.get('Tags', []) if not t['Key'].startswith('aws:')}
+                                missing = [k for k in required_tags if k not in nat_tags]
+                                for k in nat_tags:
+                                    if not k.startswith('aws:'):
+                                        all_tag_keys.add(k)
+                                summary['total'] += 1
+                                if not missing:
+                                    summary['fullyTagged'] += 1
+                                elif len(missing) < len(required_tags):
+                                    summary['partiallyTagged'] += 1
+                                else:
+                                    summary['untagged'] += 1
+                                name = nat_tags.get('Name', '') or ngw_id
+                                all_resources.append({
+                                    'arn': ngw_arn,
+                                    'resourceType': 'NAT Gateway',
+                                    'resourceId': ngw_id,
+                                    'name': name,
+                                    'account': acct_id,
+                                    'region': _nat_region,
+                                    'existingTags': nat_tags,
+                                    'missingTags': missing,
+                                })
+                                _existing_arns_ec2.add(ngw_arn)
+                    except Exception as e:
+                        logger.warning(f"NAT Gateway discovery {acct_id}/{_nat_region}: {type(e).__name__}: {e}")
+
+                # EBS Volume discovery
+                for _ebs_region in scan_regions:
+                    try:
+                        ebs_client = boto3.client('ec2',
+                            aws_access_key_id=creds['AccessKeyId'],
+                            aws_secret_access_key=creds['SecretAccessKey'],
+                            aws_session_token=creds['SessionToken'],
+                            region_name=_ebs_region)
+                        ebs_paginator = ebs_client.get_paginator('describe_volumes')
+                        for page in ebs_paginator.paginate():
+                            for vol in page.get('Volumes', []):
+                                vol_id = vol.get('VolumeId', '')
+                                vol_arn = f"arn:aws:ec2:{_ebs_region}:{acct_id}:volume/{vol_id}"
+                                if vol_arn in _existing_arns_ec2:
+                                    continue
+                                vol_tags = {t['Key']: t['Value'] for t in vol.get('Tags', []) if not t['Key'].startswith('aws:')}
+                                missing = [k for k in required_tags if k not in vol_tags]
+                                for k in vol_tags:
+                                    if not k.startswith('aws:'):
+                                        all_tag_keys.add(k)
+                                summary['total'] += 1
+                                if not missing:
+                                    summary['fullyTagged'] += 1
+                                elif len(missing) < len(required_tags):
+                                    summary['partiallyTagged'] += 1
+                                else:
+                                    summary['untagged'] += 1
+                                name = vol_tags.get('Name', '') or vol_id
+                                all_resources.append({
+                                    'arn': vol_arn,
+                                    'resourceType': 'EBS Volume',
+                                    'resourceId': vol_id,
+                                    'name': name,
+                                    'account': acct_id,
+                                    'region': _ebs_region,
+                                    'existingTags': vol_tags,
+                                    'missingTags': missing,
+                                })
+                                _existing_arns_ec2.add(vol_arn)
+                    except Exception as e:
+                        logger.warning(f"EBS discovery {acct_id}/{_ebs_region}: {type(e).__name__}: {e}")
+
                 # Service-specific resource discovery (services not indexed by Resource Groups API)
                 try:
                     _kwargs = dict(
