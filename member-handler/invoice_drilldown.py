@@ -96,6 +96,18 @@ VALID_SORT_ORDER = ['asc', 'desc']
 DEFAULT_PAGE_SIZE = 25
 MAX_PAGE_SIZE = 100
 
+# Provider-specific account ID format validation patterns.
+# Used by validate_account_id_format() to verify parsed account IDs before
+# acceptance. Each provider has distinct identifier formats.
+PROVIDER_ACCOUNT_ID_PATTERNS = {
+    'aws': re.compile(r'^\d{12}$'),
+    'azure': re.compile(
+        r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+    ),
+    'gcp': re.compile(r'^[a-z][a-z0-9\-]{4,28}[a-z0-9]$'),
+    'openai': re.compile(r'^[A-Za-z0-9][A-Za-z0-9._:\-]{0,127}$'),
+}
+
 
 # ─── Response helpers ─────────────────────────────────────────────────────────
 
@@ -242,6 +254,112 @@ def validate_sort(sort_by, sort_order):
     return None
 
 
+# ─── Account ID resolution utilities ─────────────────────────────────────────
+
+def validate_account_id_format(account_id, provider_key='aws'):
+    """Validate that an account_id matches the expected format for the provider.
+
+    Uses PROVIDER_ACCOUNT_ID_PATTERNS for provider-specific format validation.
+    Unknown providers use the permissive NON_AWS_ACCOUNT_ID_REGEX.
+
+    Args:
+        account_id: The value to validate.
+        provider_key: The provider type (e.g., 'aws', 'azure', 'gcp', 'openai').
+
+    Returns:
+        True if the format is valid, False otherwise.
+    """
+    if not account_id or not str(account_id).strip():
+        return False
+    account_id_str = str(account_id).strip()
+    provider = str(provider_key or 'aws').strip().lower()
+    pattern = PROVIDER_ACCOUNT_ID_PATTERNS.get(provider, NON_AWS_ACCOUNT_ID_REGEX)
+    return bool(pattern.match(account_id_str))
+
+
+def resolve_account_id(parsed_account_id, account_metadata_id, provider_key='aws'):
+    """Resolve the Account ID for an invoice record.
+
+    Priority:
+        1. parsed_account_id (if non-empty, not "N/A", and passes format validation)
+        2. account_metadata_id (if non-empty and not "N/A")
+        3. "N/A" as final fallback
+
+    Args:
+        parsed_account_id: Value extracted by the bill parser (may be None, "N/A", or empty).
+        account_metadata_id: Value from the accounts table.
+        provider_key: Provider identifier for format validation.
+
+    Returns:
+        Resolved Account ID string.
+    """
+    # Try parsed value first
+    parsed = str(parsed_account_id or '').strip()
+    if parsed and parsed.upper() != 'N/A':
+        if validate_account_id_format(parsed, provider_key):
+            return parsed
+        else:
+            logger.warning(
+                f"Parsed account ID failed format validation: value='{parsed}', "
+                f"provider='{provider_key}', expected pattern="
+                f"'{PROVIDER_ACCOUNT_ID_PATTERNS.get(str(provider_key or 'aws').strip().lower(), NON_AWS_ACCOUNT_ID_REGEX).pattern}'"
+            )
+
+    # Fallback to metadata value
+    metadata = str(account_metadata_id or '').strip()
+    if metadata and metadata.upper() != 'N/A':
+        return metadata
+
+    # Final fallback
+    return 'N/A'
+
+
+def aggregate_by_account(invoice_items):
+    """Aggregate invoice line items by Account ID.
+
+    For each distinct accountId, computes:
+        - totalCost: sum of all line item costs for that account
+        - serviceCount: number of distinct services with charges > 0
+        - accountId: the account identifier
+        - currency: currency code (from first record per account, default "USD")
+
+    Results are sorted by totalCost descending.
+
+    Args:
+        invoice_items: List of invoice record dicts, each with 'accountId',
+                       'totalAmount'/'amount', and optionally 'serviceName' fields.
+
+    Returns:
+        List of aggregation dicts sorted by totalCost descending.
+    """
+    account_data = {}
+    for item in invoice_items:
+        acct_id = item.get('accountId', 'N/A') or 'N/A'
+        if acct_id not in account_data:
+            account_data[acct_id] = {
+                'totalCost': 0.0,
+                'services': set(),
+                'currency': item.get('currency', 'USD'),
+            }
+        amount = float(item.get('totalAmount', item.get('amount', 0)) or 0)
+        account_data[acct_id]['totalCost'] += amount
+        service_name = item.get('serviceName', '') or ''
+        if service_name and amount > 0:
+            account_data[acct_id]['services'].add(service_name)
+
+    results = []
+    for acct_id, data in account_data.items():
+        results.append({
+            'accountId': acct_id,
+            'totalCost': round(data['totalCost'], 2),
+            'serviceCount': len(data['services']),
+            'currency': data['currency'],
+        })
+
+    results.sort(key=lambda x: x['totalCost'], reverse=True)
+    return results
+
+
 # ─── Account ownership verification ──────────────────────────────────────────
 
 def _verify_account_ownership(member_email, account_id):
@@ -306,6 +424,7 @@ def handle_invoice_list_request(event, member_email):
     page_size = params.get('pageSize', str(DEFAULT_PAGE_SIZE))
     sort_by = params.get('sortBy')
     sort_order = params.get('sortOrder')
+    group_by_account = params.get('groupByAccount', 'false')
 
     # Validate accountId presence
     if not account_id:
@@ -391,6 +510,26 @@ def handle_invoice_list_request(event, member_email):
         # overwritten (Req 5.1-5.3, 7.3).
         if items:
             _write_invoice_cache(member_email, account_id, items)
+
+    # groupByAccount: when "true", aggregate invoices by account and return
+    # per-account totals instead of individual invoice records.
+    if str(group_by_account).strip().lower() == 'true':
+        aggregated = aggregate_by_account(items)
+        # Paginate aggregated results
+        total_items = len(aggregated)
+        total_pages = math.ceil(total_items / page_size_int) if total_items > 0 else 0
+        start_idx = (page_int - 1) * page_size_int
+        end_idx = start_idx + page_size_int
+        page_items = aggregated[start_idx:end_idx]
+        return create_response(200, {
+            'items': page_items,
+            'pagination': {
+                'page': page_int,
+                'pageSize': page_size_int,
+                'totalItems': total_items,
+                'totalPages': total_pages,
+            }
+        })
 
     # Apply sorting (default: paymentDate desc)
     effective_sort_by = sort_by or 'paymentDate'
@@ -485,6 +624,7 @@ def handle_invoice_list_request(event, member_email):
     for item in page_items:
         shaped = {
             'invoiceId': item.get('invoiceId', ''),
+            'accountId': item.get('accountId', 'N/A') or 'N/A',
             'issuer': item.get('issuer', 'Amazon Web Services'),
             'paymentDate': item.get('paymentDate', ''),
             'paymentStatus': item.get('paymentStatus', ''),
@@ -615,6 +755,7 @@ def handle_service_breakdown_request(event, member_email):
         })
 
     return create_response(200, {
+        'accountId': account_id,
         'period': period,
         'totalAmount': total_amount,
         'services': response_services,
@@ -724,6 +865,7 @@ def handle_resource_breakdown_request(event, member_email):
         })
 
     return create_response(200, {
+        'accountId': account_id,
         'period': period,
         'service': service,
         'totalAmount': total_amount,
@@ -1972,6 +2114,12 @@ def _write_invoice_cache(member_email, account_id, records):
     try:
         with table.batch_writer() as writer:
             for record in records:
+                # Resolve account ID at sync time using parser-first/metadata-fallback
+                resolved_account_id = resolve_account_id(
+                    record.get('accountId', record.get('parsed_account_id')),
+                    account_id,
+                    provider_key=record.get('provider_key', 'aws'),
+                )
                 item = {
                     'pk': pk,
                     'sk': f"INV#{record['invoiceId']}",
@@ -1984,6 +2132,7 @@ def _write_invoice_cache(member_email, account_id, records):
                     'currency': record.get('currency', 'USD'),
                     'period': record.get('period', ''),
                     'source': record.get('source', ''),
+                    'accountId': resolved_account_id,
                     'lastSyncedAt': now_iso,
                     'ttl': ttl_epoch,
                 }
@@ -2895,6 +3044,7 @@ def _dynamo_item_to_dict(item):
         'currency': str(item.get('currency', 'USD')),
         'period': str(item.get('period', '')),
         'source': str(item.get('source', '')),
+        'accountId': str(item.get('accountId', 'N/A') or 'N/A'),
     }
 
 

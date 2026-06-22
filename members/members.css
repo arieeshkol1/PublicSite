@@ -945,6 +945,71 @@
    Invoice Drilldown â€” Hierarchical 3-Level Drill-Down
    ============================================================ */
 
+/* ============================================================
+   Invoice Drilldown - Account Hierarchy Breadcrumb and Badge
+   ============================================================ */
+
+.dd-breadcrumb {
+    padding: 8px 12px;
+    margin-bottom: 8px;
+    font-size: 0.85em;
+    color: #4b5563;
+    background: #f9fafb;
+    border-radius: 6px;
+    border: 1px solid #e5e7eb;
+}
+.dd-crumb-link {
+    color: #4f46e5;
+    cursor: pointer;
+    text-decoration: none;
+}
+.dd-crumb-link:hover {
+    text-decoration: underline;
+}
+.dd-crumb-current {
+    font-weight: 600;
+    color: #1f2937;
+}
+.dd-crumb-sep {
+    margin: 0 4px;
+    color: #9ca3af;
+}
+.inv-account-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    margin-bottom: 8px;
+    background: linear-gradient(135deg, #eef2ff, #e0e7ff);
+    border: 1px solid #c7d2fe;
+    border-radius: 8px;
+    font-size: 0.85em;
+}
+.inv-badge-label {
+    color: #6366f1;
+    font-weight: 600;
+}
+.inv-badge-value {
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    color: #1e1b4b;
+    font-weight: 500;
+}
+.dd-account-row {
+    cursor: pointer;
+}
+.dd-account-row:hover {
+    background: #eef2ff !important;
+}
+.dd-header-row th {
+    font-size: 0.8em;
+    color: #6b7280;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding: 8px 12px;
+    border-bottom: 1px solid #e5e7eb;
+}
+
 /* Drilldown table base */
 .dd-table { font-size: 13px; }
 .dd-table thead th { cursor: default; }

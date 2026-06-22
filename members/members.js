@@ -12556,12 +12556,15 @@ function _exportInvoiceCSV() {
             notify('No data to export.', 'warning');
             return;
         }
-        var csv = 'Service,Cost,Month,Region\n';
+        var csv = 'Month,Account ID,Service,Cost,Currency,Status,Date\n';
         items.forEach(function(item) {
-            csv += '"' + (item.service || '').replace(/"/g, '""') + '",';
-            csv += (item.cost != null ? item.cost : 0) + ',';
-            csv += '"' + (item.month || '') + '",';
-            csv += '"' + (item.region || '').replace(/"/g, '""') + '"\n';
+            csv += '"' + (item.month || item.period || '').replace(/"/g, '""') + '",';
+            csv += '"' + (item.accountId || 'N/A').replace(/"/g, '""') + '",';
+            csv += '"' + (item.service || item.serviceName || '').replace(/"/g, '""') + '",';
+            csv += (item.cost != null ? item.cost : (item.totalAmount != null ? item.totalAmount : 0)) + ',';
+            csv += '"' + (item.currency || 'USD').replace(/"/g, '""') + '",';
+            csv += '"' + (item.paymentStatus || item.status || '').replace(/"/g, '""') + '",';
+            csv += '"' + (item.paymentDate || item.date || '').replace(/"/g, '""') + '"\n';
         });
         var blob = new Blob([csv], {type: 'text/csv'});
         var url = URL.createObjectURL(blob);
@@ -12590,7 +12593,12 @@ var _ddState = {
     sortBy: 'paymentDate',
     sortOrder: 'desc',
     totalPages: 1,
-    totalItems: 0
+    totalItems: 0,
+    // Account hierarchy state
+    drillAccount: '',       // Currently drilled-into account within the month
+    level: 'month',         // Current hierarchy level: 'month' | 'account' | 'service' | 'subservice'
+    breadcrumb: [],         // Navigation trail: [{level, value, label}]
+    drillMonth: ''          // Currently selected month for account drilldown
 };
 var _ddRefreshCooldownInterval = null;
 var _ddExpandedInvoices = {};  // { period: true/false }
@@ -12708,6 +12716,184 @@ function _populateDrilldownAccounts() {
         _ddState.accountId = connected[0].accountId;
     }
 }
+
+// ─── Account Hierarchy: Navigation and Breadcrumb ────────────────────────────
+
+function _drillToLevel(level, value, label) {
+    // Push current level to breadcrumb, set new level + value, trigger reload
+    _ddState.breadcrumb.push({
+        level: _ddState.level,
+        value: level === 'account' ? _ddState.drillMonth : (level === 'service' ? _ddState.drillAccount : ''),
+        label: level === 'account' ? _ddState.drillMonth : (level === 'service' ? _ddState.drillAccount : '')
+    });
+    _ddState.level = level;
+    if (level === 'account') {
+        _ddState.drillMonth = value;
+    } else if (level === 'service') {
+        _ddState.drillAccount = value;
+    }
+    _ddState.page = 1;
+    _renderBreadcrumb();
+    _updateAccountBadge();
+    _loadDrilldownLevel();
+}
+
+function _navigateBack(targetLevel) {
+    // Pop breadcrumb back to targetLevel, restore state, trigger reload
+    if (targetLevel === 'month') {
+        _ddState.level = 'month';
+        _ddState.drillMonth = '';
+        _ddState.drillAccount = '';
+        _ddState.breadcrumb = [];
+    } else if (targetLevel === 'account') {
+        _ddState.level = 'account';
+        _ddState.drillAccount = '';
+        // Keep drillMonth, trim breadcrumb
+        _ddState.breadcrumb = _ddState.breadcrumb.filter(function(b) { return b.level === 'month'; });
+    }
+    _ddState.page = 1;
+    _renderBreadcrumb();
+    _updateAccountBadge();
+    _loadDrilldownLevel();
+}
+
+function _renderBreadcrumb() {
+    var container = document.getElementById('dd-breadcrumb');
+    if (!container) {
+        // Create breadcrumb element if it doesn't exist
+        var tableContainer = document.getElementById('dd-table-container');
+        if (!tableContainer) return;
+        container = document.createElement('div');
+        container.id = 'dd-breadcrumb';
+        container.className = 'dd-breadcrumb';
+        tableContainer.parentNode.insertBefore(container, tableContainer);
+    }
+    var html = '';
+    // Always show Month as first level
+    html += '<span class="dd-crumb dd-crumb-link" onclick="_navigateBack(\'month\')">Invoices</span>';
+
+    if (_ddState.level === 'account' || _ddState.level === 'service' || _ddState.level === 'subservice') {
+        html += ' <span class="dd-crumb-sep">\u203a</span> ';
+        if (_ddState.level === 'account') {
+            html += '<span class="dd-crumb dd-crumb-current">' + esc(_ddState.drillMonth) + '</span>';
+        } else {
+            html += '<span class="dd-crumb dd-crumb-link" onclick="_navigateBack(\'account\')">' + esc(_ddState.drillMonth) + '</span>';
+        }
+    }
+    if (_ddState.level === 'service' || _ddState.level === 'subservice') {
+        html += ' <span class="dd-crumb-sep">\u203a</span> ';
+        var acctDisplay = _ddState.drillAccount.length > 12 ? _ddState.drillAccount.substring(0, 12) + '...' : _ddState.drillAccount;
+        html += '<span class="dd-crumb dd-crumb-current">' + esc(acctDisplay) + '</span>';
+    }
+    container.innerHTML = html;
+    container.hidden = (_ddState.level === 'month');
+}
+
+function _updateAccountBadge() {
+    var badge = document.getElementById('inv-account-header');
+    var badgeValue = document.getElementById('inv-account-badge-value');
+    if (!badge) {
+        // Create badge element dynamically
+        var tableContainer = document.getElementById('dd-table-container');
+        if (!tableContainer) return;
+        badge = document.createElement('div');
+        badge.id = 'inv-account-header';
+        badge.className = 'inv-account-badge';
+        badge.innerHTML = '<span class="inv-badge-label">Account:</span> <span id="inv-account-badge-value" class="inv-badge-value"></span>';
+        tableContainer.parentNode.insertBefore(badge, tableContainer);
+        badgeValue = document.getElementById('inv-account-badge-value');
+    }
+    if (_ddState.drillAccount) {
+        badge.hidden = false;
+        if (badgeValue) badgeValue.textContent = _ddState.drillAccount;
+    } else {
+        badge.hidden = true;
+    }
+}
+
+function _loadDrilldownLevel() {
+    if (_ddState.level === 'month') {
+        // Load normal invoice list
+        var cacheKey = _ddCacheKey('invoices', _ddState.accountId);
+        delete _drilldownCache[cacheKey];
+        loadInvoiceDrilldown(_ddState.accountId);
+    } else if (_ddState.level === 'account') {
+        // Load account aggregation for the selected month
+        _loadAccountAggregation(_ddState.drillMonth);
+    } else if (_ddState.level === 'service') {
+        // Load service breakdown for the selected account+month
+        _ddLoadServices(_ddState.drillMonth);
+    }
+}
+
+async function _loadAccountAggregation(month) {
+    if (!_ddState.accountId) return;
+    _ddShowLoading();
+
+    var params = 'accountId=' + encodeURIComponent(_ddState.accountId);
+    params += '&groupByAccount=true';
+    params += '&page=' + _ddState.page;
+    params += '&pageSize=' + _ddState.pageSize;
+
+    try {
+        var data = await api('GET', '/members/invoices/list?' + params);
+        _ddHideLoading();
+        _ddHideEmpty();
+        _ddHideError();
+        _ddRenderAccountLevel(data, month);
+    } catch (err) {
+        _ddHideLoading();
+        _ddShowError(err.message || 'Failed to load account data.');
+    }
+}
+
+function _ddRenderAccountLevel(data, month) {
+    var items = (data && data.items) || [];
+    var pagination = (data && data.pagination) || {};
+    _ddState.totalPages = (pagination.totalPages != null) ? pagination.totalPages : 1;
+    _ddState.totalItems = pagination.totalItems || items.length;
+
+    var tbody = document.getElementById('dd-tbody');
+    if (!tbody) return;
+
+    if (!items.length) {
+        tbody.innerHTML = '';
+        _ddShowEmpty('No account data found for this period.');
+        _ddUpdatePagination(0, 0);
+        return;
+    }
+
+    var html = '';
+    html += '<tr class="dd-header-row"><th></th><th>Account ID</th><th>Total Cost</th><th>Services</th><th></th><th></th></tr>';
+    items.forEach(function(acct) {
+        html += '<tr class="dd-invoice-row dd-account-row" data-account-id="' + ea(acct.accountId || '') + '">';
+        html += '<td class="dd-chevron">\u25b6</td>';
+        html += '<td><code>' + esc(acct.accountId || 'N/A') + '</code></td>';
+        html += '<td style="font-weight:600;">' + _ddFormatCurrency(acct.totalCost) + '</td>';
+        html += '<td>' + (acct.serviceCount || 0) + ' services</td>';
+        html += '<td>' + esc(acct.currency || 'USD') + '</td>';
+        html += '<td></td>';
+        html += '</tr>';
+    });
+    tbody.innerHTML = html;
+
+    // Wire click handlers for account rows
+    tbody.querySelectorAll('.dd-account-row').forEach(function(row) {
+        row.onclick = function() {
+            var acctId = row.getAttribute('data-account-id');
+            _ddState.drillAccount = acctId;
+            _ddState.level = 'service';
+            _ddState.breadcrumb.push({ level: 'account', value: acctId, label: acctId });
+            _renderBreadcrumb();
+            _updateAccountBadge();
+            _ddLoadServices(_ddState.drillMonth);
+        };
+    });
+
+    _ddUpdatePagination(pagination.page || 1, _ddState.totalPages);
+}
+
+// ─── End Account Hierarchy ───────────────────────────────────────────────────
 
 // Load invoice list (Level 1)
 async function loadInvoiceDrilldown(accountId) {
@@ -12836,6 +13022,18 @@ function _ddRenderInvoices(data) {
 }
 
 function _ddToggleInvoice(period) {
+    // If we're at month level, drill into account-level aggregation for this period
+    if (_ddState.level === 'month' && period) {
+        _ddState.drillMonth = period;
+        _ddState.level = 'account';
+        _ddState.breadcrumb = [{ level: 'month', value: '', label: 'Invoices' }];
+        _ddState.page = 1;
+        _renderBreadcrumb();
+        _updateAccountBadge();
+        _loadAccountAggregation(period);
+        return;
+    }
+    // Fallback: original expand/collapse behavior for compatibility
     if (_ddExpandedInvoices[period]) {
         // Collapse
         delete _ddExpandedInvoices[period];
@@ -13192,9 +13390,15 @@ function _ddUpdatePagination(page, totalPages) {
     if (acctSel) acctSel.onchange = function() {
         _ddState.accountId = acctSel.value;
         _ddState.page = 1;
+        _ddState.level = 'month';
+        _ddState.drillAccount = '';
+        _ddState.drillMonth = '';
+        _ddState.breadcrumb = [];
         _ddExpandedInvoices = {};
         _ddExpandedServices = {};
         _ddClearCache();
+        _renderBreadcrumb();
+        _updateAccountBadge();
         if (_ddState.accountId) {
             loadInvoiceDrilldown(_ddState.accountId);
         } else {
