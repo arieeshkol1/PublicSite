@@ -344,11 +344,13 @@ def apply_deltas(
                     item["cloud"] = "AWS"
                 if "createdAt" not in item:
                     item["createdAt"] = now_iso
-                # Enrich with drilldown instructions if available
+                # Enrich with drilldown instructions if available.
+                # drilldownApis is stored as a JSON-array string to match the
+                # rest of the table (the enriched dataset uses json.dumps).
                 try:
                     drilldown = _get_drilldown_for_tip(s, item.get("cloud", "AWS"))
                     if drilldown:
-                        item["drilldownApis"] = drilldown.get("apis", [])
+                        item["drilldownApis"] = json.dumps(drilldown.get("apis", []), ensure_ascii=False)
                         item["drilldownInstructions"] = drilldown.get("drilldownInstructions", "")
                 except Exception:
                     pass  # Non-fatal: skip enrichment if module not available
@@ -401,6 +403,17 @@ def apply_deltas(
                 # Ensure cloud provider is set on updates too
                 if "cloud" not in item:
                     item["cloud"] = "AWS"
+                # Ensure drilldown coverage is preserved/filled on updates so a
+                # re-sync never wipes the executable check for a tip.
+                if not item.get("drilldownApis"):
+                    try:
+                        drilldown = _get_drilldown_for_tip(s, item.get("cloud", "AWS"))
+                        if drilldown:
+                            item["drilldownApis"] = json.dumps(drilldown.get("apis", []), ensure_ascii=False)
+                            if not item.get("drilldownInstructions"):
+                                item["drilldownInstructions"] = drilldown.get("drilldownInstructions", "")
+                    except Exception:
+                        pass  # Non-fatal
                 table.put_item(
                     Item=item,
                     ConditionExpression="attribute_exists(tipId) AND version = :v",

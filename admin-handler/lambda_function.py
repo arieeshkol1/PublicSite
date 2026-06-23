@@ -375,7 +375,38 @@ def handle_sync_billing(event):
         return create_error_response(500, 'ServerError', f'Failed to sync: {str(e)}')
 
 
-@transaction_log('admin-handler')
+def _collect_optional_tip_fields(body):
+    """Return a dict of optional tip fields present in the request body.
+    drilldownApis may be a list (one API per line from the UI) or a string."""
+    out = {}
+    str_fields = ['automatedCheck', 'cloud', 'provider', 'level', 'actionType',
+                  'actionLabel', 'drilldownInstructions', 'checkConnection']
+    for f in str_fields:
+        v = body.get(f)
+        if isinstance(v, str) and v.strip():
+            out[f] = v.strip()
+    # drilldownApis: stored as a JSON-array string to match the existing table
+    # rows (the enriched dataset uses json.dumps). Accept list or string input.
+    da = body.get('drilldownApis')
+    items = None
+    if isinstance(da, list):
+        items = [str(x).strip() for x in da if str(x).strip()]
+    elif isinstance(da, str) and da.strip():
+        s = da.strip()
+        if s[:1] == '[':
+            try:
+                parsed = json.loads(s)
+                if isinstance(parsed, list):
+                    items = [str(x).strip() for x in parsed if str(x).strip()]
+            except (ValueError, TypeError):
+                items = None
+        if items is None:
+            items = [ln.strip() for ln in s.splitlines() if ln.strip()]
+    if items:
+        out['drilldownApis'] = json.dumps(items, ensure_ascii=False)
+    return out
+
+
 def handle_create_tip(event):
     """Create a new tip in the Tips table."""
     try:
@@ -389,10 +420,7 @@ def handle_create_tip(event):
             return create_error_response(400, 'InvalidRequest', f'Field "{field}" is required and cannot be empty')
 
     tip = {field: body[field].strip() for field in required_fields}
-
-    # Optional field: automatedCheck (script/command)
-    if body.get('automatedCheck', '').strip():
-        tip['automatedCheck'] = body['automatedCheck'].strip()
+    tip.update(_collect_optional_tip_fields(body))
 
     try:
         table = dynamodb.Table(TIPS_TABLE_NAME)
@@ -410,7 +438,12 @@ def handle_create_tip(event):
 
 @transaction_log('admin-handler')
 def handle_update_tip(event):
-    """Update an existing tip in the Tips table."""
+    """Update an existing tip in the Tips table.
+
+    Uses update_item (SET) so that fields NOT present in the request (e.g.
+    metadata like version, createdAt, contentHash, positiveCount) are
+    preserved rather than wiped by a full put_item replace.
+    """
     try:
         body = json.loads(event.get('body', '{}'))
     except (json.JSONDecodeError, TypeError):
@@ -421,15 +454,29 @@ def handle_update_tip(event):
         if not body.get(field, '').strip():
             return create_error_response(400, 'InvalidRequest', f'Field "{field}" is required and cannot be empty')
 
-    tip = {field: body[field].strip() for field in required_fields}
+    service = body['service'].strip()
+    tip_id = body['tipId'].strip()
 
-    # Optional field: automatedCheck (script/command)
-    if body.get('automatedCheck', '').strip():
-        tip['automatedCheck'] = body['automatedCheck'].strip()
+    # Build the attribute set: required (minus the keys) + provided optional fields.
+    updates = {f: body[f].strip() for f in required_fields if f not in ('service', 'tipId')}
+    updates.update(_collect_optional_tip_fields(body))
+
+    names, values, sets = {}, {}, []
+    for i, (k, v) in enumerate(updates.items()):
+        names[f'#f{i}'] = k
+        values[f':v{i}'] = v
+        sets.append(f'#f{i} = :v{i}')
 
     try:
         table = dynamodb.Table(TIPS_TABLE_NAME)
-        table.put_item(Item=tip)
+        table.update_item(
+            Key={'service': service, 'tipId': tip_id},
+            UpdateExpression='SET ' + ', '.join(sets),
+            ExpressionAttributeNames=names,
+            ExpressionAttributeValues=values,
+        )
+        tip = {'service': service, 'tipId': tip_id}
+        tip.update(updates)
         return create_response(200, {'tip': tip, 'message': 'Tip updated successfully'})
     except ClientError as e:
         logger.error(f"DynamoDB error updating tip: {e}")

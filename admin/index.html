@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Admin Panel - SlashMyCloudBill</title>
     <link rel="icon" type="image/png" href="../SlashMyBill.png">
-    <link rel="stylesheet" href="admin.css?v=4">
+    <link rel="stylesheet" href="admin.css?v=5">
 </head>
 <body>
 
@@ -487,12 +487,57 @@
                             <label for="tip-estimatedSavings">Estimated Savings</label>
                             <input type="text" id="tip-estimatedSavings" placeholder="e.g. 20-40%" required>
                         </div>
+                        <div class="form-group">
+                            <label for="tip-cloud">Cloud / Provider</label>
+                            <input type="text" id="tip-cloud" placeholder="e.g. AWS, AZURE, GCP, OPENAI">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="tip-provider">Provider (routing key)</label>
+                            <input type="text" id="tip-provider" placeholder="e.g. aws, azure, gcp, openai">
+                        </div>
+                        <div class="form-group">
+                            <label for="tip-level">Level</label>
+                            <input type="text" id="tip-level" placeholder="e.g. 1, 2, 3">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="tip-actionType">Action Type</label>
+                            <input type="text" id="tip-actionType" placeholder="e.g. advisory, pending, deep-link, delete, modify">
+                        </div>
+                        <div class="form-group">
+                            <label for="tip-actionLabel">Action Label</label>
+                            <input type="text" id="tip-actionLabel" placeholder="e.g. View Details, Coming Soon">
+                        </div>
+                    </div>
+
+                    <div class="form-section-divider">Drilldown / Check</div>
+
+                    <div class="form-group">
+                        <label for="tip-drilldownInstructions">Drilldown Instructions <span class="label-optional">(human steps)</span></label>
+                        <textarea id="tip-drilldownInstructions" rows="4" placeholder="Numbered investigation steps, e.g. 1. List all plans. 2. Check CPU <20% ..."></textarea>
+                        <div class="field-hint">Human-readable steps describing what to fetch and what to show the user.</div>
                     </div>
                     <div class="form-group">
-                        <label for="tip-automatedCheck">Automated Check Script <span class="label-optional">(optional)</span></label>
-                        <textarea id="tip-automatedCheck" rows="4" placeholder="AWS CLI or shell commands to verify this check against the environment&#10;e.g. aws ec2 describe-instances --query '...' --output table"></textarea>
-                        <div class="field-hint">Commands to run against the AWS environment to verify this optimization opportunity.</div>
+                        <label for="tip-drilldownApis">Drilldown APIs <span class="label-optional">(one per line)</span></label>
+                        <textarea id="tip-drilldownApis" rows="5" placeholder="One API/CLI operation per line, e.g.&#10;az appservice plan list&#10;az monitor metrics list (CpuPercentage, Requests)"></textarea>
+                        <div class="field-hint">Structured operations the connector runs against the customer's connection to pull live data. Cost lands on the customer.</div>
                     </div>
+                    <div class="form-group">
+                        <label for="tip-checkConnection">Check Connection Command <span class="label-optional">(optional)</span></label>
+                        <textarea id="tip-checkConnection" rows="2" placeholder="CLI command used to verify the provider connection is alive"></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label for="tip-automatedCheck">Automated Check Script <span class="label-optional">(legacy, optional)</span></label>
+                        <textarea id="tip-automatedCheck" rows="4" placeholder="Legacy single CLI snippet shown in the Check popup&#10;e.g. aws ec2 describe-instances --query '...' --output table"></textarea>
+                        <div class="field-hint">Legacy free-text check. Prefer Drilldown APIs above for executable, provider-aware checks.</div>
+                    </div>
+
+                    <div class="form-section-divider">Metadata <span class="label-optional">(read-only)</span></div>
+                    <div id="tip-meta" class="tip-meta-grid"></div>
+
                     <div id="tip-form-error" class="form-error" role="alert" aria-live="polite"></div>
                 </div>
                 <div class="modal-footer">
@@ -619,6 +664,6 @@
         <span id="notification-message"></span>
     </div>
 
-    <script src="admin.js?v=5"></script>
+    <script src="admin.js?v=6"></script>
 </body>
 </html>

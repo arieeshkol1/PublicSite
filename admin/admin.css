@@ -644,6 +644,36 @@ body {
     color: var(--gray);
     margin-top: 4px;
 }
+.form-section-divider {
+    margin: 18px 0 10px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--border, #e5e7eb);
+    font-size: 13px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--gray);
+}
+.tip-meta-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px 16px;
+    background: #f8fafc;
+    border: 1px solid var(--border, #e5e7eb);
+    border-radius: 6px;
+    padding: 10px 12px;
+}
+.tip-meta-item {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    font-size: 12px;
+    line-height: 1.5;
+    border-bottom: 1px dashed #eef2f7;
+    padding-bottom: 3px;
+}
+.tip-meta-k { color: var(--gray); font-weight: 600; }
+.tip-meta-v { color: #111827; text-align: right; word-break: break-word; }
 
 /* ============================================================
    Notification fix

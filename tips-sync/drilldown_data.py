@@ -77,15 +77,38 @@ _OPENAI_MAP = {
 }
 
 
+_FALLBACK_MAP = {
+    # Generic cost-API drilldown per provider. Used when a specific service
+    # mapping does not exist, so EVERY tip still has an executable drilldown
+    # that runs through the CUSTOMER's connection (cost lands on the customer).
+    "AWS": {"apis": ["ce:GetCostAndUsage(GroupBy=SERVICE)", "ce:GetCostAndUsage(Filter={SERVICE:['<service>']},GroupBy=USAGE_TYPE)"], "drilldownInstructions": "Break down spend for this service via Cost Explorer (GroupBy=USAGE_TYPE) on the customer's connected account. Identify the largest usage types and idle/over-provisioned resources to target."},
+    "AZURE": {"apis": ["az consumption usage list --query \"[?contains(instanceName,'<service>')]\"", "az costmanagement query --type Usage --dataset-grouping name=ServiceName type=Dimension"], "drilldownInstructions": "Query Azure Cost Management for this service on the customer's subscription. Group by meter/resource to find the biggest line items and right-sizing opportunities."},
+    "GCP": {"apis": ["gcloud billing accounts list", "bq query (SELECT service.description, SUM(cost) FROM billing_export GROUP BY 1)"], "drilldownInstructions": "Query the customer's BigQuery billing export (or billing console) for this service. Group by SKU to find the largest cost drivers and idle resources."},
+    "OpenAI": {"apis": ["GET /v1/organization/costs?group_by=line_item", "GET /v1/organization/usage?group_by=model"], "drilldownInstructions": "Pull the customer's OpenAI organization costs/usage grouped by model and line item. Identify expensive models and high-token operations to optimize."},
+}
+
+
 def get_drilldown_data(service: str, cloud: str) -> dict:
     """Return drilldown data for a service on a given cloud provider.
-    Returns empty dict if no mapping exists."""
-    if cloud == "AWS":
-        return _AWS_MAP.get(service, {})
-    elif cloud == "AZURE":
-        return _AZURE_MAP.get(service, {})
-    elif cloud == "GCP":
-        return _GCP_MAP.get(service, {})
-    elif cloud == "OpenAI":
-        return _OPENAI_MAP.get(service, {})
-    return {}
+
+    Falls back to a generic per-provider cost-API drilldown when no specific
+    service mapping exists, so every tip has an executable check that runs
+    through the customer's connection. Returns {} only for unknown providers.
+    """
+    provider_map = {
+        "AWS": _AWS_MAP,
+        "AZURE": _AZURE_MAP,
+        "GCP": _GCP_MAP,
+        "OpenAI": _OPENAI_MAP,
+    }.get(cloud)
+    if provider_map is None:
+        return {}
+    data = provider_map.get(service)
+    if data:
+        return data
+    # Fallback: generic cost-API drilldown for this provider.
+    fb = _FALLBACK_MAP.get(cloud)
+    if not fb:
+        return {}
+    apis = [a.replace("<service>", service) for a in fb["apis"]]
+    return {"apis": apis, "drilldownInstructions": fb["drilldownInstructions"]}

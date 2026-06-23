@@ -12,7 +12,8 @@ Safe by design:
       drilldownApis, drilldownInstructions, provider, level, actionType,
       checkConnection, checkImplemented
   - The single tipId-collision rename (Blob Storage azure-storage-002 ->
-    azure-blobstorage-001) is reported but NOT auto-applied.
+    azure-blobstorage-001) IS applied on --apply: the corrected record is put
+    under the new tipId and the old duplicate row is deleted (backup first).
 
 ROLLBACK:
   python _update_tips_table.py --restore tips-table-backup-<ts>.json
@@ -32,6 +33,12 @@ TABLE = 'ViewMyBill-CostOptimizationTips'
 REGION = 'us-east-1'
 SET_FIELDS = ['drilldownApis', 'drilldownInstructions', 'provider', 'level',
               'actionType', 'checkConnection', 'checkImplemented']
+
+# tipId renames to apply on --apply: (service, NEW tipId) -> OLD tipId.
+# The OLD row is deleted and the corrected record is put under the NEW tipId.
+RENAME_OLD_TIPID = {
+    ('Blob Storage', 'azure-blobstorage-001'): 'azure-storage-002',
+}
 
 APPLY = '--apply' in sys.argv
 RESTORE = None
@@ -104,9 +111,10 @@ def do_update():
             to_update.append(t)
 
     print(f"Records to update: {len(to_update)}  (mode: {'APPLY' if APPLY else 'DRY-RUN'})")
-    print(f"Manual-review renames (not auto-applied): {len(renamed)}")
-    for _ in renamed:
-        print("  Blob Storage: azure-storage-002 -> azure-blobstorage-001 (needs delete+put)")
+    print(f"tipId renames (delete duplicate + put corrected): {len(renamed)}")
+    for t in renamed:
+        old = RENAME_OLD_TIPID.get((t.get('service'), t.get('tipId')), '?')
+        print(f"  {t.get('service')}: {old} -> {t.get('tipId')}")
 
     if not APPLY:
         sample = to_update[0]
@@ -153,8 +161,41 @@ def do_update():
             print(f"  ERROR {svc}/{tid}: {e.response['Error']['Code']}")
 
     print(f"\nUpdated: {ok}  Errors: {err}")
+
+    # ----- Apply tipId renames (delete duplicate + put corrected record) -----
+    # The backup above lets us roll back if anything goes wrong.
+    ren_ok = ren_err = 0
+    for t in renamed:
+        svc = t.get('service')
+        new_tid = t.get('tipId')
+        old_tid = RENAME_OLD_TIPID.get((svc, new_tid))
+        if not (svc and new_tid and old_tid):
+            print(f"  SKIP rename (no mapping): {svc}/{new_tid}")
+            continue
+        try:
+            # 1. Put the full corrected record under the new tipId.
+            item = {k: v for k, v in t.items() if str(v).strip() != ''}
+            table.put_item(Item=item)
+            # 2. Delete the old duplicate row (only if it still exists).
+            table.delete_item(
+                Key={'service': svc, 'tipId': old_tid},
+                ConditionExpression='attribute_exists(tipId)',
+            )
+            ren_ok += 1
+            print(f"  RENAMED {svc}: {old_tid} -> {new_tid} (put new, deleted old)")
+        except ClientError as e:
+            code = e.response['Error']['Code']
+            if code == 'ConditionalCheckFailedException':
+                # Old row already gone — the new row is in place, so this is fine.
+                ren_ok += 1
+                print(f"  RENAMED {svc}: {new_tid} put; old {old_tid} already absent")
+            else:
+                ren_err += 1
+                print(f"  ERROR rename {svc}/{new_tid}: {code}")
+
+    if renamed:
+        print(f"Renames applied: {ren_ok}  Errors: {ren_err}")
     print(f"Rollback if needed:  python _update_tips_table.py --restore {backup_path}")
-    print("NOTE: apply the Blob Storage tipId rename manually (delete old item, put new).")
 
 
 if __name__ == '__main__':
