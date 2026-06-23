@@ -25,7 +25,52 @@ def get_connector(cloud_provider: str):
 
 
 class AWSConnector:
-    """AWS cloud provider connector - Cost Explorer and Compute Optimizer."""
+    """AWS cloud provider connector - Cost Explorer and Compute Optimizer.
+
+    IMPORTANT (cost-safety): all cost/recommendation API calls MUST run against
+    the *customer's* account using their cross-account role credentials — never
+    the platform's own credentials. We therefore assume the customer role here
+    and pass the temporary credentials to every client. If credentials cannot be
+    resolved we return empty data rather than silently falling back to the
+    platform account (which would bill the platform's Cost Explorer).
+    """
+
+    def __init__(self):
+        self._creds_cache = {}
+
+    def _customer_credentials(self, account_context):
+        """Resolve cross-account (customer) STS credentials, cached per account.
+
+        Returns a credentials dict (AccessKeyId/SecretAccessKey/SessionToken) or
+        None if the role could not be assumed. Never returns platform creds.
+        """
+        acct = account_context.account_id
+        if acct in self._creds_cache:
+            return self._creds_cache[acct]
+        try:
+            import sts_assume_role
+            creds = sts_assume_role.assume_role(
+                acct, account_context.member_email, session_name='SlashMyBillAgentCost'
+            )
+            self._creds_cache[acct] = creds
+            return creds
+        except Exception as e:
+            logger.error(
+                f"Could not assume customer role for account {acct}; "
+                f"skipping live cost API to avoid billing the platform. Error: {e}"
+            )
+            self._creds_cache[acct] = None
+            return None
+
+    @staticmethod
+    def _client(service, creds, region="us-east-1"):
+        return boto3.client(
+            service,
+            aws_access_key_id=creds["AccessKeyId"],
+            aws_secret_access_key=creds["SecretAccessKey"],
+            aws_session_token=creds["SessionToken"],
+            region_name=region,
+        )
 
     def get_cost_data(
         self,
@@ -33,9 +78,14 @@ class AWSConnector:
         timeframe: str,
         granularity: str = "MONTHLY",
     ) -> dict[str, Any]:
-        """Query AWS Cost Explorer for cost data."""
+        """Query the CUSTOMER's AWS Cost Explorer for cost data (cache is checked
+        upstream by the behavioral router; this is the priority-2 fallback)."""
+        creds = self._customer_credentials(account_context)
+        if not creds:
+            return {"cost_by_service": [], "source": "unavailable", "timeframe": timeframe,
+                    "note": "Customer connection unavailable; no cost data retrieved."}
         try:
-            ce_client = boto3.client("ce", region_name="us-east-1")
+            ce_client = self._client("ce", creds)
 
             start_date, end_date = _parse_timeframe(timeframe)
 
@@ -44,12 +94,6 @@ class AWSConnector:
                 Granularity=granularity,
                 Metrics=["UnblendedCost", "UsageQuantity"],
                 GroupBy=[{"Type": "DIMENSION", "Key": "SERVICE"}],
-                Filter={
-                    "Dimensions": {
-                        "Key": "LINKED_ACCOUNT",
-                        "Values": [account_context.account_id],
-                    }
-                },
             )
 
             return {
@@ -58,42 +102,46 @@ class AWSConnector:
                 "timeframe": timeframe,
             }
         except Exception as e:
-            logger.error(f"AWS Cost Explorer query failed: {e}")
-            raise
+            logger.error(f"Customer Cost Explorer query failed: {e}")
+            return {"cost_by_service": [], "source": "error", "timeframe": timeframe,
+                    "note": "Cost data temporarily unavailable from the customer connection."}
 
     def get_resource_recommendations(
         self,
         account_context: AccountContext,
         service: str,
     ) -> dict[str, Any]:
-        """Query AWS Compute Optimizer for rightsizing recommendations."""
+        """Query the CUSTOMER's AWS Compute Optimizer for rightsizing recommendations."""
+        creds = self._customer_credentials(account_context)
+        if not creds:
+            return {"recommendations": [], "source": "unavailable"}
         try:
-            co_client = boto3.client("compute-optimizer", region_name="us-east-1")
+            co_client = self._client("compute-optimizer", creds)
 
             if service == "ec2":
-                response = co_client.get_ec2_instance_recommendations(
-                    accountIds=[account_context.account_id],
-                    maxResults=10,
-                )
+                response = co_client.get_ec2_instance_recommendations(maxResults=10)
                 return {
                     "recommendations": response.get("instanceRecommendations", []),
                     "source": "compute_optimizer",
                 }
             return {"recommendations": [], "source": "compute_optimizer"}
         except Exception as e:
-            logger.error(f"AWS Compute Optimizer query failed: {e}")
-            raise
+            logger.error(f"Customer Compute Optimizer query failed: {e}")
+            return {"recommendations": [], "source": "error"}
 
     def get_historical_costs(
         self,
         account_context: AccountContext,
         days: int = 90,
     ) -> list[dict[str, Any]]:
-        """Get daily cost history for forecasting."""
+        """Get daily cost history from the CUSTOMER's account for forecasting."""
+        creds = self._customer_credentials(account_context)
+        if not creds:
+            return []
         try:
             from datetime import datetime, timedelta, timezone
 
-            ce_client = boto3.client("ce", region_name="us-east-1")
+            ce_client = self._client("ce", creds)
             end_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
             start_date = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%d")
 
@@ -101,12 +149,6 @@ class AWSConnector:
                 TimePeriod={"Start": start_date, "End": end_date},
                 Granularity="DAILY",
                 Metrics=["UnblendedCost"],
-                Filter={
-                    "Dimensions": {
-                        "Key": "LINKED_ACCOUNT",
-                        "Values": [account_context.account_id],
-                    }
-                },
             )
 
             daily_costs = []
@@ -117,8 +159,8 @@ class AWSConnector:
                 })
             return daily_costs
         except Exception as e:
-            logger.error(f"AWS historical costs query failed: {e}")
-            raise
+            logger.error(f"Customer historical costs query failed: {e}")
+            return []
 
 
 class AzureConnector:

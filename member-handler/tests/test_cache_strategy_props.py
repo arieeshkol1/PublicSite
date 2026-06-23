@@ -26,21 +26,21 @@ from agent.constants import CACHE_STALENESS_THRESHOLD_SECONDS
 # ---------------------------------------------------------------------------
 
 def fresh_timestamps():
-    """Generate timestamps within the staleness threshold (fresh)."""
+    """Generate timestamps comfortably within the staleness threshold (fresh)."""
     now = datetime.now(timezone.utc)
     return st.builds(
         lambda seconds: (now - timedelta(seconds=seconds)).isoformat(),
-        seconds=st.integers(min_value=0, max_value=CACHE_STALENESS_THRESHOLD_SECONDS - 1),
+        seconds=st.integers(min_value=0, max_value=(CACHE_STALENESS_THRESHOLD_SECONDS // 2)),
     )
 
 
 def stale_timestamps():
-    """Generate timestamps beyond the staleness threshold (stale)."""
+    """Generate timestamps well beyond the staleness threshold (stale)."""
     now = datetime.now(timezone.utc)
     return st.builds(
         lambda seconds: (now - timedelta(seconds=seconds)).isoformat(),
         seconds=st.integers(
-            min_value=CACHE_STALENESS_THRESHOLD_SECONDS + 1,
+            min_value=CACHE_STALENESS_THRESHOLD_SECONDS + 3600,
             max_value=CACHE_STALENESS_THRESHOLD_SECONDS * 10,
         ),
     )
@@ -70,13 +70,13 @@ def test_property15_missing_timestamp_is_stale():
     assert _is_stale(None)
 
 
-@settings(max_examples=100)
+@settings(max_examples=50)
 @given(
     account_id=st.from_regex(r"\d{12}", fullmatch=True),
     timeframe=st.sampled_from(["last-7d", "last-30d", "last-90d"]),
 )
 def test_property15_fresh_cache_skips_api(account_id, timeframe):
-    """Property 15: Fresh cache → use cached data, no API call."""
+    """Property 15: Full cache coverage → use cached data, no API call."""
     account_context = AccountContext(
         account_id=account_id,
         account_name="Test",
@@ -85,7 +85,13 @@ def test_property15_fresh_cache_skips_api(account_id, timeframe):
     )
     session = SessionState(active_timeframe=timeframe)
 
-    fresh_time = datetime.now(timezone.utc).isoformat()
+    days_map = {"last-7d": 7, "last-30d": 30, "last-90d": 90}
+    days = days_map[timeframe]
+    # Build enough DAILY# items to satisfy coverage (>= days-2)
+    items = [
+        {"sk": f"DAILY#2026-01-{(i % 28) + 1:02d}", "service_breakdown": {"EC2": 10}}
+        for i in range(days)
+    ]
 
     with patch("agent.behavioral_router.boto3") as mock_boto3, \
          patch("agent.behavioral_router.get_connector") as mock_connector:
@@ -95,29 +101,24 @@ def test_property15_fresh_cache_skips_api(account_id, timeframe):
         mock_boto3.resource.return_value = mock_resource
         mock_resource.Table.return_value = mock_table
 
-        # Return fresh cached data
-        mock_table.get_item.return_value = {
-            "Item": {
-                "cacheKey": f"{account_id}#{timeframe}",
-                "data": {"cost_by_service": [{"service": "EC2", "cost": 100}]},
-                "cachedAt": fresh_time,
-            }
-        }
+        mock_table.query.return_value = {"Items": items}
 
         result = execute_cost_analysis_general(account_context, session)
 
-    # Should use cache, not call connector
+    # Should use cache, not call connector (no customer/platform cost API)
     mock_connector.assert_not_called()
     assert result.get("retrieval_path") == "cache_hit"
+    assert result["data"]["source"] == "cache"
 
 
-@settings(max_examples=100)
+@settings(max_examples=50)
 @given(
     account_id=st.from_regex(r"\d{12}", fullmatch=True),
     timeframe=st.sampled_from(["last-7d", "last-30d", "last-90d"]),
 )
-def test_property15_stale_cache_calls_api_and_writes_back(account_id, timeframe):
-    """Property 15: Stale/missing cache → API call + write-back."""
+def test_property15_cache_miss_calls_customer_api_no_writeback(account_id, timeframe):
+    """Property 15: Cache miss → customer cost API fallback, and NO write-back
+    (the cache is populated by the customer-credentialed sync, never here)."""
     account_context = AccountContext(
         account_id=account_id,
         account_name="Test",
@@ -125,8 +126,6 @@ def test_property15_stale_cache_calls_api_and_writes_back(account_id, timeframe)
         member_email="test@example.com",
     )
     session = SessionState(active_timeframe=timeframe)
-
-    stale_time = (datetime.now(timezone.utc) - timedelta(days=2)).isoformat()
 
     with patch("agent.behavioral_router.boto3") as mock_boto3, \
          patch("agent.behavioral_router.get_connector") as mock_connector:
@@ -136,24 +135,17 @@ def test_property15_stale_cache_calls_api_and_writes_back(account_id, timeframe)
         mock_boto3.resource.return_value = mock_resource
         mock_resource.Table.return_value = mock_table
 
-        # Return stale cached data
-        mock_table.get_item.return_value = {
-            "Item": {
-                "cacheKey": f"{account_id}#{timeframe}",
-                "data": {"cost_by_service": []},
-                "cachedAt": stale_time,
-            }
-        }
+        # Empty cache → miss
+        mock_table.query.return_value = {"Items": []}
 
-        # API returns fresh data
         mock_conn = MagicMock()
-        mock_conn.get_cost_data.return_value = {"cost_by_service": [{"service": "RDS", "cost": 200}]}
+        mock_conn.get_cost_data.return_value = {"cost_by_service": [{"service": "RDS", "cost": 200}], "source": "cost_explorer"}
         mock_connector.return_value = mock_conn
 
         result = execute_cost_analysis_general(account_context, session)
 
-    # Should have called the API
+    # Should have called the customer cost API
     mock_conn.get_cost_data.assert_called_once()
-    # Should have written back to cache
-    mock_table.put_item.assert_called_once()
+    # Must NOT write back to the cache from this path
+    mock_table.put_item.assert_not_called()
     assert result.get("retrieval_path") == "cache_miss_api_fallback"

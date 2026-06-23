@@ -52,8 +52,8 @@ def execute_cost_analysis_general(
     timeframe = session.active_timeframe or "last-30d"
     results: dict[str, Any] = {"sources": [], "data": {}}
 
-    # Try cache first
-    cache_data = _query_cache(account_context.account_id, timeframe)
+    # Priority 1: read from the local cache DB (Cost_Cache_Table)
+    cache_data = _query_cache(account_context, timeframe)
     if cache_data:
         logger.info(f"Cache HIT for {account_context.account_id}/{timeframe}")
         results["data"] = cache_data
@@ -61,19 +61,18 @@ def execute_cost_analysis_general(
         results["retrieval_path"] = "cache_hit"
         return results
 
-    # Cache miss - query API
-    logger.info(f"Cache MISS for {account_context.account_id}/{timeframe}, querying API")
+    # Priority 2: cache miss -> query the CUSTOMER's cost API via their connection
+    # (the connector assumes the customer's cross-account role; it never uses the
+    # platform's own Cost Explorer).
+    logger.info(f"Cache MISS for {account_context.account_id}/{timeframe}, querying customer cost API")
     try:
         connector = get_connector(account_context.cloud_provider)
         api_data = connector.get_cost_data(account_context, timeframe)
         results["data"] = api_data
         results["sources"].append("api")
         results["retrieval_path"] = "cache_miss_api_fallback"
-
-        # Write back to cache
-        _write_cache(account_context.account_id, timeframe, api_data)
     except Exception as e:
-        logger.error(f"API fallback failed: {e}")
+        logger.error(f"Customer cost API fallback failed: {e}")
         results["retrieval_path"] = "all_sources_failed"
         results["error"] = "Cost data temporarily unavailable"
 
@@ -226,47 +225,75 @@ def execute_forecasting(
 # Cache helpers
 # ---------------------------------------------------------------------------
 
-def _query_cache(account_id: str, timeframe: str) -> dict | None:
-    """Query Cost_Cache_Table for fresh cached data."""
+def _query_cache(account_context, timeframe: str) -> dict | None:
+    """Read cost data from the real Cost_Cache_Table (priority 1).
+
+    Uses the canonical key scheme: pk = "{member_email}#{account_id}",
+    sk = "DAILY#YYYY-MM-DD". Aggregates the per-day service_breakdown into a
+    cost_by_service list. Returns None on miss/insufficient coverage so callers
+    fall through to the customer's cost API.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    days_map = {"last-7d": 7, "last-30d": 30, "last-90d": 90}
+    days = days_map.get(timeframe, 30)
+
     try:
         dynamodb = boto3.resource("dynamodb")
         table = dynamodb.Table(COST_CACHE_TABLE)
 
-        cache_key = f"{account_id}#{timeframe}"
-        response = table.get_item(Key={"cacheKey": cache_key})
-        item = response.get("Item")
+        now = datetime.now(timezone.utc)
+        start_date = (now - timedelta(days=days)).strftime("%Y-%m-%d")
+        end_date = now.strftime("%Y-%m-%d")
 
-        if not item:
+        pk = f"{account_context.member_email}#{account_context.account_id}"
+        start_sk = f"DAILY#{start_date}"
+        end_sk = f"DAILY#{end_date}"
+
+        from boto3.dynamodb.conditions import Key
+        key_cond = Key("pk").eq(pk) & Key("sk").between(start_sk, end_sk)
+        response = table.query(KeyConditionExpression=key_cond)
+        items = response.get("Items", [])
+        while "LastEvaluatedKey" in response:
+            response = table.query(
+                KeyConditionExpression=key_cond,
+                ExclusiveStartKey=response["LastEvaluatedKey"],
+            )
+            items.extend(response.get("Items", []))
+
+        if not items:
             return None
 
-        # Check freshness
-        cached_at = item.get("cachedAt", "")
-        if _is_stale(cached_at):
+        # Require near-full coverage (allow 2-day grace for unfinalized days)
+        if len(items) < max(1, days - 2):
+            logger.info(
+                f"Cache incomplete for {account_context.account_id}: "
+                f"{len(items)} items, need ~{days}"
+            )
             return None
 
-        return item.get("data")
+        service_totals: dict[str, float] = {}
+        for item in items:
+            breakdown = item.get("service_breakdown") or {}
+            for svc, cost in breakdown.items():
+                service_totals[svc] = service_totals.get(svc, 0) + float(cost)
+
+        cost_by_service = sorted(
+            [
+                {"service": svc, "cost": round(cost, 4)}
+                for svc, cost in service_totals.items()
+                if cost > 0
+            ],
+            key=lambda x: x["cost"],
+            reverse=True,
+        )
+        if not cost_by_service:
+            return None
+
+        return {"cost_by_service": cost_by_service, "source": "cache", "timeframe": timeframe}
     except Exception as e:
         logger.warning(f"Cache query failed: {e}")
         return None
-
-
-def _write_cache(account_id: str, timeframe: str, data: dict) -> None:
-    """Write data back to Cost_Cache_Table."""
-    try:
-        dynamodb = boto3.resource("dynamodb")
-        table = dynamodb.Table(COST_CACHE_TABLE)
-
-        cache_key = f"{account_id}#{timeframe}"
-        table.put_item(Item={
-            "cacheKey": cache_key,
-            "accountId": account_id,
-            "timeframe": timeframe,
-            "data": data,
-            "cachedAt": datetime.now(timezone.utc).isoformat(),
-        })
-        logger.info(f"Cache write-back: {cache_key}")
-    except Exception as e:
-        logger.warning(f"Cache write-back failed: {e}")
 
 
 def _is_stale(cached_at: str) -> bool:
