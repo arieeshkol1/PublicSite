@@ -9,6 +9,7 @@ import json
 import logging
 import time
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import Any, Dict, List, Tuple
 
 from botocore.exceptions import ClientError
@@ -16,6 +17,28 @@ from botocore.exceptions import ClientError
 from models import compute_content_hash
 
 logger = logging.getLogger(__name__)
+
+
+def to_dynamodb_safe(value: Any) -> Any:
+    """Recursively convert a value into a DynamoDB-writable form.
+
+    - float -> Decimal (DynamoDB rejects Python floats with a TypeError)
+    - dict/list -> sanitized recursively
+    - None values inside dicts are dropped
+
+    Prevents a single tip carrying a float (common in Bedrock/COH output) from
+    raising a TypeError that would otherwise abort the entire sync run.
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, float):
+        # Decimal(str(...)) avoids binary float precision artifacts.
+        return Decimal(str(value))
+    if isinstance(value, dict):
+        return {k: to_dynamodb_safe(v) for k, v in value.items() if v is not None}
+    if isinstance(value, list):
+        return [to_dynamodb_safe(v) for v in value]
+    return value
 
 
 # ============================================================
@@ -322,6 +345,20 @@ def apply_deltas(
                         )
                     )
                     return False
+            except Exception as e:
+                # Non-ClientError (e.g. TypeError from a float value). Log and
+                # skip this single item rather than aborting the whole sync.
+                logger.error(
+                    json.dumps(
+                        {
+                            "action": "write_error_unexpected",
+                            "tipId": tip_id,
+                            "errorType": type(e).__name__,
+                            "error_message": str(e),
+                        }
+                    )
+                )
+                return False
         return False
 
     # Process inserts in batches
@@ -355,7 +392,7 @@ def apply_deltas(
                 except Exception:
                     pass  # Non-fatal: skip enrichment if module not available
                 table.put_item(
-                    Item=item,
+                    Item=to_dynamodb_safe(item),
                     ConditionExpression="attribute_not_exists(tipId)",
                 )
 
@@ -415,7 +452,7 @@ def apply_deltas(
                     except Exception:
                         pass  # Non-fatal
                 table.put_item(
-                    Item=item,
+                    Item=to_dynamodb_safe(item),
                     ConditionExpression="attribute_exists(tipId) AND version = :v",
                     ExpressionAttributeValues={":v": ver},
                 )

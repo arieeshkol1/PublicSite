@@ -5,11 +5,58 @@ import os
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from decimal import Decimal
 from unittest.mock import MagicMock, patch
 from botocore.exceptions import ClientError
 
-from sync_engine import merge_sources, compute_deltas, create_batches, apply_deltas
+from sync_engine import merge_sources, compute_deltas, create_batches, apply_deltas, to_dynamodb_safe
 from models import compute_content_hash
+
+
+class TestToDynamoDbSafe:
+    """Tests for the DynamoDB value sanitizer (float -> Decimal, drop None)."""
+
+    def test_float_converted_to_decimal(self):
+        assert to_dynamodb_safe(0.87) == Decimal("0.87")
+        assert isinstance(to_dynamodb_safe(0.87), Decimal)
+
+    def test_nested_floats_and_none_dropped(self):
+        out = to_dynamodb_safe({"a": 1.5, "b": None, "c": ["x", 2.0]})
+        assert out["a"] == Decimal("1.5")
+        assert "b" not in out
+        assert out["c"][1] == Decimal("2.0")
+
+    def test_bool_and_int_preserved(self):
+        out = to_dynamodb_safe({"flag": True, "n": 3, "s": "ok"})
+        assert out == {"flag": True, "n": 3, "s": "ok"}
+
+    def test_apply_deltas_does_not_crash_on_float(self):
+        """A tip carrying a float must not abort the sync (regression)."""
+        class FakeTable:
+            def __init__(self):
+                self.items = {}
+
+            def put_item(self, Item=None, ConditionExpression=None, ExpressionAttributeValues=None):
+                def check(v):
+                    if isinstance(v, float):
+                        raise TypeError("Float types are not supported. Use Decimal types instead.")
+                    if isinstance(v, dict):
+                        for x in v.values():
+                            check(x)
+                    if isinstance(v, list):
+                        for x in v:
+                            check(x)
+                check(Item)
+                self.items[(Item["service"], Item["tipId"])] = Item
+
+        table = FakeTable()
+        inserts = [{
+            "id": "ec2-999", "tipId": "ec2-999", "service": "EC2", "cloud": "AWS",
+            "title": "x", "description": "d", "estimatedSavings": "10%", "confidence": 0.87,
+        }]
+        inserted, updated, conflicts = apply_deltas(table, inserts, [])
+        assert inserted == 1
+        assert isinstance(table.items[("EC2", "ec2-999")]["confidence"], Decimal)
 
 
 class TestMergeSources:
@@ -119,6 +166,8 @@ class TestComputeDeltas:
                 "service": "EC2",
                 "actionType": "advisory",
                 "version": 1,
+                "cloud": "AWS",
+                "createdAt": "2024-01-01T00:00:00Z",
             }
         }
 
@@ -189,6 +238,8 @@ class TestComputeDeltas:
             "ec2-001": {
                 "id": "ec2-001",
                 "contentHash": compute_content_hash("T", "D", "10%", "AC"),
+                "cloud": "AWS",
+                "createdAt": "2024-01-01T00:00:00Z",
             },
             "s3-001": {"id": "s3-001", "contentHash": "abc123"},
         }
