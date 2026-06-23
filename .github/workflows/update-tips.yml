@@ -1,0 +1,72 @@
+name: Update Tips Table
+
+# Runs the tips drilldown enrichment update against ViewMyBill-CostOptimizationTips
+# using the CI deploy role (which has DynamoDB access), so we don't rely on
+# local IAM permissions.
+#
+# Safety:
+#   - _update_tips_table.py takes a FULL table backup BEFORE any write and
+#     aborts if the backup fails (no partial writes).
+#   - The backup file is uploaded to S3 (tips-backups/) and as a build artifact
+#     so the change can be rolled back with:  --restore <backup file>
+#
+# Triggers: on push of tips-enriched.json (the enriched dataset) to main,
+# or manually via the Actions "Run workflow" button.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'tips-enriched.json'
+      - '_update_tips_table.py'
+      - '.github/workflows/update-tips.yml'
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+  BACKUP_BUCKET: aws-bill-analyzer-storage-991105135552
+
+jobs:
+  update-tips:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4.1.0
+        with:
+          role-to-assume: arn:aws:iam::991105135552:role/GitHubDeployRole
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install boto3
+        run: pip install boto3 --quiet
+
+      - name: Backup + update tips table
+        run: python _update_tips_table.py --apply
+
+      - name: Upload backup to S3 (retain for rollback)
+        if: always()
+        run: |
+          shopt -s nullglob
+          for f in tips-table-backup-*.json; do
+            echo "Uploading $f to s3://${BACKUP_BUCKET}/tips-backups/$f"
+            aws s3 cp "$f" "s3://${BACKUP_BUCKET}/tips-backups/$f"
+          done
+
+      - name: Upload backup as build artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tips-table-backup
+          path: tips-table-backup-*.json
+          if-no-files-found: ignore

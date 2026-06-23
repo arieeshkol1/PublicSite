@@ -1,0 +1,12 @@
+{
+  "provider_filled": 504,
+  "level_filled": 22,
+  "actionType_filled": 22,
+  "tipId_reassigned": [
+    {
+      "service": "Blob Storage",
+      "old_tipId": "azure-storage-002",
+      "new_tipId": "azure-blobstorage-001"
+    }
+  ]
+}

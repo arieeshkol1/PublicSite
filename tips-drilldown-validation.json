@@ -1,0 +1,4732 @@
+{
+  "summary": {
+    "total": 523,
+    "FULL": 99,
+    "COST_ONLY": 132,
+    "NONE": 292,
+    "no_check_content": 231,
+    "openapi_operations_available": [
+      "getCostData",
+      "getMonthlyComparison",
+      "getAWSPricing",
+      "getBudgets",
+      "getFinOpsSettings",
+      "getEC2Instances",
+      "getRDSInstances",
+      "getLambdaFunctions",
+      "getS3Buckets",
+      "getEBSVolumes",
+      "getNetworkResources"
+    ],
+    "note": "All OpenAPI operations are AWS-only; non-AWS tips have no drilldown path that returns live data through the connection."
+  },
+  "tips": [
+    {
+      "cloud": "AWS",
+      "service": "API Gateway",
+      "tipId": "api gateway-001",
+      "title": "Right-size API Gateway stages",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "API Gateway",
+      "tipId": "api gateway-002",
+      "title": "Enable API Gateway Caching",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "Amplify",
+      "tipId": "amplify-001",
+      "title": "Delete unused Amplify apps and branches",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "GCP",
+      "service": "Apigee",
+      "tipId": "apigee-001",
+      "title": "Right-size Apigee Environments",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "GCP",
+      "service": "Apigee",
+      "tipId": "gcp-apigee-001",
+      "title": "Right-size Apigee environment type and instances",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "GCP",
+      "service": "Apigee",
+      "tipId": "gcp-apigee-002",
+      "title": "Use Apigee API proxy caching to reduce backend calls",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "GCP",
+      "service": "App Engine",
+      "tipId": "gcp-ae-001",
+      "title": "Use App Engine automatic scaling with conservative settings",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "GCP",
+      "service": "App Engine",
+      "tipId": "gcp-ae-002",
+      "title": "Migrate from App Engine Standard to Cloud Run for better pricing",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "GCP",
+      "service": "App Engine",
+      "tipId": "gcp-ae-003",
+      "title": "Set minimum instances to zero for non-production App Engine versions",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "App Service",
+      "tipId": "azure-appservice-001",
+      "title": "Scale down idle App Service plans",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "App Service",
+      "tipId": "azure-appservice-002",
+      "title": "Consolidate apps into shared App Service Plans",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "App Service",
+      "tipId": "azure-appservice-003",
+      "title": "Use Reserved Instances for production App Service Plans",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "App Service",
+      "tipId": "azure-appservice-004",
+      "title": "Use autoscaling rules for App Service Plans",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AWS",
+      "service": "AppSync",
+      "tipId": "appsync-001",
+      "title": "Right-size AppSync API resolvers",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "AppSync",
+      "tipId": "appsync-002",
+      "title": "Use On-Demand Capacity for AppSync",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "AppSync",
+      "tipId": "appsync-003",
+      "title": "Enable Caching for AppSync APIs",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "AppSync",
+      "tipId": "appsync-004",
+      "title": "Delete unused AppSync APIs",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Application Gateway",
+      "tipId": "azure-appgw-001",
+      "title": "Right-size Application Gateway capacity units",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Application Gateway",
+      "tipId": "azure-appgw-002",
+      "title": "Delete unused Application Gateway instances",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Application Insights",
+      "tipId": "application insights-001",
+      "title": "Optimize Application Insights retention",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Application Insights",
+      "tipId": "azure-appinsights-001",
+      "title": "Configure sampling to reduce Application Insights volume",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Application Insights",
+      "tipId": "azure-appinsights-002",
+      "title": "Set daily cap on Application Insights ingestion",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Application Insights",
+      "tipId": "azure-appinsights-003",
+      "title": "Move to workspace-based Application Insights",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "GCP",
+      "service": "Artifact Registry",
+      "tipId": "gcp-ar-001",
+      "title": "Set cleanup policies for old container images",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "GCP",
+      "service": "Artifact Registry",
+      "tipId": "gcp-ar-002",
+      "title": "Use regional Artifact Registry repositories",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AWS",
+      "service": "Athena",
+      "tipId": "athena-001",
+      "title": "Delete old Athena query results",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "Athena",
+      "tipId": "athena-002",
+      "title": "Optimize Athena Queries",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "Auto Scaling",
+      "tipId": "asg-001",
+      "title": "Schedule ASG scale-down outside business hours",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "Auto Scaling",
+      "tipId": "auto scaling-001",
+      "title": "Right-size Auto Scaling groups",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Azure AD",
+      "tipId": "azure ad-001",
+      "title": "Optimize Azure AD Licensing",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Azure AD",
+      "tipId": "azure ad-002",
+      "title": "Remove Unused Azure AD Users",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Azure AD",
+      "tipId": "azure ad-003",
+      "title": "Review Azure AD Licenses",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Azure AD",
+      "tipId": "azure-ad-001",
+      "title": "Optimize Azure AD Premium license assignments",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Azure AD",
+      "tipId": "azure-ad-002",
+      "title": "Remove stale guest accounts and app registrations",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Azure Backup",
+      "tipId": "azure-backup-001",
+      "title": "Optimize backup retention policies",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Azure Backup",
+      "tipId": "azure-backup-002",
+      "title": "Move long-term backup data to Vault-Archive tier",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Azure Backup",
+      "tipId": "azure-backup-003",
+      "title": "Delete backups for decommissioned resources",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Azure Cache for Redis",
+      "tipId": "azure-redis-001",
+      "title": "Right-size Redis cache tier and memory",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Azure Cache for Redis",
+      "tipId": "azure-redis-002",
+      "title": "Use Reserved Capacity for production Redis instances",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Azure Cache for Redis",
+      "tipId": "azure-redis-003",
+      "title": "Delete unused Redis instances in non-production environments",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Azure Cosmos DB",
+      "tipId": "azure cosmos db-001",
+      "title": "Optimize Cosmos DB Throughput Units (RU)",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Azure Cosmos DB",
+      "tipId": "azure cosmos db-002",
+      "title": "Optimize Cosmos DB capacity mode",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Azure Database for MySQL",
+      "tipId": "azure-mysql-001",
+      "title": "Downgrade MySQL Flexible Server compute tier",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Azure Database for MySQL",
+      "tipId": "azure-mysql-002",
+      "title": "Stop MySQL Flexible Server during idle periods",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Azure Database for MySQL",
+      "tipId": "azure-mysql-003",
+      "title": "Purchase Reserved Capacity for MySQL",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Azure Database for PostgreSQL",
+      "tipId": "azure database for postgresql-001",
+      "title": "Right-size Azure Database for PostgreSQL",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Azure Database for PostgreSQL",
+      "tipId": "azure-postgresql-001",
+      "title": "Right-size PostgreSQL Flexible Server tiers",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Azure Database for PostgreSQL",
+      "tipId": "azure-postgresql-002",
+      "title": "Stop PostgreSQL Flexible Server when not in use",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Azure Database for PostgreSQL",
+      "tipId": "azure-postgresql-003",
+      "title": "Use Reserved Capacity for PostgreSQL",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Azure Databricks",
+      "tipId": "azure databricks-001",
+      "title": "Right-size Databricks clusters",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Azure Databricks",
+      "tipId": "azure databricks-002",
+      "title": "Auto-Stop Idle Databricks Clusters",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Azure Databricks",
+      "tipId": "azure-databricks-001",
+      "title": "Use Spot instances for Databricks worker nodes",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Azure Databricks",
+      "tipId": "azure-databricks-002",
+      "title": "Configure aggressive auto-termination for Databricks clusters",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Azure Databricks",
+      "tipId": "azure-databricks-003",
+      "title": "Use Photon runtime and right-size cluster nodes",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Azure Databricks",
+      "tipId": "azure-databricks-004",
+      "title": "Use Databricks SQL Serverless for BI queries",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Azure DevOps",
+      "tipId": "azure devops-001",
+      "title": "Leverage Azure DevOps Server for On-Premises",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Azure DevOps",
+      "tipId": "azure-devops-001",
+      "title": "Use self-hosted agents for high-volume CI/CD pipelines",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Azure DevOps",
+      "tipId": "azure-devops-002",
+      "title": "Clean up old build artifacts and test attachments",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Azure DevOps",
+      "tipId": "azure-devops-003",
+      "title": "Audit and remove inactive Azure DevOps users",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Azure Files",
+      "tipId": "azure files-001",
+      "title": "Delete unused Azure Files shares",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Azure Files",
+      "tipId": "azure-files-001",
+      "title": "Use transaction-optimized or Cool tier for Azure Files",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Azure Files",
+      "tipId": "azure-files-002",
+      "title": "Use Azure File Sync to tier cold data to cloud",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Azure Firewall",
+      "tipId": "azure firewall-001",
+      "title": "Scale down firewall throughput units",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Azure Firewall",
+      "tipId": "azure firewall-002",
+      "title": "Implement Firewall Policy with Conditional Routing",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Azure Firewall",
+      "tipId": "azure firewall-003",
+      "title": "Optimize Firewall Policy Rules",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Azure Firewall",
+      "tipId": "azure firewall-004",
+      "title": "Deallocate Unused Azure Firewalls",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Azure Firewall",
+      "tipId": "azure-firewall-001",
+      "title": "Use Azure Firewall Basic SKU for smaller deployments",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Azure Firewall",
+      "tipId": "azure-firewall-002",
+      "title": "Deallocate Azure Firewall in non-production environments",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Azure Firewall",
+      "tipId": "azure-firewall-003",
+      "title": "Use shared Azure Firewall with hub-spoke topology",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Azure Functions",
+      "tipId": "azure functions-001",
+      "title": "Schedule functions with timers",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Azure Functions",
+      "tipId": "azure functions-002",
+      "title": "Switch consumption plan functions to premium plan for better VNet integration",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Azure Functions",
+      "tipId": "azure-functions-001",
+      "title": "Use Consumption Plan for sporadic workloads",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Azure Functions",
+      "tipId": "azure-functions-002",
+      "title": "Optimize function memory allocation and execution time",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Azure Functions",
+      "tipId": "azure-functions-003",
+      "title": "Use Premium Plan with reserved instances for steady Functions",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Azure Kubernetes Service",
+      "tipId": "azure kubernetes service-001",
+      "title": "Right-size Azure Kubernetes Service Nodes",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Azure Kubernetes Service",
+      "tipId": "azure kubernetes service-002",
+      "title": "Right-size Azure Kubernetes Service clusters",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Azure Kubernetes Service",
+      "tipId": "azure kubernetes service-003",
+      "title": "Optimize AKS node pool usage",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Azure Kubernetes Service",
+      "tipId": "azure-aks-001",
+      "title": "Right-size AKS node pools and enable cluster autoscaler",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Azure Kubernetes Service",
+      "tipId": "azure-aks-002",
+      "title": "Use Spot node pools for interruptible AKS workloads",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Azure Kubernetes Service",
+      "tipId": "azure-aks-003",
+      "title": "Scale down AKS dev/test clusters outside business hours",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Azure Kubernetes Service",
+      "tipId": "azure-aks-004",
+      "title": "Use AKS Free tier for dev/test clusters",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Azure Monitor",
+      "tipId": "azure-monitor-001",
+      "title": "Optimize Log Analytics data ingestion",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Azure Monitor",
+      "tipId": "azure-monitor-002",
+      "title": "Use commitment tiers for Log Analytics",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Azure Monitor",
+      "tipId": "azure-monitor-003",
+      "title": "Use Basic Logs for high-volume diagnostic data",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Azure Policy",
+      "tipId": "azure policy-001",
+      "title": "Enforce Cost Policies with Azure Policy",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Azure Policy",
+      "tipId": "azure policy-002",
+      "title": "Enforce Resource Tags",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Azure Policy",
+      "tipId": "azure policy-003",
+      "title": "Implement cost alert policies",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Azure Policy",
+      "tipId": "azure policy-004",
+      "title": "Implement Cost Management Policies",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Azure Policy",
+      "tipId": "azure policy-005",
+      "title": "Enforce Azure Policy for resource tagging",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Azure Policy",
+      "tipId": "azure-policy-001",
+      "title": "Enforce cost-center and environment tags via Policy",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Azure Policy",
+      "tipId": "azure-policy-002",
+      "title": "Restrict expensive VM SKUs with Azure Policy",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Azure Policy",
+      "tipId": "azure-policy-003",
+      "title": "Restrict allowed regions with Azure Policy",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Azure SQL",
+      "tipId": "azure sql-001",
+      "title": "Compress Data in Azure SQL",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Azure SQL",
+      "tipId": "azure-sql-001",
+      "title": "Right-size Azure SQL databases",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Azure SQL",
+      "tipId": "azure-sql-002",
+      "title": "Use Azure SQL Reserved Capacity",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Azure SQL",
+      "tipId": "azure-sql-003",
+      "title": "Use Elastic Pools for multi-tenant databases",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Azure SQL",
+      "tipId": "azure-sql-004",
+      "title": "Use serverless tier for intermittent SQL workloads",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Azure SQL",
+      "tipId": "azure-sql-005",
+      "title": "Apply Azure Hybrid Benefit to Azure SQL",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Azure Synapse",
+      "tipId": "azure synapse-001",
+      "title": "Delete Unused Synapse Workspaces",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Azure Synapse",
+      "tipId": "azure-synapse-001",
+      "title": "Pause dedicated SQL pools when not in use",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Azure Synapse",
+      "tipId": "azure-synapse-002",
+      "title": "Scale down Synapse DWU level for lighter workloads",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Azure Synapse",
+      "tipId": "azure-synapse-003",
+      "title": "Use Synapse Serverless SQL for ad-hoc queries",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "GCP",
+      "service": "Backup",
+      "tipId": "gcp-backup-001",
+      "title": "Optimize Backup for GKE and Compute Engine retention",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "GCP",
+      "service": "Backup",
+      "tipId": "gcp-backup-002",
+      "title": "Remove backups for deleted resources",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "OPENAI",
+      "service": "Batch API",
+      "tipId": "openai-batch-001",
+      "title": "Use the Batch API for non-time-sensitive workloads at 50% discount",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for OPENAI)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "OPENAI",
+      "service": "Batch API",
+      "tipId": "openai-batch-002",
+      "title": "Consolidate small requests into batch jobs to reduce overhead",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for OPENAI)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AWS",
+      "service": "Bedrock",
+      "tipId": "bedrock-001",
+      "title": "Use smaller/cheaper Bedrock models for simple tasks",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "Bedrock",
+      "tipId": "bedrock-002",
+      "title": "Use Provisioned Throughput for high-volume Bedrock",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "GCP",
+      "service": "BigQuery",
+      "tipId": "bigquery-001",
+      "title": "Partition and cluster tables in BigQuery",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "GCP",
+      "service": "BigQuery",
+      "tipId": "gcp-bq-001",
+      "title": "Use BigQuery editions with autoscaling for variable workloads",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "GCP",
+      "service": "BigQuery",
+      "tipId": "gcp-bq-002",
+      "title": "Set table expiration and partition pruning",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "GCP",
+      "service": "BigQuery",
+      "tipId": "gcp-bq-003",
+      "title": "Use clustering to reduce BigQuery bytes scanned",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "GCP",
+      "service": "BigQuery",
+      "tipId": "gcp-bq-004",
+      "title": "Purchase BigQuery committed slots for steady analytics workloads",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "GCP",
+      "service": "BigQuery",
+      "tipId": "gcp-bq-005",
+      "title": "Use BigQuery long-term storage pricing automatically",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "GCP",
+      "service": "Bigtable",
+      "tipId": "gcp-bigtable-001",
+      "title": "Scale down Bigtable nodes based on actual throughput",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "GCP",
+      "service": "Bigtable",
+      "tipId": "gcp-bigtable-002",
+      "title": "Use Bigtable committed use discounts",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "GCP",
+      "service": "Bigtable",
+      "tipId": "gcp-bigtable-003",
+      "title": "Configure garbage collection policies for Bigtable column families",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Blob Storage",
+      "tipId": "azure-storage-001",
+      "title": "Move infrequently accessed blobs to Cool or Archive tier",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Blob Storage",
+      "tipId": "azure-storage-002",
+      "title": "Configure lifecycle management policies for blob data",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Blob Storage",
+      "tipId": "azure-storage-003",
+      "title": "Delete old blob snapshots and versions",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Blob Storage",
+      "tipId": "azure-storage-004",
+      "title": "Use Reserved Capacity for predictable storage volumes",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "OPENAI",
+      "service": "Caching",
+      "tipId": "openai-caching-001",
+      "title": "Cache identical prompt responses to eliminate redundant API calls",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for OPENAI)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "OPENAI",
+      "service": "Caching",
+      "tipId": "openai-caching-002",
+      "title": "Use semantic caching for similar but not identical queries",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for OPENAI)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "GCP",
+      "service": "Cloud Armor",
+      "tipId": "gcp-armor-001",
+      "title": "Use Cloud Armor Standard tier for basic protection",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "GCP",
+      "service": "Cloud Armor",
+      "tipId": "gcp-armor-002",
+      "title": "Consolidate Cloud Armor policies across services",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "GCP",
+      "service": "Cloud Build",
+      "tipId": "cloud build-001",
+      "title": "Schedule Cloud Build pipelines during off-peak hours",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "GCP",
+      "service": "Cloud Build",
+      "tipId": "gcp-build-001",
+      "title": "Use default machine type unless builds require more resources",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "GCP",
+      "service": "Cloud Build",
+      "tipId": "gcp-build-002",
+      "title": "Use Docker layer caching to reduce build times",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "GCP",
+      "service": "Cloud CDN",
+      "tipId": "cloud cdn-001",
+      "title": "Leverage Cloud CDN Cache Expiration",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "GCP",
+      "service": "Cloud CDN",
+      "tipId": "gcp-cdn-001",
+      "title": "Enable Cloud CDN cache for static content",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "GCP",
+      "service": "Cloud CDN",
+      "tipId": "gcp-cdn-002",
+      "title": "Optimize Cloud CDN cache hit ratio",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "GCP",
+      "service": "Cloud DNS",
+      "tipId": "gcp-dns-001",
+      "title": "Delete unused Cloud DNS managed zones",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "GCP",
+      "service": "Cloud DNS",
+      "tipId": "gcp-dns-002",
+      "title": "Use DNS policies for internal resolution instead of forwarding zones",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "GCP",
+      "service": "Cloud Functions",
+      "tipId": "gcp-cf-001",
+      "title": "Reduce Cloud Functions memory allocation",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "GCP",
+      "service": "Cloud Functions",
+      "tipId": "gcp-cf-002",
+      "title": "Optimize function cold starts and execution time",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "GCP",
+      "service": "Cloud Functions",
+      "tipId": "gcp-cf-003",
+      "title": "Use min-instances wisely to balance cost and latency",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "GCP",
+      "service": "Cloud Interconnect",
+      "tipId": "cloud interconnect-001",
+      "title": "Implement Cloud Interconnect Partner Connections",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "GCP",
+      "service": "Cloud Interconnect",
+      "tipId": "gcp-interconnect-001",
+      "title": "Right-size Dedicated Interconnect attachments",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "GCP",
+      "service": "Cloud Interconnect",
+      "tipId": "gcp-interconnect-002",
+      "title": "Use Partner Interconnect for medium-bandwidth hybrid connectivity",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "GCP",
+      "service": "Cloud Logging",
+      "tipId": "gcp-logging-001",
+      "title": "Exclude verbose logs with exclusion filters",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "GCP",
+      "service": "Cloud Logging",
+      "tipId": "gcp-logging-002",
+      "title": "Route logs to cheaper storage with log sinks",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "GCP",
+      "service": "Cloud Logging",
+      "tipId": "gcp-logging-003",
+      "title": "Reduce log retention period to minimum required",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "GCP",
+      "service": "Cloud Monitoring",
+      "tipId": "gcp-monitoring-001",
+      "title": "Reduce custom metrics volume and cardinality",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "GCP",
+      "service": "Cloud Monitoring",
+      "tipId": "gcp-monitoring-002",
+      "title": "Remove unused alerting policies and uptime checks",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "GCP",
+      "service": "Cloud NAT",
+      "tipId": "gcp-nat-001",
+      "title": "Right-size Cloud NAT min ports per VM",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "GCP",
+      "service": "Cloud NAT",
+      "tipId": "gcp-nat-002",
+      "title": "Use Private Google Access instead of NAT for GCP API calls",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "GCP",
+      "service": "Cloud Run",
+      "tipId": "gcp-run-001",
+      "title": "Reduce Cloud Run CPU and memory allocation",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "GCP",
+      "service": "Cloud Run",
+      "tipId": "gcp-run-002",
+      "title": "Use Cloud Run concurrency to reduce instance count",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "GCP",
+      "service": "Cloud Run",
+      "tipId": "gcp-run-003",
+      "title": "Scale Cloud Run to zero for infrequent services",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "GCP",
+      "service": "Cloud Run",
+      "tipId": "gcp-run-004",
+      "title": "Use Cloud Run committed use discounts",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "GCP",
+      "service": "Cloud SQL",
+      "tipId": "gcp-sql-001",
+      "title": "Right-size Cloud SQL instances",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "GCP",
+      "service": "Cloud SQL",
+      "tipId": "gcp-sql-002",
+      "title": "Use Cloud SQL committed use discounts",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "GCP",
+      "service": "Cloud SQL",
+      "tipId": "gcp-sql-003",
+      "title": "Stop Cloud SQL instances in non-production environments",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "GCP",
+      "service": "Cloud SQL",
+      "tipId": "gcp-sql-004",
+      "title": "Reduce Cloud SQL backup retention and storage",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "GCP",
+      "service": "Cloud Spanner",
+      "tipId": "cloud spanner-001",
+      "title": "Optimize Cloud Spanner instance size",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "GCP",
+      "service": "Cloud Spanner",
+      "tipId": "cloud spanner-002",
+      "title": "Choose Optimal Spanner Instance Type",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "GCP",
+      "service": "Cloud Spanner",
+      "tipId": "cloud spanner-003",
+      "title": "Choose Spanner Multi-Region for Lower Costs",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "GCP",
+      "service": "Cloud Spanner",
+      "tipId": "cloud spanner-004",
+      "title": "Use Multi-Region Spanner",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "GCP",
+      "service": "Cloud Spanner",
+      "tipId": "cloud spanner-005",
+      "title": "Use Cloud Spanner's automatic scaling",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "GCP",
+      "service": "Cloud Spanner",
+      "tipId": "cloud spanner-006",
+      "title": "Right-size Cloud Spanner nodes",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "GCP",
+      "service": "Cloud Spanner",
+      "tipId": "cloud spanner-007",
+      "title": "Right-size Cloud Spanner Instances",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "GCP",
+      "service": "Cloud Spanner",
+      "tipId": "cloud spanner-008",
+      "title": "Use on-demand instances",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "GCP",
+      "service": "Cloud Spanner",
+      "tipId": "cloud spanner-009",
+      "title": "Use Committed Use Discounts for Spanner",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "GCP",
+      "service": "Cloud Spanner",
+      "tipId": "cloud spanner-010",
+      "title": "Scale Down Spanner Nodes During Off-Peak Hours",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "GCP",
+      "service": "Cloud Spanner",
+      "tipId": "cloud spanner-011",
+      "title": "Right-size Cloud Spanner nodes based on actual throughput usage",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "GCP",
+      "service": "Cloud Spanner",
+      "tipId": "gcp-spanner-001",
+      "title": "Scale down Cloud Spanner nodes for off-peak periods",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "GCP",
+      "service": "Cloud Spanner",
+      "tipId": "gcp-spanner-002",
+      "title": "Use Cloud Spanner committed use discounts",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "GCP",
+      "service": "Cloud Spanner",
+      "tipId": "gcp-spanner-003",
+      "title": "Use Spanner Free Trial instances for development",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "GCP",
+      "service": "Cloud Storage",
+      "tipId": "gcp-storage-001",
+      "title": "Apply lifecycle rules to move data to colder storage classes",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "GCP",
+      "service": "Cloud Storage",
+      "tipId": "gcp-storage-002",
+      "title": "Delete orphaned persistent disks and snapshots",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "GCP",
+      "service": "Cloud Storage",
+      "tipId": "gcp-storage-003",
+      "title": "Configure Object Lifecycle to delete old temporary objects",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "GCP",
+      "service": "Cloud Storage",
+      "tipId": "gcp-storage-004",
+      "title": "Use regional buckets instead of multi-regional when locality suffices",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "GCP",
+      "service": "Cloud Trace",
+      "tipId": "gcp-trace-001",
+      "title": "Configure trace sampling rate for cost control",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AWS",
+      "service": "CloudFront",
+      "tipId": "cloudfront-001",
+      "title": "Optimize CloudFront cache hit ratio",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "CloudFront",
+      "tipId": "cloudfront-002",
+      "title": "Use CloudFront Security Savings Bundle",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "CloudFront",
+      "tipId": "cloudfront-003",
+      "title": "Implement Regional Caching for CloudFront",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "CloudWatch",
+      "tipId": "cloudwatch-001",
+      "title": "Remove unused CloudWatch alarms",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "CloudWatch",
+      "tipId": "cloudwatch-002",
+      "title": "Delete Unused CloudWatch Logs",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "CloudWatch Logs",
+      "tipId": "cwlogs-001",
+      "title": "Set CloudWatch Logs retention periods",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "CloudWatch Logs",
+      "tipId": "cwlogs-002",
+      "title": "Delete empty and unused log groups",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "CodeBuild",
+      "tipId": "codebuild-001",
+      "title": "Schedule builds during off-peak hours",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "CodeBuild",
+      "tipId": "codebuild-002",
+      "title": "Stop Unused CodeBuild Projects",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "CodeBuild",
+      "tipId": "codebuild-003",
+      "title": "Implement Build Project Caching",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "Cognito",
+      "tipId": "cognito-001",
+      "title": "Remove unused Cognito User Pools",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "Cognito",
+      "tipId": "cognito-002",
+      "title": "Clean Up Unused Cognito User Pools",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "GCP",
+      "service": "Compute Engine",
+      "tipId": "gcp-ce-001",
+      "title": "Right-size underutilized VM instances",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "GCP",
+      "service": "Compute Engine",
+      "tipId": "gcp-ce-002",
+      "title": "Purchase Committed Use Discounts (CUDs)",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "GCP",
+      "service": "Compute Engine",
+      "tipId": "gcp-ce-003",
+      "title": "Leverage Sustained Use Discounts (automatic)",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "GCP",
+      "service": "Compute Engine",
+      "tipId": "gcp-ce-004",
+      "title": "Use Spot VMs for fault-tolerant workloads",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "GCP",
+      "service": "Compute Engine",
+      "tipId": "gcp-ce-005",
+      "title": "Use custom machine types for precise sizing",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "GCP",
+      "service": "Compute Engine",
+      "tipId": "gcp-ce-006",
+      "title": "Schedule non-production VM stop/start",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "GCP",
+      "service": "Compute Engine",
+      "tipId": "gcp-ce-007",
+      "title": "Use BYOL or free-tier OS images to avoid license premiums",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "GCP",
+      "service": "Compute Engine",
+      "tipId": "gcp-ce-008",
+      "title": "Delete idle VMs identified by GCP Recommender",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Container Instances",
+      "tipId": "azure-aci-001",
+      "title": "Use Container Instances for short-lived batch jobs",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Container Instances",
+      "tipId": "azure-aci-002",
+      "title": "Minimize ACI resource allocations",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Container Instances",
+      "tipId": "azure-aci-003",
+      "title": "Use Spot containers for interruptible ACI workloads",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Container Instances",
+      "tipId": "container instances-001",
+      "title": "Right-size container instances",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Cosmos DB",
+      "tipId": "azure-cosmos-001",
+      "title": "Use autoscale throughput for variable Cosmos DB workloads",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Cosmos DB",
+      "tipId": "azure-cosmos-002",
+      "title": "Purchase Cosmos DB Reserved Capacity",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Cosmos DB",
+      "tipId": "azure-cosmos-003",
+      "title": "Use Cosmos DB serverless for low-traffic applications",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Cosmos DB",
+      "tipId": "azure-cosmos-004",
+      "title": "Configure TTL to auto-expire stale Cosmos DB data",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "DDoS Protection",
+      "tipId": "azure-ddos-001",
+      "title": "Use DDoS Network Protection plan across subscriptions",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "DDoS Protection",
+      "tipId": "azure-ddos-002",
+      "title": "Evaluate if DDoS IP Protection suits your needs",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Data Factory",
+      "tipId": "azure-datafactory-001",
+      "title": "Optimize Data Factory integration runtime sizing",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Data Factory",
+      "tipId": "azure-datafactory-002",
+      "title": "Set TTL on Data Factory data flow clusters",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Data Factory",
+      "tipId": "azure-datafactory-003",
+      "title": "Use pipeline concurrency limits to control parallel costs",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Data Lake Storage",
+      "tipId": "azure-datalake-001",
+      "title": "Apply lifecycle policies to Data Lake Storage Gen2",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Data Lake Storage",
+      "tipId": "azure-datalake-002",
+      "title": "Compress and optimize file formats in Data Lake",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Data Lake Storage",
+      "tipId": "azure-datalake-003",
+      "title": "Delete temporary and staging data in Data Lake",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Data Lake Storage",
+      "tipId": "data lake storage-001",
+      "title": "Move infrequently accessed data to cooler storage tiers",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Data Lake Storage",
+      "tipId": "data lake storage-002",
+      "title": "Clean Up Old Data in Data Lake",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Data Lake Storage",
+      "tipId": "data lake storage-003",
+      "title": "Implement Azure Data Lake Storage tiers",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Data Lake Storage",
+      "tipId": "data lake storage-004",
+      "title": "Implement Azure Data Lake Storage tiering policies",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "Data Transfer",
+      "tipId": "data-transfer-001",
+      "title": "Keep traffic within the same region",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getNetworkResources",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "Data Transfer",
+      "tipId": "data-transfer-002",
+      "title": "Use CloudFront for internet egress",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getNetworkResources",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "Data Transfer",
+      "tipId": "data-transfer-003",
+      "title": "Use Availability Zone affinity to reduce cross-AZ costs",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getNetworkResources",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "Data Transfer",
+      "tipId": "data-transfer-004",
+      "title": "Compress data before transfer",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getNetworkResources",
+      "has_check_content": true
+    },
+    {
+      "cloud": "GCP",
+      "service": "Dataflow",
+      "tipId": "gcp-dataflow-001",
+      "title": "Use autoscaling and right-size Dataflow worker machines",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "GCP",
+      "service": "Dataflow",
+      "tipId": "gcp-dataflow-002",
+      "title": "Use Dataflow Shuffle and Streaming Engine to reduce worker costs",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "GCP",
+      "service": "Dataflow",
+      "tipId": "gcp-dataflow-003",
+      "title": "Use FlexRS for non-time-critical batch Dataflow jobs",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "GCP",
+      "service": "Dataproc",
+      "tipId": "gcp-dataproc-001",
+      "title": "Use Spot VMs for Dataproc worker nodes",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "GCP",
+      "service": "Dataproc",
+      "tipId": "gcp-dataproc-002",
+      "title": "Use ephemeral Dataproc clusters for batch jobs",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "GCP",
+      "service": "Dataproc",
+      "tipId": "gcp-dataproc-003",
+      "title": "Use Dataproc Serverless for intermittent Spark workloads",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AWS",
+      "service": "DynamoDB",
+      "tipId": "dynamodb-001",
+      "title": "Switch to On-Demand capacity for variable workloads",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "DynamoDB",
+      "tipId": "dynamodb-002",
+      "title": "Use DynamoDB Reserved Capacity",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "EBS",
+      "tipId": "ebs-001",
+      "title": "Use gp3 instead of gp2",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getEBSVolumes",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "EBS",
+      "tipId": "ebs-002",
+      "title": "Delete unused EBS snapshots",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getEBSVolumes",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "EBS",
+      "tipId": "ebs-003",
+      "title": "Use EBS Snapshots Archive",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getEBSVolumes",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "EBS",
+      "tipId": "ebs-004",
+      "title": "Delete unattached EBS volumes",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getEBSVolumes",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "EBS",
+      "tipId": "ebs-005",
+      "title": "Manage EBS snapshot lifecycle automatically",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getEBSVolumes",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "EC2",
+      "tipId": "ai-fb-218629bc",
+      "title": "Do I have reserved Instances?",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getEC2Instances",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AWS",
+      "service": "EC2",
+      "tipId": "ec2-001",
+      "title": "Right-size EC2 instances",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getEC2Instances",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "EC2",
+      "tipId": "ec2-002",
+      "title": "Use Reserved Instances or Savings Plans",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getEC2Instances",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "EC2",
+      "tipId": "ec2-003",
+      "title": "Use Spot Instances for fault-tolerant workloads",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getEC2Instances",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "EC2",
+      "tipId": "ec2-004",
+      "title": "Schedule non-production instances",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getEC2Instances",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "EC2",
+      "tipId": "ec2-005",
+      "title": "Implement Auto Scaling",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getEC2Instances",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "EC2",
+      "tipId": "ec2-006",
+      "title": "Use Graviton (ARM) instances",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getEC2Instances",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "EC2",
+      "tipId": "ec2-007",
+      "title": "Choose cost-effective AWS regions",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getEC2Instances",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "EC2",
+      "tipId": "ec2-008",
+      "title": "Optimize Auto Scaling policies for cost",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getEC2Instances",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "EC2",
+      "tipId": "ec2-009",
+      "title": "Use mixed instance fleets with Spot",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getEC2Instances",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "EC2",
+      "tipId": "ec2-010",
+      "title": "Match instance family to workload type",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getEC2Instances",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "EC2",
+      "tipId": "ec2-011",
+      "title": "Use AWS Instance Scheduler for non-production",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getEC2Instances",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "EC2",
+      "tipId": "ec2-012",
+      "title": "Enable EC2 hibernation for infrequently used instances",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getEC2Instances",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "EC2",
+      "tipId": "ec2-013",
+      "title": "Scale Auto Scaling Groups to zero after hours",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getEC2Instances",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "EC2",
+      "tipId": "ec2-014",
+      "title": "Optimize ASG clusters with Spot mix and multi-AZ",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getEC2Instances",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "EC2",
+      "tipId": "ec2-015",
+      "title": "Resize over-provisioned EC2 instances",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getEC2Instances",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "EC2",
+      "tipId": "ec2-016",
+      "title": "Optimize Windows Server + SQL Server vCPU licensing costs",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getEC2Instances",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "EC2",
+      "tipId": "ec2-017",
+      "title": "Use BYOL or Dedicated Hosts for Windows/SQL Server licensing",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getEC2Instances",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "EC2",
+      "tipId": "ec2-018",
+      "title": "Request AWS Optimization and Licensing Assessment (OLA)",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getEC2Instances",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "EC2",
+      "tipId": "ec2-019",
+      "title": "Utilize Reserved Instances",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getEC2Instances",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "EC2 - Other",
+      "tipId": "ec2other-001",
+      "title": "Understand EC2 - Other (Not Compute Instances)",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "EC2 - Other",
+      "tipId": "ec2other-002",
+      "title": "Migrate gp2 EBS Volumes to gp3",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "EC2 - Other",
+      "tipId": "ec2other-003",
+      "title": "Clean Up Unattached EBS Volumes",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "EC2 - Other",
+      "tipId": "ec2other-004",
+      "title": "Release Idle Elastic IPs",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "EC2 - Other",
+      "tipId": "ec2other-005",
+      "title": "Reduce EBS Snapshot Costs",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "ECS",
+      "tipId": "ecs-001",
+      "title": "Right-size ECS task definitions",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "ECS",
+      "tipId": "ecs-002",
+      "title": "Enable ECS Service Auto Scaling",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "EFS",
+      "tipId": "efs-001",
+      "title": "Monitor and optimize EFS throughput settings",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "EKS",
+      "tipId": "eks-001",
+      "title": "Right-size EKS node groups and pod resource requests",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "EKS",
+      "tipId": "eks-002",
+      "title": "Enable Karpenter or Cluster Autoscaler for EKS",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "EKS",
+      "tipId": "eks-003",
+      "title": "Scale EKS node groups to zero after hours",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "EKS",
+      "tipId": "eks-004",
+      "title": "Use EKS Spot Nodes",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "EKS",
+      "tipId": "eks-005",
+      "title": "Optimize EKS node group size",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "EKS",
+      "tipId": "eks-006",
+      "title": "Right-size EKS Worker Nodes",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "EKS",
+      "tipId": "eks-007",
+      "title": "Use Spot Instances for EKS Node Groups",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "EKS",
+      "tipId": "eks-008",
+      "title": "Use EKS Spot Instances for Non-Critical Workloads",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "EKS",
+      "tipId": "eks-009",
+      "title": "Use Spot Instances for EKS nodes",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "EKS",
+      "tipId": "eks-010",
+      "title": "Use Spot Instances for EKS worker nodes",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "EKS",
+      "tipId": "eks-011",
+      "title": "Optimize EKS Node Groups",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "ELB",
+      "tipId": "elb-001",
+      "title": "Remove idle load balancers",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "ELB",
+      "tipId": "elb-002",
+      "title": "Right-size load balancer type",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "ELB",
+      "tipId": "elb-003",
+      "title": "Use CloudFront to reduce load balancer data transfer",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "ELB",
+      "tipId": "elb-004",
+      "title": "Tear down non-production load balancers after hours",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "ELB",
+      "tipId": "elb-005",
+      "title": "Clean up empty Target Groups and deregister idle targets",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "EMR",
+      "tipId": "emr-001",
+      "title": "Right-size EMR clusters",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "EMR",
+      "tipId": "emr-002",
+      "title": "Schedule EMR Clusters for Off-Peak Hours",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "ElastiCache",
+      "tipId": "elasticache-001",
+      "title": "Right-size ElastiCache nodes",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "ElastiCache",
+      "tipId": "elasticache-002",
+      "title": "Use Reserved Nodes for ElastiCache",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "ElastiCache",
+      "tipId": "elasticache-003",
+      "title": "Optimize ElastiCache Node Sizes",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "Elastic IP",
+      "tipId": "eip-001",
+      "title": "Release unassociated Elastic IPs",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getNetworkResources",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "Elastic IP",
+      "tipId": "elastic ip-001",
+      "title": "Release Unused Elastic IPs",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getNetworkResources",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "Elastic Load Balancing",
+      "tipId": "elastic load balancing-001",
+      "title": "Remove unused load balancers",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "Elastic Load Balancing",
+      "tipId": "elastic load balancing-002",
+      "title": "Deactivate Unused Load Balancers",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "OPENAI",
+      "service": "Embeddings",
+      "tipId": "openai-model-selection-003",
+      "title": "Use text-embedding-3-small instead of text-embedding-ada-002",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for OPENAI)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Event Hubs",
+      "tipId": "azure-eventhub-001",
+      "title": "Right-size Event Hubs throughput units",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Event Hubs",
+      "tipId": "azure-eventhub-002",
+      "title": "Use Basic tier for simple event streaming scenarios",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Event Hubs",
+      "tipId": "azure-eventhub-003",
+      "title": "Delete unused Event Hub namespaces",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AWS",
+      "service": "EventBridge",
+      "tipId": "eventbridge-001",
+      "title": "Delete unused EventBridge rules",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "EventBridge",
+      "tipId": "eventbridge-002",
+      "title": "Delete Unused Event Buses",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "EventBridge",
+      "tipId": "eventbridge-003",
+      "title": "Deactivate Unused EventBridge Rules",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "EventBridge",
+      "tipId": "eventbridge-004",
+      "title": "Schedule Rule Optimization",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AZURE",
+      "service": "ExpressRoute",
+      "tipId": "azure-expressroute-001",
+      "title": "Right-size ExpressRoute circuit bandwidth",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "ExpressRoute",
+      "tipId": "azure-expressroute-002",
+      "title": "Use ExpressRoute Local for same-metro connectivity",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "GCP",
+      "service": "Filestore",
+      "tipId": "filestore-001",
+      "title": "Use lower-tier storage for cold data",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "GCP",
+      "service": "Filestore",
+      "tipId": "filestore-002",
+      "title": "Use lower-tier Filestore for dev/test",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "GCP",
+      "service": "Filestore",
+      "tipId": "gcp-filestore-001",
+      "title": "Right-size Filestore capacity and tier",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "GCP",
+      "service": "Filestore",
+      "tipId": "gcp-filestore-002",
+      "title": "Delete unused Filestore instances",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "OPENAI",
+      "service": "Fine-Tuning",
+      "tipId": "openai-finetuning-001",
+      "title": "Fine-tune GPT-4o-mini to replace GPT-4 for domain-specific tasks",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for OPENAI)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "OPENAI",
+      "service": "Fine-Tuning",
+      "tipId": "openai-finetuning-002",
+      "title": "Reduce prompt length by encoding instructions into a fine-tuned model",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for OPENAI)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "GCP",
+      "service": "Firestore",
+      "tipId": "gcp-firestore-001",
+      "title": "Optimize Firestore document reads with caching",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "GCP",
+      "service": "Firestore",
+      "tipId": "gcp-firestore-002",
+      "title": "Use composite indexes efficiently to reduce query costs",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "GCP",
+      "service": "Firestore",
+      "tipId": "gcp-firestore-003",
+      "title": "Delete expired and orphaned Firestore documents",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "OPENAI",
+      "service": "GPT-4",
+      "tipId": "openai-model-selection-001",
+      "title": "Use GPT-4o-mini for simple classification tasks",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for OPENAI)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "OPENAI",
+      "service": "GPT-4o",
+      "tipId": "openai-model-selection-002",
+      "title": "Switch from GPT-4 to GPT-4o for equivalent quality at lower cost",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for OPENAI)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AWS",
+      "service": "General",
+      "tipId": "ai-fb-b8745803",
+      "title": "Where can I save money?",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getFinOpsSettings",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AWS",
+      "service": "General",
+      "tipId": "ai-fb-e58407d1",
+      "title": "How efficient is my account?",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getFinOpsSettings",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AWS",
+      "service": "General",
+      "tipId": "finops-settings-001",
+      "title": "Activate Cost Allocation Tags",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getFinOpsSettings",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "General",
+      "tipId": "finops-settings-002",
+      "title": "Activate AWS-Generated Tags",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getFinOpsSettings",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "General",
+      "tipId": "finops-settings-003",
+      "title": "Set Up Cost Anomaly Detection",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getFinOpsSettings",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "General",
+      "tipId": "finops-settings-004",
+      "title": "Enable Hourly Cost Granularity",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getFinOpsSettings",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "General",
+      "tipId": "finops-settings-005",
+      "title": "Enable EC2 Rightsizing Recommendations",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getFinOpsSettings",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "General",
+      "tipId": "finops-settings-006",
+      "title": "Configure Cost and Usage Report (CUR)",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getFinOpsSettings",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "General",
+      "tipId": "finops-settings-007",
+      "title": "Run Tag Backfill for Historical Data",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getFinOpsSettings",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "General",
+      "tipId": "finops-settings-008",
+      "title": "Enable Linked Account Billing Access",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getFinOpsSettings",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "General",
+      "tipId": "finops-settings-009",
+      "title": "Set Up AWS Budgets with Alerts",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getFinOpsSettings",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "General",
+      "tipId": "finops-settings-010",
+      "title": "Improve Resource Tag Coverage",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getFinOpsSettings",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "General",
+      "tipId": "finops-settings-011",
+      "title": "Enroll in AWS Compute Optimizer",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getFinOpsSettings",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "General",
+      "tipId": "finops-settings-012",
+      "title": "Check Tag Activation Status (Linked Account)",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getFinOpsSettings",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "General",
+      "tipId": "general-001",
+      "title": "Enable AWS Cost Explorer",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getFinOpsSettings",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "General",
+      "tipId": "general-002",
+      "title": "Set up AWS Budgets with alerts",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getFinOpsSettings",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "General",
+      "tipId": "general-003",
+      "title": "Enable Cost Anomaly Detection",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getFinOpsSettings",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "General",
+      "tipId": "general-004",
+      "title": "Audit and remove unused resources",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getFinOpsSettings",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "General",
+      "tipId": "general-005",
+      "title": "Implement cost allocation tags",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getFinOpsSettings",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "General",
+      "tipId": "general-006",
+      "title": "Compute Savings Plans",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getFinOpsSettings",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "General",
+      "tipId": "general-007",
+      "title": "EC2 Instance Savings Plans",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getFinOpsSettings",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "General",
+      "tipId": "general-008",
+      "title": "Database Savings Plans",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getFinOpsSettings",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "General",
+      "tipId": "general-009",
+      "title": "Standard Reserved Instances",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getFinOpsSettings",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "General",
+      "tipId": "general-010",
+      "title": "Convertible Reserved Instances",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getFinOpsSettings",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "General",
+      "tipId": "general-011",
+      "title": "Monthly cost review automation",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getFinOpsSettings",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "General",
+      "tipId": "general-012",
+      "title": "Use AWS Cost Optimization Hub",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getFinOpsSettings",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "General",
+      "tipId": "general-013",
+      "title": "Implement chargeback with billing groups",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getFinOpsSettings",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "General",
+      "tipId": "general-014",
+      "title": "Sell unused Reserved Instances on RI Marketplace",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getFinOpsSettings",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "General",
+      "tipId": "general-015",
+      "title": "Migrate to serverless where possible",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getFinOpsSettings",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "General",
+      "tipId": "general-016",
+      "title": "Use Amazon Lightsail for simple, predictable workloads",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getFinOpsSettings",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "General",
+      "tipId": "general-017",
+      "title": "Set up billing alarms from day one",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getFinOpsSettings",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "General",
+      "tipId": "general-018",
+      "title": "Engage your AWS account manager",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getFinOpsSettings",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "General",
+      "tipId": "openai-009",
+      "title": "How are OpenAI tokens priced?",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getFinOpsSettings",
+      "has_check_content": true
+    },
+    {
+      "cloud": "OPENAI",
+      "service": "General",
+      "tipId": "openai-flex-processing-001",
+      "title": "Use Flex Processing for lower-priority or non-production tasks",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for OPENAI)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "OPENAI",
+      "service": "General",
+      "tipId": "openai-multimodel-001",
+      "title": "Route tasks dynamically across models for optimal cost-quality",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for OPENAI)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "OPENAI",
+      "service": "General",
+      "tipId": "openai-workspace-001",
+      "title": "Audit inactive ChatGPT Team/Enterprise seats monthly",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for OPENAI)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "OPENAI",
+      "service": "General",
+      "tipId": "openai-workspace-002",
+      "title": "Build internal Custom GPTs instead of paying for third-party wrappers",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for OPENAI)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "OPENAI",
+      "service": "General",
+      "tipId": "openai-workspace-003",
+      "title": "Turn off chat history for free-tier contractors to avoid training",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for OPENAI)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "OPENAI",
+      "service": "General",
+      "tipId": "openai-workspace-004",
+      "title": "Set hard dollar limits and alert thresholds in OpenAI Billing",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for OPENAI)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AWS",
+      "service": "Glue",
+      "tipId": "glue-001",
+      "title": "Schedule Glue jobs during off-peak hours",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "Glue",
+      "tipId": "glue-002",
+      "title": "Downsize Glue Jobs",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "Glue",
+      "tipId": "glue-003",
+      "title": "Use Glue Dynamic Frames",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "Glue",
+      "tipId": "glue-004",
+      "title": "Optimize Glue Crawlers",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "Glue",
+      "tipId": "glue-005",
+      "title": "Stop unused Glue jobs",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "Glue",
+      "tipId": "glue-006",
+      "title": "Stop unused Glue ETL jobs",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "Glue",
+      "tipId": "glue-007",
+      "title": "Stop Idle Glue Crawlers",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "GCP",
+      "service": "Google Kubernetes Engine",
+      "tipId": "gcp-gke-001",
+      "title": "Enable GKE cluster autoscaler and vertical pod autoscaler",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "GCP",
+      "service": "Google Kubernetes Engine",
+      "tipId": "gcp-gke-002",
+      "title": "Use Spot VMs for GKE node pools",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "GCP",
+      "service": "Google Kubernetes Engine",
+      "tipId": "gcp-gke-003",
+      "title": "Use GKE Autopilot for per-pod billing",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "GCP",
+      "service": "Google Kubernetes Engine",
+      "tipId": "gcp-gke-004",
+      "title": "Scale GKE dev/test clusters to zero nodes after hours",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "GCP",
+      "service": "Google Kubernetes Engine",
+      "tipId": "gcp-gke-005",
+      "title": "Use e2 machine types for GKE cost-optimized node pools",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Governance",
+      "tipId": "azure-governance-001",
+      "title": "Enforce tagging policies for cost allocation",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "GCP",
+      "service": "Governance",
+      "tipId": "gcp-governance-001",
+      "title": "Apply labels for cost attribution and budget alerts",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "GCP",
+      "service": "Governance",
+      "tipId": "gcp-governance-002",
+      "title": "Use Organization Policies to restrict expensive resources",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "GCP",
+      "service": "Governance",
+      "tipId": "gcp-governance-003",
+      "title": "Use project-level budgets with automated responses",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AWS",
+      "service": "GuardDuty",
+      "tipId": "guardduty-001",
+      "title": "Schedule GuardDuty findings review",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "GuardDuty",
+      "tipId": "guardduty-002",
+      "title": "Disable GuardDuty in Non-Production Accounts",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "GuardDuty",
+      "tipId": "guardduty-003",
+      "title": "Enable GuardDuty on Critical Accounts Only",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "GuardDuty",
+      "tipId": "guardduty-004",
+      "title": "Adjust GuardDuty Scope",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "IAM",
+      "tipId": "iam-001",
+      "title": "Remove unused IAM roles",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "IAM",
+      "tipId": "iam-002",
+      "title": "Remove unused IAM policies",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "KMS",
+      "tipId": "kms-001",
+      "title": "Audit and remove unused KMS keys",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "KMS",
+      "tipId": "kms-002",
+      "title": "Reduce KMS API request costs",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Key Vault",
+      "tipId": "azure-keyvault-001",
+      "title": "Use Standard tier Key Vault unless HSM is required",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Key Vault",
+      "tipId": "azure-keyvault-002",
+      "title": "Delete unused Key Vault secrets and expired certificates",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Key Vault",
+      "tipId": "key vault-001",
+      "title": "Remove unused Azure Key Vault secrets",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Key Vault",
+      "tipId": "key vault-002",
+      "title": "Clean up old or unused secrets in Azure Key Vault",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Key Vault",
+      "tipId": "key vault-003",
+      "title": "Clean up unused Key Vault resources",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Key Vault",
+      "tipId": "key vault-004",
+      "title": "Delete unused Key Vault resources",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "Kinesis",
+      "tipId": "kinesis-001",
+      "title": "Delete unused Kinesis streams",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "Kinesis",
+      "tipId": "kinesis-002",
+      "title": "Clean Up Old Kinesis Streams",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "Kinesis",
+      "tipId": "kinesis-003",
+      "title": "Right-size Kinesis data streams",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "Lambda",
+      "tipId": "lambda-001",
+      "title": "Right-size Lambda memory",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getLambdaFunctions",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "Lambda",
+      "tipId": "lambda-002",
+      "title": "Use Graviton for Lambda",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getLambdaFunctions",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "Lambda",
+      "tipId": "lambda-003",
+      "title": "Avoid unnecessary Provisioned Concurrency",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getLambdaFunctions",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "Lambda",
+      "tipId": "lambda-006",
+      "title": "Schedule unused Lambdas for off-peak hours",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getLambdaFunctions",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "Lambda",
+      "tipId": "lambda-007",
+      "title": "Schedule Lambda Functions for Off-Peak Hours",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getLambdaFunctions",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "Lambda",
+      "tipId": "lambda-008",
+      "title": "Schedule Lambda functions wisely",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getLambdaFunctions",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "Lambda",
+      "tipId": "lambda-009",
+      "title": "Remove unused Lambda functions",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getLambdaFunctions",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "Lambda",
+      "tipId": "lambda-010",
+      "title": "Use Provisioned Concurrency",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getLambdaFunctions",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "Lambda",
+      "tipId": "lambda-011",
+      "title": "Optimize Lambda Function Concurrency Limits",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getLambdaFunctions",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "Lambda",
+      "tipId": "lambda-012",
+      "title": "Optimize Lambda Memory and Timeout Settings",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getLambdaFunctions",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "Lambda",
+      "tipId": "lambda-013",
+      "title": "Identify and remove unused Lambda functions",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getLambdaFunctions",
+      "has_check_content": true
+    },
+    {
+      "cloud": "GCP",
+      "service": "Load Balancing",
+      "tipId": "gcp-lb-001",
+      "title": "Choose the right Load Balancer type for your use case",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "GCP",
+      "service": "Load Balancing",
+      "tipId": "gcp-lb-002",
+      "title": "Delete idle load balancer forwarding rules",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Log Analytics",
+      "tipId": "azure-loganalytics-001",
+      "title": "Reduce workspace data retention to minimum required",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Log Analytics",
+      "tipId": "azure-loganalytics-002",
+      "title": "Filter out unnecessary log sources and tables",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AWS",
+      "service": "MSK",
+      "tipId": "msk-001",
+      "title": "Remove unused MSK clusters",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "MSK",
+      "tipId": "msk-002",
+      "title": "Schedule MSK Maintenance",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "MSK",
+      "tipId": "msk-003",
+      "title": "Scale down unused MSK clusters",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Managed Disks",
+      "tipId": "azure-disk-001",
+      "title": "Delete unattached Managed Disks",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Managed Disks",
+      "tipId": "azure-disk-002",
+      "title": "Downgrade Premium SSD to Standard SSD for non-critical disks",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Managed Disks",
+      "tipId": "azure-disk-003",
+      "title": "Right-size disk capacity to actual usage",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "GCP",
+      "service": "Memorystore",
+      "tipId": "gcp-memorystore-001",
+      "title": "Right-size Memorystore Redis instances",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "GCP",
+      "service": "Memorystore",
+      "tipId": "gcp-memorystore-002",
+      "title": "Delete unused Memorystore instances",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "GCP",
+      "service": "Memorystore",
+      "tipId": "gcp-memorystore-003",
+      "title": "Use Memorystore for Redis Cluster for large deployments",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "GCP",
+      "service": "Memorystore",
+      "tipId": "memorystore-001",
+      "title": "Clean up unused Memorystore instances",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "GCP",
+      "service": "Memorystore",
+      "tipId": "memorystore-002",
+      "title": "Right-size Memorystore instances",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "NAT Gateway",
+      "tipId": "nat-001",
+      "title": "Use VPC Endpoints instead of NAT Gateway",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getNetworkResources",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "NAT Gateway",
+      "tipId": "nat-002",
+      "title": "Consolidate NAT Gateways",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getNetworkResources",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "NAT Gateway",
+      "tipId": "vpc-001",
+      "title": "Check for idle VPC resources",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getNetworkResources",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Networking",
+      "tipId": "azure-bandwidth-001",
+      "title": "Reduce egress costs with Azure CDN or Front Door",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Networking",
+      "tipId": "azure-bandwidth-002",
+      "title": "Co-locate resources in the same region to avoid cross-region transfer",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Networking",
+      "tipId": "azure-network-001",
+      "title": "Delete unused Public IP addresses",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Networking",
+      "tipId": "azure-network-002",
+      "title": "Remove idle Load Balancers",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Networking",
+      "tipId": "azure-network-003",
+      "title": "Use VNet peering instead of VPN Gateway for Azure-to-Azure",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "GCP",
+      "service": "Networking",
+      "tipId": "gcp-network-001",
+      "title": "Minimize cross-region and internet egress",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "GCP",
+      "service": "Networking",
+      "tipId": "gcp-network-002",
+      "title": "Use Standard network tier for non-latency-critical egress",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AWS",
+      "service": "OpenAI",
+      "tipId": "openai-001",
+      "title": "Use tiered models — route to cheaper models for simple tasks",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "OpenAI",
+      "tipId": "openai-002",
+      "title": "Cap output token length (max_tokens)",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "OpenAI",
+      "tipId": "openai-003",
+      "title": "Truncate chat history to reduce input tokens",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "OpenAI",
+      "tipId": "openai-004",
+      "title": "Leverage prompt caching for static system prompts",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "OpenAI",
+      "tipId": "openai-005",
+      "title": "Use the Batch API for non-urgent tasks (50% discount)",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "OpenAI",
+      "tipId": "openai-006",
+      "title": "Fine-tune smaller models instead of complex prompting on larger ones",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "OpenAI",
+      "tipId": "openai-007",
+      "title": "Optimize system prompts — keep them concise",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "OpenAI",
+      "tipId": "openai-008",
+      "title": "Set image detail to 'low' for vision tasks when possible",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "OpenSearch",
+      "tipId": "opensearch-001",
+      "title": "Right-size OpenSearch nodes",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "OpenSearch",
+      "tipId": "opensearch-002",
+      "title": "Optimize OpenSearch Indices",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "OpenSearch",
+      "tipId": "opensearch-003",
+      "title": "Use UltraWarm for infrequent access",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "GCP",
+      "service": "Persistent Disks",
+      "tipId": "gcp-pd-001",
+      "title": "Use Standard persistent disks instead of SSD for non-critical workloads",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "GCP",
+      "service": "Persistent Disks",
+      "tipId": "gcp-pd-002",
+      "title": "Delete unattached persistent disks",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "GCP",
+      "service": "Persistent Disks",
+      "tipId": "gcp-pd-003",
+      "title": "Delete old disk snapshots beyond retention requirements",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "OPENAI",
+      "service": "Prompt Optimization",
+      "tipId": "openai-prompt-reduction-002",
+      "title": "Limit conversation history to recent messages only",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for OPENAI)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "GCP",
+      "service": "Pub/Sub",
+      "tipId": "gcp-pubsub-001",
+      "title": "Reduce Pub/Sub message retention and snapshot costs",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "GCP",
+      "service": "Pub/Sub",
+      "tipId": "gcp-pubsub-002",
+      "title": "Delete unused Pub/Sub subscriptions and topics",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "GCP",
+      "service": "Pub/Sub",
+      "tipId": "gcp-pubsub-003",
+      "title": "Use Pub/Sub Lite for high-volume, cost-sensitive streaming",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AWS",
+      "service": "RDS",
+      "tipId": "rds-001",
+      "title": "Right-size RDS instances",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getRDSInstances",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "RDS",
+      "tipId": "rds-002",
+      "title": "Use Reserved Instances for RDS",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getRDSInstances",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "RDS",
+      "tipId": "rds-003",
+      "title": "Consider Aurora Serverless v2",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getRDSInstances",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "RDS",
+      "tipId": "rds-004",
+      "title": "Optimize RDS storage",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getRDSInstances",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "RDS",
+      "tipId": "rds-005",
+      "title": "Use read replicas to offload database queries",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getRDSInstances",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "RDS",
+      "tipId": "rds-006",
+      "title": "Migrate from commercial to open-source databases",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getRDSInstances",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "RDS",
+      "tipId": "rds-007",
+      "title": "Schedule non-production RDS & Aurora databases",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getRDSInstances",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "RDS",
+      "tipId": "rds-009",
+      "title": "Optimize RDS SQL Server licensing and instance sizing",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getRDSInstances",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "RDS",
+      "tipId": "rds-010",
+      "title": "Switch to Reserved Instances for RDS",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getRDSInstances",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "RDS",
+      "tipId": "rds-011",
+      "title": "Automate RDS snapshot cleanup",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getRDSInstances",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "RDS",
+      "tipId": "rds-012",
+      "title": "Optimize RDS automated backups",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getRDSInstances",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "RDS",
+      "tipId": "rds-013",
+      "title": "Move infrequently accessed data to RDS Aurora Freeze",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getRDSInstances",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "RDS",
+      "tipId": "rds-014",
+      "title": "Use RDS storage autoscaling",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getRDSInstances",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "Redshift",
+      "tipId": "redshift-001",
+      "title": "Pause non-production Redshift clusters",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "Rekognition",
+      "tipId": "rekognition-001",
+      "title": "Optimize Rekognition API call volume",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "Rekognition",
+      "tipId": "rekognition-002",
+      "title": "Delete unused Rekognition collections",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "S3",
+      "tipId": "s3-001",
+      "title": "Use S3 Intelligent-Tiering",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getS3Buckets",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "S3",
+      "tipId": "s3-002",
+      "title": "Implement lifecycle policies",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getS3Buckets",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "S3",
+      "tipId": "s3-003",
+      "title": "Delete incomplete multipart uploads",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getS3Buckets",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "S3",
+      "tipId": "s3-004",
+      "title": "Manage object versions",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getS3Buckets",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "S3",
+      "tipId": "s3-005",
+      "title": "Use S3 Storage Lens and Analytics",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getS3Buckets",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "S3",
+      "tipId": "s3-006",
+      "title": "Implement S3 Lifecycle Policies for Transitions",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getS3Buckets",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "S3",
+      "tipId": "s3-007",
+      "title": "Use S3 Lifecycle Policies",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getS3Buckets",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "S3",
+      "tipId": "s3-008",
+      "title": "Implement S3 Intelligent-Tiering for unpredictable access patterns",
+      "drilldown_class": "FULL",
+      "openapi_operation": "getS3Buckets",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "SES",
+      "tipId": "ses-001",
+      "title": "Optimize SES sending costs",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "SES",
+      "tipId": "ses-002",
+      "title": "Use SES Sending Patterns",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "SNS",
+      "tipId": "sns-001",
+      "title": "Optimize SNS topics and subscriptions",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "SNS",
+      "tipId": "sns-002",
+      "title": "Right-size SNS topics",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "SNS",
+      "tipId": "sns-003",
+      "title": "Implement SNS Message Filters",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "SNS",
+      "tipId": "sns-004",
+      "title": "Delete Unused SNS Topics",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "SNS",
+      "tipId": "sns-005",
+      "title": "Clean Up Unused SNS Topics",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "SQS",
+      "tipId": "sqs-001",
+      "title": "Adjust SQS message retention period",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "SQS",
+      "tipId": "sqs-002",
+      "title": "Optimize SQS Message Retention",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "SageMaker",
+      "tipId": "sagemaker-001",
+      "title": "Stop idle SageMaker notebook instances",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "SageMaker",
+      "tipId": "sagemaker-002",
+      "title": "Remove unused SageMaker endpoints",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "SageMaker",
+      "tipId": "sagemaker-003",
+      "title": "Use SageMaker Spot Instances",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "SageMaker",
+      "tipId": "sagemaker-004",
+      "title": "Right-size SageMaker Instances",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "SageMaker",
+      "tipId": "sagemaker-005",
+      "title": "Set up SageMaker endpoint alerts",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "SageMaker",
+      "tipId": "sagemaker-006",
+      "title": "Schedule SageMaker endpoints",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "SageMaker",
+      "tipId": "sagemaker-007",
+      "title": "Use SageMaker Pipelines for CI/CD",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "SageMaker",
+      "tipId": "sagemaker-008",
+      "title": "Terminate idle SageMaker notebook instances",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "SageMaker",
+      "tipId": "sagemaker-009",
+      "title": "Stop Unused SageMaker Notebooks",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "SageMaker",
+      "tipId": "sagemaker-010",
+      "title": "Use SageMaker Scheduled Endpoints",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "SageMaker",
+      "tipId": "sagemaker-011",
+      "title": "Stop idle SageMaker endpoints",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "GCP",
+      "service": "Secret Manager",
+      "tipId": "gcp-secretmgr-001",
+      "title": "Delete unused Secret Manager secret versions",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AWS",
+      "service": "Secrets Manager",
+      "tipId": "secrets manager-001",
+      "title": "Rotate secrets regularly",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "Secrets Manager",
+      "tipId": "secrets manager-002",
+      "title": "Rotate secrets on a schedule",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Service Bus",
+      "tipId": "azure-servicebus-001",
+      "title": "Downgrade Service Bus tier for low-volume messaging",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Service Bus",
+      "tipId": "azure-servicebus-002",
+      "title": "Remove unused Service Bus queues and topics",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Service Bus",
+      "tipId": "azure-servicebus-003",
+      "title": "Set message TTL and dead-letter policies",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Service Bus",
+      "tipId": "service bus-001",
+      "title": "Archive Old Service Bus Messages",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "Shield",
+      "tipId": "shield-001",
+      "title": "Monitor Shield Advanced usage",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "Shield",
+      "tipId": "shield-002",
+      "title": "Evaluate Shield Advanced Usage",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Site Recovery",
+      "tipId": "azure-asr-001",
+      "title": "Remove unnecessary VMs from Site Recovery replication",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Site Recovery",
+      "tipId": "azure-asr-002",
+      "title": "Reduce Site Recovery snapshot retention",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "GCP",
+      "service": "Speech-to-Text",
+      "tipId": "gcp-speech-001",
+      "title": "Choose appropriate Speech-to-Text model for accuracy needs",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AWS",
+      "service": "Step Functions",
+      "tipId": "step functions-001",
+      "title": "Simplify Step Functions state machines",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "Step Functions",
+      "tipId": "step functions-002",
+      "title": "Schedule State Machine Executions",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Storage",
+      "tipId": "azure-storage-002",
+      "title": "Delete unattached Managed Disks",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Storage",
+      "tipId": "storage-001",
+      "title": "Move rarely accessed data to cooler tiers",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Storage",
+      "tipId": "storage-002",
+      "title": "Move data to Azure Cool or Archive storage",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Storage",
+      "tipId": "storage-003",
+      "title": "Move Cold Data to Cool Storage",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "Systems Manager",
+      "tipId": "systems manager-001",
+      "title": "Schedule maintenance windows",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "Systems Manager",
+      "tipId": "systems manager-002",
+      "title": "Use AWS License Manager",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "OPENAI",
+      "service": "Token Optimization",
+      "tipId": "openai-prompt-reduction-001",
+      "title": "Compress system prompts to reduce input token costs",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for OPENAI)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "OPENAI",
+      "service": "Token Optimization",
+      "tipId": "openai-token-min-001",
+      "title": "Minify structured JSON output to save 30-50% on response tokens",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for OPENAI)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "OPENAI",
+      "service": "Token Optimization",
+      "tipId": "openai-token-min-002",
+      "title": "Set max_tokens parameter to prevent runaway verbose generation",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for OPENAI)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "Transfer Family",
+      "tipId": "transfer family-001",
+      "title": "Optimize Transfer Family workflow",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "Transfer Family",
+      "tipId": "transfer family-002",
+      "title": "Right-Size Transfer Family Servers",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AZURE",
+      "service": "VM Scale Sets",
+      "tipId": "azure-vmss-001",
+      "title": "Configure autoscaling rules for VM Scale Sets",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "VM Scale Sets",
+      "tipId": "azure-vmss-002",
+      "title": "Mix Spot and on-demand instances in VMSS",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "VM Scale Sets",
+      "tipId": "azure-vmss-003",
+      "title": "Scale VMSS to zero during off-peak hours",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "VPN Gateway",
+      "tipId": "azure-vpngw-001",
+      "title": "Downgrade VPN Gateway SKU for low-throughput connections",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "VPN Gateway",
+      "tipId": "azure-vpngw-002",
+      "title": "Delete unused VPN Gateway connections",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "GCP",
+      "service": "Vertex AI",
+      "tipId": "gcp-vertex-001",
+      "title": "Use smaller model serving machine types for low-traffic endpoints",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "GCP",
+      "service": "Vertex AI",
+      "tipId": "gcp-vertex-002",
+      "title": "Use autoscaling to scale prediction endpoints to zero",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "GCP",
+      "service": "Vertex AI",
+      "tipId": "gcp-vertex-003",
+      "title": "Use Spot VMs for Vertex AI training jobs",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Virtual Machines",
+      "tipId": "azure-vm-001",
+      "title": "Right-size underutilized Virtual Machines",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Virtual Machines",
+      "tipId": "azure-vm-002",
+      "title": "Purchase Reserved Instances for steady workloads",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Virtual Machines",
+      "tipId": "azure-vm-003",
+      "title": "Use Azure Savings Plans for flexible compute",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Virtual Machines",
+      "tipId": "azure-vm-004",
+      "title": "Use Spot VMs for interruptible workloads",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Virtual Machines",
+      "tipId": "azure-vm-005",
+      "title": "Apply Azure Hybrid Benefit for Windows and SQL",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Virtual Machines",
+      "tipId": "azure-vm-006",
+      "title": "Auto-shutdown non-production VMs",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Virtual Machines",
+      "tipId": "azure-vm-007",
+      "title": "Switch to burstable B-series VMs for variable workloads",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Virtual Machines",
+      "tipId": "azure-vm-008",
+      "title": "Use Ephemeral OS Disks for stateless VMs",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "GCP",
+      "service": "Vision AI",
+      "tipId": "gcp-vision-001",
+      "title": "Batch Vision AI requests for volume discounts",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for GCP)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AWS",
+      "service": "WAF",
+      "tipId": "waf-001",
+      "title": "Optimize WAF rules and logging",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "WAF",
+      "tipId": "waf-002",
+      "title": "Adjust WAF Rules Frequency",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "WAF",
+      "tipId": "waf-003",
+      "title": "Clean up unused WAF rules",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Web Application Firewall",
+      "tipId": "azure-waf-001",
+      "title": "Consolidate WAF policies across Application Gateways",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AZURE",
+      "service": "Web Application Firewall",
+      "tipId": "azure-waf-002",
+      "title": "Use WAF on Front Door instead of per-region Application Gateway",
+      "drilldown_class": "NONE",
+      "openapi_operation": "(no OpenAPI operation for AZURE)",
+      "has_check_content": false
+    },
+    {
+      "cloud": "AWS",
+      "service": "WorkSpaces",
+      "tipId": "workspaces-001",
+      "title": "Enable auto-stop mode for WorkSpaces",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    },
+    {
+      "cloud": "AWS",
+      "service": "WorkSpaces",
+      "tipId": "workspaces-002",
+      "title": "Implement auto-stop for WorkSpaces",
+      "drilldown_class": "COST_ONLY",
+      "openapi_operation": "getCostData(usageTypeBreakdown,serviceFilter)",
+      "has_check_content": true
+    }
+  ]
+}

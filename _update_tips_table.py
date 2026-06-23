@@ -1,0 +1,164 @@
+#!/usr/bin/env python3
+"""Update ViewMyBill-CostOptimizationTips from tips-enriched.json.
+
+Safe by design:
+  - Default is DRY-RUN (no writes). Pass --apply to write.
+  - BEFORE any write, a FULL backup of the table is taken to
+    tips-table-backup-<UTC timestamp>.json. If the backup fails, the update
+    is aborted (no writes happen).
+  - Uses update_item keyed by the EXISTING (service, tipId) — additive only,
+    never deletes, never rewrites the partition key.
+  - Only sets the enriched/normalized fields:
+      drilldownApis, drilldownInstructions, provider, level, actionType,
+      checkConnection, checkImplemented
+  - The single tipId-collision rename (Blob Storage azure-storage-002 ->
+    azure-blobstorage-001) is reported but NOT auto-applied.
+
+ROLLBACK:
+  python _update_tips_table.py --restore tips-table-backup-<ts>.json
+  Re-puts every backed-up item (full overwrite), returning the table to the
+  exact pre-update state.
+
+Usage:
+  python _update_tips_table.py                       # dry run (no writes)
+  python _update_tips_table.py --apply               # backup + update
+  python _update_tips_table.py --restore <file.json> # roll back from backup
+"""
+import json, sys, os
+from datetime import datetime, timezone
+from decimal import Decimal
+
+TABLE = 'ViewMyBill-CostOptimizationTips'
+REGION = 'us-east-1'
+SET_FIELDS = ['drilldownApis', 'drilldownInstructions', 'provider', 'level',
+              'actionType', 'checkConnection', 'checkImplemented']
+
+APPLY = '--apply' in sys.argv
+RESTORE = None
+if '--restore' in sys.argv:
+    i = sys.argv.index('--restore')
+    if i + 1 >= len(sys.argv):
+        print("ERROR: --restore requires a backup file path"); sys.exit(1)
+    RESTORE = sys.argv[i + 1]
+
+
+class _DecimalEncoder(json.JSONEncoder):
+    def default(self, o):
+        if isinstance(o, Decimal):
+            return int(o) if o % 1 == 0 else float(o)
+        return super().default(o)
+
+
+def _table():
+    import boto3
+    return boto3.resource('dynamodb', region_name=REGION).Table(TABLE)
+
+
+def _scan_all(table):
+    items, resp = [], table.scan()
+    items.extend(resp.get('Items', []))
+    while 'LastEvaluatedKey' in resp:
+        resp = table.scan(ExclusiveStartKey=resp['LastEvaluatedKey'])
+        items.extend(resp.get('Items', []))
+    return items
+
+
+def _backup(table):
+    """Full table scan -> timestamped JSON. Returns the backup path or raises."""
+    ts = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')
+    path = f'tips-table-backup-{ts}.json'
+    items = _scan_all(table)
+    with open(path, 'w', encoding='utf-8') as f:
+        json.dump(items, f, indent=2, ensure_ascii=False, cls=_DecimalEncoder)
+    print(f"Backup written: {path}  ({len(items)} items)")
+    return path, len(items)
+
+
+def do_restore(path):
+    if not os.path.exists(path):
+        print(f"ERROR: backup file not found: {path}"); sys.exit(1)
+    # parse_float=Decimal so numeric attributes are DynamoDB-safe on put_item
+    with open(path, encoding='utf-8') as f:
+        items = json.load(f, parse_float=Decimal)
+    print(f"Restoring {len(items)} items from {path} into {TABLE} ...")
+    table = _table()
+    ok = err = 0
+    with table.batch_writer() as bw:
+        for it in items:
+            try:
+                bw.put_item(Item=it); ok += 1
+            except Exception as e:
+                err += 1; print(f"  ERROR restoring {it.get('service')}/{it.get('tipId')}: {e}")
+    print(f"Restore complete. Re-put: {ok}  Errors: {err}")
+
+
+def do_update():
+    with open('tips-enriched.json', encoding='utf-8') as f:
+        tips = json.load(f)
+
+    renamed, to_update = [], []
+    for t in tips:
+        if t.get('service') == 'Blob Storage' and t.get('tipId') == 'azure-blobstorage-001':
+            renamed.append(t)
+        else:
+            to_update.append(t)
+
+    print(f"Records to update: {len(to_update)}  (mode: {'APPLY' if APPLY else 'DRY-RUN'})")
+    print(f"Manual-review renames (not auto-applied): {len(renamed)}")
+    for _ in renamed:
+        print("  Blob Storage: azure-storage-002 -> azure-blobstorage-001 (needs delete+put)")
+
+    if not APPLY:
+        sample = to_update[0]
+        print("\nSample update payload (first record):")
+        print(f"  key: service={sample.get('service')!r} tipId={sample.get('tipId')!r}")
+        for k in SET_FIELDS:
+            print(f"    SET {k} = {str(sample.get(k, ''))[:80]}")
+        print("\nDRY RUN — no writes performed. Re-run with --apply (a backup is taken first).")
+        return
+
+    # ----- APPLY: backup first, abort on failure -----
+    table = _table()
+    try:
+        backup_path, n = _backup(table)
+    except Exception as e:
+        print(f"ABORTING — backup failed, no writes performed: {e}")
+        sys.exit(1)
+    if n == 0:
+        print("ABORTING — backup returned 0 items (unexpected); no writes performed.")
+        sys.exit(1)
+
+    from botocore.exceptions import ClientError
+    ok = err = 0
+    for t in to_update:
+        svc, tid = t.get('service'), t.get('tipId')
+        if not svc or not tid:
+            err += 1; continue
+        names, values, sets = {}, {}, []
+        for i, k in enumerate(SET_FIELDS):
+            if k in t and str(t[k]).strip() != '':
+                names[f'#f{i}'] = k; values[f':v{i}'] = t[k]; sets.append(f'#f{i} = :v{i}')
+        if not sets:
+            continue
+        try:
+            table.update_item(
+                Key={'service': svc, 'tipId': tid},
+                UpdateExpression='SET ' + ', '.join(sets),
+                ExpressionAttributeNames=names,
+                ExpressionAttributeValues=values,
+            )
+            ok += 1
+        except ClientError as e:
+            err += 1
+            print(f"  ERROR {svc}/{tid}: {e.response['Error']['Code']}")
+
+    print(f"\nUpdated: {ok}  Errors: {err}")
+    print(f"Rollback if needed:  python _update_tips_table.py --restore {backup_path}")
+    print("NOTE: apply the Blob Storage tipId rename manually (delete old item, put new).")
+
+
+if __name__ == '__main__':
+    if RESTORE:
+        do_restore(RESTORE)
+    else:
+        do_update()
