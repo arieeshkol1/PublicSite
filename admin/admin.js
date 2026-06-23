@@ -86,6 +86,8 @@ leadsSearch.oninput=function(){lp=1;applyLeads();};
 tipsSearch.oninput=function(){tp=1;applyTips();};
 feedbackSearch.oninput=function(){fp=1;applyFeedback();};
 addTipBtn.onclick=function(){showTipForm(null);};
+var _expJsonBtn=$('export-tips-json-btn');if(_expJsonBtn)_expJsonBtn.onclick=function(){exportTipsJSON();};
+var _expCsvBtn=$('export-tips-csv-btn');if(_expCsvBtn)_expCsvBtn.onclick=function(){exportTipsCSV();};
 tipForm.onsubmit=function(e){e.preventDefault();saveTip();};
 tipCancelBtn.onclick=hideTipForm;tipModalClose.onclick=hideTipForm;
 leadForm.onsubmit=function(e){e.preventDefault();saveLead();};
@@ -634,3 +636,49 @@ if($('txn-refresh-btn'))$('txn-refresh-btn').addEventListener('click',function()
         }
     };
 })();
+
+
+/* ---- Tips export (JSON / CSV) ---- */
+function _downloadFile(content, filename, mime){
+  try{
+    var blob=new Blob([content],{type:mime+';charset=utf-8;'});
+    var url=URL.createObjectURL(blob);
+    var a=document.createElement('a');
+    a.href=url;a.download=filename;a.style.display='none';
+    document.body.appendChild(a);a.click();
+    document.body.removeChild(a);
+    setTimeout(function(){URL.revokeObjectURL(url);},1000);
+  }catch(e){notify('Export failed: '+(e.message||e),'error');}
+}
+
+function _tipsTimestamp(){
+  var d=new Date();
+  function p(n){return(n<10?'0':'')+n;}
+  return d.getFullYear()+p(d.getMonth()+1)+p(d.getDate())+'-'+p(d.getHours())+p(d.getMinutes())+p(d.getSeconds());
+}
+
+function exportTipsJSON(){
+  if(!allTips||!allTips.length){notify('No tips to export.','error');return;}
+  _downloadFile(JSON.stringify(allTips,null,2),'tips-'+_tipsTimestamp()+'.json','application/json');
+  notify('Exported '+allTips.length+' tips to JSON.','success');
+}
+
+function _csvCell(val){
+  if(val===null||val===undefined)return '';
+  var s=(typeof val==='object')?JSON.stringify(val):String(val);
+  if(/[",\n\r]/.test(s))s='"'+s.replace(/"/g,'""')+'"';
+  return s;
+}
+
+function exportTipsCSV(){
+  if(!allTips||!allTips.length){notify('No tips to export.','error');return;}
+  // Union of all keys across every record so no field is dropped
+  var keys=[];var seen={};
+  allTips.forEach(function(t){Object.keys(t||{}).forEach(function(k){if(!seen[k]){seen[k]=true;keys.push(k);}});});
+  var lines=[keys.map(_csvCell).join(',')];
+  allTips.forEach(function(t){
+    lines.push(keys.map(function(k){return _csvCell(t?t[k]:'');}).join(','));
+  });
+  _downloadFile(lines.join('\r\n'),'tips-'+_tipsTimestamp()+'.csv','text/csv');
+  notify('Exported '+allTips.length+' tips to CSV.','success');
+}
