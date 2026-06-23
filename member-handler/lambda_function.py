@@ -2171,6 +2171,70 @@ def handle_datasource_query_proxy(event):
             logger.error(f"Failed to save data source: {e}")
             return create_error_response(500, 'ServerError', 'Failed to save data source')
 
+    # ── Saved chart CRUD (persisted under the member's record) ──
+    # Charts reference a saved datasource by id and store visualization config
+    # (chart type, display options, layout). They do not require account_ids.
+    if action == 'chart_list':
+        try:
+            item = members_table_ds.get_item(Key={'email': member_email}).get('Item') or {}
+            saved = _decimal_to_native(item.get('savedCharts') or [])
+            return create_response(200, {'charts': saved})
+        except ClientError as e:
+            logger.error(f"Failed to list saved charts: {e}")
+            return create_error_response(500, 'ServerError', 'Failed to load saved charts')
+
+    if action == 'chart_delete':
+        chart_id = body.get('chart_id', '')
+        if not chart_id:
+            return create_error_response(400, 'InvalidRequest', 'chart_id required')
+        try:
+            item = members_table_ds.get_item(Key={'email': member_email}).get('Item') or {}
+            saved = item.get('savedCharts') or []
+            new_saved = [c for c in saved if c.get('chart_id') != chart_id]
+            members_table_ds.update_item(
+                Key={'email': member_email},
+                UpdateExpression='SET savedCharts = :s',
+                ExpressionAttributeValues={':s': new_saved},
+            )
+            return create_response(200, {'message': 'Chart deleted', 'chart_id': chart_id})
+        except ClientError as e:
+            logger.error(f"Failed to delete chart: {e}")
+            return create_error_response(500, 'ServerError', 'Failed to delete chart')
+
+    if action == 'chart_save':
+        chart_name = body.get('name', 'Untitled Chart')
+        chart_id = body.get('chart_id', '') or secrets.token_hex(8)
+        chart_config = body.get('chart_config', {})
+        record = {
+            'chart_id': chart_id,
+            'name': chart_name,
+            'datasource_id': body.get('datasource_id', ''),
+            'chart_config': _convert_floats_to_decimal(chart_config),
+            'updated_at': datetime.now(timezone.utc).isoformat(),
+        }
+        try:
+            item = members_table_ds.get_item(Key={'email': member_email}).get('Item') or {}
+            saved = item.get('savedCharts') or []
+            replaced = False
+            for i, c in enumerate(saved):
+                if c.get('chart_id') == chart_id:
+                    record['created_at'] = c.get('created_at', record['updated_at'])
+                    saved[i] = record
+                    replaced = True
+                    break
+            if not replaced:
+                record['created_at'] = record['updated_at']
+                saved.append(record)
+            members_table_ds.update_item(
+                Key={'email': member_email},
+                UpdateExpression='SET savedCharts = :s',
+                ExpressionAttributeValues={':s': saved},
+            )
+            return create_response(200, {'message': f'Chart "{chart_name}" saved', 'chart_id': chart_id})
+        except ClientError as e:
+            logger.error(f"Failed to save chart: {e}")
+            return create_error_response(500, 'ServerError', 'Failed to save chart')
+
     if not account_ids:
         return create_error_response(400, 'InvalidRequest', 'No accounts selected')
 

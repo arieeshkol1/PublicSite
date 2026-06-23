@@ -44,6 +44,7 @@ const SavedDataSources = (() => {
   function buildCard(ds) {
     var card = document.createElement('div');
     card.className = 'ds-card';
+    card.setAttribute('data-datasource-id', ds.datasource_id);
     card.innerHTML =
       '<div class="ds-card-header">' +
         '<span class="ds-card-icon">' + getIconForConfig(ds.query_config) + '</span>' +
@@ -53,13 +54,21 @@ const SavedDataSources = (() => {
         '<button class="ds-action-edit" title="Edit">✏️</button>' +
         '<button class="ds-action-run" title="Run">▶️</button>' +
         '<button class="ds-action-delete" title="Delete">🗑️</button>' +
-        '<span class="ds-action-slot-chart"></span>' +
+        '<span class="ds-action-slot-chart">' +
+          '<button class="ds-action-chart" title="Build chart">📈</button>' +
+        '</span>' +
       '</div>';
 
     // Wire action handlers
     card.querySelector('.ds-action-edit').onclick = function() { editSaved(ds); };
     card.querySelector('.ds-action-run').onclick = function() { runSaved(ds.datasource_id); };
     card.querySelector('.ds-action-delete').onclick = function() { deleteSaved(ds.datasource_id, ds.name); };
+    var chartBtn = card.querySelector('.ds-action-chart');
+    if (chartBtn) {
+      chartBtn.onclick = function() {
+        if (window.ChartWizard) ChartWizard.openForDatasource(ds.datasource_id, ds.name);
+      };
+    }
 
     // Touch support: toggle active class
     card.addEventListener('touchstart', function() { card.classList.toggle('ds-card-active'); });

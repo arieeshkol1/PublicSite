@@ -3756,6 +3756,10 @@ function _switchObserveSection(sectionId) {
         if (window.SavedDataSources && typeof window.SavedDataSources.render === 'function') {
             window.SavedDataSources.render();
         }
+        // Render the saved charts grid
+        if (window.ChartDashboard && typeof window.ChartDashboard.render === 'function') {
+            window.ChartDashboard.render();
+        }
     }
 
     // Step 6: Cancel pending resize and schedule new one

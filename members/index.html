@@ -6,7 +6,7 @@
     <title>Member Portal - SlashMyBill</title>
     <link rel="icon" type="image/png" href="../SlashMyBill.png">
     <link rel="stylesheet" href="../styles.css">
-    <link rel="stylesheet" href="members.css?v=49">
+    <link rel="stylesheet" href="members.css?v=50">
     <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
     <script src="https://www.paypal.com/sdk/js?client-id=AeSE_YsdvSkkiKXDOx77nnpCrqF21Xr6hjifypwzMtqMtzRd0UZrEAL53uboT_8kQ_4bmyAAq9kndI3G&vault=true&currency=USD" data-sdk-integration-source="button-factory"></script>
 </head>
@@ -1048,6 +1048,13 @@
                                 <!-- Results Table Container -->
                                 <div id="observe-saved-datasources-result-table" class="result-table-widget" style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:16px;"></div>
 
+                                <!-- Saved Charts Panel -->
+                                <div style="display:flex;align-items:center;justify-content:space-between;margin:28px 0 16px;">
+                                    <h3 style="margin:0;color:#1f2937;">📈 Charts</h3>
+                                </div>
+                                <p style="color:#6b7280;font-size:0.9em;margin-bottom:16px;">Visualize your saved data sources. Click the 📈 button on a data source card to build a Pie, Bar, Stacked Bar, or Line chart.</p>
+                                <div id="observe-saved-charts-container" class="saved-charts-panel" style="margin-bottom:16px;"></div>
+
                                 <!-- Empty State -->
                                 <div id="observe-custom-data-empty" style="text-align:center;padding:60px 20px;color:#6b7280;">
                                     <div style="font-size:2.5em;margin-bottom:12px;">📊</div>
@@ -1416,10 +1423,22 @@
         </div>
     </div>
 
-    <script src="members.js?v=117"></script>
+    <!-- Chart Wizard Overlay -->
+    <div id="chart-wizard-overlay" class="modal-overlay" hidden>
+        <div class="modal-card" style="max-width:640px;">
+            <div class="modal-header">
+                <h2>Chart Builder</h2>
+                <button onclick="ChartWizard.close();" class="modal-close">&times;</button>
+            </div>
+            <div class="modal-body" id="chart-wizard-body" style="min-height:400px;"></div>
+        </div>
+    </div>
+
+    <script src="members.js?v=118"></script>
     <script src="help.js?v=8"></script>
     <script src="result-table.js?v=4"></script>
-    <script src="saved-datasources.js?v=4"></script>
+    <script src="saved-datasources.js?v=5"></script>
     <script src="datasource-wizard.js?v=5"></script>
+    <script src="chart-wizard.js?v=1"></script>
 </body>
 </html>
