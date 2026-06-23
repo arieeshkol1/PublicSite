@@ -62,10 +62,16 @@ const ResultTable = (() => {
           Results: <span style="color: #6366f1;">${currentData.rows.length}</span> rows
         </div>
         <div style="display: flex; gap: 8px;">
+          <button onclick="ResultTable.promptSave()" class="btn btn-primary btn-sm" style="background:#8b5cf6;border-color:#8b5cf6;">💾 Save Query</button>
           <button onclick="ResultTable.refresh()" class="btn btn-outline btn-sm">🔄 Refresh</button>
           <button onclick="ResultTable.exportCSV()" class="btn btn-outline btn-sm">📥 CSV</button>
           <button onclick="ResultTable.exportJSON()" class="btn btn-outline btn-sm">📋 JSON</button>
         </div>
+      </div>
+      <div id="rt-save-bar" style="display:none;margin-bottom:12px;padding:12px;gap:8px;align-items:center;background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;">
+        <input type="text" id="rt-save-name" placeholder="Enter a name for this query" style="flex:1;padding:8px;border:1px solid #d1d5db;border-radius:6px;font-size:0.9em;"/>
+        <button onclick="ResultTable.doSave()" class="btn btn-primary btn-sm" style="background:#8b5cf6;border-color:#8b5cf6;">Save</button>
+        <button onclick="ResultTable.cancelSave()" class="btn btn-outline btn-sm">Cancel</button>
       </div>
     `;
 
@@ -390,6 +396,63 @@ const ResultTable = (() => {
     });
   }
 
+  /**
+   * Show inline save bar to name and persist the current query
+   */
+  function promptSave() {
+    const bar = document.getElementById('rt-save-bar');
+    if (!bar) return;
+    bar.style.display = 'flex';
+    const input = document.getElementById('rt-save-name');
+    if (input) {
+      if (!input.value) input.value = currentData.config && currentData.config.name ? currentData.config.name : 'My Data Source';
+      input.focus();
+      input.select();
+      input.onkeydown = function(e) { if (e.key === 'Enter') doSave(); if (e.key === 'Escape') cancelSave(); };
+    }
+  }
+
+  function cancelSave() {
+    const bar = document.getElementById('rt-save-bar');
+    if (bar) bar.style.display = 'none';
+  }
+
+  /**
+   * Persist the current query config under the given name
+   */
+  async function doSave() {
+    const input = document.getElementById('rt-save-name');
+    const name = input ? input.value.trim() : '';
+    if (!name) { showError('Please enter a name'); return; }
+    if (name.length > 100) { showError('Name must be 100 characters or fewer'); return; }
+
+    // Strip internal/runtime-only fields before saving
+    const configToSave = JSON.parse(JSON.stringify(currentData.config || {}));
+    delete configToSave._sort;
+    delete configToSave._discoveredFields;
+    delete configToSave.name;
+
+    try {
+      showLoading();
+      const resp = await api('PUT', '/members/dashboard-data', {
+        action: 'datasource_save',
+        name: name,
+        query_config: configToSave
+      });
+      hideLoading();
+      if (resp.error) { showError(resp.error); return; }
+      cancelSave();
+      notify('Query "' + name + '" saved', 'success');
+      if (window.SavedDataSources && typeof window.SavedDataSources.render === 'function') {
+        window.SavedDataSources.render();
+      }
+    } catch (err) {
+      hideLoading();
+      console.error('Save query error:', err);
+      showError('Failed to save query');
+    }
+  }
+
   // Public API
   return {
     render,
@@ -398,6 +461,9 @@ const ResultTable = (() => {
     refresh,
     exportCSV,
     exportJSON,
-    showEmpty
+    showEmpty,
+    promptSave,
+    cancelSave,
+    doSave
   };
 })();

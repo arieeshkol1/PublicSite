@@ -20,22 +20,11 @@ const SavedDataSources = (() => {
   }
 
   /**
-   * Determine a contextual icon based on query_config attributes
+   * Icon for a saved data source card. Uses a spreadsheet-style icon
+   * (cloud-agnostic, no currency/provider symbols).
    */
   function getIconForConfig(config) {
-    if (!config || !config.attributes) return '📋';
-    var attrs = config.attributes;
-    for (var i = 0; i < attrs.length; i++) {
-      if (attrs[i] === 'cost_amount' || attrs[i] === 'cost' || attrs[i].indexOf('cost') !== -1) {
-        return '💰';
-      }
-    }
-    for (var j = 0; j < attrs.length; j++) {
-      if (attrs[j] === 'usage_amount' || attrs[j] === 'usage' || attrs[j].indexOf('usage') !== -1) {
-        return '📊';
-      }
-    }
-    return '📋';
+    return '🧾';
   }
 
   /**

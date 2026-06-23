@@ -2386,14 +2386,14 @@
 
 .ds-card-grid {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 16px;
+    grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+    gap: 14px;
 }
 @media (max-width: 767px) {
-    .ds-card-grid { grid-template-columns: repeat(2, 1fr); }
+    .ds-card-grid { grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); }
 }
 @media (max-width: 479px) {
-    .ds-card-grid { grid-template-columns: 1fr; }
+    .ds-card-grid { grid-template-columns: 1fr 1fr; }
 }
 
 .ds-card {
@@ -2415,16 +2415,17 @@
 .ds-card-header {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 10px;
     margin-bottom: 8px;
 }
 .ds-card-icon {
-    font-size: 1.3em;
+    font-size: 1.9em;
+    line-height: 1;
 }
 .ds-card-name {
-    font-weight: 600;
+    font-weight: 700;
     color: #1f2937;
-    font-size: 0.95em;
+    font-size: 1.1em;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
