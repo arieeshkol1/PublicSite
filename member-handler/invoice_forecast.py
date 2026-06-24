@@ -25,6 +25,8 @@ from decimal import Decimal, ROUND_HALF_UP
 import boto3
 from botocore.exceptions import ClientError
 
+from ce_account_scope import apply_account_scope
+
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
@@ -194,7 +196,7 @@ def _ce_client(creds):
 
 # ─── Cost Explorer fetch wrappers ─────────────────────────────────────────────
 
-def fetch_daily_cost_series(creds, year, month, now):
+def fetch_daily_cost_series(creds, year, month, now, account_id=None):
     """Fetch DAILY UnblendedCost (excluding Tax) for the elapsed days of the
     Current_Month. Returns one float per fully elapsed day. (Req 8.3)
 
@@ -209,10 +211,12 @@ def fetch_daily_cost_series(creds, year, month, now):
         return []
 
     resp = ce.get_cost_and_usage(
-        TimePeriod={'Start': start_date, 'End': end_date},
-        Granularity='DAILY',
-        Metrics=['UnblendedCost'],
-        Filter={'Not': {'Dimensions': {'Key': 'RECORD_TYPE', 'Values': ['Tax']}}},
+        **apply_account_scope({
+            'TimePeriod': {'Start': start_date, 'End': end_date},
+            'Granularity': 'DAILY',
+            'Metrics': ['UnblendedCost'],
+            'Filter': {'Not': {'Dimensions': {'Key': 'RECORD_TYPE', 'Values': ['Tax']}}},
+        }, account_id)
     )
 
     series = []
@@ -247,11 +251,13 @@ def detect_fixed_components(creds, account_id, prev_period):
 
     try:
         resp = ce.get_cost_and_usage(
-            TimePeriod={'Start': start_date, 'End': end_date},
-            Granularity='MONTHLY',
-            Metrics=['UnblendedCost'],
-            GroupBy=[{'Type': 'DIMENSION', 'Key': 'SERVICE'}],
-            Filter={'Not': {'Dimensions': {'Key': 'RECORD_TYPE', 'Values': ['Tax']}}},
+            **apply_account_scope({
+                'TimePeriod': {'Start': start_date, 'End': end_date},
+                'Granularity': 'MONTHLY',
+                'Metrics': ['UnblendedCost'],
+                'GroupBy': [{'Type': 'DIMENSION', 'Key': 'SERVICE'}],
+                'Filter': {'Not': {'Dimensions': {'Key': 'RECORD_TYPE', 'Values': ['Tax']}}},
+            }, account_id)
         )
     except ClientError as e:
         logger.warning(f"Fixed-cost detection failed for {account_id} {prev_period}: {e}")
@@ -325,7 +331,7 @@ def compute_forecast(member_email, account_id, provider_key, now=None,
     # 4. Fetch daily series (Req 8.3); CE failure propagates (Req 8.11)
     if creds is None:
         creds = _assume_role(member_email, account_id)
-    daily = fetch_daily_cost_series(creds, now.year, now.month, now)
+    daily = fetch_daily_cost_series(creds, now.year, now.month, now, account_id)
 
     # 5. Elapsed days (Req 8.8)
     elapsed_days = len(daily)

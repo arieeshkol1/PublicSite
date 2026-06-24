@@ -17,6 +17,8 @@ from decimal import Decimal, ROUND_HALF_UP
 import boto3
 from botocore.exceptions import ClientError
 
+from ce_account_scope import apply_account_scope
+
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
@@ -213,13 +215,17 @@ def _fetch_month_data(ce_client, member_email, account_id, month):
     # Calculate end date (first day of next month)
     end_date = _get_next_month_first_day(int(year), int(month_num))
 
-    # Call 1: Service-level costs (SERVICE granularity grouped by SERVICE)
+    # Call 1: Service-level costs (SERVICE granularity grouped by SERVICE).
+    # Scoped to this account's LINKED_ACCOUNT so a payer-account connection
+    # returns only this account's costs, never the whole consolidated org.
     service_data = _call_cost_explorer_with_retry(
         ce_client,
-        TimePeriod={'Start': start_date, 'End': end_date},
-        Granularity='MONTHLY',
-        Metrics=['UnblendedCost', 'UsageQuantity'],
-        GroupBy=[{'Type': 'DIMENSION', 'Key': 'SERVICE'}],
+        **apply_account_scope({
+            'TimePeriod': {'Start': start_date, 'End': end_date},
+            'Granularity': 'MONTHLY',
+            'Metrics': ['UnblendedCost', 'UsageQuantity'],
+            'GroupBy': [{'Type': 'DIMENSION', 'Key': 'SERVICE'}],
+        }, account_id),
     )
 
     # Rate limit delay between calls
@@ -228,10 +234,12 @@ def _fetch_month_data(ce_client, member_email, account_id, month):
     # Call 2: Daily costs grouped by service
     daily_data = _call_cost_explorer_with_retry(
         ce_client,
-        TimePeriod={'Start': start_date, 'End': end_date},
-        Granularity='DAILY',
-        Metrics=['UnblendedCost'],
-        GroupBy=[{'Type': 'DIMENSION', 'Key': 'SERVICE'}],
+        **apply_account_scope({
+            'TimePeriod': {'Start': start_date, 'End': end_date},
+            'Granularity': 'DAILY',
+            'Metrics': ['UnblendedCost'],
+            'GroupBy': [{'Type': 'DIMENSION', 'Key': 'SERVICE'}],
+        }, account_id),
     )
 
     # Rate limit delay
@@ -240,13 +248,15 @@ def _fetch_month_data(ce_client, member_email, account_id, month):
     # Call 3: Usage type breakdown per service (for usageTypes field)
     usage_type_data = _call_cost_explorer_with_retry(
         ce_client,
-        TimePeriod={'Start': start_date, 'End': end_date},
-        Granularity='MONTHLY',
-        Metrics=['UnblendedCost', 'UsageQuantity'],
-        GroupBy=[
-            {'Type': 'DIMENSION', 'Key': 'SERVICE'},
-            {'Type': 'DIMENSION', 'Key': 'USAGE_TYPE'},
-        ],
+        **apply_account_scope({
+            'TimePeriod': {'Start': start_date, 'End': end_date},
+            'Granularity': 'MONTHLY',
+            'Metrics': ['UnblendedCost', 'UsageQuantity'],
+            'GroupBy': [
+                {'Type': 'DIMENSION', 'Key': 'SERVICE'},
+                {'Type': 'DIMENSION', 'Key': 'USAGE_TYPE'},
+            ],
+        }, account_id),
     )
 
     # Normalize into DynamoDB records

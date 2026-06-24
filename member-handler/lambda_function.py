@@ -27,6 +27,8 @@ import jwt
 import bcrypt
 import yaml
 
+from ce_account_scope import apply_account_scope
+
 try:
     import provider_registry
 except ImportError:
@@ -2871,7 +2873,7 @@ def handle_dashboard_data(event):
                         'Metrics': ['UnblendedCost'],
                         'GroupBy': [{'Type': 'DIMENSION', 'Key': 'SERVICE'}],
                     }
-                    _mt_resp = _ce_monthly.get_cost_and_usage(**_mt_params)
+                    _mt_resp = _ce_monthly.get_cost_and_usage(**apply_account_scope(_mt_params, acct_id))
                     monthly_trend_live = {}
                     for period in _mt_resp.get('ResultsByTime', []):
                         month_key = period['TimePeriod']['Start'][:7]
@@ -3089,7 +3091,7 @@ def handle_dashboard_data(event):
                 # Only fetch unfiltered 30-day trend if no tag filter AND cache was not used (cache already has 30 days)
                 if will_fetch_30d:
                     _daily_params = {'TimePeriod': {'Start': start_30d, 'End': end_date}, 'Granularity': 'DAILY', 'Metrics': ['UnblendedCost']}
-                    daily_30d = ce_30d.get_cost_and_usage(**_daily_params)
+                    daily_30d = ce_30d.get_cost_and_usage(**apply_account_scope(_daily_params, acct_id))
                     for period in daily_30d.get('ResultsByTime', []):
                         d_date = period['TimePeriod']['Start']
                         d_cost = float(period['Total']['UnblendedCost']['Amount'])
@@ -3103,7 +3105,7 @@ def handle_dashboard_data(event):
             # Fetch cost by region (last 30 days) - scale proportionally when tag filter is active
             try:
                 _region_params = {'TimePeriod': {'Start': start_30d, 'End': end_date}, 'Granularity': 'MONTHLY', 'Metrics': ['UnblendedCost'], 'GroupBy': [{'Type': 'DIMENSION', 'Key': 'REGION'}]}
-                region_resp = ce_30d.get_cost_and_usage(**_region_params)
+                region_resp = ce_30d.get_cost_and_usage(**apply_account_scope(_region_params, acct_id))
                 raw_regional = {}
                 for period in region_resp.get('ResultsByTime', []):
                     for group in period.get('Groups', []):
@@ -3139,7 +3141,7 @@ def handle_dashboard_data(event):
                         continue
                     try:
                         _ut_params = {'TimePeriod': {'Start': start_30d, 'End': end_date}, 'Granularity': 'MONTHLY', 'Metrics': ['UnblendedCost'], 'GroupBy': [{'Type': 'DIMENSION', 'Key': 'USAGE_TYPE'}], 'Filter': {'Dimensions': {'Key': 'SERVICE', 'Values': [svc_name]}}}
-                        ut_resp = ce_30d.get_cost_and_usage(**_ut_params)
+                        ut_resp = ce_30d.get_cost_and_usage(**apply_account_scope(_ut_params, acct_id))
                         usage_items = []
                         for p in ut_resp.get('ResultsByTime', []):
                             for g in p.get('Groups', []):
@@ -22289,10 +22291,12 @@ def _refresh_cost_cache_for_account(member_email, account_id):
     start_date = (now - timedelta(days=7)).strftime('%Y-%m-%d')
 
     resp = ce.get_cost_and_usage(
-        TimePeriod={'Start': start_date, 'End': end_date},
-        Granularity='DAILY',
-        Metrics=['UnblendedCost'],
-        GroupBy=[{'Type': 'DIMENSION', 'Key': 'SERVICE'}],
+        **apply_account_scope({
+            'TimePeriod': {'Start': start_date, 'End': end_date},
+            'Granularity': 'DAILY',
+            'Metrics': ['UnblendedCost'],
+            'GroupBy': [{'Type': 'DIMENSION', 'Key': 'SERVICE'}],
+        }, account_id)
     )
 
     cache_table = dynamodb.Table(COST_CACHE_TABLE_NAME)

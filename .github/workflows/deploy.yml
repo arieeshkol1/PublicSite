@@ -128,6 +128,7 @@ jobs:
           pip install PyJWT bcrypt pyyaml cryptography -t .build-member-handler/ --quiet
           cp member-handler/lambda_function.py .build-member-handler/
           cp transaction_logger.py .build-member-handler/
+          cp member-handler/ce_account_scope.py .build-member-handler/
           cp member-handler/provider_registry.py .build-member-handler/
           cp member-handler/sts_assume_role.py .build-member-handler/
           cp member-handler/invoice_sync.py .build-member-handler/

@@ -251,7 +251,7 @@ class CacheService:
                     engine = IncrementalFetchEngine()
                     fetched_items = engine.fetch_cost_data(
                         [DateRange(start=start_date, end=end_date)],
-                        credentials,
+                        {**credentials, 'AccountId': account_id},
                     )
                     logger.info(f"Cache fallback: CE API returned {len(fetched_items)} items for {member_id}#{account_id}")
                     return CacheResult(
@@ -312,7 +312,7 @@ class CacheService:
                 engine = IncrementalFetchEngine()
                 gaps = engine.compute_gaps(start_date, end_date, cached_dates)
                 if gaps:
-                    fetched_items = engine.fetch_cost_data(gaps, credentials)
+                    fetched_items = engine.fetch_cost_data(gaps, {**credentials, 'AccountId': account_id})
                     if fetched_items:
                         # Write fetched data to cache (non-blocking on failure)
                         self.write_cost_data(member_id, account_id, fetched_items)
@@ -948,7 +948,7 @@ class CacheService:
                 return
 
             # Fetch only missing dates from CE API
-            fetched_items = engine.fetch_cost_data(gaps, credentials)
+            fetched_items = engine.fetch_cost_data(gaps, {**credentials, 'AccountId': account_id})
 
             # Filter out any items with $0 cost for recent days (likely still incomplete)
             # Only write items that have actual cost data

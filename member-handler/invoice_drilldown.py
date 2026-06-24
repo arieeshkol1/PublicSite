@@ -26,6 +26,8 @@ import boto3
 from boto3.dynamodb.conditions import Key
 from botocore.exceptions import ClientError
 
+from ce_account_scope import apply_account_scope
+
 # Forecast is an additive, best-effort capability. If the module is missing
 # from the deployment package, invoice endpoints must still work — so the
 # import never crashes the module load. (forecast simply disabled when None)
@@ -1263,13 +1265,15 @@ def fetch_service_breakdown(member_email, account_id, period):
 
     try:
         response = ce_client.get_cost_and_usage(
-            TimePeriod={'Start': start_date, 'End': end_date},
-            Granularity='MONTHLY',
-            Metrics=['UnblendedCost', 'UsageQuantity'],
-            GroupBy=[
-                {'Type': 'DIMENSION', 'Key': 'SERVICE'},
-                {'Type': 'DIMENSION', 'Key': 'USAGE_TYPE'},
-            ],
+            **apply_account_scope({
+                'TimePeriod': {'Start': start_date, 'End': end_date},
+                'Granularity': 'MONTHLY',
+                'Metrics': ['UnblendedCost', 'UsageQuantity'],
+                'GroupBy': [
+                    {'Type': 'DIMENSION', 'Key': 'SERVICE'},
+                    {'Type': 'DIMENSION', 'Key': 'USAGE_TYPE'},
+                ],
+            }, account_id)
         )
     except ClientError as e:
         logger.error(f"Cost Explorer fetch failed for {account_id} period={period}: {e}")
@@ -1378,18 +1382,20 @@ def fetch_resource_breakdown(member_email, account_id, period, service):
     # to GetCostAndUsage with USAGE_TYPE grouping.
     try:
         response = ce_client.get_cost_and_usage_with_resources(
-            TimePeriod={'Start': start_date, 'End': end_date},
-            Granularity='MONTHLY',
-            Metrics=['UnblendedCost', 'UsageQuantity'],
-            Filter={
-                'Dimensions': {
-                    'Key': 'SERVICE',
-                    'Values': [service],
-                }
-            },
-            GroupBy=[
-                {'Type': 'DIMENSION', 'Key': 'RESOURCE_ID'},
-            ],
+            **apply_account_scope({
+                'TimePeriod': {'Start': start_date, 'End': end_date},
+                'Granularity': 'MONTHLY',
+                'Metrics': ['UnblendedCost', 'UsageQuantity'],
+                'Filter': {
+                    'Dimensions': {
+                        'Key': 'SERVICE',
+                        'Values': [service],
+                    }
+                },
+                'GroupBy': [
+                    {'Type': 'DIMENSION', 'Key': 'RESOURCE_ID'},
+                ],
+            }, account_id)
         )
     except ClientError as e:
         error_code = e.response['Error']['Code']
@@ -1397,11 +1403,11 @@ def fetch_resource_breakdown(member_email, account_id, period, service):
         # Handle "start date is too old" — fall back to usage-type breakdown
         if 'ValidationException' in error_code and 'too old' in error_msg.lower():
             logger.info(f"Resource-level data unavailable for {period} (>14 days), falling back to usage-type breakdown")
-            return _fetch_usage_type_breakdown(ce_client, creds, service, start_date, end_date, period)
+            return _fetch_usage_type_breakdown(ce_client, creds, service, start_date, end_date, period, account_id)
         # Handle "resource data not available" gracefully
         if 'ResourceNotAvailable' in error_code or 'not available' in error_msg.lower():
             logger.info(f"Resource-level data not available for {account_id}, falling back to usage-type breakdown")
-            return _fetch_usage_type_breakdown(ce_client, creds, service, start_date, end_date, period)
+            return _fetch_usage_type_breakdown(ce_client, creds, service, start_date, end_date, period, account_id)
         logger.error(f"GetCostAndUsageWithResources failed for {account_id}: {e}")
         raise
 
@@ -2668,7 +2674,7 @@ def _parse_usage_type(usage_type, service):
     return (clean, 'Usage Type')
 
 
-def _fetch_usage_type_breakdown(ce_client, creds, service, start_date, end_date, period):
+def _fetch_usage_type_breakdown(ce_client, creds, service, start_date, end_date, period, account_id=None):
     """Fallback: fetch usage-type-level breakdown when resource-level data is unavailable.
 
     Uses GetCostAndUsage with USAGE_TYPE grouping filtered by service.
@@ -2690,18 +2696,20 @@ def _fetch_usage_type_breakdown(ce_client, creds, service, start_date, end_date,
 
     try:
         response = ce_client.get_cost_and_usage(
-            TimePeriod={'Start': start_date, 'End': end_date},
-            Granularity='MONTHLY',
-            Metrics=['UnblendedCost', 'UsageQuantity'],
-            Filter={
-                'Dimensions': {
-                    'Key': 'SERVICE',
-                    'Values': [service],
-                }
-            },
-            GroupBy=[
-                {'Type': 'DIMENSION', 'Key': 'USAGE_TYPE'},
-            ],
+            **apply_account_scope({
+                'TimePeriod': {'Start': start_date, 'End': end_date},
+                'Granularity': 'MONTHLY',
+                'Metrics': ['UnblendedCost', 'UsageQuantity'],
+                'Filter': {
+                    'Dimensions': {
+                        'Key': 'SERVICE',
+                        'Values': [service],
+                    }
+                },
+                'GroupBy': [
+                    {'Type': 'DIMENSION', 'Key': 'USAGE_TYPE'},
+                ],
+            }, account_id)
         )
     except ClientError as e:
         logger.error(f"Usage-type fallback failed for {service}: {e}")
@@ -2980,9 +2988,11 @@ def _fetch_invoices_from_cost_explorer(creds, account_id):
         # (Usage, Tax, etc.) on the same UnblendedCost basis, so the per-month
         # invoice totalAmount is consistent with the dashboard monthly total.
         response = ce_client.get_cost_and_usage(
-            TimePeriod={'Start': start_date, 'End': end_date},
-            Granularity='MONTHLY',
-            Metrics=['UnblendedCost'],
+            **apply_account_scope({
+                'TimePeriod': {'Start': start_date, 'End': end_date},
+                'Granularity': 'MONTHLY',
+                'Metrics': ['UnblendedCost'],
+            }, account_id)
         )
     except ClientError as e:
         logger.error(f"Cost Explorer fallback failed for {account_id}: {e}")

@@ -25,6 +25,32 @@ logger = logging.getLogger(__name__)
 # Platform constants
 PLATFORM_ACCOUNT_ID = '991105135552'
 
+import re as _re
+_AWS_ACCT_RE = _re.compile(r'^\d{12}$')
+
+
+def _scope_ce(params: dict, account_id: str) -> dict:
+    """Scope Cost Explorer call params to a single LINKED_ACCOUNT.
+
+    In a multi-account org, querying CE from a payer/management account returns
+    the ENTIRE consolidated org's costs. The connection always targets ONE
+    account, so every cost query must be restricted to that account's
+    LINKED_ACCOUNT. AND-combines with any existing Filter. No-op for non-AWS
+    (non-12-digit) identifiers.
+    """
+    if not account_id or not _AWS_ACCT_RE.match(str(account_id).strip()):
+        return params
+    acct_filter = {'Dimensions': {'Key': 'LINKED_ACCOUNT', 'Values': [str(account_id).strip()]}}
+    scoped = dict(params)
+    existing = scoped.get('Filter')
+    if not existing:
+        scoped['Filter'] = acct_filter
+    elif 'And' in existing and isinstance(existing['And'], list):
+        scoped['Filter'] = {'And': list(existing['And']) + [acct_filter]}
+    else:
+        scoped['Filter'] = {'And': [existing, acct_filter]}
+    return scoped
+
 
 class AWSConnector(CloudConnector):
     """
@@ -117,10 +143,12 @@ class AWSConnector(CloudConnector):
 
             # Cost by service (full previous month)
             by_service = ce.get_cost_and_usage(
-                TimePeriod={'Start': start_date, 'End': end_date},
-                Granularity='MONTHLY',
-                Metrics=['UnblendedCost'],
-                GroupBy=[{'Type': 'DIMENSION', 'Key': 'SERVICE'}],
+                **_scope_ce({
+                    'TimePeriod': {'Start': start_date, 'End': end_date},
+                    'Granularity': 'MONTHLY',
+                    'Metrics': ['UnblendedCost'],
+                    'GroupBy': [{'Type': 'DIMENSION', 'Key': 'SERVICE'}],
+                }, account_id)
             )
 
             services = []
@@ -134,9 +162,11 @@ class AWSConnector(CloudConnector):
 
             # Daily trend (last 7 days) — includes current month days
             daily = ce.get_cost_and_usage(
-                TimePeriod={'Start': start_7d, 'End': today},
-                Granularity='DAILY',
-                Metrics=['UnblendedCost'],
+                **_scope_ce({
+                    'TimePeriod': {'Start': start_7d, 'End': today},
+                    'Granularity': 'DAILY',
+                    'Metrics': ['UnblendedCost'],
+                }, account_id)
             )
             daily_costs = []
             for period in daily.get('ResultsByTime', []):
@@ -150,10 +180,12 @@ class AWSConnector(CloudConnector):
             if now.day > 1:
                 try:
                     mtd_resp = ce.get_cost_and_usage(
-                        TimePeriod={'Start': first_of_this_month.strftime('%Y-%m-%d'), 'End': today},
-                        Granularity='MONTHLY',
-                        Metrics=['UnblendedCost'],
-                        GroupBy=[{'Type': 'DIMENSION', 'Key': 'SERVICE'}],
+                        **_scope_ce({
+                            'TimePeriod': {'Start': first_of_this_month.strftime('%Y-%m-%d'), 'End': today},
+                            'Granularity': 'MONTHLY',
+                            'Metrics': ['UnblendedCost'],
+                            'GroupBy': [{'Type': 'DIMENSION', 'Key': 'SERVICE'}],
+                        }, account_id)
                     )
                     for period in mtd_resp.get('ResultsByTime', []):
                         for group in period.get('Groups', []):
@@ -198,16 +230,18 @@ class AWSConnector(CloudConnector):
                         time_period = {'Start': first_of_this_month.strftime('%Y-%m-%d'), 'End': today}
 
                     usage_resp = ce.get_cost_and_usage(
-                        TimePeriod=time_period,
-                        Granularity='MONTHLY',
-                        Metrics=['UnblendedCost', 'UsageQuantity'],
-                        GroupBy=[{'Type': 'DIMENSION', 'Key': 'USAGE_TYPE'}],
-                        Filter={
-                            'Dimensions': {
-                                'Key': 'SERVICE',
-                                'Values': [service_filter],
-                            }
-                        },
+                        **_scope_ce({
+                            'TimePeriod': time_period,
+                            'Granularity': 'MONTHLY',
+                            'Metrics': ['UnblendedCost', 'UsageQuantity'],
+                            'GroupBy': [{'Type': 'DIMENSION', 'Key': 'USAGE_TYPE'}],
+                            'Filter': {
+                                'Dimensions': {
+                                    'Key': 'SERVICE',
+                                    'Values': [service_filter],
+                                }
+                            },
+                        }, account_id)
                     )
                     usage_types = []
                     for period in usage_resp.get('ResultsByTime', []):
@@ -250,10 +284,12 @@ class AWSConnector(CloudConnector):
             ).replace(day=1).strftime('%Y-%m-%d')
 
             resp = ce.get_cost_and_usage(
-                TimePeriod={'Start': start_date, 'End': end_date},
-                Granularity='MONTHLY',
-                Metrics=['UnblendedCost'],
-                GroupBy=[{'Type': 'DIMENSION', 'Key': 'SERVICE'}],
+                **_scope_ce({
+                    'TimePeriod': {'Start': start_date, 'End': end_date},
+                    'Granularity': 'MONTHLY',
+                    'Metrics': ['UnblendedCost'],
+                    'GroupBy': [{'Type': 'DIMENSION', 'Key': 'SERVICE'}],
+                }, account_id)
             )
 
             monthly_data = {}
@@ -1053,9 +1089,11 @@ class AWSConnector(CloudConnector):
 
             try:
                 forecast_resp = ce.get_cost_forecast(
-                    TimePeriod={'Start': today, 'End': forecast_end},
-                    Metric='UNBLENDED_COST',
-                    Granularity='MONTHLY',
+                    **_scope_ce({
+                        'TimePeriod': {'Start': today, 'End': forecast_end},
+                        'Metric': 'UNBLENDED_COST',
+                        'Granularity': 'MONTHLY',
+                    }, account_id)
                 )
                 forecast_total = float(forecast_resp.get('Total', {}).get('Amount', 0))
                 forecast_mean = float(forecast_resp.get('Total', {}).get('Amount', 0))

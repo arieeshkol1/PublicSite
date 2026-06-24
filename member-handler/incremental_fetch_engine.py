@@ -161,9 +161,11 @@ class IncrementalFetchEngine:
 
         # Extract account_id for size_guard logging (default "unknown" if not available)
         account_id = credentials.get('AccountId', credentials.get('account_id', 'unknown'))
+        # Account ID to scope CE queries to (only when it's a real AWS account ID).
+        scope_account_id = account_id if account_id and account_id != 'unknown' else None
 
         for batch_range in batched_ranges:
-            response = self._call_ce_with_retry(ce_client, batch_range)
+            response = self._call_ce_with_retry(ce_client, batch_range, account_id=scope_account_id)
             items = self._parse_ce_response(response)
 
             # Service-breakdown caching completes regardless of tag query outcomes
@@ -228,6 +230,7 @@ class IncrementalFetchEngine:
         date_range: DateRange,
         max_retries: int = 3,
         base_delay: float = 0.1,
+        account_id: str = None,
     ) -> dict:
         """Call Cost Explorer GetCostAndUsage with exponential backoff.
 
@@ -236,6 +239,9 @@ class IncrementalFetchEngine:
             date_range: DateRange to query.
             max_retries: Maximum number of retry attempts (default 3).
             base_delay: Base delay in seconds for backoff (default 0.1).
+            account_id: Connected AWS account ID. When provided, the query is
+                scoped to that LINKED_ACCOUNT so a payer/management-account
+                connection returns only this account's costs (not the org's).
 
         Returns:
             The CE API response dict.
@@ -244,22 +250,24 @@ class IncrementalFetchEngine:
             ClientError: If a non-retryable error occurs, or if retries
                 are exhausted.
         """
+        from ce_account_scope import apply_account_scope
+        params = apply_account_scope({
+            'TimePeriod': {
+                'Start': date_range.start,
+                'End': date_range.end,
+            },
+            'Granularity': 'DAILY',
+            'Metrics': ['UnblendedCost'],
+            'GroupBy': [
+                {
+                    'Type': 'DIMENSION',
+                    'Key': 'SERVICE',
+                }
+            ],
+        }, account_id)
         for attempt in range(max_retries + 1):
             try:
-                response = ce_client.get_cost_and_usage(
-                    TimePeriod={
-                        'Start': date_range.start,
-                        'End': date_range.end,
-                    },
-                    Granularity='DAILY',
-                    Metrics=['UnblendedCost'],
-                    GroupBy=[
-                        {
-                            'Type': 'DIMENSION',
-                            'Key': 'SERVICE',
-                        }
-                    ],
-                )
+                response = ce_client.get_cost_and_usage(**params)
                 return response
             except ClientError as e:
                 error_code = e.response['Error']['Code']

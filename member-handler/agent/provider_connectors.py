@@ -89,12 +89,16 @@ class AWSConnector:
 
             start_date, end_date = _parse_timeframe(timeframe)
 
-            response = ce_client.get_cost_and_usage(
-                TimePeriod={"Start": start_date, "End": end_date},
-                Granularity=granularity,
-                Metrics=["UnblendedCost", "UsageQuantity"],
-                GroupBy=[{"Type": "DIMENSION", "Key": "SERVICE"}],
-            )
+            # Scope to the connected account so a payer/management-account
+            # connection returns only this account's costs (not the whole org).
+            from ce_account_scope import apply_account_scope
+            params = apply_account_scope({
+                "TimePeriod": {"Start": start_date, "End": end_date},
+                "Granularity": granularity,
+                "Metrics": ["UnblendedCost", "UsageQuantity"],
+                "GroupBy": [{"Type": "DIMENSION", "Key": "SERVICE"}],
+            }, account_context.account_id)
+            response = ce_client.get_cost_and_usage(**params)
 
             return {
                 "cost_by_service": _parse_cost_results(response),
@@ -145,11 +149,14 @@ class AWSConnector:
             end_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
             start_date = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%d")
 
-            response = ce_client.get_cost_and_usage(
-                TimePeriod={"Start": start_date, "End": end_date},
-                Granularity="DAILY",
-                Metrics=["UnblendedCost"],
-            )
+            # Scope to the connected account (see get_cost_data).
+            from ce_account_scope import apply_account_scope
+            params = apply_account_scope({
+                "TimePeriod": {"Start": start_date, "End": end_date},
+                "Granularity": "DAILY",
+                "Metrics": ["UnblendedCost"],
+            }, account_context.account_id)
+            response = ce_client.get_cost_and_usage(**params)
 
             daily_costs = []
             for result in response.get("ResultsByTime", []):
