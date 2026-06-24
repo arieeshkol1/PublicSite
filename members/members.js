@@ -1622,6 +1622,7 @@ function activateMemberTab(tabId) {
         _syncAccountSelection('dash'); // save dash selection before switching
         populateAIAccounts();
         _applySharedSelection('ai-acct-cb'); // apply shared selection to AI tab
+        _ensureSingleAIAccount(); // chat is single-account only
     }
     if (tabId === 'dash-tab') {
         _syncAccountSelection('ai'); // save AI selection before switching
@@ -1979,9 +1980,8 @@ function populateAIAccounts() {
     toggleBtn.style.cssText = 'font-size:0.85em;padding:4px 12px;min-width:180px;text-align:left;position:relative;';
     function updateToggleLabel() {
         var checked = document.querySelectorAll('.ai-acct-cb:checked');
-        if (checked.length === 0) toggleBtn.textContent = 'Select accounts...';
-        else if (checked.length === 1) toggleBtn.textContent = checked[0].parentElement.dataset.label || checked[0].value;
-        else toggleBtn.textContent = checked.length + ' accounts selected';
+        if (checked.length === 0) toggleBtn.textContent = 'Select an account...';
+        else toggleBtn.textContent = checked[0].parentElement.dataset.label || checked[0].value;
         toggleBtn.textContent += ' \u25be';
     }
 
@@ -1996,31 +1996,19 @@ function populateAIAccounts() {
         row.onmouseenter = function() { row.style.background = '#f6f8fa'; };
         row.onmouseleave = function() { row.style.background = ''; };
         var cb = document.createElement('input');
-        cb.type = 'checkbox';
+        // Single-account selection only: radio buttons (never multiple) so chat
+        // cost queries always target exactly ONE account.
+        cb.type = 'radio';
+        cb.name = 'ai-acct-radio';
         cb.value = a.accountId;
         cb.className = 'ai-acct-cb';
         if (idx === 0) cb.checked = true;
         cb.style.cssText = 'accent-color:#6366f1;flex-shrink:0;';
-        cb.onchange = updateToggleLabel;
+        cb.onchange = function() { updateToggleLabel(); panel.style.display = 'none'; };
         row.appendChild(cb);
         row.appendChild(document.createTextNode(a.accountId + ' (' + (a.accountName || 'Account ' + a.accountId.slice(-4)) + ')'));
         panel.appendChild(row);
     });
-
-    // Select All / None row
-    var ctrlRow = document.createElement('div');
-    ctrlRow.style.cssText = 'display:flex;gap:8px;padding:6px 12px;border-top:1px solid #d0d7de;margin-top:4px;';
-    var selAll = document.createElement('a');
-    selAll.href = '#'; selAll.textContent = 'Select All';
-    selAll.style.cssText = 'font-size:0.8em;color:#6366f1;text-decoration:none;';
-    selAll.onclick = function(e) { e.preventDefault(); panel.querySelectorAll('.ai-acct-cb').forEach(function(c) { c.checked = true; }); updateToggleLabel(); };
-    var selNone = document.createElement('a');
-    selNone.href = '#'; selNone.textContent = 'Clear';
-    selNone.style.cssText = 'font-size:0.8em;color:#6366f1;text-decoration:none;';
-    selNone.onclick = function(e) { e.preventDefault(); panel.querySelectorAll('.ai-acct-cb').forEach(function(c) { c.checked = false; }); updateToggleLabel(); };
-    ctrlRow.appendChild(selAll);
-    ctrlRow.appendChild(selNone);
-    panel.appendChild(ctrlRow);
 
     var wrapper = document.createElement('div');
     wrapper.style.cssText = 'position:relative;display:inline-block;';
@@ -2040,10 +2028,21 @@ function populateAIAccounts() {
 }
 
 function getSelectedAccountIds() {
-    var cbs = document.querySelectorAll('.ai-acct-cb:checked');
-    var ids = [];
-    cbs.forEach(function(cb) { ids.push(cb.value); });
-    return ids;
+    // Chat is single-account only: return at most one selected account id.
+    var cb = document.querySelector('.ai-acct-cb:checked');
+    return cb ? [cb.value] : [];
+}
+
+function _ensureSingleAIAccount() {
+    // Guarantee exactly one chat account radio is selected. If a shared
+    // (possibly multi-account) selection left none or more than one checked,
+    // keep only the first and default to the first account when none match.
+    var checked = document.querySelectorAll('.ai-acct-cb:checked');
+    if (checked.length === 1) return;
+    var all = document.querySelectorAll('.ai-acct-cb');
+    all.forEach(function(c, i) { c.checked = false; });
+    var keep = checked.length > 1 ? checked[0] : (all.length ? all[0] : null);
+    if (keep) keep.checked = true;
 }
 
 
@@ -2358,11 +2357,13 @@ async function askAI() {
     var accountIds = getSelectedAccountIds();
     var question = aiQuestionInput.value.trim();
 
-    if (!accountIds.length) { notify('Please select at least one account.', 'error'); return; }
+    // Chat is single-account only.
+    if (!accountIds.length) { notify('Please select an account.', 'error'); return; }
+    if (accountIds.length > 1) { accountIds = [accountIds[0]]; }
     if (!question) return;
 
-    var acctLabel = accountIds.length === 1 ? accountIds[0] : accountIds.length + ' accounts';
-    addAIMessage('question', question + (accountIds.length > 1 ? ' [' + acctLabel + ']' : ''));
+    var acctLabel = accountIds[0];
+    addAIMessage('question', question);
     aiQuestionInput.dataset.lastQuestion = question;
     aiQuestionInput.value = '';
     addAIMessage('thinking', 'Analyzing ' + acctLabel + '...');
