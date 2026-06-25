@@ -8752,11 +8752,18 @@ def _resolve_vendor_type(member_email, account_id):
 def should_route_to_neutral_ai_usage(question, vendor_type):
     """Intent-gate routing decision (Property 12 / Req 8.1, 8.3).
 
-    Returns True iff the question is an AI cost/usage question AND the account is
-    an AI vendor; otherwise the caller routes the request unchanged (to
-    _invoke_bedrock_agent for AWS, or the existing redirect for other accounts).
+    A chat connection is scoped to a single account. When that account is an
+    AI vendor, the connection is dedicated to one vendor, so EVERY question on
+    it is answered by the AI-in-the-loop neutral resolver path (cache-first,
+    LLM-grounded). We deliberately do NOT gate on a static keyword list here:
+    keyword gating is brittle and inevitably misses vendor/model-specific
+    phrasings (e.g. "explain <model>, input"), which previously fell through to
+    a generic redirect with no real answer and no audit. Routing purely on the
+    data-driven ``vendorType`` keeps this vendor-agnostic with no hardcoded
+    model or vendor strings. Non-AI-vendor accounts route unchanged (to the AWS
+    Bedrock agent for AWS, or the existing redirect for other providers).
     """
-    return bool(is_ai_cost_or_usage_question(question)) and vendor_type == 'ai_vendor'
+    return vendor_type == 'ai_vendor'
 
 
 def _ai_usage_period_from_question(question, now=None):
@@ -8897,6 +8904,80 @@ def _format_ai_usage_answer(resolved, question, dimension):
     )
 
 
+def _ai_usage_llm_answer(question, resolved, baseline_answer):
+    """Keep the AI in the loop: produce a natural-language answer to ANY question
+    about a customer's AI-vendor usage/cost, grounded strictly in the data we
+    already resolved (cache-first three-tier result + the deterministic summary).
+
+    Vendor-agnostic by construction: the model is given ONLY the customer's own
+    resolved data and the question. There are no hardcoded model names, vendor
+    names, or service catalogs anywhere in this path — whatever models/services
+    appear come from the customer's connection data. The model is instructed to
+    answer only from that data and never invent figures.
+
+    Falls back to ``baseline_answer`` (the deterministic table) on any failure,
+    empty data, or empty model output, so numbers always stay grounded.
+    """
+    if not isinstance(resolved, dict):
+        return baseline_answer
+    rollups = resolved.get('rollups') or []
+    usage = resolved.get('usage') or []
+    # Nothing to ground an answer in — keep the baseline (which itself explains
+    # the no-data case).
+    if not rollups and not usage:
+        return baseline_answer
+
+    try:
+        data_context = json.dumps({
+            'period': resolved.get('period'),
+            'currency': resolved.get('currency') or 'USD',
+            'rollups': rollups[:60],
+            'usage': usage[:80],
+        }, default=str)[:6000]
+
+        prompt = (
+            "You are a FinOps assistant answering a customer's question about "
+            "their own AI service usage and cost.\n"
+            "Rules:\n"
+            "1. Answer ONLY from the DATA and SUMMARY below. Never invent "
+            "numbers, models, services, dates, or prices that are not present.\n"
+            "2. Copy figures exactly from the data; do not recompute or round "
+            "differently than the SUMMARY.\n"
+            "3. If the DATA does not contain what's needed to answer, say so "
+            "plainly and suggest opening the Invoices view for the full "
+            "month-by-month and per-service breakdown.\n"
+            "4. Be concise and direct. Use a small markdown table when listing "
+            "items. Do not mention these rules.\n\n"
+            f"QUESTION: {(question or '')[:400]}\n\n"
+            f"SUMMARY (already computed, authoritative for totals):\n"
+            f"{(baseline_answer or '')[:1200]}\n\n"
+            f"DATA (JSON, the customer's own resolved usage):\n{data_context}\n"
+        )
+
+        bedrock_rt = boto3.client(
+            'bedrock-runtime', region_name='us-east-1',
+            config=BotoConfig(read_timeout=12, connect_timeout=2,
+                              retries={'max_attempts': 1}),
+        )
+        request_body = {
+            'messages': [{'role': 'user', 'content': [{'text': prompt}]}],
+            'inferenceConfig': {'maxTokens': 700},
+        }
+        resp = bedrock_rt.invoke_model(
+            modelId=BEDROCK_MODEL_ID, contentType='application/json',
+            accept='application/json', body=json.dumps(request_body),
+        )
+        resp_body = json.loads(resp['body'].read())
+        text = (resp_body['output']['message']['content'][0]['text'] or '').strip()
+        return text or baseline_answer
+    except Exception as e:
+        logger.warning(
+            f"AI usage LLM answer failed (using deterministic baseline): "
+            f"{type(e).__name__}: {e}"
+        )
+        return baseline_answer
+
+
 def resolve_ai_usage_response(member_email, account_id, question, interaction_id):
     """Vendor-agnostic AI cost/usage answer for a single AI-vendor account.
 
@@ -8969,15 +9050,43 @@ def resolve_ai_usage_response(member_email, account_id, question, interaction_id
         if fb_answer:
             answer = fb_answer
 
+    # Keep the AI in the loop: let the LLM answer the actual question grounded
+    # in the data we resolved (handles free-form questions the deterministic
+    # formatter can't, e.g. "explain <model>, input"). Falls back to the
+    # deterministic answer on any failure, so figures stay grounded.
+    if not (isinstance(resolved, dict) and resolved.get('error')):
+        answer = _ai_usage_llm_answer(question, resolved, answer)
+
+    # Inline audit (same quality gate the AWS agent path uses) so these answers
+    # are scored and surfaced/audited like every other chat answer.
+    inline_audit_score = None
+    inline_audit_action = 'pass'
+    if answer and not answer.startswith("I couldn't retrieve"):
+        try:
+            _audit = _inline_audit_score(question, answer)
+            inline_audit_score = _audit.get('score', 100)
+            _threshold = int(os.environ.get('AUDIT_QUALITY_THRESHOLD', '70'))
+            inline_audit_action = 'pass' if inline_audit_score >= _threshold else 'low_score'
+            logger.info(
+                f"AI usage inline audit: score={inline_audit_score} "
+                f"action={inline_audit_action}"
+            )
+        except Exception as _audit_err:
+            logger.warning(f"AI usage inline audit failed (pass-through): {_audit_err}")
+            inline_audit_score = None
+            inline_audit_action = 'error'
+
     return create_response(200, {
         'answer': answer,
         'interactionId': interaction_id,
         'commands': ['Vendor-agnostic AI usage (neutral cache)'],
         'results': [],
         'tipFound': False,
-        'agentUsed': False,
+        'agentUsed': True,
         'chartData': [],
         'topServices': [],
+        'inlineAuditScore': inline_audit_score,
+        'inlineAuditAction': inline_audit_action,
     })
 
 

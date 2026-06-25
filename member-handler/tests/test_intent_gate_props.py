@@ -96,28 +96,33 @@ non_cost_questions = st.sampled_from(_NON_COST_QUESTIONS)
 @settings(max_examples=150, deadline=None)
 @given(question=cost_questions, vendor_type=vendor_types)
 def test_property12_cost_question_routes_neutral_only_for_ai_vendor(question, vendor_type):
-    """A classified AI-cost question routes to the neutral path iff the account
-    is an ai_vendor; a cloud_provider account routes unchanged (Property 12).
+    """A question on an ai_vendor connection routes to the neutral path; a
+    cloud_provider account routes unchanged (Property 12).
+
+    Routing is keyword-free and depends only on the data-driven vendorType, so
+    AI-vendor questions are never bounced to the static redirect (no hardcoded
+    model/vendor strings gate the decision).
 
     **Validates: Requirements 8.1, 8.3**
     """
-    # Cost phrases are always classified as AI cost/usage questions (Req 8.1).
-    assert is_ai_cost_or_usage_question(question) is True
-
     routed = should_route_to_neutral_ai_usage(question, vendor_type)
     assert routed is (vendor_type == 'ai_vendor')
 
 
 @settings(max_examples=150, deadline=None)
 @given(question=non_cost_questions, vendor_type=vendor_types)
-def test_property12_non_cost_question_never_routes_neutral(question, vendor_type):
-    """A non-AI-cost question is never routed to the neutral path, regardless of
-    vendor type — it falls through unchanged (Property 12).
+def test_property12_routing_independent_of_keywords(question, vendor_type):
+    """Questions with NO AI-cost keyword still route to the neutral path when
+    the account is an ai_vendor (the dedicated single-vendor connection answers
+    every question via the AI-in-the-loop resolver), and route unchanged for
+    cloud_provider accounts (Property 12).
+
+    This is the regression guard for the prior bug where model-specific phrasings
+    fell through to a generic redirect with no answer and no audit.
 
     **Validates: Requirements 8.1, 8.3**
     """
-    assert is_ai_cost_or_usage_question(question) is False
-    assert should_route_to_neutral_ai_usage(question, vendor_type) is False
+    assert should_route_to_neutral_ai_usage(question, vendor_type) is (vendor_type == 'ai_vendor')
 
 
 @settings(max_examples=200, deadline=None)
@@ -125,15 +130,13 @@ def test_property12_non_cost_question_never_routes_neutral(question, vendor_type
     question=st.one_of(cost_questions, non_cost_questions),
     vendor_type=vendor_types,
 )
-def test_property12_routing_is_exactly_classifier_and_ai_vendor(question, vendor_type):
-    """For any question/vendor, routing to the neutral path holds iff the
-    question is classified AND the account is an ai_vendor; otherwise the
-    request is routed unchanged (Property 12).
+def test_property12_routing_is_exactly_ai_vendor(question, vendor_type):
+    """For any question/vendor, routing to the neutral path holds iff the account
+    is an ai_vendor — independent of question wording (Property 12).
 
     **Validates: Requirements 8.1, 8.3**
     """
-    expected = is_ai_cost_or_usage_question(question) and vendor_type == 'ai_vendor'
-    assert should_route_to_neutral_ai_usage(question, vendor_type) is expected
+    assert should_route_to_neutral_ai_usage(question, vendor_type) is (vendor_type == 'ai_vendor')
 
 
 # ---------------------------------------------------------------------------
@@ -282,6 +285,11 @@ def test_neutral_path_does_not_invoke_answer_openai_query():
     with patch.object(incremental_fetch_engine, 'resolve_ai_usage',
                       return_value=fake_resolved) as mock_resolve, \
          patch.object(lambda_function, '_get_account_provider', return_value='openai'), \
+         patch.object(lambda_function, '_ai_usage_llm_answer',
+                      side_effect=lambda q, r, baseline: baseline), \
+         patch.object(lambda_function, '_inline_audit_score',
+                      return_value={'score': 100, 'can_improve': False,
+                                    'improvement': '', 'guiding_questions': []}), \
          patch.object(lambda_function, '_answer_openai_query') as mock_legacy:
         resp = resolve_ai_usage_response(
             'user@example.com', 'openai-acct-1', 'What is my AI cost this month?', 'iid-1'
@@ -322,7 +330,12 @@ def test_neutral_path_answers_cost_tokens_and_per_user_questions():
     # Per-user question -> actor dimension -> per-user table.
     with patch.object(incremental_fetch_engine, 'resolve_ai_usage',
                       side_effect=lambda *a, **k: _resolved(a[2])), \
-         patch.object(lambda_function, '_get_account_provider', return_value='openai'):
+         patch.object(lambda_function, '_get_account_provider', return_value='openai'), \
+         patch.object(lambda_function, '_ai_usage_llm_answer',
+                      side_effect=lambda q, r, baseline: baseline), \
+         patch.object(lambda_function, '_inline_audit_score',
+                      return_value={'score': 100, 'can_improve': False,
+                                    'improvement': '', 'guiding_questions': []}):
         per_user = resolve_ai_usage_response(
             'u@x.com', 'openai-1', 'Show AI tokens per user', 'iid')
         tokens_q = resolve_ai_usage_response(
