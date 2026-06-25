@@ -1128,15 +1128,15 @@ def handle_drilldown_refresh_request(event, member_email):
 
 def fetch_invoice_list(member_email, account_id):
     """
-    Fetch invoice-level metadata from AWS Invoicing API.
+    Fetch invoice-level metadata for a single account.
 
-    Calls ListInvoiceSummaries via cross-account role assumption.
-    Falls back to Cost Explorer monthly aggregation if the Invoicing API
-    is unavailable or returns AccessDenied.
-
-    Always supplements with Cost Explorer data for any recent months
-    that are missing from the Invoicing API response (AWS can take 7-10
-    days to generate the previous month's invoice).
+    Cost Explorer (LINKED_ACCOUNT-scoped via apply_account_scope) is the
+    source of truth for each month's totalAmount and currency, so a
+    consolidated-billing PAYER account shows ONLY its own charges. The AWS
+    Invoicing API (ListInvoiceSummaries) is queried best-effort to enrich
+    records with the real invoiceId, issuer, and paymentStatus, matched by
+    period (YYYY-MM). If the Invoicing API is unavailable or errors, pure
+    Cost Explorer records are returned.
 
     Args:
         member_email: Authenticated member's email address.
@@ -1147,7 +1147,19 @@ def fetch_invoice_list(member_email, account_id):
     """
     creds = _assume_role(member_email, account_id)
 
-    # Try AWS Invoicing API first (may not be available in all boto3 versions)
+    # ── Source of truth: LINKED_ACCOUNT-scoped Cost Explorer aggregation ──
+    # The AWS Invoicing API's ListInvoiceSummaries has no LINKED_ACCOUNT filter,
+    # so for a consolidated-billing PAYER account it returns the WHOLE org's
+    # invoice total (other linked accounts' charges leak in). To guarantee each
+    # account shows ONLY its own charges, every month's totalAmount/currency
+    # comes from _fetch_invoices_from_cost_explorer (which wraps the CE call in
+    # apply_account_scope(..., account_id) and matches the dashboard total).
+    # The Invoicing API is used only best-effort to enrich records with the real
+    # invoiceId, issuer, and paymentStatus, matched BY PERIOD (YYYY-MM).
+    ce_records = _fetch_invoices_from_cost_explorer(creds, account_id)
+
+    # Build per-period enrichment map from the Invoicing API (best-effort).
+    invoicing_meta = {}
     try:
         invoicing_client = boto3.client(
             'invoicing',
@@ -1162,9 +1174,7 @@ def fetch_invoice_list(member_email, account_id):
         )
         invoices = response.get('InvoiceSummaries', [])
 
-        records = []
         for inv in invoices:
-            invoice_id = inv.get('InvoiceId', '')
             payment_date = inv.get('PaymentDate', inv.get('DueDate', ''))
             if hasattr(payment_date, 'isoformat'):
                 payment_date = payment_date.strftime('%Y-%m-%d')
@@ -1172,51 +1182,21 @@ def fetch_invoice_list(member_email, account_id):
                 payment_date = str(payment_date).split('T')[0]
 
             period = str(payment_date)[:7] if payment_date else ''
-            total_amount = float(inv.get('TotalAmount', {}).get('Amount', 0))
-            currency = inv.get('TotalAmount', {}).get('CurrencyCode', 'USD')
+            if not period:
+                continue
+
             payment_status = inv.get('PaymentStatus', 'paid').lower()
             if payment_status not in ('paid', 'pending', 'overdue'):
                 payment_status = 'paid'
 
-            records.append({
-                'invoiceId': invoice_id,
+            # NOTE: TotalAmount/CurrencyCode from the Invoicing API are
+            # deliberately ignored — they are org-wide for payer accounts.
+            invoicing_meta[period] = {
+                'invoiceId': inv.get('InvoiceId', ''),
                 'issuer': inv.get('Issuer', 'Amazon Web Services'),
                 'paymentDate': str(payment_date),
                 'paymentStatus': payment_status,
-                'totalAmount': round(total_amount, 2),
-                'currency': currency,
-                'period': period,
-                'source': 'billing_api',
-            })
-
-        # Supplement missing recent months from Cost Explorer
-        # AWS Invoicing API can take 7-10 days to generate previous month's invoice
-        existing_periods = {r['period'] for r in records if r.get('period')}
-        now = datetime.now(timezone.utc)
-
-        # Check if previous month is missing (e.g., May 2026 when today is June 8)
-        prev_month_date = datetime(now.year, now.month, 1, tzinfo=timezone.utc) - timedelta(days=1)
-        prev_period = prev_month_date.strftime('%Y-%m')
-
-        if prev_period not in existing_periods:
-            logger.info(
-                f"Invoicing API missing {prev_period} for {account_id}, "
-                f"supplementing from Cost Explorer"
-            )
-            try:
-                ce_records = _fetch_invoices_from_cost_explorer(creds, account_id)
-                # Only add months that are missing from the Invoicing API response
-                for ce_record in ce_records:
-                    if ce_record.get('period') not in existing_periods:
-                        ce_record['paymentStatus'] = 'pending'  # Mark as pending since not yet invoiced
-                        records.append(ce_record)
-                        existing_periods.add(ce_record.get('period'))
-            except Exception as ce_err:
-                logger.warning(
-                    f"Cost Explorer supplement failed for {account_id}: {ce_err}"
-                )
-
-        return records
+            }
 
     except (ClientError, Exception) as e:
         error_code = ''
@@ -1224,9 +1204,35 @@ def fetch_invoice_list(member_email, account_id):
             error_code = e.response['Error']['Code']
         logger.info(
             f"Invoicing API unavailable for {account_id} ({type(e).__name__}: {error_code or str(e)}), "
-            f"falling back to Cost Explorer"
+            f"using pure Cost Explorer records"
         )
-        return _fetch_invoices_from_cost_explorer(creds, account_id)
+        # Fall back to pure CE records (current fallback behavior).
+        return ce_records
+
+    # Enrich the account-scoped CE records with real Invoicing API metadata,
+    # matched by period. totalAmount and currency ALWAYS come from CE.
+    records = []
+    for ce_record in ce_records:
+        period = ce_record.get('period', '')
+        meta = invoicing_meta.get(period)
+        if meta:
+            records.append({
+                'invoiceId': meta['invoiceId'] or ce_record['invoiceId'],
+                'issuer': meta['issuer'],
+                'paymentDate': meta['paymentDate'] or ce_record['paymentDate'],
+                'paymentStatus': meta['paymentStatus'],
+                'totalAmount': ce_record['totalAmount'],
+                'currency': ce_record['currency'],
+                'period': period,
+                'source': 'cost_explorer',
+            })
+        else:
+            # No matching Invoicing API record for this period (e.g. AWS has
+            # not yet generated the previous month's invoice). Keep the pure
+            # account-scoped CE record.
+            records.append(ce_record)
+
+    return records
 
 
 def fetch_service_breakdown(member_email, account_id, period):

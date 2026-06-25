@@ -22184,9 +22184,126 @@ def _apply_invoice_filters(items, validated):
 
 @transaction_log('member-handler')
 def handle_refresh_invoices(event):
-    """POST /members/invoices/refresh Ã¢â‚¬â€ Force re-sync invoice data from AWS."""
-    from invoice_sync import sync_invoice_data, InvoiceSyncError
+    """POST /members/invoices/refresh — re-sync invoice data.
 
+    Two modes:
+      * All-accounts (default, or allAccounts=true): iterate over EVERY connected
+        account for the member and sync each, aggregating the per-account
+        results. Per-account failures (including per-account rate limits) are
+        non-fatal so one bad account never blocks the others. This fixes the
+        prior behaviour where only the single requested account was synced.
+      * Single account: an explicit accountId with allAccounts falsy preserves
+        the original one-account behaviour.
+    """
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+    member_email = auth['sub']
+
+    try:
+        body = json.loads(event.get('body', '{}'))
+    except (json.JSONDecodeError, TypeError):
+        return create_error_response(400, 'InvalidRequest', 'Invalid request body')
+
+    requested_account = (body.get('accountId') or '').strip()
+    if not bool(body.get('allAccounts')) and requested_account:
+        # Explicit single-account refresh (back-compat).
+        return _refresh_invoices_single(event)
+    return _refresh_invoices_all(event, member_email, body)
+
+
+def _refresh_invoices_all(event, member_email, body):
+    """Sync invoice data for every connected account of the member.
+
+    Builds a per-account event and reuses ``_refresh_invoices_single`` for each
+    so AWS vs non-AWS provider routing, old-record deletion, sync, and the
+    cost-cache refresh stay byte-for-byte identical to the single-account path.
+    Per-account errors are collected and never abort the whole run.
+    """
+    months = body.get('months', [])
+
+    accounts_table = dynamodb.Table(ACCOUNTS_TABLE_NAME)
+    try:
+        resp = accounts_table.query(
+            KeyConditionExpression=boto3.dynamodb.conditions.Key('memberEmail').eq(member_email)
+        )
+        accounts = resp.get('Items', [])
+    except ClientError as e:
+        logger.error(f"All-account invoice refresh: failed to list accounts: {e}")
+        return create_error_response(500, 'ServerError', 'Failed to list accounts')
+
+    connected = [
+        a for a in accounts
+        if str(a.get('connectionStatus', '')).strip().lower() == 'connected'
+        and a.get('accountId')
+    ]
+    if not connected:
+        return create_response(200, {
+            'refreshed': False,
+            'accounts': [],
+            'syncedCount': 0,
+            'totalCount': 0,
+            'message': 'No connected accounts to sync',
+        })
+
+    results = []
+    cooldowns = []
+    for acct in connected:
+        aid = acct['accountId']
+        per_event = dict(event)
+        per_event['body'] = json.dumps({'accountId': aid, 'months': months})
+        try:
+            res = _refresh_invoices_single(per_event)
+        except Exception as e:
+            logger.warning(
+                f"All-account invoice refresh: {aid} raised {type(e).__name__}: {e}"
+            )
+            results.append({'accountId': aid, 'ok': False, 'status': 500, 'error': str(e)})
+            continue
+
+        status = res.get('statusCode', 500) if isinstance(res, dict) else 500
+        try:
+            res_body = json.loads(res.get('body', '{}')) if isinstance(res, dict) else {}
+        except Exception:
+            res_body = {}
+        ok = status == 200
+        if status == 429:
+            cooldowns.append(
+                res_body.get('cooldownRemaining') or res_body.get('secondsRemaining') or 300
+            )
+        results.append({
+            'accountId': aid,
+            'ok': ok,
+            'status': status,
+            'recordCount': res_body.get('recordCount', 0),
+            'months': res_body.get('months', []),
+            'error': None if ok else (res_body.get('message') or res_body.get('error')),
+        })
+
+    synced = sum(1 for r in results if r['ok'])
+    payload = {
+        'refreshed': synced > 0,
+        'accounts': results,
+        'syncedCount': synced,
+        'totalCount': len(results),
+    }
+    if synced > 0:
+        return create_response(200, payload)
+
+    # Nothing synced. If every account was rate-limited, surface a 429 so the UI
+    # shows its cooldown; otherwise report a sync failure with per-account detail.
+    if cooldowns and len(cooldowns) == len(results):
+        remaining = min(int(c) for c in cooldowns)
+        return create_error_response(
+            429, 'RateLimited', f'Refresh available in {remaining} seconds',
+            extra={'cooldownRemaining': remaining, 'accounts': results})
+    return create_error_response(
+        502, 'SyncFailed', 'Invoice refresh failed for all connected accounts',
+        extra={'accounts': results})
+
+
+def _refresh_invoices_single(event):
+    """POST /members/invoices/refresh Ã¢â‚¬â€ Force re-sync invoice data from AWS."""
     auth = validate_token(event)
     if isinstance(auth, dict) and 'statusCode' in auth:
         return auth
@@ -22199,42 +22316,9 @@ def handle_refresh_invoices(event):
         return create_error_response(400, 'InvalidRequest', 'Invalid request body')
 
     account_id = (body.get('accountId') or '').strip()
+    all_accounts = body.get('allAccounts') is True
 
-    # Validate accountId is provided
-    if not account_id:
-        return create_error_response(400, 'MissingParam', 'accountId is required')
-
-    # Validate accountId format. Accept any provider identifier (AWS 12-digit,
-    # Azure subscription UUID, GCP project ID, AI/OpenAI org ID). Account
-    # ownership verification below is the actual security gate.
-    if not _is_valid_account_identifier(account_id):
-        return create_error_response(400, 'InvalidAccountId', 'Invalid account identifier')
-
-    # Provider-aware routing. The AWS path below re-syncs invoice data from
-    # Cost Explorer (invoice_sync.sync_invoice_data), which requires a 12-digit
-    # AWS account and the cross-account SlashMyBill role. Non-AWS providers
-    # (azure/gcp/openai) have no Cost Explorer; they regenerate + cache their
-    # synthetic invoices via the provider-aware drill-down refresh handler
-    # (which uses provider_invoices.generate_provider_invoices). Routing here
-    # keeps the existing AWS behaviour untouched while making refresh work for
-    # non-AWS accounts.
-    provider_key = _get_account_provider(member_email, account_id)
-    if provider_key != 'aws':
-        from invoice_drilldown import handle_drilldown_refresh_request
-        return handle_drilldown_refresh_request(event, member_email)
-
-    # AWS path: enforce the strict 12-digit account format the Cost Explorer
-    # sync depends on (preserves the previous AWS-only validation/error).
-    if not re.fullmatch(r'\d{12}', account_id):
-        return create_error_response(400, 'InvalidAccountId', 'Account ID must be a 12-digit number')
-
-    # Verify account ownership
-    ownership = _verify_account_ownership(member_email, [account_id])
-    if ownership is not True:
-        logger.warning(f"Unauthorized invoice refresh attempt: member={member_email} accountId={account_id}")
-        return ownership
-
-    # Validate months array
+    # --- Resolve months ONCE (shared by every account in this refresh) ---
     months = body.get('months', [])
     if not isinstance(months, list):
         return create_error_response(400, 'InvalidRequest', 'months must be an array')
@@ -22261,6 +22345,160 @@ def handle_refresh_invoices(event):
         if error:
             return error
 
+    # --- Determine the target accounts ---
+    single_account_mode = bool(account_id) and not all_accounts
+
+    if single_account_mode:
+        # Preserve today's behavior: validate the single account up-front and
+        # return its validation errors directly.
+        if not _is_valid_account_identifier(account_id):
+            return create_error_response(400, 'InvalidAccountId', 'Invalid account identifier')
+        target_accounts = [account_id]
+    else:
+        # All-accounts mode: every connected account belonging to the member.
+        try:
+            accounts_table = dynamodb.Table(ACCOUNTS_TABLE_NAME)
+            acct_resp = accounts_table.query(
+                KeyConditionExpression=boto3.dynamodb.conditions.Key('memberEmail').eq(member_email)
+            )
+            target_accounts = [
+                item['accountId']
+                for item in acct_resp.get('Items', [])
+                if item.get('accountId')
+                and str(item.get('connectionStatus', '')).strip().lower() == 'connected'
+            ]
+        except ClientError as e:
+            logger.error(f"Failed to list accounts for all-accounts refresh: {e}")
+            return create_error_response(500, 'ServerError', 'Failed to list accounts')
+
+        if not target_accounts:
+            return create_response(200, {
+                'refreshed': True,
+                'accounts': [],
+                'syncedAccountCount': 0,
+                'months': months,
+                'recordCount': 0,
+            })
+
+    # --- Loop over the target accounts, collecting per-account results ---
+    results = []
+    for aid in target_accounts:
+        try:
+            results.append(_refresh_invoices_for_account(member_email, aid, months, event))
+        except Exception as e:
+            # Defensive: the helper should never raise, but never let one
+            # account abort the whole refresh.
+            logger.error(f"Unexpected error refreshing account {aid}: {e}")
+            results.append({
+                'accountId': aid, 'ok': False, 'error': 'Invoice refresh failed',
+                'errorType': 'ServerError', 'skipped': False, 'statusCode': 500,
+            })
+
+    synced_count = sum(1 for r in results if r.get('ok'))
+    total_records = sum(int(r.get('recordCount', 0) or 0) for r in results)
+
+    # Single-account mode: preserve direct error responses for back-compat.
+    if single_account_mode:
+        only = results[0]
+        if not only.get('ok'):
+            extra = None
+            if only.get('cooldownRemaining') is not None:
+                extra = {'cooldownRemaining': only['cooldownRemaining']}
+            return create_error_response(
+                int(only.get('statusCode', 500)),
+                only.get('errorType', 'ServerError'),
+                only.get('error', 'Invoice refresh failed'),
+                extra=extra,
+            )
+
+    # Aggregate summary (the new contract); keep legacy top-level keys too.
+    return create_response(200, {
+        'refreshed': True,
+        'accounts': results,
+        'syncedAccountCount': synced_count,
+        'months': months,
+        'recordCount': total_records,
+    })
+
+
+def _refresh_invoices_for_account(member_email, account_id, months, event):
+    """Re-sync invoice data for a single account.
+
+    Returns a plain dict (never an HTTP response) and never raises out to the
+    caller, so an all-accounts loop can continue past individual failures.
+
+    Success: {'accountId', 'provider', 'ok': True, 'months': [...], 'recordCount': N}
+    Failure: {'accountId', 'provider', 'ok': False, 'error', 'errorType',
+              'skipped': <bool, True for rate-limit>, 'statusCode': <int>}
+    """
+    from invoice_sync import sync_invoice_data, InvoiceSyncError
+
+    # Provider-aware routing. The AWS path below re-syncs invoice data from
+    # Cost Explorer (invoice_sync.sync_invoice_data), which requires a 12-digit
+    # AWS account and the cross-account SlashMyBill role. Non-AWS providers
+    # (azure/gcp/openai/groundcover) have no Cost Explorer; they regenerate +
+    # cache their synthetic invoices via the provider-aware drill-down refresh
+    # handler (which uses provider_invoices.generate_provider_invoices).
+    provider_key = _get_account_provider(member_email, account_id)
+    if provider_key != 'aws':
+        try:
+            from invoice_drilldown import handle_drilldown_refresh_request
+            dd_event = dict(event)
+            try:
+                dd_body = json.loads(event.get('body', '{}')) or {}
+            except (json.JSONDecodeError, TypeError):
+                dd_body = {}
+            dd_body['accountId'] = account_id
+            dd_event['body'] = json.dumps(dd_body)
+
+            resp = handle_drilldown_refresh_request(dd_event, member_email)
+            status = resp.get('statusCode', 500) if isinstance(resp, dict) else 500
+            try:
+                resp_body = json.loads(resp.get('body', '{}')) if isinstance(resp, dict) else {}
+            except (json.JSONDecodeError, TypeError):
+                resp_body = {}
+
+            if 200 <= status < 300:
+                return {
+                    'accountId': account_id, 'provider': provider_key, 'ok': True,
+                    'months': months,
+                    'recordCount': len(resp_body.get('invoices', []) or []),
+                }
+            return {
+                'accountId': account_id, 'provider': provider_key, 'ok': False,
+                'error': resp_body.get('message', resp_body.get('error', 'Refresh failed')),
+                'errorType': resp_body.get('error', 'RefreshError'),
+                'skipped': status == 429, 'statusCode': status,
+                'cooldownRemaining': resp_body.get('secondsRemaining'),
+            }
+        except Exception as e:
+            logger.error(f"Non-AWS refresh failed for {account_id}: {e}")
+            return {
+                'accountId': account_id, 'provider': provider_key, 'ok': False,
+                'error': 'Invoice refresh failed', 'errorType': 'ServerError',
+                'skipped': False, 'statusCode': 500,
+            }
+
+    # AWS path: enforce the strict 12-digit account format the Cost Explorer
+    # sync depends on (preserves the previous AWS-only validation/error).
+    if not re.fullmatch(r'\d{12}', account_id):
+        return {
+            'accountId': account_id, 'provider': 'aws', 'ok': False,
+            'error': 'Account ID must be a 12-digit number', 'errorType': 'InvalidAccountId',
+            'skipped': False, 'statusCode': 400,
+        }
+
+    # Verify account ownership
+    ownership = _verify_account_ownership(member_email, [account_id])
+    if ownership is not True:
+        logger.warning(f"Unauthorized invoice refresh attempt: member={member_email} accountId={account_id}")
+        status = ownership.get('statusCode', 403) if isinstance(ownership, dict) else 403
+        return {
+            'accountId': account_id, 'provider': 'aws', 'ok': False,
+            'error': 'Account does not belong to you', 'errorType': 'Forbidden',
+            'skipped': False, 'statusCode': status,
+        }
+
     # --- Rate limiting: 1 refresh per account per 5-minute window ---
     invoices_table = dynamodb.Table(INVOICES_TABLE_NAME)
     refresh_pk = f'REFRESH#{account_id}'
@@ -22278,11 +22516,12 @@ def handle_refresh_invoices(event):
             elapsed = now_epoch - last_refresh
             if elapsed < cooldown_seconds:
                 remaining = cooldown_seconds - elapsed
-                return create_error_response(
-                    429, 'RateLimited',
-                    f'Refresh available in {remaining} seconds',
-                    extra={'cooldownRemaining': remaining}
-                )
+                return {
+                    'accountId': account_id, 'provider': 'aws', 'ok': False,
+                    'error': f'Refresh available in {remaining} seconds',
+                    'errorType': 'RateLimited', 'skipped': True, 'statusCode': 429,
+                    'cooldownRemaining': remaining,
+                }
     except ClientError as e:
         logger.warning(f"Rate limit check error: {e}")
         # Proceed if we can't check rate limit
@@ -22340,7 +22579,11 @@ def handle_refresh_invoices(event):
                 batch.delete_item(Key={'pk': item['pk'], 'sk': item['sk']})
     except ClientError as e:
         logger.error(f"Failed to delete old invoice records: {e}")
-        return create_error_response(500, 'ServerError', 'Failed to prepare refresh')
+        return {
+            'accountId': account_id, 'provider': 'aws', 'ok': False,
+            'error': 'Failed to prepare refresh', 'errorType': 'ServerError',
+            'skipped': False, 'statusCode': 500,
+        }
 
     # --- Call sync_invoice_data to fetch fresh data ---
     try:
@@ -22348,10 +22591,18 @@ def handle_refresh_invoices(event):
     except InvoiceSyncError as e:
         # Preserve existing cache on failure (already deleted Ã¢â‚¬â€ but sync failed)
         logger.error(f"Invoice sync failed during refresh: {e.message}")
-        return create_error_response(e.status_code, e.error_type, e.message)
+        return {
+            'accountId': account_id, 'provider': 'aws', 'ok': False,
+            'error': e.message, 'errorType': e.error_type,
+            'skipped': False, 'statusCode': e.status_code,
+        }
     except Exception as e:
         logger.error(f"Unexpected error during invoice refresh: {e}")
-        return create_error_response(500, 'ServerError', 'Invoice refresh failed')
+        return {
+            'accountId': account_id, 'provider': 'aws', 'ok': False,
+            'error': 'Invoice refresh failed', 'errorType': 'ServerError',
+            'skipped': False, 'statusCode': 500,
+        }
 
     # --- Also refresh the daily cost cache (Cost_Cache_Table) ---
     try:
@@ -22372,11 +22623,13 @@ def handle_refresh_invoices(event):
     except ClientError as e:
         logger.warning(f"Failed to update rate limit record: {e}")
 
-    return create_response(200, {
-        'refreshed': True,
+    return {
+        'accountId': account_id,
+        'provider': 'aws',
+        'ok': True,
         'months': result.get('synced_months', []),
         'recordCount': result.get('record_count', 0),
-    })
+    }
 
 
 def _refresh_ai_usage_cache_for_account(member_email, account_id, provider=None):
