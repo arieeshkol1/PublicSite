@@ -12494,6 +12494,7 @@ async function _refreshInvoiceData() {
     try {
         await api('POST', '/members/invoices/refresh', {
             accountId: _invState.accountId,
+            allAccounts: true,
             months: [currentMonth, prevMonth]
         });
         notify('Invoice data refreshed.', 'success');
@@ -13029,18 +13030,10 @@ function _ddRenderInvoices(data) {
 }
 
 function _ddToggleInvoice(period) {
-    // If we're at month level, drill into account-level aggregation for this period
-    if (_ddState.level === 'month' && period) {
-        _ddState.drillMonth = period;
-        _ddState.level = 'account';
-        _ddState.breadcrumb = [{ level: 'month', value: '', label: 'Invoices' }];
-        _ddState.page = 1;
-        _renderBreadcrumb();
-        _updateAccountBadge();
-        _loadAccountAggregation(period);
-        return;
-    }
-    // Fallback: original expand/collapse behavior for compatibility
+    // Account level removed (Month → Service → Sub-service). The per-account
+    // selector already scopes the view to a single account/connection, so an
+    // account hierarchy level inside a month is redundant. Clicking a month now
+    // expands its services inline; each service expands to its resources.
     if (_ddExpandedInvoices[period]) {
         // Collapse
         delete _ddExpandedInvoices[period];
@@ -13283,7 +13276,7 @@ async function _ddRefresh() {
     var prevMonth = prevDate.getFullYear() + '-' + String(prevDate.getMonth() + 1).padStart(2, '0');
 
     try {
-        await api('POST', '/members/invoices/refresh', { accountId: _ddState.accountId, months: [curMonth, prevMonth] });
+        await api('POST', '/members/invoices/refresh', { accountId: _ddState.accountId, allAccounts: true, months: [curMonth, prevMonth] });
         notify('Invoice data refreshed.', 'success');
         _ddClearCache();
         _ddState.page = 1;
