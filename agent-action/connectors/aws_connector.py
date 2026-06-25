@@ -405,10 +405,25 @@ class AWSConnector(CloudConnector):
             pricing_client = boto3.client('pricing', region_name='us-east-1')
             location = self._region_to_location(region)
 
+            # licenseModel disambiguates Windows SKUs: AWS returns BOTH a
+            # "License Included" SKU (the on-demand rate the customer actually
+            # pays, which bakes in the Windows Server license) AND a "Bring your
+            # own license" SKU (priced the same as Linux). Without this filter,
+            # get_products returns several SKUs and picking the first > 0 grabs
+            # the BYOL/Linux-equivalent rate — making Windows instances show the
+            # Linux price (e.g. t3.medium $0.0416 instead of the Windows rate).
+            # Linux uses "No License required".
+            license_model = ('License Included'
+                             if str(operating_system).lower() == 'windows'
+                             else 'No License required')
+
             for itype in instance_types:
                 try:
-                    # Use minimal filters to maximize matches across regions.
-                    # The capacitystatus filter can cause empty results in some regions.
+                    # licenseModel disambiguates Windows License-Included vs BYOL
+                    # (see note above). capacitystatus is intentionally omitted —
+                    # it can yield empty results in some regions, and the
+                    # operatingSystem+licenseModel+preInstalledSw+tenancy set is
+                    # specific enough to resolve the correct on-demand SKU.
                     resp = pricing_client.get_products(
                         ServiceCode='AmazonEC2',
                         Filters=[
@@ -417,6 +432,7 @@ class AWSConnector(CloudConnector):
                             {'Type': 'TERM_MATCH', 'Field': 'operatingSystem', 'Value': operating_system},
                             {'Type': 'TERM_MATCH', 'Field': 'tenancy', 'Value': 'Shared'},
                             {'Type': 'TERM_MATCH', 'Field': 'preInstalledSw', 'Value': 'NA'},
+                            {'Type': 'TERM_MATCH', 'Field': 'licenseModel', 'Value': license_model},
                         ],
                         MaxResults=5,
                     )
@@ -446,6 +462,7 @@ class AWSConnector(CloudConnector):
                                 {'Type': 'TERM_MATCH', 'Field': 'operatingSystem', 'Value': operating_system},
                                 {'Type': 'TERM_MATCH', 'Field': 'tenancy', 'Value': 'Shared'},
                                 {'Type': 'TERM_MATCH', 'Field': 'preInstalledSw', 'Value': 'NA'},
+                                {'Type': 'TERM_MATCH', 'Field': 'licenseModel', 'Value': license_model},
                             ],
                             MaxResults=5,
                         )

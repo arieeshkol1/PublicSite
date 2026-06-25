@@ -213,3 +213,24 @@ class CloudConnector(ABC):
         raise NotImplementedError(
             f"{self.__class__.__name__} does not implement get_ai_vendor_usage"
         )
+
+    def get_ai_usage(self, account_id: str, member_email: str, params: dict) -> dict:
+        """
+        Vendor-neutral AI cost/usage retrieval.
+
+        params:
+          dimension: "cost" | "units" | "actor"   (required)
+          service:   optional str  - scope to a single AI service/model
+          period:    optional {start, end}         - defaults to the last 30 days
+
+        Returns a neutral-shaped dict:
+            {dimension, period, currency, rollups[], usage[], truncated,
+             providerMetadata}
+
+        AI-vendor connectors (OpenAI, Anthropic, etc.) override this. Non-AI
+        connectors (AWS/Azure/GCP) inherit this default, which the Provider
+        Router converts into a structured ``notSupported`` response.
+        """
+        raise NotImplementedError(
+            f"{self.__class__.__name__} does not implement get_ai_usage"
+        )
