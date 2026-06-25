@@ -8401,6 +8401,93 @@ def _openai_period_label(period):
     return datetime(int(y), int(m), 1).strftime('%B %Y')
 
 
+def _ai_usage_resolved_is_empty(resolved):
+    """True when the neutral resolver produced no usable cost/usage.
+
+    Used to decide whether to fall back to the cache-first per-model breakdown.
+    A structured error (missing connection / admin-key gap) is NOT treated as
+    empty — that message is meaningful and must be preserved.
+    """
+    if not isinstance(resolved, dict) or resolved.get('error'):
+        return False
+    rollups = resolved.get('rollups') or []
+    usage = resolved.get('usage') or []
+    total = sum(_ai_usage_safe_float(r.get('cost_amount')) for r in rollups)
+    tokens = sum(_ai_usage_safe_float(u.get('usage_quantity')) for u in usage)
+    return total <= 0 and tokens <= 0 and not usage
+
+
+def _ai_usage_cache_answer(member_email, account_id, question, period, dimension):
+    """Cache-first fallback for AI-usage chat answers (OpenAI/AI-vendor).
+
+    The neutral three-tier resolver reads only the neutral COST#/USAGE# window,
+    which can be empty when AI cost data still lives in the legacy OpenAI cache.
+    This reuses the SAME cache-first per-model breakdown the Invoices view uses
+    (``_openai_period_data``: OPENAI service cache → bounded generation), shapes
+    it into the neutral response dict, and formats it. Returns a formatted answer
+    string, or None when no cached data exists.
+    """
+    try:
+        periods = _parse_periods_from_question(question)
+    except Exception:
+        periods = []
+    if not periods:
+        # Derive the calendar months spanned by the resolved window.
+        try:
+            s = (period or {}).get('start', '')
+            e = (period or {}).get('end', '')
+            y, m = int(s[:4]), int(s[5:7])
+            ey, em = int(e[:4]), int(e[5:7])
+            periods = []
+            while (y, m) <= (ey, em) and len(periods) < 13:
+                periods.append(f"{y:04d}-{m:02d}")
+                m += 1
+                if m > 12:
+                    m = 1
+                    y += 1
+        except Exception:
+            periods = []
+    if not periods:
+        return None
+
+    rollups = []
+    usage = []
+    grand_total = 0.0
+    for p in periods:
+        try:
+            total, services = _openai_period_data(member_email, account_id, p)
+        except Exception:
+            total, services = 0.0, []
+        if (total or 0) <= 0 and not services:
+            continue
+        grand_total += float(total or 0)
+        rollups.append({'date': f"{p}-01", 'cost_amount': float(total or 0), 'currency': 'USD'})
+        for s in (services or []):
+            svc = s.get('serviceName') or s.get('service') or 'unknown'
+            usage.append({
+                'date': f"{p}-01",
+                'actor': None,
+                'service': svc,
+                'usage_quantity': None,
+                'unit': 'tokens',
+                'cost_amount': float(s.get('amount', 0) or 0),
+            })
+
+    if grand_total <= 0 and not usage:
+        return None
+
+    resolved_fb = {
+        'dimension': dimension,
+        'period': period,
+        'currency': 'USD',
+        'rollups': rollups,
+        'usage': usage,
+        'truncated': False,
+        'providerMetadata': {'provider': 'openai', 'source': 'cache'},
+    }
+    return _format_ai_usage_answer(resolved_fb, question, dimension)
+
+
 def _answer_openai_forecast(member_email, account_id, question, interaction_id, now=None):
     """Compute and return an OpenAI month-end forecast in chat.
 
@@ -8862,6 +8949,26 @@ def resolve_ai_usage_response(member_email, account_id, question, interaction_id
         })
 
     answer = _format_ai_usage_answer(resolved, question, dimension)
+
+    # Cache-first fallback: the neutral resolver reads only the neutral
+    # COST#/USAGE# window, which can be empty when AI cost data still lives in
+    # the legacy OpenAI cache (the live Tier-3 call may also return partial).
+    # Reuse the Invoices view's cache-first per-model breakdown so the chat reads
+    # cached data instead of reporting "No AI usage cost is recorded".
+    if provider == 'openai' and _ai_usage_resolved_is_empty(resolved):
+        try:
+            fb_answer = _ai_usage_cache_answer(
+                member_email, account_id, question, period, dimension
+            )
+        except Exception as _fb_e:
+            logger.warning(
+                f"AI usage cache fallback failed for {account_id}: "
+                f"{type(_fb_e).__name__}: {_fb_e}"
+            )
+            fb_answer = None
+        if fb_answer:
+            answer = fb_answer
+
     return create_response(200, {
         'answer': answer,
         'interactionId': interaction_id,
