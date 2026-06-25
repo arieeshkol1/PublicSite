@@ -87,6 +87,71 @@
           }
         }
       }
+    },
+    "/get-ai-usage": {
+      "post": {
+        "operationId": "getAIUsage",
+        "summary": "Get vendor-agnostic AI cost and usage data",
+        "description": "Returns vendor-agnostic AI cost and usage data for a connected AI vendor account. Supports cost, units (tokens), and actor (per-user/per-key) dimensions, optionally scoped to a single AI service or model and a requested time period.",
+        "parameters": [
+          {
+            "name": "accountId",
+            "in": "query",
+            "description": "The connected account identifier",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "The connected account identifier"
+            }
+          },
+          {
+            "name": "memberEmail",
+            "in": "query",
+            "description": "The member email address for account resolution",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "The member email address for account resolution"
+            }
+          },
+          {
+            "name": "dimension",
+            "in": "query",
+            "description": "The AI usage dimension to return: cost (spend rollups), units (token/usage quantities), or actor (per-user/per-key attribution)",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "The AI usage dimension to return: cost (spend rollups), units (token/usage quantities), or actor (per-user/per-key attribution)",
+              "enum": ["cost", "units", "actor"]
+            }
+          },
+          {
+            "name": "service",
+            "in": "query",
+            "description": "Optional AI service or model name to scope results to a single service (e.g., gpt-4o, claude-3-opus)",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "Optional AI service or model name to scope results to a single service (e.g., gpt-4o, claude-3-opus)"
+            }
+          },
+          {
+            "name": "period",
+            "in": "query",
+            "description": "Optional requested time window as ISO-8601 start/end; defaults to the most recent 30 days when omitted",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "Optional requested time window as ISO-8601 start/end; defaults to the most recent 30 days when omitted"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "AI cost/usage response"
+          }
+        }
+      }
     }
   }
 }

@@ -14197,6 +14197,76 @@ function _renderOpenAIDashboard() {
 /**
  * Fetch OpenAI usage data from backend
  */
+// ---- Neutral AI dashboard payload adapter (vendor-agnostic-ai-usage, Task 9.4) ----
+// handle_dashboard_data / the AI dashboard data path now return the
+// vendor-neutral payload shape: rollups[] (COST# cost rollups) and usage[]
+// (USAGE# per-actor/per-service detail). The AI_Dashboard_Widgets (cost
+// summary, per-model breakdown, per-user token graph) render from these
+// neutral records. Legacy convenience fields are kept as a fallback for any
+// pre-cutover cached response (Req 13.7).
+function _neutralKeyDate(sk, prefix) {
+    sk = String(sk || '');
+    if (sk.indexOf(prefix) === 0) {
+        return sk.slice(prefix.length).split('#')[0];
+    }
+    return '';
+}
+
+function _normalizeNeutralDashboardData(data) {
+    if (!data || (!Array.isArray(data.rollups) && !Array.isArray(data.usage))) {
+        return data; // no neutral payload — keep legacy fields as-is
+    }
+    var rollups = data.rollups || [];
+    var usage = data.usage || [];
+
+    // Cost summary + spend trends from COST# rollups.
+    var byDate = {};
+    rollups.forEach(function(r) {
+        var d = _neutralKeyDate(r.sk, 'COST#') || r.date || '';
+        if (!d) return;
+        byDate[d] = (byDate[d] || 0) + (parseFloat(r.cost_amount) || 0);
+    });
+    var trends = Object.keys(byDate).sort().map(function(d) {
+        return { date: d, cost: byDate[d] };
+    });
+    var total = trends.reduce(function(s, t) { return s + t.cost; }, 0);
+
+    // Per-model cost breakdown + per-user token records from USAGE# detail
+    // (grouped by actor for the per-user token consumption graph).
+    var modelCosts = {};
+    var tokenRecords = [];
+    usage.forEach(function(u) {
+        var d = _neutralKeyDate(u.sk, 'USAGE#') || u.date || '';
+        var service = u.service || '';
+        var actor = u.actor || '';
+        var cost = parseFloat(u.cost_amount) || 0;
+        var tokens = parseInt(u.usage_quantity, 10) || 0;
+        if (service) modelCosts[service] = (modelCosts[service] || 0) + cost;
+        tokenRecords.push({
+            date: d,
+            service_name: service || 'unknown',
+            model: service || 'unknown',
+            user_id: actor || 'unknown',
+            api_key_id: actor || '',
+            cost_amount: cost,
+            input_tokens: tokens,
+            output_tokens: 0,
+            total_tokens: tokens
+        });
+    });
+    var costByModel = Object.keys(modelCosts).map(function(m) {
+        return { model: m, cost: modelCosts[m] };
+    }).sort(function(a, b) { return b.cost - a.cost; });
+
+    // Source the widgets from the neutral records.
+    data.spend_trends = trends;
+    data.total_spend = Math.round(total * 100) / 100;
+    data.cost_by_model = costByModel;
+    data.token_usage = tokenRecords;
+    data.per_user_daily = tokenRecords;
+    return data;
+}
+
 async function _fetchOpenAIDashboardData(forceRefresh) {
     var contentEl = document.getElementById('openai-dash-content');
     if (!contentEl) return;
@@ -14215,6 +14285,7 @@ async function _fetchOpenAIDashboardData(forceRefresh) {
             dateRange: _openaiDashState.dateRange,
             forceRefresh: forceRefresh || false
         });
+        data = _normalizeNeutralDashboardData(data);
         _openaiDashState.data = data;
         _openaiDashState.loading = false;
         _renderOpenAIDashboardSections();

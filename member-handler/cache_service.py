@@ -31,6 +31,378 @@ ACCOUNTS_TABLE_NAME = os.environ.get('ACCOUNTS_TABLE_NAME', 'MemberPortal-Accoun
 TTL_DURATION_SECONDS = 90 * 24 * 60 * 60  # 7,776,000 seconds
 
 
+# ---------------------------------------------------------------------------
+# Vendor-neutral AI cost/usage cache schema (vendor-agnostic-ai-usage feature)
+#
+# Two neutral sort-key families share the existing (pk, sk) Cost_Cache_Table
+# shape and the {memberEmail}#{accountId} partition key:
+#
+#   Cost_Rollup_Item   sk = "COST#{date}"
+#   Usage_Detail_Item  sk = "USAGE#{date}#{actor}#{service}"
+#
+# These are independent of the AWS "DAILY#" keys, which are left untouched.
+# Absent neutral fields are set to None (DynamoDB null) rather than omitted
+# (Req 2.6) so every neutral item carries the full field set.
+# ---------------------------------------------------------------------------
+
+# Sort-key prefixes for the neutral schema.
+COST_ROLLUP_SK_PREFIX = "COST#"
+USAGE_DETAIL_SK_PREFIX = "USAGE#"
+
+# Unit label used for token-based AI usage detail.
+NEUTRAL_USAGE_UNIT = "tokens"
+
+
+def build_neutral_partition_key(member_email: str, account_id: str) -> str:
+    """Build the neutral partition key '{memberEmail}#{accountId}'.
+
+    Args:
+        member_email: The authenticated member's email address.
+        account_id: The connected AI-vendor account identifier.
+
+    Returns:
+        Partition key string in the format '{member_email}#{account_id}'.
+    """
+    return f"{member_email}#{account_id}"
+
+
+def build_cost_rollup_sort_key(date: str) -> str:
+    """Build a Cost_Rollup_Item sort key 'COST#{date}'.
+
+    Args:
+        date: ISO 8601 calendar date (YYYY-MM-DD).
+
+    Returns:
+        Sort key string in the format 'COST#{date}'.
+    """
+    return f"{COST_ROLLUP_SK_PREFIX}{date}"
+
+
+def build_usage_detail_sort_key(date: str, actor: str, service: str) -> str:
+    """Build a Usage_Detail_Item sort key 'USAGE#{date}#{actor}#{service}'.
+
+    Args:
+        date: ISO 8601 calendar date (YYYY-MM-DD).
+        actor: The actor (user/API key/project) the usage is attributed to.
+        service: The AI service or model name.
+
+    Returns:
+        Sort key string in the format 'USAGE#{date}#{actor}#{service}'.
+    """
+    return f"{USAGE_DETAIL_SK_PREFIX}{date}#{actor}#{service}"
+
+
+def _neutral_numeric(value) -> str | None:
+    """Normalize a numeric neutral field to a string, preserving null.
+
+    Numeric neutral fields (cost amount, usage quantity) are stored as strings
+    to match the existing cache write convention. A missing source value is
+    preserved as None (DynamoDB null) rather than coerced to "0" (Req 2.6).
+
+    Args:
+        value: The source value, or None when there is no source field.
+
+    Returns:
+        String representation of the value, or None if value is None.
+    """
+    if value is None:
+        return None
+    return str(value)
+
+
+def shape_cost_rollup_item(
+    member_email: str,
+    account_id: str,
+    date: str,
+    cost_amount,
+    currency: str | None = None,
+    cached_at: str | None = None,
+) -> dict:
+    """Shape a Cost_Rollup_Item dict for the neutral cache schema.
+
+    The item carries the neutral partition key, a 'COST#{date}' sort key, the
+    total cost amount, currency code, and a 'cached_at' ISO 8601 timestamp
+    (Req 2.1, 2.3). Fields with no source value are set to None rather than
+    omitted (Req 2.6).
+
+    Args:
+        member_email: The authenticated member's email address.
+        account_id: The connected AI-vendor account identifier.
+        date: ISO 8601 calendar date (YYYY-MM-DD) for the rollup.
+        cost_amount: Total cost amount for the day (or None if absent).
+        currency: Currency code (e.g. 'USD'); None if absent.
+        cached_at: ISO 8601 timestamp; defaults to now (UTC) when not provided.
+
+    Returns:
+        A dict ready to write to the Cost_Cache_Table.
+    """
+    return {
+        'pk': build_neutral_partition_key(member_email, account_id),
+        'sk': build_cost_rollup_sort_key(date),
+        'cost_amount': _neutral_numeric(cost_amount),
+        'currency': currency,
+        'cached_at': cached_at or datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def shape_usage_detail_item(
+    member_email: str,
+    account_id: str,
+    date: str,
+    actor: str,
+    service: str,
+    usage_quantity=None,
+    unit: str | None = None,
+    cost_amount=None,
+    cached_at: str | None = None,
+) -> dict:
+    """Shape a Usage_Detail_Item dict for the neutral cache schema.
+
+    The item carries the neutral partition key, a
+    'USAGE#{date}#{actor}#{service}' sort key, the usage quantity, unit label,
+    cost amount, actor identifier, and service name (Req 2.2, 2.4). Fields with
+    no source value are set to None rather than omitted (Req 2.6).
+
+    Args:
+        member_email: The authenticated member's email address.
+        account_id: The connected AI-vendor account identifier.
+        date: ISO 8601 calendar date (YYYY-MM-DD) for the usage.
+        actor: The actor (user/API key/project) the usage is attributed to.
+        service: The AI service or model name.
+        usage_quantity: Usage quantity (e.g. tokens); None if absent.
+        unit: Unit label for the quantity; None if absent.
+        cost_amount: Cost amount for this actor/service/day; None if absent.
+        cached_at: ISO 8601 timestamp; defaults to now (UTC) when not provided.
+
+    Returns:
+        A dict ready to write to the Cost_Cache_Table.
+    """
+    return {
+        'pk': build_neutral_partition_key(member_email, account_id),
+        'sk': build_usage_detail_sort_key(date, actor, service),
+        'usage_quantity': _neutral_numeric(usage_quantity),
+        'unit': unit,
+        'cost_amount': _neutral_numeric(cost_amount),
+        'actor': actor,
+        'service': service,
+        'cached_at': cached_at or datetime.now(timezone.utc).isoformat(),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Staleness check and Tier-2 trigger predicates
+# (vendor-agnostic-ai-usage feature, Task 3.2)
+#
+# These are pure functions over already-read Tier-1 cache items. They never
+# touch DynamoDB themselves, so the resolver stays cache-first (Tier 1 read
+# happens before any of these are evaluated) and they are trivially testable.
+# ---------------------------------------------------------------------------
+
+# Default Staleness_Threshold in hours (matches CACHE_STALENESS_THRESHOLD_HOURS).
+DEFAULT_STALENESS_HOURS = 48.0
+
+# Default cap on the number of usage entries returned in a response (Req 12.2).
+DEFAULT_MAX_RESPONSE_ENTRIES = 100
+
+
+def get_staleness_threshold_hours() -> float:
+    """Return the configured Staleness_Threshold in hours.
+
+    Reads the ``AI_USAGE_STALENESS_HOURS`` environment variable, falling back
+    to :data:`DEFAULT_STALENESS_HOURS` (48h) when unset or unparseable.
+    """
+    raw = os.environ.get('AI_USAGE_STALENESS_HOURS')
+    if raw is None or raw == '':
+        return DEFAULT_STALENESS_HOURS
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return DEFAULT_STALENESS_HOURS
+
+
+def _parse_iso_timestamp(value):
+    """Parse an ISO-8601 timestamp string to a timezone-aware datetime.
+
+    Returns ``None`` when the value is missing or unparseable. Naive timestamps
+    are assumed to be UTC.
+    """
+    if not value:
+        return None
+    if isinstance(value, datetime):
+        dt = value
+    else:
+        try:
+            dt = datetime.fromisoformat(str(value).replace('Z', '+00:00'))
+        except (TypeError, ValueError):
+            return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+def is_stale(cached_at, now: datetime | None = None,
+             threshold_hours: float | None = None) -> bool:
+    """Return True when a cached record is stale.
+
+    A record is stale **iff** ``now - cached_at`` strictly exceeds the
+    Staleness_Threshold (Req 4.5). A record whose age equals the threshold
+    exactly is NOT stale (boundary belongs to the fresh side). A record with a
+    missing/unparseable ``cached_at`` is treated as stale.
+
+    Args:
+        cached_at: ISO-8601 timestamp string (or datetime) of when the record
+            was cached.
+        now: Reference time (defaults to current UTC time).
+        threshold_hours: Override for the threshold; defaults to the configured
+            value.
+    """
+    cached_dt = _parse_iso_timestamp(cached_at)
+    if cached_dt is None:
+        return True
+    if now is None:
+        now = datetime.now(timezone.utc)
+    elif now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    if threshold_hours is None:
+        threshold_hours = get_staleness_threshold_hours()
+    age = now - cached_dt
+    return age > timedelta(hours=threshold_hours)
+
+
+def within_staleness(cached_at, now: datetime | None = None,
+                     threshold_hours: float | None = None) -> bool:
+    """Return True when a cached record is fresh (within the threshold).
+
+    This is the exact negation of :func:`is_stale` (Req 4.5).
+    """
+    return not is_stale(cached_at, now=now, threshold_hours=threshold_hours)
+
+
+def rollup_date(item: dict) -> str | None:
+    """Extract the ISO date from a Cost_Rollup_Item's 'COST#{date}' sort key."""
+    sk = item.get('sk', '') if isinstance(item, dict) else ''
+    if sk.startswith(COST_ROLLUP_SK_PREFIX):
+        return sk[len(COST_ROLLUP_SK_PREFIX):]
+    return None
+
+
+def covers_full_window(rollup_items: list, window_dates: list) -> bool:
+    """Return True when every day in the window has a Cost_Rollup_Item.
+
+    Args:
+        rollup_items: Tier-1 Cost_Rollup_Item dicts.
+        window_dates: List of ISO date strings (YYYY-MM-DD) that the request
+            spans.
+    """
+    if not window_dates:
+        return True
+    covered = {rollup_date(i) for i in rollup_items}
+    covered.discard(None)
+    return all(d in covered for d in window_dates)
+
+
+def tier2_trigger_reasons(
+    rollup_items: list,
+    window_dates: list,
+    service: str | None = None,
+    now: datetime | None = None,
+    threshold_hours: float | None = None,
+) -> set:
+    """Return the set of Tier-2 trigger codes that fire for the given state.
+
+    Tier 2 is triggered when **any** of the five conditions holds (Req 5.1-5.5):
+
+        T1 — the most recent day in the window has no Cost_Rollup_Item.
+        T2 — any day in the window has no Cost_Rollup_Item (a gap).
+        T3 — a specific ``service`` scopes the request.
+        T4 — Tier 1 returned no items for the window.
+        T5 — any covering cached record exceeds the Staleness_Threshold.
+
+    The returned set is empty exactly when the fresh full-coverage
+    short-circuit applies and no service scope is requested (Req 4.2).
+
+    Args:
+        rollup_items: Tier-1 Cost_Rollup_Item dicts.
+        window_dates: List of ISO date strings the request spans.
+        service: Optional service scope.
+        now: Reference time for staleness (defaults to current UTC time).
+        threshold_hours: Override for the staleness threshold.
+
+    Returns:
+        A set drawn from ``{'T1', 'T2', 'T3', 'T4', 'T5'}``.
+    """
+    reasons: set = set()
+
+    # T4 — empty Tier-1 result.
+    if not rollup_items:
+        reasons.add('T4')
+
+    covered_dates = {rollup_date(i) for i in rollup_items}
+    covered_dates.discard(None)
+
+    if window_dates:
+        # T1 — most recent day missing.
+        latest = max(window_dates)
+        if latest not in covered_dates:
+            reasons.add('T1')
+        # T2 — any gap in the window.
+        if any(d not in covered_dates for d in window_dates):
+            reasons.add('T2')
+
+    # T3 — specific-service scope.
+    if service:
+        reasons.add('T3')
+
+    # T5 — any covering record is stale.
+    if any(
+        is_stale(i.get('cached_at'), now=now, threshold_hours=threshold_hours)
+        for i in rollup_items
+    ):
+        reasons.add('T5')
+
+    return reasons
+
+
+def should_trigger_tier2(
+    rollup_items: list,
+    window_dates: list,
+    service: str | None = None,
+    now: datetime | None = None,
+    threshold_hours: float | None = None,
+) -> bool:
+    """Return True when Tier 2 must run (union of the five triggers, Req 5.x)."""
+    return bool(
+        tier2_trigger_reasons(
+            rollup_items, window_dates, service,
+            now=now, threshold_hours=threshold_hours,
+        )
+    )
+
+
+def window_dates_inclusive(start_date: str, end_date: str) -> list:
+    """Return all ISO dates in the inclusive range [start_date, end_date]."""
+    dates: list = []
+    current = datetime.strptime(start_date, '%Y-%m-%d')
+    end = datetime.strptime(end_date, '%Y-%m-%d')
+    while current <= end:
+        dates.append(current.strftime('%Y-%m-%d'))
+        current += timedelta(days=1)
+    return dates
+
+
+def default_period(now: datetime | None = None, window_days: int = 30) -> dict:
+    """Return the default {start, end} window (most recent ``window_days``).
+
+    The window is inclusive and spans ``window_days`` calendar days ending on
+    the reference date (Req 3.6 — used when no period is supplied).
+    """
+    if now is None:
+        now = datetime.now(timezone.utc)
+    end = now.strftime('%Y-%m-%d')
+    start = (now - timedelta(days=window_days - 1)).strftime('%Y-%m-%d')
+    return {'start': start, 'end': end}
+
+
 class ServiceUnavailableError(Exception):
     """Raised when both cache and Cost Explorer API are unavailable."""
     pass

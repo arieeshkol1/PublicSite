@@ -8563,6 +8563,317 @@ def _answer_openai_query(member_email, account_id, question, interaction_id):
     })
 
 
+# ---------------------------------------------------------------------------
+# Vendor-agnostic AI usage intent gate (vendor-agnostic-ai-usage, Task 7)
+#
+# The intent gate in handle_ai_query classifies AI cost/usage questions and
+# routes single-account AI-vendor questions through the shared three-tier
+# resolver (resolve_ai_usage + build_ai_usage_response), replacing the
+# OpenAI-specific _answer_openai_query short-circuit. Non-AI-cost questions and
+# non-AI-vendor accounts are routed unchanged (Req 8.1-8.4, 9.6, 12.2, 12.3).
+# ---------------------------------------------------------------------------
+
+# AI cost/usage intent keywords (vendor-agnostic). Covers cost/spend, token/
+# unit usage, and per-user/actor questions.
+_AI_USAGE_KEYWORDS = (
+    'cost', 'costs', 'spend', 'spent', 'spending', 'bill', 'billing',
+    'charge', 'charged', 'charges', 'price', 'pricing', 'expense', 'expenses',
+    'expensive', 'budget', 'forecast', 'how much', 'invoice', 'invoices',
+    'token', 'tokens', 'usage', 'used', 'using', 'consume', 'consumed',
+    'consumption', 'units', 'utilization',
+    'per-user', 'per user', 'by user', 'which user', 'who used', 'who is using',
+    'each user', 'per model', 'per-model', 'by model', 'which model',
+    'breakdown', 'break down', 'actor', 'project',
+)
+
+# Per-user/actor intent keywords (highest routing priority).
+_AI_USAGE_ACTOR_KEYWORDS = (
+    'per-user', 'per user', 'by user', 'which user', 'who used', 'who is using',
+    'each user', 'actor', 'by project', 'per project', 'which person', 'by team',
+    'per team',
+)
+
+# Token/unit intent keywords (second priority).
+_AI_USAGE_UNITS_KEYWORDS = (
+    'token', 'tokens', 'units', 'consumption', 'consumed', 'utilization',
+    'how many',
+)
+
+
+def is_ai_cost_or_usage_question(question):
+    """Classify whether a chat question is about AI cost or usage (Req 8.1).
+
+    Vendor-agnostic keyword/intent classifier used by the handle_ai_query intent
+    gate to decide whether to route an AI-vendor account to the neutral
+    resolve_ai_usage path. Covers cost/spend, token/unit usage, and
+    per-user/actor questions.
+    """
+    if not question:
+        return False
+    q = question.lower()
+    if '$' in q:
+        return True
+    return any(k in q for k in _AI_USAGE_KEYWORDS)
+
+
+def _ai_usage_dimension_from_question(question):
+    """Pick the neutral resolver dimension implied by a question.
+
+    Priority: per-user/actor > token/units > cost (default). This ensures token
+    and per-user questions are answered on their own terms rather than always
+    returning a per-model cost table (the prior bug this feature fixes).
+    """
+    q = (question or '').lower()
+    if any(k in q for k in _AI_USAGE_ACTOR_KEYWORDS):
+        return 'actor'
+    if any(k in q for k in _AI_USAGE_UNITS_KEYWORDS):
+        return 'units'
+    return 'cost'
+
+
+def _resolve_vendor_type(member_email, account_id):
+    """Return 'ai_vendor' or 'cloud_provider' for an account (Req 8.4).
+
+    Reads the ``vendorType`` field from MemberPortal-Accounts, falling back to a
+    cloudProvider-based classification (and an accountId-prefix heuristic) for
+    legacy records.
+    """
+    item = {}
+    try:
+        accounts_table = dynamodb.Table(ACCOUNTS_TABLE_NAME)
+        resp = accounts_table.get_item(
+            Key={'memberEmail': member_email, 'accountId': account_id},
+            ProjectionExpression='vendorType, cloudProvider',
+        )
+        item = resp.get('Item', {}) or {}
+    except Exception as e:
+        logger.warning(f"vendorType lookup failed for {account_id}: {type(e).__name__}")
+
+    vt = (item.get('vendorType') or '').strip().lower()
+    if vt in ('ai_vendor', 'cloud_provider'):
+        return vt
+
+    provider = (item.get('cloudProvider') or '').strip().lower()
+    if not provider and account_id:
+        if account_id.startswith('openai-') or account_id.startswith('groundcover-'):
+            provider = account_id.split('-', 1)[0]
+    if provider in ('openai', 'groundcover'):
+        return 'ai_vendor'
+    return 'cloud_provider'
+
+
+def should_route_to_neutral_ai_usage(question, vendor_type):
+    """Intent-gate routing decision (Property 12 / Req 8.1, 8.3).
+
+    Returns True iff the question is an AI cost/usage question AND the account is
+    an AI vendor; otherwise the caller routes the request unchanged (to
+    _invoke_bedrock_agent for AWS, or the existing redirect for other accounts).
+    """
+    return bool(is_ai_cost_or_usage_question(question)) and vendor_type == 'ai_vendor'
+
+
+def _ai_usage_period_from_question(question, now=None):
+    """Derive a {start, end} window from a question, or None for the default.
+
+    Recognises a single referenced month (via _parse_periods_from_question) and
+    converts it to an inclusive {start, end} window. Returns None when no period
+    is referenced so the resolver applies its default last-30-days window
+    (Req 3.6).
+    """
+    now = now or datetime.now(timezone.utc)
+    periods = _parse_periods_from_question(question, now=now)
+    if not periods:
+        return None
+    period = periods[-1]
+    try:
+        y, m = period.split('-')
+        y, m = int(y), int(m)
+    except (ValueError, AttributeError):
+        return None
+    start = datetime(y, m, 1, tzinfo=timezone.utc)
+    if m == 12:
+        end = datetime(y + 1, 1, 1, tzinfo=timezone.utc) - timedelta(days=1)
+    else:
+        end = datetime(y, m + 1, 1, tzinfo=timezone.utc) - timedelta(days=1)
+    return {'start': start.strftime('%Y-%m-%d'), 'end': end.strftime('%Y-%m-%d')}
+
+
+def _ai_usage_safe_float(value):
+    """Best-effort numeric coercion; missing/unparseable values become 0.0."""
+    if value is None:
+        return 0.0
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _format_ai_usage_answer(resolved, question, dimension):
+    """Render a neutral AIUsageResponse dict into a chat answer.
+
+    Branches on ``dimension`` so cost, token/unit, and per-user/actor questions
+    are each answered on their own terms (fixes the prior bug where token and
+    per-user questions only returned a per-model cost table). Appends cap and
+    live-partial graceful-degradation notes from the resolver (Req 12.2, 12.3).
+    """
+    if not isinstance(resolved, dict):
+        return "No AI usage data is available for this account."
+
+    # Structured errors (missing connection / admin-key gap) come straight back.
+    if resolved.get('error'):
+        return resolved.get('message') or "AI usage data is unavailable for this account."
+
+    rollups = resolved.get('rollups') or []
+    usage = resolved.get('usage') or []
+    currency = resolved.get('currency') or 'USD'
+    period = resolved.get('period') or {}
+    meta = resolved.get('providerMetadata') or {}
+
+    total_cost = sum(_ai_usage_safe_float(r.get('cost_amount')) for r in rollups)
+    period_label = ''
+    if period.get('start') and period.get('end'):
+        period_label = f" ({period['start']} to {period['end']})"
+
+    lines = []
+
+    if dimension == 'actor':
+        # Per-user / per-actor view.
+        by_actor = {}
+        for u in usage:
+            actor = u.get('actor') or 'unattributed'
+            agg = by_actor.setdefault(actor, {'tokens': 0.0, 'cost': 0.0})
+            agg['tokens'] += _ai_usage_safe_float(u.get('usage_quantity'))
+            agg['cost'] += _ai_usage_safe_float(u.get('cost_amount'))
+        if not by_actor:
+            lines.append(f"No per-user AI usage is recorded for this account{period_label}.")
+        else:
+            lines.append(f"**Per-user AI usage{period_label}:**")
+            lines.append("\n| User / actor | Tokens | Cost |")
+            lines.append("|---|---|---|")
+            for actor, agg in sorted(
+                by_actor.items(),
+                key=lambda kv: (kv[1]['cost'], kv[1]['tokens']),
+                reverse=True,
+            ):
+                lines.append(f"| {actor} | {int(agg['tokens']):,} | ${agg['cost']:,.2f} |")
+            if total_cost > 0:
+                lines.append(f"\nTotal cost{period_label}: **${total_cost:,.2f}** {currency}.")
+    elif dimension == 'units':
+        # Token / unit view, grouped by service/model.
+        by_service = {}
+        total_tokens = 0.0
+        for u in usage:
+            svc = u.get('service') or 'unknown'
+            qty = _ai_usage_safe_float(u.get('usage_quantity'))
+            by_service[svc] = by_service.get(svc, 0.0) + qty
+            total_tokens += qty
+        if total_tokens <= 0 and not by_service:
+            lines.append(f"No AI token usage is recorded for this account{period_label}.")
+        else:
+            lines.append(f"Your AI usage was **{int(total_tokens):,} tokens**{period_label}.")
+            top = sorted(by_service.items(), key=lambda kv: kv[1], reverse=True)[:10]
+            top = [t for t in top if t[1] > 0]
+            if top:
+                lines.append("\n| Model / service | Tokens |")
+                lines.append("|---|---|")
+                for svc, qty in top:
+                    lines.append(f"| {svc} | {int(qty):,} |")
+            if total_cost > 0:
+                lines.append(f"\nTotal cost{period_label}: **${total_cost:,.2f}** {currency}.")
+    else:
+        # Cost view (default) — per-model cost breakdown.
+        if total_cost <= 0 and not usage:
+            lines.append(f"No AI usage cost is recorded for this account{period_label}.")
+        else:
+            lines.append(f"Your AI usage cost{period_label} was **${total_cost:,.2f}** {currency}.")
+            by_service = {}
+            for u in usage:
+                svc = u.get('service') or 'unknown'
+                by_service[svc] = by_service.get(svc, 0.0) + _ai_usage_safe_float(u.get('cost_amount'))
+            top = sorted(by_service.items(), key=lambda kv: kv[1], reverse=True)[:10]
+            top = [t for t in top if t[1] > 0]
+            if top:
+                lines.append("\n| Model / service | Cost | % |")
+                lines.append("|---|---|---|")
+                for svc, cost in top:
+                    pct = (cost / total_cost * 100) if total_cost > 0 else 0.0
+                    lines.append(f"| {svc} | ${cost:,.2f} | {pct:.1f}% |")
+
+    # Graceful-degradation notes (Req 12.2 cap, 12.3 partial).
+    if resolved.get('truncated'):
+        lines.append("\n_Showing the highest-cost entries; additional entries are not shown._")
+    if meta.get('live_partial'):
+        lines.append("\n_Live data was partial; showing the best available cached/partial result._")
+
+    return "\n".join(lines) if lines else (
+        f"No AI usage data is available for this account{period_label}."
+    )
+
+
+def resolve_ai_usage_response(member_email, account_id, question, interaction_id):
+    """Vendor-agnostic AI cost/usage answer for a single AI-vendor account.
+
+    Routes through the shared three-tier resolver (Task-3 resolve_ai_usage +
+    build_ai_usage_response): cache-first, customer-connection-only, single
+    account. Formats a chat answer that addresses cost, token/unit, AND
+    per-user/actor questions, and surfaces graceful-degradation notes (cap /
+    live-partial) from the resolver (Req 8.1, 8.2, 8.3, 8.4, 9.6, 12.2, 12.3).
+    """
+    from incremental_fetch_engine import resolve_ai_usage
+
+    dimension = _ai_usage_dimension_from_question(question)
+    period = _ai_usage_period_from_question(question)
+    provider = _get_account_provider(member_email, account_id)
+
+    # Tier-3 live connector (customer connection). Only wired when the provider's
+    # connector exposes the neutral get_ai_usage entrypoint; otherwise Tier 3
+    # degrades gracefully and Tier 1 (cache) + Tier 2 (Tips drilldown) still run.
+    connector = None
+    try:
+        import connectors as _connectors
+        _candidate = _connectors.get_connector(provider)
+        if _candidate is not None and hasattr(_candidate, 'get_ai_usage'):
+            connector = _candidate
+    except Exception:
+        connector = None
+
+    try:
+        resolved = resolve_ai_usage(
+            member_email, account_id, dimension,
+            service=None, period=period, connector=connector,
+        )
+    except Exception as e:
+        logger.warning(
+            f"resolve_ai_usage failed for {account_id}: {type(e).__name__}: {e}"
+        )
+        return create_response(200, {
+            'answer': (
+                "I couldn't retrieve AI usage data for this account right now. "
+                "Please try again in a moment, or check your connection in the "
+                "Configure tab."
+            ),
+            'interactionId': interaction_id,
+            'commands': [],
+            'results': [],
+            'tipFound': False,
+            'agentUsed': False,
+            'chartData': [],
+            'topServices': [],
+        })
+
+    answer = _format_ai_usage_answer(resolved, question, dimension)
+    return create_response(200, {
+        'answer': answer,
+        'interactionId': interaction_id,
+        'commands': ['Vendor-agnostic AI usage (neutral cache)'],
+        'results': [],
+        'tipFound': False,
+        'agentUsed': False,
+        'chartData': [],
+        'topServices': [],
+    })
+
+
 @transaction_log('member-handler')
 def handle_ai_query(event):
     """Handle natural language questions Ã¢â‚¬â€ uses Bedrock Agent or falls back to direct model API."""
@@ -8626,18 +8937,25 @@ def handle_ai_query(event):
     _aws_acct_re = re.compile(r'^\d{12}$')
     if account_ids and all(not _aws_acct_re.match(a) for a in account_ids):
         _single = account_ids[0] if len(account_ids) == 1 else None
-        if _single and _single.lower().startswith('openai'):
+        # Vendor-agnostic intent gate (replaces the _answer_openai_query
+        # short-circuit). An AI cost/usage question for a single AI-vendor
+        # account resolves through the neutral three-tier resolver (cache-first,
+        # customer-connection-only, single account); everything else falls
+        # through to the existing redirect unchanged (Req 8.1-8.4, 9.6).
+        if _single and should_route_to_neutral_ai_usage(
+            ai_question, _resolve_vendor_type(member_email, _single)
+        ):
             try:
-                # Bound the work so a cold (uncached) multi-month fetch can never
-                # ride to the API Gateway 29s limit â€” fall back to the redirect.
+                # Bound the work so a cold (uncached) live drilldown can never
+                # ride to the API Gateway 29s limit — fall back to the redirect.
                 with concurrent.futures.ThreadPoolExecutor(max_workers=1) as _ex:
                     _fut = _ex.submit(
-                        _answer_openai_query, member_email, _single, ai_question, interaction_id)
-                    return _fut.result(timeout=20)
+                        resolve_ai_usage_response, member_email, _single, ai_question, interaction_id)
+                    return _fut.result(timeout=25)
             except concurrent.futures.TimeoutError:
-                logger.warning(f"OpenAI chat answer timed out for {_single}; redirecting")
+                logger.warning(f"Neutral AI usage answer timed out for {_single}; redirecting")
             except Exception as e:
-                logger.warning(f"OpenAI chat answer failed for {_single} ({type(e).__name__}: {e}); redirecting")
+                logger.warning(f"Neutral AI usage answer failed for {_single} ({type(e).__name__}: {e}); redirecting")
         return create_response(200, {
             'answer': (
                 "AI-chat analysis for this account isn't available yet. Open the "
@@ -8880,36 +9198,10 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
             "prompt caching efficiency, and whether cheaper models (gpt-4o-mini) can replace expensive ones (gpt-4o). "
             "PRICING: GPT-4o=$2.50/$10 per 1M tokens (in/out). GPT-4o-mini=$0.15/$0.60. Cached=50% off. Batch API=50% off.]"
         )
-        # Pre-compute OpenAI cost data from cache to avoid agent timeout
-        # This ensures the agent has real data without needing to call tools
-        try:
-            from boto3.dynamodb.conditions import Key as _Key
-            from datetime import datetime as _dt, timedelta as _td
-            _now = _dt.now()
-            _cache_table = dynamodb.Table(os.environ.get('COST_CACHE_TABLE_NAME', 'Cost_Cache_Table'))
-            _pk = f"{member_email}#{account_id}"
-            _start_sk = f"OPENAI_DAILY#{(_now - _td(days=30)).strftime('%Y-%m-%d')}"
-            _end_sk = f"OPENAI_DAILY#{_now.strftime('%Y-%m-%d')}"
-            _resp = _cache_table.query(
-                KeyConditionExpression=_Key('pk').eq(_pk) & _Key('sk').between(_start_sk, _end_sk)
-            )
-            _items = _resp.get('Items', [])
-            if _items:
-                _total = sum(float(i.get('cost_amount', 0)) for i in _items)
-                _svc_totals = {}
-                for _item in _items:
-                    for _svc, _cost in _item.get('service_breakdown', {}).items():
-                        _svc_totals[_svc] = _svc_totals.get(_svc, 0) + float(_cost)
-                _top_svcs = sorted(_svc_totals.items(), key=lambda x: x[1], reverse=True)[:7]
-                _svc_str = ', '.join(f"{s}: ${c:.2f}" for s, c in _top_svcs)
-                enriched_prompt += (
-                    f"\n\n[PRE-COMPUTED OPENAI DATA (from cache, last 30 days): "
-                    f"Total spend: ${_total:.2f} | Top models: {_svc_str} | "
-                    f"Days with data: {len(_items)} | "
-                    f"Use this data to answer. Call getCostBreakdown ONLY if you need more detail.]"
-                )
-        except Exception as _e:
-            logger.warning(f"OpenAI cache pre-compute failed: {_e}")
+        # Note: AI-vendor cost/usage questions are routed to the vendor-agnostic
+        # neutral resolver (resolve_ai_usage_response) by the handle_ai_query
+        # intent gate before reaching the agent, so no OPENAI_DAILY# cache
+        # pre-compute happens here post-cutover (Req 9.6).
 
     # Service detection removed â€” the AI agent handles tool selection autonomously.
     # Quality enforcement is done by the inline audit gate + rewrite path.
@@ -8998,15 +9290,6 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
             )
             items = resp.get('Items', [])
 
-            # Also try OPENAI_DAILY# prefix for AI vendor accounts
-            if not items:
-                openai_start_sk = start_sk.replace('DAILY#', 'OPENAI_DAILY#')
-                openai_end_sk = end_sk.replace('DAILY#', 'OPENAI_DAILY#')
-                resp = cache_table.query(
-                    KeyConditionExpression=_Key('pk').eq(pk) & _Key('sk').between(openai_start_sk, openai_end_sk)
-                )
-                items = resp.get('Items', [])
-
             if items:
                 svc_full_name = _SERVICE_NAMES[_detected_svc_key]
                 svc_total = 0.0
@@ -9025,7 +9308,7 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
                             svc_total += cost_val
 
                     if day_cost > 0:
-                        date = item['sk'].replace('OPENAI_DAILY#', '').replace('DAILY#', '')
+                        date = item['sk'].replace('DAILY#', '')
                         daily_breakdown.append(f"{date}: ${day_cost:.2f}")
 
                 if svc_total > 0:
@@ -12995,6 +13278,136 @@ def handle_test_groundcover_connection(event):
         })
 
 
+# AI-vendor providers served by the neutral AI dashboard data path.
+AI_VENDOR_PROVIDERS = ('openai', 'groundcover')
+
+
+def _get_ai_usage_connector(provider):
+    """Resolve an AI-vendor connector via Provider_Router-style cloudProvider
+    lookup (Req 13.4 — no vendor-specific branching).
+
+    Returns a connector exposing the neutral ``get_ai_usage`` entrypoint, or
+    ``None`` when the provider has no live neutral entrypoint wired (Tier 3 then
+    degrades gracefully and the cache/Tips tiers still apply).
+    """
+    try:
+        import connectors as _connectors
+        candidate = _connectors.get_connector(provider)
+        if candidate is not None and hasattr(candidate, 'get_ai_usage'):
+            return candidate
+    except Exception:
+        pass
+    return None
+
+
+def _ai_usage_float(value):
+    """Best-effort float coercion for neutral numeric fields (stored as str)."""
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _neutral_usage_date(item):
+    """Extract the ISO date from a Usage_Detail_Item 'USAGE#{date}#...' key."""
+    sk = str(item.get('sk', '')) if isinstance(item, dict) else ''
+    if sk.startswith('USAGE#'):
+        return sk[len('USAGE#'):].split('#', 1)[0]
+    return item.get('date', '') if isinstance(item, dict) else ''
+
+
+def _ai_dashboard_needs_refresh(rollups, now=None):
+    """Return True when the neutral AI cache is empty or stale (Req 13.6).
+
+    Missing data (no Cost_Rollup_Item records) or a stale freshest record means
+    the dashboard should obtain fresh data through the shared resolver. This is
+    a pure check over already-read Tier-1 items, so the path stays cache-first.
+    """
+    from cache_service import is_stale
+    if not rollups:
+        return True
+    cached_ats = [r.get('cached_at') for r in rollups if r.get('cached_at')]
+    if not cached_ats:
+        return True
+    return is_stale(max(cached_ats), now=now)
+
+
+def _build_ai_dashboard_payload(rollups, usage, prev_rollups, period,
+                                date_range, provider):
+    """Build the neutral AI dashboard payload consumed by members.js (Req 13.7).
+
+    Emits the neutral arrays (``rollups[]`` / ``usage[]``) as the source of
+    truth plus convenience fields derived strictly from those neutral records:
+    the cost summary (``total_spend`` / ``period_change``), the per-model cost
+    breakdown (``cost_by_model``), spend trends (``spend_trends``), and the
+    per-user token-graph source (``per_user_daily`` / ``token_usage``) grouped
+    by actor (Req 13.1, 13.2, 13.5).
+    """
+    rollups = [_decimal_to_native(r) for r in (rollups or [])]
+    usage = [_decimal_to_native(u) for u in (usage or [])]
+
+    # Cost summary / spend trends from COST# rollups.
+    daily_cost = {}
+    for r in rollups:
+        date = str(r.get('sk', '')).replace('COST#', '') or r.get('date', '')
+        if not date:
+            continue
+        daily_cost[date] = daily_cost.get(date, 0.0) + _ai_usage_float(r.get('cost_amount'))
+    spend_trends = [{'date': d, 'cost': round(daily_cost[d], 4)} for d in sorted(daily_cost)]
+    total_spend = round(sum(daily_cost.values()), 2)
+
+    previous_total = sum(_ai_usage_float(r.get('cost_amount')) for r in (prev_rollups or []))
+    if previous_total > 0:
+        period_change = round(((total_spend - previous_total) / previous_total) * 100, 1)
+    else:
+        period_change = 'new_spend'
+
+    # Per-model breakdown + per-user/token records from USAGE# detail
+    # (grouped by actor for the per-user token graph, Req 13.5).
+    model_costs = {}
+    token_records = []
+    for u in usage:
+        actor = u.get('actor')
+        service = u.get('service')
+        cost = _ai_usage_float(u.get('cost_amount'))
+        tokens = int(_ai_usage_float(u.get('usage_quantity')))
+        date = _neutral_usage_date(u)
+        if service:
+            model_costs[service] = model_costs.get(service, 0.0) + cost
+        token_records.append({
+            'date': date,
+            'service_name': service or 'unknown',
+            'model': service or 'unknown',
+            'user_id': actor or 'unknown',
+            'api_key_id': actor or '',
+            'cost_amount': round(cost, 6),
+            'input_tokens': tokens,
+            'output_tokens': 0,
+            'total_tokens': tokens,
+        })
+    cost_by_model = sorted(
+        [{'model': m, 'cost': round(c, 2)} for m, c in model_costs.items()],
+        key=lambda x: x['cost'], reverse=True,
+    )
+
+    return {
+        'success': True,
+        # Neutral payload — source of truth for the AI dashboard widgets.
+        'rollups': rollups,
+        'usage': usage,
+        # Convenience fields derived from the neutral records above.
+        'total_spend': total_spend,
+        'period_change': period_change,
+        'cost_by_model': cost_by_model,
+        'spend_trends': spend_trends,
+        'token_usage': token_records,
+        'per_user_daily': token_records,
+        'project_breakdown': {},
+        'dateRange': date_range,
+        'provider': provider,
+    }
+
+
 @transaction_log('member-handler')
 def handle_openai_usage(event):
     """Retrieve OpenAI usage data for the authenticated member's account.
@@ -13055,356 +13468,60 @@ def handle_openai_usage(event):
     # Track execution time for Lambda timeout safety (API GW has 29s timeout)
     start_time = time.time()
 
-    # Check if force refresh requested (bypasses cache)
+    # Check if force refresh requested (always re-resolves through the resolver)
     force_refresh = body.get('forceRefresh', False)
 
-    # Try to get data from Cost_Cache_Table
+    # ── Vendor-agnostic AI dashboard data path (vendor-agnostic-ai-usage) ──
+    # Read AI cost/usage exclusively from the neutral COST#/USAGE# cache
+    # families — no OPENAI_DAILY# reads remain on this path (Req 13.1, 13.2,
+    # 9.7). On missing/stale data, the shared three-tier resolver fetches fresh
+    # data via the connector selected by the account's cloudProvider
+    # (Provider_Router style, no vendor-specific branching — Req 13.4) and
+    # writes neutral items back (Req 13.6). Customer-connection-only, single
+    # account (Req 11.4, 11.5).
+    from incremental_fetch_engine import IncrementalFetchEngine, resolve_ai_usage
+
     cache_table = dynamodb.Table(COST_CACHE_TABLE_NAME)
-    pk = f"{member_email}#{account_id}"
-    sk_prefix = 'OPENAI_DAILY#'
+    engine = IncrementalFetchEngine()
+    period = {'start': start_date, 'end': end_date}
 
-    cached_records = []
-    from boto3.dynamodb.conditions import Key as DDBKey
-
-    if not force_refresh:
-        try:
-            # Query cache for date range
-            sk_start = f"{sk_prefix}{start_date}"
-            sk_end = f"{sk_prefix}{end_date}"
-
-            response = cache_table.query(
-                KeyConditionExpression=DDBKey('pk').eq(pk) & DDBKey('sk').between(sk_start, sk_end)
-            )
-            cached_records = response.get('Items', [])
-
-            # Handle pagination
-            while 'LastEvaluatedKey' in response:
-                if time.time() - start_time > 22:
-                    break
-                response = cache_table.query(
-                    KeyConditionExpression=DDBKey('pk').eq(pk) & DDBKey('sk').between(sk_start, sk_end),
-                    ExclusiveStartKey=response['LastEvaluatedKey']
-                )
-                cached_records.extend(response.get('Items', []))
-        except ClientError as e:
-            logger.warning(f"Cost cache query failed for {account_id}: {e}")
-            cached_records = []
-
-    # Check timeout (25s allows time for paginated 30d API calls)
-    if time.time() - start_time > 25:
-        return create_error_response(504, 'Timeout', 'Request timed out. Please try again.')
-
-    normalized_records = []
-
-    if cached_records:
-        # Cache hit: reconstruct normalized records from cache items
-        for item in cached_records:
-            item = _decimal_to_native(item)
-            date_str = str(item.get('sk', '')).replace(sk_prefix, '')
-            cost_amount = float(item.get('cost_amount', 0))
-
-            # If item has service_breakdown, expand into per-model records
-            service_breakdown = item.get('service_breakdown')
-            token_breakdown = item.get('token_breakdown', {})
-            project_breakdown = item.get('project_breakdown', {})
-
-            if service_breakdown and isinstance(service_breakdown, dict):
-                for model, model_cost in service_breakdown.items():
-                    tokens = token_breakdown.get(model, {}) if isinstance(token_breakdown, dict) else {}
-                    record = {
-                        'date': date_str,
-                        'service_name': model,
-                        'cost_amount': float(model_cost),
-                        'currency': 'USD',
-                        'cloud_provider': 'openai',
-                        'account_id': account_id,
-                        'input_tokens': int(tokens.get('input_tokens', 0)) if isinstance(tokens, dict) else 0,
-                        'output_tokens': int(tokens.get('output_tokens', 0)) if isinstance(tokens, dict) else 0,
-                    }
-                    # Add project info from project_breakdown
-                    normalized_records.append(record)
-            else:
-                # Single record per day (no breakdown)
-                normalized_records.append({
-                    'date': date_str,
-                    'service_name': 'unknown',
-                    'cost_amount': cost_amount,
-                    'currency': 'USD',
-                    'cloud_provider': 'openai',
-                    'account_id': account_id,
-                    'input_tokens': 0,
-                    'output_tokens': 0,
-                })
-
-            # Add project-level records if project_breakdown exists
-            if project_breakdown and isinstance(project_breakdown, dict):
-                for proj_id, proj_data in project_breakdown.items():
-                    if isinstance(proj_data, dict):
-                        proj_cost = float(proj_data.get('cost', 0))
-                    else:
-                        proj_cost = float(proj_data)
-                    # Tag existing records or create project-annotated records
-                    for rec in normalized_records:
-                        if rec['date'] == date_str and 'project_id' not in rec:
-                            pass  # Skip: project info will be derived from project_breakdown
-                    # We'll build project records separately for the aggregation
-                    normalized_records.append({
-                        'date': date_str,
-                        'service_name': 'project_cost',
-                        'cost_amount': proj_cost,
-                        'currency': 'USD',
-                        'cloud_provider': 'openai',
-                        'account_id': account_id,
-                        'input_tokens': 0,
-                        'output_tokens': 0,
-                        'project_id': proj_id,
-                    })
-    else:
-        # Cache miss: decrypt key and call OpenAI Usage API
-        if time.time() - start_time > 20:
-            return create_error_response(504, 'Timeout', 'Request timed out. Please try again.')
-
-        # Decrypt the stored API key
-        credentials = account.get('credentials', {})
-        encrypted_key = credentials.get('encryptedApiKey', '')
-        if not encrypted_key:
-            return create_error_response(400, 'MissingCredentials', 'No API key stored for this account. Please re-add the connection.')
-
-        try:
-            from connectors.openai_kms import decrypt_openai_key, DecryptionError
-        except ImportError as e:
-            logger.error(f"Failed to import openai_kms: {e}")
-            return create_error_response(500, 'ServerError', 'Encryption module not available.')
-
-        try:
-            api_key = decrypt_openai_key(encrypted_key, member_email, account_id)
-        except DecryptionError as e:
-            logger.error(f"KMS decryption failed for openai-usage: {e}")
-            return create_error_response(500, 'DecryptionFailed', 'Credentials inaccessible. Please re-add your OpenAI connection.')
-
-        # Call AI vendor Usage API via connector
-        try:
-            from connectors.base_connector import CostRetrievalError
-            if cloud_provider == 'groundcover':
-                from connectors.groundcover_connector import GroundcoverConnector
-                connector = GroundcoverConnector()
-                auth_context = {'api_key': api_key}
-            else:
-                from connectors.openai_connector import OpenAIConnector
-                connector = OpenAIConnector()
-                auth_context = {'api_key': api_key, 'org_name': ''}
-        except ImportError as e:
-            logger.error(f"Failed to import connector: {e}")
-            return create_error_response(500, 'ServerError', 'AI connector not available.')
-
-        try:
-            raw_records = connector.get_cost_data(auth_context, account_id, start_date, end_date)
-        except CostRetrievalError as e:
-            logger.error(f"AI cost data retrieval failed for {account_id}: {e}")
-            # Update connection status if flagged
-            if getattr(e, 'mark_connection_failed', False):
-                now_iso = datetime.now(timezone.utc).isoformat()
-                _update_connection_status(accounts_table, member_email, account_id, 'failed', now_iso)
-            return create_error_response(502, 'UpstreamError', str(e))
-        except Exception as e:
-            logger.error(f"AI cost data retrieval failed for {account_id}: {type(e).__name__}: {e}")
-            return create_error_response(502, 'UpstreamError', f'Failed to fetch cost data: {type(e).__name__}')
-
-        # Check timeout after API call (25s allows time for paginated 30d API calls)
-        if time.time() - start_time > 25:
-            return create_error_response(504, 'Timeout', 'Request timed out. Please try again.')
-
-        # Normalize the raw response (both OpenAI and GroundCover use the same bucket format)
-        try:
-            from cost_normalizer import normalize_openai
-        except ImportError as e:
-            logger.error(f"Failed to import cost_normalizer: {e}")
-            return create_error_response(500, 'ServerError', 'Cost normalizer not available.')
-
-        normalized_records = normalize_openai(raw_records, account_id)
-
-    # Final timeout check before aggregation (25s allows time for paginated 30d API calls)
-    if time.time() - start_time > 25:
-        return create_error_response(504, 'Timeout', 'Request timed out. Please try again.')
-
-    # Aggregate the data using cost_normalizer functions
     try:
-        from cost_normalizer import (
-            aggregate_cost_by_model,
-            aggregate_cost_by_project,
-            aggregate_time_buckets,
-            calculate_period_change,
-        )
-    except ImportError as e:
-        logger.error(f"Failed to import aggregation functions: {e}")
-        return create_error_response(500, 'ServerError', 'Aggregation module not available.')
+        rollups = engine.read_cost_rollup_window(
+            cache_table, member_email, account_id, start_date, end_date)
+        usage = engine.read_usage_detail_window(
+            cache_table, member_email, account_id, start_date, end_date)
+    except Exception as e:
+        logger.warning(f"Neutral AI cache read failed for {account_id}: {e}")
+        rollups, usage = [], []
 
-    # Filter records for model/token aggregation (exclude project_cost markers)
-    usage_records = [r for r in normalized_records if r.get('service_name') != 'project_cost']
-    project_records = [r for r in normalized_records if r.get('project_id')]
+    if force_refresh or _ai_dashboard_needs_refresh(rollups, now):
+        if time.time() - start_time < 22:
+            try:
+                connector = _get_ai_usage_connector(cloud_provider)
+                resolve_ai_usage(
+                    member_email, account_id, 'actor',
+                    service=None, period=period, connector=connector,
+                )
+                # Re-read the full neutral window so the dashboard renders the
+                # complete (uncapped) data the resolver just wrote back.
+                rollups = engine.read_cost_rollup_window(
+                    cache_table, member_email, account_id, start_date, end_date)
+                usage = engine.read_usage_detail_window(
+                    cache_table, member_email, account_id, start_date, end_date)
+            except Exception as e:
+                logger.warning(f"AI usage resolve failed for {account_id}: {e}")
 
-    # Cost by model
-    cost_by_model = aggregate_cost_by_model(usage_records)
-
-    # Spend trends (daily granularity, then compute period change)
-    spend_trends_buckets = aggregate_time_buckets(usage_records, 'daily')
-
-    # Calculate total spend and period-over-period change
-    total_spend = sum(r.get('cost_amount', 0) for r in usage_records)
-
-    # Previous period for comparison
+    # Previous-period total for the period-over-period change (neutral COST#).
     prev_start = (now - timedelta(days=date_range * 2)).strftime('%Y-%m-%d')
     prev_end = start_date
-    # Current period total
-    current_total = total_spend
-    # Previous period total from records outside current range (if available from cache)
-    # For simplicity, calculate from available data
-    previous_total = 0.0
-    # If we have previous period data in the cache, fetch it
     try:
-        sk_prev_start = f"{sk_prefix}{prev_start}"
-        sk_prev_end = f"{sk_prefix}{prev_end}"
-        prev_response = cache_table.query(
-            KeyConditionExpression=DDBKey('pk').eq(pk) & DDBKey('sk').between(sk_prev_start, sk_prev_end),
-            ProjectionExpression='cost_amount'
-        )
-        for item in prev_response.get('Items', []):
-            previous_total += float(item.get('cost_amount', 0))
+        prev_rollups = engine.read_cost_rollup_window(
+            cache_table, member_email, account_id, prev_start, prev_end)
     except Exception:
-        # If prev period query fails, just use 0
-        previous_total = 0.0
+        prev_rollups = []
 
-    period_change = calculate_period_change(current_total, previous_total)
-
-    spend_trends = {
-        'buckets': spend_trends_buckets,
-        'total': round(total_spend, 2),
-        'periodChange': period_change if period_change != float('inf') else 'new_spend',
-        'dateRange': date_range,
-    }
-
-    # Project breakdown
-    project_breakdown = aggregate_cost_by_project(project_records)
-
-    # Map spend_trends_buckets to frontend format: {date, cost}
-    spend_trends_for_frontend = [
-        {'date': b['period_start'], 'cost': b['total_cost']}
-        for b in spend_trends_buckets
-    ]
-
-    # Write to Cost_Cache_Table so the AI chat can access this data
-    # Also enables fast cache-hit on subsequent page loads (avoids 15-20s API calls)
-    try:
-        now_iso = datetime.now(timezone.utc).isoformat()
-        # Group costs by date for cache write
-        _daily_cache = {}
-        for rec in usage_records:
-            d = rec.get('date', '')
-            if not d:
-                continue
-            if d not in _daily_cache:
-                _daily_cache[d] = {'cost': 0.0, 'services': {}, 'tokens': {}}
-            _daily_cache[d]['cost'] += float(rec.get('cost_amount', 0))
-            svc = rec.get('service_name', 'unknown')
-            _daily_cache[d]['services'][svc] = _daily_cache[d]['services'].get(svc, 0) + float(rec.get('cost_amount', 0))
-            # Track token breakdown per model
-            if svc not in _daily_cache[d]['tokens']:
-                _daily_cache[d]['tokens'][svc] = {'input_tokens': 0, 'output_tokens': 0}
-            _daily_cache[d]['tokens'][svc]['input_tokens'] += int(rec.get('input_tokens', 0))
-            _daily_cache[d]['tokens'][svc]['output_tokens'] += int(rec.get('output_tokens', 0))
-
-        _cache_write_count = 0
-        for date_key, day_data in _daily_cache.items():
-            cache_item = {
-                'pk': pk,
-                'sk': f"{sk_prefix}{date_key}",
-                'cost_amount': str(round(day_data['cost'], 4)),
-                'service_breakdown': {k: str(round(v, 4)) for k, v in day_data['services'].items()},
-                'token_breakdown': {k: v for k, v in day_data['tokens'].items()},
-                'cached_at': now_iso,
-            }
-            cache_table.put_item(Item=cache_item)
-            _cache_write_count += 1
-        logger.info(f"Cache write: {_cache_write_count} records to Cost_Cache_Table for {pk}")
-    except Exception as _cache_err:
-        logger.warning(f"Cache write FAILED for {pk}: {type(_cache_err).__name__}: {_cache_err}")
-
-    # Trigger per-user daily token enrichment if we have an API key (cache miss path)
-    # This populates the DAILY# records that the per-user graph reads
-    try:
-        _local_api_key = locals().get('api_key', '')
-        if _local_api_key:
-            from provider_invoices import _enrich_daily_token_usage
-            _enrich_period = now.strftime('%Y-%m')
-            _enrich_count = _enrich_daily_token_usage(
-                member_email, account_id, _local_api_key, '', _enrich_period
-            )
-            logger.debug(f"Per-user enrichment during openai-usage: {_enrich_count} records")
-    except Exception as _enrich_err:
-        logger.debug(f"Per-user enrichment skipped during openai-usage: {_enrich_err}")
-
-    # Fetch per-user daily token records
-    per_user_records = []
-
-    # For GroundCover: fetch per-user data directly from Prometheus API
-    if cloud_provider == 'groundcover':
-        try:
-            # api_key may not be in locals if we hit the cache path; decrypt if needed
-            _gc_api_key = locals().get('api_key', '')
-            if not _gc_api_key:
-                _gc_creds = account.get('credentials', {})
-                _gc_enc_key = _gc_creds.get('encryptedApiKey', '')
-                if _gc_enc_key:
-                    from connectors.openai_kms import decrypt_openai_key
-                    _gc_api_key = decrypt_openai_key(_gc_enc_key, member_email, account_id)
-            if _gc_api_key:
-                from connectors.groundcover_connector import GroundcoverConnector
-                _gc_connector = GroundcoverConnector()
-                per_user_records = _gc_connector.get_per_user_data(
-                    {'api_key': _gc_api_key}, account_id, start_date, end_date
-                )
-        except Exception as _pu_err:
-            logger.warning(f"GroundCover per-user fetch failed: {_pu_err}")
-            per_user_records = []
-    else:
-        # OpenAI: fetch from MemberPortal-Invoices DAILY# records
-        try:
-            invoices_table = dynamodb.Table(INVOICES_TABLE_NAME)
-            pk_val = f"{member_email}#{account_id}"
-            daily_response = invoices_table.query(
-                KeyConditionExpression=DDBKey('pk').eq(pk_val) & DDBKey('sk').begins_with('DAILY#'),
-                ProjectionExpression='#d, user_id, model, api_key_id, input_tokens, output_tokens, input_cached_tokens, num_model_requests',
-                ExpressionAttributeNames={'#d': 'date'}
-            )
-            per_user_records = daily_response.get('Items', [])
-            # Handle pagination
-            while 'LastEvaluatedKey' in daily_response:
-                if time.time() - start_time > 25:
-                    break
-                daily_response = invoices_table.query(
-                    KeyConditionExpression=DDBKey('pk').eq(pk_val) & DDBKey('sk').begins_with('DAILY#'),
-                    ProjectionExpression='#d, user_id, model, api_key_id, input_tokens, output_tokens, input_cached_tokens, num_model_requests',
-                    ExpressionAttributeNames={'#d': 'date'},
-                    ExclusiveStartKey=daily_response['LastEvaluatedKey']
-                )
-                per_user_records.extend(daily_response.get('Items', []))
-        except Exception as e:
-            logger.warning(f"Failed to fetch per-user daily records: {e}")
-            per_user_records = []
-
-    # Build response matching the frontend expected schema
-    # Frontend reads: data.token_usage, data.cost_by_model, data.spend_trends, data.project_breakdown
-    response_data = {
-        'success': True,
-        'token_usage': _decimal_to_native(usage_records),
-        'cost_by_model': _decimal_to_native(cost_by_model),
-        'spend_trends': _decimal_to_native(spend_trends_for_frontend),
-        'total_spend': round(total_spend, 2),
-        'period_change': _decimal_to_native(period_change) if period_change != float('inf') else 'new_spend',
-        'project_breakdown': _decimal_to_native(project_breakdown),
-        'per_user_daily': _decimal_to_native(per_user_records),
-    }
-
+    response_data = _build_ai_dashboard_payload(
+        rollups, usage, prev_rollups, period, date_range, cloud_provider)
     return create_response(200, response_data)
 
 
@@ -22262,12 +22379,58 @@ def handle_refresh_invoices(event):
     })
 
 
+def _refresh_ai_usage_cache_for_account(member_email, account_id, provider=None):
+    """Refresh the neutral AI cost/usage cache for one AI-vendor account.
+
+    Runs the shared three-tier resolver (which writes neutral items back during
+    Tier 2 / Tier 3) and then persists the resolved neutral rollups + usage via
+    ``write_neutral_items``, guaranteeing every written record uses the neutral
+    ``COST#{date}`` / ``USAGE#{date}#{actor}#{service}`` schema — never
+    ``OPENAI_DAILY#`` (Req 13.3, 13.6). Retrieval is customer-connection-only
+    and scoped to exactly one ``(memberEmail, accountId)`` pair, never
+    platform-owned AI spend (Req 11.4, 11.5).
+    """
+    from incremental_fetch_engine import IncrementalFetchEngine, resolve_ai_usage
+    from cache_service import default_period
+
+    if provider is None:
+        provider = _get_account_provider(member_email, account_id)
+    period = default_period()  # most recent 30 days
+    connector = _get_ai_usage_connector(provider)
+
+    resolved = resolve_ai_usage(
+        member_email, account_id, 'actor',
+        service=None, period=period, connector=connector,
+        max_entries=10 ** 9,  # never drop entries while persisting the cache
+    )
+
+    cache_table = dynamodb.Table(COST_CACHE_TABLE_NAME)
+    engine = IncrementalFetchEngine()
+    items = list(resolved.get('rollups', []) or []) + list(resolved.get('usage', []) or [])
+    if items:
+        engine.write_neutral_items(cache_table, items)
+    logger.info(
+        f"AI usage cache refreshed (neutral schema) for {account_id}: "
+        f"{len(items)} items"
+    )
+    return resolved
+
+
 def _refresh_cost_cache_for_account(member_email, account_id):
-    """Refresh Cost_Cache_Table with last 7 days of daily costs for one account.
+    """Refresh Cost_Cache_Table with recent daily costs for one account.
 
     Called during manual invoice refresh to also update the daily cost cache
     that the AI chat and dashboard read from.
+
+    AI-vendor accounts (OpenAI / GroundCover) refresh through the shared
+    resolver and persist vendor-neutral Cost_Rollup_Item / Usage_Detail_Item
+    records — never ``OPENAI_DAILY#`` (Req 13.3, 13.6). AWS accounts keep the
+    existing Cost Explorer ``DAILY#`` refresh untouched.
     """
+    provider = _get_account_provider(member_email, account_id)
+    if provider in AI_VENDOR_PROVIDERS:
+        return _refresh_ai_usage_cache_for_account(member_email, account_id, provider)
+
     import hashlib as _hlib
     role_arn = f'arn:aws:iam::{account_id}:role/SlashMyBill-{account_id}'
     external_id = _hlib.sha256(member_email.encode('utf-8')).hexdigest()

@@ -11,6 +11,8 @@ import pytest
 from unittest.mock import patch, MagicMock
 from datetime import datetime, timedelta, timezone
 
+from hypothesis import given, settings, strategies as st
+
 import sys
 import os
 
@@ -284,11 +286,16 @@ class TestToolToMethodMapping:
             "getFinOpsSettings", "getCommitmentCoverage", "getTagCompliance",
             "getBusinessMetrics", "getCostForecast", "getCostAnomalies",
             "getRightsizingRecommendations", "getSpotCandidates",
-            "getLicensingAnalysis", "getAIVendorUsage", "getOptimizationTips",
+            "getLicensingAnalysis", "getAIUsage", "getOptimizationTips",
             "getPricingData", "getContainerClusters",
         ]
         for tool in expected_tools:
             assert tool in TOOL_TO_METHOD, f"Missing mapping for {tool}"
+
+    def test_get_ai_usage_maps_to_connector_method(self):
+        """getAIUsage replaces the superseded getAIVendorUsage entry."""
+        assert TOOL_TO_METHOD["getAIUsage"] == "get_ai_usage"
+        assert "getAIVendorUsage" not in TOOL_TO_METHOD
 
     def test_tool_count(self):
         assert len(TOOL_TO_METHOD) == 22
@@ -640,3 +647,69 @@ class TestAggregateFunctions:
 
         assert "EC2" in result["monthlyComparison"]["2024-01"]
         assert "TinyService" not in result["monthlyComparison"]["2024-01"]
+
+
+class TestProperty1ProviderSelectionPurity:
+    """Property 1: Provider selection is a pure function of cloudProvider.
+
+    Feature: vendor-agnostic-ai-usage, Property 1
+    **Validates: Requirements 1.1, 1.2**
+
+    The connector chosen by the resolver depends only on the stored
+    `cloudProvider` value and never on the account/member identity or
+    vendor-specific conditional logic. Any two accounts with the same
+    `cloudProvider` therefore resolve to the same provider and connector type.
+    """
+
+    @staticmethod
+    def _make_resource(cloud_provider, present=True):
+        """Build a mock DynamoDB resource whose account item carries cloud_provider."""
+        table = MagicMock()
+        if present:
+            item = {"memberEmail": "x", "accountId": "y"}
+            if cloud_provider is not None:
+                item["cloudProvider"] = cloud_provider
+            table.get_item.return_value = {"Item": item}
+        else:
+            table.get_item.return_value = {}
+        resource = MagicMock()
+        resource.Table.return_value = table
+        return resource
+
+    @settings(max_examples=150, deadline=None)
+    @given(
+        cloud_provider=st.one_of(
+            st.sampled_from(["aws", "azure", "gcp", "openai"]),
+            # Invalid / missing values must deterministically default to "aws".
+            st.sampled_from(["", "AWS", "digitalocean", "oracle", "unknown"]),
+            st.none(),
+        ),
+        acct_a=st.text(min_size=1, max_size=16),
+        email_a=st.emails(),
+        acct_b=st.text(min_size=1, max_size=16),
+        email_b=st.emails(),
+    )
+    def test_provider_selection_is_pure_function_of_cloud_provider(
+        self, cloud_provider, acct_a, email_a, acct_b, email_b
+    ):
+        resource = self._make_resource(cloud_provider)
+
+        with patch("provider_router._get_dynamodb_resource", return_value=resource):
+            prov_a = resolve_provider(acct_a, email_a)
+            prov_b = resolve_provider(acct_b, email_b)
+
+        # The resolved provider depends only on cloudProvider, so two different
+        # accounts sharing the same cloudProvider resolve identically.
+        assert prov_a == prov_b
+
+        # The resolved provider is exactly the pure function of cloudProvider:
+        # valid values pass through; everything else defaults to "aws".
+        expected = cloud_provider if cloud_provider in VALID_PROVIDERS else "aws"
+        assert prov_a == expected
+        assert prov_a in VALID_PROVIDERS
+
+        # The connector type is itself a pure function of the resolved provider,
+        # so identical providers yield identical connector types.
+        conn_a = type(_get_connector(prov_a)).__name__
+        conn_b = type(_get_connector(prov_b)).__name__
+        assert conn_a == conn_b

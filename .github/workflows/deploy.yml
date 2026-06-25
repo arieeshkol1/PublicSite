@@ -335,7 +335,7 @@ jobs:
                 "Version": "2012-10-17",
                 "Statement": [
                   {"Effect": "Allow", "Action": "sts:AssumeRole", "Resource": "*"},
-                  {"Effect": "Allow", "Action": ["dynamodb:GetItem","dynamodb:Query","dynamodb:Scan"], "Resource": ["arn:aws:dynamodb:us-east-1:991105135552:table/ViewMyBill-CostOptimizationTips","arn:aws:dynamodb:us-east-1:991105135552:table/Cost_Cache_Table","arn:aws:dynamodb:us-east-1:991105135552:table/MemberPortal-Members"]},
+                  {"Effect": "Allow", "Action": ["dynamodb:GetItem","dynamodb:Query","dynamodb:Scan","dynamodb:PutItem","dynamodb:BatchWriteItem"], "Resource": ["arn:aws:dynamodb:us-east-1:991105135552:table/ViewMyBill-CostOptimizationTips","arn:aws:dynamodb:us-east-1:991105135552:table/Cost_Cache_Table","arn:aws:dynamodb:us-east-1:991105135552:table/MemberPortal-Members","arn:aws:dynamodb:us-east-1:991105135552:table/MemberPortal-Invoices","arn:aws:dynamodb:us-east-1:991105135552:table/MemberPortal-Invoices/index/*"]},
                   {"Effect": "Allow", "Action": ["pricing:GetProducts","pricing:DescribeServices","pricing:GetAttributeValues"], "Resource": "*"},
                   {"Effect": "Allow", "Action": ["kms:Decrypt","kms:DescribeKey"], "Resource": "*"}
                 ]
@@ -355,6 +355,12 @@ jobs:
         run: |
           # Always update the AgentAction role permissions (role may already exist
           # but be missing kms:Decrypt which causes "unable to decrypt env vars" errors)
+          # Vendor-agnostic AI usage (Req 7.1/7.2): cache RW on neutral COST#/USAGE#
+          # keys (GetItem/Query/PutItem/BatchWriteItem on Cost_Cache_Table), Tips read,
+          # and MemberPortal-Invoices read as the Tier-2 drilldown source.
+          # NOTE: kms:Decrypt stays unscoped here because this role also decrypts the
+          # Lambda's env vars; the credential-CMK encryption-context scoping (Req 7.3)
+          # is enforced on the member-handler execution role in viewmybill-stack.yaml.
           aws iam put-role-policy \
             --role-name "SlashMyBill-AgentAction-Role" \
             --policy-name "AgentActionPermissions" \
@@ -362,13 +368,13 @@ jobs:
               "Version": "2012-10-17",
               "Statement": [
                 {"Effect": "Allow", "Action": "sts:AssumeRole", "Resource": "*"},
-                {"Effect": "Allow", "Action": ["dynamodb:GetItem","dynamodb:Query","dynamodb:Scan","dynamodb:PutItem"], "Resource": ["arn:aws:dynamodb:us-east-1:991105135552:table/ViewMyBill-CostOptimizationTips","arn:aws:dynamodb:us-east-1:991105135552:table/Cost_Cache_Table","arn:aws:dynamodb:us-east-1:991105135552:table/MemberPortal-Members","arn:aws:dynamodb:us-east-1:991105135552:table/MemberPortal-Accounts"]},
+                {"Effect": "Allow", "Action": ["dynamodb:GetItem","dynamodb:Query","dynamodb:Scan","dynamodb:PutItem","dynamodb:BatchWriteItem"], "Resource": ["arn:aws:dynamodb:us-east-1:991105135552:table/ViewMyBill-CostOptimizationTips","arn:aws:dynamodb:us-east-1:991105135552:table/Cost_Cache_Table","arn:aws:dynamodb:us-east-1:991105135552:table/MemberPortal-Members","arn:aws:dynamodb:us-east-1:991105135552:table/MemberPortal-Accounts","arn:aws:dynamodb:us-east-1:991105135552:table/MemberPortal-Invoices","arn:aws:dynamodb:us-east-1:991105135552:table/MemberPortal-Invoices/index/*"]},
                 {"Effect": "Allow", "Action": ["pricing:GetProducts","pricing:DescribeServices","pricing:GetAttributeValues"], "Resource": "*"},
                 {"Effect": "Allow", "Action": ["kms:Decrypt","kms:DescribeKey"], "Resource": "*"},
                 {"Effect": "Allow", "Action": ["logs:CreateLogGroup","logs:CreateLogStream","logs:PutLogEvents"], "Resource": "arn:aws:logs:us-east-1:991105135552:log-group:/aws/lambda/SlashMyBill-AgentAction:*"}
               ]
             }'
-          echo "✓ AgentAction role permissions updated (includes MemberPortal-Accounts + PutItem for cache)"
+          echo "✓ AgentAction role permissions updated (cache RW on neutral keys + Tips/Invoices read + MemberPortal-Accounts)"
 
       - name: Remove env vars and KMS key from AgentAction Lambda
         continue-on-error: true

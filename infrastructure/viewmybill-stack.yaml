@@ -1111,6 +1111,8 @@ Resources:
                   - !Sub 'arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:agent/*'
                   - !Sub 'arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:agent-alias/*'
         - PolicyName: DynamoDBTipsAccess
+          # Vendor-agnostic AI usage Tier-2 drilldown: read access to the
+          # Tips_Table (ViewMyBill-CostOptimizationTips) via Query/GetItem (Req 7.2).
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
@@ -1214,6 +1216,9 @@ Resources:
                 Resource:
                   - !Ref SpotInterruptionsTopic
         - PolicyName: DynamoDBInvoicesCRUDAccess
+          # Vendor-agnostic AI usage Tier-2 drilldown source: read access to
+          # MemberPortal-Invoices (per-user DAILY# token items) via Query/GetItem,
+          # plus existing CRUD for invoice sync (Req 7.2 supporting).
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
@@ -1229,6 +1234,11 @@ Resources:
                   - !GetAtt InvoicesTable.Arn
                   - !Sub '${InvoicesTable.Arn}/index/*'
         - PolicyName: DynamoDBCostCacheAccess
+          # Vendor-agnostic AI usage: cache read+write covering the neutral
+          # COST#{date} (Cost_Rollup_Item) and USAGE#{date}#{actor}#{service}
+          # (Usage_Detail_Item) key families on the Cost_Cache_Table (Req 7.1).
+          # DynamoDB IAM scopes by table/partition key; both neutral sort-key
+          # families live on this single table and are covered here.
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
@@ -1252,6 +1262,11 @@ Resources:
                 Resource:
                   - !GetAtt ProviderRegistryTable.Arn
         - PolicyName: KMSCredentialEncryption
+          # Vendor-agnostic AI usage Tier-3 live calls: kms:Decrypt scoped to the
+          # customer credential CMK, restricted to the {memberEmail, accountId}
+          # encryption context used by openai_kms.encrypt/decrypt (Req 7.3).
+          # ForAllValues:StringEquals limits the allowed context keys to that set
+          # while still permitting the legacy empty-context kms_helpers path.
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
@@ -1261,6 +1276,11 @@ Resources:
                   - kms:Decrypt
                 Resource:
                   - !GetAtt CredentialEncryptionKey.Arn
+                Condition:
+                  'ForAllValues:StringEquals':
+                    'kms:EncryptionContextKeys':
+                      - memberEmail
+                      - accountId
       Tags:
         - Key: Project
           Value: ViewMyBill

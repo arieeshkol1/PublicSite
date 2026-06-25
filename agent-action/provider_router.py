@@ -49,7 +49,7 @@ TOOL_TO_METHOD = {
     "getRightsizingRecommendations": "get_rightsizing_recommendations",
     "getSpotCandidates": "get_spot_candidates",
     "getLicensingAnalysis": "get_licensing_analysis",
-    "getAIVendorUsage": "get_ai_vendor_usage",
+    "getAIUsage": "get_ai_usage",
     "getOptimizationTips": "get_optimization_tips",
     "getPricingData": "get_pricing_data",
     "getContainerClusters": "get_container_clusters",
@@ -168,13 +168,13 @@ def _read_cost_cache(member_email: str, account_id: str, tool_name: str, params:
         cache_table = _get_cache_table()
         now = datetime.now(timezone.utc)
 
-        # Determine SK prefix based on provider (OpenAI uses OPENAI_DAILY#, AWS uses DAILY#)
-        # Resolve provider to pick correct prefix
+        # Determine SK prefix based on provider. AI-vendor accounts (e.g. openai)
+        # use the vendor-neutral COST# family; AWS/others keep DAILY#.
         try:
             provider = resolve_provider(account_id, member_email)
         except Exception:
             provider = "aws"
-        sk_prefix = "OPENAI_DAILY#" if provider == "openai" else "DAILY#"
+        sk_prefix = "COST#" if provider == "openai" else "DAILY#"
 
         # Determine the date range for the query based on tool type
         if tool_name == "getCostBreakdown":
@@ -258,8 +258,8 @@ def _aggregate_cost_breakdown(items, start_date, end_date):
     for item in items:
         cost = float(item.get("cost_amount", 0))
         sk = item["sk"]
-        # Strip both DAILY# and OPENAI_DAILY# prefixes to get the date
-        date = sk.replace("OPENAI_DAILY#", "").replace("DAILY#", "")
+        # Strip DAILY#, OPENAI_DAILY#, and neutral COST# prefixes to get the date
+        date = sk.replace("OPENAI_DAILY#", "").replace("COST#", "").replace("DAILY#", "")
         daily_costs.append({"date": date, "cost": round(cost, 2)})
         for svc, svc_cost in item.get("service_breakdown", {}).items():
             services[svc] = services.get(svc, 0) + float(svc_cost)
@@ -311,7 +311,7 @@ def _aggregate_monthly_trend(items):
     monthly_data = {}
     for item in items:
         sk = item["sk"]
-        date = sk.replace("OPENAI_DAILY#", "").replace("DAILY#", "")
+        date = sk.replace("OPENAI_DAILY#", "").replace("COST#", "").replace("DAILY#", "")
         month = date[:7]  # YYYY-MM
         if month not in monthly_data:
             monthly_data[month] = {}
@@ -335,7 +335,7 @@ def _write_cost_cache(member_email: str, account_id: str, tool_name: str, result
 
     Writes daily cost items with the current timestamp as cached_at.
     Only writes if the result contains usable cost data.
-    Uses OPENAI_DAILY# prefix for OpenAI accounts, DAILY# for others.
+    Uses the vendor-neutral COST# prefix for AI-vendor (openai) accounts, DAILY# for others.
     """
     try:
         cache_table = _get_cache_table()
@@ -343,12 +343,12 @@ def _write_cost_cache(member_email: str, account_id: str, tool_name: str, result
         pk = f"{member_email}#{account_id}"
         cached_at = now.isoformat()
 
-        # Determine SK prefix based on provider
+        # Determine SK prefix based on provider (AI-vendor accounts use neutral COST#)
         try:
             provider = resolve_provider(account_id, member_email)
         except Exception:
             provider = "aws"
-        sk_prefix = "OPENAI_DAILY#" if provider == "openai" else "DAILY#"
+        sk_prefix = "COST#" if provider == "openai" else "DAILY#"
 
         if tool_name == "getCostBreakdown":
             daily_costs = result.get("dailyCosts", [])

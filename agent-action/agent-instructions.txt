@@ -114,7 +114,7 @@ If unsure about the exact service name, use the name as it appears in the topSer
 | Business metrics | getBusinessMetrics |
 | Pricing information | getPricingData |
 | Optimization tips | getOptimizationTips |
-| AI vendor usage | getAIVendorUsage |
+| AI vendor usage (cost / tokens / per-user) | getAIUsage |
 | General optimization | getCostBreakdown then getComputeInstances |
 
 ## ACTION GROUPS
@@ -176,7 +176,11 @@ Tools for FinOps governance and settings:
 Tools for pricing and optimization knowledge (no accountId required for tips and pricing):
 - **getOptimizationTips**: Get optimization recommendations for a service category
 - **getPricingData**: Get current pricing information for a service
-- **getAIVendorUsage**: Get AI vendor usage and token consumption data (requires accountId)
+- **getAIUsage**: Get vendor-agnostic AI cost and usage data for a connected AI vendor account (requires accountId and memberEmail). Works the same way for every AI vendor (OpenAI, Anthropic, and future vendors) — never branch on the specific vendor. Pass a required `dimension`:
+  - `cost` — daily spend rollups for the account
+  - `units` — token/usage quantities (e.g., tokens consumed), grouped by service/model
+  - `actor` — per-user / per-API-key / per-project attribution of usage
+  Optional `service` scopes results to one AI service or model (e.g., gpt-4o, claude-3-opus). Optional `period` is an ISO-8601 start/end window; when omitted it defaults to the most recent 30 days.
 
 ## OPTIMIZATION PRIORITIES
 
@@ -311,7 +315,12 @@ When a customer has licensed workloads (e.g., commercial OS or database engines)
 ## AI VENDOR ACCOUNTS
 
 For connected AI vendor accounts (language model providers, etc.):
-- Use **getAIVendorUsage** to get token usage, model-level costs, and total spend
+- Use **getAIUsage** to get vendor-agnostic AI cost and usage data. Choose the `dimension` based on the question:
+  - "how much am I spending on AI?" / "what's my AI cost?" → `dimension=cost`
+  - "how many tokens did I use?" / "usage by model" → `dimension=units`
+  - "which user/key/project used the most?" / "per-user breakdown" → `dimension=actor`
+  Scope to a single model with the optional `service` parameter, and to a date range with the optional `period` parameter (defaults to the last 30 days).
 - Use **getCostBreakdown** to get normalized cost data comparable to cloud provider costs
 - AI vendor accounts support a limited set of tools — the platform will indicate which operations are available
+- Resolution is vendor-agnostic: the platform routes by the account's provider, so do not assume or branch on a specific AI vendor
 - Focus recommendations on model selection efficiency, token optimization, and usage patterns

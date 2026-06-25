@@ -37,9 +37,12 @@ class AIVendorConnector(CloudConnector):
 
     SUPPORTED_OPERATIONS: list[str] = [
         "getCostBreakdown",
-        "getAIVendorUsage",
+        "getAIUsage",
         "getMonthlyTrend",
     ]
+
+    # Default resolution window when no period is supplied (Req 3.6).
+    DEFAULT_WINDOW_DAYS = 30
 
     # ─── Credential Helpers ───────────────────────────────────────────────
 
@@ -267,6 +270,320 @@ class AIVendorConnector(CloudConnector):
         except Exception as e:
             logger.error(f"AI vendor get_ai_vendor_usage failed: {e}")
             return {"error": str(e)}
+
+    # ─── Vendor-Neutral AI Usage (getAIUsage) ─────────────────────────────
+
+    def get_ai_usage(self, account_id: str, member_email: str, params: dict) -> dict:
+        """
+        Vendor-neutral AI cost/usage retrieval.
+
+        Reuses the existing OpenAI fetch path and maps raw vendor fields onto
+        the neutral schema (tokens -> units, user_id -> actor, model -> service)
+        before projecting by ``dimension``:
+
+          - ``cost``  -> daily Cost_Rollup_Item list (rollups), plus detail usage.
+          - ``units`` -> usage_quantity totals grouped by service.
+          - ``actor`` -> usage detail grouped by actor.
+
+        params:
+          dimension: "cost" | "units" | "actor"   (defaults to "cost")
+          service:   optional str  - scope to a single AI service/model
+          period:    optional {start, end} or "start/end" string
+                     (defaults to the last 30 days, Req 3.6)
+
+        Returns a neutral-shaped dict:
+            {dimension, period, currency, rollups[], usage[], truncated,
+             providerMetadata}
+        """
+        try:
+            creds = self._get_credentials(account_id, member_email)
+            api_key = creds["api_key"]
+            organization_id = creds.get("organization_id", "")
+            vendor = creds.get("vendor", "openai")
+
+            dimension = (params.get("dimension") or "cost").lower()
+            if dimension not in ("cost", "units", "actor"):
+                dimension = "cost"
+            service_filter = params.get("service") or None
+
+            # Default window is the most recent 30 days (Req 3.6).
+            period = self._resolve_period(params.get("period"))
+            start_date = period["start"]
+            end_date = period["end"]
+
+            # Raw per-actor / per-model usage buckets (nulls preserved, Req 2.6).
+            raw_buckets = self._fetch_raw_usage_buckets(
+                api_key, organization_id, vendor, start_date, end_date
+            )
+            usage_items = self._map_usage_buckets_to_neutral(raw_buckets)
+
+            # Daily cost rollups from the org costs endpoint.
+            cost_data = self._fetch_usage_data(
+                api_key, organization_id, vendor, start_date, end_date
+            )
+            currency = self._resolve_currency(usage_items)
+            rollup_items = self._map_daily_costs_to_rollups(cost_data, currency)
+
+            # Optional single-service scoping (Req 3.4 / 5.3).
+            if service_filter:
+                usage_items = [
+                    u for u in usage_items if u.get("service") == service_filter
+                ]
+
+            rollups, usage = self._project_by_dimension(
+                dimension, rollup_items, usage_items
+            )
+
+            return {
+                "dimension": dimension,
+                "period": period,
+                "currency": currency,
+                "rollups": rollups,
+                "usage": usage,
+                "truncated": False,
+                "providerMetadata": {
+                    "provider": vendor,
+                    "organizationId": organization_id,
+                    "source": "live",
+                },
+            }
+        except (PermissionError, RuntimeError):
+            raise
+        except Exception as e:
+            logger.error(f"AI vendor get_ai_usage failed: {e}")
+            return {"error": str(e)}
+
+    def _resolve_period(self, period) -> dict:
+        """
+        Resolve the requested window, defaulting to the most recent 30 days
+        when no ``period`` is supplied (Req 3.6).
+
+        Accepts a ``{start, end}`` dict, a ``"start/end"`` / ``"start to end"``
+        / ``"start,end"`` string, or ``None``. Returns ``{start, end}`` as
+        ISO-8601 ``YYYY-MM-DD`` strings.
+        """
+        now = datetime.now(timezone.utc)
+        default_end = now.strftime("%Y-%m-%d")
+        default_start = (
+            now - timedelta(days=self.DEFAULT_WINDOW_DAYS)
+        ).strftime("%Y-%m-%d")
+
+        if not period:
+            return {"start": default_start, "end": default_end}
+
+        if isinstance(period, dict):
+            return {
+                "start": period.get("start") or default_start,
+                "end": period.get("end") or default_end,
+            }
+
+        if isinstance(period, str):
+            for sep in ("/", " to ", ","):
+                if sep in period:
+                    parts = [p.strip() for p in period.split(sep, 1)]
+                    if len(parts) == 2 and parts[0] and parts[1]:
+                        return {"start": parts[0], "end": parts[1]}
+                    break
+
+        return {"start": default_start, "end": default_end}
+
+    def _fetch_raw_usage_buckets(
+        self, api_key: str, organization_id: str, vendor: str,
+        start_date: str, end_date: str
+    ) -> list[dict]:
+        """
+        Fetch raw per-actor / per-model usage buckets from the AI vendor.
+
+        Returns the raw bucket list unchanged (so the neutral mapper can
+        preserve missing fields as null). Returns [] for unsupported vendors
+        or on any API error (never raises).
+        """
+        if vendor != "openai":
+            return []
+
+        try:
+            start_ts = int(
+                datetime.strptime(start_date, "%Y-%m-%d")
+                .replace(tzinfo=timezone.utc)
+                .timestamp()
+            )
+            end_ts = int(
+                datetime.strptime(end_date, "%Y-%m-%d")
+                .replace(tzinfo=timezone.utc)
+                .timestamp()
+            )
+        except (ValueError, TypeError):
+            return []
+
+        endpoint = (
+            f"/v1/organization/usage/completions"
+            f"?group_by=user_id&group_by=model&bucket_width=1d"
+            f"&start_time={start_ts}&end_time={end_ts}"
+        )
+
+        try:
+            data = self._make_openai_request(endpoint, api_key, organization_id)
+        except (PermissionError, RuntimeError):
+            return []
+
+        buckets = list(data.get("data", []))
+
+        page_count = 1
+        while data.get("has_more") and data.get("next_page") and page_count < 5:
+            try:
+                data = self._make_openai_request(
+                    endpoint + f"&page={data['next_page']}",
+                    api_key,
+                    organization_id,
+                )
+                buckets.extend(data.get("data", []))
+                page_count += 1
+            except Exception:
+                break
+
+        return buckets
+
+    def _map_usage_buckets_to_neutral(self, buckets: list) -> list[dict]:
+        """
+        Map raw vendor usage buckets onto neutral Usage_Detail fields
+        (Req 2.5, 2.6). Direction:
+
+            tokens (input + output) -> usage_quantity ("tokens")
+            user_id -> actor          (falls back to project_id, then api_key_id)
+            model   -> service        (falls back to line_item)
+            amount.value -> cost_amount
+            amount.currency -> currency (uppercased, default USD)
+
+        A neutral field with no corresponding source is set to ``None`` (null)
+        rather than omitted.
+        """
+        items: list[dict] = []
+        for bucket in buckets or []:
+            date = None
+            start_time = bucket.get("start_time")
+            if start_time is not None:
+                try:
+                    date = datetime.fromtimestamp(
+                        int(start_time), tz=timezone.utc
+                    ).strftime("%Y-%m-%d")
+                except (ValueError, TypeError, OSError):
+                    date = None
+
+            for result in bucket.get("results", []):
+                # actor: user_id -> project_id -> api_key_id -> null
+                actor = (
+                    result.get("user_id")
+                    or result.get("project_id")
+                    or result.get("api_key_id")
+                    or None
+                )
+                # service: model -> line_item -> null
+                service = result.get("model") or result.get("line_item") or None
+
+                # usage_quantity: input + output tokens; null if neither present
+                input_tokens = result.get("input_tokens")
+                output_tokens = result.get("output_tokens")
+                if input_tokens is None and output_tokens is None:
+                    usage_quantity = None
+                    unit = None
+                else:
+                    usage_quantity = int(input_tokens or 0) + int(output_tokens or 0)
+                    unit = "tokens"
+
+                amount_obj = result.get("amount") or {}
+                cost_value = amount_obj.get("value")
+                cost_amount = (
+                    round(float(cost_value), 4) if cost_value is not None else None
+                )
+                currency = (amount_obj.get("currency") or "USD").upper()
+
+                items.append({
+                    "date": date,
+                    "actor": actor,
+                    "service": service,
+                    "usage_quantity": usage_quantity,
+                    "unit": unit,
+                    "cost_amount": cost_amount,
+                    "currency": currency,
+                })
+        return items
+
+    def _map_daily_costs_to_rollups(self, cost_data: dict, currency: str) -> list[dict]:
+        """
+        Map the daily cost series produced by ``_fetch_usage_data`` onto
+        neutral Cost_Rollup fields ({date, cost_amount, currency}).
+        """
+        rollups: list[dict] = []
+        for entry in cost_data.get("daily_costs", []):
+            date = entry.get("date")
+            cost = entry.get("cost")
+            rollups.append({
+                "date": date,
+                "cost_amount": round(float(cost), 4) if cost is not None else None,
+                "currency": currency,
+            })
+        return rollups
+
+    @staticmethod
+    def _resolve_currency(usage_items: list) -> str:
+        """Use the first non-null currency from usage detail, default USD."""
+        for item in usage_items:
+            currency = item.get("currency")
+            if currency:
+                return currency.upper()
+        return "USD"
+
+    @staticmethod
+    def _project_by_dimension(
+        dimension: str, rollup_items: list, usage_items: list
+    ) -> tuple[list, list]:
+        """
+        Project the neutral records according to the requested dimension.
+
+          - ``cost``  -> rollups primary; usage is the full detail list.
+          - ``units`` -> usage grouped by service (summed usage_quantity).
+          - ``actor`` -> usage grouped by actor (summed quantity and cost).
+        """
+        if dimension == "units":
+            grouped: dict = {}
+            for u in usage_items:
+                svc = u.get("service")
+                qty = u.get("usage_quantity") or 0
+                grouped[svc] = grouped.get(svc, 0) + qty
+            usage = [
+                {"service": svc, "usage_quantity": qty, "unit": "tokens"}
+                for svc, qty in sorted(
+                    grouped.items(), key=lambda kv: kv[1], reverse=True
+                )
+            ]
+            return rollup_items, usage
+
+        if dimension == "actor":
+            grouped_actor: dict = {}
+            for u in usage_items:
+                actor = u.get("actor")
+                bucket = grouped_actor.setdefault(
+                    actor, {"actor": actor, "usage_quantity": 0, "cost_amount": 0.0}
+                )
+                bucket["usage_quantity"] += u.get("usage_quantity") or 0
+                bucket["cost_amount"] += u.get("cost_amount") or 0.0
+            usage = sorted(
+                (
+                    {
+                        "actor": v["actor"],
+                        "usage_quantity": v["usage_quantity"],
+                        "cost_amount": round(v["cost_amount"], 4),
+                        "unit": "tokens",
+                    }
+                    for v in grouped_actor.values()
+                ),
+                key=lambda x: x["cost_amount"],
+                reverse=True,
+            )
+            return rollup_items, usage
+
+        # dimension == "cost": rollups primary, full usage detail retained.
+        return rollup_items, usage_items
 
     # ─── Internal Helpers ─────────────────────────────────────────────────
 

@@ -3,8 +3,13 @@ Deploy all 6 vendor-neutral action groups to the SlashMyBill Bedrock Agent.
 
 This script:
 1. Creates or updates each of the 6 action groups with their OpenAPI schemas
+   (including the Knowledge group, which now carries the vendor-agnostic getAIUsage tool)
 2. Updates the agent instructions to the vendor-neutral version
 3. Calls PrepareAgent to create a new prepared agent version
+4. Updates the agent alias to point at the new prepared version
+
+The steps run in order; if any step fails the script logs the failing step
+and exits with a non-zero status.
 
 Usage: python deploy-agent-action-groups.py
 
@@ -62,7 +67,7 @@ ACTION_GROUPS = [
     {
         'name': 'Knowledge',
         'schema_file': 'knowledge.json',
-        'description': 'Knowledge and pricing tools: getOptimizationTips, getPricingData, getAIVendorUsage',
+        'description': 'Knowledge and pricing tools: getOptimizationTips, getPricingData, getAIUsage',
     },
 ]
 
@@ -175,33 +180,34 @@ def prepare_agent(client, agent_id):
 
 
 def update_agent_alias(client, agent_id, alias_id):
-    """Update agent alias to point to the latest prepared version."""
-    print(f"\nUpdating agent alias {alias_id} to latest version...")
-    try:
-        # List versions to find the latest
-        versions_resp = client.list_agent_versions(agentId=agent_id, maxResults=10)
-        versions = versions_resp.get('agentVersionSummaries', [])
-        # Find the highest numeric version (skip DRAFT)
-        numeric_versions = [v for v in versions if v['agentVersion'] not in ('DRAFT',)]
-        if not numeric_versions:
-            print("  No prepared versions found, skipping alias update")
-            return False
-        latest = max(numeric_versions, key=lambda v: int(v['agentVersion']))
-        latest_version = latest['agentVersion']
-        print(f"  Latest prepared version: {latest_version}")
+    """Update agent alias to point to the latest prepared version.
 
-        # Update the alias to point to the latest version
-        client.update_agent_alias(
-            agentId=agent_id,
-            agentAliasId=alias_id,
-            agentAliasName='live',
-            routingConfiguration=[{'agentVersion': latest_version}],
-        )
-        print(f"✓ Alias {alias_id} updated to version {latest_version}")
-        return True
-    except Exception as e:
-        print(f"  Warning: Could not update alias: {e}")
+    Returns True on success, False when no prepared version exists to point at.
+    Raises on API errors so the caller can treat alias update as a failing
+    deploy step (Req 10.4).
+    """
+    print(f"\nUpdating agent alias {alias_id} to latest version...")
+    # List versions to find the latest
+    versions_resp = client.list_agent_versions(agentId=agent_id, maxResults=10)
+    versions = versions_resp.get('agentVersionSummaries', [])
+    # Find the highest numeric version (skip DRAFT)
+    numeric_versions = [v for v in versions if v['agentVersion'] not in ('DRAFT',)]
+    if not numeric_versions:
+        print("  No prepared versions found to point the alias at")
         return False
+    latest = max(numeric_versions, key=lambda v: int(v['agentVersion']))
+    latest_version = latest['agentVersion']
+    print(f"  Latest prepared version: {latest_version}")
+
+    # Update the alias to point to the latest version
+    client.update_agent_alias(
+        agentId=agent_id,
+        agentAliasId=alias_id,
+        agentAliasName='live',
+        routingConfiguration=[{'agentVersion': latest_version}],
+    )
+    print(f"✓ Alias {alias_id} updated to version {latest_version}")
+    return True
 
 
 def main():
@@ -304,12 +310,22 @@ def main():
         print(f"  Instructions: updated")
         sys.exit(1)
 
-    # Update the alias to point to the new version
+    # Update the alias to point to the new version (final deploy step)
     ALIAS_ID = os.environ.get('BEDROCK_AGENT_ALIAS_ID', '3TI0ZATFFV')
     try:
-        update_agent_alias(client, AGENT_ID, ALIAS_ID)
+        alias_updated = update_agent_alias(client, AGENT_ID, ALIAS_ID)
+        if not alias_updated:
+            print("\n✗ Failed to update agent alias: no prepared version available to point at.")
+            print(f"  Succeeded action groups: {', '.join(succeeded)}")
+            print("  Instructions: updated")
+            print("  Agent: prepared")
+            sys.exit(1)
     except Exception as e:
-        print(f"  Warning: Alias update failed (non-fatal): {e}")
+        print(f"\n✗ Failed to update agent alias: {e}")
+        print(f"  Succeeded action groups: {', '.join(succeeded)}")
+        print("  Instructions: updated")
+        print("  Agent: prepared")
+        sys.exit(1)
 
     # All done
     print(f"\n{'=' * 60}")

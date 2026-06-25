@@ -1158,3 +1158,665 @@ class IncrementalFetchEngine:
 
         # Return sorted by date ascending
         return sorted(merged.values(), key=lambda item: item.date)
+
+    # -----------------------------------------------------------------------
+    # Vendor-neutral AI cost/usage read and write-back
+    # (vendor-agnostic-ai-usage feature)
+    #
+    # These methods operate on the neutral COST#/USAGE# sort-key families only.
+    # The AWS DAILY# path above is left completely untouched.
+    # -----------------------------------------------------------------------
+
+    def _query_neutral_window(
+        self,
+        table,
+        pk: str,
+        start_sk: str,
+        end_sk: str,
+    ) -> list[dict]:
+        """Query a (pk, sk) window from the cache table, handling pagination.
+
+        Args:
+            table: A boto3 DynamoDB Table resource for the Cost_Cache_Table.
+            pk: The neutral partition key '{memberEmail}#{accountId}'.
+            start_sk: Inclusive lower sort-key bound.
+            end_sk: Inclusive upper sort-key bound.
+
+        Returns:
+            List of raw DynamoDB item dicts within the window.
+        """
+        from boto3.dynamodb.conditions import Key
+
+        key_condition = Key('pk').eq(pk) & Key('sk').between(start_sk, end_sk)
+
+        items: list[dict] = []
+        response = table.query(KeyConditionExpression=key_condition)
+        items.extend(response.get('Items', []))
+        while 'LastEvaluatedKey' in response:
+            response = table.query(
+                KeyConditionExpression=key_condition,
+                ExclusiveStartKey=response['LastEvaluatedKey'],
+            )
+            items.extend(response.get('Items', []))
+        return items
+
+    def read_cost_rollup_window(
+        self,
+        table,
+        member_email: str,
+        account_id: str,
+        start_date: str,
+        end_date: str,
+    ) -> list[dict]:
+        """Read Cost_Rollup_Item records for a date window.
+
+        Uses ``Key('pk').eq(pk) & Key('sk').between('COST#{start}', 'COST#{end}')``
+        over the neutral schema (Req 2.1).
+
+        Args:
+            table: A boto3 DynamoDB Table resource for the Cost_Cache_Table.
+            member_email: The authenticated member's email address.
+            account_id: The connected AI-vendor account identifier.
+            start_date: Inclusive ISO 8601 start date (YYYY-MM-DD).
+            end_date: Inclusive ISO 8601 end date (YYYY-MM-DD).
+
+        Returns:
+            List of Cost_Rollup_Item dicts in the window.
+        """
+        from cache_service import (
+            build_neutral_partition_key,
+            build_cost_rollup_sort_key,
+        )
+
+        pk = build_neutral_partition_key(member_email, account_id)
+        start_sk = build_cost_rollup_sort_key(start_date)
+        end_sk = build_cost_rollup_sort_key(end_date)
+        return self._query_neutral_window(table, pk, start_sk, end_sk)
+
+    def read_usage_detail_window(
+        self,
+        table,
+        member_email: str,
+        account_id: str,
+        start_date: str,
+        end_date: str,
+    ) -> list[dict]:
+        """Read Usage_Detail_Item records for a date window.
+
+        Uses ``Key('pk').eq(pk) & Key('sk').between('USAGE#{start}', 'USAGE#{end}#\\uffff')``
+        so that every actor/service suffix on the inclusive end date is captured
+        (Req 2.2).
+
+        Args:
+            table: A boto3 DynamoDB Table resource for the Cost_Cache_Table.
+            member_email: The authenticated member's email address.
+            account_id: The connected AI-vendor account identifier.
+            start_date: Inclusive ISO 8601 start date (YYYY-MM-DD).
+            end_date: Inclusive ISO 8601 end date (YYYY-MM-DD).
+
+        Returns:
+            List of Usage_Detail_Item dicts in the window.
+        """
+        from cache_service import (
+            build_neutral_partition_key,
+            USAGE_DETAIL_SK_PREFIX,
+        )
+
+        pk = build_neutral_partition_key(member_email, account_id)
+        start_sk = f"{USAGE_DETAIL_SK_PREFIX}{start_date}"
+        # '\uffff' sorts after every normal character, so the upper bound
+        # captures all '#{actor}#{service}' suffixes on the end date.
+        end_sk = f"{USAGE_DETAIL_SK_PREFIX}{end_date}#\uffff"
+        return self._query_neutral_window(table, pk, start_sk, end_sk)
+
+    def write_neutral_items(self, table, items: list[dict]) -> bool:
+        """Persist pre-shaped neutral items (Tier-2/Tier-3 write-back).
+
+        Writes Cost_Rollup_Item / Usage_Detail_Item dicts (as produced by
+        ``cache_service.shape_cost_rollup_item`` / ``shape_usage_detail_item``)
+        to the Cost_Cache_Table via batched PutItem requests, overwriting by
+        primary key (Req 4.6). The AWS DAILY# path is not involved.
+
+        Args:
+            table: A boto3 DynamoDB Table resource for the Cost_Cache_Table.
+            items: List of pre-shaped neutral item dicts.
+
+        Returns:
+            True when all items were submitted for writing.
+        """
+        if not items:
+            return True
+
+        with table.batch_writer() as batch:
+            for item in items:
+                batch.put_item(Item=item)
+        return True
+
+    def neutral_items_from_normalized(
+        self,
+        member_email: str,
+        account_id: str,
+        normalized_records: list[dict],
+        cached_at: str | None = None,
+    ) -> list[dict]:
+        """Build neutral cache items from cost_normalizer output.
+
+        Reuses the common-schema records produced by ``cost_normalizer`` (which
+        carry ``date``, ``service_name``, ``cost_amount``, ``currency``,
+        ``input_tokens``, ``output_tokens`` and optional ``project_id``) and
+        projects them onto the neutral schema: one Cost_Rollup_Item per day
+        (summing cost across services) plus one Usage_Detail_Item per
+        actor/service/day (Req 2.1, 2.2). Token totals become the usage
+        quantity (unit 'tokens'); the actor falls back to null when the source
+        has no project/user identifier (Req 2.6).
+
+        Args:
+            member_email: The authenticated member's email address.
+            account_id: The connected AI-vendor account identifier.
+            normalized_records: cost_normalizer common-schema records.
+            cached_at: ISO 8601 timestamp; defaults to now (UTC) per item shaper.
+
+        Returns:
+            List of neutral item dicts (rollups followed by detail records).
+        """
+        from cache_service import (
+            shape_cost_rollup_item,
+            shape_usage_detail_item,
+            NEUTRAL_USAGE_UNIT,
+        )
+
+        rollups: dict[str, dict] = {}
+        details: list[dict] = []
+
+        for record in normalized_records:
+            date = record.get('date')
+            if not date:
+                continue
+            cost = float(record.get('cost_amount', 0) or 0)
+            currency = record.get('currency') or 'USD'
+
+            # Accumulate the daily cost rollup.
+            rollup = rollups.get(date)
+            if rollup is None:
+                rollups[date] = {'cost': cost, 'currency': currency}
+            else:
+                rollup['cost'] += cost
+
+            # Per-actor/per-service usage detail.
+            service = record.get('service_name')
+            # Actor falls back to null when no source identifier is present.
+            actor = record.get('project_id')
+            tokens = (record.get('input_tokens') or 0) + (record.get('output_tokens') or 0)
+            details.append(
+                shape_usage_detail_item(
+                    member_email=member_email,
+                    account_id=account_id,
+                    date=date,
+                    actor=actor,
+                    service=service,
+                    usage_quantity=tokens if tokens else None,
+                    unit=NEUTRAL_USAGE_UNIT,
+                    cost_amount=cost,
+                    cached_at=cached_at,
+                )
+            )
+
+        rollup_items = [
+            shape_cost_rollup_item(
+                member_email=member_email,
+                account_id=account_id,
+                date=date,
+                cost_amount=round(data['cost'], 4),
+                currency=data['currency'],
+                cached_at=cached_at,
+            )
+            for date, data in sorted(rollups.items())
+        ]
+
+        return rollup_items + details
+
+
+# ===========================================================================
+# Three-tier AI usage resolver (vendor-agnostic-ai-usage feature, Task 3)
+#
+# The resolver is the AI_Usage_Service orchestrator. It is structurally
+# cache-first: Tier 1 (cache read) always executes before any Tier 2 (Tips
+# drilldown via the customer connection) or Tier 3 (bounded live vendor call),
+# and Tier 2 always runs before Tier 3 (Property 6 / Req 4.1, 4.3, 4.4, 11.1).
+# Tier-2/Tier-3 results are written back under the neutral COST#/USAGE# schema
+# (Req 4.6). All retrieval targets exactly one (memberEmail, accountId) pair
+# using the customer's own credentials (Req 11.2, 11.3).
+# ===========================================================================
+
+import os as _os
+from concurrent.futures import (
+    ThreadPoolExecutor as _ThreadPoolExecutor,
+    TimeoutError as _FuturesTimeout,
+)
+from dataclasses import dataclass, field
+
+# Tier-3 latency bound (reuses the existing 20s ThreadPoolExecutor budget used
+# elsewhere for bounded live work, Req 12.3).
+TIER3_TIMEOUT_SECONDS = 20
+
+_COST_CACHE_TABLE_NAME = _os.environ.get('COST_CACHE_TABLE_NAME', 'Cost_Cache_Table')
+
+
+class AdminKeyRequiredError(Exception):
+    """Raised when a Tier-3 live call needs an admin-level key the account lacks."""
+    pass
+
+
+@dataclass
+class DrilldownResult:
+    """Outcome of a Tier-2 Tips drilldown executed via the customer connection."""
+    satisfied: bool = False
+    items: list = field(default_factory=list)
+    error: dict | None = None
+
+
+@dataclass
+class LiveResult:
+    """Outcome of a bounded Tier-3 live vendor call."""
+    items: list = field(default_factory=list)
+    partial: bool = False
+    error: dict | None = None
+
+
+def build_admin_key_required_error() -> dict:
+    """Structured message when account-wide usage needs an admin-level key (Req 12.1)."""
+    return {
+        'error': 'admin_key_required',
+        'message': (
+            'Account-wide AI usage requires an admin-level API key. The connected '
+            'key does not have organization-wide access. Please add an admin-level '
+            'key in the Configure tab to see account-wide usage.'
+        ),
+    }
+
+
+def build_connection_required_error() -> dict:
+    """Structured "configure connection" message for missing credentials (Req 6.4)."""
+    return {
+        'error': 'connection_required',
+        'message': (
+            'No AI vendor connection is configured for this account. Please add '
+            'your connection in the Configure tab to retrieve usage data.'
+        ),
+        'configureTab': True,
+    }
+
+
+def _coerce_float(value) -> float:
+    """Best-effort numeric coercion; missing/unparseable values sort as 0.0."""
+    if value is None:
+        return 0.0
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _field(obj, key, default=None):
+    """Read ``key`` from a dict or attribute-style object."""
+    if isinstance(obj, dict):
+        return obj.get(key, default)
+    return getattr(obj, key, default)
+
+
+def _normalize_period(period, now: datetime, window_days: int = 30) -> dict:
+    """Resolve the requested window to {start, end} ISO dates.
+
+    Defaults to the most recent ``window_days`` calendar days when no period
+    is supplied (Req 3.6).
+    """
+    default_end = now.strftime('%Y-%m-%d')
+    default_start = (now - timedelta(days=window_days - 1)).strftime('%Y-%m-%d')
+    if not period:
+        return {'start': default_start, 'end': default_end}
+    if isinstance(period, dict):
+        return {
+            'start': period.get('start') or default_start,
+            'end': period.get('end') or default_end,
+        }
+    if isinstance(period, str):
+        for sep in ('/', ' to ', ','):
+            if sep in period:
+                parts = [p.strip() for p in period.split(sep, 1)]
+                if len(parts) == 2 and parts[0] and parts[1]:
+                    return {'start': parts[0], 'end': parts[1]}
+                break
+    return {'start': default_start, 'end': default_end}
+
+
+def _resolve_currency(rollup_items: list, usage_items: list) -> str:
+    """Return the first non-null currency seen, defaulting to USD."""
+    for item in list(rollup_items or []) + list(usage_items or []):
+        currency = _field(item, 'currency')
+        if currency:
+            return str(currency).upper()
+    return 'USD'
+
+
+def _merge_neutral(*item_lists) -> tuple[list, list]:
+    """Merge neutral item lists by (pk, sk), later writes winning.
+
+    Returns ``(rollup_items, usage_items)`` split by sort-key family.
+    """
+    from cache_service import COST_ROLLUP_SK_PREFIX, USAGE_DETAIL_SK_PREFIX
+
+    merged: dict = {}
+    order: list = []
+    for lst in item_lists:
+        for item in lst or []:
+            sk = _field(item, 'sk')
+            key = (_field(item, 'pk'), sk) if sk else (id(item),)
+            if key not in merged:
+                order.append(key)
+            merged[key] = item
+
+    rollups, usage = [], []
+    for key in order:
+        item = merged[key]
+        sk = str(_field(item, 'sk') or '')
+        if sk.startswith(COST_ROLLUP_SK_PREFIX):
+            rollups.append(item)
+        elif sk.startswith(USAGE_DETAIL_SK_PREFIX):
+            usage.append(item)
+        else:
+            usage.append(item)
+    return rollups, usage
+
+
+def build_ai_usage_response(
+    dimension: str,
+    period: dict,
+    rollup_items: list,
+    usage_items: list,
+    *,
+    source: str = 'cache',
+    live_partial: bool = False,
+    currency: str | None = None,
+    max_entries: int | None = None,
+    error: dict | None = None,
+    provider: str | None = None,
+) -> dict:
+    """Build the capped neutral AIUsageResponse dict.
+
+    The ``usage`` list is sorted by descending cost and capped to the
+    configured maximum number of entries; when entries are dropped the
+    response sets ``truncated = True`` (Property 15 / Req 12.2). ``rollups``
+    are one-per-day and not capped.
+    """
+    from cache_service import DEFAULT_MAX_RESPONSE_ENTRIES
+
+    if max_entries is None:
+        max_entries = DEFAULT_MAX_RESPONSE_ENTRIES
+
+    sorted_usage = sorted(
+        list(usage_items or []),
+        key=lambda u: _coerce_float(_field(u, 'cost_amount')),
+        reverse=True,
+    )
+    truncated = len(sorted_usage) > max_entries
+    capped_usage = sorted_usage[:max_entries]
+
+    response = {
+        'dimension': dimension,
+        'period': period,
+        'currency': currency or _resolve_currency(rollup_items, usage_items),
+        'rollups': list(rollup_items or []),
+        'usage': capped_usage,
+        'truncated': truncated,
+        'providerMetadata': {
+            'provider': provider,
+            'source': source,
+            'live_partial': bool(live_partial),
+        },
+    }
+    if error:
+        response['error'] = error.get('error')
+        response['message'] = error.get('message')
+        if error.get('configureTab'):
+            response['configureTab'] = True
+    return response
+
+
+def _live_result_to_neutral_items(member_email: str, account_id: str, result: dict,
+                                  cached_at: str | None = None) -> list:
+    """Convert an ``AIVendorConnector.get_ai_usage`` result to neutral items.
+
+    Only entries carrying a concrete ``date`` (plus actor/service for usage)
+    are converted for write-back; dimension-grouped projections (which lack a
+    date) are left out of the cache write (Req 4.6).
+    """
+    from cache_service import (
+        shape_cost_rollup_item,
+        shape_usage_detail_item,
+        NEUTRAL_USAGE_UNIT,
+    )
+
+    items: list = []
+    if not isinstance(result, dict):
+        return items
+
+    for rollup in result.get('rollups', []) or []:
+        date = _field(rollup, 'date')
+        if not date:
+            continue
+        items.append(shape_cost_rollup_item(
+            member_email=member_email,
+            account_id=account_id,
+            date=date,
+            cost_amount=_field(rollup, 'cost_amount'),
+            currency=_field(rollup, 'currency'),
+            cached_at=cached_at,
+        ))
+
+    for usage in result.get('usage', []) or []:
+        date = _field(usage, 'date')
+        actor = _field(usage, 'actor')
+        service = _field(usage, 'service')
+        # Grouped projections (units/actor) omit the date — skip those.
+        if not date or service is None and actor is None:
+            continue
+        items.append(shape_usage_detail_item(
+            member_email=member_email,
+            account_id=account_id,
+            date=date,
+            actor=actor,
+            service=service,
+            usage_quantity=_field(usage, 'usage_quantity'),
+            unit=_field(usage, 'unit') or NEUTRAL_USAGE_UNIT,
+            cost_amount=_field(usage, 'cost_amount'),
+            cached_at=cached_at,
+        ))
+
+    return items
+
+
+def _default_tier3_call(
+    member_email: str,
+    account_id: str,
+    dimension: str,
+    service: str | None,
+    period: dict,
+    *,
+    connector=None,
+    now: datetime | None = None,
+    timeout: int | None = None,
+) -> LiveResult:
+    """Bounded Tier-3 live vendor call via the customer's connector.
+
+    Reuses a single-worker ThreadPoolExecutor bounded to ``TIER3_TIMEOUT_SECONDS``
+    (Req 12.3). On timeout the call degrades to the best lower-tier result by
+    returning no new items with ``partial=True`` (Req 12.4). When the live call
+    needs an admin-level key the account lacks, a structured admin-key error is
+    returned (Req 12.1).
+    """
+    if connector is None or not hasattr(connector, 'get_ai_usage'):
+        # No live connector wired into this context — degrade gracefully.
+        return LiveResult(items=[], partial=False)
+
+    timeout = timeout or TIER3_TIMEOUT_SECONDS
+    params = {'dimension': dimension, 'service': service, 'period': period}
+
+    def _call():
+        return connector.get_ai_usage(account_id, member_email, params)
+
+    # Do NOT use a `with` block here: ThreadPoolExecutor.__exit__ calls
+    # shutdown(wait=True), which would block until the (possibly hung) worker
+    # finishes and defeat the latency bound. Instead shut down with wait=False
+    # on every path so the call always returns within ``timeout`` (Req 12.3).
+    executor = _ThreadPoolExecutor(max_workers=1)
+    try:
+        future = executor.submit(_call)
+        try:
+            result = future.result(timeout=timeout)
+        except _FuturesTimeout:
+            logger.warning(
+                "Tier-3 live call exceeded %ss bound for account %s; returning "
+                "best lower-tier result", timeout, account_id
+            )
+            return LiveResult(items=[], partial=True)
+        except AdminKeyRequiredError:
+            return LiveResult(items=[], error=build_admin_key_required_error())
+        except PermissionError as e:
+            if 'admin' in str(e).lower():
+                return LiveResult(items=[], error=build_admin_key_required_error())
+            return LiveResult(items=[], error=build_connection_required_error())
+        except Exception as e:  # pragma: no cover - defensive
+            logger.warning("Tier-3 live call failed for account %s: %s", account_id, type(e).__name__)
+            return LiveResult(items=[], partial=False)
+    finally:
+        executor.shutdown(wait=False)
+
+    if isinstance(result, dict) and result.get('error'):
+        err = str(result.get('error'))
+        if 'admin' in err.lower():
+            return LiveResult(items=[], error=build_admin_key_required_error())
+        return LiveResult(items=[], partial=False)
+
+    items = _live_result_to_neutral_items(member_email, account_id, result)
+    partial = bool(isinstance(result, dict) and result.get('live_partial'))
+    return LiveResult(items=items, partial=partial)
+
+
+def resolve_ai_usage(
+    member_email: str,
+    account_id: str,
+    dimension: str,
+    service: str | None = None,
+    period=None,
+    *,
+    table=None,
+    now: datetime | None = None,
+    tier2_fn=None,
+    tier3_fn=None,
+    connector=None,
+    max_entries: int | None = None,
+    window_days: int = 30,
+    staleness_hours: float | None = None,
+) -> dict:
+    """Resolve AI cost/usage for exactly one account, cache-first.
+
+    Orchestrates the three-tier resolution (Req 4.1-4.4, 11.1):
+
+      Tier 1 — read neutral COST#/USAGE# records from the cache.
+      Tier 2 — Tips drilldown via the customer connection (when triggered).
+      Tier 3 — bounded live vendor call (last resort).
+
+    Tier 1 always runs first; the fresh full-coverage / no-service case
+    short-circuits Tiers 2 and 3 (Req 4.2). Tier-2/Tier-3 results are written
+    back under the neutral schema (Req 4.6).
+
+    Args:
+        member_email: Authenticated member email (single account scope).
+        account_id: The connected AI-vendor account id.
+        dimension: 'cost' | 'units' | 'actor'.
+        service: Optional service scope (forces Tier 2, T3).
+        period: Optional {start, end} window; defaults to last 30 days.
+        table: Optional cache table resource (injected for tests).
+        now: Reference time (defaults to current UTC time).
+        tier2_fn: Optional Tier-2 executor override (injected for tests).
+        tier3_fn: Optional Tier-3 executor override (injected for tests).
+        connector: Optional connector for the default Tier-3 live call.
+        max_entries: Optional response cap override.
+        window_days: Default window size when no period is supplied.
+        staleness_hours: Optional staleness threshold override.
+
+    Returns:
+        A neutral AIUsageResponse dict (capped, with providerMetadata).
+    """
+    from cache_service import should_trigger_tier2, window_dates_inclusive
+
+    if now is None:
+        now = datetime.now(timezone.utc)
+    period = _normalize_period(period, now, window_days)
+    w_dates = window_dates_inclusive(period['start'], period['end'])
+
+    engine = IncrementalFetchEngine()
+
+    if table is None:
+        table = boto3.resource('dynamodb').Table(_COST_CACHE_TABLE_NAME)
+
+    # ---- Tier 1: cache read (ALWAYS first — cache-first guarantee) ----
+    tier1_rollups = engine.read_cost_rollup_window(
+        table, member_email, account_id, period['start'], period['end']
+    )
+    tier1_detail = engine.read_usage_detail_window(
+        table, member_email, account_id, period['start'], period['end']
+    )
+
+    # Fresh full-coverage, no service scope → short-circuit (Req 4.2).
+    if not should_trigger_tier2(
+        tier1_rollups, w_dates, service, now=now, threshold_hours=staleness_hours
+    ):
+        return build_ai_usage_response(
+            dimension, period, tier1_rollups, tier1_detail,
+            source='cache', max_entries=max_entries,
+        )
+
+    # ---- Tier 2: Tips drilldown via the customer connection (Req 4.3, 6) ----
+    if tier2_fn is None:
+        from provider_invoices import tips_drilldown as tier2_fn
+    t2 = tier2_fn(member_email, account_id, service, period)
+    t2_error = _field(t2, 'error')
+    t2_items = _field(t2, 'items') or []
+    if t2_error:
+        # Missing customer credentials → Configure-tab error (Req 6.4).
+        return build_ai_usage_response(
+            dimension, period, tier1_rollups, tier1_detail,
+            source='tips', max_entries=max_entries, error=t2_error,
+        )
+    if _field(t2, 'satisfied'):
+        engine.write_neutral_items(table, t2_items)  # neutral write-back (Req 4.6)
+        rollups, usage = _merge_neutral(tier1_rollups, tier1_detail, t2_items)
+        return build_ai_usage_response(
+            dimension, period, rollups, usage,
+            source='tips', max_entries=max_entries,
+        )
+
+    # ---- Tier 3: bounded live vendor call (last resort, Req 4.4, 12.3) ----
+    if tier3_fn is None:
+        tier3_fn = _default_tier3_call
+    t3 = tier3_fn(
+        member_email, account_id, dimension, service, period,
+        connector=connector, now=now,
+    )
+    t3_error = _field(t3, 'error')
+    t3_items = _field(t3, 'items') or []
+    t3_partial = bool(_field(t3, 'partial'))
+    if t3_error:
+        # Admin-key gap → structured admin-level-key message (Req 12.1).
+        return build_ai_usage_response(
+            dimension, period, tier1_rollups, tier1_detail,
+            source='live', max_entries=max_entries, error=t3_error,
+        )
+    if t3_items:
+        engine.write_neutral_items(table, t3_items)  # neutral write-back (Req 4.6)
+    rollups, usage = _merge_neutral(tier1_rollups, tier1_detail, t2_items, t3_items)
+    return build_ai_usage_response(
+        dimension, period, rollups, usage,
+        source='live', live_partial=t3_partial, max_entries=max_entries,
+    )

@@ -810,3 +810,204 @@ def _enrich_daily_token_usage(member_email, account_id, api_key, organization_id
             f"period {period}: {type(e).__name__}: {e}"
         )
         return 0
+
+
+# ===========================================================================
+# Tier-2 Tips-drilldown executor (vendor-agnostic-ai-usage feature, Task 3.3)
+#
+# Queries the ViewMyBill-CostOptimizationTips table for the per-service
+# drilldown plan, executes it through the CUSTOMER's own connection (the
+# account's encrypted key decrypted with the {memberEmail, accountId} KMS
+# context — never platform credentials), normalizes results into neutral
+# Usage_Detail_Item records, and reports them for cache write-back by the
+# resolver. Missing customer credentials return a structured "configure
+# connection in the Configure tab" error (Req 6.1-6.4, 4.6).
+# ===========================================================================
+
+from boto3.dynamodb.conditions import Key as _TipsKey
+
+# The Tier-2 result and the Configure-tab error builder live in the resolver
+# module so the orchestrator and executor share one definition.
+from incremental_fetch_engine import (
+    DrilldownResult,
+    build_connection_required_error,
+)
+
+TIPS_TABLE_NAME = os.environ.get('TIPS_TABLE_NAME', 'ViewMyBill-CostOptimizationTips')
+
+
+def _query_tips_for_service(service, provider_key, tips_table):
+    """Query the Tips_Table for drilldown plans for a service (or provider).
+
+    The Tips_Table partition key is ``service``. When a specific ``service`` is
+    requested it is used as the partition key; otherwise the provider key
+    (e.g. ``'openai'``) is used to fetch the provider-level drilldown plan.
+    Returns the raw tip items (empty list on any error).
+    """
+    if tips_table is None:
+        tips_table = boto3.resource('dynamodb').Table(TIPS_TABLE_NAME)
+    svc_key = service or provider_key
+    try:
+        resp = tips_table.query(
+            KeyConditionExpression=_TipsKey('service').eq(svc_key)
+        )
+        return resp.get('Items', []) or []
+    except Exception as e:
+        logger.warning(
+            f"Tier-2 tips query failed for service '{svc_key}': {type(e).__name__}"
+        )
+        return []
+
+
+def _normalize_drilldown_to_usage_detail(
+    member_email, account_id, raw_records, service_filter=None, cached_at=None
+):
+    """Normalize raw per-actor/per-model drilldown records to neutral detail.
+
+    Maps the customer connection's per-user usage records
+    (``{date, user_id, model, input_tokens, output_tokens, ...}``) onto neutral
+    Usage_Detail_Item dicts: ``user_id -> actor``, ``model -> service``,
+    ``input+output tokens -> usage_quantity`` (Req 6.3). When a ``service_filter``
+    is supplied, only matching records are kept (Req 5.3).
+    """
+    from cache_service import shape_usage_detail_item, NEUTRAL_USAGE_UNIT
+
+    items = []
+    for record in raw_records or []:
+        date = record.get('date')
+        if not date:
+            continue
+        actor = (
+            record.get('user_id')
+            or record.get('project_id')
+            or record.get('api_key_id')
+            or None
+        )
+        svc = record.get('model') or record.get('line_item') or None
+        if service_filter and svc != service_filter:
+            continue
+        tokens = (record.get('input_tokens') or 0) + (record.get('output_tokens') or 0)
+        items.append(
+            shape_usage_detail_item(
+                member_email=member_email,
+                account_id=account_id,
+                date=date,
+                actor=actor,
+                service=svc,
+                usage_quantity=tokens if tokens else None,
+                unit=NEUTRAL_USAGE_UNIT,
+                cost_amount=record.get('cost_amount'),
+                cached_at=cached_at,
+            )
+        )
+    return items
+
+
+def tips_drilldown(
+    member_email,
+    account_id,
+    service,
+    window,
+    *,
+    provider_key='openai',
+    tips_table=None,
+    connector=None,
+    credentials_loader=None,
+    cached_at=None,
+):
+    """Execute the Tier-2 Tips drilldown via the customer's connection.
+
+    Steps (Req 6.1-6.4):
+      1. Query the Tips_Table for the ``drilldownApis`` / ``checkConnection``
+         plan for the requested service (or provider).
+      2. Load the customer's credentials scoped to ``(memberEmail, accountId)``
+         via the existing ``_load_credentials`` / KMS path. Missing credentials
+         return a structured Configure-tab error (Req 6.4).
+      3. Execute the drilldown through the customer connection (the AI vendor
+         connector), never platform credentials.
+      4. Normalize results to neutral Usage_Detail_Item records for cache
+         write-back by the resolver (Req 6.3, 4.6).
+
+    Args:
+        member_email: Authenticated member email (single account scope).
+        account_id: The connected AI-vendor account id.
+        service: Optional service scope.
+        window: ``{start, end}`` dict (or a list of ISO dates).
+        provider_key: AI-vendor provider key (default ``'openai'``).
+        tips_table: Optional Tips_Table resource (injected for tests).
+        connector: Optional connector override (injected for tests).
+        credentials_loader: Optional ``_load_credentials`` override (tests).
+        cached_at: Optional ISO timestamp for the produced items.
+
+    Returns:
+        A :class:`DrilldownResult`.
+    """
+    # Resolve the window bounds.
+    if isinstance(window, dict):
+        start_date = window.get('start')
+        end_date = window.get('end')
+    elif window:
+        start_date = min(window)
+        end_date = max(window)
+    else:
+        start_date = end_date = None
+
+    # 1. Tips_Table drilldown plan.
+    tips = _query_tips_for_service(service, provider_key, tips_table)
+    plan = [t for t in tips if t.get('drilldownApis')]
+    if not plan:
+        # No drilldown plan available — Tier 2 cannot satisfy the request.
+        return DrilldownResult(satisfied=False)
+
+    # 2. Load customer credentials scoped to (memberEmail, accountId).
+    loader = credentials_loader or _load_credentials
+    try:
+        credentials = loader(member_email, account_id, provider_key)
+    except (RuntimeError, PermissionError, ValueError) as e:
+        logger.warning(
+            f"Tier-2 drilldown: credentials unavailable for {provider_key} "
+            f"account {account_id}: {type(e).__name__}"
+        )
+        return DrilldownResult(satisfied=False, error=build_connection_required_error())
+    if not credentials:
+        return DrilldownResult(satisfied=False, error=build_connection_required_error())
+
+    # 3. Execute the drilldown through the customer connection.
+    if connector is None:
+        connector = connectors.get_connector(provider_key)
+    if connector is None:
+        return DrilldownResult(satisfied=False)
+
+    try:
+        auth_context = connector.authenticate(credentials)
+    except AuthenticationError:
+        return DrilldownResult(satisfied=False, error=build_connection_required_error())
+    except Exception as e:
+        logger.warning(
+            f"Tier-2 drilldown auth failed for {provider_key} account "
+            f"{account_id}: {type(e).__name__}"
+        )
+        return DrilldownResult(satisfied=False, error=build_connection_required_error())
+
+    api_key = auth_context.get('api_key')
+    organization_id = (
+        auth_context.get('organization_id')
+        or auth_context.get('org_name')
+        or ''
+    )
+
+    try:
+        raw_records = connector.fetch_per_user_daily_usage(
+            api_key, organization_id, start_date, end_date
+        )
+    except Exception as e:
+        logger.warning(
+            f"Tier-2 drilldown execution failed for {provider_key} account "
+            f"{account_id}: {type(e).__name__}"
+        )
+        return DrilldownResult(satisfied=False)
+
+    items = _normalize_drilldown_to_usage_detail(
+        member_email, account_id, raw_records, service_filter=service, cached_at=cached_at
+    )
+    return DrilldownResult(satisfied=bool(items), items=items)
