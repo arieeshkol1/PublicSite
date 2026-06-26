@@ -9064,6 +9064,15 @@ def resolve_ai_usage_response(member_email, account_id, question, interaction_id
     period = _ai_usage_period_from_question(question)
     provider = _get_account_provider(member_email, account_id)
 
+    # Ensure the Tips table has vendor-agnostic AI optimization tips + drilldown
+    # plans for this provider so "why is this costing me / how do I reduce it"
+    # has grounding (Tier-2 drilldown + tip citations). Idempotent, best-effort.
+    try:
+        from ai_tips_seed import ensure_ai_tips_seeded
+        ensure_ai_tips_seeded(dynamodb.Table(TIPS_TABLE_NAME), provider)
+    except Exception as _seed_e:
+        logger.warning(f"AI tips seed call skipped: {type(_seed_e).__name__}: {_seed_e}")
+
     # Tier-3 live connector (customer connection). Only wired when the provider's
     # connector exposes the neutral get_ai_usage entrypoint; otherwise Tier 3
     # degrades gracefully and Tier 1 (cache) + Tier 2 (Tips drilldown) still run.

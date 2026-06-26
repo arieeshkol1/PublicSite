@@ -360,9 +360,27 @@ class GroundcoverConnector(ProviderConnector):
             logger.warning(f"GroundCover get_per_user_data failed: {type(e).__name__}: {e}")
             return []
 
+    def fetch_per_user_daily_usage(self, api_key, organization_id, start_date, end_date):
+        """Per-user daily usage in the shared connector signature.
+
+        The Tier-2 Tips drilldown executor calls
+        ``connector.fetch_per_user_daily_usage(api_key, organization_id, start,
+        end)`` uniformly across AI vendors. GroundCover's native method takes an
+        auth_context dict, so this adapts the signature (organization_id is
+        unused for GroundCover). Returns ``[]`` on any error (never raises).
+        """
+        try:
+            return self.get_per_user_data(
+                {'api_key': api_key}, organization_id or '', start_date, end_date
+            )
+        except Exception as e:
+            logger.warning(
+                f"GroundCover fetch_per_user_daily_usage failed: {type(e).__name__}: {e}"
+            )
+            return []
+
     # ──────────────────────────────────────────────────────────────────────
     # Vendor-neutral AI cost/usage entrypoint (Tier-3 live call).
-    #
     # The shared three-tier resolver (incremental_fetch_engine) calls
     # ``connector.get_ai_usage(account_id, member_email, params)`` for ANY
     # AI-vendor account, selecting the connector purely by the account's
