@@ -9049,6 +9049,47 @@ def _ai_usage_top_services(resolved):
     ]
 
 
+def _ai_usage_apportion_actor_cost(resolved, dimension):
+    """For a per-user ('actor') answer where the drilldown returned tokens but
+    no per-user cost, estimate each user's cost by their token share of the
+    period total, so the answer can actually 'break down cost by user'.
+
+    Vendor-agnostic: many per-user usage APIs (e.g. GroundCover's token metrics)
+    return token counts without cost. Rather than showing a single account-level
+    total that doesn't reconcile with the per-model breakdown, we apportion the
+    authoritative cost-rollup total across users by token share and flag it as
+    an estimate. Mutates ``resolved`` in place and returns it.
+    """
+    if (dimension or '').lower() != 'actor' or not isinstance(resolved, dict):
+        return resolved
+    rollups = resolved.get('rollups') or []
+    usage = resolved.get('usage') or []
+    total_cost = sum(_ai_usage_safe_float(r.get('cost_amount')) for r in rollups)
+
+    actor_rows = [
+        u for u in usage
+        if (u.get('actor') or '').strip()
+        and _ai_usage_safe_float(u.get('usage_quantity')) > 0
+    ]
+    if not actor_rows or total_cost <= 0:
+        return resolved
+    # If the drilldown already provided per-user cost, keep it as-is.
+    if any(_ai_usage_safe_float(u.get('cost_amount')) > 0 for u in actor_rows):
+        return resolved
+
+    total_tokens = sum(_ai_usage_safe_float(u.get('usage_quantity')) for u in actor_rows)
+    if total_tokens <= 0:
+        return resolved
+
+    for u in actor_rows:
+        share = _ai_usage_safe_float(u.get('usage_quantity')) / total_tokens
+        u['cost_amount'] = round(total_cost * share, 4)
+
+    meta = resolved.setdefault('providerMetadata', {})
+    meta['actor_cost_estimated'] = True
+    return resolved
+
+
 def resolve_ai_usage_response(member_email, account_id, question, interaction_id):
     """Vendor-agnostic AI cost/usage answer for a single AI-vendor account.
 
@@ -9109,6 +9150,11 @@ def resolve_ai_usage_response(member_email, account_id, question, interaction_id
             'topServices': [],
         })
 
+    # Per-user breakdown: if the drilldown returned tokens but no per-user cost,
+    # estimate each user's cost by token share so the answer reconciles with the
+    # period total (vendor-agnostic; flagged as an estimate below).
+    resolved = _ai_usage_apportion_actor_cost(resolved, dimension)
+
     answer = _format_ai_usage_answer(resolved, question, dimension)
 
     # Cache-first fallback: the neutral resolver reads only the neutral
@@ -9136,6 +9182,18 @@ def resolve_ai_usage_response(member_email, account_id, question, interaction_id
     # deterministic answer on any failure, so figures stay grounded.
     if not (isinstance(resolved, dict) and resolved.get('error')):
         answer = _ai_usage_llm_answer(question, resolved, answer)
+
+    # If per-user costs were apportioned by token share, make that explicit so
+    # the figures aren't mistaken for vendor-reported per-user billing.
+    try:
+        if (isinstance(resolved, dict)
+                and (resolved.get('providerMetadata') or {}).get('actor_cost_estimated')
+                and answer and 'estimat' not in answer.lower()):
+            answer += ("\n\n_Per-user costs are estimated by each user's share of "
+                       "tokens for the period (the usage API reports tokens per "
+                       "user, not cost)._")
+    except Exception:
+        pass
 
     # Inline audit (same quality gate the AWS agent path uses) so these answers
     # are scored and surfaced/audited like every other chat answer.
