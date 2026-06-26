@@ -1702,6 +1702,44 @@ def _default_tier3_call(
     return LiveResult(items=items, partial=partial)
 
 
+def _tier1_covers_dimension(dimension, tier1_detail):
+    """True when the cached usage detail can satisfy the requested dimension.
+
+    Cost-rollup freshness gates the cache short-circuit elsewhere, but a fresh
+    cost cache does NOT mean a per-user/per-unit question can be answered from
+    it. This guards the short-circuit so dimension-specific questions fall
+    through to the Tips→API drilldown when the cache lacks that breakdown:
+
+      - 'cost'  : always covered by the cost rollups.
+      - 'units' : covered only if some usage row carries a token/unit quantity.
+      - 'actor' : covered only if the cache holds a real per-actor breakdown
+                  (>=2 distinct actors). A single actor (e.g. one project id
+                  carried over from a cost fetch) is treated as NOT covering a
+                  "break down by user" request, so the per-user drilldown runs.
+    """
+    dim = (dimension or 'cost').lower()
+    if dim == 'cost':
+        return True
+    items = tier1_detail or []
+
+    def _qty(v):
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return 0.0
+
+    if dim == 'units':
+        return any(_qty(it.get('usage_quantity')) > 0 for it in items)
+    if dim == 'actor':
+        actors = {
+            (it.get('actor') or '').strip()
+            for it in items
+            if (it.get('actor') or '').strip()
+        }
+        return len(actors) >= 2
+    return True
+
+
 def resolve_ai_usage(
     member_email: str,
     account_id: str,
@@ -1768,10 +1806,16 @@ def resolve_ai_usage(
         table, member_email, account_id, period['start'], period['end']
     )
 
-    # Fresh full-coverage, no service scope → short-circuit (Req 4.2).
+    # Fresh full-coverage, no service scope → short-circuit (Req 4.2) — but
+    # ONLY when the cached detail actually covers the requested dimension.
+    # Cost-rollup freshness alone does not satisfy a per-user ('actor') or
+    # per-unit ('units') question: the cached usage detail produced by a cost
+    # fetch carries project-level actors, not per-user breakdowns. Without this
+    # dimension check, "break it down by users" wrongly short-circuits on the
+    # cost cache and never runs the Tips→API per-user drilldown (Req 4.3, 6).
     if not should_trigger_tier2(
         tier1_rollups, w_dates, service, now=now, threshold_hours=staleness_hours
-    ):
+    ) and _tier1_covers_dimension(dimension, tier1_detail):
         return build_ai_usage_response(
             dimension, period, tier1_rollups, tier1_detail,
             source='cache', max_entries=max_entries,

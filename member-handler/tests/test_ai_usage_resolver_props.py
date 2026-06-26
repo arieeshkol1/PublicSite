@@ -181,14 +181,32 @@ def test_property6_cache_first_strict_ordering(member_email, account_id, dimensi
 @given(member_email=emails, account_id=account_ids, dimension=dimensions, window=windows)
 def test_property7_fresh_full_coverage_short_circuits(member_email, account_id, dimension, window):
     """A fresh, fully covered window with no service scope is answered from the
-    cache alone — neither Tier 2 nor Tier 3 is invoked (Property 7)."""
+    cache alone — neither Tier 2 nor Tier 3 is invoked (Property 7).
+
+    "Fully covered" is dimension-aware: a cost question is covered by fresh cost
+    rollups, while units/actor questions also require dimension-appropriate
+    cached usage detail (per-unit quantities / >=2 distinct actors). When that
+    detail is present, the resolver still short-circuits on Tier 1.
+    """
     dates = window_dates_inclusive(window['start'], window['end'])
     fresh = REF_NOW.isoformat()
-    rollups = [
+    items = [
         shape_cost_rollup_item(member_email, account_id, d, 10.0, 'USD', cached_at=fresh)
         for d in dates
     ]
-    table = FakeCacheTable(items=rollups)
+    # Add dimension-appropriate fresh detail so the cache covers the dimension.
+    if dimension in ('units', 'actor'):
+        for d in dates:
+            items.append(shape_usage_detail_item(
+                member_email, account_id, date=d, actor='user_a', service='svc',
+                usage_quantity=100, unit=NEUTRAL_USAGE_UNIT, cost_amount=1.0,
+                cached_at=fresh))
+            if dimension == 'actor':
+                items.append(shape_usage_detail_item(
+                    member_email, account_id, date=d, actor='user_b', service='svc',
+                    usage_quantity=50, unit=NEUTRAL_USAGE_UNIT, cost_amount=0.5,
+                    cached_at=fresh))
+    table = FakeCacheTable(items=items)
 
     called = {'t2': False, 't3': False}
 
@@ -209,6 +227,41 @@ def test_property7_fresh_full_coverage_short_circuits(member_email, account_id, 
     assert called['t3'] is False
     assert resp['providerMetadata']['source'] == 'cache'
     assert table.written == []
+
+
+@settings(max_examples=80, deadline=None)
+@given(member_email=emails, account_id=account_ids, window=windows)
+def test_property7b_cost_cache_does_not_cover_per_user(member_email, account_id, window):
+    """A fresh cost-rollup cache with no per-user detail must NOT short-circuit a
+    per-user ('actor') question — the resolver falls through to the Tips→API
+    drilldown instead of answering from cost-level data (regression for the
+    "break it down by users answered from cache" bug)."""
+    dates = window_dates_inclusive(window['start'], window['end'])
+    fresh = REF_NOW.isoformat()
+    rollups = [
+        shape_cost_rollup_item(member_email, account_id, d, 10.0, 'USD', cached_at=fresh)
+        for d in dates
+    ]
+    table = FakeCacheTable(items=rollups)
+
+    called = {'t2': False, 't3': False}
+
+    def tier2(*a, **k):
+        called['t2'] = True
+        return DrilldownResult(satisfied=False)
+
+    def tier3(*a, **k):
+        called['t3'] = True
+        return LiveResult(items=[], partial=False)
+
+    resolve_ai_usage(
+        member_email, account_id, 'actor', service=None, period=window,
+        table=table, now=REF_NOW, tier2_fn=tier2, tier3_fn=tier3,
+    )
+
+    # The per-user drilldown path must run (Tier 2, then Tier 3 on miss).
+    assert called['t2'] is True
+    assert called['t3'] is True
 
 
 # ---------------------------------------------------------------------------
