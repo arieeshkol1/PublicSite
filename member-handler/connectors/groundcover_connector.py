@@ -360,6 +360,206 @@ class GroundcoverConnector(ProviderConnector):
             logger.warning(f"GroundCover get_per_user_data failed: {type(e).__name__}: {e}")
             return []
 
+    # ──────────────────────────────────────────────────────────────────────
+    # Vendor-neutral AI cost/usage entrypoint (Tier-3 live call).
+    #
+    # The shared three-tier resolver (incremental_fetch_engine) calls
+    # ``connector.get_ai_usage(account_id, member_email, params)`` for ANY
+    # AI-vendor account, selecting the connector purely by the account's
+    # ``cloudProvider`` — no vendor-specific branching anywhere upstream
+    # (Req 13.4). Implementing this here is what lets GroundCover flow through
+    # the exact same cache-first chat + dashboard path as OpenAI, with neutral
+    # COST#/USAGE# write-back. Customer-connection-only, single account.
+    # ──────────────────────────────────────────────────────────────────────
+
+    def get_ai_usage(self, account_id: str, member_email: str, params: dict) -> dict:
+        """Vendor-neutral AI cost/usage retrieval for a GroundCover account.
+
+        Maps GroundCover's token/cost data onto the neutral schema (tokens ->
+        units, user_email -> actor, model -> service) and projects by
+        ``dimension``:
+
+          - ``cost``  -> daily rollups + per-model cost detail.
+          - ``units`` -> per-model token detail.
+          - ``actor`` -> per-user token detail.
+
+        params:
+          dimension: "cost" | "units" | "actor"   (defaults to "cost")
+          service:   optional str  - scope to a single model/service
+          period:    optional {start, end} or "start/end" string
+                     (defaults to the last 30 days, Req 3.6)
+
+        Returns a neutral-shaped dict
+        ``{dimension, period, currency, rollups[], usage[], truncated,
+        providerMetadata}`` or ``{'error': ...}`` on failure. Loads the
+        CUSTOMER's credentials scoped to (member_email, account_id) — never a
+        platform-owned key — and resolves exactly one account.
+        """
+        import cost_normalizer
+
+        dimension = (params.get('dimension') or 'cost').lower()
+        if dimension not in ('cost', 'units', 'actor'):
+            dimension = 'cost'
+        service_filter = params.get('service') or None
+        period = self._resolve_neutral_period(params.get('period'))
+        start_date, end_date = period['start'], period['end']
+
+        # Customer credentials only, scoped to (member_email, account_id).
+        auth_context = self._load_auth_context(member_email, account_id)
+
+        # Daily cost + per-model tokens (GroundCover returns OpenAI-style buckets,
+        # so the shared OpenAI normalizer parses them directly).
+        raw_cost = self.get_cost_data(auth_context, account_id, start_date, end_date)
+        normalized = cost_normalizer.normalize_openai(raw_cost, account_id)
+
+        # Per-user (actor) token detail.
+        per_user = []
+        if dimension == 'actor':
+            per_user = self.get_per_user_data(
+                auth_context, account_id, start_date, end_date
+            )
+
+        rollups, usage = self._project_neutral(
+            dimension, normalized, per_user, service_filter
+        )
+        currency = next(
+            (r.get('currency') for r in rollups if r.get('currency')), None
+        ) or 'USD'
+
+        return {
+            'dimension': dimension,
+            'period': period,
+            'currency': currency,
+            'rollups': rollups,
+            'usage': usage,
+            'truncated': False,
+            'providerMetadata': {'provider': 'groundcover', 'source': 'live'},
+        }
+
+    @staticmethod
+    def _load_auth_context(member_email: str, account_id: str) -> dict:
+        """Load + decrypt the customer's GroundCover token, returning the auth
+        context expected by get_cost_data / get_per_user_data.
+
+        The token is stored KMS-encrypted under ``credentials.encryptedApiKey``
+        with the {memberEmail, accountId} encryption context (same scheme as
+        OpenAI). Decrypted secret stays a local variable; it is never returned
+        beyond the auth context, logged, or persisted.
+        """
+        import os
+        import boto3
+        from .openai_kms import decrypt_openai_key, DecryptionError
+        from .base_connector import AuthenticationError
+
+        accounts_table = boto3.resource('dynamodb').Table(
+            os.environ.get('ACCOUNTS_TABLE_NAME', 'MemberPortal-Accounts')
+        )
+        try:
+            result = accounts_table.get_item(
+                Key={'memberEmail': member_email, 'accountId': account_id}
+            )
+        except Exception:
+            raise AuthenticationError(
+                'Unable to read GroundCover account record.', provider='groundcover'
+            )
+        account = result.get('Item') or {}
+        encrypted_key = (account.get('credentials', {}) or {}).get('encryptedApiKey', '')
+        if not encrypted_key:
+            raise AuthenticationError(
+                'No GroundCover token stored for this account.', provider='groundcover'
+            )
+        try:
+            api_key = decrypt_openai_key(encrypted_key, member_email, account_id)
+        except DecryptionError:
+            raise AuthenticationError(
+                'Credentials inaccessible. Please re-add your GroundCover connection.',
+                provider='groundcover',
+            )
+        return {'api_key': api_key}
+
+    @staticmethod
+    def _resolve_neutral_period(period) -> dict:
+        """Resolve the window, defaulting to the most recent 30 days (Req 3.6)."""
+        from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+        now = _dt.now(_tz.utc)
+        default_end = now.strftime('%Y-%m-%d')
+        default_start = (now - _td(days=30)).strftime('%Y-%m-%d')
+        if not period:
+            return {'start': default_start, 'end': default_end}
+        if isinstance(period, dict):
+            return {
+                'start': period.get('start') or default_start,
+                'end': period.get('end') or default_end,
+            }
+        if isinstance(period, str):
+            for sep in ('/', ' to ', ','):
+                if sep in period:
+                    parts = [p.strip() for p in period.split(sep, 1)]
+                    if len(parts) == 2 and parts[0] and parts[1]:
+                        return {'start': parts[0], 'end': parts[1]}
+                    break
+        return {'start': default_start, 'end': default_end}
+
+    @staticmethod
+    def _project_neutral(dimension, normalized, per_user, service_filter):
+        """Project normalized records onto neutral rollups + usage detail.
+
+        ``rollups`` carry ``{date, cost_amount, currency}`` (one per day) and
+        ``usage`` carry ``{date, actor, service, usage_quantity, unit,
+        cost_amount}`` so the resolver's write-back can shape neutral COST#/
+        USAGE# items. Mirrors the OpenAI connector's projection so both vendors
+        produce identical neutral output.
+        """
+        rollup_map = {}
+        for rec in normalized:
+            date = rec.get('date')
+            if not date:
+                continue
+            agg = rollup_map.setdefault(
+                date, {'date': date, 'cost_amount': 0.0,
+                       'currency': rec.get('currency') or 'USD'}
+            )
+            agg['cost_amount'] += float(rec.get('cost_amount', 0) or 0)
+        rollups = [rollup_map[d] for d in sorted(rollup_map)]
+
+        usage = []
+        if dimension == 'actor':
+            for rec in per_user:
+                date = rec.get('date')
+                if not date:
+                    continue
+                service = rec.get('model')
+                if service_filter and service != service_filter:
+                    continue
+                tokens = (rec.get('input_tokens') or 0) + (rec.get('output_tokens') or 0)
+                usage.append({
+                    'date': date,
+                    'actor': rec.get('user_id'),
+                    'service': service,
+                    'usage_quantity': tokens if tokens else None,
+                    'unit': 'tokens',
+                    'cost_amount': None,
+                })
+        else:
+            for rec in normalized:
+                date = rec.get('date')
+                if not date:
+                    continue
+                service = rec.get('service_name')
+                if service_filter and service != service_filter:
+                    continue
+                tokens = (rec.get('input_tokens') or 0) + (rec.get('output_tokens') or 0)
+                usage.append({
+                    'date': date,
+                    'actor': rec.get('project_id'),
+                    'service': service,
+                    'usage_quantity': tokens if tokens else None,
+                    'unit': 'tokens',
+                    'cost_amount': float(rec.get('cost_amount', 0) or 0),
+                })
+
+        return rollups, usage
+
 
 # Auto-register when module is imported
 register_connector('groundcover', GroundcoverConnector, vendor_type='ai_vendor')
