@@ -9130,6 +9130,7 @@ def resolve_ai_usage_response(member_email, account_id, question, interaction_id
         resolved = resolve_ai_usage(
             member_email, account_id, dimension,
             service=None, period=period, connector=connector,
+            provider_key=provider,
         )
     except Exception as e:
         logger.warning(
@@ -9156,25 +9157,6 @@ def resolve_ai_usage_response(member_email, account_id, question, interaction_id
     resolved = _ai_usage_apportion_actor_cost(resolved, dimension)
 
     answer = _format_ai_usage_answer(resolved, question, dimension)
-
-    # Cache-first fallback: the neutral resolver reads only the neutral
-    # COST#/USAGE# window, which can be empty when AI cost data still lives in
-    # the legacy OpenAI cache (the live Tier-3 call may also return partial).
-    # Reuse the Invoices view's cache-first per-model breakdown so the chat reads
-    # cached data instead of reporting "No AI usage cost is recorded".
-    if provider == 'openai' and _ai_usage_resolved_is_empty(resolved):
-        try:
-            fb_answer = _ai_usage_cache_answer(
-                member_email, account_id, question, period, dimension
-            )
-        except Exception as _fb_e:
-            logger.warning(
-                f"AI usage cache fallback failed for {account_id}: "
-                f"{type(_fb_e).__name__}: {_fb_e}"
-            )
-            fb_answer = None
-        if fb_answer:
-            answer = fb_answer
 
     # Keep the AI in the loop: let the LLM answer the actual question grounded
     # in the data we resolved (handles free-form questions the deterministic
