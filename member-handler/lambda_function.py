@@ -8343,7 +8343,12 @@ def _parse_periods_from_question(question, now=None):
     q = (question or '').lower()
     periods = set()
 
-    for y, m in re.findall(r'\b(20\d{2})-(0[1-9]|1[0-2])\b', q):
+    # Match a YYYY-MM period reference, but NOT a date embedded inside a model
+    # or version identifier. The negative lookahead ``(?!-?\d)`` rejects
+    # YYYY-MM-DD (e.g. the "2025-11-13" inside "gpt-5.1-2025-11-13"), and the
+    # lookbehind ``(?<![\w.])`` rejects a YYYY-MM glued to a preceding token
+    # (e.g. "...5.1-2025-11"). A standalone period like "2025-11" still matches.
+    for y, m in re.findall(r'(?<![\w.])(20\d{2})-(0[1-9]|1[0-2])(?!-?\d)', q):
         periods.add(f"{y}-{m}")
 
     for name, mon in _OPENAI_MONTH_NAMES.items():
@@ -8956,7 +8961,7 @@ def _ai_usage_llm_answer(question, resolved, baseline_answer):
 
         bedrock_rt = boto3.client(
             'bedrock-runtime', region_name='us-east-1',
-            config=BotoConfig(read_timeout=12, connect_timeout=2,
+            config=BotoConfig(read_timeout=8, connect_timeout=2,
                               retries={'max_attempts': 1}),
         )
         request_body = {
@@ -8976,6 +8981,72 @@ def _ai_usage_llm_answer(question, resolved, baseline_answer):
             f"{type(e).__name__}: {e}"
         )
         return baseline_answer
+
+
+def _ai_usage_followups(resolved):
+    """Build vendor-agnostic drill-down suggestions from the resolved cache data
+    (and the Tips table), so AI-vendor accounts never surface cloud-provider
+    (AWS/EC2/...) follow-ups. Whatever services/models appear come from the
+    customer's own data — nothing is hardcoded per vendor.
+    """
+    suggestions = []
+    try:
+        usage = (resolved or {}).get('usage') or []
+        by_service = {}
+        for u in usage:
+            svc = (u.get('service') or '').strip()
+            if not svc:
+                continue
+            agg = by_service.setdefault(svc, {'cost': 0.0, 'tokens': 0.0})
+            agg['cost'] += _ai_usage_safe_float(u.get('cost_amount'))
+            agg['tokens'] += _ai_usage_safe_float(u.get('usage_quantity'))
+        ranked = sorted(
+            by_service.items(),
+            key=lambda kv: (kv[1]['cost'], kv[1]['tokens']),
+            reverse=True,
+        )
+        for svc, _agg in ranked[:2]:
+            suggestions.append(f"What is driving the cost of {svc}?")
+    except Exception:
+        pass
+
+    for q in (
+        "Which service is costing me the most?",
+        "Break down my usage by user",
+        "Show my spend trend over the last 30 days",
+        "How can I reduce this spend?",
+    ):
+        if q not in suggestions:
+            suggestions.append(q)
+
+    # Surface a Tips-table prompt if any optimization tips exist (the tips table
+    # is provider-neutral, so this stays vendor-agnostic).
+    try:
+        tips_table = dynamodb.Table(TIPS_TABLE_NAME)
+        if (tips_table.scan(Limit=1).get('Items')):
+            suggestions.append("What cost optimization tips apply to me?")
+    except Exception:
+        pass
+
+    return suggestions[:4]
+
+
+def _ai_usage_top_services(resolved):
+    """Top services/models by cost from the resolved cache data, shaped for the
+    chat 'topServices' field. Vendor-agnostic — derived from the customer's own
+    usage records.
+    """
+    by_service = {}
+    for u in (resolved or {}).get('usage') or []:
+        svc = (u.get('service') or '').strip()
+        if not svc:
+            continue
+        by_service[svc] = by_service.get(svc, 0.0) + _ai_usage_safe_float(u.get('cost_amount'))
+    ranked = sorted(by_service.items(), key=lambda kv: kv[1], reverse=True)
+    return [
+        {'service': svc, 'cost': round(cost, 2)}
+        for svc, cost in ranked[:6] if cost > 0
+    ]
 
 
 def resolve_ai_usage_response(member_email, account_id, question, interaction_id):
@@ -9084,7 +9155,8 @@ def resolve_ai_usage_response(member_email, account_id, question, interaction_id
         'tipFound': False,
         'agentUsed': True,
         'chartData': [],
-        'topServices': [],
+        'topServices': _ai_usage_top_services(resolved),
+        'followUpQuestions': _ai_usage_followups(resolved),
         'inlineAuditScore': inline_audit_score,
         'inlineAuditAction': inline_audit_action,
     })
