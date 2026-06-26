@@ -20,6 +20,7 @@ from sources.baseline_file import load_baseline_tips
 from sources.cost_optimization_hub import fetch_recommendations
 from sources.trusted_advisor import fetch_cost_checks
 from sources.bedrock_tips_generator import generate_tips_with_bedrock
+from sources.ai_vendor_tips import load_ai_vendor_tips
 from sync_engine import apply_deltas, compute_deltas, merge_sources
 
 # Configure structured JSON logging at INFO level
@@ -78,7 +79,7 @@ def lambda_handler(event, context):
 
     try:
         # (4) Fetch from all sources with graceful degradation
-        sources_queried = ["cost-optimization-hub", "trusted-advisor", "baseline", "bedrock-ai"]
+        sources_queried = ["cost-optimization-hub", "trusted-advisor", "baseline", "ai-vendor", "bedrock-ai"]
         sources_succeeded = []
         sources_failed = []
 
@@ -90,6 +91,31 @@ def lambda_handler(event, context):
 
         # Fetch from baseline file
         baseline_tips = _fetch_baseline_tips(sources_succeeded, sources_failed)
+
+        # Vendor-agnostic AI-vendor tips (OpenAI, GroundCover, ...). These keep
+        # the tips table complete for AI accounts with provider-keyed rows +
+        # executable drilldown plans (attached at write time). Treated as
+        # baseline-priority static content, so they merge alongside the files.
+        try:
+            ai_vendor_tips = load_ai_vendor_tips()
+            if ai_vendor_tips:
+                baseline_tips = list(baseline_tips) + ai_vendor_tips
+                sources_succeeded.append("ai-vendor")
+                logger.info(json.dumps({
+                    "action": "source_fetch_complete",
+                    "source": "ai-vendor",
+                    "tipsCount": len(ai_vendor_tips),
+                }))
+            else:
+                sources_failed.append("ai-vendor")
+        except Exception as e:
+            logger.error(json.dumps({
+                "action": "source_fetch_error",
+                "source": "ai-vendor",
+                "error": str(e),
+                "errorType": type(e).__name__,
+            }))
+            sources_failed.append("ai-vendor")
 
         # If ALL sources fail, publish failure metric and return error
         if not sources_succeeded:
@@ -421,6 +447,15 @@ def _fetch_baseline_tips(sources_succeeded, sources_failed) -> list:
                     # Also keep cloudProvider for backward compat if needed
                     if "cloudProvider" in tip:
                         del tip["cloudProvider"]
+                    # AI-vendor service rows that live inside the AWS baseline
+                    # (e.g. service "OpenAI") must not inherit cloud="AWS", or
+                    # they'd get an AWS Cost Explorer drilldown instead of the
+                    # vendor's API. Re-map them to their own provider.
+                    _svc = (tip.get("service") or "").strip().lower()
+                    _ai_svc_cloud = {"openai": "OpenAI", "groundcover": "groundcover",
+                                     "anthropic": "groundcover"}
+                    if _svc in _ai_svc_cloud:
+                        tip["cloud"] = _ai_svc_cloud[_svc]
                 all_tips.extend(tips)
                 any_succeeded = True
                 logger.info(json.dumps({

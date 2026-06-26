@@ -84,7 +84,23 @@ _FALLBACK_MAP = {
     "AWS": {"apis": ["ce:GetCostAndUsage(GroupBy=SERVICE)", "ce:GetCostAndUsage(Filter={SERVICE:['<service>']},GroupBy=USAGE_TYPE)"], "drilldownInstructions": "Break down spend for this service via Cost Explorer (GroupBy=USAGE_TYPE) on the customer's connected account. Identify the largest usage types and idle/over-provisioned resources to target."},
     "AZURE": {"apis": ["az consumption usage list --query \"[?contains(instanceName,'<service>')]\"", "az costmanagement query --type Usage --dataset-grouping name=ServiceName type=Dimension"], "drilldownInstructions": "Query Azure Cost Management for this service on the customer's subscription. Group by meter/resource to find the biggest line items and right-sizing opportunities."},
     "GCP": {"apis": ["gcloud billing accounts list", "bq query (SELECT service.description, SUM(cost) FROM billing_export GROUP BY 1)"], "drilldownInstructions": "Query the customer's BigQuery billing export (or billing console) for this service. Group by SKU to find the largest cost drivers and idle resources."},
-    "OpenAI": {"apis": ["GET /v1/organization/costs?group_by=line_item", "GET /v1/organization/usage?group_by=model"], "drilldownInstructions": "Pull the customer's OpenAI organization costs/usage grouped by model and line item. Identify expensive models and high-token operations to optimize."},
+    "OPENAI": {"apis": ["GET /v1/organization/costs?group_by=line_item", "GET /v1/organization/usage?group_by=model"], "drilldownInstructions": "Pull the customer's OpenAI organization costs/usage grouped by model and line item. Identify expensive models and high-token operations to optimize."},
+    # GroundCover proxies Anthropic (and other) model usage via a Prometheus
+    # metrics API. The drilldown pulls per-model token/cost from the customer's
+    # GroundCover connection (the neutral getAIUsage:units / :actor operations).
+    "GROUNDCOVER": {"apis": ["getAIUsage:units", "getAIUsage:actor"], "drilldownInstructions": "Pull the customer's GroundCover gen-AI token/cost metrics grouped by model and by user. Identify the most expensive models and heaviest users to target."},
+    # Generic AI-vendor fallback for any token-billed AI provider not listed
+    # above — uses the neutral, vendor-agnostic usage operations.
+    "AI": {"apis": ["getAIUsage:units", "getAIUsage:actor"], "drilldownInstructions": "Pull the customer's AI usage/cost grouped by model/service and by user from their connection. Rank by cost to find the biggest drivers."},
+}
+
+
+# AI-vendor model: maps each AI provider key to its specific drilldown map (or
+# None to use the generic AI fallback). Keeps AI vendors vendor-agnostic — the
+# generic fallback covers any provider added later with no code change.
+_AI_VENDOR_MAPS = {
+    "OPENAI": _OPENAI_MAP,
+    "GROUNDCOVER": None,   # no service-level map yet -> generic AI fallback
 }
 
 
@@ -93,21 +109,36 @@ def get_drilldown_data(service: str, cloud: str) -> dict:
 
     Falls back to a generic per-provider cost-API drilldown when no specific
     service mapping exists, so every tip has an executable check that runs
-    through the customer's connection. Returns {} only for unknown providers.
+    through the customer's connection. The ``cloud`` key is matched
+    case-insensitively. Returns {} only for genuinely unknown providers.
     """
+    cloud_key = (cloud or "").strip().upper()
+
+    # Cloud-provider service maps (case-insensitive lookup).
     provider_map = {
         "AWS": _AWS_MAP,
         "AZURE": _AZURE_MAP,
         "GCP": _GCP_MAP,
-        "OpenAI": _OPENAI_MAP,
-    }.get(cloud)
+        "OPENAI": _OPENAI_MAP,
+    }.get(cloud_key)
+
+    # AI-vendor providers (openai/groundcover/...) — use their specific service
+    # map if present, otherwise the generic AI fallback below.
+    if provider_map is None and cloud_key in _AI_VENDOR_MAPS:
+        provider_map = _AI_VENDOR_MAPS[cloud_key] or {}
+
     if provider_map is None:
         return {}
+
     data = provider_map.get(service)
     if data:
         return data
-    # Fallback: generic cost-API drilldown for this provider.
-    fb = _FALLBACK_MAP.get(cloud)
+
+    # Fallback: generic cost-API drilldown for this provider. AI vendors with no
+    # explicit fallback row use the generic "AI" fallback.
+    fb = _FALLBACK_MAP.get(cloud_key)
+    if not fb and cloud_key in _AI_VENDOR_MAPS:
+        fb = _FALLBACK_MAP.get("AI")
     if not fb:
         return {}
     apis = [a.replace("<service>", service) for a in fb["apis"]]
