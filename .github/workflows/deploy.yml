@@ -25,6 +25,7 @@ on:
       - 'member-handler/**'
       - 'members/**'
       - 'agent-action/**'
+      - 'answer-healer/**'
       - 'audit-evaluator/**'
       - 'transaction_logger.py'
       - 'scheduler-executor/**'
@@ -174,6 +175,7 @@ jobs:
           cp agent-action/connectors/azure_connector.py .build-agent-action/connectors/
           cp agent-action/connectors/gcp_connector.py .build-agent-action/connectors/
           cp agent-action/connectors/ai_vendor_connector.py .build-agent-action/connectors/
+          cp agent-action/connectors/vendor_registry.json .build-agent-action/connectors/
           # Schemas (needed by deployment script)
           cp agent-action/schemas/*.json .build-agent-action/schemas/
           # Agent instructions
@@ -185,6 +187,16 @@ jobs:
           cd ..
           aws s3 cp agent-action-lambda.zip s3://${{ env.STORAGE_BUCKET }}/lambda-packages/agent-action.zip
           echo "✓ Agent Action packaged (vendor-neutral architecture)"
+
+      - name: Package Answer Healer Lambda
+        run: |
+          echo "Packaging Answer Healer Lambda..."
+          mkdir -p .build-answer-healer
+          cp answer-healer/lambda_function.py .build-answer-healer/
+          cd .build-answer-healer && zip -r ../answer-healer-lambda.zip . -q
+          cd ..
+          aws s3 cp answer-healer-lambda.zip s3://${{ env.STORAGE_BUCKET }}/lambda-packages/answer-healer.zip
+          echo "✓ Answer Healer packaged"
 
       - name: Package Scheduler Executor Lambda
         run: |
@@ -456,6 +468,8 @@ jobs:
           # Note: Cognito env vars are set in the CloudFormation template (viewmybill-stack.yaml)
           # Do NOT use update-function-configuration here as it replaces ALL env vars
           update_lambda SlashMyBill-AgentAction lambda-packages/agent-action.zip
+          # Update Answer Healer (Bedrock Investigator)
+          update_lambda slashmybill-answer-healer lambda-packages/answer-healer.zip
           # Update Scheduler Executor (skip if not yet created)
           update_lambda slashmybill-scheduler-executor lambda-packages/scheduler-executor.zip
           # Update Tips Sync Lambda (skip if not yet created)
