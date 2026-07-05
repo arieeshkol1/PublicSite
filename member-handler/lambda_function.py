@@ -9874,7 +9874,7 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
         inline_audit_action = 'pass'
 
         # Skip gate for pre-computed answers (already accurate) or if disabled
-        _skip_gate = not _gate_enabled or _svc_precomputed or is_forecast_question
+        _skip_gate = not _gate_enabled  # Audit gate runs on ALL answers (C6/R9)
         if not _skip_gate and answer and not answer.startswith(('The analysis is taking', "I couldn't generate a response")):
             try:
                 _audit_result = _inline_audit_score(question, answer)
