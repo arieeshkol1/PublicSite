@@ -106,11 +106,30 @@ Resources:
           AttributeType: S
         - AttributeName: tipId
           AttributeType: S
+        - AttributeName: provider
+          AttributeType: S
+        - AttributeName: cloud
+          AttributeType: S
       KeySchema:
         - AttributeName: service
           KeyType: HASH
         - AttributeName: tipId
           KeyType: RANGE
+      GlobalSecondaryIndexes:
+        - IndexName: provider-cloud-index
+          KeySchema:
+            - AttributeName: provider
+              KeyType: HASH
+            - AttributeName: cloud
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+        - IndexName: cloud-index
+          KeySchema:
+            - AttributeName: cloud
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
       SSESpecification:
         SSEEnabled: true
       Tags:

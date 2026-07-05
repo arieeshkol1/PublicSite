@@ -166,12 +166,13 @@ def _search_tips(question: str, provider: str = 'aws', tips_table=None, dynamodb
     """
     Search ViewMyBill-CostOptimizationTips for relevant tips matching the question.
 
-    Uses provider-specific keyword-to-service mappings to query only relevant
-    service partitions. Always includes tips tagged with service "General".
+    Uses the provider-cloud-index GSI to query efficiently by provider,
+    avoiding full-table scans (C5: optimised key access).
+    Always includes 'all' and 'General' tips regardless of provider.
 
     Args:
         question: The user's question text.
-        provider: Cloud provider ("aws", "azure", "gcp"). Defaults to "aws".
+        provider: Cloud provider ("aws", "azure", "gcp", "openai", ...). Defaults to "aws".
         tips_table: Optional pre-resolved DynamoDB table resource (for testing).
         dynamodb_resource: Optional boto3 DynamoDB resource (for testing).
 
@@ -190,7 +191,6 @@ def _search_tips(question: str, provider: str = 'aws', tips_table=None, dynamodb
     # Check cache first
     cached = _get_cached_tips(provider)
     if cached is not None:
-        # Filter cached tips based on question keywords
         return _filter_cached_tips(cached, question, provider)
 
     question_lower = question.lower()
@@ -201,41 +201,50 @@ def _search_tips(question: str, provider: str = 'aws', tips_table=None, dynamodb
     for keyword, service_name in service_mapping.items():
         if keyword in question_lower:
             matched_services.add(service_name)
-
-    # Always include "General" tips regardless of provider
     matched_services.add('General')
 
     tips = []
     try:
-        if matched_services:
-            for svc in list(matched_services)[:5]:
-                result = tips_table.query(
-                    KeyConditionExpression=boto3.dynamodb.conditions.Key('service').eq(svc)
-                )
-                tips.extend(result.get('Items', []))
-            # Also check AI-GENERATED tips (from auto-save)
+        # Query by provider via GSI (avoids full table scan — C5)
+        # We query the provider value AND the special 'all' sentinel that marks universal tips.
+        providers_to_query = {provider, 'all'}
+        for prov in providers_to_query:
             try:
-                ai_tips = tips_table.query(
-                    KeyConditionExpression=boto3.dynamodb.conditions.Key('service').eq('AI-GENERATED')
+                resp = tips_table.query(
+                    IndexName='provider-cloud-index',
+                    KeyConditionExpression=boto3.dynamodb.conditions.Key('provider').eq(prov),
                 )
-                tips.extend(ai_tips.get('Items', []))
-            except Exception:
-                pass
-        else:
-            result = tips_table.scan(Limit=20)
-            tips = result.get('Items', [])
+                tips.extend(resp.get('Items', []))
+            except Exception as gsi_err:
+                # GSI may not exist on older table — fall back to service-keyed queries
+                logger.debug(f"GSI query failed for provider={prov}: {gsi_err} — using service query")
+                if matched_services:
+                    for svc in list(matched_services)[:5]:
+                        result = tips_table.query(
+                            KeyConditionExpression=boto3.dynamodb.conditions.Key('service').eq(svc)
+                        )
+                        tips.extend(result.get('Items', []))
+                else:
+                    result = tips_table.scan(Limit=20)
+                    tips.extend(result.get('Items', []))
+                break
+
+        # Also include AI-GENERATED tips
+        try:
+            ai_tips = tips_table.query(
+                KeyConditionExpression=boto3.dynamodb.conditions.Key('service').eq('AI-GENERATED')
+            )
+            tips.extend(ai_tips.get('Items', []))
+        except Exception:
+            pass
+
     except ClientError as e:
         logger.warning(f"Tips table query error: {e}")
 
     # Deduplicate by tipId
     tips = _deduplicate_tips(tips)
-
-    # Sort: high-confidence first, then by feedbackScore, then curated
     tips.sort(key=_tip_sort_key)
-
-    # Cache the results for this provider
     _set_cached_tips(provider, tips)
-
     return _decimal_to_native(tips[:10])
 
 

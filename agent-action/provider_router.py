@@ -1,17 +1,21 @@
 """
 Provider Router — resolves the cloud provider for an account and dispatches
-tool invocations to the appropriate Cloud Connector.
+tool invocations to the appropriate connector.
 
 The routing flow:
 1. Look up the account's `cloudProvider` in MemberPortal-Accounts DynamoDB table
-2. Instantiate the matching connector (aws, azure, gcp, openai)
+2. Load vendor metadata from vendor_registry.json (no hardcoded provider lists)
 3. For cost tools (getCostBreakdown, getMonthlyTrend): check Cost_Cache_Table first
+   Cache SK prefix = <VENDOR>#<account_id>#<date>  (e.g. AWS#123456789012#2026-07-05)
 4. Check if the requested tool is in the connector's SUPPORTED_OPERATIONS
 5. Dispatch to the connector method and return the result
 """
 
+import json
 import logging
+import os
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import boto3
 from boto3.dynamodb.conditions import Key
@@ -21,13 +25,25 @@ logger = logging.getLogger(__name__)
 
 # Cost Cache configuration
 COST_CACHE_TABLE_NAME = "Cost_Cache_Table"
-CACHE_STALENESS_THRESHOLD_HOURS = 48
 
 # Tools that benefit from cost cache lookup
 CACHEABLE_TOOLS = {"getCostBreakdown", "getMonthlyTrend"}
 
-# Valid provider values that map to specific connectors
-VALID_PROVIDERS = {"aws", "azure", "gcp", "openai"}
+# Load vendor registry once at cold-start
+_REGISTRY_PATH = Path(__file__).parent / "connectors" / "vendor_registry.json"
+try:
+    with open(_REGISTRY_PATH) as _f:
+        _VENDOR_REGISTRY = json.load(_f)["vendors"]
+except Exception as _e:
+    logger.warning(f"vendor_registry.json load failed: {_e} — using fallback defaults")
+    _VENDOR_REGISTRY = {}
+
+VALID_PROVIDERS = set(_VENDOR_REGISTRY.keys()) or {"aws", "azure", "gcp", "openai", "anthropic", "groundcover"}
+
+
+def _vendor_meta(provider: str) -> dict:
+    """Return registry entry for provider, falling back to aws defaults."""
+    return _VENDOR_REGISTRY.get(provider, _VENDOR_REGISTRY.get("aws", {}))
 
 # Maps camelCase tool names (from OpenAPI schema) to snake_case connector methods
 TOOL_TO_METHOD = {
@@ -124,25 +140,19 @@ def resolve_provider(account_id: str, member_email: str) -> str:
 
 def _get_connector(provider: str):
     """
-    Instantiate and return the Cloud Connector for the given provider.
-
-    Imports are deferred to avoid circular dependencies and to allow
-    connectors to be added incrementally.
+    Instantiate and return the connector for the given provider.
+    The connector class is resolved from vendor_registry.json so no
+    hardcoded provider names live in routing code.
     """
-    if provider == "aws":
-        from connectors.aws_connector import AWSConnector
-        return AWSConnector()
-    elif provider == "azure":
-        from connectors.azure_connector import AzureConnector
-        return AzureConnector()
-    elif provider == "gcp":
-        from connectors.gcp_connector import GCPConnector
-        return GCPConnector()
-    elif provider == "openai":
-        from connectors.ai_vendor_connector import AIVendorConnector
-        return AIVendorConnector()
-    else:
-        # Fallback to AWS for any unexpected value
+    meta = _vendor_meta(provider)
+    connector_path = meta.get("connector", "aws_connector.AWSConnector")
+    module_name, class_name = connector_path.rsplit(".", 1)
+    try:
+        import importlib
+        mod = importlib.import_module(f"connectors.{module_name}")
+        return getattr(mod, class_name)()
+    except Exception as e:
+        logger.warning(f"Connector load failed for {provider} ({connector_path}): {e} — falling back to AWSConnector")
         from connectors.aws_connector import AWSConnector
         return AWSConnector()
 
@@ -153,45 +163,60 @@ def _get_cache_table():
     return dynamodb.Table(COST_CACHE_TABLE_NAME)
 
 
+def _cache_sk(provider: str, account_id: str, date_str: str) -> str:
+    """Build the cache sort key: <VENDOR>#<account_id>#<YYYY-MM-DD>.
+    E.g.  AWS#123456789012#2026-07-05
+          OPENAI#openai-org-xxx#2026-07-05
+    """
+    vendor = _vendor_meta(provider).get("cachePrefix", provider.upper())
+    return f"{vendor}#{account_id}#{date_str}"
+
+
+def _parse_cache_date(sk: str) -> str:
+    """Extract the date part from any SK format, new or legacy."""
+    # New: VENDOR#accountId#YYYY-MM-DD
+    parts = sk.split("#")
+    if len(parts) >= 3:
+        return parts[-1]
+    # Legacy: DAILY#YYYY-MM-DD or COST#YYYY-MM-DD or OPENAI_DAILY#YYYY-MM-DD
+    return sk.replace("OPENAI_DAILY#", "").replace("COST#", "").replace("DAILY#", "")
+
+
 def _read_cost_cache(member_email: str, account_id: str, tool_name: str, params: dict):
     """
     Attempt to read cached cost data from Cost_Cache_Table.
 
-    Cache key format: {memberEmail}#{accountId}
-    Sort key format: DAILY#{YYYY-MM-DD}
+    Cache key format:
+      PK = {memberEmail}#{accountId}
+      SK = <VENDOR>#<account_id>#<YYYY-MM-DD>   (e.g. AWS#123456789012#2026-07-05)
 
     Returns:
-        tuple: (cached_data, is_fresh) where cached_data is a dict or None,
-               and is_fresh indicates whether the data is within the staleness threshold.
+        tuple: (cached_data, is_fresh)
     """
     try:
         cache_table = _get_cache_table()
         now = datetime.now(timezone.utc)
 
-        # Determine SK prefix based on provider. AI-vendor accounts (e.g. openai)
-        # use the vendor-neutral COST# family; AWS/others keep DAILY#.
         try:
             provider = resolve_provider(account_id, member_email)
         except Exception:
             provider = "aws"
-        sk_prefix = "COST#" if provider == "openai" else "DAILY#"
 
-        # Determine the date range for the query based on tool type
+        staleness_hours = _vendor_meta(provider).get("staleness_hours", 48)
+
         if tool_name == "getCostBreakdown":
-            # Include both previous month AND current month-to-date for accurate daily trends
-            # This ensures "last N days" questions get recent data, not just last month
             first_of_current_month = now.replace(day=1)
             first_of_last_month = (first_of_current_month - timedelta(days=1)).replace(day=1)
             start_date = first_of_last_month
-            end_date = now  # Include up to today
+            end_date = now
         else:  # getMonthlyTrend
             months = int(params.get("months", 3))
             end_date = now.replace(day=1)
             start_date = (end_date - timedelta(days=months * 31)).replace(day=1)
 
         pk = f"{member_email}#{account_id}"
-        start_sk = f"{sk_prefix}{start_date.strftime('%Y-%m-%d')}"
-        end_sk = f"{sk_prefix}{end_date.strftime('%Y-%m-%d')}"
+        start_sk = _cache_sk(provider, account_id, start_date.strftime('%Y-%m-%d'))
+        end_sk   = _cache_sk(provider, account_id, end_date.strftime('%Y-%m-%d'))
 
         resp = cache_table.query(
             KeyConditionExpression=Key("pk").eq(pk) & Key("sk").between(start_sk, end_sk)
@@ -201,11 +226,8 @@ def _read_cost_cache(member_email: str, account_id: str, tool_name: str, params:
         if not items:
             return None, False
 
-        # Check staleness: use the most recent item's cached_at timestamp
-        # If any item has a cached_at within the threshold, consider data fresh
-        staleness_threshold = now - timedelta(hours=CACHE_STALENESS_THRESHOLD_HOURS)
+        staleness_threshold = now - timedelta(hours=staleness_hours)
         most_recent_cached_at = None
-
         for item in items:
             cached_at_str = item.get("cached_at")
             if cached_at_str:
@@ -216,34 +238,17 @@ def _read_cost_cache(member_email: str, account_id: str, tool_name: str, params:
                 except (ValueError, TypeError):
                     pass
 
-        # If no cached_at found, check if items look recent by date proximity
-        if most_recent_cached_at is None:
-            # Assume fresh if items exist (backward compat with data that has no cached_at)
-            is_fresh = True
-        else:
-            # For OpenAI accounts, use a much longer staleness window (7 days)
-            # since there's no background refresh — cache is populated on dashboard view
-            if provider == "openai":
-                openai_staleness = now - timedelta(days=7)
-                is_fresh = most_recent_cached_at >= openai_staleness
-            else:
-                is_fresh = most_recent_cached_at >= staleness_threshold
-
+        is_fresh = True if most_recent_cached_at is None else (most_recent_cached_at >= staleness_threshold)
         if not is_fresh:
             return None, False
 
-        # Aggregate cached items into the appropriate response format
         if tool_name == "getCostBreakdown":
             return _aggregate_cost_breakdown(items, start_date, end_date), True
-        else:  # getMonthlyTrend
+        else:
             return _aggregate_monthly_trend(items), True
 
     except Exception as e:
-        # Cache read failure — log warning and return None so caller falls back to live API
-        logger.warning(
-            f"Cost cache read failure for {member_email}#{account_id} "
-            f"({tool_name}): {e}"
-        )
+        logger.warning(f"Cost cache read failure for {member_email}#{account_id} ({tool_name}): {e}")
         return None, False
 
 
@@ -258,8 +263,7 @@ def _aggregate_cost_breakdown(items, start_date, end_date):
     for item in items:
         cost = float(item.get("cost_amount", 0))
         sk = item["sk"]
-        # Strip DAILY#, OPENAI_DAILY#, and neutral COST# prefixes to get the date
-        date = sk.replace("OPENAI_DAILY#", "").replace("COST#", "").replace("DAILY#", "")
+        date = _parse_cache_date(sk)
         daily_costs.append({"date": date, "cost": round(cost, 2)})
         for svc, svc_cost in item.get("service_breakdown", {}).items():
             services[svc] = services.get(svc, 0) + float(svc_cost)
@@ -311,7 +315,7 @@ def _aggregate_monthly_trend(items):
     monthly_data = {}
     for item in items:
         sk = item["sk"]
-        date = sk.replace("OPENAI_DAILY#", "").replace("COST#", "").replace("DAILY#", "")
+        date = _parse_cache_date(sk)
         month = date[:7]  # YYYY-MM
         if month not in monthly_data:
             monthly_data[month] = {}
@@ -332,10 +336,7 @@ def _aggregate_monthly_trend(items):
 def _write_cost_cache(member_email: str, account_id: str, tool_name: str, result: dict):
     """
     Write cost data to Cost_Cache_Table after a cache miss.
-
-    Writes daily cost items with the current timestamp as cached_at.
-    Only writes if the result contains usable cost data.
-    Uses the vendor-neutral COST# prefix for AI-vendor (openai) accounts, DAILY# for others.
+    SK format: <VENDOR>#<account_id>#<YYYY-MM-DD>  (from vendor_registry cachePrefix)
     """
     try:
         cache_table = _get_cache_table()
@@ -343,17 +344,14 @@ def _write_cost_cache(member_email: str, account_id: str, tool_name: str, result
         pk = f"{member_email}#{account_id}"
         cached_at = now.isoformat()
 
-        # Determine SK prefix based on provider (AI-vendor accounts use neutral COST#)
         try:
             provider = resolve_provider(account_id, member_email)
         except Exception:
             provider = "aws"
-        sk_prefix = "COST#" if provider == "openai" else "DAILY#"
 
         if tool_name == "getCostBreakdown":
             daily_costs = result.get("dailyCosts", [])
             service_breakdown = {}
-            # For OpenAI, service breakdown comes from serviceBreakdown field
             for svc in result.get("topServices", result.get("serviceBreakdown", [])):
                 svc_name = svc.get("service", svc.get("serviceName", ""))
                 svc_cost = svc.get("cost", 0)
@@ -364,38 +362,29 @@ def _write_cost_cache(member_email: str, account_id: str, tool_name: str, result
                 date = day_entry.get("date", "")
                 cost = day_entry.get("cost", 0)
                 if date:
-                    cache_table.put_item(
-                        Item={
-                            "pk": pk,
-                            "sk": f"{sk_prefix}{date}",
-                            "cost_amount": str(cost),
-                            "service_breakdown": service_breakdown,
-                            "cached_at": cached_at,
-                        }
-                    )
+                    cache_table.put_item(Item={
+                        "pk": pk,
+                        "sk": _cache_sk(provider, account_id, date),
+                        "cost_amount": str(cost),
+                        "service_breakdown": service_breakdown,
+                        "cached_at": cached_at,
+                    })
         elif tool_name == "getMonthlyTrend":
             monthly_data = result.get("monthlyComparison", {})
             for month, services in monthly_data.items():
-                # Write a summary entry per month (first day of month)
                 total_cost = sum(float(v) for v in services.values())
                 service_breakdown = {k: str(v) for k, v in services.items()}
-                cache_table.put_item(
-                    Item={
-                        "pk": pk,
-                        "sk": f"{sk_prefix}{month}-01",
-                        "cost_amount": str(round(total_cost, 2)),
-                        "service_breakdown": service_breakdown,
-                        "cached_at": cached_at,
-                    }
-                )
+                cache_table.put_item(Item={
+                    "pk": pk,
+                    "sk": _cache_sk(provider, account_id, f"{month}-01"),
+                    "cost_amount": str(round(total_cost, 2)),
+                    "service_breakdown": service_breakdown,
+                    "cached_at": cached_at,
+                })
 
         logger.info(f"Cost cache updated for {pk} ({tool_name})")
     except Exception as e:
-        # Cache write failure is non-fatal — log and continue
-        logger.warning(
-            f"Cost cache write failure for {member_email}#{account_id} "
-            f"({tool_name}): {e}"
-        )
+        logger.warning(f"Cost cache write failure for {member_email}#{account_id} ({tool_name}): {e}")
 
 
 def route_tool(tool_name: str, account_id: str, member_email: str, params: dict) -> dict:
@@ -489,16 +478,7 @@ def route_tool(tool_name: str, account_id: str, member_email: str, params: dict)
             f"Auth/permission error for {tool_name} on {provider} "
             f"account {account_id}: {error_msg}"
         )
-        # For OpenAI accounts, provide specific guidance
-        if provider == "openai":
-            return {
-                "error": "OpenAI cost data not yet cached",
-                "guidance": (
-                    "Please open Observe > OpenAI dashboard first to load your cost data. "
-                    "After loading the dashboard once, the Chat will be able to answer cost questions."
-                ),
-                "provider": "openai",
-            }
+        # For accounts with no live cache yet, provide generic guidance
         return {
             "authError": True,
             "error": "Authentication or permissions error",

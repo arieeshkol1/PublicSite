@@ -48,6 +48,11 @@ def lambda_handler(event, context):
                 entry['start_timestamp'],
                 evaluation
             )
+
+            # C2: Self-healing — if audit score is below threshold, fire the
+            # answer-healer Lambda asynchronously so it can produce a better
+            # answer without blocking the user-facing response.
+            _maybe_trigger_healer(entry, evaluation)
         except Exception as e:
             logger.error(f"Error processing record: {e}")
             # Try to mark as failed if we have the keys
@@ -506,3 +511,77 @@ def _update_entry_with_evaluation(transaction_id, start_timestamp, evaluation):
     except Exception as e:
         logger.error(f"Failed to update entry {transaction_id}: {e}")
         raise
+
+
+# ── C2: Self-healing healer trigger ──────────────────────────────────────────
+
+_HEALER_FUNCTION_NAME = os.environ.get(
+    'ANSWER_HEALER_FUNCTION_NAME', 'slashmybill-answer-healer'
+)
+_HEAL_THRESHOLD = int(os.environ.get('AUDIT_QUALITY_THRESHOLD', '70'))
+
+
+def _maybe_trigger_healer(entry: dict, evaluation: dict):
+    """Asynchronously invoke the answer-healer Lambda if the audit score is low.
+
+    This is a fire-and-forget invoke (InvocationType=Event). The healer will
+    re-attempt a better answer and write healed_answer / healed_score back to
+    the audit log record. It never touches the user-facing response.
+    """
+    score = evaluation.get('audit_score')
+    if score is None or score >= _HEAL_THRESHOLD:
+        return  # answer quality is acceptable — no healing needed
+
+    # Extract the original question and answer from the entry's stored payloads
+    question = ''
+    answer   = ''
+    provider = 'aws'
+    try:
+        req = json.loads(entry.get('request_payload') or '{}')
+        body = json.loads(req.get('body') or '{}')
+        question = (body.get('question') or '').strip()
+
+        resp = json.loads(entry.get('response_payload') or '{}')
+        resp_body = json.loads(resp.get('body') or '{}')
+        answer = (resp_body.get('answer') or '').strip()
+    except Exception:
+        pass
+
+    if not question or not answer:
+        return  # nothing useful to heal
+
+    try:
+        acct_ids = json.loads(
+            json.loads(entry.get('request_payload') or '{}').get('body') or '{}'
+        ).get('accountIds', [])
+        if acct_ids:
+            # provider resolved at heal time by answer-healer via DynamoDB — pass a hint
+            first = (acct_ids[0] or '').lower()
+            if first.startswith('openai') or first.startswith('groundcover') or first.startswith('anthropic'):
+                provider = first.split('-')[0]
+    except Exception:
+        pass
+
+    payload = {
+        'transaction_id': entry.get('transaction_id', ''),
+        'question':        question,
+        'answer':          answer,
+        'improvement_suggestions': evaluation.get('audit_improvement_suggestions') or '',
+        'provider': provider,
+    }
+
+    try:
+        lambda_client = boto3.client('lambda')
+        lambda_client.invoke(
+            FunctionName=_HEALER_FUNCTION_NAME,
+            InvocationType='Event',          # async fire-and-forget
+            Payload=json.dumps(payload).encode(),
+        )
+        logger.info(json.dumps({
+            'action': 'healer_triggered',
+            'transaction_id': payload['transaction_id'],
+            'audit_score': score,
+        }))
+    except Exception as e:
+        # Non-fatal — healing is best-effort
+        logger.warning(f'answer-healer trigger failed (non-fatal): {e}')

@@ -16,7 +16,9 @@ right-sizing, output-token control). Rows differ only by the provider key.
 
 # AI vendor provider keys maintained by the daily sync. Lowercase to match the
 # provider key the chat resolver / connectors use as the Tips_Table PK.
-AI_VENDOR_PROVIDERS = ("openai", "groundcover")
+# C6: Generic rule — all registered AI vendors get tips, not just OpenAI and GroundCover.
+# Adding Anthropic alongside existing vendors; new vendors are added here only.
+AI_VENDOR_PROVIDERS = ("openai", "anthropic", "groundcover")
 
 # Provider-neutral AI optimization tip templates. {suffix: {content fields}}.
 _AI_TIP_TEMPLATES = [

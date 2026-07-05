@@ -1,0 +1,83 @@
+{
+  "_comment": "Vendor registry — single source of truth for provider capabilities and auth type. No vendor-specific logic lives in routing code; everything is driven from here.",
+  "vendors": {
+    "aws": {
+      "displayName": "Amazon Web Services",
+      "cloud": "aws",
+      "authType": "iam_role",
+      "cachePrefix": "AWS",
+      "staleness_hours": 48,
+      "connector": "aws_connector.AWSConnector",
+      "supportedTools": [
+        "getCostBreakdown", "getMonthlyTrend",
+        "getEC2Instances", "getRDSInstances", "getLambdaFunctions",
+        "getS3Buckets", "getEBSVolumes", "getNetworkResources",
+        "getBudgets", "getFinOpsSettings", "getOptimizationTips",
+        "getAWSPricing", "getCostForecast", "getCostAnomalies",
+        "getRightsizingRecommendations"
+      ]
+    },
+    "azure": {
+      "displayName": "Microsoft Azure",
+      "cloud": "azure",
+      "authType": "service_principal",
+      "cachePrefix": "AZURE",
+      "staleness_hours": 48,
+      "connector": "azure_connector.AzureConnector",
+      "supportedTools": [
+        "getCostBreakdown", "getMonthlyTrend",
+        "getComputeInstances", "getDatabaseInstances",
+        "getObjectStorage", "getOptimizationTips"
+      ]
+    },
+    "gcp": {
+      "displayName": "Google Cloud Platform",
+      "cloud": "gcp",
+      "authType": "service_account",
+      "cachePrefix": "GCP",
+      "staleness_hours": 48,
+      "connector": "gcp_connector.GCPConnector",
+      "supportedTools": [
+        "getCostBreakdown", "getMonthlyTrend",
+        "getComputeInstances", "getObjectStorage",
+        "getServerlessFunctions", "getOptimizationTips"
+      ]
+    },
+    "openai": {
+      "displayName": "OpenAI",
+      "cloud": "ai_vendor",
+      "authType": "api_key",
+      "cachePrefix": "OPENAI",
+      "staleness_hours": 168,
+      "connector": "ai_vendor_connector.AIVendorConnector",
+      "supportedTools": [
+        "getCostBreakdown", "getMonthlyTrend",
+        "getAIUsage", "getOptimizationTips"
+      ]
+    },
+    "anthropic": {
+      "displayName": "Anthropic",
+      "cloud": "ai_vendor",
+      "authType": "api_key",
+      "cachePrefix": "ANTHROPIC",
+      "staleness_hours": 168,
+      "connector": "ai_vendor_connector.AIVendorConnector",
+      "supportedTools": [
+        "getCostBreakdown", "getMonthlyTrend",
+        "getAIUsage", "getOptimizationTips"
+      ]
+    },
+    "groundcover": {
+      "displayName": "GroundCover",
+      "cloud": "ai_vendor",
+      "authType": "api_key",
+      "cachePrefix": "GROUNDCOVER",
+      "staleness_hours": 168,
+      "connector": "ai_vendor_connector.AIVendorConnector",
+      "supportedTools": [
+        "getCostBreakdown", "getMonthlyTrend",
+        "getAIUsage", "getOptimizationTips"
+      ]
+    }
+  }
+}

@@ -9263,117 +9263,18 @@ def handle_ai_query(event):
     if tag_key and tag_value:
         ai_question = f"[FILTER ACTIVE: Showing data filtered by tag {tag_key}={tag_value}] {question}"
 
-    # Non-AWS accounts are NOT served by the AWS-oriented Bedrock agent action
-    # group (its Cost Explorer / STS tool calls hang until the 27s cap). Handle
-    # them here instead of routing through the agent:
-    #   - OpenAI: answer in-chat from cached invoice/per-model data (same logic
-    #     surface as AWS â€” total + breakdown, or period comparison).
-    #   - Azure/GCP: no per-service cost source wired here yet, so redirect to
-    #     the Invoices view.
-    # AWS accounts (12-digit IDs) are unaffected.
-    _aws_acct_re = re.compile(r'^\d{12}$')
-    if account_ids and all(not _aws_acct_re.match(a) for a in account_ids):
-        _single = account_ids[0] if len(account_ids) == 1 else None
-        # Vendor-agnostic intent gate (replaces the _answer_openai_query
-        # short-circuit). An AI cost/usage question for a single AI-vendor
-        # account resolves through the neutral three-tier resolver (cache-first,
-        # customer-connection-only, single account); everything else falls
-        # through to the existing redirect unchanged (Req 8.1-8.4, 9.6).
-        if _single and should_route_to_neutral_ai_usage(
-            ai_question, _resolve_vendor_type(member_email, _single)
-        ):
-            try:
-                # Bound the work so a cold (uncached) live drilldown can never
-                # ride to the API Gateway 29s limit — fall back to the redirect.
-                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as _ex:
-                    _fut = _ex.submit(
-                        resolve_ai_usage_response, member_email, _single, ai_question, interaction_id)
-                    return _fut.result(timeout=25)
-            except concurrent.futures.TimeoutError:
-                logger.warning(f"Neutral AI usage answer timed out for {_single}; redirecting")
-            except Exception as e:
-                logger.warning(f"Neutral AI usage answer failed for {_single} ({type(e).__name__}: {e}); redirecting")
-        return create_response(200, {
-            'answer': (
-                "AI-chat analysis for this account isn't available yet. Open the "
-                "Invoices view to see the month-by-month total and the "
-                "per-service breakdown from cached cost data."
-            ),
-            'interactionId': interaction_id,
-            'commands': [],
-            'results': [],
-            'tipFound': False,
-            'agentUsed': False,
-            'chartData': [],
-            'topServices': [],
-        })
-
-    # Use a timeout to prevent API Gateway 29s timeout from returning 503
+    # All accounts — cloud (AWS/Azure/GCP) AND AI-vendor — are served by the
+    # single Bedrock Agent engine.  Provider resolution and tool dispatch happen
+    # inside agent-action/provider_router.py which reads cloudProvider from
+    # DynamoDB.  No account-ID prefix regex or hardcoded vendor names here.
     def _run_ai_query():
-        # Try new modular pipeline first (single-account only), fallback to existing behavior
-        if len(account_ids) == 1:
-            try:
-                from agent.pipeline import execute_pipeline as _execute_pipeline
-                pipeline_event = {
-                    "question": ai_question,
-                    "account_id": account_ids[0],
-                    "member_email": member_email,
-                    "interaction_id": interaction_id,
-                }
-                pipeline_result = _execute_pipeline(pipeline_event)
-                if pipeline_result and not pipeline_result.get("metadata", {}).get("error"):
-                    return create_response(200, pipeline_result)
-            except ImportError:
-                pass  # agent package not available, use existing path
-            except Exception as e:
-                logger.warning(f"Pipeline failed, falling back to direct model: {e}")
-
         if len(account_ids) > 1:
-            # Split: handle non-AWS accounts from cache; send only AWS IDs to the agent
-            _nonaws_ids = [a for a in account_ids if not _aws_acct_re.match(a)]
-            _aws_ids = [a for a in account_ids if _aws_acct_re.match(a)]
-
-            # Answer OpenAI accounts from cached invoice data (fast, deterministic)
-            _nonaws_parts = []
-            for _naid in _nonaws_ids:
-                if _naid.lower().startswith('openai'):
-                    try:
-                        _oa_resp = _answer_openai_query(member_email, _naid, ai_question, interaction_id)
-                        _oa_body = json.loads(_oa_resp.get('body', '{}'))
-                        _oa_ans = _oa_body.get('answer', '')
-                        if _oa_ans:
-                            _nonaws_parts.append(f"**OpenAI ({_naid})**:\n{_oa_ans}")
-                    except Exception as _e:
-                        logger.warning(f"OpenAI cached answer for {_naid} in multi-account: {_e}")
-                        _nonaws_parts.append(f"**OpenAI ({_naid})**: cost data unavailable â€” open Invoices to refresh.")
-
-            # If no AWS accounts remain, return the non-AWS answers directly
-            if not _aws_ids:
-                _combined = "\n\n---\n\n".join(_nonaws_parts) if _nonaws_parts else (
-                    "No cost data available for the selected accounts.")
-                return create_response(200, {
-                    'answer': _combined,
-                    'interactionId': interaction_id,
-                    'commands': [],
-                    'results': [],
-                    'tipFound': False,
-                    'agentUsed': False,
-                    'chartData': [],
-                    'topServices': [],
-                })
-
-            # Route only AWS accounts through Bedrock Agent
-            multi_context = f"[Multi-Account Query: accounts={','.join(_aws_ids)}] {ai_question}"
-            # Determine primary account from AWS-only list
-            primary_account = _aws_ids[1] if len(_aws_ids) > 1 else _aws_ids[0]
-
-            # Prepend non-AWS answers (if any) to the agent's response context
-            if _nonaws_parts:
-                multi_context = "\n\n".join(_nonaws_parts) + "\n\n---\n\n" + multi_context
-
+            # Multi-account: pass all IDs as context; Agent resolves each via tools.
+            multi_context = f"[Multi-Account Query: accounts={','.join(account_ids)}] {ai_question}"
+            primary_account = account_ids[0]
             return _invoke_bedrock_agent(multi_context, primary_account, member_email, interaction_id)
         else:
-            # Route ALL single-account chat queries exclusively through Bedrock Agent
+            # Single account — any provider (AWS, OpenAI, GCP, Azure, GroundCover, ...)
             return _invoke_bedrock_agent(ai_question, account_ids[0], member_email, interaction_id)
 
     try:
