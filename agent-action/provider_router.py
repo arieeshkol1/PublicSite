@@ -226,7 +226,8 @@ def _read_cost_cache(member_email: str, account_id: str, tool_name: str, params:
         if not items:
             # Backward compat: try legacy SK prefixes (DAILY#, COST#)
             # Old cache entries predate the VENDOR#accountId#date scheme.
-            _legacy_pfx = "COST#" if provider in ("openai", "anthropic", "groundcover") else "DAILY#"
+            # Legacy SK prefixes: openai historically used OPENAI_DAILY#, then COST#; cloud uses DAILY#
+            _legacy_pfx = "OPENAI_DAILY#" if provider == "openai" else ("COST#" if provider in ("anthropic", "groundcover") else "DAILY#")
             _leg_start = f"{_legacy_pfx}{start_date.strftime('%Y-%m-%d')}"
             _leg_end   = f"{_legacy_pfx}{end_date.strftime('%Y-%m-%d')}"
             try:
@@ -236,6 +237,18 @@ def _read_cost_cache(member_email: str, account_id: str, tool_name: str, params:
                 items = _leg_resp.get("Items", [])
             except Exception:
                 pass
+            # Second legacy attempt: if openai OPENAI_DAILY# was empty, try COST#
+            if not items and provider == "openai":
+                try:
+                    _alt_resp = cache_table.query(
+                        KeyConditionExpression=Key("pk").eq(pk) & Key("sk").between(
+                            f"COST#{start_date.strftime('%Y-%m-%d')}",
+                            f"COST#{end_date.strftime('%Y-%m-%d')}"
+                        )
+                    )
+                    items = _alt_resp.get("Items", [])
+                except Exception:
+                    pass
             if not items:
                 return None, False
 
