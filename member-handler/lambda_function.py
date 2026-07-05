@@ -9410,36 +9410,17 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
         ),
     )
 
-    # Search tips table for relevant pricing/optimization data
-    # Detect AI vendor accounts by accountId prefix (e.g., "openai-...")
-    _provider = 'aws'
-    if account_id and account_id.startswith('openai-'):
-        _provider = 'openai'
-    elif account_id and account_id.startswith('azure-'):
-        _provider = 'azure'
-    elif account_id and account_id.startswith('gcp-'):
-        _provider = 'gcp'
+    # Provider resolved from DynamoDB (vendor-agnostic — no account-ID prefix logic).
+    # Tips table lookup applies to ALL accounts; the agent uses tip context to ground
+    # its answer and select the right tools.  (C6: no AWS-specific cases; rely on Tips.)
+    _provider = _get_account_provider(member_email, account_id)
     tips_context = _search_tips(question, provider=_provider)
     tip_found = bool(tips_context)
 
-    # Include account context and tips in the prompt so the Agent has accurate pricing
-    enriched_prompt = f"[Account: {account_id}, Member: {member_email}] {question}"
-
-    # For AI vendor accounts, inject context about available tools
-    if _provider == 'openai':
-        enriched_prompt += (
-            "\n\n[CONTEXT: This is an OpenAI AI vendor account, NOT an AWS account. "
-            "Only these tools are available: getCostBreakdown (model cost breakdown), "
-            "getAIVendorUsage (token usage per model), getMonthlyTrend (daily spend trend). "
-            "Do NOT call getNetworkResources, getEC2Instances, getFinOpsSettings, or any AWS-specific tools. "
-            "For cost savings, analyze: which models cost the most, output/input token ratio, "
-            "prompt caching efficiency, and whether cheaper models (gpt-4o-mini) can replace expensive ones (gpt-4o). "
-            "PRICING: GPT-4o=$2.50/$10 per 1M tokens (in/out). GPT-4o-mini=$0.15/$0.60. Cached=50% off. Batch API=50% off.]"
-        )
-        # Note: AI-vendor cost/usage questions are routed to the vendor-agnostic
-        # neutral resolver (resolve_ai_usage_response) by the handle_ai_query
-        # intent gate before reaching the agent, so no OPENAI_DAILY# cache
-        # pre-compute happens here post-cutover (Req 9.6).
+    # Build enriched prompt: account context + tips (same for ALL providers).
+    enriched_prompt = f"[Account: {account_id}, Member: {member_email}, Provider: {_provider}] {question}"
+    if tips_context:
+        enriched_prompt += f"\n\n[OPTIMIZATION TIPS]\n{tips_context}"
 
     # Service detection removed â€” the AI agent handles tool selection autonomously.
     # Quality enforcement is done by the inline audit gate + rewrite path.
