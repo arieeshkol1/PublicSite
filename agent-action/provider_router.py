@@ -34,9 +34,16 @@ _REGISTRY_PATH = Path(__file__).parent / "connectors" / "vendor_registry.json"
 try:
     with open(_REGISTRY_PATH) as _f:
         _VENDOR_REGISTRY = json.load(_f)["vendors"]
-except Exception as _e:
-    logger.warning(f"vendor_registry.json load failed: {_e} — using fallback defaults")
-    _VENDOR_REGISTRY = {}
+except Exception:
+    # Fallback: try relative path (Lambda zip may flatten structure)
+    try:
+        import os as _os
+        _alt_path = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "connectors", "vendor_registry.json")
+        with open(_alt_path) as _f2:
+            _VENDOR_REGISTRY = json.load(_f2)["vendors"]
+    except Exception as _e2:
+        logger.warning(f"vendor_registry.json not found: {_e2} — using empty registry")
+        _VENDOR_REGISTRY = {}
 
 VALID_PROVIDERS = set(_VENDOR_REGISTRY.keys()) or {"aws", "azure", "gcp", "openai", "anthropic", "groundcover"}
 
@@ -528,5 +535,6 @@ def route_tool(tool_name: str, account_id: str, member_email: str, params: dict)
             "retryable": True,
             "guidance": "Try again in a moment. If the issue persists, check your account connection in the Configure tab.",
         }
-#   D e p l o y   t r i g g e r  
- 
+# Deploy trigger
+
+
