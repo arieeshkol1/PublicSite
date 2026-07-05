@@ -160,6 +160,7 @@ def lambda_handler(event, context):
         'POST /members/accounts/update-permissions': handle_update_permissions,
         'POST /members/accounts/execute': handle_execute_command,
         'POST /members/accounts/ai-query': handle_ai_query,
+        'GET /members/accounts/ai-healed-answer': handle_get_healed_answer,
         'POST /members/accounts/ai-feedback': handle_ai_feedback,
         'GET /members/dashboard': handle_get_dashboard,
         'GET /members/dashboard-data': handle_dashboard_data,
@@ -9318,6 +9319,17 @@ def handle_ai_query(event):
             result['body'] = json.dumps(resp_body)
         except Exception:
             pass
+
+    # Healing notification: if inline audit flagged low_score, add fields to response
+    # so the frontend knows to poll GET /members/accounts/ai-healed-answer
+    try:
+        _rb = json.loads(result.get('body', '{}'))
+        if _rb.get('inlineAuditAction') == 'low_score':
+            _rb['healingInProgress'] = True
+            _rb['healingMessage'] = "We're researching the best answer for you. We'll notify you when an improved answer is ready."
+            result['body'] = json.dumps(_rb)
+    except Exception:
+        pass
 
     return result
 
