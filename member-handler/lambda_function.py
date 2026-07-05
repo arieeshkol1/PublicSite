@@ -8005,6 +8005,35 @@ def _derive_related_service(question):
 
 
 @transaction_log('member-handler')
+def handle_get_healed_answer(event):
+    """Poll endpoint: check if a healed answer is ready for a given interactionId."""
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+    params = event.get('queryStringParameters') or {}
+    interaction_id = (params.get('interactionId') or '').strip()
+    if not interaction_id:
+        return create_error_response(400, 'InvalidRequest', 'interactionId required')
+    try:
+        audit_table = dynamodb.Table(os.environ.get('AUDIT_TABLE_NAME', 'Audit_Transaction_Log'))
+        resp = audit_table.get_item(
+            Key={'transaction_id': interaction_id},
+            ProjectionExpression='healed_answer, healed_score, healed_at',
+        )
+        item = resp.get('Item')
+        if not item or not item.get('healed_answer'):
+            return create_response(200, {'ready': False, 'message': 'Still researching the best answer for you...'})
+        return create_response(200, {
+            'ready': True,
+            'healedAnswer': item.get('healed_answer', ''),
+            'healedScore': int(item.get('healed_score', 0)),
+            'healedAt': item.get('healed_at', ''),
+        })
+    except Exception as e:
+        logger.warning(f"Healed answer lookup failed: {e}")
+        return create_response(200, {'ready': False, 'message': 'Still researching...'})
+
+
 def handle_ai_feedback(event):
     """Handle AI feedback submissions Ã¢â‚¬â€ store feedback and optionally save tip."""
     auth = validate_token(event)
