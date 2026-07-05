@@ -9495,6 +9495,11 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
     }
     _BREAKDOWN_WORDS = ['break down', 'breakdown', 'cost of', 'how much', 'spending on', 'spend on', 'charges for', 'what are the', 'what is the', 'list my', 'show my', 'what are my', 'functions i use', 'their costs', 'split of', 'list down']
     _is_service_breakdown = any(bw in question_lower for bw in _BREAKDOWN_WORDS)
+    # Never pre-compute when user asks for usage-type breakdown — let the Agent
+    # call getCostData with usageTypeBreakdown=true for detailed sub-service data.
+    _wants_usage_type = any(ut in question_lower for ut in ['usage type', 'usage-type', 'by type', 'by usage'])
+    if _wants_usage_type:
+        _is_service_breakdown = False
     _detected_svc_key = None
     for svc_key in _SERVICE_NAMES:
         if svc_key in question_lower:
