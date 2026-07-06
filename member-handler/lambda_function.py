@@ -10201,11 +10201,14 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
         # Include trace in the response body so frontend/audit can show reasoning steps
         if inference_trace:
             try:
+                # Validate trace is JSON-serializable before injecting
+                _trace_json = json.dumps(inference_trace, default=str)
                 resp_body = json.loads(result.get('body', '{}'))
-                resp_body['inferenceTrace'] = inference_trace
-                result['body'] = json.dumps(resp_body)
-            except Exception:
-                pass
+                resp_body['inferenceTrace'] = json.loads(_trace_json)
+                result['body'] = json.dumps(resp_body, default=str)
+            except Exception as _trace_err:
+                import logging as _tlog
+                _tlog.getLogger(__name__).warning(f"inferenceTrace injection failed: {_trace_err}")
 
         # Attach trace to result for the transaction logger to pick up
         if inference_trace:
