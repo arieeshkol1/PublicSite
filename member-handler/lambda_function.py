@@ -9536,24 +9536,43 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
                     last_of_month = datetime(_year + 1, 1, 1, tzinfo=timezone.utc) - timedelta(days=1)
                 else:
                     last_of_month = datetime(_year, _detected_month_num + 1, 1, tzinfo=timezone.utc) - timedelta(days=1)
-                start_sk = f"DAILY#{first_of_month.strftime('%Y-%m-%d')}"
-                end_sk = f"DAILY#{last_of_month.strftime('%Y-%m-%d')}"
+                _vpfx = (_provider or 'aws').upper()
+                start_sk = f"{_vpfx}#{account_id}#{first_of_month.strftime('%Y-%m-%d')}"
+                end_sk = f"{_vpfx}#{account_id}#{last_of_month.strftime('%Y-%m-%d')}"
                 period_label = f"{first_of_month.strftime('%Y-%m')} ({calendar.month_name[_detected_month_num]})"
             elif 'last month' in question_lower or 'previous month' in question_lower:
                 first_of_current = now.replace(day=1)
                 first_of_prev = (first_of_current - timedelta(days=1)).replace(day=1)
-                start_sk = f"DAILY#{first_of_prev.strftime('%Y-%m-%d')}"
-                end_sk = f"DAILY#{first_of_current.strftime('%Y-%m-%d')}"
+                _vpfx = (_provider or 'aws').upper()
+                start_sk = f"{_vpfx}#{account_id}#{first_of_prev.strftime('%Y-%m-%d')}"
+                end_sk = f"{_vpfx}#{account_id}#{first_of_current.strftime('%Y-%m-%d')}"
                 period_label = f"{first_of_prev.strftime('%Y-%m')} (last month)"
             else:
-                start_sk = f"DAILY#{now.strftime('%Y-%m')}-01"
-                end_sk = f"DAILY#{now.strftime('%Y-%m-%d')}"
+                _vpfx = (_provider or 'aws').upper()
+                start_sk = f"{_vpfx}#{account_id}#{now.strftime('%Y-%m')}-01"
+                end_sk = f"{_vpfx}#{account_id}#{now.strftime('%Y-%m-%d')}"
                 period_label = f"{now.strftime('%Y-%m')} (month to date)"
 
             resp = cache_table.query(
                 KeyConditionExpression=_Key('pk').eq(pk) & _Key('sk').between(start_sk, end_sk)
             )
             items = resp.get('Items', [])
+            # Fallback to legacy DAILY# prefix if new format returned empty
+            if not items:
+                import calendar as _cal2
+                if _detected_month_num:
+                    _leg_s = f"DAILY#{first_of_month.strftime('%Y-%m-%d')}"
+                    _leg_e = f"DAILY#{last_of_month.strftime('%Y-%m-%d')}"
+                elif 'last month' in question_lower or 'previous month' in question_lower:
+                    _leg_s = f"DAILY#{first_of_prev.strftime('%Y-%m-%d')}"
+                    _leg_e = f"DAILY#{first_of_current.strftime('%Y-%m-%d')}"
+                else:
+                    _leg_s = f"DAILY#{now.strftime('%Y-%m')}-01"
+                    _leg_e = f"DAILY#{now.strftime('%Y-%m-%d')}"
+                resp = cache_table.query(
+                    KeyConditionExpression=_Key('pk').eq(pk) & _Key('sk').between(_leg_s, _leg_e)
+                )
+                items = resp.get('Items', [])
 
             if items:
                 svc_full_name = _SERVICE_NAMES[_detected_svc_key]
@@ -9573,7 +9592,7 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
                             svc_total += cost_val
 
                     if day_cost > 0:
-                        date = item['sk'].replace('DAILY#', '')
+                        date = item['sk'].split('#')[-1] if item['sk'].count('#') >= 2 else item['sk'].replace('DAILY#', '')
                         daily_breakdown.append(f"{date}: ${day_cost:.2f}")
 
                 if svc_total > 0:
@@ -9626,13 +9645,25 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
             now = datetime.now(timezone.utc)
             cache_table = dynamodb.Table(os.environ.get('COST_CACHE_TABLE_NAME', 'Cost_Cache_Table'))
             pk = f"{member_email}#{account_id}"
-            start_sk = f"DAILY#{(now - timedelta(days=30)).strftime('%Y-%m-%d')}"
-            end_sk = f"DAILY#{now.strftime('%Y-%m-%d')}"
+            _start_date_str = (now - timedelta(days=30)).strftime('%Y-%m-%d')
+            _end_date_str = now.strftime('%Y-%m-%d')
 
+            # Try new SK format first: VENDOR#accountId#date (C3)
+            _vendor_pfx = (_provider or 'aws').upper()
+            start_sk = f"{_vendor_pfx}#{account_id}#{_start_date_str}"
+            end_sk = f"{_vendor_pfx}#{account_id}#{_end_date_str}"
             resp = cache_table.query(
                 KeyConditionExpression=_Key('pk').eq(pk) & _Key('sk').between(start_sk, end_sk)
             )
             items = resp.get('Items', [])
+            # Fallback to legacy DAILY# prefix
+            if not items:
+                start_sk = f"DAILY#{_start_date_str}"
+                end_sk = f"DAILY#{_end_date_str}"
+                resp = cache_table.query(
+                    KeyConditionExpression=_Key('pk').eq(pk) & _Key('sk').between(start_sk, end_sk)
+                )
+                items = resp.get('Items', [])
 
             if items:
                 svc_totals = {}
@@ -9690,7 +9721,7 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
                 may_days = {}
                 jun_days = {}
                 for item in items:
-                    date = item['sk'].replace('DAILY#', '')
+                    date = item['sk'].split('#')[-1] if item['sk'].count('#') >= 2 else item['sk'].replace('DAILY#', '')
                     cost = float(item.get('cost_amount', 0))
                     day_num = int(date.split('-')[2])
                     month = date[:7]
@@ -10026,7 +10057,7 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
             _daily = []
             for item in _items:
                 cost = float(item.get('cost_amount', 0))
-                date = item['sk'].replace('DAILY#', '')
+                date = item['sk'].split('#')[-1] if item['sk'].count('#') >= 2 else item['sk'].replace('DAILY#', '')
                 _daily.append({'date': date, 'cost': cost})
                 for svc, svc_cost in item.get('service_breakdown', {}).items():
                     _svc_totals[svc] = _svc_totals.get(svc, 0) + float(svc_cost)
