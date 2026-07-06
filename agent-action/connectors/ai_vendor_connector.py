@@ -137,7 +137,7 @@ class AIVendorConnector(CloudConnector):
             req.add_header("OpenAI-Organization", organization_id)
 
         try:
-            with urllib.request.urlopen(req, timeout=30) as resp:
+            with urllib.request.urlopen(req, timeout=15) as resp:
                 return json.loads(resp.read().decode("utf-8"))
         except urllib.error.HTTPError as e:
             error_body = e.read().decode("utf-8", errors="replace")
@@ -429,7 +429,7 @@ class AIVendorConnector(CloudConnector):
         buckets = list(data.get("data", []))
 
         page_count = 1
-        while data.get("has_more") and data.get("next_page") and page_count < 5:
+        while data.get("has_more") and data.get("next_page") and page_count < 2:
             try:
                 data = self._make_openai_request(
                     endpoint + f"&page={data['next_page']}",
@@ -662,9 +662,9 @@ class AIVendorConnector(CloudConnector):
 
         all_buckets = data.get("data", [])
 
-        # Fetch additional pages (max 5)
+        # Fetch additional pages (max 2 to stay within Bedrock Agent timeout)
         page_count = 1
-        while data.get("has_more") and data.get("next_page") and page_count < 5:
+        while data.get("has_more") and data.get("next_page") and page_count < 2:
             next_endpoint = f"/v1/organization/costs?start_time={start_ts}&end_time={end_ts}&group_by=line_item&page={data['next_page']}"
             try:
                 data = self._make_openai_request(next_endpoint, api_key, organization_id)

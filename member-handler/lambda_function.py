@@ -9692,7 +9692,7 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
             logger.warning(f"Savings pre-computation failed: {e}")
 
     # Detect AI token/usage questions for AI vendor accounts and pre-compute from cache
-    _TOKEN_KEYWORDS = ['token', 'tokens', 'input output', 'input/output', 'usage by model', 'per model', 'per-model']
+    _TOKEN_KEYWORDS = ['token', 'tokens', 'consumpt', 'input output', 'input/output', 'usage by model', 'per model', 'per-model']
     _is_token_question = not _svc_precomputed and any(kw in question_lower for kw in _TOKEN_KEYWORDS)
     _is_ai_vendor_account = _provider in ('openai', 'anthropic', 'ai')
 
