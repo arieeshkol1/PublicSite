@@ -483,7 +483,7 @@ jobs:
           # Update audit-evaluator environment variable (model ID fix)
           aws lambda update-function-configuration \
             --function-name audit-evaluator \
-            --environment "Variables={TABLE_NAME=Audit_Transaction_Log,BEDROCK_MODEL_ID=us.amazon.nova-lite-v1:0}" > /dev/null 2>&1 || true
+            --environment "Variables={TABLE_NAME=Audit_Transaction_Log,BEDROCK_MODEL_ID=us.amazon.nova-lite-v1:0,ANSWER_HEALER_FUNCTION_NAME=slashmybill-answer-healer,AUDIT_QUALITY_THRESHOLD=50}" > /dev/null 2>&1 || true
           echo "✓ Lambda functions updated"
 
       - name: Ensure GroundCover API routes exist
@@ -652,7 +652,7 @@ jobs:
               --role "arn:aws:iam::${ACCOUNT_ID}:role/${ROLE_NAME}" \
               --timeout 60 \
               --memory-size 256 \
-              --environment "Variables={TABLE_NAME=Audit_Transaction_Log,BEDROCK_MODEL_ID=us.amazon.nova-lite-v1:0}" \
+              --environment "Variables={TABLE_NAME=Audit_Transaction_Log,BEDROCK_MODEL_ID=us.amazon.nova-lite-v1:0,ANSWER_HEALER_FUNCTION_NAME=slashmybill-answer-healer,AUDIT_QUALITY_THRESHOLD=50}" \
               --zip-file fileb://audit-evaluator-lambda.zip \
               --tags Project=ViewMyBill > /dev/null
             echo "✓ $FUNCTION_NAME Lambda created"
@@ -1496,6 +1496,37 @@ jobs:
             cat /tmp/schema-sync-result.json | python3 -c "import sys,json; d=json.load(sys.stdin); print(f'Operations: {d.get(\"operationCount\",\"?\")} | Providers: {d.get(\"providers\",\"?\")} | DryRun: {d.get(\"dryRun\",\"?\")}')" 2>/dev/null || cat /tmp/schema-sync-result.json
           fi
           echo "✓ Schema Sync validation complete"
+
+      - name: Ensure DynamoDB Stream triggers audit-evaluator
+        continue-on-error: true
+        run: |
+          # Check if audit-evaluator has an event source mapping for Audit_Transaction_Log stream
+          STREAM_ARN=$(aws dynamodb describe-table --table-name Audit_Transaction_Log --query "Table.LatestStreamArn" --output text 2>/dev/null || echo "")
+          if [ -z "$STREAM_ARN" ] || [ "$STREAM_ARN" = "None" ]; then
+            echo "⚠ No stream on Audit_Transaction_Log — enabling..."
+            aws dynamodb update-table --table-name Audit_Transaction_Log \
+              --stream-specification StreamEnabled=true,StreamViewType=NEW_IMAGE > /dev/null 2>&1 || true
+            sleep 5
+            STREAM_ARN=$(aws dynamodb describe-table --table-name Audit_Transaction_Log --query "Table.LatestStreamArn" --output text 2>/dev/null || echo "")
+          fi
+          if [ -z "$STREAM_ARN" ] || [ "$STREAM_ARN" = "None" ]; then
+            echo "❌ Cannot get stream ARN"
+            exit 0
+          fi
+          echo "Stream ARN: $STREAM_ARN"
+          # Check if event source mapping already exists
+          EXISTING=$(aws lambda list-event-source-mappings --function-name audit-evaluator --event-source-arn "$STREAM_ARN" --query "EventSourceMappings[0].UUID" --output text 2>/dev/null || echo "None")
+          if [ "$EXISTING" = "None" ] || [ -z "$EXISTING" ]; then
+            echo "Creating event source mapping: Audit_Transaction_Log → audit-evaluator"
+            aws lambda create-event-source-mapping \
+              --function-name audit-evaluator \
+              --event-source-arn "$STREAM_ARN" \
+              --starting-position LATEST \
+              --batch-size 1 \
+              --maximum-batching-window-in-seconds 0 > /dev/null 2>&1 && echo "✓ Stream mapping created" || echo "⚠ Mapping creation failed (may already exist)"
+          else
+            echo "✓ Stream mapping already exists: $EXISTING"
+          fi
 
       - name: Summary
         run: |
