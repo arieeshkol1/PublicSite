@@ -9459,7 +9459,7 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
     tip_found = bool(tips_context)
 
     # Build enriched prompt: account context + tips (same for ALL providers).
-    enriched_prompt = f"[Account: {account_id}, Member: {member_email}, Provider: {_provider}] {question}"
+    enriched_prompt = f"[Account: {account_id}, Member: {member_email}, Provider: {_provider}, Today: {datetime.now(timezone.utc).strftime('%Y-%m-%d')}] {question}"
     if tips_context:
         enriched_prompt += f"\n\n[OPTIMIZATION TIPS]\n{tips_context}"
 
@@ -9493,7 +9493,7 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
         'bedrock': 'Amazon Bedrock',
         'sagemaker': 'Amazon SageMaker',
     }
-    _BREAKDOWN_WORDS = ['break down', 'breakdown', 'cost of', 'cost for', 'monthly cost', 'how much', 'spending on', 'spend on', 'charges for', 'what are the', 'what is the', 'list my', 'show my', 'what are my', 'functions i use', 'their costs', 'split of', 'list down']
+    _BREAKDOWN_WORDS = ['break down', 'breakdown', 'cost of', 'how much', 'spending on', 'spend on', 'charges for', 'what are the', 'what is the', 'list my', 'show my', 'what are my', 'functions i use', 'their costs', 'split of', 'list down']
     _is_service_breakdown = any(bw in question_lower for bw in _BREAKDOWN_WORDS)
     # Never pre-compute when user asks for usage-type breakdown — let the Agent
     # call getCostData with usageTypeBreakdown=true for detailed sub-service data.
@@ -9636,7 +9636,7 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
             logger.warning(f"Service breakdown pre-computation failed: {e}")
 
     # Detect general savings/optimization questions and pre-compute from cache
-    _SAVINGS_KEYWORDS = ['save money', 'reduce cost', 'cut cost', 'optimize', 'where can i save', 'how to save', 'reduce spend', 'lower my bill', 'too expensive', 'monthly cost', 'cost for', 'how much did', 'what did i spend', 'total spend']
+    _SAVINGS_KEYWORDS = ['save money', 'reduce cost', 'cut cost', 'optimize', 'where can i save', 'how to save', 'reduce spend', 'lower my bill', 'too expensive']
     _is_savings_question = not _svc_precomputed and any(kw in question_lower for kw in _SAVINGS_KEYWORDS)
 
     if _is_savings_question:
@@ -9692,7 +9692,7 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
             logger.warning(f"Savings pre-computation failed: {e}")
 
     # Detect AI token/usage questions for AI vendor accounts and pre-compute from cache
-    _TOKEN_KEYWORDS = ['token', 'tokens', 'consumpt', 'input output', 'input/output', 'usage by model', 'per model', 'per-model']
+    _TOKEN_KEYWORDS = ['token', 'tokens', 'input output', 'input/output', 'usage by model', 'per model', 'per-model']
     _is_token_question = not _svc_precomputed and any(kw in question_lower for kw in _TOKEN_KEYWORDS)
     _is_ai_vendor_account = _provider in ('openai', 'anthropic', 'ai')
 
