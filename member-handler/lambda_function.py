@@ -9691,7 +9691,117 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
         except Exception as e:
             logger.warning(f"Savings pre-computation failed: {e}")
 
-    # Detect comparison/trend questions and pre-compute the answer from cache
+    # Detect AI token/usage questions for AI vendor accounts and pre-compute from cache
+    _TOKEN_KEYWORDS = ['token', 'tokens', 'input output', 'input/output', 'usage by model', 'per model', 'per-model']
+    _is_token_question = not _svc_precomputed and any(kw in question_lower for kw in _TOKEN_KEYWORDS)
+    _is_ai_vendor_account = _provider in ('openai', 'anthropic', 'ai')
+
+    if _is_token_question and _is_ai_vendor_account:
+        try:
+            from boto3.dynamodb.conditions import Key as _TKey
+            import calendar as _tcal
+            now = datetime.now(timezone.utc)
+            cache_table = dynamodb.Table(os.environ.get('COST_CACHE_TABLE_NAME', 'Cost_Cache_Table'))
+            pk = f"{member_email}#{account_id}"
+
+            # Determine the month from the question (default: last month)
+            _t_month_num = None
+            _t_month_names = {m.lower(): i for i, m in enumerate(_tcal.month_name) if m}
+            _t_month_abbrs = {m.lower(): i for i, m in enumerate(_tcal.month_abbr) if m}
+            for mname, mnum in {**_t_month_names, **_t_month_abbrs}.items():
+                if mname in question_lower:
+                    _t_month_num = mnum
+                    break
+
+            if _t_month_num:
+                _t_year = now.year
+                if _t_month_num > now.month:
+                    _t_year -= 1
+                _t_start = f"{_t_year:04d}-{_t_month_num:02d}-01"
+                _t_end = f"{_t_year:04d}-{_t_month_num:02d}-31"
+                _t_period_label = f"{_t_year:04d}-{_t_month_num:02d} ({_tcal.month_name[_t_month_num]})"
+            else:
+                # Default: last 30 days
+                _t_start = (now - timedelta(days=30)).strftime('%Y-%m-%d')
+                _t_end = now.strftime('%Y-%m-%d')
+                _t_period_label = "last 30 days"
+
+            # Read USAGE# entries (format: USAGE#date#actor#service)
+            _usage_start = f"USAGE#{_t_start}"
+            _usage_end = f"USAGE#{_t_end}~"  # ~ sorts after all dates
+            resp = cache_table.query(
+                KeyConditionExpression=_TKey('pk').eq(pk) & _TKey('sk').between(_usage_start, _usage_end)
+            )
+            usage_items = resp.get('Items', [])
+
+            if usage_items:
+                # Aggregate tokens by model (service)
+                model_tokens = {}
+                for item in usage_items:
+                    svc = item.get('service', item.get('model', 'unknown'))
+                    qty = float(item.get('usage_quantity', 0) or 0)
+                    unit = item.get('unit', 'tokens')
+                    if svc not in model_tokens:
+                        model_tokens[svc] = {'input': 0, 'output': 0, 'total': 0, 'unit': unit}
+                    # Try to distinguish input/output from the item fields
+                    input_t = float(item.get('input_tokens', 0) or 0)
+                    output_t = float(item.get('output_tokens', 0) or 0)
+                    if input_t > 0 or output_t > 0:
+                        model_tokens[svc]['input'] += input_t
+                        model_tokens[svc]['output'] += output_t
+                        model_tokens[svc]['total'] += input_t + output_t
+                    elif qty > 0:
+                        model_tokens[svc]['total'] += qty
+
+                if model_tokens:
+                    token_lines = []
+                    total_all = 0
+                    for model, data in sorted(model_tokens.items(), key=lambda x: x[1]['total'], reverse=True):
+                        if data['input'] > 0 or data['output'] > 0:
+                            token_lines.append(f"{model}: input={int(data['input']):,} output={int(data['output']):,} total={int(data['total']):,}")
+                        else:
+                            token_lines.append(f"{model}: {int(data['total']):,} {data['unit']}")
+                        total_all += data['total']
+
+                    token_str = ' | '.join(token_lines[:10])
+                    enriched_prompt += (
+                        f"\n\n[PRE-COMPUTED TOKEN USAGE for {_t_period_label} (from cache):\n"
+                        f"Total tokens: {int(total_all):,}\n"
+                        f"By model: {token_str}\n"
+                        f"Present this data as a table with columns: Model | Input Tokens | Output Tokens | Total.\n"
+                        f"Do NOT ask for clarification. This is real cached usage data.]"
+                    )
+                    _svc_precomputed = True
+                    logger.info(f"Token pre-compute: {len(model_tokens)} models, {int(total_all):,} total tokens")
+            else:
+                # Fallback: try to read from legacy OPENAI_DAILY# entries which have token fields
+                _leg_start = f"OPENAI_DAILY#{_t_start}"
+                _leg_end = f"OPENAI_DAILY#{_t_end}"
+                resp = cache_table.query(
+                    KeyConditionExpression=_TKey('pk').eq(pk) & _TKey('sk').between(_leg_start, _leg_end)
+                )
+                leg_items = resp.get('Items', [])
+                if leg_items:
+                    # Legacy items may have service_breakdown with token info
+                    total_cost = sum(float(i.get('cost_amount', 0)) for i in leg_items)
+                    svc_totals = {}
+                    for item in leg_items:
+                        for svc, cost in item.get('service_breakdown', {}).items():
+                            svc_totals[svc] = svc_totals.get(svc, 0) + float(cost)
+                    svc_str = ' | '.join(f"{s}: ${c:.2f}" for s, c in sorted(svc_totals.items(), key=lambda x: x[1], reverse=True)[:8])
+                    enriched_prompt += (
+                        f"\n\n[PRE-COMPUTED AI USAGE for {_t_period_label} (legacy cache):\n"
+                        f"Total cost: ${total_cost:.2f}\n"
+                        f"By model: {svc_str}\n"
+                        f"Note: Token counts are not available in this cache format - showing cost by model instead.\n"
+                        f"Present this as a breakdown table. Do NOT ask for clarification.]"
+                    )
+                    _svc_precomputed = True
+        except Exception as e:
+            logger.warning(f"Token usage pre-computation failed: {e}")
+
+
+        # Detect comparison/trend questions and pre-compute the answer from cache
     # Skip if service-specific breakdown was already pre-computed
     # Note: "last month" alone is NOT a comparison â€” it's a time reference
     _COMPARISON_KEYWORDS = ['compare', 'comparison', 'instead of', 'versus', 'vs', 'difference between',
