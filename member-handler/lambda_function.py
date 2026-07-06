@@ -9801,6 +9801,65 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
             logger.warning(f"Token usage pre-computation failed: {e}")
 
 
+    # Detect account efficiency/health/score questions and pre-compute from cache + settings
+    _EFFICIENCY_KEYWORDS = ['efficient', 'efficiency', 'health', 'score my', 'grade my', 'rate my', 'how well', 'account health', 'how good is my']
+    _is_efficiency_question = not _svc_precomputed and any(kw in question_lower for kw in _EFFICIENCY_KEYWORDS)
+
+    if _is_efficiency_question:
+        try:
+            from boto3.dynamodb.conditions import Key as _EKey
+            now = datetime.now(timezone.utc)
+            cache_table = dynamodb.Table(os.environ.get('COST_CACHE_TABLE_NAME', 'Cost_Cache_Table'))
+            pk = f"{member_email}#{account_id}"
+            _start_date_str = (now - timedelta(days=30)).strftime('%Y-%m-%d')
+            _end_date_str = now.strftime('%Y-%m-%d')
+
+            # Get cost breakdown from cache
+            _vendor_pfx = (_provider or 'aws').upper()
+            start_sk = f"{_vendor_pfx}#{account_id}#{_start_date_str}"
+            end_sk = f"{_vendor_pfx}#{account_id}#{_end_date_str}"
+            resp = cache_table.query(
+                KeyConditionExpression=_EKey('pk').eq(pk) & _EKey('sk').between(start_sk, end_sk)
+            )
+            items = resp.get('Items', [])
+            if not items:
+                start_sk = f"DAILY#{_start_date_str}"
+                end_sk = f"DAILY#{_end_date_str}"
+                resp = cache_table.query(
+                    KeyConditionExpression=_EKey('pk').eq(pk) & _EKey('sk').between(start_sk, end_sk)
+                )
+                items = resp.get('Items', [])
+
+            cost_summary = ''
+            total_spend = 0.0
+            if items:
+                svc_totals = {}
+                for item in items:
+                    for svc, cost in item.get('service_breakdown', {}).items():
+                        c = float(cost)
+                        svc_totals[svc] = svc_totals.get(svc, 0) + c
+                        total_spend += c
+                top_services = sorted(svc_totals.items(), key=lambda x: x[1], reverse=True)[:8]
+                svc_lines = ' | '.join(f"{s}: ${c:.2f}" for s, c in top_services if c > 0.50)
+                cost_summary = f"Total 30-day spend: ${total_spend:.2f}. Top services: {svc_lines}"
+
+            # Build the pre-computed prompt injection
+            enriched_prompt += (
+                f"\n\n[PRE-COMPUTED EFFICIENCY DATA for account {account_id}:\n"
+                f"{cost_summary}\n"
+                f"INSTRUCTIONS: Provide a clear efficiency score (0-100) and rating (Poor/Fair/Good/Excellent). "
+                f"Base the score on: (1) cost trends (flat/rising/declining), "
+                f"(2) service diversity (over-reliance on expensive services), "
+                f"(3) FinOps best practices (call getFinOpsSettings for details). "
+                f"Use the cost data above as input. "
+                f"Present: headline score, top 3 findings with dollar amounts, and 2-3 specific actions. "
+                f"If getFinOpsSettings returns an error about permissions, skip that check and score based on cost data only. "
+                f"Do NOT ask for clarification. Do NOT mention errors in the response.]"
+            )
+            _svc_precomputed = True
+        except Exception as e:
+            logger.warning(f"Efficiency pre-computation failed: {e}")
+
         # Detect comparison/trend questions and pre-compute the answer from cache
     # Skip if service-specific breakdown was already pre-computed
     # Note: "last month" alone is NOT a comparison â€” it's a time reference
