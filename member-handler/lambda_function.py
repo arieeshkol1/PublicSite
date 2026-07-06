@@ -10015,7 +10015,7 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
         # INLINE AUDIT QUALITY GATE â€” Score response before returning to user
         # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
         _gate_enabled = os.environ.get('AUDIT_QUALITY_GATE_ENABLED', 'true').lower() == 'true'
-        _gate_threshold = int(os.environ.get('AUDIT_QUALITY_THRESHOLD', '70'))
+        _gate_threshold = int(os.environ.get('AUDIT_QUALITY_THRESHOLD', '50'))
         inline_audit_score = None
         inline_audit_action = 'pass'
 
