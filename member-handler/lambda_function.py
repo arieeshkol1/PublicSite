@@ -10198,6 +10198,15 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
             'inlineAuditAction': inline_audit_action,
         })
 
+        # Include trace in the response body so frontend/audit can show reasoning steps
+        if inference_trace:
+            try:
+                resp_body = json.loads(result.get('body', '{}'))
+                resp_body['inferenceTrace'] = inference_trace
+                result['body'] = json.dumps(resp_body)
+            except Exception:
+                pass
+
         # Attach trace to result for the transaction logger to pick up
         if inference_trace:
             result['_inference_trace'] = inference_trace
