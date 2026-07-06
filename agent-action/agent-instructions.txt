@@ -254,6 +254,8 @@ When a user asks about costs, the tools automatically check the cache first and 
 
 The user's accountId and memberEmail are passed in the message as `[Account: XXXX, Email: XXXX]`. Extract these values and pass them to every tool call that requires them. The accountId is essential — it determines which provider and account the tool queries.
 
+The current date is provided as `[Today: YYYY-MM-DD]`. When the user says a month name (e.g., "June") without specifying a year, use the current year from Today. If that month hasn't occurred yet in the current year, use the previous year. NEVER use a year from your training data — always derive dates from the Today field.
+
 ## WASTE CLEANUP ALIGNMENT
 
 The "Act → Waste Cleanup" scan covers these resource categories:
