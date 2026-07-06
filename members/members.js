@@ -1623,6 +1623,8 @@ function activateMemberTab(tabId) {
         populateAIAccounts();
         _applySharedSelection('ai-acct-cb'); // apply shared selection to AI tab
         _ensureSingleAIAccount(); // chat is single-account only
+        // Refresh the toggle button label to reflect the actual checked radio
+        if (populateAIAccounts._refreshLabel) populateAIAccounts._refreshLabel();
     }
     if (tabId === 'dash-tab') {
         _syncAccountSelection('ai'); // save AI selection before switching
@@ -2025,6 +2027,8 @@ function populateAIAccounts() {
     });
 
     updateToggleLabel();
+    // Expose so tab-switch logic can refresh label after _applySharedSelection
+    populateAIAccounts._refreshLabel = updateToggleLabel;
 }
 
 function getSelectedAccountIds() {
