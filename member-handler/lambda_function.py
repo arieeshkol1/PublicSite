@@ -10106,29 +10106,12 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
                                 'chartData': [],
                             })
                     else:
-                        # Option 3: Ask guiding questions
+                        # Option 3: can_improve=false — system lacks data to answer.
+                        # Don't block with generic clarification. Pass through the Agent's
+                        # actual answer (which explains the issue) and let background audit handle it.
                         inline_audit_action = 'clarify'
-                        _guiding_qs = _audit_result.get('guiding_questions', [])
-                        if not _guiding_qs:
-                            _guiding_qs = ['Could you specify which account you want to analyze?',
-                                           'What specific service or resource are you asking about?']
-                        logger.info(f"Quality gate: clarification needed (score={inline_audit_score})")
-                        # Return clarification response immediately
-                        return create_response(200, {
-                            'answer': 'I need a bit more detail to give you an accurate answer.',
-                            'needsClarification': True,
-                            'guidingQuestions': _guiding_qs[:3],
-                            'interactionId': interaction_id,
-                            'commands': [],
-                            'results': [],
-                            'tipFound': False,
-                            'agentUsed': True,
-                            'inlineAuditScore': inline_audit_score,
-                            'inlineAuditAction': inline_audit_action,
-                            'followUpQuestions': [],
-                            'dataSources': [],
-                            'chartData': [],
-                        })
+                        logger.info(f"Quality gate: passing through (can_improve=false, score={inline_audit_score})")
+                        # Fall through to deliver the Agent's answer as-is
             except Exception as _gate_err:
                 logger.warning(f"Inline audit gate failed (passing through): {_gate_err}")
                 inline_audit_score = None
