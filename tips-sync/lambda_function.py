@@ -92,11 +92,10 @@ def lambda_handler(event, context):
         # Fetch from baseline file
         baseline_tips = _fetch_baseline_tips(sources_succeeded, sources_failed)
 
-        # Vendor-agnostic AI-vendor tips (OpenAI, GroundCover, ...). These keep
-        # the tips table complete for AI accounts with provider-keyed rows +
-        # executable drilldown plans (attached at write time). Treated as
-        # baseline-priority static content, so they merge alongside the files.
+        # C6: Generic provider-loop for ALL AI vendors registered in ai_vendor_tips.
+        # AI_VENDOR_PROVIDERS drives which vendors get tips — no hardcoded names here.
         try:
+            from sources.ai_vendor_tips import AI_VENDOR_PROVIDERS as _AI_VENDORS
             ai_vendor_tips = load_ai_vendor_tips()
             if ai_vendor_tips:
                 baseline_tips = list(baseline_tips) + ai_vendor_tips
@@ -104,6 +103,7 @@ def lambda_handler(event, context):
                 logger.info(json.dumps({
                     "action": "source_fetch_complete",
                     "source": "ai-vendor",
+                    "providers": list(_AI_VENDORS),
                     "tipsCount": len(ai_vendor_tips),
                 }))
             else:

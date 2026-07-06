@@ -220,14 +220,14 @@ def _evaluate_with_bedrock(entry):
                         }
                     ],
                     'inferenceConfig': {
-                        'maxTokens': 1024
+                        'maxTokens': 2048
                     }
                 }
             else:
                 # Anthropic Claude format
                 request_body = {
                     'anthropic_version': 'bedrock-2023-05-31',
-                    'max_tokens': 1024,
+                    'max_tokens': 2048,
                     'messages': [
                         {
                             'role': 'user',
@@ -304,20 +304,72 @@ def _build_trace_scoring_section(inference_trace_raw, request_payload):
     tool_invocations = trace_data.get('tool_invocations', [])
     reasoning_steps = trace_data.get('reasoning_steps', [])
 
+    # Build detailed invocation log for the evaluator
+    invocation_details = []
+    for i, inv in enumerate(tool_invocations):
+        detail = f"  Step {i+1}: {inv.get('tool_name', 'unknown')}"
+        params = inv.get('request_params')
+        if params:
+            # Compact representation of params
+            if isinstance(params, dict):
+                param_str = ', '.join(f"{k}={v}" for k, v in params.items() if v)
+            elif isinstance(params, list):
+                param_str = ', '.join(
+                    f"{p.get('name', '?')}={p.get('value', '?')}" for p in params if isinstance(p, dict)
+                )
+            else:
+                param_str = str(params)[:200]
+            detail += f"({param_str})"
+        detail += f" [{inv.get('duration_ms', 0)}ms]"
+        # Include response summary (truncate to keep prompt manageable)
+        resp = inv.get('response_data')
+        if resp and resp != '[TRUNCATED]':
+            resp_str = str(resp)[:500]
+            detail += f"\n    → Response: {resp_str}"
+        elif resp == '[TRUNCATED]':
+            detail += "\n    → Response: [TRUNCATED due to size]"
+        else:
+            detail += "\n    → Response: [no response captured]"
+        invocation_details.append(detail)
+
+    invocation_log = '\n'.join(invocation_details) if invocation_details else '  (no tool calls made)'
+
+    # Build reasoning chain for the evaluator
+    reasoning_log = ''
+    if reasoning_steps:
+        reasoning_entries = []
+        for i, step in enumerate(reasoning_steps):
+            # Truncate individual steps to keep prompt size reasonable
+            step_text = str(step)[:600]
+            reasoning_entries.append(f"  [{i+1}] {step_text}")
+        reasoning_log = '\n'.join(reasoning_entries)
+    else:
+        reasoning_log = '  (no reasoning steps captured)'
+
     section = f"""
 
-TRACE-BASED SCORING (Agent Reasoning Audit):
-The agent made the following decisions during this interaction:
-- Tools selected: {json.dumps(tools_selected)}
-- Tool invocations: {len(tool_invocations)} calls made
-- Reasoning steps: {len(reasoning_steps)} steps recorded
+FULL AGENT REASONING TRACE:
+The following is the complete trace of the agent's decision-making process during this interaction.
 
-Trace Scoring Rules:
-1. TOOL SELECTION: Assess whether the agent selected appropriate tools for the question type. Penalize if obvious tools were missed. EXCEPTION: If the response contains pre-computed data (specific dollar amounts, day-by-day tables, service breakdowns with real names), do NOT penalize for zero tool calls — the system pre-computes answers for forecast, comparison, and service-breakdown questions.
-2. REASONING QUALITY: Were the reasoning steps logical and relevant to the question?
-3. Do NOT penalize for missing 'getPricingData' or 'usageTypeBreakdown' on forecast, comparison, or trend questions — these do not require pricing lookups.
+═══ TOOLS SELECTED ═══
+{json.dumps(tools_selected) if tools_selected else '(none)'}
 
-Include your trace-based assessment in the "trace_assessment" field of your response.
+═══ TOOL INVOCATIONS (chronological) ═══
+{invocation_log}
+
+═══ AGENT REASONING STEPS (chronological) ═══
+{reasoning_log}
+
+═══ TRACE SCORING RULES ═══
+Evaluate the reasoning trace against these criteria:
+1. TOOL SELECTION: Did the agent select the correct tools for the question? Penalize if obvious tools were missed (e.g., getCostBreakdown for a cost question). EXCEPTION: If the response contains pre-computed data (specific dollar amounts, day-by-day tables, service breakdowns with real names), do NOT penalize for zero tool calls — the system pre-computes answers for forecast, comparison, and service-breakdown questions.
+2. REASONING QUALITY: Were the reasoning steps logical? Did the agent correctly interpret the user's intent? Did it avoid unnecessary clarification when data was available?
+3. PARAMETER ACCURACY: Did the agent pass correct parameters (accountId, memberEmail, serviceFilter, dimension) to the tools?
+4. RESPONSE SYNTHESIS: Did the agent correctly use the tool responses to build its final answer? Did it miss important data returned by the tools?
+5. FAILURE RECOVERY: If a tool returned an error or empty data, did the agent handle it gracefully or did it give up and ask for clarification?
+6. Do NOT penalize for missing 'getPricingData' or 'usageTypeBreakdown' on forecast, comparison, or trend questions — these do not require pricing lookups.
+
+Include a DETAILED trace-based assessment in the "trace_assessment" field of your response. Describe the agent's reasoning chain step by step: what it decided, what it called, what it got back, and whether it used the data correctly.
 """
 
     return section

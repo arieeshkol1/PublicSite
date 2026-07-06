@@ -516,6 +516,22 @@ def _load_credentials(member_email, account_id, provider_key):
             'org_name': account.get('accountName', '') or '',
         }
 
+    if provider_key == 'groundcover':
+        encrypted_api_key = stored.get('encryptedApiKey', '')
+        if not encrypted_api_key:
+            logger.warning(f"GroundCover account {account_id} has no stored token")
+            raise RuntimeError("GroundCover credentials are not available for this account.")
+        # GroundCover's connector.authenticate expects a plaintext token, so we
+        # decrypt here with the {memberEmail, accountId} KMS context (same scheme
+        # as OpenAI). The decrypted token stays a local variable handed straight
+        # to authenticate — never returned beyond this dict, logged, or stored.
+        from connectors.openai_kms import decrypt_openai_key, DecryptionError
+        try:
+            api_key = decrypt_openai_key(encrypted_api_key, member_email, account_id)
+        except (DecryptionError, RuntimeError):
+            raise RuntimeError("GroundCover credentials are inaccessible for this account.")
+        return {'api_key': api_key}
+
     raise ValueError(f"Unsupported provider for credential loading: {provider_key}")
 
 

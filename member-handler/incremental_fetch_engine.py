@@ -1740,6 +1740,20 @@ def _tier1_covers_dimension(dimension, tier1_detail):
     return True
 
 
+def _provider_key_from_account(account_id):
+    """Best-effort AI-vendor provider key from the account id prefix.
+
+    Vendor-agnostic: derives the provider from the ``{provider}-...`` id naming
+    used for AI-vendor connections (e.g. 'openai-...', 'groundcover-...').
+    Falls back to 'openai' for ids without a recognised AI-vendor prefix.
+    """
+    aid = (account_id or '').strip().lower()
+    for pk in ('openai', 'groundcover'):
+        if aid.startswith(pk + '-'):
+            return pk
+    return 'openai'
+
+
 def resolve_ai_usage(
     member_email: str,
     account_id: str,
@@ -1752,6 +1766,7 @@ def resolve_ai_usage(
     tier2_fn=None,
     tier3_fn=None,
     connector=None,
+    provider_key: str | None = None,
     max_entries: int | None = None,
     window_days: int = 30,
     staleness_hours: float | None = None,
@@ -1823,7 +1838,13 @@ def resolve_ai_usage(
 
     # ---- Tier 2: Tips drilldown via the customer connection (Req 4.3, 6) ----
     if tier2_fn is None:
-        from provider_invoices import tips_drilldown as tier2_fn
+        import functools
+        from provider_invoices import tips_drilldown
+        # Bind the account's OWN provider so the tips drilldown uses the right
+        # tips/credentials/connector — never a hardcoded vendor (Req 6, vendor
+        # agnostic). Without this it defaulted to 'openai' for every account.
+        _pk = provider_key or _provider_key_from_account(account_id)
+        tier2_fn = functools.partial(tips_drilldown, provider_key=_pk)
     t2 = tier2_fn(member_email, account_id, service, period)
     t2_error = _field(t2, 'error')
     t2_items = _field(t2, 'items') or []
