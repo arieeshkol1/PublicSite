@@ -344,6 +344,11 @@ def _aggregate_cost_breakdown(items, start_date, end_date):
     )
     total = sum(s["cost"] for s in top_services)
 
+    # If no service_breakdown found (e.g. neutral COST# schema items from AI vendors),
+    # compute total from the sum of daily costs instead.
+    if not total and daily_costs:
+        total = round(sum(d["cost"] for d in daily_costs), 2)
+
     # Return up to 21 days — enough for week-over-week comparison
     # while keeping response within Bedrock's token limits
     recent_daily = daily_costs[-21:]
@@ -546,17 +551,17 @@ def route_tool(tool_name: str, account_id: str, member_email: str, params: dict)
     try:
         provider = resolve_provider(account_id, member_email)
     except AccountNotFoundError:
-        # Account not found in DynamoDB — default to 'aws' and let the
-        # connector handle it. This avoids the agent hallucinating
-        # "Please select a connected account" when the tool returns an error.
-        logger.warning(
-            f"Account {account_id} not found for {member_email}, "
-            "defaulting to 'aws' provider"
-        )
-        provider = "aws"
+        return {
+            "error": "Account not connected",
+            "guidance": "Add this account via the Configure tab.",
+        }
     except ClientError as e:
         logger.error(f"DynamoDB error resolving provider for account {account_id}: {e}")
-        provider = "aws"
+        return {
+            "error": "Unable to look up account information",
+            "retryable": True,
+            "guidance": "Try again in a moment. If the issue persists, check your account connection in the Configure tab.",
+        }
 
     # Get connector instance
     connector = _get_connector(provider)
