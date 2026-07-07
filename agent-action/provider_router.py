@@ -285,6 +285,47 @@ def _read_cost_cache(member_email: str, account_id: str, tool_name: str, params:
                 except Exception:
                     pass
 
+            # Attempt 4: USAGE# detail items (AI vendors may only have these)
+            # Aggregate per-model usage items into synthetic daily cost rows
+            if not items:
+                try:
+                    _usage_resp = cache_table.query(
+                        KeyConditionExpression=Key("pk").eq(pk) & Key("sk").between(
+                            f"USAGE#{_start_str}", f"USAGE#{_end_str}~"
+                        )
+                    )
+                    _usage_items = _usage_resp.get("Items", [])
+                    if _usage_items:
+                        # Aggregate usage detail into daily cost + service breakdown
+                        _daily_agg = {}  # date -> {total, services: {svc: cost}, cached_at}
+                        for ui in _usage_items:
+                            _ui_sk = ui.get("sk", "")
+                            _parts = _ui_sk.split("#")
+                            # USAGE#date#actor#service -> date at index 1
+                            _ui_date = _parts[1] if len(_parts) >= 2 else ""
+                            _ui_cost = float(ui.get("cost_amount") or 0)
+                            _ui_svc = ui.get("service") or "unknown"
+                            _ui_cached = ui.get("cached_at", "")
+                            if _ui_date:
+                                if _ui_date not in _daily_agg:
+                                    _daily_agg[_ui_date] = {"total": 0, "services": {}, "cached_at": _ui_cached}
+                                _daily_agg[_ui_date]["total"] += _ui_cost
+                                _daily_agg[_ui_date]["services"][_ui_svc] = (
+                                    _daily_agg[_ui_date]["services"].get(_ui_svc, 0) + _ui_cost
+                                )
+                                if _ui_cached > _daily_agg[_ui_date].get("cached_at", ""):
+                                    _daily_agg[_ui_date]["cached_at"] = _ui_cached
+                        # Convert to items format matching what _aggregate_cost_breakdown expects
+                        for _d, _agg in sorted(_daily_agg.items()):
+                            items.append({
+                                "sk": f"COST#{_d}",
+                                "cost_amount": str(round(_agg["total"], 4)),
+                                "service_breakdown": {k: str(round(v, 4)) for k, v in _agg["services"].items()},
+                                "cached_at": _agg["cached_at"],
+                            })
+                except Exception:
+                    pass
+
             if not items:
                 return None, False
 
