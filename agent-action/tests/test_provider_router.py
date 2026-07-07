@@ -160,32 +160,39 @@ class TestRouteTool:
         assert result == {"instances": [], "count": 0}
         connector.get_compute_instances.assert_called_once_with("123", "user@test.com", {})
 
+    @patch("provider_router._get_connector")
     @patch("provider_router.resolve_provider")
-    def test_returns_error_when_account_not_found(self, mock_resolve):
+    def test_defaults_to_aws_when_account_not_found(self, mock_resolve, mock_get_conn):
         mock_resolve.side_effect = AccountNotFoundError("123", "user@test.com")
+        connector = MagicMock()
+        connector.SUPPORTED_OPERATIONS = ["getComputeInstances"]
+        connector.get_compute_instances.return_value = {"instances": [], "count": 0}
+        mock_get_conn.return_value = connector
 
         result = route_tool("getComputeInstances", "123", "user@test.com", {})
 
-        assert "error" in result
-        assert "Account not connected" in result["error"]
-        assert "guidance" in result
-        assert "Configure tab" in result["guidance"]
+        # Should default to 'aws' and proceed, not return an error
+        mock_get_conn.assert_called_once_with("aws")
+        connector.get_compute_instances.assert_called_once()
 
+    @patch("provider_router._get_connector")
     @patch("provider_router.resolve_provider")
-    def test_returns_retryable_error_on_dynamodb_client_error(self, mock_resolve):
-        """When DynamoDB raises a ClientError during provider lookup, returns retryable error."""
+    def test_defaults_to_aws_on_dynamodb_client_error(self, mock_resolve, mock_get_conn):
+        """When DynamoDB raises a ClientError during provider lookup, defaults to aws."""
         from botocore.exceptions import ClientError as BotoClientError
         mock_resolve.side_effect = BotoClientError(
             {"Error": {"Code": "InternalServerError", "Message": "Service unavailable"}},
             "GetItem"
         )
+        connector = MagicMock()
+        connector.SUPPORTED_OPERATIONS = ["getComputeInstances"]
+        connector.get_compute_instances.return_value = {"instances": [], "count": 0}
+        mock_get_conn.return_value = connector
 
         result = route_tool("getComputeInstances", "123", "user@test.com", {})
 
-        assert "error" in result
-        assert result["retryable"] is True
-        assert "guidance" in result
-        assert "Configure tab" in result["guidance"]
+        # Should default to 'aws' and proceed
+        mock_get_conn.assert_called_once_with("aws")
 
     @patch("provider_router._get_connector")
     @patch("provider_router.resolve_provider")

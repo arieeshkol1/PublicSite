@@ -115,8 +115,8 @@ def resolve_provider(account_id: str, member_email: str) -> str:
         member_email: The member's email (partition key).
 
     Returns:
-        One of: "aws", "azure", "gcp", "openai". Defaults to "aws" if the value
-        is missing or not in the supported set.
+        One of the VALID_PROVIDERS strings. Defaults to "aws" if the value
+        is missing, empty, or not in the supported set.
 
     Raises:
         AccountNotFoundError: If no account record exists for the given keys.
@@ -136,9 +136,9 @@ def resolve_provider(account_id: str, member_email: str) -> str:
     if not item:
         raise AccountNotFoundError(account_id, member_email)
 
-    cloud_provider = item.get("cloudProvider", "")
+    cloud_provider = (item.get("cloudProvider") or "").strip().lower()
 
-    if cloud_provider not in VALID_PROVIDERS:
+    if not cloud_provider or cloud_provider not in VALID_PROVIDERS:
         logger.info(
             f"Account {account_id} has invalid/missing cloudProvider "
             f"'{cloud_provider}', defaulting to 'aws'"
@@ -187,6 +187,14 @@ def _parse_cache_date(sk: str) -> str:
     # New: VENDOR#accountId#YYYY-MM-DD
     parts = sk.split("#")
     if len(parts) >= 3:
+        # For new VENDOR#accountId#date format, date is at index 2
+        # For USAGE#date#actor#service, date is also at index 1
+        # Detect by checking if parts[2] looks like a date (YYYY-MM-DD)
+        if len(parts[2]) == 10 and parts[2][4] == '-' and parts[2][7] == '-':
+            return parts[2]
+        # COST#date or USAGE#date#... — date at index 1
+        if len(parts[1]) == 10 and parts[1][4] == '-' and parts[1][7] == '-':
+            return parts[1]
         return parts[-1]
     # Legacy: DAILY#YYYY-MM-DD or COST#YYYY-MM-DD or OPENAI_DAILY#YYYY-MM-DD
     return sk.replace("OPENAI_DAILY#", "").replace("COST#", "").replace("DAILY#", "")
@@ -236,29 +244,47 @@ def _read_cost_cache(member_email: str, account_id: str, tool_name: str, params:
         if not items:
             # Backward compat: try legacy SK prefixes (DAILY#, COST#)
             # Old cache entries predate the VENDOR#accountId#date scheme.
-            # Legacy SK prefixes: openai historically used OPENAI_DAILY#, then COST#; cloud uses DAILY#
-            _legacy_pfx = "OPENAI_DAILY#" if provider == "openai" else ("COST#" if provider in ("anthropic", "groundcover") else "DAILY#")
-            _leg_start = f"{_legacy_pfx}{start_date.strftime('%Y-%m-%d')}"
-            _leg_end   = f"{_legacy_pfx}{end_date.strftime('%Y-%m-%d')}"
+            # The neutral schema (used by AI vendors) writes COST#{date} items.
+            # AWS legacy uses DAILY#{date}. OpenAI historically used OPENAI_DAILY#.
+            # Try COST# first (neutral schema), then provider-specific legacy prefix.
+            _start_str = start_date.strftime('%Y-%m-%d')
+            _end_str = end_date.strftime('%Y-%m-%d')
+
+            # Attempt 1: neutral COST# schema (works for all AI vendors)
             try:
-                _leg_resp = cache_table.query(
-                    KeyConditionExpression=Key("pk").eq(pk) & Key("sk").between(_leg_start, _leg_end)
+                _cost_resp = cache_table.query(
+                    KeyConditionExpression=Key("pk").eq(pk) & Key("sk").between(
+                        f"COST#{_start_str}", f"COST#{_end_str}~"
+                    )
                 )
-                items = _leg_resp.get("Items", [])
+                items = _cost_resp.get("Items", [])
             except Exception:
                 pass
-            # Second legacy attempt: if openai OPENAI_DAILY# was empty, try COST#
-            if not items and provider == "openai":
+
+            # Attempt 2: AWS DAILY# legacy schema
+            if not items:
                 try:
-                    _alt_resp = cache_table.query(
+                    _daily_resp = cache_table.query(
                         KeyConditionExpression=Key("pk").eq(pk) & Key("sk").between(
-                            f"COST#{start_date.strftime('%Y-%m-%d')}",
-                            f"COST#{end_date.strftime('%Y-%m-%d')}"
+                            f"DAILY#{_start_str}", f"DAILY#{_end_str}~"
                         )
                     )
-                    items = _alt_resp.get("Items", [])
+                    items = _daily_resp.get("Items", [])
                 except Exception:
                     pass
+
+            # Attempt 3: OpenAI legacy OPENAI_DAILY# schema
+            if not items and provider == "openai":
+                try:
+                    _oai_resp = cache_table.query(
+                        KeyConditionExpression=Key("pk").eq(pk) & Key("sk").between(
+                            f"OPENAI_DAILY#{_start_str}", f"OPENAI_DAILY#{_end_str}~"
+                        )
+                    )
+                    items = _oai_resp.get("Items", [])
+                except Exception:
+                    pass
+
             if not items:
                 return None, False
 
@@ -275,13 +301,11 @@ def _read_cost_cache(member_email: str, account_id: str, tool_name: str, params:
                     pass
 
         is_fresh = True if most_recent_cached_at is None else (most_recent_cached_at >= staleness_threshold)
-        if not is_fresh:
-            return None, False
 
         if tool_name == "getCostBreakdown":
-            return _aggregate_cost_breakdown(items, start_date, end_date), True
+            return _aggregate_cost_breakdown(items, start_date, end_date), is_fresh
         else:
-            return _aggregate_monthly_trend(items), True
+            return _aggregate_monthly_trend(items), is_fresh
 
     except Exception as e:
         logger.warning(f"Cost cache read failure for {member_email}#{account_id} ({tool_name}): {e}")
@@ -522,17 +546,17 @@ def route_tool(tool_name: str, account_id: str, member_email: str, params: dict)
     try:
         provider = resolve_provider(account_id, member_email)
     except AccountNotFoundError:
-        return {
-            "error": "Account not connected",
-            "guidance": "Add this account via the Configure tab.",
-        }
+        # Account not found in DynamoDB — default to 'aws' and let the
+        # connector handle it. This avoids the agent hallucinating
+        # "Please select a connected account" when the tool returns an error.
+        logger.warning(
+            f"Account {account_id} not found for {member_email}, "
+            "defaulting to 'aws' provider"
+        )
+        provider = "aws"
     except ClientError as e:
         logger.error(f"DynamoDB error resolving provider for account {account_id}: {e}")
-        return {
-            "error": "Unable to look up account information",
-            "retryable": True,
-            "guidance": "Try again in a moment. If the issue persists, check your account connection in the Configure tab.",
-        }
+        provider = "aws"
 
     # Get connector instance
     connector = _get_connector(provider)
@@ -594,6 +618,10 @@ def route_tool(tool_name: str, account_id: str, member_email: str, params: dict)
                 f"Cost cache hit for {member_email}#{account_id} ({tool_name})"
             )
             return cached_data
+        # Keep stale data as fallback in case connector fails
+        stale_cache = cached_data if cached_data and not is_fresh else None
+    else:
+        stale_cache = None
 
     # Resolve the method name
     method_name = TOOL_TO_METHOD.get(tool_name)
@@ -626,6 +654,13 @@ def route_tool(tool_name: str, account_id: str, member_email: str, params: dict)
             f"Auth/permission error for {tool_name} on {provider} "
             f"account {account_id}: {error_msg}"
         )
+        # Fall back to stale cache if available — better stale data than no answer
+        if stale_cache:
+            logger.info(
+                f"Using stale cache fallback for {member_email}#{account_id} ({tool_name}) after auth error"
+            )
+            stale_cache["_stale"] = True
+            return stale_cache
         # For accounts with no live cache yet, provide generic guidance
         return {
             "authError": True,
@@ -645,6 +680,13 @@ def route_tool(tool_name: str, account_id: str, member_email: str, params: dict)
             f"Provider API error for {tool_name} on {provider} "
             f"account {account_id}: {e}"
         )
+        # Fall back to stale cache if available
+        if stale_cache:
+            logger.info(
+                f"Using stale cache fallback for {member_email}#{account_id} ({tool_name}) after API error"
+            )
+            stale_cache["_stale"] = True
+            return stale_cache
         return {
             "error": "Provider API error",
             "retryable": True,
