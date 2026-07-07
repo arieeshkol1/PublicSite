@@ -9453,19 +9453,13 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
 
     # Provider resolved from DynamoDB (vendor-agnostic — no account-ID prefix logic).
     _provider = _get_account_provider(member_email, account_id)
-    if not _provider or _provider == 'unknown':
-        return create_response(200, {
-            'answer': 'Please select a connected account from the account list.',
-            'interactionId': interaction_id,
-            'commands': [],
-            'results': [],
-            'tipFound': False,
-            'agentUsed': False,
-        })
     tip_found = False
 
     # Build enriched prompt: account context only (no tips, no pre-computation).
-    enriched_prompt = f"[Account: {account_id}, Member: {member_email}, Provider: {_provider}, Today: {datetime.now(timezone.utc).strftime('%Y-%m-%d')}] {question}"
+    # If provider is unknown, still proceed — the Agent/provider_router will handle
+    # the error properly and return a meaningful message to the user.
+    _provider_label = _provider if _provider and _provider != 'unknown' else 'aws'
+    enriched_prompt = f"[Account: {account_id}, Member: {member_email}, Provider: {_provider_label}, Today: {datetime.now(timezone.utc).strftime('%Y-%m-%d')}] {question}"
 
     # Cap prompt length to prevent Bedrock EventStreamError
     if len(enriched_prompt) > 3500:
@@ -10593,7 +10587,6 @@ def _get_account_provider(member_email, account_id):
         accounts_table = dynamodb.Table(ACCOUNTS_TABLE_NAME)
         resp = accounts_table.get_item(
             Key={'memberEmail': member_email, 'accountId': account_id},
-            ProjectionExpression='cloudProvider',
         )
         item = resp.get('Item')
         if not item:
@@ -24403,3 +24396,5 @@ def handle_cache_invalidate(event):
         'message': 'Cache invalidated and refresh triggered',
         'deletedItems': deleted_count,
     })
+
+# Deploy trigger v2
