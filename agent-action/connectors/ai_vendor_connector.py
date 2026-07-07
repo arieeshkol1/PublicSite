@@ -12,6 +12,7 @@ by the Provider Router / Response Normalizer layer.
 
 import json
 import logging
+import urllib.parse
 import urllib.request
 import urllib.error
 from datetime import datetime, timedelta, timezone
@@ -19,6 +20,7 @@ from datetime import datetime, timedelta, timezone
 import boto3
 
 from . import CloudConnector
+from provider_router import _substitute_placeholders
 
 logger = logging.getLogger(__name__)
 
@@ -946,3 +948,77 @@ class AIVendorConnector(CloudConnector):
             "model_costs": model_costs,
             "daily_costs": daily_costs,
         }
+
+    # ─── Drilldown Execution ─────────────────────────────────────────────
+
+    def execute_drilldown_plan(self, account_id: str, member_email: str,
+                               plan: list, params: dict) -> dict:
+        """
+        Execute a structured drilldown plan using HTTP requests to AI vendor APIs.
+
+        Each plan step contains:
+          - service: base URL domain (e.g. "api.openai.com")
+          - operation: HTTP path (e.g. "/v1/models")
+          - params: dict with optional headers, query, and body fields
+
+        Builds the full URL as https://{service}{operation}, injects an
+        Authorization Bearer header with the account's API key, and issues
+        a GET request via urllib.
+
+        On 401/403: returns authError response with partial results.
+        On success: returns {drilldownResults: [...], stepCount: N}.
+
+        Args:
+            account_id: The cloud account identifier for credential resolution.
+            member_email: The member requesting the drilldown.
+            plan: A list of Structured Objects from the Tips table drilldownApis field.
+            params: Additional context parameters from the original tool invocation.
+
+        Returns:
+            A dict with drilldown results or error information.
+        """
+        creds = self._get_credentials(account_id, member_email)
+        api_key = creds['api_key']
+        results = []
+
+        for i, step in enumerate(plan):
+            svc = step.get('service')    # base URL domain
+            op = step.get('operation')   # HTTP path
+            call_params = step.get('params', {})
+
+            if not svc or not op:
+                logger.warning(f"Skipping malformed AI drilldown step {i}: {step}")
+                continue
+
+            # Substitute <each> placeholders from previous results
+            if results and isinstance(call_params, dict):
+                call_params = _substitute_placeholders(call_params, results[-1])
+
+            headers = call_params.get('headers', {})
+            headers['Authorization'] = f'Bearer {api_key}'
+            query = call_params.get('query', {})
+
+            url = f"https://{svc}{op}"
+            if query:
+                query_string = urllib.parse.urlencode(query)
+                url = f"{url}?{query_string}"
+
+            req = urllib.request.Request(url, method="GET")
+            for hdr_key, hdr_val in headers.items():
+                req.add_header(hdr_key, hdr_val)
+
+            try:
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    results.append(json.loads(resp.read().decode("utf-8")))
+            except urllib.error.HTTPError as e:
+                if e.code in (401, 403):
+                    logger.error(f"Auth error on AI drilldown step {i} ({svc}{op}): {e.code}")
+                    return {
+                        'authError': True,
+                        'partialResults': results,
+                        'failedStep': i,
+                        'guidance': 'Check your API key in the Configure tab.',
+                    }
+                raise
+
+        return {'drilldownResults': results, 'stepCount': len(results)}

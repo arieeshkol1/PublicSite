@@ -19,6 +19,7 @@ import boto3
 from botocore.exceptions import ClientError
 
 from . import CloudConnector
+from provider_router import _substitute_placeholders
 
 logger = logging.getLogger(__name__)
 
@@ -1241,3 +1242,68 @@ class AWSConnector(CloudConnector):
             'message': 'get_container_clusters is not yet fully implemented for AWS',
             'tool': 'getContainerClusters',
         }
+
+    # ─── Drilldown Execution ─────────────────────────────────────────────
+
+    def execute_drilldown_plan(self, account_id: str, member_email: str,
+                               plan: list, params: dict) -> dict:
+        """
+        Execute a structured drilldown plan using boto3 dynamic clients.
+
+        Each entry: {service: str, operation: str, params: dict}
+        Maps to: boto3.client(service).operation(**params)
+        """
+        credentials = self._assume_role(account_id, member_email)
+        results = []
+
+        for i, step in enumerate(plan):
+            svc = step.get('service')
+            op = step.get('operation')
+            call_params = step.get('params', {})
+
+            if not svc or not op:
+                logger.warning(f"Skipping malformed drilldown step {i}: {step}")
+                continue
+
+            # Substitute <each> placeholders from previous results
+            if results and isinstance(call_params, dict):
+                call_params = _substitute_placeholders(call_params, results[-1])
+
+            try:
+                client = self._make_client(svc, credentials)
+            except Exception as e:
+                logger.warning(f"Unrecognized service '{svc}': {e}")
+                return {
+                    'error': f"Unrecognized service: {svc}",
+                    'healingRequired': True,
+                    'tipId': params.get('tipId', ''),
+                    'service': params.get('service', ''),
+                }
+
+            method = getattr(client, op, None)
+            if not method:
+                logger.warning(f"Invalid operation '{op}' on service '{svc}'")
+                return {
+                    'error': f"Invalid operation: {op} on service {svc}",
+                    'healingRequired': True,
+                    'tipId': params.get('tipId', ''),
+                    'service': params.get('service', ''),
+                }
+
+            try:
+                result = method(**call_params)
+                results.append(result)
+            except ClientError as e:
+                error_code = e.response['Error']['Code']
+                if error_code in ('AccessDeniedException', 'UnauthorizedOperation',
+                                  'AccessDenied', 'AuthFailure'):
+                    logger.error(f"Permission error on step {i} ({svc}.{op}): {e}")
+                    return {
+                        'authError': True,
+                        'partialResults': results,
+                        'failedStep': i,
+                        'guidance': 'Check your account connection in the Configure tab.',
+                    }
+                raise
+
+        return {'drilldownResults': results, 'stepCount': len(results)}

@@ -26,6 +26,9 @@ logger = logging.getLogger(__name__)
 # Cost Cache configuration
 COST_CACHE_TABLE_NAME = "Cost_Cache_Table"
 
+# Tips table for drilldown plan lookup
+TIPS_TABLE_NAME = "ViewMyBill-CostOptimizationTips"
+
 # Tools that benefit from cost cache lookup
 CACHEABLE_TOOLS = {"getCostBreakdown", "getMonthlyTrend"}
 
@@ -420,6 +423,76 @@ def _write_cost_cache(member_email: str, account_id: str, tool_name: str, result
         logger.warning(f"Cost cache write failure for {member_email}#{account_id} ({tool_name}): {e}")
 
 
+def _substitute_placeholders(call_params: dict, previous_result: dict) -> dict:
+    """
+    Replace <each> placeholders in params with values from previous result.
+
+    Example:
+      params: {"InstanceIds": "<each>"}
+      previous_result: {"Reservations": [{"Instances": [{"InstanceId": "i-123"}]}]}
+
+    The connector extracts the iterable from previous_result and substitutes.
+    """
+    substituted = {}
+    for key, value in call_params.items():
+        if value == '<each>':
+            substituted[key] = _extract_iterable(previous_result)
+        else:
+            substituted[key] = value
+    return substituted
+
+
+def _extract_iterable(result: dict) -> list:
+    """Extract the primary list from an API response for <each> substitution."""
+    for key in result:
+        if isinstance(result[key], list) and result[key]:
+            return result[key]
+    return []
+
+
+def _resolve_drilldown_plan(service: str, tip_id: str) -> dict:
+    """
+    Query Tips_Table for the drilldown plan associated with a tip.
+
+    Always queries fresh — no in-memory caching.
+
+    Returns:
+        dict with keys:
+          - 'plan': list of structured objects or legacy strings
+          - 'format': 'structured' or 'legacy'
+        OR error dict with 'error' key on failure.
+    """
+    dynamodb = _get_dynamodb_resource()
+    table = dynamodb.Table(TIPS_TABLE_NAME)
+
+    try:
+        response = table.get_item(
+            Key={'service': service, 'tipId': tip_id}
+        )
+    except ClientError as e:
+        logger.error(f"DynamoDB error fetching drilldown plan for {service}/{tip_id}: {e}")
+        return {'error': 'Unable to fetch drilldown plan', 'retryable': True}
+
+    item = response.get('Item')
+    if not item:
+        return {
+            'error': 'Drilldown plan not found',
+            'guidance': f'No drilldown configuration exists for tip {tip_id} in service {service}.'
+        }
+
+    drilldown_apis = item.get('drilldownApis', [])
+    if not drilldown_apis:
+        return {
+            'error': 'Drilldown plan not found',
+            'guidance': f'Tip {tip_id} exists but has no drilldownApis defined.'
+        }
+
+    # Detect format by inspecting first element
+    fmt = 'structured' if isinstance(drilldown_apis[0], dict) else 'legacy'
+
+    return {'plan': drilldown_apis, 'format': fmt}
+
+
 def route_tool(tool_name: str, account_id: str, member_email: str, params: dict) -> dict:
     """
     Resolve the provider for the account, instantiate the correct connector,
@@ -457,6 +530,42 @@ def route_tool(tool_name: str, account_id: str, member_email: str, params: dict)
 
     # Get connector instance
     connector = _get_connector(provider)
+
+    # === Drilldown plan path (triggered by tipId presence) ===
+    tip_id = params.get('tipId')
+    if tip_id:
+        service = params.get('service', '')
+        plan_result = _resolve_drilldown_plan(service, tip_id)
+
+        if 'error' in plan_result:
+            return plan_result
+
+        plan = plan_result['plan']
+        fmt = plan_result['format']
+
+        if fmt == 'structured':
+            # Validate and filter malformed entries
+            valid_steps = [s for s in plan if s.get('service') and s.get('operation')]
+            skipped = len(plan) - len(valid_steps)
+            if skipped > 0:
+                logger.warning(f"Skipped {skipped} malformed entries in plan for {tip_id}")
+
+            if not valid_steps:
+                return {
+                    'error': 'All drilldown plan entries are malformed',
+                    'healingRequired': True,
+                    'tipId': tip_id,
+                    'service': service,
+                }
+
+            return connector.execute_drilldown_plan(
+                account_id, member_email, valid_steps, params
+            )
+        else:
+            # Legacy string-array format — pass to existing connector logic
+            return connector.execute_legacy_drilldown(
+                account_id, member_email, plan, params
+            )
 
     # Check if tool is supported by this connector
     if tool_name not in connector.SUPPORTED_OPERATIONS:

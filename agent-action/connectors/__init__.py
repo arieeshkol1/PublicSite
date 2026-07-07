@@ -234,3 +234,27 @@ class CloudConnector(ABC):
         raise NotImplementedError(
             f"{self.__class__.__name__} does not implement get_ai_usage"
         )
+
+    # ─── Drilldown Execution ─────────────────────────────────────────────
+
+    def execute_drilldown_plan(self, account_id: str, member_email: str, plan: list, params: dict) -> dict:
+        """
+        Execute a structured drilldown plan retrieved from the Tips table.
+
+        Subclasses override this to dynamically invoke provider APIs described
+        in the plan's Structured Objects. Each plan entry contains {service,
+        operation, params} and the connector creates the appropriate client,
+        calls the operation, and collects results sequentially.
+
+        Args:
+            account_id: The cloud account identifier for credential resolution.
+            member_email: The member requesting the drilldown.
+            plan: A list of Structured Objects from the Tips table drilldownApis field.
+            params: Additional context parameters from the original tool invocation.
+
+        Returns:
+            A dict with drilldown results or error information.
+        """
+        raise NotImplementedError(
+            f"{self.__class__.__name__} does not implement execute_drilldown_plan"
+        )

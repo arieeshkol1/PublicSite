@@ -141,6 +141,19 @@
         ],
         "responses": {"200": {"description": "Pricing response"}}
       }
+    },
+    "/update-drilldown-plan": {
+      "post": {
+        "operationId": "updateDrilldownPlan",
+        "summary": "Update or create a drilldown plan for a tip",
+        "description": "Writes corrected drilldownApis to the Tips table. Used by self-healing when a drilldown plan has invalid service or operation names.",
+        "parameters": [
+          {"name": "service", "in": "query", "description": "The service partition key in the Tips table (e.g. EC2, S3, LAMBDA)", "required": true, "schema": {"type": "string"}},
+          {"name": "tipId", "in": "query", "description": "The tipId sort key in the Tips table", "required": true, "schema": {"type": "string"}},
+          {"name": "drilldownApis", "in": "query", "description": "JSON string of the drilldownApis array. Each entry is {service, operation, params}.", "required": true, "schema": {"type": "string"}}
+        ],
+        "responses": {"200": {"description": "Update result"}}
+      }
     }
   }
 }

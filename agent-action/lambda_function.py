@@ -28,7 +28,7 @@ TIPS_TABLE_NAME = 'ViewMyBill-CostOptimizationTips'
 COST_CACHE_TABLE_NAME = 'Cost_Cache_Table'
 
 # Knowledge group tools that do NOT require an accountId (platform-wide data)
-KNOWLEDGE_TOOLS_NO_ACCOUNT = {'getOptimizationTips', 'getPricingData'}
+KNOWLEDGE_TOOLS_NO_ACCOUNT = {'getOptimizationTips', 'getPricingData', 'updateDrilldownPlan'}
 
 dynamodb = boto3.resource('dynamodb')
 
@@ -126,6 +126,11 @@ def _handle_knowledge_tool(tool_name: str, parameters: dict) -> dict:
         filters = parameters.get('filters', '')
         region = parameters.get('region', 'us-east-1')
         return _get_pricing_data(service_code, filters, region)
+    elif tool_name == 'updateDrilldownPlan':
+        service = parameters.get('service', '')
+        tip_id = parameters.get('tipId', '')
+        drilldown_apis_str = parameters.get('drilldownApis', '[]')
+        return _update_drilldown_plan(service, tip_id, drilldown_apis_str)
     else:
         return {'error': f'Unknown knowledge tool: {tool_name}'}
 
@@ -238,3 +243,56 @@ def _region_to_location(region):
         'ap-northeast-1': 'Asia Pacific (Tokyo)',
     }
     return mapping.get(region, 'US East (N. Virginia)')
+
+
+def _update_drilldown_plan(service: str, tip_id: str, drilldown_apis_str: str) -> dict:
+    """
+    Write or update the drilldownApis field for a tip in the Tips table.
+    Used by the self-healing flow when the Agent detects a broken plan.
+
+    Args:
+        service: Tips table partition key (e.g., 'EC2')
+        tip_id: Tips table sort key (e.g., 'ec2-idle-instances')
+        drilldown_apis_str: JSON string of the drilldownApis list
+
+    Returns:
+        Success or error dict
+    """
+    if not service or not tip_id:
+        return {'error': 'service and tipId are required'}
+
+    try:
+        drilldown_apis = json.loads(drilldown_apis_str)
+    except (json.JSONDecodeError, TypeError):
+        return {'error': 'drilldownApis must be a valid JSON array'}
+
+    if not isinstance(drilldown_apis, list) or not drilldown_apis:
+        return {'error': 'drilldownApis must be a non-empty array'}
+
+    # Validate each entry has at minimum service and operation
+    for i, entry in enumerate(drilldown_apis):
+        if not isinstance(entry, dict):
+            return {'error': f'Entry {i} must be a dict with service and operation fields'}
+        if not entry.get('service') or not entry.get('operation'):
+            return {'error': f'Entry {i} must have non-empty service and operation fields'}
+
+    tips_table = dynamodb.Table(TIPS_TABLE_NAME)
+
+    try:
+        tips_table.update_item(
+            Key={'service': service, 'tipId': tip_id},
+            UpdateExpression='SET drilldownApis = :apis, healedAt = :ts',
+            ExpressionAttributeValues={
+                ':apis': drilldown_apis,
+                ':ts': datetime.now(timezone.utc).isoformat(),
+            },
+        )
+        logger.info(f"Self-healing: updated drilldownApis for {service}/{tip_id} ({len(drilldown_apis)} steps)")
+        return {
+            'success': True,
+            'message': f'Drilldown plan updated for {service}/{tip_id}',
+            'stepCount': len(drilldown_apis),
+        }
+    except ClientError as e:
+        logger.error(f"Failed to update drilldown plan for {service}/{tip_id}: {e}")
+        return {'error': 'Failed to update drilldown plan', 'retryable': True}

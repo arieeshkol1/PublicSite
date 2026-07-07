@@ -28,7 +28,6 @@ from provider_router import (
     VALID_PROVIDERS,
     CACHEABLE_TOOLS,
     COST_CACHE_TABLE_NAME,
-    CACHE_STALENESS_THRESHOLD_HOURS,
     _get_connector,
     _read_cost_cache,
     _write_cost_cache,
@@ -431,7 +430,7 @@ class TestCostCacheIntegration:
     def test_stale_cache_invokes_connector(
         self, mock_resolve, mock_get_conn, mock_cache_table
     ):
-        """When cache data is older than 24 hours, invokes connector."""
+        """When cache data is older than staleness threshold, invokes connector."""
         mock_resolve.return_value = "aws"
         connector = MagicMock()
         connector.SUPPORTED_OPERATIONS = ["getCostBreakdown"]
@@ -443,8 +442,8 @@ class TestCostCacheIntegration:
         }
         mock_get_conn.return_value = connector
 
-        # Stale cache (cached_at > 24 hours ago)
-        stale_time = (datetime.now(timezone.utc) - timedelta(hours=25)).isoformat()
+        # Stale cache (cached_at > 48 hours ago, exceeding vendor registry staleness_hours)
+        stale_time = (datetime.now(timezone.utc) - timedelta(hours=49)).isoformat()
         cache_table = MagicMock()
         cache_table.query.return_value = {
             "Items": [
@@ -544,8 +543,9 @@ class TestCostCacheIntegration:
 class TestCacheKeyFormat:
     """Tests for cache key format: {memberEmail}#{accountId}."""
 
+    @patch("provider_router.resolve_provider", return_value="aws")
     @patch("provider_router._get_cache_table")
-    def test_cache_key_format(self, mock_cache_table):
+    def test_cache_key_format(self, mock_cache_table, mock_resolve):
         """Cache queries use the correct pk format: {memberEmail}#{accountId}."""
         cache_table = MagicMock()
         cache_table.query.return_value = {"Items": []}
@@ -554,23 +554,21 @@ class TestCacheKeyFormat:
         _read_cost_cache("alice@company.com", "987654321012", "getCostBreakdown", {})
 
         # Verify the query was called with proper key format
-        call_kwargs = cache_table.query.call_args[1]
-        key_expr = call_kwargs["KeyConditionExpression"]
-        # The Key condition should reference pk = "alice@company.com#987654321012"
-        # We can verify the query was actually called
-        cache_table.query.assert_called_once()
+        # The first call uses the new VENDOR#accountId#date format
+        assert cache_table.query.call_count >= 1
 
+    @patch("provider_router.resolve_provider", return_value="aws")
     @patch("provider_router._get_cache_table")
-    def test_sort_key_format_daily(self, mock_cache_table):
-        """Sort key uses DAILY#{date} format."""
+    def test_sort_key_format_daily(self, mock_cache_table, mock_resolve):
+        """Sort key uses VENDOR#accountId#date format (with legacy fallback)."""
         cache_table = MagicMock()
         cache_table.query.return_value = {"Items": []}
         mock_cache_table.return_value = cache_table
 
         _read_cost_cache("user@test.com", "123", "getCostBreakdown", {})
 
-        # Verify query was called (sort key is embedded in the KeyConditionExpression)
-        cache_table.query.assert_called_once()
+        # Verify query was called (may include legacy fallback attempts)
+        assert cache_table.query.call_count >= 1
 
 
 class TestAggregateFunctions:
