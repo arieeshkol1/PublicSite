@@ -293,6 +293,9 @@ def _aggregate_cost_breakdown(items, start_date, end_date):
     
     Returns last 14 days of daily costs and identifies first-of-month fixed charges
     (support, tax, etc.) so forecasting can separate recurring monthly fees from daily usage.
+    
+    NOTE: service_breakdown is stored as the full-period total on EACH daily row
+    (not split per day). We take it from one row only — not summed across days.
     """
     services = {}
     daily_costs = []
@@ -301,8 +304,11 @@ def _aggregate_cost_breakdown(items, start_date, end_date):
         sk = item["sk"]
         date = _parse_cache_date(sk)
         daily_costs.append({"date": date, "cost": round(cost, 2)})
-        for svc, svc_cost in item.get("service_breakdown", {}).items():
-            services[svc] = services.get(svc, 0) + float(svc_cost)
+        # Take service_breakdown from any row that has it (all rows carry the same
+        # full-period breakdown). Only populate services once.
+        if not services and item.get("service_breakdown"):
+            for svc, svc_cost in item["service_breakdown"].items():
+                services[svc] = float(svc_cost)
 
     # Sort by date to ensure correct ordering
     daily_costs.sort(key=lambda x: x["date"])

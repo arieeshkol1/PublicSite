@@ -575,19 +575,20 @@ class TestAggregateFunctions:
     """Tests for _aggregate_cost_breakdown and _aggregate_monthly_trend."""
 
     def test_aggregate_cost_breakdown_basic(self):
-        """Aggregates daily items into cost breakdown response."""
+        """Aggregates daily items into cost breakdown response.
+        service_breakdown is the same on each row (full-period total), not per-day."""
         items = [
             {
                 "pk": "user@test.com#123",
                 "sk": "DAILY#2024-01-15",
                 "cost_amount": "10.00",
-                "service_breakdown": {"EC2": "7.00", "S3": "3.00"},
+                "service_breakdown": {"EC2": "15.00", "S3": "7.00"},
             },
             {
                 "pk": "user@test.com#123",
                 "sk": "DAILY#2024-01-16",
                 "cost_amount": "12.00",
-                "service_breakdown": {"EC2": "8.00", "S3": "4.00"},
+                "service_breakdown": {"EC2": "15.00", "S3": "7.00"},
             },
         ]
         start_date = datetime(2024, 1, 1, tzinfo=timezone.utc)
@@ -595,11 +596,11 @@ class TestAggregateFunctions:
 
         result = _aggregate_cost_breakdown(items, start_date, end_date)
 
+        # totalCost30Days comes from service_breakdown (taken once, not summed across days)
         assert result["totalCost30Days"] == 22.0
         assert result["source"] == "cache"
         assert "(from cache)" in result["period"]
         assert len(result["topServices"]) == 2
-        # EC2: 7+8=15, S3: 3+4=7
         assert result["topServices"][0]["service"] == "EC2"
         assert result["topServices"][0]["cost"] == 15.0
         assert result["topServices"][1]["service"] == "S3"
