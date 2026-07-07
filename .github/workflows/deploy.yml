@@ -486,6 +486,36 @@ jobs:
             --environment "Variables={TABLE_NAME=Audit_Transaction_Log,BEDROCK_MODEL_ID=us.amazon.nova-lite-v1:0,ANSWER_HEALER_FUNCTION_NAME=slashmybill-answer-healer,AUDIT_QUALITY_THRESHOLD=50}" > /dev/null 2>&1 || true
           echo "✓ Lambda functions updated"
 
+      - name: Update Bedrock Agent Instructions
+        continue-on-error: true
+        run: |
+          # Read the agent instructions and update the Bedrock Agent
+          AGENT_ID=$(aws lambda get-function-configuration --function-name aws-bill-analyzer-member-api --query 'Environment.Variables.BEDROCK_AGENT_ID' --output text 2>/dev/null || echo "")
+          if [ -z "$AGENT_ID" ] || [ "$AGENT_ID" = "None" ]; then
+            echo "⚠ BEDROCK_AGENT_ID not found, skipping agent instructions update"
+            exit 0
+          fi
+          echo "Updating Bedrock Agent $AGENT_ID instructions..."
+          INSTRUCTIONS=$(cat agent-action/agent-instructions.txt)
+          # Get current agent config to preserve other settings
+          AGENT_CONFIG=$(aws bedrock-agent get-agent --agent-id "$AGENT_ID" --query 'agent' --output json 2>/dev/null)
+          if [ -z "$AGENT_CONFIG" ]; then
+            echo "⚠ Could not fetch agent config, skipping"
+            exit 0
+          fi
+          AGENT_NAME=$(echo "$AGENT_CONFIG" | python3 -c "import sys,json; print(json.load(sys.stdin).get('agentName','SlashMyBill-Agent'))")
+          AGENT_ROLE=$(echo "$AGENT_CONFIG" | python3 -c "import sys,json; print(json.load(sys.stdin).get('agentResourceRoleArn',''))")
+          FOUNDATION_MODEL=$(echo "$AGENT_CONFIG" | python3 -c "import sys,json; print(json.load(sys.stdin).get('foundationModel',''))")
+          aws bedrock-agent update-agent \
+            --agent-id "$AGENT_ID" \
+            --agent-name "$AGENT_NAME" \
+            --agent-resource-role-arn "$AGENT_ROLE" \
+            --foundation-model "$FOUNDATION_MODEL" \
+            --instruction "$INSTRUCTIONS" > /dev/null 2>&1
+          # Prepare agent to apply changes
+          aws bedrock-agent prepare-agent --agent-id "$AGENT_ID" > /dev/null 2>&1
+          echo "✓ Bedrock Agent instructions updated and prepared"
+
       - name: Ensure GroundCover API routes exist
         continue-on-error: true
         run: |
