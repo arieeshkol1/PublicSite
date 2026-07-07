@@ -206,6 +206,46 @@ class AIVendorConnector(CloudConnector):
                 },
             }
         except (PermissionError, RuntimeError) as e:
+            # Primary org costs endpoint failed (likely needs admin key).
+            # Fall back to the usage/completions endpoint which works with
+            # standard API keys and derive cost data from token usage.
+            logger.warning(f"AI vendor org costs endpoint failed ({e}), trying usage fallback")
+            try:
+                creds = self._get_credentials(account_id, member_email)
+                api_key = creds["api_key"]
+                organization_id = creds.get("organization_id", "")
+                vendor = creds.get("vendor", "openai")
+                now = datetime.now(timezone.utc)
+                start_date = params.get("startDate", (now - timedelta(days=30)).strftime("%Y-%m-%d"))
+                end_date = params.get("endDate", now.strftime("%Y-%m-%d"))
+
+                # Try the raw usage buckets endpoint (different permission scope)
+                raw_buckets = self._fetch_raw_usage_buckets(
+                    api_key, organization_id, vendor, start_date, end_date
+                )
+                if raw_buckets:
+                    usage_items = self._map_usage_buckets_to_neutral(raw_buckets)
+                    # Derive total cost and model breakdown from usage items
+                    total_cost = sum(u.get("cost_amount") or 0 for u in usage_items)
+                    model_map = {}
+                    for u in usage_items:
+                        svc = u.get("service") or "unknown"
+                        model_map[svc] = model_map.get(svc, 0) + (u.get("cost_amount") or 0)
+                    top_services = sorted(
+                        [{"service": k, "cost": round(v, 4)} for k, v in model_map.items()],
+                        key=lambda x: x["cost"], reverse=True
+                    )
+                    return {
+                        "totalCost30Days": round(total_cost, 2),
+                        "currency": "USD",
+                        "period": f"{start_date} to {end_date}",
+                        "topServices": top_services[:7],
+                        "dailyCosts": [],
+                        "providerMetadata": {"provider": vendor, "source": "usage-fallback"},
+                    }
+            except Exception as fallback_err:
+                logger.warning(f"AI vendor usage fallback also failed: {fallback_err}")
+            # If fallback fails too, raise original error
             raise
         except Exception as e:
             logger.error(f"AI vendor get_cost_breakdown failed: {e}")
