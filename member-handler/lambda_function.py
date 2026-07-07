@@ -10595,9 +10595,14 @@ def _get_account_provider(member_email, account_id):
             Key={'memberEmail': member_email, 'accountId': account_id},
             ProjectionExpression='cloudProvider',
         )
-        item = resp.get('Item', {})
+        item = resp.get('Item')
+        if not item:
+            # Account record doesn't exist at all — truly not connected
+            return 'unknown'
         provider = item.get('cloudProvider', '').strip().lower()
-        return provider if provider in ('aws', 'azure', 'gcp', 'openai', 'groundcover') else 'unknown'
+        # If account exists but cloudProvider is empty/missing, it's a legacy
+        # AWS account created before multi-provider support — default to 'aws'
+        return provider if provider in ('aws', 'azure', 'gcp', 'openai', 'groundcover') else 'aws'
     except Exception as e:
         logger.warning(f"Failed to get provider for account {account_id}: {e}")
         # Fallback: detect from accountId prefix
