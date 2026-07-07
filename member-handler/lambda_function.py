@@ -9452,35 +9452,24 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
     )
 
     # Provider resolved from DynamoDB (vendor-agnostic — no account-ID prefix logic).
-    # Tips table lookup applies to ALL accounts; the agent uses tip context to ground
-    # its answer and select the right tools.  (C6: no AWS-specific cases; rely on Tips.)
     _provider = _get_account_provider(member_email, account_id)
-    tips_context = _search_tips(question, provider=_provider)
-    tip_found = bool(tips_context)
+    if not _provider or _provider == 'unknown':
+        return create_response(200, {
+            'answer': 'Please select a connected account from the account list.',
+            'interactionId': interaction_id,
+            'commands': [],
+            'results': [],
+            'tipFound': False,
+            'agentUsed': False,
+        })
+    tip_found = False
 
-    # Build enriched prompt: account context + tips (same for ALL providers).
+    # Build enriched prompt: account context only (no tips, no pre-computation).
     enriched_prompt = f"[Account: {account_id}, Member: {member_email}, Provider: {_provider}, Today: {datetime.now(timezone.utc).strftime('%Y-%m-%d')}] {question}"
-    if tips_context:
-        enriched_prompt += f"\n\n[OPTIMIZATION TIPS]\n{tips_context}"
 
-    # --- Agent-driven flow: NO keyword-based pre-computation ---
-    # The Bedrock Agent autonomously selects tools and parameters.
-    # The provider_router handles cache-first logic for all tools.
-    # No hardcoded keyword lists, no intent detection, no pre-computed answers.
-
-    # Append tips context (if found and not too long)
-    if tips_context:
-        from tip_citation import build_tip_citation_prompt
-        tips_text = build_tip_citation_prompt(tips_context)
-        enriched_prompt += f"\n\n{tips_text}"
-
-    # Cap prompt length to prevent Bedrock EventStreamError (max ~4000 chars for inputText)
+    # Cap prompt length to prevent Bedrock EventStreamError
     if len(enriched_prompt) > 3500:
-        base_end = enriched_prompt.find('\n\nRELEVANT OPTIMIZATION TIPS:')
-        if base_end > 0:
-            enriched_prompt = enriched_prompt[:base_end]
-        else:
-            enriched_prompt = enriched_prompt[:3500]
+        enriched_prompt = enriched_prompt[:3500]
 
     collector = TraceCollector()
 
@@ -9501,110 +9490,9 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
                       "cost, or time period.")
 
         # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-        # INLINE AUDIT QUALITY GATE â€” Score response before returning to user
-        # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-        _gate_enabled = os.environ.get('AUDIT_QUALITY_GATE_ENABLED', 'false').lower() == 'true'
-        _gate_threshold = int(os.environ.get('AUDIT_QUALITY_THRESHOLD', '50'))
+        # Quality gate removed per design review.
         inline_audit_score = None
         inline_audit_action = 'pass'
-
-        # Skip gate for pre-computed answers (already accurate) or if disabled
-        _skip_gate = not _gate_enabled  # Audit gate runs on ALL answers (C6/R9)
-        if not _skip_gate and answer and not answer.startswith(('The analysis is taking', "I couldn't generate a response")):
-            try:
-                _audit_result = _inline_audit_score(question, answer)
-                inline_audit_score = _audit_result.get('score', 100)
-                logger.info(f"Inline audit: score={inline_audit_score}, can_improve={_audit_result.get('can_improve')}")
-
-                if inline_audit_score < _gate_threshold:
-                    if _audit_result.get('can_improve'):
-                        # Option 2: Re-invoke with improvement instructions (single retry)
-                        inline_audit_action = 'rewrite'
-                        logger.info(f"Quality gate: rewriting (score={inline_audit_score}, improvement={_audit_result.get('improvement', '')[:100]})")
-                        _retry_prompt = enriched_prompt + (
-                            f"\n\n[QUALITY IMPROVEMENT: Your previous answer scored {inline_audit_score}/100. "
-                            f"Issue: {_audit_result.get('improvement', 'Answer was vague or incomplete')}. "
-                            f"Rewrite your answer to directly address the user's question with specific data.]"
-                        )
-                        # Cap retry prompt
-                        if len(_retry_prompt) > 3500:
-                            _retry_prompt = _retry_prompt[:3500]
-                        _retry_answer = None
-                        _retry_guiding_qs = _audit_result.get('guiding_questions', [])
-                        try:
-                            _retry_answer = _invoke_agent_with_retry(
-                                agent_runtime,
-                                agentId=BEDROCK_AGENT_ID,
-                                agentAliasId=BEDROCK_AGENT_ALIAS_ID,
-                                sessionId=re.sub(r'[^0-9a-zA-Z._:-]', '_', f'{member_email}-{account_id}-{interaction_id}-retry')[:100],
-                                inputText=_retry_prompt,
-                                enableTrace=False,
-                            )
-                        except Exception as _retry_err:
-                            logger.warning(f"Quality gate retry failed: {_retry_err}")
-
-                        # Re-score the rewritten answer (or fall through to clarification)
-                        if _retry_answer and len(_retry_answer) > 20:
-                            try:
-                                _rescore_result = _inline_audit_score(question, _retry_answer)
-                                _rescore_score = _rescore_result.get('score', 0)
-                                logger.info(f"Quality gate re-score: {_rescore_score} (threshold={_gate_threshold})")
-                                if _rescore_score >= _gate_threshold:
-                                    # Rewrite passed on second scoring - deliver it
-                                    answer = _retry_answer
-                                    inline_audit_score = _rescore_score
-                                    inline_audit_action = 'rewrite_accepted'
-                                else:
-                                    # Rewrite still fails - use guiding questions from second audit
-                                    inline_audit_action = 'rewrite_clarify'
-                                    _retry_guiding_qs = _rescore_result.get('guiding_questions', _retry_guiding_qs)
-                                    if not _retry_guiding_qs:
-                                        # Generate user-friendly questions (never expose raw technical hints)
-                                        _retry_guiding_qs = [
-                                            'Could you tell me more about what specific information you need?',
-                                            'Are there particular servers or services you want me to focus on?',
-                                        ]
-                            except Exception as _rescore_err:
-                                logger.warning(f"Quality gate re-score failed: {_rescore_err}")
-                                inline_audit_action = 'rewrite_clarify'
-                        else:
-                            # Retry produced empty/short answer - ask for clarification
-                            inline_audit_action = 'rewrite_clarify'
-                            if not _retry_guiding_qs:
-                                _retry_guiding_qs = [
-                                    'Could you rephrase your question or provide more detail about what you need?',
-                                    'Are there specific servers or services you want me to analyze?',
-                                ]
-
-                        # If rewrite still failed scoring, ask the user a clarifying question
-                        if inline_audit_action == 'rewrite_clarify':
-                            logger.info(f"Quality gate: asking clarification (score={inline_audit_score}, guiding_qs={_retry_guiding_qs[:1]})")
-                            return create_response(200, {
-                                'answer': 'I need a bit more detail to give you an accurate answer.',
-                                'needsClarification': True,
-                                'guidingQuestions': _retry_guiding_qs[:3],
-                                'interactionId': interaction_id,
-                                'commands': [],
-                                'results': [],
-                                'tipFound': False,
-                                'agentUsed': True,
-                                'inlineAuditScore': inline_audit_score,
-                                'inlineAuditAction': 'rewrite_clarify',
-                                'followUpQuestions': [],
-                                'dataSources': [],
-                                'chartData': [],
-                            })
-                    else:
-                        # Option 3: can_improve=false — system lacks data to answer.
-                        # Don't block with generic clarification. Pass through the Agent's
-                        # actual answer (which explains the issue) and let background audit handle it.
-                        inline_audit_action = 'clarify'
-                        logger.info(f"Quality gate: passing through (can_improve=false, score={inline_audit_score})")
-                        # Fall through to deliver the Agent's answer as-is
-            except Exception as _gate_err:
-                logger.warning(f"Inline audit gate failed (passing through): {_gate_err}")
-                inline_audit_score = None
-                inline_audit_action = 'error'
 
         # Build structured trace â€” errors here are non-fatal
         inference_trace = None
@@ -10709,7 +10597,7 @@ def _get_account_provider(member_email, account_id):
         )
         item = resp.get('Item', {})
         provider = item.get('cloudProvider', '').strip().lower()
-        return provider if provider in ('aws', 'azure', 'gcp', 'openai', 'groundcover') else 'aws'
+        return provider if provider in ('aws', 'azure', 'gcp', 'openai', 'groundcover') else 'unknown'
     except Exception as e:
         logger.warning(f"Failed to get provider for account {account_id}: {e}")
         # Fallback: detect from accountId prefix
@@ -10717,7 +10605,7 @@ def _get_account_provider(member_email, account_id):
             return 'openai'
         if account_id and account_id.startswith('groundcover-'):
             return 'groundcover'
-        return 'aws'
+        return 'unknown'
 
 
 def _gather_account_data(question, credentials, tag_key=None, tag_value=None, member_email=None, account_id=None, intent=None):
