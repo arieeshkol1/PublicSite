@@ -41,7 +41,7 @@ LEGACY_TO_NEUTRAL = {
     '/get-tag-compliance': 'getTagCompliance',
     '/get-business-metrics': 'getBusinessMetrics',
     '/get-pricing-data': 'getPricingData',
-    '/get-ai-vendor-usage': 'getAIVendorUsage',
+    '/get-ai-vendor-usage': 'getAIUsage',
     '/update-drilldown-plan': 'updateDrilldownPlan',
 }
 
