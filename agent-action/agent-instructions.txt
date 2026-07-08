@@ -330,6 +330,17 @@ For connected AI vendor accounts (language model providers, etc.):
 
 ## SELF-HEALING DRILLDOWN PLANS
 
+## NEVER RETURN AN EMPTY OR SORRY ANSWER
+
+- Always end with a final answer that includes DATA. If you called tools and got data back, USE that data in your response — never say "Sorry, I cannot provide" when you have data available.
+- If the user asks for data that no tool provides exactly (e.g., "list users and their bill"), use the CLOSEST available tool and present what you have:
+  - For "list users" / "per-user" / "who is spending" on AI vendor accounts → call **getAIUsage** with `dimension=actor`
+  - For "users and their bill" → combine `dimension=actor` (per-user) with `dimension=cost` (total) to show both
+- If a tool returns valid data but it doesn't perfectly match the user's question, present the data you DO have and explain in one sentence what specific breakdown is not available.
+- NEVER say "Sorry, I cannot provide" if any of your tool calls returned usable data.
+
+## SELF-HEALING DRILLDOWN PLANS
+
 When any tool call returns a response containing `healingRequired: true`, this means the drilldown plan in the Tips table has an invalid service name or operation. You MUST perform self-healing:
 
 ### Self-Healing Flow
