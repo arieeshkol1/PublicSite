@@ -110,7 +110,19 @@ def _execute_tool(tool_name: str, account_id: str, member_email: str, parameters
         }
 
     # Route through provider_router (resolves provider, dispatches to connector)
-    return provider_router.route_tool(tool_name, account_id, member_email, parameters)
+    result = provider_router.route_tool(tool_name, account_id, member_email, parameters)
+
+    # Fallback: if tool returns notSupported with available alternatives, retry once
+    if isinstance(result, dict) and result.get('notSupported') is True:
+        available_ops = result.get('availableOperations', [])
+        if available_ops:
+            fallback_tool = available_ops[0]
+            logger.warning(f"Tool fallback: {tool_name} -> {fallback_tool} for account {account_id}")
+            result = provider_router.route_tool(fallback_tool, account_id, member_email, parameters)
+        else:
+            logger.warning(f"Tool {tool_name} not supported for account {account_id}, no alternatives available")
+
+    return result
 
 
 def _handle_knowledge_tool(tool_name: str, parameters: dict) -> dict:
