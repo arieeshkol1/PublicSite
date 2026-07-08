@@ -21,12 +21,12 @@ Fix two related bugs in the member portal Observe tab and AI agent tool routing:
     {
       "wave": 2,
       "tasks": ["3.1", "3.2", "3.3", "4.1", "4.2"],
-      "description": "Implement both fixes (UI single-select + agent fallback logic)"
+      "description": "Implement both fixes (UI single-select + agent fallback logic + legacy mapper)"
     },
     {
       "wave": 3,
       "tasks": ["3.4", "3.5", "4.3", "4.4"],
-      "description": "Verify exploration tests pass and preservation tests still pass"
+      "description": "Verify exploration tests now pass and preservation tests still pass"
     },
     {
       "wave": 4,
