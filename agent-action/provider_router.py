@@ -677,6 +677,38 @@ def route_tool(tool_name: str, account_id: str, member_email: str, params: dict)
             "guidance": "Check available tools in the Chat tab.",
         }
 
+    # For AI vendor providers (non-cloud), getCostBreakdown/getMonthlyTrend
+    # cannot fetch live data from the vendor API (agent-action doesn't have
+    # the vendor-specific connector). If the cache had data, it was already
+    # returned above. If not, trigger an async cache populate via member-handler
+    # and return a helpful message.
+    _ai_vendor_providers = {"openai", "groundcover", "anthropic"}
+    if provider in _ai_vendor_providers and tool_name in CACHEABLE_TOOLS and not stale_cache:
+        # Try to trigger cache populate via member-handler async invocation
+        try:
+            lambda_client = boto3.client("lambda")
+            lambda_client.invoke(
+                FunctionName="aws-bill-analyzer-member-api",
+                InvocationType="Event",  # async, don't wait
+                Payload=json.dumps({
+                    "_cache_refresh_ai": True,
+                    "member_email": member_email,
+                    "account_id": account_id,
+                    "provider": provider,
+                }).encode(),
+            )
+            logger.info(f"Triggered async AI cache refresh for {member_email}#{account_id}")
+        except Exception as e:
+            logger.warning(f"Failed to trigger async AI cache refresh: {e}")
+        return {
+            "totalCost30Days": 0,
+            "topServices": [],
+            "dailyCosts": [],
+            "period": "Data is being synced from your AI vendor",
+            "source": "pending",
+            "note": "Cost data for this AI vendor account is being refreshed. Please try again in a moment, or use the getAIUsage tool for detailed AI cost and usage data.",
+        }
+
     # Dispatch to the connector method
     method = getattr(connector, method_name, None)
     if not method:
@@ -739,5 +771,6 @@ def route_tool(tool_name: str, account_id: str, member_email: str, params: dict)
             "guidance": "Try again in a moment. If the issue persists, check your account connection in the Configure tab.",
         }
 # Deploy trigger
+# Force redeploy: 2026-07-08T13:15
 
 
