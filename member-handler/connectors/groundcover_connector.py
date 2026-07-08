@@ -188,7 +188,15 @@ class GroundcoverConnector(ProviderConnector):
                         logger.warning(f"GroundCover Prometheus query failed: {raw.get('error', 'unknown')}")
                         return []
                     return raw.get('data', {}).get('result', [])
-                except (urllib.error.HTTPError, urllib.error.URLError, OSError) as e:
+                except urllib.error.HTTPError as e:
+                    if e.code in (401, 403):
+                        raise PermissionError(
+                            f"GroundCover API authentication failed (HTTP {e.code}). "
+                            "Check your API token in the Configure tab."
+                        )
+                    logger.warning(f"GroundCover Prometheus API call failed: {e}")
+                    return []
+                except (urllib.error.URLError, OSError) as e:
                     logger.warning(f"GroundCover Prometheus API call failed: {e}")
                     return []
                 except Exception as e:
@@ -250,6 +258,8 @@ class GroundcoverConnector(ProviderConnector):
             logger.info(f"GroundCover: fetched {len(buckets)} daily buckets with {len(model_data)} models")
             return buckets
 
+        except PermissionError:
+            raise  # Let auth errors propagate to the resolver
         except Exception as e:
             logger.warning(f"GroundCover get_cost_data failed: {type(e).__name__}: {e}")
             return []
