@@ -675,35 +675,36 @@ def route_tool(tool_name: str, account_id: str, member_email: str, params: dict)
                     cached_data['totalCost30Days'] = round(sum(s['cost'] for s in filtered), 2)
                     cached_data['serviceFilter'] = service_filter
 
-                    # Check Tips table for drilldown plan for this service.
-                    # If no drilldownApis exist, signal healingRequired so the
-                    # agent's self-healing flow researches and populates the plan.
+                    # Inline drilldown: when a serviceFilter is applied to cached data,
+                    # automatically fetch live usage-type breakdown from the connector.
+                    # This provides the granular data the user needs without relying on
+                    # the agent to call a separate tool or waiting for async healing.
                     matched_service = filtered[0].get('service', '')
                     if matched_service:
                         try:
-                            dynamodb = _get_dynamodb_resource()
-                            tips_table = dynamodb.Table(TIPS_TABLE_NAME)
-                            # Query tips for this service to find any with drilldownApis
-                            tips_resp = tips_table.query(
-                                KeyConditionExpression=Key('service').eq(matched_service),
-                                ProjectionExpression='tipId, drilldownApis',
-                                Limit=5,
-                            )
-                            tips_items = tips_resp.get('Items', [])
-                            has_drilldown = any(
-                                item.get('drilldownApis') for item in tips_items
-                            )
-                            if not has_drilldown:
-                                cached_data['healingRequired'] = True
-                                cached_data['tipId'] = f'drilldown-{matched_service.lower().replace(" ", "-")[:30]}'
-                                cached_data['service'] = matched_service
-                                cached_data['error'] = (
-                                    f'No usage-type drilldown plan configured for {matched_service}. '
-                                    f'Self-healing: research the pricing model and usage types, '
-                                    f'then call updateDrilldownPlan to populate drilldownApis.'
-                                )
+                            drilldown_params = dict(params)
+                            drilldown_params['usageTypeBreakdown'] = 'true'
+                            drilldown_params['serviceFilter'] = matched_service
+                            method_name = TOOL_TO_METHOD.get(tool_name)
+                            if method_name:
+                                drilldown_method = getattr(connector, method_name, None)
+                                if drilldown_method:
+                                    live_result = drilldown_method(account_id, member_email, drilldown_params)
+                                    if live_result and 'error' not in live_result:
+                                        # Merge live usage-type breakdown into cached response
+                                        if live_result.get('usageTypeBreakdown'):
+                                            cached_data['usageTypeBreakdown'] = live_result['usageTypeBreakdown']
+                                        # Also update MTD data if available from live
+                                        if live_result.get('currentMonthMTD'):
+                                            cached_data['currentMonthMTD'] = live_result['currentMonthMTD']
+                                        if live_result.get('currentMonthServices'):
+                                            cached_data['currentMonthServices'] = live_result['currentMonthServices']
+                                        if live_result.get('currentMonthPeriod'):
+                                            cached_data['currentMonthPeriod'] = live_result['currentMonthPeriod']
+                                    else:
+                                        logger.warning(f"Live drilldown failed for {matched_service}: {live_result.get('error', 'unknown')}")
                         except Exception as e:
-                            logger.warning(f"Tips drilldown check failed (non-fatal): {e}")
+                            logger.warning(f"Inline drilldown fetch failed (non-fatal): {e}")
 
             return cached_data
         # Keep stale data as fallback in case connector fails
@@ -813,6 +814,6 @@ def route_tool(tool_name: str, account_id: str, member_email: str, params: dict)
             "guidance": "Try again in a moment. If the issue persists, check your account connection in the Configure tab.",
         }
 # Deploy trigger
-# Force redeploy: 2026-07-08T13:15
+# Force redeploy: 2026-07-09T10:00 — inline drilldown (bypass healingRequired)
 
 
