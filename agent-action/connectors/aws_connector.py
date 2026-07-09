@@ -19,7 +19,6 @@ import boto3
 from botocore.exceptions import ClientError
 
 from . import CloudConnector
-from provider_router import _substitute_placeholders
 
 logger = logging.getLogger(__name__)
 
@@ -223,6 +222,18 @@ class AWSConnector(CloudConnector):
             # fetch granular usage type data (e.g., FaceSearchImageCount, LabelDetection)
             usage_type_breakdown = params.get('usageTypeBreakdown', '')
             service_filter = params.get('serviceFilter', '')
+
+            # Filter topServices when serviceFilter is provided (even without usageTypeBreakdown)
+            if service_filter:
+                filtered_services = [
+                    s for s in services
+                    if service_filter.lower() in s['service'].lower()
+                ]
+                if filtered_services:
+                    result['topServices'] = filtered_services
+                    result['totalCost30Days'] = round(sum(s['cost'] for s in filtered_services), 2)
+                    result['serviceFilter'] = service_filter
+
             if usage_type_breakdown in ('true', 'True', '1', True) and service_filter:
                 try:
                     time_period = {'Start': start_date, 'End': end_date}
@@ -1255,6 +1266,8 @@ class AWSConnector(CloudConnector):
         """
         credentials = self._assume_role(account_id, member_email)
         results = []
+
+        from provider_router import _substitute_placeholders
 
         for i, step in enumerate(plan):
             svc = step.get('service')
