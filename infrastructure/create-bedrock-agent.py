@@ -12,7 +12,7 @@ import time
 REGION = 'us-east-1'
 ACCOUNT_ID = '991105135552'
 AGENT_NAME = 'SlashMyBill-FinOps-Agent'
-MODEL_ID = 'amazon.nova-lite-v1:0'
+MODEL_ID = 'us.anthropic.claude-opus-4-0-20250514-v1:0'
 AGENT_ROLE_NAME = 'SlashMyBill-BedrockAgent-Role'
 
 bedrock_agent = boto3.client('bedrock-agent', region_name=REGION)
@@ -55,6 +55,7 @@ def create_agent_role():
                 "Resource": [
                     f"arn:aws:bedrock:{REGION}::foundation-model/{MODEL_ID}",
                     f"arn:aws:bedrock:{REGION}::foundation-model/amazon.nova-lite-v1:0",
+                    f"arn:aws:bedrock:{REGION}::foundation-model/us.anthropic.claude-opus-4-0-20250514-v1:0",
                 ]
             },
             {
