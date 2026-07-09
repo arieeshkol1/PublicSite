@@ -483,7 +483,7 @@ jobs:
           # Update audit-evaluator environment variable (model ID fix)
           aws lambda update-function-configuration \
             --function-name audit-evaluator \
-            --environment "Variables={TABLE_NAME=Audit_Transaction_Log,BEDROCK_MODEL_ID=us.anthropic.claude-opus-4-0-20250514-v1:0,ANSWER_HEALER_FUNCTION_NAME=slashmybill-answer-healer,AUDIT_QUALITY_THRESHOLD=70}" > /dev/null 2>&1 || true
+            --environment "Variables={TABLE_NAME=Audit_Transaction_Log,BEDROCK_MODEL_ID=us.anthropic.claude-opus-4-8-20250501-v1:0,ANSWER_HEALER_FUNCTION_NAME=slashmybill-answer-healer,AUDIT_QUALITY_THRESHOLD=70}" > /dev/null 2>&1 || true
           echo "✓ Lambda functions updated"
 
       - name: Update Bedrock Agent Instructions
@@ -682,7 +682,7 @@ jobs:
               --role "arn:aws:iam::${ACCOUNT_ID}:role/${ROLE_NAME}" \
               --timeout 60 \
               --memory-size 256 \
-              --environment "Variables={TABLE_NAME=Audit_Transaction_Log,BEDROCK_MODEL_ID=us.anthropic.claude-opus-4-0-20250514-v1:0,ANSWER_HEALER_FUNCTION_NAME=slashmybill-answer-healer,AUDIT_QUALITY_THRESHOLD=70}" \
+              --environment "Variables={TABLE_NAME=Audit_Transaction_Log,BEDROCK_MODEL_ID=us.anthropic.claude-opus-4-8-20250501-v1:0,ANSWER_HEALER_FUNCTION_NAME=slashmybill-answer-healer,AUDIT_QUALITY_THRESHOLD=70}" \
               --zip-file fileb://audit-evaluator-lambda.zip \
               --tags Project=ViewMyBill > /dev/null
             echo "✓ $FUNCTION_NAME Lambda created"

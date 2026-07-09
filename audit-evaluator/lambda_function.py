@@ -19,7 +19,7 @@ logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
 TABLE_NAME = os.environ.get('TABLE_NAME', 'Audit_Transaction_Log')
-BEDROCK_MODEL_ID = os.environ.get('BEDROCK_MODEL_ID', 'us.anthropic.claude-opus-4-0-20250514-v1:0')
+BEDROCK_MODEL_ID = os.environ.get('BEDROCK_MODEL_ID', 'us.anthropic.claude-opus-4-8-20250501-v1:0')
 
 MAX_RETRIES = 3
 BACKOFF_BASE = 2  # seconds
