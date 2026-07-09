@@ -19,7 +19,7 @@ logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
 TABLE_NAME = os.environ.get('TABLE_NAME', 'Audit_Transaction_Log')
-BEDROCK_MODEL_ID = os.environ.get('BEDROCK_MODEL_ID', 'us.amazon.nova-2-lite-v1:0')
+BEDROCK_MODEL_ID = os.environ.get('BEDROCK_MODEL_ID', 'us.anthropic.claude-opus-4-0-20250514-v1:0')
 
 MAX_RETRIES = 3
 BACKOFF_BASE = 2  # seconds
@@ -419,6 +419,7 @@ CRITICAL EVALUATION RULES:
 14. ZERO-ACTIVITY RESOURCES: When a user asks to list resources (Lambda functions, EC2 instances, etc.) and the response shows all resources with zero activity/cost — that IS a correct answer if the data was fetched from the actual account. Do NOT penalize for "not providing a breakdown" when there is genuinely nothing to break down. A table of functions with 0 invocations and $0.00 cost is the truthful answer. Score 75+ for correct data presentation even when all values are zero.
 15. COST BREAKDOWN COMPLETENESS: When a user explicitly asks for COST or COST BREAKDOWN (words like "cost", "how much", "pricing", "spend", "charges") and the response lists resources WITHOUT any dollar amounts or cost figures — score BELOW 60. Listing resource names without cost data does NOT answer a cost question. The response must include specific dollar amounts per resource or a clear statement that per-resource cost data is unavailable. If the tool only returned inventory data without costs, the agent should acknowledge the limitation rather than presenting a list as if it answers the cost question.
 16. GENERIC PRICING vs ACCOUNT-SPECIFIC SPEND: When a user asks "what do I pay for" or "break down my [service] cost" and the response provides GENERIC pricing tiers or rate cards (e.g., "$0.001 per image", "$0.023/GB/month") instead of the user's ACTUAL spend amount from their account — score BELOW 50. The user is asking about THEIR bill, not a pricing catalog. The correct approach is to use getCostData to fetch the user's actual spend, THEN explain what generates that cost. A response that only shows pricing rates without the user's total spend fails to answer the question.
+17. DRILL-DOWN QUALITY (SERVICE EXPLANATION): When a user asks to "explain", "break down", or "drill down" into a specific service's cost and the answer ONLY lists the dollar amounts or daily costs WITHOUT explaining (a) the service's pricing model (per-request, per-hour, per-GB, etc.), (b) the implied usage quantity (total_cost / unit_price = volume), and (c) what generates that usage — score BELOW 65. A good drill-down answer must show the MATH (e.g., "$135.91 / $0.01 per request = ~13,591 API requests"). Simply restating the numbers from the tool response without interpretation is a shallow data dump, not an explanation. The answer must make the cost TANGIBLE by converting dollars into concrete actions or resources. If the answer also includes irrelevant data (daily costs the user didn't ask for, forecast hints, internal metadata), penalize further.
 """
 
     # Append trace-based scoring if inference_trace is present

@@ -39,7 +39,7 @@ REGION           = os.environ.get('AWS_REGION', 'us-east-1')
 HEAL_THRESHOLD   = int(os.environ.get('AUDIT_QUALITY_THRESHOLD', '70'))
 
 # Claude model for highest-quality research and tip generation
-CLAUDE_MODEL_ID  = os.environ.get('CLAUDE_MODEL_ID', 'us.anthropic.claude-sonnet-4-20250514-v1:0')
+CLAUDE_MODEL_ID  = os.environ.get('CLAUDE_MODEL_ID', 'us.anthropic.claude-opus-4-0-20250514-v1:0')
 # Nova for fast scoring
 NOVA_MODEL_ID    = os.environ.get('BEDROCK_MODEL_ID', 'us.amazon.nova-2-lite-v1:0')
 
@@ -117,13 +117,21 @@ def _identify_gap(question: str, answer: str, improvement: str) -> str:
     try:
         prompt = (
             "You are a FinOps knowledge-base analyst. A chat answer scored poorly. "
-            "Identify what specific knowledge or data was MISSING that caused the low score. "
-            "Return a concise paragraph describing the knowledge gap.\n\n"
+            "Identify what specific knowledge or data was MISSING that caused the low score.\n\n"
+            "COMMON GAP PATTERNS (check for these first):\n"
+            "- SHALLOW DATA DUMP: The answer lists dollar amounts from tool output but does NOT explain "
+            "the pricing model (per-request, per-hour, per-GB), does NOT calculate implied usage "
+            "(total / unit_price = volume), and does NOT explain what generates the charges. "
+            "A good answer must convert costs into tangible actions (e.g., '$135 / $0.01 = 13,500 API requests').\n"
+            "- MISSING DRILL-DOWN: The user asked 'explain' or 'break down' but got only a top-level summary "
+            "without sub-service or usage-type detail.\n"
+            "- IRRELEVANT DATA INCLUDED: Daily costs or forecast hints shown when not requested.\n\n"
+            "Return a concise paragraph describing the knowledge gap and what the correct answer structure should include.\n\n"
             f"QUESTION: {question[:500]}\n"
             f"ANSWER GIVEN: {answer[:800]}\n"
             f"AUDIT FEEDBACK: {improvement[:500]}\n"
         )
-        return _call_claude(prompt, max_tokens=300)
+        return _call_claude(prompt, max_tokens=400)
     except Exception as e:
         logger.warning(f'Gap analysis failed: {e}')
         return improvement or question
@@ -209,7 +217,11 @@ def _generate_tip_with_claude(question: str, gap: str, research: str, provider: 
             "Rules:\n"
             "- service: the specific cloud service or AI model name\n"
             "- Include specific pricing or configuration facts from the research\n"
-            "- drilldownInstructions: actionable steps a user can take\n"
+            "- description MUST include: (1) the pricing model (per-request/per-hour/per-GB), "
+            "(2) the unit price, (3) the formula: total_cost / unit_price = implied_volume, "
+            "(4) what actions/resources generate that usage\n"
+            "- drilldownInstructions: actionable steps to investigate and reduce the cost\n"
+            "- drilldownApis: relevant AWS API calls for investigation (boto3 format)\n"
             "- Return ONLY the JSON object, no markdown fences\n\n"
             f"ORIGINAL QUESTION: {question[:300]}\n"
             f"KNOWLEDGE GAP: {gap[:300]}\n"
