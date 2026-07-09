@@ -674,6 +674,37 @@ def route_tool(tool_name: str, account_id: str, member_email: str, params: dict)
                     cached_data['topServices'] = filtered
                     cached_data['totalCost30Days'] = round(sum(s['cost'] for s in filtered), 2)
                     cached_data['serviceFilter'] = service_filter
+
+                    # Check Tips table for drilldown plan for this service.
+                    # If no drilldownApis exist, signal healingRequired so the
+                    # agent's self-healing flow researches and populates the plan.
+                    matched_service = filtered[0].get('service', '')
+                    if matched_service:
+                        try:
+                            dynamodb = _get_dynamodb_resource()
+                            tips_table = dynamodb.Table(TIPS_TABLE_NAME)
+                            # Query tips for this service to find any with drilldownApis
+                            tips_resp = tips_table.query(
+                                KeyConditionExpression=Key('service').eq(matched_service),
+                                ProjectionExpression='tipId, drilldownApis',
+                                Limit=5,
+                            )
+                            tips_items = tips_resp.get('Items', [])
+                            has_drilldown = any(
+                                item.get('drilldownApis') for item in tips_items
+                            )
+                            if not has_drilldown:
+                                cached_data['healingRequired'] = True
+                                cached_data['tipId'] = f'drilldown-{matched_service.lower().replace(" ", "-")[:30]}'
+                                cached_data['service'] = matched_service
+                                cached_data['error'] = (
+                                    f'No usage-type drilldown plan configured for {matched_service}. '
+                                    f'Self-healing: research the pricing model and usage types, '
+                                    f'then call updateDrilldownPlan to populate drilldownApis.'
+                                )
+                        except Exception as e:
+                            logger.warning(f"Tips drilldown check failed (non-fatal): {e}")
+
             return cached_data
         # Keep stale data as fallback in case connector fails
         stale_cache = cached_data if cached_data and not is_fresh else None
