@@ -3401,10 +3401,9 @@ function populateDashAccounts() {
     toggleBtn.className = 'btn btn-outline btn-sm';
     toggleBtn.style.cssText = 'font-size:0.85em;padding:4px 12px;min-width:180px;text-align:left;';
     function updateLabel() {
-        var checked = el.querySelectorAll('.dash-acct-cb:checked');
-        if (checked.length === 0) toggleBtn.textContent = 'Select accounts...';
-        else if (checked.length === 1) toggleBtn.textContent = checked[0].parentElement.dataset.label || checked[0].value;
-        else toggleBtn.textContent = checked.length + ' accounts selected';
+        var checked = el.querySelector('.dash-acct-cb:checked');
+        if (!checked) toggleBtn.textContent = 'Select account...';
+        else toggleBtn.textContent = checked.parentElement.dataset.label || checked.value;
         toggleBtn.textContent += ' \u25be';
     }
 
@@ -3418,25 +3417,14 @@ function populateDashAccounts() {
         row.onmouseenter = function() { row.style.background = '#f6f8fa'; };
         row.onmouseleave = function() { row.style.background = ''; };
         var cb = document.createElement('input');
-        cb.type = 'checkbox'; cb.value = a.accountId; cb.className = 'dash-acct-cb';
-        cb.checked = true; // All accounts selected by default for dashboard
+        cb.type = 'radio'; cb.name = 'dash-acct-radio'; cb.value = a.accountId; cb.className = 'dash-acct-cb';
+        cb.checked = (idx === 0); // Only first account selected by default
         cb.style.cssText = 'accent-color:#6366f1;flex-shrink:0;';
-        cb.onchange = function() { updateLabel(); dashDataCache = null; loadDashboardData(); };
+        cb.onchange = function() { updateLabel(); dashDataCache = null; loadDashboardData(); panel.style.display = 'none'; };
         row.appendChild(cb);
         row.appendChild(document.createTextNode(a.accountId + ' (' + (a.accountName || 'Account ' + a.accountId.slice(-4)) + ')'));
         panel.appendChild(row);
     });
-
-    var ctrlRow = document.createElement('div');
-    ctrlRow.style.cssText = 'display:flex;gap:8px;padding:6px 12px;border-top:1px solid #d0d7de;margin-top:4px;';
-    var selAll = document.createElement('a');
-    selAll.href = '#'; selAll.textContent = 'Select All'; selAll.style.cssText = 'font-size:0.8em;color:#6366f1;text-decoration:none;';
-    selAll.onclick = function(e) { e.preventDefault(); panel.querySelectorAll('.dash-acct-cb').forEach(function(c) { c.checked = true; }); updateLabel(); dashDataCache = null; loadDashboardData(); };
-    var selNone = document.createElement('a');
-    selNone.href = '#'; selNone.textContent = 'Clear'; selNone.style.cssText = 'font-size:0.8em;color:#6366f1;text-decoration:none;';
-    selNone.onclick = function(e) { e.preventDefault(); panel.querySelectorAll('.dash-acct-cb').forEach(function(c) { c.checked = false; }); updateLabel(); };
-    ctrlRow.appendChild(selAll); ctrlRow.appendChild(selNone);
-    panel.appendChild(ctrlRow);
 
     var wrapper = document.createElement('div');
     wrapper.style.cssText = 'position:relative;display:inline-block;';
@@ -3449,8 +3437,8 @@ function populateDashAccounts() {
 }
 
 function getDashSelectedAccountIds() {
-    var cbs = document.querySelectorAll('.dash-acct-cb:checked');
-    var ids = []; cbs.forEach(function(cb) { ids.push(cb.value); }); return ids;
+    var selected = document.querySelector('.dash-acct-cb:checked');
+    return selected ? [selected.value] : [];
 }
 
 async function loadDashboardData() {
