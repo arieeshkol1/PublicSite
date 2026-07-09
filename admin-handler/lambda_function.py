@@ -782,6 +782,7 @@ def handle_get_transactions(event):
     user_email = params.get('user_email', '').strip()
     function_name = params.get('function_name', '').strip()
     status_filter = params.get('status', '').strip()
+    source_handler_filter = params.get('source_handler', '').strip()
     score_min = params.get('score_min', '').strip()
     score_max = params.get('score_max', '').strip()
     date_from = params.get('date_from', '').strip()
@@ -845,11 +846,24 @@ def handle_get_transactions(event):
             items = _query_all_pages(table, query_kwargs)
 
         else:
-            # Full table scan
-            items = _scan_all_pages(table)
+            # Full table scan — include payloads when search is active so text
+            # search can match account IDs and other request content.
+            # Default to last 7 days when no date filter is specified to ensure
+            # recent entries are always visible (avoids arbitrary scan ordering).
+            from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+            effective_date_from = date_from or None
+            if not date_from and not date_to and not search:
+                effective_date_from = (_dt.now(_tz.utc) - _td(days=7)).isoformat()
+            items = _scan_all_pages(
+                table,
+                max_items=5000,
+                include_payloads=bool(search),
+                source_handler_filter=source_handler_filter or None,
+                date_from=effective_date_from,
+            )
 
         # Apply server-side filtering
-        filtered = _apply_filters(items, status_filter, score_min, score_max, date_from, date_to, search, user_email, function_name)
+        filtered = _apply_filters(items, status_filter, score_min, score_max, date_from, date_to, search, user_email, function_name, source_handler_filter=source_handler_filter or None)
 
         # Sort by start_timestamp descending
         filtered.sort(key=lambda x: x.get('start_timestamp', ''), reverse=True)
@@ -910,15 +924,37 @@ def _query_all_pages(table, query_kwargs):
     return items
 
 
-def _scan_all_pages(table, max_items=2000):
+def _scan_all_pages(table, max_items=2000, include_payloads=False, source_handler_filter=None, date_from=None):
     """Execute a DynamoDB scan with a cap to prevent Lambda timeout.
-    Excludes large payload fields to keep memory under control."""
+    Excludes large payload fields to keep memory under control unless search requires them.
+    When date_from is provided, only returns items with start_timestamp >= date_from."""
     items = []
-    # Project only summary fields — payloads excluded to avoid 6MB response limit
-    scan_kwargs = {
-        'ProjectionExpression': 'transaction_id, start_timestamp, end_timestamp, function_name, #s, user_email, source_handler, duration_ms, audit_status, audit_score, audit_accuracy_assessment, audit_timing_assessment, audit_improvement_suggestions',
-        'ExpressionAttributeNames': {'#s': 'status'},
-    }
+    if include_payloads:
+        # Include request_payload for text search (but still exclude response_payload to save memory)
+        scan_kwargs = {
+            'ProjectionExpression': 'transaction_id, start_timestamp, end_timestamp, function_name, #s, user_email, source_handler, duration_ms, audit_status, audit_score, audit_accuracy_assessment, audit_timing_assessment, audit_improvement_suggestions, request_payload',
+            'ExpressionAttributeNames': {'#s': 'status'},
+        }
+    else:
+        # Project only summary fields — payloads excluded to avoid 6MB response limit
+        scan_kwargs = {
+            'ProjectionExpression': 'transaction_id, start_timestamp, end_timestamp, function_name, #s, user_email, source_handler, duration_ms, audit_status, audit_score, audit_accuracy_assessment, audit_timing_assessment, audit_improvement_suggestions',
+            'ExpressionAttributeNames': {'#s': 'status'},
+        }
+
+    # Build FilterExpression combining all applicable filters
+    filter_conditions = []
+    if source_handler_filter:
+        filter_conditions.append(Attr('source_handler').eq(source_handler_filter))
+    if date_from:
+        filter_conditions.append(Attr('start_timestamp').gte(date_from))
+
+    if filter_conditions:
+        combined = filter_conditions[0]
+        for cond in filter_conditions[1:]:
+            combined = combined & cond
+        scan_kwargs['FilterExpression'] = combined
+
     response = table.scan(**scan_kwargs)
     items.extend(response.get('Items', []))
     while 'LastEvaluatedKey' in response and len(items) < max_items:
@@ -928,8 +964,8 @@ def _scan_all_pages(table, max_items=2000):
     return items
 
 
-def _apply_filters(items, status_filter, score_min, score_max, date_from, date_to, search, user_email_used, function_name_used):
-    """Apply server-side filtering for status, score range, date range, and text search."""
+def _apply_filters(items, status_filter, score_min, score_max, date_from, date_to, search, user_email_used, function_name_used, source_handler_filter=None):
+    """Apply server-side filtering for status, score range, date range, source handler, and text search."""
     filtered = []
 
     # Parse score range
@@ -947,6 +983,10 @@ def _apply_filters(items, status_filter, score_min, score_max, date_from, date_t
             pass
 
     for item in items:
+        # Source handler filter (when querying via GSI, DynamoDB filter isn't applied)
+        if source_handler_filter and item.get('source_handler', '') != source_handler_filter:
+            continue
+
         # Status filter
         if status_filter and item.get('status', '') != status_filter:
             continue
