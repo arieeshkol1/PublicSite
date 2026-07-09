@@ -241,6 +241,19 @@ class AWSConnector(CloudConnector):
                     if mtd_total > 0:
                         time_period = {'Start': first_of_this_month.strftime('%Y-%m-%d'), 'End': today}
 
+                    # Resolve the exact CE service name from filtered results.
+                    # The agent may pass a partial name like "Bedrock" but the CE
+                    # SERVICE dimension requires the exact name "Amazon Bedrock".
+                    exact_service_name = service_filter
+                    if filtered_services:
+                        exact_service_name = filtered_services[0]['service']
+                    elif services:
+                        # Fallback: search all services for partial match
+                        for s in services:
+                            if service_filter.lower() in s['service'].lower():
+                                exact_service_name = s['service']
+                                break
+
                     usage_resp = ce.get_cost_and_usage(
                         **_scope_ce({
                             'TimePeriod': time_period,
@@ -250,7 +263,7 @@ class AWSConnector(CloudConnector):
                             'Filter': {
                                 'Dimensions': {
                                     'Key': 'SERVICE',
-                                    'Values': [service_filter],
+                                    'Values': [exact_service_name],
                                 }
                             },
                         }, account_id)
