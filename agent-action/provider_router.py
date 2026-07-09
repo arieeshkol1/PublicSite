@@ -663,6 +663,17 @@ def route_tool(tool_name: str, account_id: str, member_email: str, params: dict)
             logger.info(
                 f"Cost cache hit for {member_email}#{account_id} ({tool_name})"
             )
+            # Apply serviceFilter to cached response if provided
+            service_filter = params.get('serviceFilter', '')
+            if service_filter and 'topServices' in cached_data:
+                filtered = [
+                    s for s in cached_data['topServices']
+                    if service_filter.lower() in s.get('service', '').lower()
+                ]
+                if filtered:
+                    cached_data['topServices'] = filtered
+                    cached_data['totalCost30Days'] = round(sum(s['cost'] for s in filtered), 2)
+                    cached_data['serviceFilter'] = service_filter
             return cached_data
         # Keep stale data as fallback in case connector fails
         stale_cache = cached_data if cached_data and not is_fresh else None
