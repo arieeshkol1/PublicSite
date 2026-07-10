@@ -62,6 +62,7 @@ dynamodb = boto3.resource('dynamodb')
 def lambda_handler(event, context):
     """Entry point — invoked asynchronously by audit-evaluator."""
     transaction_id  = event.get('transaction_id', '')
+    start_timestamp = event.get('start_timestamp', '')
     question        = (event.get('question') or '').strip()
     original_answer = (event.get('answer') or '').strip()
     improvement     = (event.get('improvement_suggestions') or '').strip()
@@ -94,7 +95,7 @@ def lambda_handler(event, context):
 
     # Step 6: Score and write back
     healed_score = _score(question, healed_answer)
-    _write_healed(transaction_id, healed_answer, healed_score, new_tip, tip_written)
+    _write_healed(transaction_id, start_timestamp, healed_answer, healed_score, new_tip, tip_written)
 
     logger.info(json.dumps({
         'action': 'investigator_complete',
@@ -347,9 +348,15 @@ def _score(question: str, answer: str) -> int:
         return 0
 
 
-def _write_healed(transaction_id: str, healed_answer: str, healed_score: int,
-                  tip: dict, tip_written: bool):
-    """Write healed results back to Audit_Transaction_Log."""
+def _write_healed(transaction_id: str, start_timestamp: str, healed_answer: str,
+                  healed_score: int, tip: dict, tip_written: bool):
+    """Write healed results back to Audit_Transaction_Log.
+    
+    Uses composite key (transaction_id + start_timestamp) as required by the table schema.
+    """
+    if not start_timestamp:
+        logger.warning(f'Cannot write healed results: missing start_timestamp for {transaction_id}')
+        return
     try:
         table = dynamodb.Table(AUDIT_TABLE_NAME)
         update_expr = 'SET healed_answer = :a, healed_score = :s, healed_at = :t, tip_corrected = :tc'
@@ -365,7 +372,7 @@ def _write_healed(transaction_id: str, healed_answer: str, healed_score: int,
             expr_values[':ti'] = f"investigator-{tip.get('provider','')}-{tip['service'].lower().replace(' ','-')[:30]}"
 
         table.update_item(
-            Key={'transaction_id': transaction_id},
+            Key={'transaction_id': transaction_id, 'start_timestamp': start_timestamp},
             UpdateExpression=update_expr,
             ExpressionAttributeValues=expr_values,
         )

@@ -617,6 +617,7 @@ def _maybe_trigger_healer(entry: dict, evaluation: dict):
 
     payload = {
         'transaction_id': entry.get('transaction_id', ''),
+        'start_timestamp': entry.get('start_timestamp', ''),
         'question':        question,
         'answer':          answer,
         'improvement_suggestions': evaluation.get('audit_improvement_suggestions') or '',

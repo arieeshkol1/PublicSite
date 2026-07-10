@@ -298,7 +298,7 @@ AI Answer (text) → Drill-down buttons → "Show as Table" buttons
 | SlashMyBill-AgentAction | 256 MB | 120s | Bedrock Agent actions |
 | slashmybill-scheduler-executor | 512 MB | 300s | Cross-account scheduled actions (stop/start/scale) |
 
-### 8.2 DynamoDB Tables (6)
+### 8.2 DynamoDB Tables (8)
 | Table | Partition Key | Sort Key | Purpose |
 |-------|--------------|----------|---------|
 | ViewMyBill-Leads | email | timestamp | Contact leads |
@@ -306,6 +306,9 @@ AI Answer (text) → Drill-down buttons → "Show as Table" buttons
 | ViewMyBill-OTP | email | — | OTP codes (TTL 5min) |
 | MemberPortal-Members | email | — | Member accounts |
 | MemberPortal-Accounts | memberEmail | accountId | Connected AWS accounts |
+| Audit_Transaction_Log | transaction_id | start_timestamp | AI query audit trail + evaluations + healed answers |
+| Cost_Cache_Table | pk (email#accountId) | sk (VENDOR#accountId#date) | Cached daily cost data from CE (avoids repeated API charges) |
+| SpotSavingsLedger | accountId | timestamp | Spot instance savings tracking |
 
 ### 8.3 Other Resources
 - API Gateway HTTP v2 (15+ routes, auto-deploy)
