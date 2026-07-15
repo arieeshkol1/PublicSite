@@ -77,7 +77,7 @@ PLATFORM_ACCOUNT_ID = os.environ.get('PLATFORM_ACCOUNT_ID', '991105135552')
 TIPS_TABLE_NAME = os.environ.get('TIPS_TABLE_NAME', 'ViewMyBill-CostOptimizationTips')
 SPOT_LEDGER_TABLE_NAME = os.environ.get('SPOT_LEDGER_TABLE_NAME', 'SpotSavingsLedger')
 SPOT_SNS_TOPIC_ARN = os.environ.get('SPOT_SNS_TOPIC_ARN', '')
-BEDROCK_MODEL_ID = os.environ.get('BEDROCK_MODEL_ID', 'us.amazon.nova-2-lite-v1:0')
+BEDROCK_MODEL_ID = os.environ.get('BEDROCK_MODEL_ID', 'us.anthropic.claude-opus-4-0-20250514-v1:0')
 BEDROCK_AGENT_ID = os.environ.get('BEDROCK_AGENT_ID', '')
 BEDROCK_AGENT_ALIAS_ID = os.environ.get('BEDROCK_AGENT_ALIAS_ID', '')
 FEEDBACK_TABLE_NAME = os.environ.get('FEEDBACK_TABLE_NAME', 'MemberPortal-AgentFeedback')
@@ -131,6 +131,10 @@ def lambda_handler(event, context):
     # -- Async cache refresh (fire-and-forget from dashboard) --
     if event.get('_cache_refresh'):
         return _execute_cache_refresh(event)
+
+    # -- Async AI vendor cache refresh (triggered by agent-action on cache miss) --
+    if event.get('_cache_refresh_ai'):
+        return _execute_ai_cache_refresh(event)
 
     # Ã¢â€â‚¬Ã¢â€â‚¬ SNS event detection (Spot interruption push pipeline) Ã¢â€â‚¬Ã¢â€â‚¬
     records = event.get('Records', [])
@@ -2789,6 +2793,7 @@ def handle_dashboard_data(event):
                             service_totals = {}
                             daily_cost_trend = []
                             monthly_trend_from_cache = {}
+                            monthly_cost_amount_totals = {}
                             _today_cache = datetime.now(timezone.utc).strftime('%Y-%m-%d')
                             _yesterday_cache = (datetime.now(timezone.utc) - timedelta(days=1)).strftime('%Y-%m-%d')
                             _30d_ago_cache = (datetime.now(timezone.utc) - timedelta(days=30)).strftime('%Y-%m-%d')
@@ -2802,6 +2807,7 @@ def handle_dashboard_data(event):
                                 month_key = date_str[:7]  # 'YYYY-MM'
                                 if month_key not in monthly_trend_from_cache:
                                     monthly_trend_from_cache[month_key] = {}
+                                monthly_cost_amount_totals[month_key] = monthly_cost_amount_totals.get(month_key, 0) + cost
                                 for svc, svc_cost in (item.get('service_breakdown') or {}).items():
                                     svc_cost_f = float(svc_cost)
                                     monthly_trend_from_cache[month_key][svc] = monthly_trend_from_cache[month_key].get(svc, 0) + svc_cost_f
@@ -2811,6 +2817,21 @@ def handle_dashboard_data(event):
                                 # Only include last 30 days in daily cost trend
                                 if date_str >= _30d_ago_cache:
                                     daily_cost_trend.append({'date': date_str, 'cost_usd': cost})
+                            # Integrity check: if service_breakdown monthly sum exceeds
+                            # cost_amount sum by >20%, data is corrupted. Scale down.
+                            for _mk in list(monthly_trend_from_cache.keys()):
+                                _svc_sum = sum(monthly_trend_from_cache[_mk].values())
+                                _cost_sum = monthly_cost_amount_totals.get(_mk, 0)
+                                if _cost_sum > 0 and _svc_sum > _cost_sum * 1.2:
+                                    _sf = _cost_sum / _svc_sum
+                                    monthly_trend_from_cache[_mk] = {s: round(v * _sf, 2) for s, v in monthly_trend_from_cache[_mk].items()}
+                            # Also fix service_totals (last 30 days)
+                            _30d_svc_sum = sum(service_totals.values())
+                            _30d_cost_sum = sum(d['cost_usd'] for d in daily_cost_trend)
+                            if _30d_cost_sum > 0 and _30d_svc_sum > _30d_cost_sum * 1.2:
+                                _sf2 = _30d_cost_sum / _30d_svc_sum
+                                service_totals = {s: v * _sf2 for s, v in service_totals.items()}
+
                             cost_by_service = sorted(
                                 [{'service': s, 'cost_usd': round(c, 2), 'period': 'last_30_days'} for s, c in service_totals.items()],
                                 key=lambda x: x['cost_usd'], reverse=True
@@ -6186,6 +6207,32 @@ def _execute_cache_refresh(event):
         return {'statusCode': 200, 'body': 'Cache refreshed'}
     except Exception as e:
         logger.error(f"Async cache refresh failed for {member_email}#{account_id}: {e}")
+        return {'statusCode': 500, 'body': str(e)}
+
+
+def _execute_ai_cache_refresh(event):
+    """Execute AI vendor cache refresh (triggered by agent-action on cache miss).
+
+    Runs the three-tier resolver for the specified AI vendor account, which
+    calls the vendor-specific connector (GroundCover Prometheus, OpenAI Usage API)
+    and writes neutral COST#/USAGE# items to Cost_Cache_Table.
+    """
+    member_email = event.get('member_email', '')
+    account_id = event.get('account_id', '')
+    provider = event.get('provider', '')
+
+    if not member_email or not account_id:
+        logger.error("AI cache refresh: missing member_email or account_id")
+        return {'statusCode': 400, 'body': 'Missing fields'}
+
+    logger.info(f"Async AI cache refresh starting for {member_email}#{account_id} (provider={provider})")
+
+    try:
+        _refresh_ai_usage_cache_for_account(member_email, account_id, provider or None)
+        logger.info(f"Async AI cache refresh completed for {member_email}#{account_id}")
+        return {'statusCode': 200, 'body': 'AI cache refreshed'}
+    except Exception as e:
+        logger.error(f"Async AI cache refresh failed for {member_email}#{account_id}: {e}")
         return {'statusCode': 500, 'body': str(e)}
 
 
