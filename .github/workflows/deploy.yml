@@ -635,6 +635,44 @@ jobs:
             --timeout 300 > /dev/null 2>&1 || true
           echo "✓ Member handler: 2048MB, 300s timeout"
 
+      - name: Ensure Custom Plan API routes exist
+        continue-on-error: true
+        run: |
+          API_ID="l2fd4h481h"
+          # Get MEMBER-HANDLER integration ID
+          MEMBER_INT=$(aws apigatewayv2 get-routes --api-id "$API_ID" --query "Items[?RouteKey=='POST /members/login'].Target" --output text 2>/dev/null | sed 's|integrations/||')
+          # Get ADMIN-HANDLER integration ID
+          ADMIN_INT=$(aws apigatewayv2 get-routes --api-id "$API_ID" --query "Items[?RouteKey=='GET /admin/leads'].Target" --output text 2>/dev/null | sed 's|integrations/||')
+          echo "Member integration: $MEMBER_INT, Admin integration: $ADMIN_INT"
+
+          # Helper to create route if missing
+          ensure_route() {
+            local route_key="$1" integration="$2"
+            EXISTING=$(aws apigatewayv2 get-routes --api-id "$API_ID" --query "Items[?RouteKey=='$route_key'].RouteId" --output text 2>/dev/null || echo "")
+            if [ -z "$EXISTING" ] || [ "$EXISTING" = "None" ]; then
+              aws apigatewayv2 create-route --api-id "$API_ID" --route-key "$route_key" --target "integrations/$integration" > /dev/null 2>&1 && echo "✓ $route_key created" || echo "⚠ $route_key failed"
+            else
+              echo "✓ $route_key exists"
+            fi
+          }
+
+          # Member-handler custom plan routes
+          if [ -n "$MEMBER_INT" ] && [ "$MEMBER_INT" != "None" ]; then
+            ensure_route "POST /members/custom-plan/calculate" "$MEMBER_INT"
+            ensure_route "POST /members/custom-plan/subscribe" "$MEMBER_INT"
+            ensure_route "GET /members/custom-plan/status" "$MEMBER_INT"
+            ensure_route "POST /members/custom-plan/renew" "$MEMBER_INT"
+            ensure_route "POST /members/custom-plan/webhook" "$MEMBER_INT"
+          fi
+
+          # Admin-handler custom plan routes
+          if [ -n "$ADMIN_INT" ] && [ "$ADMIN_INT" != "None" ]; then
+            ensure_route "GET /admin/custom-plans" "$ADMIN_INT"
+            ensure_route "GET /admin/custom-plans/config" "$ADMIN_INT"
+            ensure_route "PUT /admin/custom-plans/config" "$ADMIN_INT"
+          fi
+          echo "✓ Custom plan routes checked"
+
       - name: Ensure datasource API routes exist
         continue-on-error: true
         run: |
