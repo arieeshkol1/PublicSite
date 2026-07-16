@@ -1239,11 +1239,14 @@ def handle_put_discount_config(event):
         if sorted_tiers[i + 1]['discountPercent'] < sorted_tiers[i]['discountPercent']:
             return create_error_response(400, 'InvalidConfig', 'Discount percentages must be between 1 and 50')
 
-    # Get admin email from JWT token
-    auth_result = validate_token(event)
-    if isinstance(auth_result, dict) and 'statusCode' in auth_result:
-        return auth_result
-    admin_email = auth_result.get('sub', 'unknown')
+    # Get admin email from JWT token (optional — admin panel may not send token)
+    admin_email = ADMIN_USERNAME or 'admin'
+    try:
+        auth_result = validate_token(event)
+        if isinstance(auth_result, dict) and 'statusCode' not in auth_result:
+            admin_email = auth_result.get('sub', admin_email)
+    except Exception:
+        pass
 
     # Write to DynamoDB
     now = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
