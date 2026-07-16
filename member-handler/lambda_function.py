@@ -64,6 +64,11 @@ except ImportError:
             return fn
         return decorator
 
+try:
+    from discount_engine import calculate_discount
+except ImportError:
+    calculate_discount = None
+
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
@@ -87,6 +92,12 @@ SCHEDULER_EXECUTOR_ARN = os.environ.get('SCHEDULER_EXECUTOR_ARN', 'arn:aws:lambd
 SCHEDULER_ROLE_ARN = os.environ.get('SCHEDULER_ROLE_ARN', 'arn:aws:iam::991105135552:role/SlashMyBill-EventBridge-Scheduler-Role')
 INVOICES_TABLE_NAME = os.environ.get('INVOICES_TABLE_NAME', 'MemberPortal-Invoices')
 COST_CACHE_TABLE_NAME = os.environ.get('COST_CACHE_TABLE_NAME', 'Cost_Cache_Table')
+DISCOUNT_CONFIG_TABLE_NAME = os.environ.get('DISCOUNT_CONFIG_TABLE_NAME', 'CustomPlan-DiscountConfig')
+MEMBER_HANDLER_ARN = os.environ.get('MEMBER_HANDLER_ARN', 'arn:aws:lambda:us-east-1:991105135552:function:aws-bill-analyzer-member-api')
+PAYPAL_CLIENT_ID = os.environ.get('PAYPAL_CLIENT_ID', '')
+PAYPAL_CLIENT_SECRET = os.environ.get('PAYPAL_CLIENT_SECRET', '')
+PAYPAL_API_BASE = os.environ.get('PAYPAL_API_BASE', 'https://api-m.paypal.com')
+PAYPAL_WEBHOOK_ID = os.environ.get('PAYPAL_WEBHOOK_ID', '')
 
 
 # AWS clients
@@ -135,6 +146,10 @@ def lambda_handler(event, context):
     # -- Async AI vendor cache refresh (triggered by agent-action on cache miss) --
     if event.get('_cache_refresh_ai'):
         return _execute_ai_cache_refresh(event)
+
+    # -- Commitment expiry notification (scheduled by EventBridge Scheduler) --
+    if event.get('_commitmentNotification'):
+        return _handle_commitment_notification(event['_commitmentNotification'])
 
     # Ã¢â€â‚¬Ã¢â€â‚¬ SNS event detection (Spot interruption push pipeline) Ã¢â€â‚¬Ã¢â€â‚¬
     records = event.get('Records', [])
@@ -241,6 +256,11 @@ def lambda_handler(event, context):
         'POST /members/accounts/openai-usage': handle_openai_usage,
         'POST /members/accounts/add-groundcover': handle_add_groundcover,
         'POST /members/accounts/test-groundcover-connection': handle_test_groundcover_connection,
+        'POST /members/custom-plan/calculate': handle_custom_plan_calculate,
+        'POST /members/custom-plan/subscribe': handle_custom_plan_subscribe,
+        'GET /members/custom-plan/status': handle_custom_plan_status,
+        'POST /members/custom-plan/webhook': handle_paypal_webhook,
+        'POST /members/custom-plan/renew': handle_custom_plan_renew,
     }
 
     handler = routes.get(route_key)
@@ -796,23 +816,133 @@ TIER_ACCOUNT_LIMITS = {'free': 1, 'growth': 5, 'scale': 20}
 
 def _check_and_consume_credits(member_email: str, tier: str, cost: int) -> dict:
     """Check if member has enough tokens and consume them. Returns None if OK, or error response."""
-    max_tokens = AI_CREDITS.get(tier, 100)
-
     members_table = dynamodb.Table(MEMBERS_TABLE_NAME)
-    current_month = datetime.now(timezone.utc).strftime('%Y-%m')
+    now = datetime.now(timezone.utc)
+    current_month = now.strftime('%Y-%m')
+
+    # Lazy commitment expiry check for custom tier members
+    if tier == 'custom':
+        try:
+            member = members_table.get_item(Key={'email': member_email}).get('Item', {})
+            commitment_end = member.get('commitmentEndDate')
+            commitment_status = member.get('commitmentStatus', '')
+            now_iso = now.isoformat()
+
+            if commitment_end and now_iso >= commitment_end:
+                # Commitment has expired naturally — transition member to Scale tier
+                members_table.update_item(
+                    Key={'email': member_email},
+                    UpdateExpression=(
+                        'SET tier = :scale, commitmentStatus = :expired, updatedAt = :now '
+                        'REMOVE customTokenAllocation, customMonthlyPrice, '
+                        'commitmentStartDate, commitmentEndDate'
+                    ),
+                    ExpressionAttributeValues={
+                        ':scale': 'scale',
+                        ':expired': 'expired',
+                        ':now': now_iso,
+                    }
+                )
+                # Use Scale tier allocation (1500) going forward for this request
+                tier = 'scale'
+                max_tokens = AI_CREDITS.get('scale', 1500)
+                logger.info(f"Commitment expired for {member_email}, transitioned to scale tier")
+
+            elif commitment_status == 'grace_period':
+                # Payment failed — check if grace period deadline has passed
+                grace_deadline = member.get('commitmentGraceDeadline', '')
+                if grace_deadline and now_iso >= grace_deadline:
+                    # Grace period expired — revert to free tier, clear all commitment fields
+                    members_table.update_item(
+                        Key={'email': member_email},
+                        UpdateExpression=(
+                            'SET tier = :free, commitmentStatus = :expired, updatedAt = :now '
+                            'REMOVE customTokenAllocation, customMonthlyPrice, '
+                            'commitmentStartDate, commitmentEndDate, commitmentMonths, '
+                            'commitmentDiscountPercent, paypalCustomPlanSubId, '
+                            'commitmentGraceDeadline'
+                        ),
+                        ExpressionAttributeValues={
+                            ':free': 'free',
+                            ':expired': 'expired',
+                            ':now': now_iso,
+                        }
+                    )
+                    tier = 'free'
+                    max_tokens = AI_CREDITS.get('free', 100)
+                    logger.info(f"Grace period expired for {member_email}, reverted to free tier")
+                else:
+                    # Within 7-day grace window — allow continued access at custom tier
+                    max_tokens = int(member.get('customTokenAllocation', AI_CREDITS.get('scale', 1500)))
+                    logger.info(f"Member {member_email} in grace period, allowing custom tier access")
+
+            else:
+                # Active custom commitment — use member-specific token allocation
+                max_tokens = int(member.get('customTokenAllocation', AI_CREDITS.get('scale', 1500)))
+        except Exception as e:
+            logger.warning(f"Error checking commitment expiry for {member_email}: {e}")
+            max_tokens = AI_CREDITS.get('scale', 1500)
+            member = {}
+    else:
+        max_tokens = AI_CREDITS.get(tier, 100)
+        member = None  # will be fetched below
+
+    reset_period_key = current_month  # default; may be overridden for custom tier
+
     try:
-        member = members_table.get_item(Key={'email': member_email}).get('Item', {})
+        if member is None:
+            member = members_table.get_item(Key={'email': member_email}).get('Item', {})
         tokens_used = int(member.get('aiCreditsUsed', 0))
         tokens_month = member.get('aiCreditsMonth', '')
         bonus_tokens = int(member.get('bonusTokens', 0))
 
-        # Monthly reset: if stored month differs from current, reset used count
-        if tokens_month != current_month:
+        # Monthly reset logic
+        # For custom tier: reset on billing cycle anniversary (commitmentStartDate day-of-month)
+        # For other tiers: reset when calendar month changes
+        needs_reset = False
+        reset_period_key = current_month
+
+        if tier == 'custom':
+            commitment_start = member.get('commitmentStartDate', '')
+            if commitment_start:
+                try:
+                    start_date = datetime.fromisoformat(commitment_start.replace('Z', '+00:00'))
+                    billing_day = min(start_date.day, 28)  # Cap at 28 to avoid month-length issues
+                    # Determine the current billing period start date
+                    if now.day >= billing_day:
+                        billing_period_start = now.replace(day=billing_day, hour=0, minute=0, second=0, microsecond=0)
+                    else:
+                        # Billing period started in previous month
+                        if now.month == 1:
+                            billing_period_start = now.replace(year=now.year - 1, month=12, day=billing_day,
+                                                              hour=0, minute=0, second=0, microsecond=0)
+                        else:
+                            billing_period_start = now.replace(month=now.month - 1, day=billing_day,
+                                                              hour=0, minute=0, second=0, microsecond=0)
+                    reset_period_key = billing_period_start.strftime('%Y-%m-%d')
+                    if tokens_month != reset_period_key:
+                        needs_reset = True
+                except (ValueError, TypeError):
+                    # Fallback to calendar month if date parsing fails
+                    if tokens_month != current_month:
+                        needs_reset = True
+                        reset_period_key = current_month
+            else:
+                # No commitment start date, fall back to calendar month
+                if tokens_month != current_month:
+                    needs_reset = True
+                    reset_period_key = current_month
+        else:
+            if tokens_month != current_month:
+                needs_reset = True
+                reset_period_key = current_month
+
+        if needs_reset:
             tokens_used = 0
             members_table.update_item(
                 Key={'email': member_email},
                 UpdateExpression='SET aiCreditsUsed = :zero, aiCreditsMonth = :month',
-                ExpressionAttributeValues={':zero': 0, ':month': current_month}
+                ExpressionAttributeValues={':zero': 0, ':month': reset_period_key}
             )
 
         tokens_remaining = max(0, (max_tokens + bonus_tokens) - tokens_used)
@@ -834,7 +964,7 @@ def _check_and_consume_credits(member_email: str, tier: str, cost: int) -> dict:
         members_table.update_item(
             Key={'email': member_email},
             UpdateExpression='SET aiCreditsUsed = if_not_exists(aiCreditsUsed, :zero) + :cost, aiCreditsMonth = :month',
-            ExpressionAttributeValues={':zero': 0, ':cost': cost, ':month': current_month}
+            ExpressionAttributeValues={':zero': 0, ':cost': cost, ':month': reset_period_key}
         )
     except Exception:
         pass
@@ -855,6 +985,37 @@ def _get_member_tier(email: str) -> str:
         return item.get('tier', 'free')
     except Exception:
         return 'free'
+
+
+def _enter_grace_period(member_email: str) -> None:
+    """Set member into grace period status after a payment failure.
+    
+    Sets commitmentStatus to 'grace_period' and commitmentGraceDeadline to now + 7 days.
+    Also sends a grace period notification email to the member.
+    """
+    members_table = dynamodb.Table(MEMBERS_TABLE_NAME)
+    now = datetime.now(timezone.utc)
+    grace_deadline = (now + timedelta(days=7)).isoformat()
+
+    try:
+        members_table.update_item(
+            Key={'email': member_email},
+            UpdateExpression=(
+                'SET commitmentStatus = :grace, commitmentGraceDeadline = :deadline, updatedAt = :now'
+            ),
+            ExpressionAttributeValues={
+                ':grace': 'grace_period',
+                ':deadline': grace_deadline,
+                ':now': now.isoformat(),
+            }
+        )
+        logger.info(f"Member {member_email} entered grace period, deadline: {grace_deadline}")
+    except Exception as e:
+        logger.error(f"Failed to set grace period for {member_email}: {e}")
+        return
+
+    # Send grace period email notification
+    _send_grace_period_email(member_email, grace_deadline)
 
 
 @transaction_log('member-handler')
@@ -18291,6 +18452,33 @@ def handle_add_tokens(event):
         return create_error_response(500, 'InternalError', 'Failed to add tokens')
 
 
+def _months_remaining(commitment_end_date):
+    """Calculate the number of full months remaining from now until commitment_end_date.
+
+    Args:
+        commitment_end_date: ISO 8601 date string (e.g. '2027-07-15T00:00:00Z')
+
+    Returns:
+        int: Number of months remaining (minimum 0).
+    """
+    now = datetime.now(timezone.utc)
+    try:
+        end_dt = datetime.fromisoformat(commitment_end_date.replace('Z', '+00:00'))
+    except (ValueError, AttributeError):
+        return 0
+
+    if end_dt <= now:
+        return 0
+
+    # Calculate months difference
+    months = (end_dt.year - now.year) * 12 + (end_dt.month - now.month)
+    # If the current day is past the end day within the month, subtract one
+    if now.day > end_dt.day:
+        months -= 1
+
+    return max(0, months)
+
+
 @transaction_log('member-handler')
 def handle_update_tier(event):
     """Update a member's tier (called from frontend after Paddle subscription checkout)."""
@@ -18305,6 +18493,20 @@ def handle_update_tier(event):
             return create_error_response(400, 'BadRequest', 'email and valid tier required')
 
         members_table = dynamodb.Table(MEMBERS_TABLE_NAME)
+
+        # Check commitment lock before allowing tier change
+        member = members_table.get_item(Key={'email': email}).get('Item', {})
+        commitment_end = member.get('commitmentEndDate')
+
+        if commitment_end:
+            now_iso = datetime.now(timezone.utc).isoformat()
+            if now_iso < commitment_end:
+                remaining = _months_remaining(commitment_end)
+                return create_error_response(403, 'CommitmentLocked',
+                    f'Cannot change plan during active commitment. '
+                    f'Commitment ends {commitment_end[:10]}, {remaining} months remaining.',
+                    extra={'commitmentEndDate': commitment_end, 'remainingMonths': remaining})
+
         now = datetime.now(timezone.utc).isoformat()
 
         update_expr = 'SET tier = :tier, updatedAt = :ts'
@@ -24443,5 +24645,1405 @@ def handle_cache_invalidate(event):
         'message': 'Cache invalidated and refresh triggered',
         'deletedItems': deleted_count,
     })
+
+
+# ============================================================
+# Custom Plan Handlers
+# ============================================================
+
+@transaction_log('member-handler')
+def handle_custom_plan_status(event):
+    """GET /members/custom-plan/status -- Return current commitment status for the authenticated member."""
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+
+    email = auth.get('sub', '').lower()
+    if not email:
+        return create_error_response(401, 'AuthError', 'Authentication required')
+
+    # Read member record
+    try:
+        members_table = dynamodb.Table(MEMBERS_TABLE_NAME)
+        member_resp = members_table.get_item(Key={'email': email})
+        member = member_resp.get('Item')
+    except ClientError as e:
+        logger.error(f"Failed to read member record: {e}")
+        return create_error_response(500, 'ServerError', 'Failed to read member record')
+
+    if not member:
+        return create_error_response(404, 'NotFound', 'Member not found')
+
+    # Check if member has an active commitment
+    commitment_end = member.get('commitmentEndDate')
+    commitment_status = member.get('commitmentStatus')
+
+    if not commitment_end or not commitment_status or commitment_status == 'expired':
+        return create_response(200, {'hasCommitment': False, 'status': None})
+
+    # Calculate remaining months and canRenew flag
+    remaining_months = _months_remaining(commitment_end)
+    now = datetime.now(timezone.utc)
+
+    # Parse end date for canRenew calculation (30 days or fewer remaining)
+    try:
+        end_dt = datetime.fromisoformat(commitment_end.replace('Z', '+00:00'))
+        days_remaining = (end_dt - now).days
+        can_renew = days_remaining <= 30
+    except (ValueError, AttributeError):
+        can_renew = False
+
+    response = {
+        'hasCommitment': True,
+        'status': commitment_status,
+        'startDate': member.get('commitmentStartDate'),
+        'endDate': commitment_end,
+        'remainingMonths': remaining_months,
+        'monthlyPrice': float(Decimal(str(member.get('customMonthlyPrice', 0)))),
+        'tokenAllocation': int(member.get('customTokenAllocation', 0)),
+        'discountPercent': int(member.get('commitmentDiscountPercent', 0)),
+        'canRenew': can_renew,
+    }
+
+    return create_response(200, response)
+
+
+@transaction_log('member-handler')
+def handle_custom_plan_calculate(event):
+    """POST /members/custom-plan/calculate -- Calculate custom plan pricing for a given commitment period."""
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+
+    try:
+        body = json.loads(event.get('body', '{}'))
+    except (json.JSONDecodeError, TypeError):
+        return create_error_response(400, 'InvalidRequest', 'Invalid request body')
+
+    if not body or 'commitmentMonths' not in body:
+        return create_error_response(400, 'InvalidRequest', 'commitmentMonths is required')
+
+    commitment_months = body.get('commitmentMonths')
+
+    # Validate commitment months is an integer and within range
+    if not isinstance(commitment_months, int):
+        try:
+            commitment_months = int(commitment_months)
+        except (ValueError, TypeError):
+            return create_error_response(400, 'InvalidRequest', 'commitmentMonths must be an integer')
+
+    if commitment_months < 3 or commitment_months > 24:
+        return create_error_response(400, 'InvalidRequest', 'Commitment period must be between 3 and 24 months')
+
+    # Read discount config from DynamoDB
+    try:
+        config_table = dynamodb.Table(DISCOUNT_CONFIG_TABLE_NAME)
+        config_resp = config_table.get_item(Key={'configId': 'ACTIVE'})
+        config = config_resp.get('Item')
+    except ClientError as e:
+        logger.error(f"Failed to read discount config: {e}")
+        return create_error_response(500, 'ServerError', 'Failed to read discount configuration')
+
+    if not config:
+        return create_error_response(500, 'ServerError', 'Discount configuration not found')
+
+    # Call the discount engine
+    try:
+        result = calculate_discount(commitment_months, config)
+    except ValueError as e:
+        return create_error_response(400, 'InvalidRequest', str(e))
+    except Exception as e:
+        logger.error(f"Discount calculation failed: {e}")
+        return create_error_response(500, 'ServerError', 'Failed to calculate discount')
+
+    # Build response with comparison to Scale plan
+    response = {
+        'monthlyPrice': float(result['monthlyPrice']),
+        'tokenAllocation': result['tokenAllocation'],
+        'discountPercent': result['discountPercent'],
+        'commitmentMonths': result['commitmentMonths'],
+        'totalCommitmentValue': float(result['totalCommitmentValue']),
+        'baseMonthlyPrice': float(Decimal(str(config['baseMonthlyPrice']))),
+        'baseTokenCount': int(config['baseTokenCount']),
+        'scalePrice': 200,
+        'savingsVsMonthly': f"{result['discountPercent']}%",
+    }
+
+    return create_response(200, response)
+
+
+# ============================================================
+# PayPal Subscriptions API Helpers
+# ============================================================
+
+def _get_paypal_access_token():
+    """Obtain an OAuth2 access token from PayPal using client credentials.
+
+    Returns:
+        str: Access token string.
+
+    Raises:
+        Exception: If PayPal API call fails.
+    """
+    import urllib.request
+    import urllib.error
+    import urllib.parse
+    import base64
+
+    if not PAYPAL_CLIENT_ID or not PAYPAL_CLIENT_SECRET:
+        raise Exception("PayPal credentials not configured")
+
+    token_url = f"{PAYPAL_API_BASE}/v1/oauth2/token"
+    credentials = base64.b64encode(
+        f"{PAYPAL_CLIENT_ID}:{PAYPAL_CLIENT_SECRET}".encode()
+    ).decode()
+
+    data = urllib.parse.urlencode({'grant_type': 'client_credentials'}).encode('utf-8')
+
+    req = urllib.request.Request(token_url, data=data, method='POST')
+    req.add_header('Authorization', f'Basic {credentials}')
+    req.add_header('Content-Type', 'application/x-www-form-urlencoded')
+
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        body = json.loads(resp.read().decode('utf-8'))
+        access_token = body.get('access_token')
+        if not access_token:
+            raise Exception("PayPal OAuth2 returned no access token")
+        return access_token
+
+
+def _paypal_create_billing_plan(access_token, monthly_price, commitment_months, product_name="SlashMyBill Custom Plan"):
+    """Create a PayPal billing plan with a fixed number of billing cycles.
+
+    Args:
+        access_token: PayPal OAuth2 access token.
+        monthly_price: Monthly price as a float or Decimal.
+        commitment_months: Number of billing cycles (3-24).
+        product_name: Name for the plan.
+
+    Returns:
+        dict: PayPal plan response including 'id'.
+
+    Raises:
+        Exception: If the plan creation fails.
+    """
+    import urllib.request
+    import urllib.error
+
+    # First, create a product (or reuse one)
+    product_url = f"{PAYPAL_API_BASE}/v1/catalogs/products"
+    product_payload = json.dumps({
+        "name": product_name,
+        "description": f"Custom commitment plan - {commitment_months} months",
+        "type": "SERVICE",
+        "category": "SOFTWARE",
+    }).encode('utf-8')
+
+    req = urllib.request.Request(product_url, data=product_payload, method='POST')
+    req.add_header('Authorization', f'Bearer {access_token}')
+    req.add_header('Content-Type', 'application/json')
+    req.add_header('PayPal-Request-Id', f'product-custom-{commitment_months}mo-{uuid.uuid4().hex[:8]}')
+
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        product = json.loads(resp.read().decode('utf-8'))
+        product_id = product['id']
+
+    # Create the billing plan with fixed billing cycles
+    plan_url = f"{PAYPAL_API_BASE}/v1/billing/plans"
+    price_str = f"{float(monthly_price):.2f}"
+
+    plan_payload = json.dumps({
+        "product_id": product_id,
+        "name": f"Custom Plan - {commitment_months} months @ ${price_str}/mo",
+        "description": f"{commitment_months}-month commitment at ${price_str}/month",
+        "billing_cycles": [
+            {
+                "frequency": {
+                    "interval_unit": "MONTH",
+                    "interval_count": 1
+                },
+                "tenure_type": "REGULAR",
+                "sequence": 1,
+                "total_cycles": commitment_months,
+                "pricing_scheme": {
+                    "fixed_price": {
+                        "value": price_str,
+                        "currency_code": "USD"
+                    }
+                }
+            }
+        ],
+        "payment_preferences": {
+            "auto_bill_outstanding": True,
+            "payment_failure_threshold": 3
+        },
+        "status": "ACTIVE"
+    }).encode('utf-8')
+
+    req = urllib.request.Request(plan_url, data=plan_payload, method='POST')
+    req.add_header('Authorization', f'Bearer {access_token}')
+    req.add_header('Content-Type', 'application/json')
+    req.add_header('PayPal-Request-Id', f'plan-custom-{commitment_months}mo-{uuid.uuid4().hex[:8]}')
+    req.add_header('Prefer', 'return=representation')
+
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        plan = json.loads(resp.read().decode('utf-8'))
+        return plan
+
+
+def _paypal_create_subscription(access_token, plan_id, subscriber_email):
+    """Create a PayPal subscription for the given plan.
+
+    Args:
+        access_token: PayPal OAuth2 access token.
+        plan_id: PayPal billing plan ID.
+        subscriber_email: Email address of the subscriber.
+
+    Returns:
+        dict with 'subscriptionId' and 'approvalUrl'.
+
+    Raises:
+        Exception: If subscription creation fails.
+    """
+    import urllib.request
+    import urllib.error
+
+    subscription_url = f"{PAYPAL_API_BASE}/v1/billing/subscriptions"
+
+    # Start time is the next day to give PayPal time to process
+    start_time = (datetime.now(timezone.utc) + timedelta(minutes=5)).strftime('%Y-%m-%dT%H:%M:%SZ')
+
+    subscription_payload = json.dumps({
+        "plan_id": plan_id,
+        "start_time": start_time,
+        "subscriber": {
+            "email_address": subscriber_email,
+        },
+        "application_context": {
+            "brand_name": "SlashMyBill",
+            "locale": "en-US",
+            "shipping_preference": "NO_SHIPPING",
+            "user_action": "SUBSCRIBE_NOW",
+            "return_url": "https://slashmycloudbill.com/members/?custom_plan_activated=true",
+            "cancel_url": "https://slashmycloudbill.com/members/?custom_plan_cancelled=true",
+        }
+    }).encode('utf-8')
+
+    req = urllib.request.Request(subscription_url, data=subscription_payload, method='POST')
+    req.add_header('Authorization', f'Bearer {access_token}')
+    req.add_header('Content-Type', 'application/json')
+    req.add_header('PayPal-Request-Id', f'sub-{subscriber_email}-{uuid.uuid4().hex[:8]}')
+    req.add_header('Prefer', 'return=representation')
+
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        subscription = json.loads(resp.read().decode('utf-8'))
+        subscription_id = subscription.get('id', '')
+        # Find the approval URL from the links array
+        approval_url = ''
+        for link in subscription.get('links', []):
+            if link.get('rel') == 'approve':
+                approval_url = link.get('href', '')
+                break
+
+        return {
+            'subscriptionId': subscription_id,
+            'approvalUrl': approval_url,
+        }
+
+
+def _paypal_activate_subscription(access_token, subscription_id):
+    """Activate a PayPal subscription after approval.
+
+    Args:
+        access_token: PayPal OAuth2 access token.
+        subscription_id: PayPal subscription ID to activate.
+
+    Returns:
+        dict: Subscription details after activation.
+
+    Raises:
+        Exception: If activation fails.
+    """
+    import urllib.request
+    import urllib.error
+
+    # First activate the subscription
+    activate_url = f"{PAYPAL_API_BASE}/v1/billing/subscriptions/{subscription_id}/activate"
+    activate_payload = json.dumps({
+        "reason": "Member approved custom plan subscription"
+    }).encode('utf-8')
+
+    req = urllib.request.Request(activate_url, data=activate_payload, method='POST')
+    req.add_header('Authorization', f'Bearer {access_token}')
+    req.add_header('Content-Type', 'application/json')
+
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            # 204 No Content is success for activation
+            pass
+    except urllib.error.HTTPError as e:
+        # 422 means subscription is already active, which is fine
+        if e.code != 422:
+            raise
+
+    # Get subscription details to confirm status
+    details_url = f"{PAYPAL_API_BASE}/v1/billing/subscriptions/{subscription_id}"
+    req = urllib.request.Request(details_url, method='GET')
+    req.add_header('Authorization', f'Bearer {access_token}')
+
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        return json.loads(resp.read().decode('utf-8'))
+
+
+# ============================================================
+# Custom Plan Subscribe Handler
+# ============================================================
+
+@transaction_log('member-handler')
+def handle_custom_plan_subscribe(event):
+    """POST /members/custom-plan/subscribe -- Two-step PayPal subscription flow.
+
+    Step 1 (create): Body contains {commitmentMonths: N}
+        - Creates a PayPal billing plan with N cycles
+        - Creates a subscription and returns the approval URL
+
+    Step 2 (activate): Body contains {action: "activate", subscriptionId: "I-..."}
+        - Activates the subscription after PayPal approval
+        - Updates member record with custom plan details
+    """
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+
+    email = auth.get('sub', '').lower()
+    if not email:
+        return create_error_response(401, 'AuthError', 'Authentication required')
+
+    try:
+        body = json.loads(event.get('body', '{}'))
+    except (json.JSONDecodeError, TypeError):
+        return create_error_response(400, 'InvalidRequest', 'Invalid request body')
+
+    if not body:
+        return create_error_response(400, 'InvalidRequest', 'Request body is required')
+
+    action = body.get('action', 'create')
+
+    if action == 'activate':
+        return _handle_custom_plan_activate(email, body)
+    else:
+        return _handle_custom_plan_create(email, body)
+
+
+def _handle_custom_plan_create(email, body):
+    """Step 1: Create PayPal billing plan and subscription, return approval URL."""
+    import urllib.error
+
+    commitment_months = body.get('commitmentMonths')
+
+    # Validate commitmentMonths
+    if commitment_months is None:
+        return create_error_response(400, 'InvalidRequest', 'commitmentMonths is required')
+
+    if not isinstance(commitment_months, int):
+        try:
+            commitment_months = int(commitment_months)
+        except (ValueError, TypeError):
+            return create_error_response(400, 'InvalidRequest', 'commitmentMonths must be an integer')
+
+    if commitment_months < 3 or commitment_months > 24:
+        return create_error_response(400, 'InvalidRequest', 'Commitment period must be between 3 and 24 months')
+
+    # Check if member already has an active commitment
+    try:
+        members_table = dynamodb.Table(MEMBERS_TABLE_NAME)
+        member_resp = members_table.get_item(Key={'email': email})
+        member = member_resp.get('Item', {})
+    except ClientError as e:
+        logger.error(f"Failed to read member record: {e}")
+        return create_error_response(500, 'ServerError', 'Failed to read member record')
+
+    commitment_end = member.get('commitmentEndDate')
+    if commitment_end:
+        now_iso = datetime.now(timezone.utc).isoformat()
+        if now_iso < commitment_end and member.get('commitmentStatus') == 'active':
+            return create_error_response(409, 'ConflictError',
+                f'You already have an active commitment until {commitment_end[:10]}')
+
+    # Read discount config and calculate pricing
+    try:
+        config_table = dynamodb.Table(DISCOUNT_CONFIG_TABLE_NAME)
+        config_resp = config_table.get_item(Key={'configId': 'ACTIVE'})
+        config = config_resp.get('Item')
+    except ClientError as e:
+        logger.error(f"Failed to read discount config: {e}")
+        return create_error_response(500, 'ServerError', 'Failed to read discount configuration')
+
+    if not config:
+        return create_error_response(500, 'ServerError', 'Discount configuration not found')
+
+    try:
+        discount_result = calculate_discount(commitment_months, config)
+    except ValueError as e:
+        return create_error_response(400, 'InvalidRequest', str(e))
+    except Exception as e:
+        logger.error(f"Discount calculation failed: {e}")
+        return create_error_response(500, 'ServerError', 'Failed to calculate discount')
+
+    monthly_price = discount_result['monthlyPrice']
+    token_allocation = discount_result['tokenAllocation']
+
+    # Create PayPal billing plan and subscription
+    try:
+        access_token = _get_paypal_access_token()
+
+        # Create billing plan with exact N billing cycles
+        plan = _paypal_create_billing_plan(access_token, monthly_price, commitment_months)
+        plan_id = plan.get('id')
+
+        if not plan_id:
+            raise Exception("PayPal plan creation returned no plan ID")
+
+        # Create subscription for the plan
+        sub_result = _paypal_create_subscription(access_token, plan_id, email)
+
+        if not sub_result.get('approvalUrl'):
+            raise Exception("PayPal subscription creation returned no approval URL")
+
+    except urllib.error.HTTPError as e:
+        error_body = ''
+        try:
+            error_body = e.read().decode('utf-8', errors='replace')[:500]
+        except Exception:
+            pass
+        logger.error(f"PayPal API error: HTTP {e.code} - {error_body}")
+        return create_error_response(502, 'PaymentError',
+            'Failed to create payment subscription. Please try again.')
+    except Exception as e:
+        logger.error(f"PayPal subscription creation failed: {e}", exc_info=True)
+        return create_error_response(502, 'PaymentError',
+            'Failed to create payment subscription. Please try again.')
+
+    return create_response(200, {
+        'paypalApprovalUrl': sub_result['approvalUrl'],
+        'subscriptionId': sub_result['subscriptionId'],
+        'monthlyPrice': float(monthly_price),
+        'tokenAllocation': token_allocation,
+    })
+
+
+def _schedule_commitment_notifications(email, commitment_end_date):
+    """Schedule EventBridge Scheduler one-time schedules for commitment expiry notifications.
+
+    Creates up to two one-time schedules:
+    - 14-day warning: commitmentEndDate - 14 days (skipped if commitment <= 14 days)
+    - 3-day warning: commitmentEndDate - 3 days
+
+    Target is the member-handler Lambda with a _commitmentNotification payload.
+    """
+    now = datetime.now(timezone.utc)
+    email_hash = hashlib.md5(email.encode()).hexdigest()[:12]
+
+    scheduler_client = boto3.client('scheduler')
+    scheduled = []
+
+    # Calculate notification times
+    notify_14d = commitment_end_date - timedelta(days=14)
+    notify_3d = commitment_end_date - timedelta(days=3)
+
+    notifications = []
+
+    # Only schedule 14-day notification if it's in the future (commitment > 14 days)
+    if notify_14d > now:
+        notifications.append(('14day', notify_14d, f'custom-plan-14d-{email_hash}'))
+
+    # Always schedule 3-day notification (should always be in the future for valid commitments)
+    if notify_3d > now:
+        notifications.append(('3day', notify_3d, f'custom-plan-3d-{email_hash}'))
+
+    for notif_type, notif_time, schedule_name in notifications:
+        payload = json.dumps({
+            '_commitmentNotification': {
+                'email': email,
+                'type': notif_type,
+            }
+        })
+
+        # EventBridge Scheduler one-time schedule expression: at(YYYY-MM-DDThh:mm:ss)
+        schedule_expr = f"at({notif_time.strftime('%Y-%m-%dT%H:%M:%S')})"
+
+        try:
+            # Delete existing schedule with same name (in case of re-activation)
+            try:
+                scheduler_client.delete_schedule(Name=schedule_name)
+            except scheduler_client.exceptions.ResourceNotFoundException:
+                pass
+            except Exception:
+                pass
+
+            scheduler_client.create_schedule(
+                Name=schedule_name,
+                ScheduleExpression=schedule_expr,
+                ScheduleExpressionTimezone='UTC',
+                FlexibleTimeWindow={'Mode': 'OFF'},
+                Target={
+                    'Arn': MEMBER_HANDLER_ARN,
+                    'RoleArn': SCHEDULER_ROLE_ARN,
+                    'Input': payload,
+                },
+                State='ENABLED',
+            )
+            scheduled.append(schedule_name)
+            logger.info(f"Scheduled {notif_type} commitment notification for {email} at {notif_time.isoformat()}")
+        except Exception as e:
+            logger.error(f"Failed to schedule {notif_type} notification for {email}: {e}")
+            # Non-fatal: don't fail the activation if notification scheduling fails
+
+    return scheduled
+
+
+def _handle_commitment_notification(notification_data):
+    """Handle commitment expiry notification events triggered by EventBridge Scheduler.
+
+    Event format: {'email': 'user@example.com', 'type': '14day' | '3day'}
+
+    Reads member record, validates active custom plan, and sends styled HTML email
+    informing the member of their upcoming commitment expiry.
+    """
+    email = notification_data.get('email', '').strip().lower()
+    notif_type = notification_data.get('type', '')
+
+    if not email or notif_type not in ('14day', '3day'):
+        logger.warning(f"Invalid commitment notification data: {notification_data}")
+        return {'statusCode': 400, 'body': 'Invalid notification data'}
+
+    logger.info(f"Processing {notif_type} commitment notification for {email}")
+
+    # Read member record
+    try:
+        members_table = dynamodb.Table(MEMBERS_TABLE_NAME)
+        member_resp = members_table.get_item(Key={'email': email})
+        member = member_resp.get('Item')
+    except ClientError as e:
+        logger.error(f"Failed to read member for commitment notification: {e}")
+        return {'statusCode': 500, 'body': 'Failed to read member record'}
+
+    if not member:
+        logger.info(f"Member {email} not found, skipping notification")
+        return {'statusCode': 200, 'body': 'Member not found, notification skipped'}
+
+    # Exit silently if member no longer on custom plan or commitment is not active
+    tier = member.get('tier', '')
+    commitment_status = member.get('commitmentStatus', '')
+    if tier != 'custom' or commitment_status != 'active':
+        logger.info(f"Member {email} no longer on custom plan (tier={tier}, status={commitment_status}), skipping")
+        return {'statusCode': 200, 'body': 'Member no longer on custom plan, notification skipped'}
+
+    # Extract plan details
+    monthly_price = member.get('customMonthlyPrice', 0)
+    token_allocation = member.get('customTokenAllocation', 0)
+    discount_percent = member.get('commitmentDiscountPercent', 0)
+    commitment_end = member.get('commitmentEndDate', '')
+    commitment_months = member.get('commitmentMonths', 0)
+
+    # Format price for display
+    try:
+        price_display = f"${float(monthly_price):.2f}"
+    except (ValueError, TypeError):
+        price_display = f"${monthly_price}"
+
+    # Format end date for display
+    end_date_display = commitment_end[:10] if commitment_end else 'N/A'
+
+    # Build email content based on notification type
+    portal_url = "https://slashmycloudbill.com/members/"
+    plan_modal_url = f"{portal_url}?open_plan_modal=true"
+
+    if notif_type == '14day':
+        subject = "Your custom plan commitment expires in 14 days"
+        days_text = "14 days"
+        urgency_color = "#f59e0b"  # amber
+        urgency_text = "Upcoming Expiry"
+    else:
+        subject = "Final reminder: Your custom plan expires in 3 days"
+        days_text = "3 days"
+        urgency_color = "#ef4444"  # red
+        urgency_text = "Expiring Soon"
+
+    display_name = member.get('displayName', email.split('@')[0])
+
+    # Build styled HTML email
+    body_html = f'''<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden;">
+    <!-- Header -->
+    <div style="background:linear-gradient(135deg,#6366f1,#8b5cf6);padding:24px 32px;color:#ffffff;">
+        <h2 style="margin:0 0 4px 0;font-size:1.3em;">Custom Plan Expiry Notice</h2>
+        <p style="margin:0;opacity:0.9;font-size:0.9em;">SlashMyBill Commitment Update</p>
+    </div>
+
+    <!-- Body -->
+    <div style="padding:24px 32px;">
+        <p style="margin:0 0 16px 0;color:#374151;font-size:1em;">Hi {display_name},</p>
+
+        <p style="margin:0 0 20px 0;color:#374151;font-size:1em;">
+            Your custom plan commitment expires in <strong>{days_text}</strong> (on <strong>{end_date_display}</strong>).
+        </p>
+
+        <!-- Urgency badge -->
+        <div style="display:inline-block;background:{urgency_color}15;border:1px solid {urgency_color};border-radius:6px;padding:8px 16px;margin-bottom:20px;">
+            <span style="color:{urgency_color};font-weight:600;font-size:0.9em;">{urgency_text}</span>
+        </div>
+
+        <!-- Plan details table -->
+        <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:16px 20px;margin-bottom:20px;">
+            <h3 style="margin:0 0 12px 0;color:#374151;font-size:0.95em;">Your Current Plan Details</h3>
+            <table style="width:100%;border-collapse:collapse;">
+                <tr>
+                    <td style="padding:6px 0;color:#6b7280;font-size:0.9em;">Monthly Price</td>
+                    <td style="padding:6px 0;text-align:right;font-weight:600;color:#374151;">{price_display}/mo</td>
+                </tr>
+                <tr>
+                    <td style="padding:6px 0;color:#6b7280;font-size:0.9em;">Token Allocation</td>
+                    <td style="padding:6px 0;text-align:right;font-weight:600;color:#374151;">{token_allocation} tokens/mo</td>
+                </tr>
+                <tr>
+                    <td style="padding:6px 0;color:#6b7280;font-size:0.9em;">Discount Applied</td>
+                    <td style="padding:6px 0;text-align:right;font-weight:600;color:#10b981;">{discount_percent}% off</td>
+                </tr>
+                <tr>
+                    <td style="padding:6px 0;color:#6b7280;font-size:0.9em;">Commitment Period</td>
+                    <td style="padding:6px 0;text-align:right;font-weight:600;color:#374151;">{commitment_months} months</td>
+                </tr>
+                <tr>
+                    <td style="padding:6px 0;color:#6b7280;font-size:0.9em;">Expires On</td>
+                    <td style="padding:6px 0;text-align:right;font-weight:600;color:{urgency_color};">{end_date_display}</td>
+                </tr>
+            </table>
+        </div>
+
+        <!-- What happens next -->
+        <div style="margin-bottom:20px;">
+            <h3 style="margin:0 0 8px 0;color:#374151;font-size:0.95em;">What happens next?</h3>
+            <p style="margin:0;color:#6b7280;font-size:0.9em;line-height:1.5;">
+                If you don't renew your commitment, you'll automatically transition to the
+                <strong>Scale tier</strong> ($200/mo, 1,500 tokens/mo) when your commitment ends.
+                You can renew your custom plan at any time from the Plan Modal to keep your discounted rate.
+            </p>
+        </div>
+
+        <!-- CTA Button -->
+        <div style="text-align:center;margin:24px 0;">
+            <a href="{plan_modal_url}" style="display:inline-block;background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#ffffff;text-decoration:none;padding:14px 32px;border-radius:8px;font-weight:600;font-size:1em;">
+                Manage Your Plan
+            </a>
+        </div>
+
+        <p style="margin:0;color:#9ca3af;font-size:0.85em;text-align:center;">
+            Visit your members portal to renew or explore other plan options.
+        </p>
+    </div>
+
+    <!-- Footer -->
+    <div style="padding:16px 32px;background:#f9fafb;border-top:1px solid #e5e7eb;text-align:center;">
+        <p style="margin:0;color:#9ca3af;font-size:0.8em;">
+            SlashMyBill - Cloud Cost Optimization Platform
+        </p>
+    </div>
+</div>'''
+
+    # Send email via SES
+    try:
+        ses_client.send_email(
+            Source=f'SlashMyBill <{SES_SENDER_EMAIL}>',
+            Destination={'ToAddresses': [email]},
+            Message={
+                'Subject': {'Data': subject, 'Charset': 'UTF-8'},
+                'Body': {'Html': {'Data': body_html, 'Charset': 'UTF-8'}}
+            }
+        )
+        logger.info(f"Commitment {notif_type} notification email sent to {email}")
+    except Exception as e:
+        logger.error(f"Failed to send commitment notification email to {email}: {e}")
+        return {'statusCode': 500, 'body': f'Failed to send notification email: {str(e)}'}
+
+    return {'statusCode': 200, 'body': f'{notif_type} notification sent to {email}'}
+
+
+def _handle_custom_plan_activate(email, body):
+    """Step 2: Activate subscription after PayPal approval and update member record."""
+    import urllib.error
+
+    subscription_id = body.get('subscriptionId', '').strip()
+    if not subscription_id:
+        return create_error_response(400, 'InvalidRequest', 'subscriptionId is required')
+
+    # Check if member already has an active commitment (race condition guard)
+    try:
+        members_table = dynamodb.Table(MEMBERS_TABLE_NAME)
+        member_resp = members_table.get_item(Key={'email': email})
+        member = member_resp.get('Item', {})
+    except ClientError as e:
+        logger.error(f"Failed to read member record: {e}")
+        return create_error_response(500, 'ServerError', 'Failed to read member record')
+
+    commitment_end = member.get('commitmentEndDate')
+    if commitment_end:
+        now_iso = datetime.now(timezone.utc).isoformat()
+        if now_iso < commitment_end and member.get('commitmentStatus') == 'active':
+            return create_error_response(409, 'ConflictError',
+                f'You already have an active commitment until {commitment_end[:10]}')
+
+    # Activate the subscription via PayPal
+    try:
+        access_token = _get_paypal_access_token()
+        sub_details = _paypal_activate_subscription(access_token, subscription_id)
+    except urllib.error.HTTPError as e:
+        error_body = ''
+        try:
+            error_body = e.read().decode('utf-8', errors='replace')[:500]
+        except Exception:
+            pass
+        logger.error(f"PayPal activation error: HTTP {e.code} - {error_body}")
+        return create_error_response(502, 'PaymentError',
+            'Failed to create payment subscription. Please try again.')
+    except Exception as e:
+        logger.error(f"PayPal subscription activation failed: {e}", exc_info=True)
+        return create_error_response(502, 'PaymentError',
+            'Failed to create payment subscription. Please try again.')
+
+    # Determine commitment details from the subscription
+    # We need to recalculate the pricing based on the plan details
+    # Read the billing plan info from the subscription to get commitment months
+    plan_id = sub_details.get('plan_id', '')
+    billing_info = sub_details.get('billing_info', {})
+
+    # Get commitment months from the plan name or recalculate
+    # The commitment months should be passed from the frontend or stored
+    commitment_months = body.get('commitmentMonths')
+    if not commitment_months:
+        # Try to extract from plan cycle info
+        plan_details = sub_details.get('plan', {})
+        billing_cycles = plan_details.get('billing_cycles', [])
+        if billing_cycles:
+            commitment_months = billing_cycles[0].get('total_cycles', 12)
+        else:
+            commitment_months = 12  # Fallback
+
+    if not isinstance(commitment_months, int):
+        try:
+            commitment_months = int(commitment_months)
+        except (ValueError, TypeError):
+            commitment_months = 12
+
+    # Read discount config and calculate pricing
+    try:
+        config_table = dynamodb.Table(DISCOUNT_CONFIG_TABLE_NAME)
+        config_resp = config_table.get_item(Key={'configId': 'ACTIVE'})
+        config = config_resp.get('Item')
+    except ClientError as e:
+        logger.error(f"Failed to read discount config during activation: {e}")
+        return create_error_response(500, 'ServerError', 'Failed to read discount configuration')
+
+    if not config:
+        return create_error_response(500, 'ServerError', 'Discount configuration not found')
+
+    try:
+        discount_result = calculate_discount(commitment_months, config)
+    except Exception as e:
+        logger.error(f"Discount calculation failed during activation: {e}")
+        return create_error_response(500, 'ServerError', 'Failed to calculate commitment details')
+
+    monthly_price = discount_result['monthlyPrice']
+    token_allocation = discount_result['tokenAllocation']
+    discount_percent = discount_result['discountPercent']
+
+    # Calculate commitment dates
+    now = datetime.now(timezone.utc)
+    commitment_start = now.strftime('%Y-%m-%dT%H:%M:%SZ')
+    commitment_end_dt = now + timedelta(days=commitment_months * 30)
+    # Use dateutil-style month addition for accuracy
+    end_year = now.year + (now.month + commitment_months - 1) // 12
+    end_month = (now.month + commitment_months - 1) % 12 + 1
+    end_day = min(now.day, 28)  # Safe day to avoid month overflow
+    commitment_end_date = datetime(end_year, end_month, end_day, now.hour, now.minute, now.second, tzinfo=timezone.utc)
+    commitment_end = commitment_end_date.strftime('%Y-%m-%dT%H:%M:%SZ')
+
+    # Update member record with custom plan details
+    try:
+        members_table.update_item(
+            Key={'email': email},
+            UpdateExpression=(
+                'SET tier = :tier, '
+                'customTokenAllocation = :tokens, '
+                'customMonthlyPrice = :price, '
+                'commitmentStartDate = :start_date, '
+                'commitmentEndDate = :end_date, '
+                'commitmentMonths = :months, '
+                'commitmentDiscountPercent = :discount, '
+                'paypalCustomPlanSubId = :sub_id, '
+                'commitmentStatus = :status, '
+                'updatedAt = :updated_at'
+            ),
+            ExpressionAttributeValues={
+                ':tier': 'custom',
+                ':tokens': token_allocation,
+                ':price': Decimal(str(float(monthly_price))),
+                ':start_date': commitment_start,
+                ':end_date': commitment_end,
+                ':months': commitment_months,
+                ':discount': discount_percent,
+                ':sub_id': subscription_id,
+                ':status': 'active',
+                ':updated_at': commitment_start,
+            },
+        )
+    except ClientError as e:
+        logger.error(f"Failed to update member record with custom plan: {e}")
+        return create_error_response(500, 'ServerError', 'Failed to activate custom plan')
+
+    logger.info(f"Custom plan activated for {email}: {commitment_months} months, "
+                f"${float(monthly_price)}/mo, {token_allocation} tokens")
+
+    # Schedule expiry notification emails via EventBridge Scheduler
+    _schedule_commitment_notifications(email, commitment_end_date)
+
+    return create_response(200, {
+        'message': 'Custom plan activated',
+        'tier': 'custom',
+        'commitment': {
+            'startDate': commitment_start,
+            'endDate': commitment_end,
+            'months': commitment_months,
+            'monthlyPrice': float(monthly_price),
+            'tokenAllocation': token_allocation,
+            'discountPercent': discount_percent,
+        }
+    })
+
+
+@transaction_log('member-handler')
+def handle_custom_plan_renew(event):
+    """POST /members/custom-plan/renew -- Create a renewal commitment starting after current one ends.
+
+    Only available when current commitment has 30 days or fewer remaining.
+    Creates a new PayPal subscription starting on current commitment's end date.
+
+    Request body: { "commitmentMonths": N }  (3-24)
+
+    Response 200:
+    {
+        "paypalApprovalUrl": "https://...",
+        "subscriptionId": "I-...",
+        "newCommitment": {
+            "startDate": "(current commitment end date)",
+            "endDate": "(current end + new months)",
+            "months": N,
+            "monthlyPrice": X,
+            "tokenAllocation": Y,
+            "discountPercent": Z
+        }
+    }
+    """
+    import urllib.error
+
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+
+    email = auth.get('sub', '').lower()
+    if not email:
+        return create_error_response(401, 'AuthError', 'Authentication required')
+
+    try:
+        body = json.loads(event.get('body', '{}'))
+    except (json.JSONDecodeError, TypeError):
+        return create_error_response(400, 'InvalidRequest', 'Invalid request body')
+
+    if not body:
+        return create_error_response(400, 'InvalidRequest', 'Request body is required')
+
+    # Validate commitmentMonths
+    commitment_months = body.get('commitmentMonths')
+    if commitment_months is None:
+        return create_error_response(400, 'InvalidRequest', 'commitmentMonths is required')
+
+    if not isinstance(commitment_months, int):
+        try:
+            commitment_months = int(commitment_months)
+        except (ValueError, TypeError):
+            return create_error_response(400, 'InvalidRequest', 'commitmentMonths must be an integer')
+
+    if commitment_months < 3 or commitment_months > 24:
+        return create_error_response(400, 'InvalidRequest', 'Commitment period must be between 3 and 24 months')
+
+    # Read member record
+    try:
+        members_table = dynamodb.Table(MEMBERS_TABLE_NAME)
+        member_resp = members_table.get_item(Key={'email': email})
+        member = member_resp.get('Item')
+    except ClientError as e:
+        logger.error(f"Failed to read member record: {e}")
+        return create_error_response(500, 'ServerError', 'Failed to read member record')
+
+    if not member:
+        return create_error_response(404, 'NotFound', 'Member not found')
+
+    # Verify member has an active commitment
+    commitment_end = member.get('commitmentEndDate')
+    commitment_status = member.get('commitmentStatus')
+
+    if not commitment_end or commitment_status != 'active':
+        return create_error_response(400, 'InvalidRequest',
+            'No active commitment found. Renewal is only available for members with an active commitment.')
+
+    # Check that current commitment has 30 days or fewer remaining
+    now = datetime.now(timezone.utc)
+    try:
+        end_dt = datetime.fromisoformat(commitment_end.replace('Z', '+00:00'))
+    except (ValueError, AttributeError):
+        return create_error_response(500, 'ServerError', 'Invalid commitment end date format')
+
+    days_remaining = (end_dt - now).days
+    if days_remaining > 30:
+        return create_error_response(400, 'InvalidRequest',
+            f'Renewal is only available within 30 days of commitment end. '
+            f'Your commitment ends on {commitment_end[:10]} ({days_remaining} days remaining).')
+
+    # Read discount config and calculate pricing for the new period
+    try:
+        config_table = dynamodb.Table(DISCOUNT_CONFIG_TABLE_NAME)
+        config_resp = config_table.get_item(Key={'configId': 'ACTIVE'})
+        config = config_resp.get('Item')
+    except ClientError as e:
+        logger.error(f"Failed to read discount config: {e}")
+        return create_error_response(500, 'ServerError', 'Failed to read discount configuration')
+
+    if not config:
+        return create_error_response(500, 'ServerError', 'Discount configuration not found')
+
+    try:
+        discount_result = calculate_discount(commitment_months, config)
+    except ValueError as e:
+        return create_error_response(400, 'InvalidRequest', str(e))
+    except Exception as e:
+        logger.error(f"Discount calculation failed: {e}")
+        return create_error_response(500, 'ServerError', 'Failed to calculate discount')
+
+    monthly_price = discount_result['monthlyPrice']
+    token_allocation = discount_result['tokenAllocation']
+    discount_percent = discount_result['discountPercent']
+
+    # Calculate new commitment dates (starts after current one ends)
+    new_start_date = commitment_end  # New commitment starts when current one ends
+    # Calculate new end date: current end date + commitment_months
+    new_end_year = end_dt.year + (end_dt.month + commitment_months - 1) // 12
+    new_end_month = (end_dt.month + commitment_months - 1) % 12 + 1
+    new_end_day = min(end_dt.day, 28)  # Safe day to avoid month overflow
+    new_end_dt = datetime(new_end_year, new_end_month, new_end_day,
+                          end_dt.hour, end_dt.minute, end_dt.second, tzinfo=timezone.utc)
+    new_end_date = new_end_dt.strftime('%Y-%m-%dT%H:%M:%SZ')
+
+    # Create PayPal billing plan and subscription with start date = current commitment end
+    try:
+        access_token = _get_paypal_access_token()
+
+        # Create billing plan with exact N billing cycles
+        plan = _paypal_create_billing_plan(access_token, monthly_price, commitment_months,
+                                           product_name="SlashMyBill Custom Plan Renewal")
+        plan_id = plan.get('id')
+
+        if not plan_id:
+            raise Exception("PayPal plan creation returned no plan ID")
+
+        # Create subscription with start_time set to current commitment's end date
+        sub_result = _paypal_create_subscription_with_start_date(
+            access_token, plan_id, email, commitment_end)
+
+        if not sub_result.get('approvalUrl'):
+            raise Exception("PayPal subscription creation returned no approval URL")
+
+    except urllib.error.HTTPError as e:
+        error_body = ''
+        try:
+            error_body = e.read().decode('utf-8', errors='replace')[:500]
+        except Exception:
+            pass
+        logger.error(f"PayPal API error during renewal: HTTP {e.code} - {error_body}")
+        return create_error_response(502, 'PaymentError',
+            'Failed to create payment subscription. Please try again.')
+    except Exception as e:
+        logger.error(f"PayPal subscription creation failed during renewal: {e}", exc_info=True)
+        return create_error_response(502, 'PaymentError',
+            'Failed to create payment subscription. Please try again.')
+
+    logger.info(f"Custom plan renewal initiated for {email}: {commitment_months} months starting {new_start_date[:10]}")
+
+    return create_response(200, {
+        'paypalApprovalUrl': sub_result['approvalUrl'],
+        'subscriptionId': sub_result['subscriptionId'],
+        'newCommitment': {
+            'startDate': new_start_date,
+            'endDate': new_end_date,
+            'months': commitment_months,
+            'monthlyPrice': float(monthly_price),
+            'tokenAllocation': token_allocation,
+            'discountPercent': discount_percent,
+        }
+    })
+
+
+def _paypal_create_subscription_with_start_date(access_token, plan_id, subscriber_email, start_date):
+    """Create a PayPal subscription starting on a specific date (for renewals).
+
+    Args:
+        access_token: PayPal OAuth2 access token.
+        plan_id: PayPal billing plan ID.
+        subscriber_email: Email address of the subscriber.
+        start_date: ISO 8601 date string for when the subscription should start billing.
+
+    Returns:
+        dict with 'subscriptionId' and 'approvalUrl'.
+
+    Raises:
+        Exception: If subscription creation fails.
+    """
+    import urllib.request
+    import urllib.error
+
+    subscription_url = f"{PAYPAL_API_BASE}/v1/billing/subscriptions"
+
+    # Parse the start_date and format for PayPal
+    try:
+        start_dt = datetime.fromisoformat(start_date.replace('Z', '+00:00'))
+        start_time = start_dt.strftime('%Y-%m-%dT%H:%M:%SZ')
+    except (ValueError, AttributeError):
+        # Fallback to near-future if parsing fails
+        start_time = (datetime.now(timezone.utc) + timedelta(minutes=5)).strftime('%Y-%m-%dT%H:%M:%SZ')
+
+    subscription_payload = json.dumps({
+        "plan_id": plan_id,
+        "start_time": start_time,
+        "subscriber": {
+            "email_address": subscriber_email,
+        },
+        "application_context": {
+            "brand_name": "SlashMyBill",
+            "locale": "en-US",
+            "shipping_preference": "NO_SHIPPING",
+            "user_action": "SUBSCRIBE_NOW",
+            "return_url": "https://slashmycloudbill.com/members/?custom_plan_renewed=true",
+            "cancel_url": "https://slashmycloudbill.com/members/?custom_plan_renewal_cancelled=true",
+        }
+    }).encode('utf-8')
+
+    req = urllib.request.Request(subscription_url, data=subscription_payload, method='POST')
+    req.add_header('Authorization', f'Bearer {access_token}')
+    req.add_header('Content-Type', 'application/json')
+    req.add_header('PayPal-Request-Id', f'renew-{subscriber_email}-{uuid.uuid4().hex[:8]}')
+    req.add_header('Prefer', 'return=representation')
+
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        subscription = json.loads(resp.read().decode('utf-8'))
+        subscription_id = subscription.get('id', '')
+        # Find the approval URL from the links array
+        approval_url = ''
+        for link in subscription.get('links', []):
+            if link.get('rel') == 'approve':
+                approval_url = link.get('href', '')
+                break
+
+        return {
+            'subscriptionId': subscription_id,
+            'approvalUrl': approval_url,
+        }
+
+
+# ============================================================
+# PayPal Webhook Handler (no JWT auth - called by PayPal directly)
+# ============================================================
+
+def _verify_paypal_webhook_signature(event):
+    """Verify PayPal webhook signature using PayPal's verification API.
+
+    Extracts transmission headers from the incoming event and calls PayPal's
+    /v1/notifications/verify-webhook-signature endpoint.
+
+    Returns:
+        True if signature is valid, False otherwise.
+    """
+    import urllib.request
+    import urllib.error
+
+    if not PAYPAL_WEBHOOK_ID:
+        logger.error("PAYPAL_WEBHOOK_ID not configured, cannot verify webhook signature")
+        return False
+
+    headers = event.get('headers', {}) or {}
+
+    # PayPal sends these headers with webhook notifications
+    transmission_id = headers.get('paypal-transmission-id', '')
+    transmission_time = headers.get('paypal-transmission-time', '')
+    cert_url = headers.get('paypal-cert-url', '')
+    auth_algo = headers.get('paypal-auth-algo', '')
+    transmission_sig = headers.get('paypal-transmission-sig', '')
+
+    if not all([transmission_id, transmission_time, cert_url, auth_algo, transmission_sig]):
+        logger.warning("Missing PayPal webhook signature headers")
+        return False
+
+    # Get the raw body for verification
+    body = event.get('body', '{}')
+
+    try:
+        access_token = _get_paypal_access_token()
+    except Exception as e:
+        logger.error(f"Failed to get PayPal access token for webhook verification: {e}")
+        return False
+
+    verify_url = f"{PAYPAL_API_BASE}/v1/notifications/verify-webhook-signature"
+    verify_payload = json.dumps({
+        "auth_algo": auth_algo,
+        "cert_url": cert_url,
+        "transmission_id": transmission_id,
+        "transmission_sig": transmission_sig,
+        "transmission_time": transmission_time,
+        "webhook_id": PAYPAL_WEBHOOK_ID,
+        "webhook_event": json.loads(body) if isinstance(body, str) else body,
+    })
+
+    req = urllib.request.Request(verify_url, data=verify_payload.encode(), method='POST')
+    req.add_header('Authorization', f'Bearer {access_token}')
+    req.add_header('Content-Type', 'application/json')
+
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            result = json.loads(resp.read().decode())
+            verification_status = result.get('verification_status', '')
+            if verification_status == 'SUCCESS':
+                return True
+            else:
+                logger.warning(f"PayPal webhook signature verification failed: {verification_status}")
+                return False
+    except urllib.error.HTTPError as e:
+        error_body = ''
+        try:
+            error_body = e.read().decode()
+        except Exception:
+            pass
+        logger.error(f"PayPal webhook verification API error: HTTP {e.code} - {error_body}")
+        return False
+    except Exception as e:
+        logger.error(f"PayPal webhook verification failed: {e}")
+        return False
+
+
+def handle_paypal_webhook(event):
+    """POST /members/custom-plan/webhook -- Handle PayPal webhook events.
+
+    This endpoint does NOT require JWT authentication (called by PayPal directly).
+    Instead, it verifies PayPal's webhook signature.
+
+    Handles:
+      - PAYMENT.SALE.COMPLETED: clear grace period, reset to active
+      - PAYMENT.SALE.DENIED: enter 7-day grace period
+      - BILLING.SUBSCRIPTION.EXPIRED: transition to Scale tier
+      - BILLING.SUBSCRIPTION.CANCELLED: log warning
+    """
+    # Verify PayPal webhook signature
+    if not _verify_paypal_webhook_signature(event):
+        logger.warning("PayPal webhook signature verification failed")
+        return create_error_response(401, 'Unauthorized', 'Invalid webhook signature')
+
+    # Parse the event body
+    try:
+        body = json.loads(event.get('body', '{}'))
+    except (json.JSONDecodeError, TypeError):
+        return create_error_response(400, 'InvalidRequest', 'Invalid JSON body')
+
+    event_type = body.get('event_type', '')
+    resource = body.get('resource', {})
+
+    logger.info(f"PayPal webhook received: {event_type}")
+
+    # Extract subscription_id from the resource
+    # For PAYMENT.SALE events, subscription_id is in resource.billing_agreement_id
+    # For BILLING.SUBSCRIPTION events, subscription_id is in resource.id
+    subscription_id = None
+    if event_type.startswith('PAYMENT.SALE'):
+        subscription_id = resource.get('billing_agreement_id')
+    elif event_type.startswith('BILLING.SUBSCRIPTION'):
+        subscription_id = resource.get('id')
+
+    if not subscription_id:
+        logger.warning(f"PayPal webhook {event_type}: could not extract subscription_id from resource")
+        return create_response(200, {'message': 'Event received, no subscription_id found'})
+
+    # Look up member by paypalCustomPlanSubId
+    members_table = dynamodb.Table(MEMBERS_TABLE_NAME)
+    member = None
+
+    try:
+        # Scan for member with matching paypalCustomPlanSubId
+        scan_resp = members_table.scan(
+            FilterExpression='paypalCustomPlanSubId = :sub_id',
+            ExpressionAttributeValues={':sub_id': subscription_id},
+            Limit=1,
+        )
+        items = scan_resp.get('Items', [])
+        if items:
+            member = items[0]
+    except ClientError as e:
+        logger.error(f"Failed to look up member by subscription ID {subscription_id}: {e}")
+        return create_response(200, {'message': 'Event received, member lookup failed'})
+
+    if not member:
+        logger.warning(f"PayPal webhook {event_type}: no member found with paypalCustomPlanSubId={subscription_id}")
+        return create_response(200, {'message': 'Event received, member not found'})
+
+    email = member.get('email')
+    logger.info(f"PayPal webhook {event_type} for member: {email}")
+
+    # Handle event types
+    if event_type == 'PAYMENT.SALE.COMPLETED':
+        _handle_webhook_payment_completed(email, members_table)
+    elif event_type == 'PAYMENT.SALE.DENIED':
+        _handle_webhook_payment_denied(email, members_table)
+    elif event_type == 'BILLING.SUBSCRIPTION.EXPIRED':
+        _handle_webhook_subscription_expired(email, members_table)
+    elif event_type == 'BILLING.SUBSCRIPTION.CANCELLED':
+        logger.warning(f"PayPal subscription cancelled for {email} (subscription: {subscription_id}). "
+                       "This shouldn't happen during an active commitment.")
+    else:
+        logger.info(f"PayPal webhook: unhandled event type {event_type}")
+
+    return create_response(200, {'message': f'Webhook event {event_type} processed'})
+
+
+def _handle_webhook_payment_completed(email, members_table):
+    """Clear grace period and reset commitment status to active."""
+    try:
+        members_table.update_item(
+            Key={'email': email},
+            UpdateExpression=(
+                'SET commitmentStatus = :status '
+                'REMOVE commitmentGraceDeadline'
+            ),
+            ExpressionAttributeValues={
+                ':status': 'active',
+            },
+        )
+        logger.info(f"Payment completed for {email}: grace period cleared, status set to active")
+    except ClientError as e:
+        logger.error(f"Failed to update member {email} after payment completed: {e}")
+
+
+def _handle_webhook_payment_denied(email, members_table):
+    """Enter 7-day grace period on payment failure."""
+    now = datetime.now(timezone.utc)
+    grace_deadline = (now + timedelta(days=7)).strftime('%Y-%m-%dT%H:%M:%SZ')
+
+    try:
+        members_table.update_item(
+            Key={'email': email},
+            UpdateExpression=(
+                'SET commitmentStatus = :status, '
+                'commitmentGraceDeadline = :deadline'
+            ),
+            ExpressionAttributeValues={
+                ':status': 'grace_period',
+                ':deadline': grace_deadline,
+            },
+        )
+        logger.info(f"Payment denied for {email}: entering grace period until {grace_deadline}")
+    except ClientError as e:
+        logger.error(f"Failed to update member {email} after payment denied: {e}")
+        return
+
+    # Send email notification about payment failure
+    try:
+        _send_grace_period_email(email, grace_deadline)
+    except Exception as e:
+        logger.error(f"Failed to send grace period email to {email}: {e}")
+
+
+def _handle_webhook_subscription_expired(email, members_table):
+    """Transition member to Scale tier when subscription expires."""
+    now = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+
+    try:
+        members_table.update_item(
+            Key={'email': email},
+            UpdateExpression=(
+                'SET tier = :tier, '
+                'commitmentStatus = :status, '
+                'updatedAt = :updated_at '
+                'REMOVE customTokenAllocation, customMonthlyPrice, '
+                'commitmentStartDate, commitmentEndDate, commitmentMonths, '
+                'commitmentDiscountPercent, paypalCustomPlanSubId, '
+                'commitmentGraceDeadline'
+            ),
+            ExpressionAttributeValues={
+                ':tier': 'scale',
+                ':status': 'expired',
+                ':updated_at': now,
+            },
+        )
+        logger.info(f"Subscription expired for {email}: transitioned to Scale tier")
+    except ClientError as e:
+        logger.error(f"Failed to transition member {email} to Scale tier on expiry: {e}")
+
+
+def _send_grace_period_email(member_email, grace_deadline):
+    """Send email notification about payment failure and grace period.
+    
+    Called when a member enters grace period due to payment failure.
+    The email informs them of the deadline and consequences.
+    """
+    try:
+        deadline_date = datetime.fromisoformat(grace_deadline.replace('Z', '+00:00'))
+        deadline_str = deadline_date.strftime('%B %d, %Y')
+    except (ValueError, TypeError):
+        deadline_str = grace_deadline[:10] if grace_deadline else 'in 7 days'
+
+    subject = 'Action Required: Payment Failed for Your Custom Plan'
+    body_html = (
+        '<div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;background:#fff;'
+        'border:1px solid #e5e7eb;border-radius:12px;overflow:hidden;">'
+        '<div style="background:linear-gradient(135deg,#ef4444,#f97316);padding:20px 24px;color:#fff;">'
+        '<h2 style="margin:0;font-size:1.2em;">⚠️ Payment Failed</h2></div>'
+        '<div style="padding:20px 24px;">'
+        '<p style="color:#374151;line-height:1.6;">We were unable to process your recurring payment '
+        'for your Custom plan subscription.</p>'
+        '<table style="width:100%;border-collapse:collapse;margin:16px 0;">'
+        '<tr><td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;color:#6b7280;">Status</td>'
+        '<td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;font-weight:600;color:#f59e0b;">'
+        'Grace Period</td></tr>'
+        f'<tr><td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;color:#6b7280;">Deadline</td>'
+        f'<td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;font-weight:600;">{deadline_str}</td></tr>'
+        '<tr><td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;color:#6b7280;">Action Needed</td>'
+        '<td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;font-weight:600;">'
+        'Update payment method in PayPal</td></tr></table>'
+        '<p style="color:#374151;line-height:1.6;">You have <strong>7 days</strong> to resolve this payment issue. '
+        'During this time, you will retain full access to your Custom plan features and token allocation.</p>'
+        f'<p style="color:#dc2626;line-height:1.6;font-weight:600;">If payment is not resolved by {deadline_str}, '
+        'your account will be reverted to the Free tier (100 tokens/month).</p>'
+        '<p style="color:#374151;line-height:1.6;">Please update your payment method in PayPal to avoid '
+        'any disruption to your service.</p></div>'
+        '<div style="padding:12px 24px;background:#f9fafb;text-align:center;color:#9ca3af;font-size:0.8em;">'
+        'SlashMyBill - Custom Subscription Plan</div></div>'
+    )
+
+    try:
+        ses_client.send_email(
+            Source=f'SlashMyBill <{SES_SENDER_EMAIL}>',
+            Destination={'ToAddresses': [member_email]},
+            Message={
+                'Subject': {'Data': subject, 'Charset': 'UTF-8'},
+                'Body': {'Html': {'Data': body_html, 'Charset': 'UTF-8'}}
+            }
+        )
+        logger.info(f"Grace period notification email sent to {member_email}")
+    except Exception as e:
+        logger.warning(f"Failed to send grace period email to {member_email}: {e}")
+
 
 # Deploy trigger v2

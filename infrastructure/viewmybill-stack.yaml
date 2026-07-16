@@ -881,6 +881,17 @@ Resources:
                   - dynamodb:Query
                 Resource:
                   - !GetAtt ProviderRegistryTable.Arn
+        - PolicyName: DynamoDBDiscountConfigCRUDAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                Resource:
+                  - !GetAtt CustomPlanDiscountConfigTable.Arn
       Tags:
         - Key: Project
           Value: ViewMyBill
@@ -909,6 +920,7 @@ Resources:
           TIPS_TABLE_NAME: !Ref CostOptimizationTipsTable
           STORAGE_BUCKET: !Ref BillStorageBucket
           FEEDBACK_TABLE_NAME: !Ref AgentFeedbackTable
+          DISCOUNT_CONFIG_TABLE_NAME: !Ref CustomPlanDiscountConfigTable
       Tags:
         - Key: Project
           Value: ViewMyBill
@@ -1280,6 +1292,17 @@ Resources:
                   - dynamodb:Query
                 Resource:
                   - !GetAtt ProviderRegistryTable.Arn
+        - PolicyName: DynamoDBDiscountConfigAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                Resource:
+                  - !GetAtt CustomPlanDiscountConfigTable.Arn
         - PolicyName: KMSCredentialEncryption
           # Vendor-agnostic AI usage Tier-3 live calls: kms:Decrypt scoped to the
           # customer credential CMK, restricted to the {memberEmail, accountId}
@@ -1348,6 +1371,7 @@ Resources:
           SUPPORTED_PROVIDERS: 'aws,azure,gcp,openai'
           AUDIT_QUALITY_THRESHOLD: '70'
           AUDIT_QUALITY_GATE_ENABLED: 'true'
+          DISCOUNT_CONFIG_TABLE_NAME: !Ref CustomPlanDiscountConfigTable
       Tags:
         - Key: Project
           Value: ViewMyBill
@@ -2315,6 +2339,26 @@ Resources:
       RouteKey: 'POST /members/accounts/test-groundcover-connection'
       Target: !Sub 'integrations/${MemberIntegration}'
 
+  # ============================================================
+  # DynamoDB Table - Custom Plan Discount Configuration
+  # ============================================================
+  CustomPlanDiscountConfigTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: CustomPlan-DiscountConfig
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: configId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: configId
+          KeyType: HASH
+      SSESpecification:
+        SSEEnabled: true
+      Tags:
+        - Key: Project
+          Value: ViewMyBill
+
 
 Outputs:
   ApiEndpoint:
@@ -2422,3 +2466,11 @@ Outputs:
   InvoicesTableArn:
     Description: DynamoDB Invoices table ARN
     Value: !GetAtt InvoicesTable.Arn
+
+  CustomPlanDiscountConfigTableName:
+    Description: DynamoDB table name for custom plan discount configuration
+    Value: !Ref CustomPlanDiscountConfigTable
+
+  CustomPlanDiscountConfigTableArn:
+    Description: DynamoDB Custom Plan Discount Config table ARN
+    Value: !GetAtt CustomPlanDiscountConfigTable.Arn

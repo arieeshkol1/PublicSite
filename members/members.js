@@ -294,21 +294,25 @@ function _showUpgradeModal() {
     var total = tokens.total || 100;
     var email = getMemberEmail() || '';
 
-    var tierNames = {free:'Free', growth:'Growth', scale:'Scale'};
+    var tierNames = {free:'Free', growth:'Growth', scale:'Scale', custom:'Custom'};
     var overlay = document.createElement('div');
     overlay.id = 'upgrade-modal';
     overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:900;display:flex;align-items:center;justify-content:center;';
     overlay.onclick = function(e) { if (e.target === overlay) overlay.remove(); };
 
     var current = tierNames[currentTier] || 'Free';
-    var html = '<div style="background:#fff;border-radius:16px;padding:32px;max-width:600px;width:95%;max-height:90vh;overflow-y:auto;">';
+    var html = '<div style="background:#fff;border-radius:16px;padding:32px;max-width:820px;width:95%;max-height:90vh;overflow-y:auto;">';
     html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">';
     html += '<h2 style="margin:0;font-size:1.3em;">Manage Your Plan</h2>';
     html += '<button onclick="document.getElementById(\'upgrade-modal\').remove();" style="background:none;border:none;font-size:1.4em;cursor:pointer;color:#6b7280;">&times;</button></div>';
     html += '<p style="color:#6b7280;font-size:0.85em;margin-bottom:20px;">Current plan: <strong>' + current + '</strong> &middot; Tokens: <strong>' + remaining + '/' + total + '</strong></p>';
 
     // Plan cards
-    html += '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:24px;">';
+    html += '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:24px;">';
+
+    // Check if member has active commitment (used to disable Growth/Scale buttons)
+    var memberCommitmentEnd = sessionStorage.getItem('memberCommitmentEndDate') || '';
+    var memberHasActiveCommitment = currentTier === 'custom' && memberCommitmentEnd && new Date(memberCommitmentEnd) > new Date();
 
     // Free
     html += '<div style="border:2px solid ' + (currentTier === 'free' ? '#e8714a' : '#e5e7eb') + ';border-radius:12px;padding:16px;text-align:center;">';
@@ -326,7 +330,13 @@ function _showUpgradeModal() {
     html += '<div style="font-size:2em;font-weight:800;margin:8px 0;">$50</div>';
     html += '<div style="color:#6b7280;font-size:0.8em;">300 tokens/mo</div>';
     html += '<div style="color:#6b7280;font-size:0.8em;">5 accounts</div>';
-    html += currentTier === 'growth' ? '<div style="margin-top:12px;color:#10b981;font-weight:600;font-size:0.85em;">&#10003; Current Plan</div>' : '<div id="paypal-btn-growth" style="margin-top:12px;"></div>';
+    if (currentTier === 'growth') {
+        html += '<div style="margin-top:12px;color:#10b981;font-weight:600;font-size:0.85em;">&#10003; Current Plan</div>';
+    } else if (memberHasActiveCommitment) {
+        html += '<div style="margin-top:12px;font-size:0.75em;color:#9ca3af;font-style:italic;">&#128274; Commitment locked</div>';
+    } else {
+        html += '<div id="paypal-btn-growth" style="margin-top:12px;"></div>';
+    }
     html += '</div>';
 
     // Scale
@@ -335,8 +345,46 @@ function _showUpgradeModal() {
     html += '<div style="font-size:2em;font-weight:800;margin:8px 0;">$200</div>';
     html += '<div style="color:#6b7280;font-size:0.8em;">1,500 tokens/mo</div>';
     html += '<div style="color:#6b7280;font-size:0.8em;">20 accounts</div>';
-    html += currentTier === 'scale' ? '<div style="margin-top:12px;color:#10b981;font-weight:600;font-size:0.85em;">&#10003; Current Plan</div>' : '<div id="paypal-btn-scale" style="margin-top:12px;"></div>';
+    if (currentTier === 'scale') {
+        html += '<div style="margin-top:12px;color:#10b981;font-weight:600;font-size:0.85em;">&#10003; Current Plan</div>';
+    } else if (memberHasActiveCommitment) {
+        html += '<div style="margin-top:12px;font-size:0.75em;color:#9ca3af;font-style:italic;">&#128274; Commitment locked</div>';
+    } else {
+        html += '<div id="paypal-btn-scale" style="margin-top:12px;"></div>';
+    }
     html += '</div>';
+
+    // Custom Plan card
+    html += '<div class="plan-card custom-plan-card" style="border:2px solid ' + (currentTier === 'custom' ? '#e8714a' : '#7c3aed') + ';border-radius:12px;padding:16px;text-align:center;">';
+    html += '<div style="font-weight:700;font-size:1.1em;">Custom</div>';
+    html += '<p style="color:#6b7280;font-size:0.8em;margin:4px 0 12px;">Commit &amp; save</p>';
+
+    if (memberHasActiveCommitment) {
+        // Show commitment status
+        var endDate = new Date(memberCommitmentEnd);
+        var now = new Date();
+        var remainingMs = endDate - now;
+        var remainingMonths = Math.max(1, Math.ceil(remainingMs / (1000 * 60 * 60 * 24 * 30)));
+        var endDateStr = endDate.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+        html += '<div style="margin-top:12px;color:#10b981;font-weight:600;font-size:0.85em;">&#10003; Current Plan</div>';
+        html += '<div style="margin-top:8px;font-size:0.8em;color:#374151;">Ends: ' + endDateStr + '</div>';
+        html += '<div style="font-size:0.8em;color:#374151;">' + remainingMonths + ' months left</div>';
+        // Renewal section placeholder (loaded async after modal renders)
+        html += '<div id="custom-plan-renewal-section"></div>';
+    } else {
+        // Show month selector dropdown
+        html += '<select id="custom-plan-months" class="custom-plan-select" onchange="calculateCustomPrice()">';
+        for (var m = 3; m <= 24; m++) {
+            html += '<option value="' + m + '">' + m + ' months</option>';
+        }
+        html += '</select>';
+        html += '<div id="custom-plan-price" style="margin-top:10px;font-size:0.85em;color:#374151;">Select months...</div>';
+        html += '<div id="custom-plan-tokens" style="font-size:0.8em;color:#6b7280;"></div>';
+        html += '<div id="custom-plan-discount" style="font-size:0.8em;color:#7c3aed;font-weight:600;"></div>';
+        html += '<div id="paypal-btn-custom" style="margin-top:12px;"></div>';
+    }
+    html += '</div>';
+
     html += '</div>';
 
     // Token top-up section
@@ -446,8 +494,349 @@ function _showUpgradeModal() {
             }
         };
     });
+
+    // Check renewal eligibility for active custom plan commitments
+    if (memberHasActiveCommitment) {
+        _checkAndRenderRenewalSection();
+    }
 }
-    var html = '<div style="background:#fff;border-radius:16px;padding:32px;max-width:700px;width:95%;max-height:90vh;overflow-y:auto;">';
+
+// ============================================================
+// Custom Plan - Price Calculator & Subscribe Flow
+// ============================================================
+function calculateCustomPrice() {
+    var monthsEl = document.getElementById('custom-plan-months');
+    var priceEl = document.getElementById('custom-plan-price');
+    var tokensEl = document.getElementById('custom-plan-tokens');
+    var discountEl = document.getElementById('custom-plan-discount');
+    if (!monthsEl) return;
+
+    var months = parseInt(monthsEl.value);
+    if (priceEl) priceEl.textContent = 'Calculating...';
+    if (tokensEl) tokensEl.textContent = '';
+    if (discountEl) discountEl.textContent = '';
+
+    api('POST', '/members/custom-plan/calculate', { commitmentMonths: months })
+        .then(function(data) {
+            if (priceEl) priceEl.textContent = '$' + data.monthlyPrice + '/mo';
+            if (tokensEl) tokensEl.textContent = data.tokenAllocation + ' tokens/mo';
+            if (discountEl) discountEl.textContent = data.discountPercent + '% off';
+            // Render subscribe button after successful price calculation
+            renderCustomPlanSubscribeButton(months, data);
+        })
+        .catch(function(err) {
+            if (priceEl) priceEl.textContent = 'Error loading price';
+            console.warn('Custom plan calculate error:', err);
+        });
+}
+
+// ============================================================
+// Custom Plan - Renewal Section (Task 10.3)
+// ============================================================
+
+// Check status endpoint and render renewal UI if canRenew is true
+function _checkAndRenderRenewalSection() {
+    var section = document.getElementById('custom-plan-renewal-section');
+    if (!section) return;
+
+    api('GET', '/members/custom-plan/status')
+        .then(function(data) {
+            if (!data.canRenew) return;
+
+            var endDateStr = '';
+            if (data.endDate) {
+                var d = new Date(data.endDate);
+                endDateStr = d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+            }
+
+            var renewHtml = '<div style="margin-top:12px;border-top:1px solid #e5e7eb;padding-top:10px;">';
+            renewHtml += '<div style="font-size:0.78em;font-weight:600;color:#7c3aed;margin-bottom:6px;">&#128260; Renew your commitment</div>';
+            renewHtml += '<select id="renewal-months" style="width:100%;padding:5px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:0.8em;margin-bottom:6px;">';
+            for (var m = 3; m <= 24; m++) {
+                renewHtml += '<option value="' + m + '">' + m + ' months</option>';
+            }
+            renewHtml += '</select>';
+            renewHtml += '<div id="renewal-price-info" style="font-size:0.75em;color:#374151;margin-bottom:4px;"></div>';
+            renewHtml += '<div id="renewal-tokens-info" style="font-size:0.75em;color:#6b7280;"></div>';
+            renewHtml += '<div id="renewal-discount-info" style="font-size:0.75em;color:#7c3aed;font-weight:600;"></div>';
+            renewHtml += '<div style="font-size:0.7em;color:#6b7280;margin-top:4px;font-style:italic;">New commitment starts after current one ends' + (endDateStr ? ' on ' + endDateStr : '') + '</div>';
+            renewHtml += '<button id="renewal-calculate-btn" style="margin-top:8px;background:#f3f4f6;border:1px solid #d1d5db;border-radius:6px;padding:6px 12px;font-size:0.75em;cursor:pointer;width:100%;font-weight:600;color:#374151;">Calculate Renewal</button>';
+            renewHtml += '<div id="renewal-action-btn" style="margin-top:6px;"></div>';
+            renewHtml += '</div>';
+
+            section.innerHTML = renewHtml;
+
+            // Wire up calculate button
+            var calcBtn = document.getElementById('renewal-calculate-btn');
+            if (calcBtn) {
+                calcBtn.onclick = function() { calculateRenewalPrice(); };
+            }
+
+            // Also calculate on month selection change
+            var monthsSelect = document.getElementById('renewal-months');
+            if (monthsSelect) {
+                monthsSelect.onchange = function() {
+                    // Clear previous results when month changes
+                    var actionBtn = document.getElementById('renewal-action-btn');
+                    if (actionBtn) actionBtn.innerHTML = '';
+                    var priceInfo = document.getElementById('renewal-price-info');
+                    if (priceInfo) priceInfo.textContent = '';
+                    var tokensInfo = document.getElementById('renewal-tokens-info');
+                    if (tokensInfo) tokensInfo.textContent = '';
+                    var discountInfo = document.getElementById('renewal-discount-info');
+                    if (discountInfo) discountInfo.textContent = '';
+                };
+            }
+        })
+        .catch(function(err) {
+            console.warn('Custom plan status check failed:', err);
+        });
+}
+
+// Calculate renewal pricing based on selected months
+function calculateRenewalPrice() {
+    var monthsEl = document.getElementById('renewal-months');
+    var priceInfo = document.getElementById('renewal-price-info');
+    var tokensInfo = document.getElementById('renewal-tokens-info');
+    var discountInfo = document.getElementById('renewal-discount-info');
+    var actionBtn = document.getElementById('renewal-action-btn');
+    if (!monthsEl) return;
+
+    var months = parseInt(monthsEl.value);
+    if (priceInfo) priceInfo.textContent = 'Calculating...';
+    if (tokensInfo) tokensInfo.textContent = '';
+    if (discountInfo) discountInfo.textContent = '';
+    if (actionBtn) actionBtn.innerHTML = '';
+
+    api('POST', '/members/custom-plan/calculate', { commitmentMonths: months })
+        .then(function(data) {
+            if (priceInfo) priceInfo.textContent = '$' + data.monthlyPrice + '/mo';
+            if (tokensInfo) tokensInfo.textContent = data.tokenAllocation + ' tokens/mo';
+            if (discountInfo) discountInfo.textContent = data.discountPercent + '% off';
+
+            // Show renew button
+            if (actionBtn) {
+                actionBtn.innerHTML = '<button id="renewal-submit-btn" style="' +
+                    'background:linear-gradient(135deg,#7c3aed,#6d28d9);color:#fff;border:none;' +
+                    'border-radius:6px;padding:8px 14px;font-size:0.8em;font-weight:600;' +
+                    'cursor:pointer;width:100%;transition:opacity 0.2s;">' +
+                    '&#128260; Renew $' + data.monthlyPrice + '/mo</button>';
+
+                var renewBtn = document.getElementById('renewal-submit-btn');
+                if (renewBtn) {
+                    renewBtn.onmouseenter = function() { renewBtn.style.opacity = '0.85'; };
+                    renewBtn.onmouseleave = function() { renewBtn.style.opacity = '1'; };
+                    renewBtn.onclick = function() { renewCustomPlan(months); };
+                }
+            }
+        })
+        .catch(function(err) {
+            if (priceInfo) priceInfo.textContent = 'Error loading price';
+            console.warn('Renewal price calculation error:', err);
+        });
+}
+
+// Submit renewal request
+function renewCustomPlan(months) {
+    var btn = document.getElementById('renewal-submit-btn');
+    if (btn) {
+        btn.disabled = true;
+        btn.textContent = 'Processing...';
+        btn.style.opacity = '0.6';
+        btn.style.cursor = 'not-allowed';
+    }
+
+    api('POST', '/members/custom-plan/renew', { commitmentMonths: months })
+        .then(function(resp) {
+            if (resp.paypalApprovalUrl) {
+                // Store pending renewal info
+                sessionStorage.setItem('pendingRenewalSubId', resp.subscriptionId || '');
+                sessionStorage.setItem('pendingRenewalMonths', String(months));
+                // Redirect to PayPal for approval
+                window.location.href = resp.paypalApprovalUrl;
+            } else {
+                // If no PayPal redirect needed (direct activation)
+                notify('Commitment renewed successfully!', 'success', 6000);
+                if (resp.commitment && resp.commitment.endDate) {
+                    sessionStorage.setItem('memberCommitmentEndDate', resp.commitment.endDate);
+                }
+                var modal = document.getElementById('upgrade-modal');
+                if (modal) modal.remove();
+            }
+        })
+        .catch(function(err) {
+            notify(err.message || 'Failed to renew commitment. Please try again.', 'error', 6000);
+            if (btn) {
+                btn.disabled = false;
+                btn.textContent = '\ud83d\udd04 Renew';
+                btn.style.opacity = '1';
+                btn.style.cursor = 'pointer';
+            }
+        });
+}
+
+// Render a subscribe button inside #paypal-btn-custom that triggers the custom plan subscribe flow
+function renderCustomPlanSubscribeButton(months, data) {
+    var container = document.getElementById('paypal-btn-custom');
+    if (!container) return;
+
+    container.innerHTML = '<button id="custom-plan-subscribe-btn" style="' +
+        'background:linear-gradient(135deg,#7c3aed,#6d28d9);color:#fff;border:none;' +
+        'border-radius:8px;padding:10px 18px;font-size:0.85em;font-weight:600;' +
+        'cursor:pointer;width:100%;transition:opacity 0.2s;">' +
+        '&#128274; Subscribe $' + data.monthlyPrice + '/mo</button>';
+
+    var btn = document.getElementById('custom-plan-subscribe-btn');
+    if (!btn) return;
+
+    btn.onmouseenter = function() { btn.style.opacity = '0.85'; };
+    btn.onmouseleave = function() { btn.style.opacity = '1'; };
+
+    btn.onclick = function() {
+        btn.disabled = true;
+        btn.textContent = 'Processing...';
+        btn.style.opacity = '0.6';
+        btn.style.cursor = 'not-allowed';
+
+        // Step 1: Call subscribe API to create PayPal subscription
+        api('POST', '/members/custom-plan/subscribe', { commitmentMonths: months })
+            .then(function(resp) {
+                // Store subscription ID for activation after PayPal redirect
+                sessionStorage.setItem('pendingCustomSubId', resp.subscriptionId);
+                sessionStorage.setItem('pendingCustomMonths', String(months));
+                // Redirect to PayPal approval URL
+                if (resp.paypalApprovalUrl) {
+                    window.location.href = resp.paypalApprovalUrl;
+                } else {
+                    throw { message: 'No approval URL received from server' };
+                }
+            })
+            .catch(function(err) {
+                btn.disabled = false;
+                btn.innerHTML = '&#128274; Subscribe $' + data.monthlyPrice + '/mo';
+                btn.style.opacity = '1';
+                btn.style.cursor = 'pointer';
+                notify(err.message || 'Failed to create subscription. Please try again.', 'error', 5000);
+                console.warn('Custom plan subscribe error:', err);
+            });
+    };
+}
+
+// Handle PayPal return - activation callback when URL contains ?custom_plan_activated=true
+function _handleCustomPlanActivation() {
+    var params = new URLSearchParams(window.location.search);
+
+    // Handle cancellation - user clicked cancel at PayPal
+    if (params.has('custom_plan_cancelled')) {
+        sessionStorage.removeItem('pendingCustomSubId');
+        sessionStorage.removeItem('pendingCustomMonths');
+        notify('Custom plan subscription was cancelled.', 'warning', 4000);
+        _cleanCustomPlanUrlParams();
+        return;
+    }
+
+    if (!params.has('custom_plan_activated')) return;
+
+    var subscriptionId = sessionStorage.getItem('pendingCustomSubId');
+    if (!subscriptionId) {
+        // No pending subscription found, clean up URL
+        _cleanCustomPlanUrlParams();
+        return;
+    }
+
+    // Show loading while activating
+    showLoading();
+
+    // Step 2: Activate the subscription after PayPal approval
+    api('POST', '/members/custom-plan/subscribe', { action: 'activate', subscriptionId: subscriptionId })
+        .then(function(resp) {
+            hideLoading();
+            // Update session storage with custom tier data
+            sessionStorage.setItem('memberTier', 'custom');
+            if (resp.commitment) {
+                sessionStorage.setItem('memberCommitmentEndDate', resp.commitment.endDate || '');
+                sessionStorage.setItem('memberCustomTokens', String(resp.commitment.tokenAllocation || 0));
+                sessionStorage.setItem('memberCustomPrice', String(resp.commitment.monthlyPrice || 0));
+            }
+            // Update tier badge in header
+            var badge = document.getElementById('header-tier-badge');
+            if (badge) {
+                badge.textContent = 'Custom';
+                badge.style.background = '#ede9fe';
+                badge.style.color = '#6d28d9';
+            }
+            // Clean up pending data
+            sessionStorage.removeItem('pendingCustomSubId');
+            sessionStorage.removeItem('pendingCustomMonths');
+            // Show success notification
+            notify('Custom plan activated! Your commitment is now active.', 'success', 6000);
+            // Clean URL params
+            _cleanCustomPlanUrlParams();
+        })
+        .catch(function(err) {
+            hideLoading();
+            notify(err.message || 'Failed to activate custom plan. Please contact support.', 'error', 8000);
+            sessionStorage.removeItem('pendingCustomSubId');
+            sessionStorage.removeItem('pendingCustomMonths');
+            _cleanCustomPlanUrlParams();
+        });
+}
+
+function _cleanCustomPlanUrlParams() {
+    var url = new URL(window.location.href);
+    url.searchParams.delete('custom_plan_activated');
+    url.searchParams.delete('custom_plan_cancelled');
+    url.searchParams.delete('custom_plan_renewed');
+    url.searchParams.delete('token');
+    window.history.replaceState({}, document.title, url.pathname);
+}
+
+// Handle PayPal return for renewal - when URL contains ?custom_plan_renewed=true
+function _handleCustomPlanRenewal() {
+    var params = new URLSearchParams(window.location.search);
+    if (!params.has('custom_plan_renewed')) return;
+
+    var subscriptionId = sessionStorage.getItem('pendingRenewalSubId');
+    if (!subscriptionId) {
+        // No pending renewal found, just show success and clean up
+        notify('Commitment renewed successfully!', 'success', 6000);
+        _cleanCustomPlanUrlParams();
+        return;
+    }
+
+    // Show loading while activating renewal
+    showLoading();
+
+    // Activate the renewal after PayPal approval
+    api('POST', '/members/custom-plan/renew', { action: 'activate', subscriptionId: subscriptionId })
+        .then(function(resp) {
+            hideLoading();
+            // Update commitment end date in session
+            if (resp.commitment && resp.commitment.endDate) {
+                sessionStorage.setItem('memberCommitmentEndDate', resp.commitment.endDate);
+            }
+            if (resp.commitment && resp.commitment.tokenAllocation) {
+                sessionStorage.setItem('memberCustomTokens', String(resp.commitment.tokenAllocation));
+            }
+            if (resp.commitment && resp.commitment.monthlyPrice) {
+                sessionStorage.setItem('memberCustomPrice', String(resp.commitment.monthlyPrice));
+            }
+            // Clean up pending data
+            sessionStorage.removeItem('pendingRenewalSubId');
+            sessionStorage.removeItem('pendingRenewalMonths');
+            // Show success notification
+            notify('Commitment renewed successfully! Your new commitment is confirmed.', 'success', 6000);
+            // Clean URL params
+            _cleanCustomPlanUrlParams();
+        })
+        .catch(function(err) {
+            hideLoading();
+            notify(err.message || 'Failed to confirm renewal. Please contact support.', 'error', 8000);
+            sessionStorage.removeItem('pendingRenewalSubId');
+            sessionStorage.removeItem('pendingRenewalMonths');
+            _cleanCustomPlanUrlParams();
+        });
+}
 
 
 // ============================================================
@@ -1200,6 +1589,10 @@ async function updatePermissions(accountId, btn) {
 // ============================================================
 
 if (getToken()) {
+    // Check for custom plan activation callback from PayPal redirect
+    _handleCustomPlanActivation();
+    // Check for custom plan renewal callback from PayPal redirect
+    _handleCustomPlanRenewal();
     showView('dashboard');
 } else {
     showView('login');
