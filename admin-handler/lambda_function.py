@@ -30,6 +30,7 @@ LEADS_TABLE_NAME = os.environ.get('LEADS_TABLE_NAME', 'ViewMyBill-Leads')
 TIPS_TABLE_NAME = os.environ.get('TIPS_TABLE_NAME', 'ViewMyBill-CostOptimizationTips')
 FEEDBACK_TABLE_NAME = os.environ.get('FEEDBACK_TABLE_NAME', 'MemberPortal-AgentFeedback')
 TRANSACTION_LOG_TABLE_NAME = os.environ.get('TRANSACTION_LOG_TABLE_NAME', 'Audit_Transaction_Log')
+DISCOUNT_CONFIG_TABLE_NAME = os.environ.get('DISCOUNT_CONFIG_TABLE_NAME', 'CustomPlan-DiscountConfig')
 
 dynamodb = boto3.resource('dynamodb')
 s3_client = boto3.client('s3')
@@ -78,6 +79,9 @@ def lambda_handler(event, context):
         'POST /admin/tips-sync/trigger': handle_trigger_sync,
         'GET /admin/transactions': handle_get_transactions,
         'GET /admin/transactions/detail': handle_get_transaction_detail,
+        'GET /admin/custom-plans': handle_get_custom_plans,
+        'GET /admin/custom-plans/config': handle_get_discount_config,
+        'PUT /admin/custom-plans/config': handle_put_discount_config,
     }
 
     handler = routes.get(route_key)
@@ -702,6 +706,99 @@ def handle_get_schedules(event):
 
 
 @transaction_log('admin-handler')
+def handle_get_custom_plans(event):
+    """Return all members with custom plans and a revenue summary.
+
+    Scans MemberPortal-Members for members where tier='custom' OR commitmentStatus exists.
+    Returns per-member details and aggregate summary (active count, MRR, grace period count).
+    Requirements: 6.1, 6.2, 6.3, 6.4
+    """
+    from datetime import datetime, timezone
+
+    try:
+        table = dynamodb.Table('MemberPortal-Members')
+
+        # Scan with filter: tier = "custom" OR commitmentStatus attribute exists
+        filter_expr = Attr('tier').eq('custom') | Attr('commitmentStatus').exists()
+        response = table.scan(FilterExpression=filter_expr)
+        items = response.get('Items', [])
+        # Handle DynamoDB pagination
+        while 'LastEvaluatedKey' in response:
+            response = table.scan(
+                FilterExpression=filter_expr,
+                ExclusiveStartKey=response['LastEvaluatedKey']
+            )
+            items.extend(response.get('Items', []))
+
+        now = datetime.now(timezone.utc)
+        custom_plans = []
+        total_active = 0
+        total_monthly_revenue = Decimal('0')
+        grace_period_count = 0
+
+        for item in items:
+            email = item.get('email', '')
+            monthly_price = item.get('customMonthlyPrice', 0)
+            token_allocation = item.get('customTokenAllocation', 0)
+            start_date = item.get('commitmentStartDate', '')
+            end_date = item.get('commitmentEndDate', '')
+            status = item.get('commitmentStatus', '')
+            paypal_sub_id = item.get('paypalCustomPlanSubId', '')
+
+            # Calculate remaining months
+            remaining_months = 0
+            if end_date:
+                try:
+                    end_dt = datetime.fromisoformat(end_date.replace('Z', '+00:00'))
+                    if end_dt > now:
+                        months = (end_dt.year - now.year) * 12 + (end_dt.month - now.month)
+                        if now.day > end_dt.day:
+                            months -= 1
+                        remaining_months = max(0, months)
+                except (ValueError, AttributeError):
+                    remaining_months = 0
+
+            # Build plan entry
+            plan_entry = {
+                'email': email,
+                'monthlyPrice': float(Decimal(str(monthly_price))) if monthly_price else 0,
+                'tokenAllocation': int(token_allocation) if token_allocation else 0,
+                'commitmentStartDate': start_date,
+                'commitmentEndDate': end_date,
+                'remainingMonths': remaining_months,
+                'status': status,
+                'paypalSubscriptionId': paypal_sub_id,
+            }
+            custom_plans.append(plan_entry)
+
+            # Aggregate summary
+            if status == 'active':
+                total_active += 1
+                total_monthly_revenue += Decimal(str(monthly_price)) if monthly_price else Decimal('0')
+            elif status == 'grace_period':
+                grace_period_count += 1
+
+        # Sort by status (grace_period first for visibility), then by email
+        status_order = {'grace_period': 0, 'active': 1, 'expired': 2}
+        custom_plans.sort(key=lambda x: (status_order.get(x['status'], 99), x['email']))
+
+        result = {
+            'customPlans': custom_plans,
+            'summary': {
+                'totalActiveCommitments': total_active,
+                'totalMonthlyRevenue': float(total_monthly_revenue),
+                'gracePeriodCount': grace_period_count,
+            }
+        }
+
+        return create_response(200, result)
+
+    except ClientError as e:
+        logger.error(f"DynamoDB error scanning custom plans: {e}")
+        return create_error_response(500, 'ServerError', 'Failed to retrieve custom plans')
+
+
+@transaction_log('admin-handler')
 def handle_get_sync_status(event):
     """Return the current SYNC_METADATA record."""
     try:
@@ -1053,6 +1150,120 @@ def handle_get_transaction_detail(event):
     except ClientError as e:
         logger.error(f"DynamoDB error getting transaction detail: {e}")
         return create_error_response(500, 'ServerError', 'Failed to retrieve transaction detail')
+
+
+# ============================================================
+# Custom Plans Config Routes
+# ============================================================
+
+@transaction_log('admin-handler')
+def handle_get_discount_config(event):
+    """Return the current discount configuration from CustomPlan-DiscountConfig table."""
+    try:
+        table = dynamodb.Table(DISCOUNT_CONFIG_TABLE_NAME)
+        response = table.get_item(Key={'configId': 'ACTIVE'})
+        item = response.get('Item')
+        if not item:
+            return create_response(200, {
+                'config': None,
+                'message': 'No discount configuration found. Please create one.',
+            })
+        return create_response(200, {'config': _decimal_to_native(item)})
+    except ClientError as e:
+        logger.error(f"DynamoDB error getting discount config: {e}")
+        return create_error_response(500, 'ServerError', 'Failed to retrieve discount configuration')
+
+
+@transaction_log('admin-handler')
+def handle_put_discount_config(event):
+    """Validate and update the discount configuration."""
+    try:
+        body = json.loads(event.get('body', '{}'))
+    except (json.JSONDecodeError, TypeError):
+        return create_error_response(400, 'InvalidRequest', 'Invalid request body')
+
+    # Extract fields
+    base_monthly_price = body.get('baseMonthlyPrice')
+    base_token_count = body.get('baseTokenCount')
+    discount_tiers = body.get('discountTiers')
+
+    # Validate baseMonthlyPrice
+    if base_monthly_price is None or not isinstance(base_monthly_price, (int, float)):
+        return create_error_response(400, 'InvalidConfig', 'Base monthly price must be greater than $200')
+    if base_monthly_price <= 200:
+        return create_error_response(400, 'InvalidConfig', 'Base monthly price must be greater than $200')
+
+    # Validate baseTokenCount
+    if base_token_count is None or not isinstance(base_token_count, int) or base_token_count <= 0:
+        return create_error_response(400, 'InvalidConfig', 'Base token count must be a positive integer')
+
+    # Validate discountTiers is a non-empty array
+    if not discount_tiers or not isinstance(discount_tiers, list) or len(discount_tiers) == 0:
+        return create_error_response(400, 'InvalidConfig', 'Discount tiers must be a non-empty array')
+
+    # Validate each tier and discount percentages
+    for tier in discount_tiers:
+        if not isinstance(tier, dict):
+            return create_error_response(400, 'InvalidConfig', 'Each discount tier must be an object')
+        min_months = tier.get('minMonths')
+        max_months = tier.get('maxMonths')
+        discount_percent = tier.get('discountPercent')
+
+        if not isinstance(min_months, int) or not isinstance(max_months, int):
+            return create_error_response(400, 'InvalidConfig', 'Discount tier ranges must cover months 3-24 without gaps or overlaps')
+        if not isinstance(discount_percent, (int, float)):
+            return create_error_response(400, 'InvalidConfig', 'Discount percentages must be between 1 and 50')
+        if discount_percent < 1 or discount_percent > 50:
+            return create_error_response(400, 'InvalidConfig', 'Discount percentages must be between 1 and 50')
+        if min_months > max_months:
+            return create_error_response(400, 'InvalidConfig', 'Discount tier ranges must cover months 3-24 without gaps or overlaps')
+
+    # Sort tiers by minMonths ascending
+    sorted_tiers = sorted(discount_tiers, key=lambda t: t['minMonths'])
+
+    # Validate tier ranges cover 3-24 without gaps or overlaps
+    if sorted_tiers[0]['minMonths'] != 3:
+        return create_error_response(400, 'InvalidConfig', 'Discount tier ranges must cover months 3-24 without gaps or overlaps')
+    if sorted_tiers[-1]['maxMonths'] != 24:
+        return create_error_response(400, 'InvalidConfig', 'Discount tier ranges must cover months 3-24 without gaps or overlaps')
+
+    for i in range(len(sorted_tiers) - 1):
+        current_max = sorted_tiers[i]['maxMonths']
+        next_min = sorted_tiers[i + 1]['minMonths']
+        # Next tier should start exactly 1 after current ends (no gap, no overlap)
+        if next_min != current_max + 1:
+            return create_error_response(400, 'InvalidConfig', 'Discount tier ranges must cover months 3-24 without gaps or overlaps')
+
+    # Validate monotonicity: discount percent must increase (or stay same) as months increase
+    for i in range(len(sorted_tiers) - 1):
+        if sorted_tiers[i + 1]['discountPercent'] < sorted_tiers[i]['discountPercent']:
+            return create_error_response(400, 'InvalidConfig', 'Discount percentages must be between 1 and 50')
+
+    # Get admin email from JWT token
+    auth_result = validate_token(event)
+    if isinstance(auth_result, dict) and 'statusCode' in auth_result:
+        return auth_result
+    admin_email = auth_result.get('sub', 'unknown')
+
+    # Write to DynamoDB
+    now = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
+    try:
+        table = dynamodb.Table(DISCOUNT_CONFIG_TABLE_NAME)
+        table.put_item(Item={
+            'configId': 'ACTIVE',
+            'baseMonthlyPrice': Decimal(str(base_monthly_price)),
+            'baseTokenCount': base_token_count,
+            'discountTiers': sorted_tiers,
+            'updatedAt': now,
+            'updatedBy': admin_email,
+        })
+        return create_response(200, {
+            'message': 'Discount configuration updated',
+            'updatedAt': now,
+        })
+    except ClientError as e:
+        logger.error(f"DynamoDB error updating discount config: {e}")
+        return create_error_response(500, 'ServerError', 'Failed to update discount configuration')
 
 
 # ============================================================

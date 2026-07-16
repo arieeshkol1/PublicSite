@@ -688,3 +688,216 @@ function exportTipsCSV(){
   _downloadFile(lines.join('\r\n'),'tips-'+_tipsTimestamp()+'.csv','text/csv');
   notify('Exported '+allTips.length+' tips to CSV.','success');
 }
+
+
+// ============================================================
+// Custom Plans Tab
+// ============================================================
+var allCustomPlans=[];var fCustomPlans=[];var cpp=1;var cpsc='email';var cpsa=true;var customPlansLoaded=false;
+var customPlansTbody=$('custom-plans-tbody');var customPlansEmpty=$('custom-plans-empty');
+
+async function loadCustomPlans(){
+    try{
+        showL();
+        var d=await api('GET','/admin/custom-plans');
+        allCustomPlans=d.customPlans||[];
+        customPlansLoaded=true;
+        cpp=1;
+        renderCustomPlansStats(d.summary||{});
+        applyCustomPlans();
+    }catch(e){
+        notify('Failed to load custom plans.','error');
+    }finally{hideL();}
+}
+
+function renderCustomPlansStats(summary){
+    var el=$('custom-plans-stats');if(!el)return;
+    var mrr=summary.totalMonthlyRevenue||0;
+    var active=summary.totalActiveCommitments||0;
+    var grace=summary.gracePeriodCount||0;
+    el.innerHTML='<div class="cp-summary-card"><div class="cp-summary-label">Monthly Recurring Revenue</div><div class="cp-summary-value" style="color:#10b981;">$'+mrr.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})+'</div></div>'
+        +'<div class="cp-summary-card"><div class="cp-summary-label">Active Commitments</div><div class="cp-summary-value" style="color:#3b82f6;">'+active+'</div></div>'
+        +'<div class="cp-summary-card"><div class="cp-summary-label">Grace Period</div><div class="cp-summary-value" style="color:'+(grace>0?'#f59e0b':'#10b981')+';">'+grace+'</div></div>';
+}
+
+function applyCustomPlans(){
+    fCustomPlans=allCustomPlans.slice();
+    fCustomPlans=sortArr(fCustomPlans,cpsc,cpsa);
+    updSort('custom-plans-table',cpsc,cpsa);
+    renderCustomPlans();
+}
+
+function renderCustomPlans(){
+    var p=pg(fCustomPlans,cpp);
+    customPlansTbody.innerHTML='';
+    if(!fCustomPlans.length){customPlansEmpty.hidden=false;return;}
+    customPlansEmpty.hidden=true;
+    var off=(cpp-1)*PS;
+    p.forEach(function(cp,idx){
+        var r=document.createElement('tr');
+        var status=cp.status||'unknown';
+        var statusColor=status==='active'?'#10b981':status==='grace_period'?'#f59e0b':'#8b949e';
+        var statusLabel=status==='grace_period'?'Grace Period':status.charAt(0).toUpperCase()+status.slice(1);
+        if(status==='grace_period')r.classList.add('cp-grace-row');
+        var startDate=cp.commitmentStartDate?cp.commitmentStartDate.substring(0,10):'—';
+        var endDate=cp.commitmentEndDate?cp.commitmentEndDate.substring(0,10):'—';
+        r.innerHTML='<td style="color:#999;font-size:12px">'+(off+idx+1)+'</td>'
+            +'<td>'+esc(cp.email||'')+'</td>'
+            +'<td>'+fmtM(cp.monthlyPrice)+'</td>'
+            +'<td>'+((cp.tokenAllocation!=null)?cp.tokenAllocation.toLocaleString():'—')+'</td>'
+            +'<td>'+startDate+'</td>'
+            +'<td>'+endDate+'</td>'
+            +'<td style="text-align:center;font-weight:600;">'+((cp.remainingMonths!=null)?cp.remainingMonths:'—')+'</td>'
+            +'<td><span style="color:'+statusColor+';font-weight:600;">'+esc(statusLabel)+'</span></td>';
+        customPlansTbody.appendChild(r);
+    });
+    pgNav('custom-plans-pagination',fCustomPlans.length,cpp,function(x){cpp=x;renderCustomPlans();});
+}
+
+// Sortable headers for custom plans table
+document.querySelectorAll('#custom-plans-table th.sortable').forEach(function(h){
+    h.style.cursor='pointer';
+    h.onclick=function(){var c=h.dataset.col;if(cpsc===c)cpsa=!cpsa;else{cpsc=c;cpsa=true;}cpp=1;applyCustomPlans();};
+});
+
+// ============================================================
+// Discount Configuration Editor
+// ============================================================
+var discountConfigLoaded=false;
+var discountTiers=[];
+
+async function loadDiscountConfig(){
+    try{
+        var d=await api('GET','/admin/custom-plans/config');
+        var config=d.config||{};
+        $('dc-base-price').value=config.baseMonthlyPrice||'';
+        $('dc-base-tokens').value=config.baseTokenCount||'';
+        discountTiers=(config.discountTiers||[]).map(function(t){return{minMonths:t.minMonths,maxMonths:t.maxMonths,discountPercent:t.discountPercent};});
+        renderDiscountTiers();
+        renderDiscountMeta(config);
+        discountConfigLoaded=true;
+        $('dc-error').textContent='';
+        $('dc-success').textContent='';
+    }catch(e){
+        $('dc-error').textContent='Failed to load discount configuration: '+(e.message||'Unknown error');
+    }
+}
+
+function renderDiscountTiers(){
+    var tbody=$('dc-tiers-tbody');
+    tbody.innerHTML='';
+    discountTiers.forEach(function(tier,idx){
+        var r=document.createElement('tr');
+        r.innerHTML='<td><input type="number" min="3" max="24" value="'+tier.minMonths+'" data-idx="'+idx+'" data-field="minMonths"></td>'
+            +'<td><input type="number" min="3" max="24" value="'+tier.maxMonths+'" data-idx="'+idx+'" data-field="maxMonths"></td>'
+            +'<td><input type="number" min="1" max="50" value="'+tier.discountPercent+'" data-idx="'+idx+'" data-field="discountPercent"></td>'
+            +'<td><button type="button" class="dc-remove-tier-btn" data-idx="'+idx+'">Remove</button></td>';
+        tbody.appendChild(r);
+    });
+}
+
+function renderDiscountMeta(config){
+    var el=$('dc-meta');
+    if(!el)return;
+    if(config.updatedAt||config.updatedBy){
+        var parts=[];
+        if(config.updatedAt)parts.push('Last updated: '+fmtD(config.updatedAt));
+        if(config.updatedBy)parts.push('by '+config.updatedBy);
+        el.textContent=parts.join(' ');
+    }else{
+        el.textContent='';
+    }
+}
+
+function collectDiscountTiers(){
+    var rows=document.querySelectorAll('#dc-tiers-tbody tr');
+    var tiers=[];
+    rows.forEach(function(row){
+        var inputs=row.querySelectorAll('input[type="number"]');
+        var tier={};
+        inputs.forEach(function(inp){
+            tier[inp.dataset.field]=parseInt(inp.value,10)||0;
+        });
+        tiers.push(tier);
+    });
+    return tiers;
+}
+
+async function saveDiscountConfig(){
+    $('dc-error').textContent='';
+    $('dc-success').textContent='';
+    var basePrice=parseFloat($('dc-base-price').value);
+    var baseTokens=parseInt($('dc-base-tokens').value,10);
+    var tiers=collectDiscountTiers();
+
+    // Basic client-side validation
+    if(!basePrice||basePrice<=200){
+        $('dc-error').textContent='Base monthly price must be greater than $200.';
+        return;
+    }
+    if(!baseTokens||baseTokens<1){
+        $('dc-error').textContent='Base token count must be at least 1.';
+        return;
+    }
+
+    var payload={
+        baseMonthlyPrice:basePrice,
+        baseTokenCount:baseTokens,
+        discountTiers:tiers
+    };
+
+    try{
+        showL();
+        var d=await api('PUT','/admin/custom-plans/config',payload);
+        $('dc-success').textContent='Configuration saved successfully.';
+        // Refresh to show updated meta
+        await loadDiscountConfig();
+        notify('Discount configuration updated.','success');
+    }catch(e){
+        $('dc-error').textContent=e.message||'Failed to save configuration.';
+    }finally{hideL();}
+}
+
+// Wire up discount config events
+var dcAddTierBtn=$('dc-add-tier-btn');
+if(dcAddTierBtn)dcAddTierBtn.onclick=function(){
+    discountTiers.push({minMonths:3,maxMonths:6,discountPercent:5});
+    renderDiscountTiers();
+};
+
+var dcTiersTbody=$('dc-tiers-tbody');
+if(dcTiersTbody)dcTiersTbody.addEventListener('click',function(e){
+    var btn=e.target.closest('.dc-remove-tier-btn');
+    if(!btn)return;
+    var idx=parseInt(btn.dataset.idx,10);
+    discountTiers.splice(idx,1);
+    renderDiscountTiers();
+});
+
+// Update discountTiers array when inputs change
+if(dcTiersTbody)dcTiersTbody.addEventListener('input',function(e){
+    var inp=e.target;
+    if(inp.tagName!=='INPUT')return;
+    var idx=parseInt(inp.dataset.idx,10);
+    var field=inp.dataset.field;
+    if(idx>=0&&field&&discountTiers[idx]){
+        discountTiers[idx][field]=parseInt(inp.value,10)||0;
+    }
+});
+
+var dcSaveBtn=$('dc-save-btn');
+if(dcSaveBtn)dcSaveBtn.onclick=saveDiscountConfig;
+
+// Tab activation — extend switchTab for custom-plans
+(function(){
+    var prevSwitch=switchTab;
+    switchTab=function(n){
+        prevSwitch(n);
+        var cpPanel=$('custom-plans-tab');
+        if(cpPanel)cpPanel.hidden=n!=='custom-plans';
+        if(n==='custom-plans'&&!customPlansLoaded){
+            loadCustomPlans();
+            loadDiscountConfig();
+        }
+    };
+})();

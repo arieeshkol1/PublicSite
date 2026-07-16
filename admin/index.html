@@ -50,6 +50,7 @@
             <button class="tab-btn" data-tab="schedules">Schedules</button>
             <button class="tab-btn" data-tab="sync">Tips Sync</button>
             <button class="tab-btn" data-tab="transactions">Transactions</button>
+            <button class="tab-btn" data-tab="custom-plans">Custom Plans</button>
         </nav>
 
         <!-- Leads Tab -->
@@ -296,6 +297,73 @@
                 <button id="txn-prev-btn" class="btn btn-outline btn-sm" disabled>← Previous</button>
                 <span id="txn-page-indicator" class="page-indicator">Page 1</span>
                 <button id="txn-next-btn" class="btn btn-outline btn-sm" disabled>Next →</button>
+            </div>
+        </div>
+
+        <!-- Custom Plans Tab -->
+        <div id="custom-plans-tab" class="tab-content" hidden>
+            <div id="custom-plans-stats" style="display:flex;gap:16px;margin-bottom:12px;flex-wrap:wrap;"></div>
+            <div class="table-wrapper">
+                <table id="custom-plans-table" class="data-table">
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th class="sortable" data-col="email">Email <span class="sort-icon">⇅</span></th>
+                            <th class="sortable" data-col="monthlyPrice">Monthly Price <span class="sort-icon">⇅</span></th>
+                            <th class="sortable" data-col="tokenAllocation">Tokens <span class="sort-icon">⇅</span></th>
+                            <th class="sortable" data-col="commitmentStartDate">Start Date <span class="sort-icon">⇅</span></th>
+                            <th class="sortable" data-col="commitmentEndDate">End Date <span class="sort-icon">⇅</span></th>
+                            <th class="sortable" data-col="remainingMonths">Remaining <span class="sort-icon">⇅</span></th>
+                            <th class="sortable" data-col="status">Status <span class="sort-icon">⇅</span></th>
+                        </tr>
+                    </thead>
+                    <tbody id="custom-plans-tbody"></tbody>
+                </table>
+                <div id="custom-plans-empty" class="empty-state" hidden>
+                    <p>No custom plan members found.</p>
+                </div>
+            </div>
+
+            <!-- Discount Configuration Editor -->
+            <div class="dc-section">
+                <h3 class="dc-section-title">Discount Configuration</h3>
+                <div id="dc-error" class="dc-error" role="alert" aria-live="polite"></div>
+                <div id="dc-success" class="dc-success" role="status" aria-live="polite"></div>
+                <div id="dc-form-container">
+                    <div class="dc-form-row">
+                        <div class="form-group">
+                            <label for="dc-base-price">Base Monthly Price ($)</label>
+                            <input type="number" id="dc-base-price" min="201" step="1" placeholder="e.g. 250">
+                        </div>
+                        <div class="form-group">
+                            <label for="dc-base-tokens">Base Token Count</label>
+                            <input type="number" id="dc-base-tokens" min="1" step="1" placeholder="e.g. 2000">
+                        </div>
+                    </div>
+                    <div class="dc-tiers-section">
+                        <div class="dc-tiers-header">
+                            <h4>Discount Tiers</h4>
+                            <button type="button" id="dc-add-tier-btn" class="btn btn-outline btn-sm">+ Add Tier</button>
+                        </div>
+                        <div class="table-wrapper">
+                            <table id="dc-tiers-table" class="data-table" style="min-width:auto;">
+                                <thead>
+                                    <tr>
+                                        <th>Min Months</th>
+                                        <th>Max Months</th>
+                                        <th>Discount %</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="dc-tiers-tbody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                    <div class="dc-actions">
+                        <button type="button" id="dc-save-btn" class="btn btn-primary">Save Configuration</button>
+                    </div>
+                    <div id="dc-meta" class="dc-meta"></div>
+                </div>
             </div>
         </div>
 

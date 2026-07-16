@@ -987,3 +987,186 @@ body {
         flex-wrap: wrap;
     }
 }
+
+
+/* ============================================================
+   Custom Plans Tab
+   ============================================================ */
+
+/* Summary Cards */
+.cp-summary-card {
+    background: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 8px;
+    padding: 12px 16px;
+    flex: 1;
+    min-width: 140px;
+}
+
+.cp-summary-label {
+    color: #8b949e;
+    font-size: 0.8em;
+    margin-bottom: 4px;
+}
+
+.cp-summary-value {
+    font-size: 1.4em;
+    font-weight: 700;
+    color: #e2e8f0;
+}
+
+/* Grace period row highlight */
+.cp-grace-row {
+    background: rgba(245, 158, 11, 0.08) !important;
+    border-left: 3px solid #f59e0b;
+}
+
+.cp-grace-row:hover {
+    background: rgba(245, 158, 11, 0.14) !important;
+}
+
+
+/* ============================================================
+   Discount Configuration Editor
+   ============================================================ */
+
+.dc-section {
+    margin-top: 32px;
+    padding-top: 24px;
+    border-top: 2px solid var(--gray-light);
+}
+
+.dc-section-title {
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--dark);
+    margin-bottom: 16px;
+}
+
+.dc-form-row {
+    display: flex;
+    gap: 16px;
+    margin-bottom: 16px;
+}
+
+.dc-form-row .form-group {
+    flex: 1;
+    max-width: 260px;
+}
+
+.dc-tiers-section {
+    margin-bottom: 16px;
+}
+
+.dc-tiers-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 10px;
+}
+
+.dc-tiers-header h4 {
+    font-size: 14px;
+    font-weight: 600;
+    color: #374151;
+}
+
+#dc-tiers-table {
+    min-width: auto;
+}
+
+#dc-tiers-table thead th {
+    font-size: 11px;
+    padding: 10px 12px;
+}
+
+#dc-tiers-table tbody td {
+    padding: 8px 12px;
+}
+
+#dc-tiers-table input[type="number"] {
+    width: 90px;
+    padding: 6px 8px;
+    border: 1.5px solid var(--gray-light);
+    border-radius: 6px;
+    font-size: 13px;
+    outline: none;
+    transition: border-color 0.2s;
+}
+
+#dc-tiers-table input[type="number"]:focus {
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(0,102,255,0.1);
+}
+
+.dc-remove-tier-btn {
+    background: rgba(239,68,68,0.1);
+    color: var(--danger);
+    border: none;
+    border-radius: 6px;
+    padding: 5px 10px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+
+.dc-remove-tier-btn:hover {
+    background: rgba(239,68,68,0.2);
+}
+
+.dc-actions {
+    margin-top: 16px;
+    margin-bottom: 12px;
+}
+
+.dc-meta {
+    font-size: 12px;
+    color: var(--gray);
+    margin-top: 8px;
+}
+
+.dc-error {
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+    color: #991b1b;
+    padding: 10px 14px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 500;
+    margin-bottom: 12px;
+}
+
+.dc-error:empty {
+    display: none;
+}
+
+.dc-success {
+    background: #ecfdf5;
+    border: 1px solid #a7f3d0;
+    color: #065f46;
+    padding: 10px 14px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 500;
+    margin-bottom: 12px;
+}
+
+.dc-success:empty {
+    display: none;
+}
+
+@media (max-width: 768px) {
+    .dc-form-row {
+        flex-direction: column;
+        gap: 0;
+    }
+
+    .dc-form-row .form-group {
+        max-width: 100%;
+    }
+
+    #dc-tiers-table input[type="number"] {
+        width: 70px;
+    }
+}

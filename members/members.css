@@ -2559,3 +2559,44 @@
     overflow: hidden;
 }
 
+
+/* ============================================================
+   Custom Subscription Plan Card Styles
+   ============================================================ */
+
+.custom-plan-card {
+    transition: border-color 0.2s, box-shadow 0.2s;
+}
+.custom-plan-card:hover {
+    box-shadow: 0 4px 12px rgba(124, 58, 237, 0.12);
+}
+
+.custom-plan-select {
+    width: 100%;
+    padding: 8px 10px;
+    border: 1.5px solid #e5e7eb;
+    border-radius: 8px;
+    font-size: 0.85em;
+    background: #fff;
+    color: #1f2937;
+    cursor: pointer;
+    outline: none;
+    transition: border-color 0.2s;
+    margin-top: 4px;
+}
+.custom-plan-select:focus {
+    border-color: #7c3aed;
+    box-shadow: 0 0 0 2px rgba(124, 58, 237, 0.1);
+}
+
+/* Responsive: stack plan cards on small screens */
+@media (max-width: 768px) {
+    #upgrade-modal > div > div[style*="grid-template-columns:repeat(4"] {
+        grid-template-columns: repeat(2, 1fr) !important;
+    }
+}
+@media (max-width: 480px) {
+    #upgrade-modal > div > div[style*="grid-template-columns:repeat(4"] {
+        grid-template-columns: 1fr !important;
+    }
+}
