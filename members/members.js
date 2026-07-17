@@ -14902,6 +14902,27 @@ function _renderOpenAIDashboardSections() {
     if (!data) return;
 
     var html = '';
+
+    // Connection error / refresh warning banner
+    if (data.refreshError) {
+        html += '<div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:12px 16px;margin-bottom:16px;display:flex;align-items:flex-start;gap:10px;">';
+        html += '<span style="color:#dc2626;font-size:1.2em;">⚠️</span>';
+        html += '<div style="flex:1;">';
+        html += '<div style="color:#991b1b;font-weight:600;font-size:0.9em;">Data refresh failed</div>';
+        html += '<div style="color:#7f1d1d;font-size:0.85em;margin-top:2px;">' + esc(data.refreshError) + '</div>';
+        if (data.refreshError.indexOf('authentication') !== -1 || data.refreshError.indexOf('401') !== -1 || data.refreshError.indexOf('403') !== -1 || data.refreshError.indexOf('Connection error') !== -1) {
+            html += '<div style="color:#7f1d1d;font-size:0.85em;margin-top:4px;">Your API token may have expired. Please re-add the connection in the <b>Configure</b> tab.</div>';
+        }
+        html += '</div></div>';
+    } else if (data.dataStatus === 'empty') {
+        html += '<div style="background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:12px 16px;margin-bottom:16px;display:flex;align-items:flex-start;gap:10px;">';
+        html += '<span style="color:#d97706;font-size:1.2em;">ℹ️</span>';
+        html += '<div style="flex:1;">';
+        html += '<div style="color:#92400e;font-weight:600;font-size:0.9em;">No data available</div>';
+        html += '<div style="color:#78350f;font-size:0.85em;margin-top:2px;">No usage data was found for the selected period. If this is unexpected, try a force refresh or verify your API token in the Configure tab.</div>';
+        html += '</div></div>';
+    }
+
     // Section 1: Token Usage Time-Series (Task 14.1)
     html += '<div id="openai-section-tokens" class="openai-dash-section">';
     html += _renderTokenUsageChart(data);

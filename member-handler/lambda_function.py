@@ -6392,9 +6392,18 @@ def _execute_ai_cache_refresh(event):
         _refresh_ai_usage_cache_for_account(member_email, account_id, provider or None)
         logger.info(f"Async AI cache refresh completed for {member_email}#{account_id}")
         return {'statusCode': 200, 'body': 'AI cache refreshed'}
+    except PermissionError as e:
+        logger.error(
+            f"Async AI cache refresh AUTH FAILED for {member_email}#{account_id} "
+            f"(provider={provider}): {e} — token likely expired, user must re-add connection"
+        )
+        return {'statusCode': 403, 'body': f'Authentication failed: {e}'}
     except Exception as e:
-        logger.error(f"Async AI cache refresh failed for {member_email}#{account_id}: {e}")
-        return {'statusCode': 500, 'body': str(e)}
+        logger.error(
+            f"Async AI cache refresh failed for {member_email}#{account_id} "
+            f"(provider={provider}): {type(e).__name__}: {e}"
+        )
+        return {'statusCode': 500, 'body': f'{type(e).__name__}: {e}'}
 
 
 def _execute_async_scan(event):
@@ -13478,22 +13487,35 @@ def handle_openai_usage(event):
         logger.warning(f"Neutral AI cache read failed for {account_id}: {e}")
         rollups, usage = [], []
 
+    refresh_error = None
     if force_refresh or _ai_dashboard_needs_refresh(rollups, now):
         if time.time() - start_time < 22:
             try:
                 connector = _get_ai_usage_connector(cloud_provider)
-                resolve_ai_usage(
+                resolved = resolve_ai_usage(
                     member_email, account_id, 'actor',
                     service=None, period=period, connector=connector,
                 )
-                # Re-read the full neutral window so the dashboard renders the
-                # complete (uncapped) data the resolver just wrote back.
-                rollups = engine.read_cost_rollup_window(
-                    cache_table, member_email, account_id, start_date, end_date)
-                usage = engine.read_usage_detail_window(
-                    cache_table, member_email, account_id, start_date, end_date)
+                # Check if the resolver reported an error (e.g. auth failure)
+                if isinstance(resolved, dict) and resolved.get('error'):
+                    refresh_error = f"Connection error: {resolved.get('message') or resolved.get('error')}"
+                    logger.warning(f"AI usage resolver error for {account_id}: {refresh_error}")
+                else:
+                    # Re-read the full neutral window so the dashboard renders the
+                    # complete (uncapped) data the resolver just wrote back.
+                    rollups = engine.read_cost_rollup_window(
+                        cache_table, member_email, account_id, start_date, end_date)
+                    usage = engine.read_usage_detail_window(
+                        cache_table, member_email, account_id, start_date, end_date)
+            except PermissionError as e:
+                # Auth failure (401/403 from provider API) — surface to user
+                refresh_error = f"Connection error: {e}"
+                logger.warning(f"AI usage auth failed for {account_id}: {e}")
             except Exception as e:
+                refresh_error = f"Data refresh failed: {type(e).__name__}: {e}"
                 logger.warning(f"AI usage resolve failed for {account_id}: {e}")
+        else:
+            refresh_error = "Refresh skipped: request approaching timeout limit"
 
     # Previous-period total for the period-over-period change (neutral COST#).
     prev_start = (now - timedelta(days=date_range * 2)).strftime('%Y-%m-%d')
@@ -13506,6 +13528,16 @@ def handle_openai_usage(event):
 
     response_data = _build_ai_dashboard_payload(
         rollups, usage, prev_rollups, period, date_range, cloud_provider)
+
+    # Surface refresh errors so the frontend can display a warning banner
+    if refresh_error:
+        response_data['refreshError'] = refresh_error
+    # If cache was stale/empty AND still empty after refresh attempt, flag it
+    if not rollups and not usage:
+        response_data['dataStatus'] = 'empty'
+        if refresh_error:
+            response_data['dataStatus'] = 'error'
+
     return create_response(200, response_data)
 
 

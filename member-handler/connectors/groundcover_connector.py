@@ -307,6 +307,14 @@ class GroundcoverConnector(ProviderConnector):
                     if raw.get('status') != 'success':
                         return []
                     return raw.get('data', {}).get('result', [])
+                except urllib.error.HTTPError as e:
+                    if e.code in (401, 403):
+                        raise PermissionError(
+                            f"GroundCover API authentication failed (HTTP {e.code}). "
+                            "Check your API token in the Configure tab."
+                        )
+                    logger.warning(f"GroundCover per-user query failed: HTTP {e.code}: {e}")
+                    return []
                 except Exception as e:
                     logger.warning(f"GroundCover per-user query failed: {type(e).__name__}: {e}")
                     return []
@@ -366,6 +374,8 @@ class GroundcoverConnector(ProviderConnector):
             logger.info(f"GroundCover: fetched {len(per_user_records)} per-user records")
             return per_user_records
 
+        except PermissionError:
+            raise  # Let auth errors propagate to the resolver
         except Exception as e:
             logger.warning(f"GroundCover get_per_user_data failed: {type(e).__name__}: {e}")
             return []
