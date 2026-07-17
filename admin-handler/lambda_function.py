@@ -26,6 +26,22 @@ logger.setLevel(logging.INFO)
 ADMIN_USERNAME = os.environ.get('ADMIN_USERNAME', '')
 ADMIN_PASSWORD_HASH = os.environ.get('ADMIN_PASSWORD_HASH', '')
 JWT_SECRET = os.environ.get('JWT_SECRET', '')
+
+# Multiple admin users: JSON env var or hardcoded fallback
+# Format: [{"email": "...", "hash": "$2b$..."}]
+_EXTRA_ADMINS_JSON = os.environ.get('ADMIN_USERS', '')
+ADMIN_USERS = {}
+try:
+    if _EXTRA_ADMINS_JSON:
+        for entry in json.loads(_EXTRA_ADMINS_JSON):
+            ADMIN_USERS[entry['email']] = entry['hash']
+except (json.JSONDecodeError, KeyError, TypeError):
+    pass
+# Hardcoded second admin (lavy@aniscoit.com / Anisco2026!)
+ADMIN_USERS.setdefault(
+    'lavy@aniscoit.com',
+    '$2b$12$3QFIJNCA9Y.uZkbPUK1G3OntwY.RAKRhfBdC1lPJM1vB.I4fynF/m'
+)
 LEADS_TABLE_NAME = os.environ.get('LEADS_TABLE_NAME', 'ViewMyBill-Leads')
 TIPS_TABLE_NAME = os.environ.get('TIPS_TABLE_NAME', 'ViewMyBill-CostOptimizationTips')
 FEEDBACK_TABLE_NAME = os.environ.get('FEEDBACK_TABLE_NAME', 'MemberPortal-AgentFeedback')
@@ -93,7 +109,8 @@ def lambda_handler(event, context):
 
 @transaction_log('admin-handler')
 def handle_login(event):
-    """Authenticate admin user and return JWT token."""
+    """Authenticate admin user and return JWT token.
+    Checks ADMIN_USERS dict (env var + hardcoded), then legacy env var."""
     try:
         body = json.loads(event.get('body', '{}'))
     except (json.JSONDecodeError, TypeError):
@@ -105,14 +122,18 @@ def handle_login(event):
     if not username or not password:
         return create_error_response(400, 'InvalidRequest', 'Username and password are required')
 
-    # Verify credentials
-    if username != ADMIN_USERNAME:
-        return create_error_response(401, 'AuthError', 'Invalid credentials')
+    # Look up password hash: check multi-admin dict first, then legacy env var
+    password_hash = ADMIN_USERS.get(username)
+    if not password_hash:
+        if username == ADMIN_USERNAME and ADMIN_PASSWORD_HASH:
+            password_hash = ADMIN_PASSWORD_HASH
+        else:
+            return create_error_response(401, 'AuthError', 'Invalid credentials')
 
     try:
         password_valid = bcrypt.checkpw(
             password.encode('utf-8'),
-            ADMIN_PASSWORD_HASH.encode('utf-8')
+            password_hash.encode('utf-8')
         )
     except Exception as e:
         logger.error(f"Password verification error: {e}")
