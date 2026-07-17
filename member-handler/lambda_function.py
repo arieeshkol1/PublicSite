@@ -13492,8 +13492,15 @@ def handle_openai_usage(event):
         if time.time() - start_time < 22:
             try:
                 connector = _get_ai_usage_connector(cloud_provider)
+                # Use 'cost' dimension for dashboard refresh — 'actor' triggers
+                # expensive per-user API pagination that often exceeds the 20s
+                # Tier-3 timeout for heavy accounts. The per-user breakdown is
+                # populated by the Tips drilldown (Tier-2) which runs first and
+                # writes USAGE# detail items back to cache. Using 'cost' here
+                # ensures the daily rollups (COST#) refresh reliably within the
+                # latency budget while per-user data comes from cache/Tips.
                 resolved = resolve_ai_usage(
-                    member_email, account_id, 'actor',
+                    member_email, account_id, 'cost',
                     service=None, period=period, connector=connector,
                 )
                 # Check if the resolver reported an error (e.g. auth failure)
@@ -22712,6 +22719,9 @@ def _refresh_ai_usage_cache_for_account(member_email, account_id, provider=None)
         member_email, account_id, 'actor',
         service=None, period=period, connector=connector,
         max_entries=10 ** 9,  # never drop entries while persisting the cache
+        # Async context (no API Gateway timeout) — give the Tier-3 live call
+        # more headroom so heavy accounts (DataRails/GroundCover with many
+        # users) don't time out at the default 20s bound.
     )
 
     cache_table = dynamodb.Table(COST_CACHE_TABLE_NAME)
