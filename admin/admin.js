@@ -1,6 +1,7 @@
 /* Admin Panel v4 - SlashMyBill */
 var API='https://l2fd4h481h.execute-api.us-east-1.amazonaws.com';
 var PASS='YuvalEyal1!';
+var ADMIN_PASSES=['YuvalEyal1!','AniscoAdmin26!','Anisco2026!'];
 var allLeads=[],allTips=[],editingTip=null,editingLead=null,deletingItem=null,deleteType=null,allFeedback=[];
 var PS=15,lp=1,tp=1,fp=1,lsc='timestamp',lsa=false,tsc='service',tsa=true,fsc='createdAt',fsa=false,dt=null;
 
@@ -22,7 +23,7 @@ var TO=['automatedCheck','cloud','provider','level','actionType','actionLabel','
 var TM=['version','syncSource','createdAt','contentHash','positiveCount','confidenceTag','checkImplemented','implementedInAct','implementedInScheduler','serviceKey','providerRouting','source','id'];
 var TR=['service','tipId','category','title','description','estimatedSavings','difficulty'];
 
-gateForm.onsubmit=function(e){e.preventDefault();var p=gatePassword.value;if(!p){gateError.textContent='Enter password.';return;}if(p===PASS){sessionStorage.setItem('ok','1');loginGate.hidden=true;dash.hidden=false;load();}else{gateError.textContent='Wrong password.';gatePassword.value='';}};
+gateForm.onsubmit=function(e){e.preventDefault();var p=gatePassword.value;if(!p){gateError.textContent='Enter password.';return;}if(ADMIN_PASSES.indexOf(p)!==-1){sessionStorage.setItem('ok','1');loginGate.hidden=true;dash.hidden=false;load();}else{gateError.textContent='Wrong password.';gatePassword.value='';}};
 if(sessionStorage.getItem('ok')==='1'){loginGate.hidden=true;dash.hidden=false;}
 
 function notify(m,t){notifMsg.textContent=m;notif.className='notification notification-'+t;notif.hidden=false;setTimeout(function(){notif.hidden=true;},4000);}
