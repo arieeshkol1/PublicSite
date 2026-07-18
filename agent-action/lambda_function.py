@@ -44,11 +44,20 @@ def lambda_handler(event, context):
         parameters = {p['name']: p['value'] for p in event.get('parameters', [])}
 
         # Bedrock Agent sometimes wraps string parameters in literal quotes
-        # (e.g. "'991105135552'" instead of "991105135552"). Strip them.
+        # (e.g. "'991105135552'" instead of "991105135552") or HTML-encoded
+        # quotes (&#39; or &quot;). Strip all variants aggressively.
         for key in parameters:
             val = parameters[key]
-            if isinstance(val, str) and len(val) >= 2 and val[0] == val[-1] and val[0] in ("'", '"'):
-                parameters[key] = val[1:-1]
+            if isinstance(val, str):
+                # Decode HTML entities first (&#39; -> ', &quot; -> ")
+                val = val.replace('&#39;', "'").replace('&quot;', '"').replace('&amp;', '&')
+                # Strip wrapping quotes (repeat to handle double-wrapped)
+                for _ in range(3):
+                    if len(val) >= 2 and val[0] == val[-1] and val[0] in ("'", '"'):
+                        val = val[1:-1]
+                # Final strip of whitespace
+                val = val.strip()
+                parameters[key] = val.strip()
 
         account_id = parameters.get('accountId', '')
         member_email = parameters.get('memberEmail', '')
