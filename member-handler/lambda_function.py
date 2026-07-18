@@ -2484,6 +2484,30 @@ def handle_datasource_query_proxy(event):
                     if total_scanned > 0:
                         break  # Found data with this prefix, no need to try the other
 
+            # For AI vendor accounts, always include user/model/project columns
+            # since USAGE# items carry actor (user), service (model) fields
+            if any(sk_prefix == 'COST#' or sk_prefix == 'USAGE#' for sk_prefix in ['DAILY#', 'OPENAI_DAILY#', 'COST#', 'USAGE#'] if total_scanned > 0):
+                pass  # Already discovered from items above
+            # Explicitly add AI-specific columns if USAGE# items exist
+            for acct_id in account_ids[:3]:
+                pk = f"{member_email}#{acct_id}"
+                try:
+                    usage_resp = cache_table.query(
+                        KeyConditionExpression=DDBKey('pk').eq(pk) & DDBKey('sk').begins_with('USAGE#'),
+                        Limit=5,
+                    )
+                    for u_item in usage_resp.get('Items', []):
+                        if u_item.get('actor'):
+                            all_keys.add('user')
+                        if u_item.get('service'):
+                            all_keys.add('model')
+                        all_keys.add('input_tokens')
+                        all_keys.add('output_tokens')
+                        all_keys.add('total_tokens')
+                        break  # One item is enough to discover the schema
+                except Exception:
+                    pass
+
             columns = sorted(list(all_keys))
             return create_response(200, {'columns': columns, 'sample_count': total_scanned})
         except Exception as e:
@@ -2578,6 +2602,11 @@ def handle_datasource_query_proxy(event):
                         row['account_name'] = account_names.get(acct_id, acct_id)
                     row['service'] = u_item.get('service', u_item.get('actor', ''))
                     row['cost_amount'] = round(float(u_item.get('cost_amount', 0) or 0), 4)
+                    # AI vendor fields: user (actor), model (service)
+                    if 'user' in attributes:
+                        row['user'] = u_item.get('actor', '')
+                    if 'model' in attributes:
+                        row['model'] = u_item.get('service', '')
                     qty = int(float(u_item.get('usage_quantity', 0) or 0))
                     if 'input_tokens' in attributes:
                         row['input_tokens'] = qty
