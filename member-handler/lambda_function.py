@@ -2420,8 +2420,8 @@ def handle_datasource_query_proxy(event):
             for acct_id in account_ids[:3]:
                 pk = f"{member_email}#{acct_id}"
 
-                # Scan BOTH DAILY# and OPENAI_DAILY# prefixes (covers AWS + AI vendor accounts)
-                for sk_prefix in ['DAILY#', 'OPENAI_DAILY#']:
+                # Scan DAILY#, OPENAI_DAILY#, COST#, and USAGE# prefixes
+                for sk_prefix in ['DAILY#', 'OPENAI_DAILY#', 'COST#', 'USAGE#']:
                     start_sk = f"{sk_prefix}{(now - timedelta(days=90)).strftime('%Y-%m-%d')}"
                     end_sk = f"{sk_prefix}{now.strftime('%Y-%m-%d')}"
 
@@ -2530,8 +2530,10 @@ def handle_datasource_query_proxy(event):
             pk = f"{member_email}#{acct_id}"
 
             # Try BOTH prefixes â€” DAILY# for AWS, OPENAI_DAILY# for AI vendor accounts
+            # Try ALL prefixes: DAILY# for AWS, OPENAI_DAILY# for legacy AI,
+            # COST# for neutral AI vendor accounts (GroundCover, new OpenAI)
             items_found = []
-            for sk_prefix in ['DAILY#', 'OPENAI_DAILY#']:
+            for sk_prefix in ['DAILY#', 'OPENAI_DAILY#', 'COST#']:
                 start_sk = f"{sk_prefix}{start}"
                 end_sk = f"{sk_prefix}{end}"
 
@@ -2547,6 +2549,44 @@ def handle_datasource_query_proxy(event):
                     items_found.extend(resp.get('Items', []))
                 if items_found:
                     break  # Found data, stop trying other prefix
+
+            # Also fetch USAGE# detail for AI vendor token/service breakdown
+            usage_items = []
+            start_sk_u = f"USAGE#{start}"
+            end_sk_u = f"USAGE#{end}~"
+            try:
+                resp = cache_table.query(
+                    KeyConditionExpression=DDBKey('pk').eq(pk) & DDBKey('sk').between(start_sk_u, end_sk_u)
+                )
+                usage_items = resp.get('Items', [])
+                while 'LastEvaluatedKey' in resp:
+                    resp = cache_table.query(
+                        KeyConditionExpression=DDBKey('pk').eq(pk) & DDBKey('sk').between(start_sk_u, end_sk_u),
+                        ExclusiveStartKey=resp['LastEvaluatedKey'],
+                    )
+                    usage_items.extend(resp.get('Items', []))
+            except Exception:
+                pass
+
+            # If we only have COST# rollups (no DAILY#), build rows from USAGE# detail
+            if usage_items and not any(i['sk'].startswith('DAILY#') or i['sk'].startswith('OPENAI_DAILY#') for i in items_found):
+                for u_item in usage_items:
+                    sk_val = u_item.get('sk', '')
+                    date_val = u_item.get('date', sk_val.replace('USAGE#', '').split('#')[0])
+                    row = {'date': date_val, 'account_id': acct_id}
+                    if account_names:
+                        row['account_name'] = account_names.get(acct_id, acct_id)
+                    row['service'] = u_item.get('service', u_item.get('actor', ''))
+                    row['cost_amount'] = round(float(u_item.get('cost_amount', 0) or 0), 4)
+                    qty = int(float(u_item.get('usage_quantity', 0) or 0))
+                    if 'input_tokens' in attributes:
+                        row['input_tokens'] = qty
+                    if 'output_tokens' in attributes:
+                        row['output_tokens'] = 0
+                    if 'total_tokens' in attributes:
+                        row['total_tokens'] = qty
+                    all_rows.append(row)
+                continue  # Skip DAILY# row processing for this account
 
             for item in items_found:
                 date_val = item['sk'].replace('OPENAI_DAILY#', '').replace('DAILY#', '')
