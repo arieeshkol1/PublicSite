@@ -110,15 +110,14 @@ class GroundcoverConnector(ProviderConnector):
                       start_date: str, end_date: str, **kwargs) -> list:
         """Fetch AI token usage from GroundCover's Prometheus API.
 
-        Queries the GroundCover Prometheus-compatible API for gen_ai token metrics,
+        Queries the GroundCover Prometheus-compatible API for token metrics,
         aggregated by model and day. Returns data in the same bucket format as
         the OpenAI connector so the existing dashboard can consume it.
 
         Uses the confirmed working endpoint:
           POST https://api.groundcover.com/api/prometheus/api/v1/query_range
-        with the metrics:
-          - groundcover_gen_ai_response_usage_input_tokens (by model, daily)
-          - groundcover_gen_ai_response_usage_output_tokens (by model, daily)
+        with the metric:
+          - claude_code_token_usage_tokens_total (by model, daily, type=input/output)
         """
         token = auth_context.get('api_key', '')
         from datetime import datetime, timezone, timedelta
@@ -166,10 +165,12 @@ class GroundcoverConnector(ProviderConnector):
             end_ts = int(end_dt.timestamp())
             step = '86400'  # 1 day
 
-            # Use increase() for input tokens (counter metric) and delta() for output tokens (gauge metric).
-            # increase() doesn't work on gauge metrics and returns empty results.
-            input_query = 'sum by (gen_ai_request_model) (increase(groundcover_gen_ai_response_usage_input_tokens[1d]))'
-            output_query = 'sum by (gen_ai_request_model) (delta(groundcover_gen_ai_response_usage_output_tokens[1d]))'
+            # Use claude_code_token_usage_tokens_total which is the actively-reported
+            # metric (the gen_ai_response_usage_* metrics stopped reporting after June 2025).
+            # This metric is a cumulative gauge (total tokens consumed to date), so we use
+            # delta() to get the per-day change in token count for each model.
+            input_query = 'sum by (model) (delta(claude_code_token_usage_tokens_total{type="input"}[1d]))'
+            output_query = 'sum by (model) (delta(claude_code_token_usage_tokens_total{type="output"}[1d]))'
 
             def _prom_range_query(query):
                 """Execute a Prometheus range query and return parsed results."""
@@ -213,7 +214,7 @@ class GroundcoverConnector(ProviderConnector):
             # Build a lookup: {model: {timestamp: {input_tokens, output_tokens}}}
             model_data = {}
             for series in input_results:
-                model = series.get('metric', {}).get('gen_ai_request_model', 'unknown')
+                model = series.get('metric', {}).get('model', 'unknown')
                 for ts_val in series.get('values', []):
                     ts = int(float(ts_val[0]))
                     # Align to day start
@@ -223,7 +224,7 @@ class GroundcoverConnector(ProviderConnector):
                     model_data[model][day_ts]['input'] += tokens
 
             for series in output_results:
-                model = series.get('metric', {}).get('gen_ai_request_model', 'unknown')
+                model = series.get('metric', {}).get('model', 'unknown')
                 for ts_val in series.get('values', []):
                     ts = int(float(ts_val[0]))
                     day_ts = ts - (ts % 86400)
