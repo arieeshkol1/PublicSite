@@ -467,31 +467,35 @@ def _aggregate_cost_breakdown(items, start_date, end_date, usage_items=None):
             first_of_month_charges = round(d["cost"] - median_cost, 2)
             d["_note"] = f"includes ~${first_of_month_charges} monthly fixed charges (support, tax, etc.)"
 
+    # Determine if this is an AI vendor account (has model/user breakdowns)
+    # If so, keep the response compact to avoid Bedrock token truncation
+    is_ai_vendor = bool(model_costs)
+
     return {
         "totalCost30Days": round(total, 2),
-        "topServices": top_services[:7],
+        "topServices": top_services[:5] if is_ai_vendor else top_services[:7],
         "projectBreakdown": sorted(
             [{"project": k, "cost": round(v, 2)} for k, v in projects.items() if v > 0],
             key=lambda x: x["cost"],
             reverse=True,
-        )[:10] if projects else [],
+        )[:5] if projects else [],
         "userBreakdown": sorted(
             [{"user": k, "cost": round(v["cost"], 2), "tokens": v["tokens"]} for k, v in user_costs.items() if v["cost"] > 0 or v["tokens"] > 0],
             key=lambda x: x["cost"],
             reverse=True,
-        )[:10] if user_costs else [],
+        )[:5] if user_costs else [],
         "modelBreakdown": sorted(
             [{"model": k, "cost": round(v["cost"], 2), "tokens": v["tokens"]} for k, v in model_costs.items() if v["cost"] > 0 or v["tokens"] > 0],
             key=lambda x: x["cost"],
             reverse=True,
-        )[:10] if model_costs else [],
+        )[:7] if model_costs else [],
         "tokenSummary": {
             "totalTokens": total_input_tokens + total_output_tokens + sum(v["tokens"] for v in model_costs.values()),
             "inputTokens": total_input_tokens,
             "outputTokens": total_output_tokens,
             "totalCost": round(total_cost_from_usage, 2) if total_cost_from_usage > 0 else round(total, 2),
         } if (total_input_tokens + total_output_tokens > 0 or model_costs) else None,
-        "dailyCosts": recent_daily,
+        "dailyCosts": recent_daily[-7:] if is_ai_vendor else recent_daily,
         "period": (
             f"{start_date.strftime('%Y-%m-%d')} to "
             f"{end_date.strftime('%Y-%m-%d')} (from cache)"
@@ -501,8 +505,7 @@ def _aggregate_cost_breakdown(items, start_date, end_date, usage_items=None):
             "firstOfMonthFixedCharges": first_of_month_charges,
             "medianDailyCost": round(median_cost, 2),
             "taxAndSupportPercent": round((first_of_month_charges / (median_cost * 30 + first_of_month_charges)) * 100, 1) if median_cost > 0 else 0,
-            "note": "For forecasting: daily costs on non-1st days EXCLUDE tax/support (billed as lump sum on 1st). To estimate total month: (avg_daily × 30) / (1 - taxSupportPercent/100). Tax and Support are percentages of total spend, not fixed amounts."
-        },
+        } if not is_ai_vendor else None,
     }
 
 
