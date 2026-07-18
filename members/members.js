@@ -14655,7 +14655,7 @@ async function _fetchOpenAIDashboardData(forceRefresh) {
     // Show loading state
     contentEl.innerHTML = '<div style="text-align:center;padding:40px;color:#6b7280;">' +
         '<div class="spinner" style="margin:0 auto 12px;width:28px;height:28px;"></div>' +
-        '<div>Loading OpenAI usage data...</div></div>';
+        '<div>Loading AI data...</div></div>';
 
     try {
         var data = await api('POST', '/members/accounts/openai-usage', {
