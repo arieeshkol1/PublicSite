@@ -13312,9 +13312,10 @@ def _neutral_usage_date(item):
 def _ai_dashboard_needs_refresh(rollups, now=None):
     """Return True when the neutral AI cache is empty or stale (Req 13.6).
 
-    Missing data (no Cost_Rollup_Item records) or a stale freshest record means
-    the dashboard should obtain fresh data through the shared resolver. This is
-    a pure check over already-read Tier-1 items, so the path stays cache-first.
+    Missing data (no Cost_Rollup_Item records), a stale freshest record, or
+    a gap in recent coverage (no data in the last 3 days) means the dashboard
+    should obtain fresh data through the shared resolver. This is a pure check
+    over already-read Tier-1 items, so the path stays cache-first.
     """
     from cache_service import is_stale
     if not rollups:
@@ -13322,7 +13323,22 @@ def _ai_dashboard_needs_refresh(rollups, now=None):
     cached_ats = [r.get('cached_at') for r in rollups if r.get('cached_at')]
     if not cached_ats:
         return True
-    return is_stale(max(cached_ats), now=now)
+    if is_stale(max(cached_ats), now=now):
+        return True
+    # Check coverage: if no rollup covers the last 3 days, force refresh.
+    # This catches the case where old data is cached "freshly" but the window
+    # has moved forward and new days are missing.
+    if now is None:
+        now = datetime.now(timezone.utc)
+    three_days_ago = (now - timedelta(days=3)).strftime('%Y-%m-%d')
+    rollup_dates = set()
+    for r in rollups:
+        date = str(r.get('sk', '')).replace('COST#', '') or r.get('date', '')
+        if date:
+            rollup_dates.add(date[:10])
+    if not any(d >= three_days_ago for d in rollup_dates):
+        return True
+    return False
 
 
 def _build_ai_dashboard_payload(rollups, usage, prev_rollups, period,
