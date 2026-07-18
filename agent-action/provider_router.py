@@ -363,6 +363,7 @@ def _aggregate_cost_breakdown(items, start_date, end_date):
     (not split per day). We take it from one row only — not summed across days.
     """
     services = {}
+    projects = {}
     daily_costs = []
     for item in items:
         cost = float(item.get("cost_amount", 0))
@@ -373,7 +374,22 @@ def _aggregate_cost_breakdown(items, start_date, end_date):
         # full-period breakdown). Only populate services once.
         if not services and item.get("service_breakdown"):
             for svc, svc_cost in item["service_breakdown"].items():
-                services[svc] = float(svc_cost)
+                if isinstance(svc_cost, dict):
+                    services[svc] = float(svc_cost.get("cost", svc_cost.get("cost_amount", 0)))
+                else:
+                    services[svc] = float(svc_cost)
+
+        # Extract project_breakdown for AI vendor accounts (OpenAI)
+        if item.get("project_breakdown") and isinstance(item["project_breakdown"], dict):
+            for proj_id, proj_val in item["project_breakdown"].items():
+                if isinstance(proj_val, dict):
+                    proj_cost = float(proj_val.get("cost", proj_val.get("cost_amount", 0)))
+                    proj_name = proj_val.get("name", proj_id)
+                else:
+                    proj_cost = float(proj_val)
+                    proj_name = proj_id
+                projects.setdefault(proj_name or proj_id, 0.0)
+                projects[proj_name or proj_id] += proj_cost
 
     # Sort by date to ensure correct ordering
     daily_costs.sort(key=lambda x: x["date"])
@@ -407,6 +423,11 @@ def _aggregate_cost_breakdown(items, start_date, end_date):
     return {
         "totalCost30Days": round(total, 2),
         "topServices": top_services[:7],
+        "projectBreakdown": sorted(
+            [{"project": k, "cost": round(v, 2)} for k, v in projects.items() if v > 0],
+            key=lambda x: x["cost"],
+            reverse=True,
+        )[:10] if projects else [],
         "dailyCosts": recent_daily,
         "period": (
             f"{start_date.strftime('%Y-%m-%d')} to "
