@@ -22095,6 +22095,12 @@ def handle_get_invoices(event):
         logger.error(f"Unexpected error in handle_get_invoices: {type(e).__name__}: {e}")
         return create_error_response(500, 'ServerError', f'Unexpected error: {type(e).__name__}: {str(e)}')
 
+    # --- AI vendor fallback: synthesize from Cost_Cache_Table ---
+    if not all_items:
+        provider = _get_account_provider(member_email, account_id)
+        if provider in ('openai', 'groundcover', 'anthropic'):
+            all_items = _synthesize_ai_vendor_invoice_items(member_email, account_id)
+
     # --- Apply server-side filters ---
     filtered_items = _apply_invoice_filters(all_items, validated)
 
@@ -22925,6 +22931,79 @@ def _refresh_cost_cache_for_account(member_email, account_id):
     logger.info(f"Cost cache refreshed for {account_id}: {start_date} to {end_date}")
 
 
+def _synthesize_ai_vendor_invoice_items(member_email, account_id):
+    """Synthesize invoice-like items from Cost_Cache_Table for AI vendor accounts.
+
+    AI vendor accounts (OpenAI, GroundCover/Anthropic) store their cost data in
+    Cost_Cache_Table with COST# and USAGE# SK prefixes. This function reads those
+    items and reshapes them into the same format that handle_get_invoices_summary
+    and handle_get_invoices expect (items with 'month', 'service', 'cost' fields).
+    """
+    cache_table = dynamodb.Table(COST_CACHE_TABLE_NAME)
+    pk = f"{member_email}#{account_id}"
+
+    now = datetime.now(timezone.utc)
+    start_date = (now - timedelta(days=90)).strftime('%Y-%m-%d')
+    end_date = now.strftime('%Y-%m-%d')
+
+    items = []
+    try:
+        # Try USAGE# items first (most granular for AI vendors)
+        resp = cache_table.query(
+            KeyConditionExpression=boto3.dynamodb.conditions.Key('pk').eq(pk)
+            & boto3.dynamodb.conditions.Key('sk').between(f"USAGE#{start_date}", f"USAGE#{end_date}~")
+        )
+        usage_items = resp.get('Items', [])
+
+        if usage_items:
+            month_service_agg = {}
+            for u in usage_items:
+                sk = u.get('sk', '')
+                parts = sk.split('#')
+                date_str = parts[1] if len(parts) >= 2 else ''
+                month = date_str[:7] if len(date_str) >= 7 else ''
+                service = u.get('service', '') or 'Unknown'
+                cost = float(u.get('cost_amount', 0) or 0)
+                if month:
+                    key = (month, service)
+                    month_service_agg[key] = month_service_agg.get(key, 0) + cost
+
+            for (month, service), cost in month_service_agg.items():
+                if cost >= 0.01:
+                    items.append({'month': month, 'service': service, 'cost': round(cost, 2), 'sk': f"{month}#{service}"})
+        else:
+            # Fallback: COST# items
+            resp = cache_table.query(
+                KeyConditionExpression=boto3.dynamodb.conditions.Key('pk').eq(pk)
+                & boto3.dynamodb.conditions.Key('sk').between(f"COST#{start_date}", f"COST#{end_date}~")
+            )
+            cost_items = resp.get('Items', [])
+            month_service_agg = {}
+            for c in cost_items:
+                sk = c.get('sk', '')
+                date_str = sk.replace('COST#', '')
+                month = date_str[:7] if len(date_str) >= 7 else ''
+                svc_breakdown = c.get('service_breakdown', {})
+                if svc_breakdown and month:
+                    for svc, svc_cost in svc_breakdown.items():
+                        cost_val = float(svc_cost) if not isinstance(svc_cost, dict) else float(svc_cost.get('cost', 0))
+                        key = (month, svc)
+                        month_service_agg[key] = month_service_agg.get(key, 0) + cost_val
+                elif month:
+                    cost_val = float(c.get('cost_amount', 0))
+                    key = (month, 'AI Usage')
+                    month_service_agg[key] = month_service_agg.get(key, 0) + cost_val
+
+            for (month, service), cost in month_service_agg.items():
+                if cost >= 0.01:
+                    items.append({'month': month, 'service': service, 'cost': round(cost, 2), 'sk': f"{month}#{service}"})
+
+    except Exception as e:
+        logger.warning(f"AI vendor invoice synthesis failed for {account_id}: {e}")
+
+    return items
+
+
 @transaction_log('member-handler')
 def handle_get_invoices_summary(event):
     """GET /members/invoices/summary Ã¢â‚¬â€ Get spending summary (totals, trends)."""
@@ -22974,6 +23053,14 @@ def handle_get_invoices_summary(event):
 
     # Filter out rate limit records (pk starts with REFRESH#)
     all_items = [item for item in all_items if not item.get('sk', '').startswith('RATE_LIMIT')]
+
+    # --- AI vendor fallback: synthesize from Cost_Cache_Table ---
+    # AI vendor accounts (OpenAI, GroundCover) don't have {YYYY-MM}#{service} records
+    # in MemberPortal-Invoices. Their data lives in Cost_Cache_Table with COST#/USAGE# keys.
+    if not all_items or not any(item.get('month') for item in all_items):
+        provider = _get_account_provider(member_email, account_id)
+        if provider in ('openai', 'groundcover', 'anthropic'):
+            all_items = _synthesize_ai_vendor_invoice_items(member_email, account_id)
 
     # --- Determine current and previous month ---
     now = datetime.now(timezone.utc)
@@ -23101,6 +23188,16 @@ def handle_get_invoices_services(event):
         return create_error_response(500, 'ServerError', f'Unexpected error: {type(e).__name__}: {str(e)}')
 
     # Return sorted list in ascending alphabetical order
+    # AI vendor fallback: if no services found, check Cost_Cache_Table
+    if not all_services:
+        provider = _get_account_provider(member_email, account_id)
+        if provider in ('openai', 'groundcover', 'anthropic'):
+            synth_items = _synthesize_ai_vendor_invoice_items(member_email, account_id)
+            for item in synth_items:
+                svc = item.get('service')
+                if svc:
+                    all_services.add(svc)
+
     sorted_services = sorted(all_services)
 
     return create_response(200, {'services': sorted_services})
