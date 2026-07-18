@@ -22718,6 +22718,7 @@ def _refresh_ai_usage_cache_for_account(member_email, account_id, provider=None)
     resolved = resolve_ai_usage(
         member_email, account_id, 'actor',
         service=None, period=period, connector=connector,
+        provider_key=provider,
         max_entries=10 ** 9,  # never drop entries while persisting the cache
         # Async context (no API Gateway timeout) — give the Tier-3 live call
         # more headroom so heavy accounts (DataRails/GroundCover with many
