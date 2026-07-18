@@ -9745,7 +9745,33 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
     # If provider is unknown, still proceed — the Agent/provider_router will handle
     # the error properly and return a meaningful message to the user.
     _provider_label = _provider if _provider and _provider != 'unknown' else 'aws'
-    enriched_prompt = f"[Account: {account_id}, Member: {member_email}, Provider: {_provider_label}, Today: {datetime.now(timezone.utc).strftime('%Y-%m-%d')}] {question}"
+
+    # For AI vendor accounts (GroundCover/Anthropic, OpenAI), inject vendor-specific
+    # context so the agent gives relevant recommendations (model tiering, prompt
+    # caching) instead of AWS infrastructure advice (EC2, Spot, Waste Cleanup).
+    # This is vendor-agnostic: detects account type from cloudProvider field and
+    # injects the appropriate optimization framework without hardcoding vendors.
+    _cloud_infra_providers = {'aws', 'azure', 'gcp'}
+    _is_ai_vendor = _provider_label not in _cloud_infra_providers
+    _ai_context = ''
+    if _is_ai_vendor:
+        _ai_context = (
+            " [AI/LLM API ACCOUNT — This is NOT a cloud infrastructure account. "
+            "This account tracks AI model API usage (tokens, models, costs). "
+            "Do NOT recommend cloud infrastructure actions (EC2, Spot Instances, Savings Plans, "
+            "Waste Cleanup, EBS, RDS, Lambda rightsizing, NAT Gateways, or any compute/storage optimization). "
+            "For AI API accounts, cost optimization strategies are: "
+            "(1) Model tiering — route simple tasks to cheaper/smaller models instead of the most expensive one, "
+            "(2) Reduce output tokens — set max_tokens limits, use concise system prompts, "
+            "(3) Prompt caching — cache repeated system prompts and long context prefixes to reduce input token costs, "
+            "(4) Batch processing — use batch/async APIs for non-urgent requests at discounted rates, "
+            "(5) Per-user governance — identify heavy users consuming disproportionate tokens and set budgets, "
+            "(6) Output efficiency — request structured/JSON output instead of verbose prose. "
+            "Show specific dollar amounts and token counts from the cost data returned by getCostBreakdown. "
+            "Reference the Observe > Dashboard for AI spend trends.]"
+        )
+
+    enriched_prompt = f"[Account: {account_id}, Member: {member_email}, Provider: {_provider_label}, Today: {datetime.now(timezone.utc).strftime('%Y-%m-%d')}]{_ai_context} {question}"
 
     # Cap prompt length to prevent Bedrock EventStreamError
     if len(enriched_prompt) > 3500:
