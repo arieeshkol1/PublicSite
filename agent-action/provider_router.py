@@ -408,12 +408,16 @@ def _aggregate_cost_breakdown(items, start_date, end_date, usage_items=None):
     # Enrich with USAGE# items: per-model and per-user breakdowns (vendor-agnostic)
     model_costs = {}
     user_costs = {}
+    total_input_tokens = 0
+    total_output_tokens = 0
+    total_cost_from_usage = 0.0
     if usage_items:
         for u in usage_items:
             svc = u.get("service", "")
             actor = u.get("actor", "")
             cost = float(u.get("cost_amount", 0) or 0)
             tokens = int(float(u.get("usage_quantity", 0) or 0))
+            total_cost_from_usage += cost
             if svc:
                 agg = model_costs.setdefault(svc, {"cost": 0.0, "tokens": 0})
                 agg["cost"] += cost
@@ -427,6 +431,15 @@ def _aggregate_cost_breakdown(items, start_date, end_date, usage_items=None):
             for model, agg in model_costs.items():
                 if agg["cost"] > 0.01 or agg["tokens"] > 0:
                     services[model] = round(agg["cost"], 2)
+
+    # Extract input/output token split from token_breakdown (in OPENAI_DAILY# or any items)
+    for item in items:
+        tok_breakdown = item.get("token_breakdown")
+        if tok_breakdown and isinstance(tok_breakdown, dict):
+            for model_name, tok_val in tok_breakdown.items():
+                if isinstance(tok_val, dict):
+                    total_input_tokens += int(float(tok_val.get("input_tokens", 0)))
+                    total_output_tokens += int(float(tok_val.get("output_tokens", 0)))
 
     top_services = sorted(
         [{"service": k, "cost": round(v, 2)} for k, v in services.items()],
@@ -472,6 +485,12 @@ def _aggregate_cost_breakdown(items, start_date, end_date, usage_items=None):
             key=lambda x: x["cost"],
             reverse=True,
         )[:10] if model_costs else [],
+        "tokenSummary": {
+            "totalTokens": total_input_tokens + total_output_tokens + sum(v["tokens"] for v in model_costs.values()),
+            "inputTokens": total_input_tokens,
+            "outputTokens": total_output_tokens,
+            "totalCost": round(total_cost_from_usage, 2) if total_cost_from_usage > 0 else round(total, 2),
+        } if (total_input_tokens + total_output_tokens > 0 or model_costs) else None,
         "dailyCosts": recent_daily,
         "period": (
             f"{start_date.strftime('%Y-%m-%d')} to "
