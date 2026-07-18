@@ -287,7 +287,9 @@ def _acquire_lock(table) -> bool:
                 "lockedAt": now.isoformat(),
                 "ttl": ttl_epoch,
             },
-            ConditionExpression="attribute_not_exists(tipId)",
+            ConditionExpression="attribute_not_exists(tipId) OR #t < :now",
+            ExpressionAttributeNames={"#t": "ttl"},
+            ExpressionAttributeValues={":now": int(now.timestamp())},
         )
         logger.info(json.dumps({
             "action": "lock_acquired",

@@ -392,7 +392,7 @@ async function triggerSync(){
     var btn=$('trigger-sync-btn');
     if(!btn||btn.disabled)return;
     btn.disabled=true;btn.textContent='Triggering...';
-    try{await api('POST','/admin/tips-sync/trigger');notify('Sync triggered! It will run in the background.','success');}
+    try{await api('POST','/admin/tips-sync/trigger');notify('Sync triggered! Reloading in 15s...','success');setTimeout(function(){syncLoaded=false;loadSyncData();},15000);}
     catch(e){notify('Failed to trigger sync: '+(e.message||'Unknown error'),'error');}
     finally{btn.disabled=false;btn.textContent='⚡ Trigger Manual Sync';}
 }
