@@ -344,7 +344,18 @@ def _read_cost_cache(member_email: str, account_id: str, tool_name: str, params:
         is_fresh = True if most_recent_cached_at is None else (most_recent_cached_at >= staleness_threshold)
 
         if tool_name == "getCostBreakdown":
-            return _aggregate_cost_breakdown(items, start_date, end_date), is_fresh
+            # Also fetch USAGE# detail items for AI vendor per-model/per-user breakdowns
+            usage_items = []
+            try:
+                _usage_resp = cache_table.query(
+                    KeyConditionExpression=Key("pk").eq(pk) & Key("sk").between(
+                        f"USAGE#{_start_str}", f"USAGE#{_end_str}~"
+                    )
+                )
+                usage_items = _usage_resp.get("Items", [])
+            except Exception:
+                pass
+            return _aggregate_cost_breakdown(items, start_date, end_date, usage_items), is_fresh
         else:
             return _aggregate_monthly_trend(items), is_fresh
 
@@ -353,7 +364,7 @@ def _read_cost_cache(member_email: str, account_id: str, tool_name: str, params:
         return None, False
 
 
-def _aggregate_cost_breakdown(items, start_date, end_date):
+def _aggregate_cost_breakdown(items, start_date, end_date, usage_items=None):
     """Aggregate daily cache items into a cost breakdown response.
     
     Returns last 14 days of daily costs and identifies first-of-month fixed charges
@@ -394,6 +405,29 @@ def _aggregate_cost_breakdown(items, start_date, end_date):
     # Sort by date to ensure correct ordering
     daily_costs.sort(key=lambda x: x["date"])
 
+    # Enrich with USAGE# items: per-model and per-user breakdowns (vendor-agnostic)
+    model_costs = {}
+    user_costs = {}
+    if usage_items:
+        for u in usage_items:
+            svc = u.get("service", "")
+            actor = u.get("actor", "")
+            cost = float(u.get("cost_amount", 0) or 0)
+            tokens = int(float(u.get("usage_quantity", 0) or 0))
+            if svc:
+                agg = model_costs.setdefault(svc, {"cost": 0.0, "tokens": 0})
+                agg["cost"] += cost
+                agg["tokens"] += tokens
+            if actor:
+                agg = user_costs.setdefault(actor, {"cost": 0.0, "tokens": 0})
+                agg["cost"] += cost
+                agg["tokens"] += tokens
+        # If no service_breakdown from COST# items, use USAGE# model data
+        if not services and model_costs:
+            for model, agg in model_costs.items():
+                if agg["cost"] > 0.01 or agg["tokens"] > 0:
+                    services[model] = round(agg["cost"], 2)
+
     top_services = sorted(
         [{"service": k, "cost": round(v, 2)} for k, v in services.items()],
         key=lambda x: x["cost"],
@@ -428,6 +462,16 @@ def _aggregate_cost_breakdown(items, start_date, end_date):
             key=lambda x: x["cost"],
             reverse=True,
         )[:10] if projects else [],
+        "userBreakdown": sorted(
+            [{"user": k, "cost": round(v["cost"], 2), "tokens": v["tokens"]} for k, v in user_costs.items() if v["cost"] > 0 or v["tokens"] > 0],
+            key=lambda x: x["cost"],
+            reverse=True,
+        )[:10] if user_costs else [],
+        "modelBreakdown": sorted(
+            [{"model": k, "cost": round(v["cost"], 2), "tokens": v["tokens"]} for k, v in model_costs.items() if v["cost"] > 0 or v["tokens"] > 0],
+            key=lambda x: x["cost"],
+            reverse=True,
+        )[:10] if model_costs else [],
         "dailyCosts": recent_daily,
         "period": (
             f"{start_date.strftime('%Y-%m-%d')} to "
