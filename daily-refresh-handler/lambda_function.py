@@ -78,7 +78,22 @@ def _refresh_account(member_email, account_id):
     """Refresh cost cache and invoice data for one account."""
     logger.info(f"Refreshing {account_id} for {member_email}")
 
-    # Assume role
+    # AI vendor accounts (OpenAI, GroundCover, etc.) don't use STS AssumeRole.
+    # Trigger their cache refresh via the member-handler Lambda asynchronously.
+    if not account_id.isdigit():
+        try:
+            lambda_client = boto3.client('lambda', region_name=REGION)
+            lambda_client.invoke(
+                FunctionName='aws-bill-analyzer-member-api',
+                InvocationType='Event',
+                Payload=b'{"_cache_refresh_ai": true, "member_email": "' + member_email.encode() + b'", "account_id": "' + account_id.encode() + b'"}',
+            )
+            logger.info(f"Triggered async AI vendor refresh for {account_id}")
+        except Exception as e:
+            logger.warning(f"Failed to trigger AI vendor refresh for {account_id}: {e}")
+        return
+
+    # AWS accounts: Assume role
     role_arn = f'arn:aws:iam::{account_id}:role/SlashMyBill-{account_id}'
     external_id = hashlib.sha256(member_email.encode('utf-8')).hexdigest()
 
