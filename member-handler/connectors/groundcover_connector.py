@@ -127,9 +127,11 @@ class GroundcoverConnector(ProviderConnector):
 
         # Anthropic model pricing (USD per 1M tokens) - approximate
         MODEL_PRICING = {
-            'claude-opus-4': {'input': 15.0, 'output': 75.0},
+            'claude-opus-4': {'input': 5.0, 'output': 25.0},
             'claude-sonnet-4': {'input': 3.0, 'output': 15.0},
-            'claude-haiku-4': {'input': 0.80, 'output': 4.0},
+            'claude-sonnet-5': {'input': 3.0, 'output': 15.0},
+            'claude-haiku-4': {'input': 1.0, 'output': 5.0},
+            'claude-fable-5': {'input': 10.0, 'output': 50.0},
             'gemini-2.5-pro': {'input': 1.25, 'output': 10.0},
             'gemini-2.5-flash': {'input': 0.15, 'output': 0.60},
         }
