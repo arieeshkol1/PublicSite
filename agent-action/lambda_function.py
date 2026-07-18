@@ -81,15 +81,43 @@ def lambda_handler(event, context):
     # Cap response size to prevent Bedrock EventStreamError on oversized tool responses
     result_json = json.dumps(result, default=str)
     if len(result_json) > 12000:
-        # Trim large responses: remove daily costs and limit services to keep under limit
+        # Trim large responses progressively to keep under Bedrock limit
         logger.warning(f"Tool response too large ({len(result_json)} chars), trimming...")
+
+        # Pass 1: limit breakdowns and daily data
         if 'dailyCosts' in result:
             result['dailyCosts'] = result['dailyCosts'][-7:]  # Keep only last 7 days
         if 'topServices' in result:
             result['topServices'] = result['topServices'][:5]
         if 'currentMonthServices' in result:
             result['currentMonthServices'] = result['currentMonthServices'][:5]
+        if 'modelBreakdown' in result:
+            result['modelBreakdown'] = result['modelBreakdown'][:5]
+        if 'userBreakdown' in result:
+            result['userBreakdown'] = result['userBreakdown'][:5]
+        if 'projectBreakdown' in result:
+            result['projectBreakdown'] = result['projectBreakdown'][:5]
+        # Remove usageTypeBreakdown if present (very verbose)
+        result.pop('usageTypeBreakdown', None)
+
         result_json = json.dumps(result, default=str)
+
+        # Pass 2: if still over limit, drop verbose fields entirely
+        if len(result_json) > 12000:
+            logger.warning(f"Still too large after pass 1 ({len(result_json)} chars), aggressive trim...")
+            result.pop('dailyCosts', None)
+            result.pop('forecastHint', None)
+            result.pop('projectBreakdown', None)
+            # Keep modelBreakdown/userBreakdown/tokenSummary (compact, high value)
+            result_json = json.dumps(result, default=str)
+
+        # Pass 3: nuclear — keep only the absolute essentials
+        if len(result_json) > 12000:
+            logger.warning(f"Still too large after pass 2 ({len(result_json)} chars), nuclear trim...")
+            result.pop('userBreakdown', None)
+            result.pop('modelBreakdown', None)
+            result.pop('tokenSummary', None)
+            result_json = json.dumps(result, default=str)
 
     response_body = {'application/json': {'body': result_json}}
 
@@ -128,15 +156,27 @@ def _execute_tool(tool_name: str, account_id: str, member_email: str, parameters
     # Route through provider_router (resolves provider, dispatches to connector)
     result = provider_router.route_tool(tool_name, account_id, member_email, parameters)
 
-    # Fallback: if tool returns notSupported with available alternatives, retry once
+    # Handle notSupported: return a helpful message instead of blindly retrying
+    # with an irrelevant tool (e.g. getComputeInstances for an AI vendor account)
     if isinstance(result, dict) and result.get('notSupported') is True:
         available_ops = result.get('availableOperations', [])
-        if available_ops:
-            fallback_tool = available_ops[0]
+        # Only retry with fallback if the alternative is a cost/usage tool
+        # (useful fallbacks). Don't retry with unrelated tools.
+        cost_tools = {'getCostBreakdown', 'getMonthlyTrend', 'getAIUsage'}
+        useful_fallbacks = [op for op in available_ops if op in cost_tools]
+        if useful_fallbacks:
+            fallback_tool = useful_fallbacks[0]
             logger.warning(f"Tool fallback: {tool_name} -> {fallback_tool} for account {account_id}")
             result = provider_router.route_tool(fallback_tool, account_id, member_email, parameters)
         else:
-            logger.warning(f"Tool {tool_name} not supported for account {account_id}, no alternatives available")
+            # Return clear guidance — don't attempt irrelevant tools
+            logger.warning(f"Tool {tool_name} not supported for account {account_id}, no useful alternatives")
+            result = {
+                'notApplicable': True,
+                'message': f'{tool_name} is not applicable for this account type. '
+                           f'For AI vendor accounts, use getCostBreakdown or getOptimizationTips to analyze costs and get savings recommendations.',
+                'availableOperations': available_ops,
+            }
 
     return result
 
