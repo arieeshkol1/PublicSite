@@ -452,11 +452,24 @@ def _aggregate_monthly_trend(items):
         month = date[:7]  # YYYY-MM
         if month not in monthly_data:
             monthly_data[month] = {}
-        for svc, svc_cost in item.get("service_breakdown", {}).items():
-            cost = float(svc_cost)
+
+        svc_breakdown = item.get("service_breakdown", {})
+        if svc_breakdown:
+            for svc, svc_cost in svc_breakdown.items():
+                if isinstance(svc_cost, dict):
+                    cost = float(svc_cost.get("cost", svc_cost.get("cost_amount", 0)))
+                else:
+                    cost = float(svc_cost)
+                if cost > 0.01:
+                    monthly_data[month][svc] = round(
+                        monthly_data[month].get(svc, 0) + cost, 2
+                    )
+        else:
+            # No service_breakdown (neutral COST# schema) — use cost_amount as total
+            cost = float(item.get("cost_amount", 0))
             if cost > 0.01:
-                monthly_data[month][svc] = round(
-                    monthly_data[month].get(svc, 0) + cost, 2
+                monthly_data[month]["total"] = round(
+                    monthly_data[month].get("total", 0) + cost, 2
                 )
 
     return {
