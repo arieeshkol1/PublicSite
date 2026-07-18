@@ -114,10 +114,9 @@ class GroundcoverConnector(ProviderConnector):
         aggregated by model and day. Returns data in the same bucket format as
         the OpenAI connector so the existing dashboard can consume it.
 
-        Uses the confirmed working endpoint:
-          POST https://api.groundcover.com/api/prometheus/api/v1/query_range
-        with the metric:
-          - claude_code_token_usage_tokens_total (by model, daily, type=input/output)
+        Strategy: query raw counter values at daily intervals, then compute
+        per-day deltas from consecutive readings. This avoids issues with
+        increase()/delta() returning empty on GroundCover's Prometheus.
         """
         token = auth_context.get('api_key', '')
         from datetime import datetime, timezone, timedelta
@@ -144,7 +143,6 @@ class GroundcoverConnector(ProviderConnector):
                     pricing = p
                     break
             if not pricing:
-                # Default: use claude-sonnet pricing as fallback
                 pricing = {'input': 3.0, 'output': 15.0}
             cost = (input_tok * pricing['input'] + output_tok * pricing['output']) / 1_000_000
             return round(cost, 6)
@@ -161,22 +159,21 @@ class GroundcoverConnector(ProviderConnector):
                 'Accept': 'application/json',
             }
 
-            start_ts = int(start_dt.timestamp())
+            # Query raw cumulative counter at daily intervals.
+            # We start 1 day earlier so we can compute the delta for start_date.
+            query_start_ts = int((start_dt - timedelta(days=1)).timestamp())
             end_ts = int(end_dt.timestamp())
             step = '86400'  # 1 day
 
-            # Use claude_code_token_usage_tokens_total which is the actively-reported
-            # metric (the gen_ai_response_usage_* metrics stopped reporting after June 2025).
-            # This metric is a cumulative gauge (total tokens consumed to date), so we use
-            # delta() to get the per-day change in token count for each model.
-            input_query = 'sum by (model) (delta(claude_code_token_usage_tokens_total{type="input"}[1d]))'
-            output_query = 'sum by (model) (delta(claude_code_token_usage_tokens_total{type="output"}[1d]))'
+            # Raw counter query — no increase()/delta() wrapping
+            input_query = 'sum by (model) (claude_code_token_usage_tokens_total{type="input"})'
+            output_query = 'sum by (model) (claude_code_token_usage_tokens_total{type="output"})'
 
             def _prom_range_query(query):
                 """Execute a Prometheus range query and return parsed results."""
                 params = urllib.parse.urlencode({
                     'query': query,
-                    'start': str(start_ts),
+                    'start': str(query_start_ts),
                     'end': str(end_ts),
                     'step': step,
                 })
@@ -208,29 +205,51 @@ class GroundcoverConnector(ProviderConnector):
             output_results = _prom_range_query(output_query)
 
             if not input_results and not output_results:
-                logger.info("GroundCover Prometheus returned no gen_ai token data")
+                logger.info("GroundCover Prometheus returned no token data")
                 return []
 
-            # Build a lookup: {model: {timestamp: {input_tokens, output_tokens}}}
-            model_data = {}
-            for series in input_results:
-                model = series.get('metric', {}).get('model', 'unknown')
-                for ts_val in series.get('values', []):
-                    ts = int(float(ts_val[0]))
-                    # Align to day start
-                    day_ts = ts - (ts % 86400)
-                    tokens = int(float(ts_val[1]))
-                    model_data.setdefault(model, {}).setdefault(day_ts, {'input': 0, 'output': 0})
-                    model_data[model][day_ts]['input'] += tokens
+            # Build cumulative readings: {model: [(timestamp, value), ...]}
+            # then compute per-day deltas from consecutive readings.
+            start_ts_filter = int(start_dt.timestamp())
 
-            for series in output_results:
-                model = series.get('metric', {}).get('model', 'unknown')
-                for ts_val in series.get('values', []):
-                    ts = int(float(ts_val[0]))
-                    day_ts = ts - (ts % 86400)
-                    tokens = max(0, int(float(ts_val[1])))  # clamp negative delta to 0
+            def _build_daily_deltas(results):
+                """Convert cumulative counter readings into per-day deltas."""
+                model_deltas = {}  # {model: {day_ts: delta_tokens}}
+                for series in results:
+                    model = series.get('metric', {}).get('model', 'unknown')
+                    values = series.get('values', [])
+                    if len(values) < 2:
+                        continue
+                    # Sort by timestamp
+                    values = sorted(values, key=lambda v: float(v[0]))
+                    for i in range(1, len(values)):
+                        ts = int(float(values[i][0]))
+                        day_ts = ts - (ts % 86400)
+                        # Only include days in the requested range
+                        if day_ts < start_ts_filter:
+                            continue
+                        curr = float(values[i][1])
+                        prev = float(values[i - 1][1])
+                        delta = max(0, int(curr - prev))  # clamp resets to 0
+                        if delta > 0:
+                            model_deltas.setdefault(model, {}).setdefault(day_ts, 0)
+                            model_deltas[model][day_ts] += delta
+                return model_deltas
+
+            input_deltas = _build_daily_deltas(input_results)
+            output_deltas = _build_daily_deltas(output_results)
+
+            # Merge input + output into model_data
+            model_data = {}
+            all_models = set(list(input_deltas.keys()) + list(output_deltas.keys()))
+            for model in all_models:
+                in_days = input_deltas.get(model, {})
+                out_days = output_deltas.get(model, {})
+                all_days = set(list(in_days.keys()) + list(out_days.keys()))
+                for day_ts in all_days:
                     model_data.setdefault(model, {}).setdefault(day_ts, {'input': 0, 'output': 0})
-                    model_data[model][day_ts]['output'] += tokens
+                    model_data[model][day_ts]['input'] += in_days.get(day_ts, 0)
+                    model_data[model][day_ts]['output'] += out_days.get(day_ts, 0)
 
             if not model_data:
                 return []
@@ -269,23 +288,22 @@ class GroundcoverConnector(ProviderConnector):
                           start_date: str, end_date: str) -> list:
         """Fetch per-user token usage from GroundCover's Prometheus API.
 
-        Uses the claude_code_token_usage_tokens_total metric which has user_email
-        and model labels. Uses an instant query (fast) to get current totals per user,
-        then returns records the Per-User Token Consumption chart can display.
-          {date, user_id, model, input_tokens, output_tokens, num_model_requests}
+        Uses a range query on claude_code_token_usage_tokens_total grouped by
+        user_email and model, then computes daily deltas from consecutive
+        counter readings. Returns actual per-day per-user token consumption.
         """
         token = auth_context.get('api_key', '')
-        from datetime import datetime, timezone
+        from datetime import datetime, timezone, timedelta
         try:
             import urllib.parse
         except ImportError:
             return []
 
         try:
+            start_dt = datetime.strptime(start_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
             end_dt = datetime.strptime(end_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
 
-            # Use instant query (fast, <1s) instead of range query (times out)
-            prom_url = f"{GROUNDCOVER_API_BASE}/api/prometheus/api/v1/query"
+            prom_url = f"{GROUNDCOVER_API_BASE}/api/prometheus/api/v1/query_range"
             headers = {
                 'Authorization': f'Bearer {token}',
                 'X-Backend-Id': 'groundcover',
@@ -293,16 +311,24 @@ class GroundcoverConnector(ProviderConnector):
                 'Accept': 'application/json',
             }
 
-            # Get current total tokens per user+model, split by input/output type
-            # The metric has type={input,output,cacheCreation,cacheRead}
+            # Query raw cumulative counter at daily intervals (start 1 day early for delta)
+            query_start_ts = int((start_dt - timedelta(days=1)).timestamp())
+            end_ts = int(end_dt.timestamp())
+            step = '86400'
+
             input_query = 'sum by (user_email, model) (claude_code_token_usage_tokens_total{type="input"})'
             output_query = 'sum by (user_email, model) (claude_code_token_usage_tokens_total{type="output"})'
 
-            def _instant_query(query):
-                p = urllib.parse.urlencode({'query': query})
+            def _prom_range_query(query):
+                params = urllib.parse.urlencode({
+                    'query': query,
+                    'start': str(query_start_ts),
+                    'end': str(end_ts),
+                    'step': step,
+                })
+                data = params.encode('utf-8')
                 try:
-                    req = urllib.request.Request(prom_url, method='POST', headers=headers,
-                                                data=p.encode('utf-8'))
+                    req = urllib.request.Request(prom_url, method='POST', headers=headers, data=data)
                     resp = urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT)
                     raw = json.loads(resp.read().decode('utf-8'))
                     if raw.get('status') != 'success':
@@ -314,65 +340,70 @@ class GroundcoverConnector(ProviderConnector):
                             f"GroundCover API authentication failed (HTTP {e.code}). "
                             "Check your API token in the Configure tab."
                         )
-                    logger.warning(f"GroundCover per-user query failed: HTTP {e.code}: {e}")
+                    logger.warning(f"GroundCover per-user range query failed: {e}")
                     return []
                 except Exception as e:
-                    logger.warning(f"GroundCover per-user query failed: {type(e).__name__}: {e}")
+                    logger.warning(f"GroundCover per-user range query failed: {type(e).__name__}: {e}")
                     return []
 
-            input_results = _instant_query(input_query)
-            output_results = _instant_query(output_query)
+            input_results = _prom_range_query(input_query)
+            output_results = _prom_range_query(output_query)
 
             if not input_results and not output_results:
                 return []
 
-            # Build lookup: {(user, model): {input: N, output: N}}
-            user_data = {}
-            for series in input_results:
-                user = series.get('metric', {}).get('user_email', '')
-                model = series.get('metric', {}).get('model', 'unknown')
-                if not user:
-                    continue
-                val = series.get('value', [0, '0'])
-                tokens = int(float(val[1])) if len(val) > 1 else 0
-                if tokens > 0:
-                    user_data.setdefault((user, model), {'input': 0, 'output': 0})
-                    user_data[(user, model)]['input'] += tokens
+            # Compute daily deltas from consecutive readings
+            start_ts_filter = int(start_dt.timestamp())
 
-            for series in output_results:
-                user = series.get('metric', {}).get('user_email', '')
-                model = series.get('metric', {}).get('model', 'unknown')
-                if not user:
-                    continue
-                val = series.get('value', [0, '0'])
-                tokens = int(float(val[1])) if len(val) > 1 else 0
-                if tokens > 0:
-                    user_data.setdefault((user, model), {'input': 0, 'output': 0})
-                    user_data[(user, model)]['output'] += tokens
+            def _extract_user_deltas(results):
+                """Build {(user, model): {day_ts: delta}} from range query results."""
+                deltas = {}
+                for series in results:
+                    user = series.get('metric', {}).get('user_email', '')
+                    model = series.get('metric', {}).get('model', 'unknown')
+                    if not user:
+                        continue
+                    values = sorted(series.get('values', []), key=lambda v: float(v[0]))
+                    if len(values) < 2:
+                        continue
+                    for i in range(1, len(values)):
+                        ts = int(float(values[i][0]))
+                        day_ts = ts - (ts % 86400)
+                        if day_ts < start_ts_filter:
+                            continue
+                        curr = float(values[i][1])
+                        prev = float(values[i - 1][1])
+                        delta = max(0, int(curr - prev))
+                        if delta > 0:
+                            key = (user, model)
+                            deltas.setdefault(key, {}).setdefault(day_ts, 0)
+                            deltas[key][day_ts] += delta
+                return deltas
 
-            if not user_data:
-                return []
+            input_deltas = _extract_user_deltas(input_results)
+            output_deltas = _extract_user_deltas(output_results)
 
-            # Spread per-user totals across the full date range
-            from datetime import timedelta as _td
-            start_dt = datetime.strptime(start_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
-            num_days = max(2, (end_dt - start_dt).days)
+            # Merge into per-user records
+            all_keys = set(list(input_deltas.keys()) + list(output_deltas.keys()))
             per_user_records = []
-            for (user_email, model), tok in user_data.items():
-                daily_input = max(1, tok['input'] // num_days)
-                daily_output = max(0, tok['output'] // num_days)
-                for day_offset in range(num_days):
-                    day_dt = start_dt + _td(days=day_offset)
+            for (user_email, model) in all_keys:
+                in_days = input_deltas.get((user_email, model), {})
+                out_days = output_deltas.get((user_email, model), {})
+                all_days = set(list(in_days.keys()) + list(out_days.keys()))
+                for day_ts in all_days:
+                    day_str = datetime.fromtimestamp(day_ts, tz=timezone.utc).strftime('%Y-%m-%d')
+                    inp = in_days.get(day_ts, 0)
+                    out = out_days.get(day_ts, 0)
                     per_user_records.append({
-                        'date': day_dt.strftime('%Y-%m-%d'),
+                        'date': day_str,
                         'user_id': user_email,
                         'model': model,
-                        'input_tokens': daily_input,
-                        'output_tokens': daily_output,
+                        'input_tokens': inp,
+                        'output_tokens': out,
                         'num_model_requests': 1,
                     })
 
-            logger.info(f"GroundCover: fetched {len(per_user_records)} per-user records")
+            logger.info(f"GroundCover: fetched {len(per_user_records)} per-user daily records")
             return per_user_records
 
         except PermissionError:
