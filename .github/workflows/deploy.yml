@@ -7,10 +7,6 @@ on:
       - '*.html'
       - '*.css'
       - '*.js'
-
-concurrency:
-  group: deploy-${{ github.ref }}
-  cancel-in-progress: true
       - '*.png'
       - '*.jpg'
       - '*.jpeg'
@@ -51,6 +47,10 @@ concurrency:
       - 'infrastructure/dashboard-stack.yaml'
       - '.github/workflows/deploy.yml'
   workflow_dispatch:
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   id-token: write
