@@ -9796,9 +9796,22 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
                       "cost, or time period.")
 
         # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-        # Quality gate removed per design review.
+        # Inline audit quality gate: score the answer and trigger healing if low
+        _gate_enabled = os.environ.get('AUDIT_QUALITY_GATE_ENABLED', 'true').lower() == 'true'
+        _threshold = int(os.environ.get('AUDIT_QUALITY_THRESHOLD', '50'))
         inline_audit_score = None
         inline_audit_action = 'pass'
+
+        if _gate_enabled and answer and len(answer) > 30:
+            try:
+                _audit = _inline_audit_score(question, answer)
+                inline_audit_score = _audit.get('score', 100)
+                inline_audit_action = 'pass' if inline_audit_score >= _threshold else 'low_score'
+                logger.info(f'Inline audit: score={inline_audit_score} action={inline_audit_action}')
+            except Exception as _audit_err:
+                logger.warning(f'Inline audit failed (pass-through): {_audit_err}')
+                inline_audit_score = None
+                inline_audit_action = 'pass'
 
         # Build structured trace â€” errors here are non-fatal
         inference_trace = None
