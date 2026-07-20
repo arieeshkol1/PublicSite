@@ -7,6 +7,10 @@ on:
       - '*.html'
       - '*.css'
       - '*.js'
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: true
       - '*.png'
       - '*.jpg'
       - '*.jpeg'
