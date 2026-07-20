@@ -14706,6 +14706,8 @@ function _groupTokensByDateAndEntity(tokenUsage, visibleEntities, dimField) {
     visibleEntities.forEach(function(u) { visibleSet[u] = true; });
     var dateSet = {};
     var byDateEntity = {};
+    var totalCostSeen = 0;
+    var totalTokensSeen = 0;
     (tokenUsage || []).forEach(function(r) {
         var entity = (r[dimField] || '').trim();
         if (!entity || entity === 'unknown' || !visibleSet[entity]) return;
@@ -14713,20 +14715,52 @@ function _groupTokensByDateAndEntity(tokenUsage, visibleEntities, dimField) {
         if (!dt) return;
         dateSet[dt] = true;
         var key = dt + '|' + entity;
-        // Use cost_amount if available, otherwise estimate from tokens
         var cost = parseFloat(r.cost_amount || 0);
-        if (!cost && (r.input_tokens || r.output_tokens)) {
-            // Rough estimate: $2.50/1M input + $10/1M output (GPT-4o average)
-            cost = ((r.input_tokens || 0) * 2.5 + (r.output_tokens || 0) * 10) / 1000000;
+        var tokens = parseFloat(r.usage_quantity || r.total_tokens || r.input_tokens || 0) + parseFloat(r.output_tokens || 0);
+        totalCostSeen += cost;
+        totalTokensSeen += tokens;
+        if (!cost && tokens) {
+            // Estimate cost from tokens when cost_amount is 0 (GroundCover/Anthropic)
+            // Use realistic Anthropic pricing: ~$10/MTok average (mix of Opus/Sonnet/Haiku)
+            var inTok = parseFloat(r.input_tokens || 0);
+            var outTok = parseFloat(r.output_tokens || 0);
+            var totalTok = parseFloat(r.usage_quantity || r.total_tokens || 0);
+            if (inTok || outTok) {
+                cost = (inTok * 5 + outTok * 25) / 1000000;
+            } else if (totalTok) {
+                cost = totalTok * 10 / 1000000;
+            }
         }
         byDateEntity[key] = (byDateEntity[key] || 0) + cost;
     });
+    // If total cost is near-zero but tokens exist, switch to token mode
+    // so the chart shows meaningful data instead of flat $0 lines
+    var useTokens = (totalCostSeen < 0.01 && totalTokensSeen > 0);
+    // Also switch if estimated costs are too small to display meaningfully
+    if (!useTokens && totalTokensSeen > 0) {
+        var estimatedTotal = 0;
+        Object.keys(byDateEntity).forEach(function(k) { estimatedTotal += byDateEntity[k]; });
+        if (estimatedTotal < 0.10) useTokens = true;
+    }
+    if (useTokens) {
+        // Recompute using raw token counts
+        byDateEntity = {};
+        (tokenUsage || []).forEach(function(r) {
+            var entity = (r[dimField] || '').trim();
+            if (!entity || entity === 'unknown' || !visibleSet[entity]) return;
+            var dt = r.date || '';
+            if (!dt) return;
+            var key = dt + '|' + entity;
+            var tokens = parseFloat(r.usage_quantity || r.total_tokens || 0) || (parseFloat(r.input_tokens || 0) + parseFloat(r.output_tokens || 0));
+            byDateEntity[key] = (byDateEntity[key] || 0) + tokens;
+        });
+    }
     var dates = Object.keys(dateSet).sort();
     var series = {};
     visibleEntities.forEach(function(entity) {
         series[entity] = dates.map(function(dt) { return byDateEntity[dt + '|' + entity] || 0; });
     });
-    return { dates: dates, series: series };
+    return { dates: dates, series: series, useTokens: useTokens };
 }
 
 function _assignUserColors(users) {
@@ -14740,6 +14774,7 @@ function _renderPerUserSVG(grouped, userColors, visibleUsers) {
         return '<div style="text-align:center;padding:30px;color:#6b7280;">Select at least one user to display the chart.</div>';
     }
     var dates = grouped.dates, series = grouped.series;
+    var useTokens = grouped.useTokens || false;
     var maxY = 0;
     visibleUsers.forEach(function(uid) {
         (series[uid] || []).forEach(function(v) { if (v > maxY) maxY = v; });
@@ -14757,7 +14792,14 @@ function _renderPerUserSVG(grouped, userColors, visibleUsers) {
     for (var yi = 0; yi <= 5; yi++) {
         var yPos = (H - PAD) - (yi / 5 * chartH);
         var yVal = maxY * yi / 5;
-        var yLabel = yVal >= 1000 ? '$' + (yVal / 1000).toFixed(1) + 'K' : '$' + yVal.toFixed(0);
+        var yLabel;
+        if (useTokens) {
+            // Token mode: show K/M suffixes
+            yLabel = yVal >= 1000000 ? (yVal / 1000000).toFixed(1) + 'M' : yVal >= 1000 ? (yVal / 1000).toFixed(0) + 'K' : yVal > 0 ? Math.round(yVal).toString() : '0';
+        } else {
+            // Cost mode: always show $X.XX format
+            yLabel = yVal >= 1000 ? '$' + (yVal / 1000).toFixed(1) + 'K' : yVal >= 1 ? '$' + yVal.toFixed(2) : yVal > 0 ? '$' + yVal.toFixed(2) : '$0.00';
+        }
         svg += '<text x="' + (PADL - 8) + '" y="' + (yPos + 4) + '" text-anchor="end" font-size="12" font-weight="500" fill="#374151">' + yLabel + '</text>';
         svg += '<line x1="' + PADL + '" y1="' + yPos + '" x2="' + (W - 20) + '" y2="' + yPos + '" stroke="#e5e7eb" stroke-width="0.5"/>';
     }
