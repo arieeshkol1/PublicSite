@@ -453,6 +453,17 @@ def _aggregate_cost_breakdown(items, start_date, end_date, usage_items=None):
     if not total and daily_costs:
         total = round(sum(d["cost"] for d in daily_costs), 2)
 
+    # Estimate per-user cost: if users have tokens but $0 cost (common for
+    # GroundCover where cost is only tracked at model level), distribute
+    # total cost proportionally by token share.
+    if user_costs:
+        total_user_cost = sum(v["cost"] for v in user_costs.values())
+        total_user_tokens = sum(v["tokens"] for v in user_costs.values())
+        if total_user_cost < 0.01 and total_user_tokens > 0 and total > 0:
+            for actor, agg in user_costs.items():
+                if agg["tokens"] > 0:
+                    agg["cost"] = round((agg["tokens"] / total_user_tokens) * total, 2)
+
     # Return up to 21 days — enough for week-over-week comparison
     # while keeping response within Bedrock's token limits
     recent_daily = daily_costs[-21:]
