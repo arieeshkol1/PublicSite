@@ -9756,20 +9756,20 @@ def _invoke_bedrock_agent(question, account_id, member_email, interaction_id):
     _ai_context = ''
     if _is_ai_vendor:
         _ai_context = (
-            " [AI/LLM API ACCOUNT — This is NOT a cloud infrastructure account. "
-            "This account tracks AI model API usage (tokens, models, costs). "
-            "Do NOT recommend cloud infrastructure actions (EC2, Spot Instances, Savings Plans, "
-            "Waste Cleanup, EBS, RDS, Lambda rightsizing, NAT Gateways, or any compute/storage optimization). "
-            "For AI API accounts, cost optimization strategies are: "
-            "(1) Model tiering — route simple tasks to cheaper/smaller models instead of the most expensive one, "
-            "(2) Reduce output tokens — set max_tokens limits, use concise system prompts, "
-            "(3) Prompt caching — cache repeated system prompts and long context prefixes to reduce input token costs, "
-            "(4) Batch processing — use batch/async APIs for non-urgent requests at discounted rates, "
-            "(5) Per-user governance — identify heavy users consuming disproportionate tokens and set budgets, "
-            "(6) Output efficiency — request structured/JSON output instead of verbose prose. "
-            "Show specific dollar amounts and token counts from the cost data returned by getCostBreakdown. "
-            "Reference the Observe > Dashboard for AI spend trends.]"
+            " [AI/LLM API ACCOUNT — NOT a cloud infrastructure account. "
+            "Do NOT recommend EC2, Spot, Savings Plans, Waste Cleanup, EBS, RDS, or any AWS infrastructure. "
+            "CRITICAL: When asked about savings, you MUST calculate specific dollar amounts from the cost data. "
+            "Use this formula: if the most expensive model costs $X and a cheaper model costs Y% less, "
+            "switching N% of calls saves $(X * N% * Y%). Show the math. "
+            "Strategies with dollar estimates: "
+            "(1) Model tiering — the cheapest model in the data vs the most expensive: calculate cost difference per million tokens, "
+            "(2) Prompt caching — cached input tokens cost 50-90% less than regular input: show cached vs uncached ratio from data, "
+            "(3) Per-user governance — identify the heaviest-spending user/project from userBreakdown and quantify their share, "
+            "(4) Batch API — 50% discount on non-urgent requests: estimate what % could be batched, "
+            "(5) Output reduction — shorter responses reduce output token costs. "
+            "ALWAYS start with: 'Your total spend is $X. Here is how you can save:' followed by numbered items with dollar amounts.]"
         )
+
 
     enriched_prompt = f"[Account: {account_id}, Member: {member_email}, Provider: {_provider_label}, Today: {datetime.now(timezone.utc).strftime('%Y-%m-%d')}]{_ai_context} {question}"
 
