@@ -1,4 +1,5 @@
 name: Deploy
+# Clean run trigger
 
 on:
   push:
