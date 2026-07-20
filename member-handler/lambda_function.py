@@ -22622,6 +22622,15 @@ def _refresh_invoices_for_account(member_email, account_id, months, event):
     # handler (which uses provider_invoices.generate_provider_invoices).
     provider_key = _get_account_provider(member_email, account_id)
     if provider_key != 'aws':
+        # AI vendor accounts (groundcover, openai) don't have traditional invoices.
+        # Their cost data lives in Cost_Cache_Table and is served via
+        # _synthesize_ai_vendor_invoice_items. A refresh is a no-op — return success.
+        _ai_vendors = {'groundcover', 'openai', 'anthropic'}
+        if provider_key in _ai_vendors:
+            return {
+                'accountId': account_id, 'provider': provider_key, 'ok': True,
+                'months': months, 'recordCount': 0,
+            }
         try:
             from invoice_drilldown import handle_drilldown_refresh_request
             dd_event = dict(event)
