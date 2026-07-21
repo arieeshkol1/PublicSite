@@ -596,21 +596,55 @@ class GroundcoverConnector(ProviderConnector):
 
         usage = []
         if dimension == 'actor':
+            # Build per-day per-model cost from normalized data
+            # so we can distribute cost proportionally to users by token share
+            daily_model_cost = {}  # {(date, model): cost}
+            for rec in normalized:
+                date = rec.get('date')
+                model = rec.get('service_name')
+                if date and model:
+                    key = (date, model)
+                    daily_model_cost[key] = daily_model_cost.get(key, 0) + float(rec.get('cost_amount', 0) or 0)
+
+            # First pass: compute per-day per-model total tokens across all users
+            daily_model_tokens = {}  # {(date, model): total_tokens}
+            for rec in per_user:
+                date = rec.get('date')
+                model = rec.get('model')
+                if not date:
+                    continue
+                if service_filter and model != service_filter:
+                    continue
+                tokens = (rec.get('input_tokens') or 0) + (rec.get('output_tokens') or 0)
+                key = (date, model)
+                daily_model_tokens[key] = daily_model_tokens.get(key, 0) + tokens
+
+            # Second pass: distribute cost to each user proportionally
             for rec in per_user:
                 date = rec.get('date')
                 if not date:
                     continue
-                service = rec.get('model')
-                if service_filter and service != service_filter:
+                model = rec.get('model')
+                if service_filter and model != service_filter:
                     continue
                 tokens = (rec.get('input_tokens') or 0) + (rec.get('output_tokens') or 0)
+                key = (date, model)
+                total_tokens_for_model = daily_model_tokens.get(key, 0)
+                model_cost = daily_model_cost.get(key, 0)
+                # Distribute cost by token share
+                if total_tokens_for_model > 0 and model_cost > 0:
+                    user_cost = (tokens / total_tokens_for_model) * model_cost
+                else:
+                    user_cost = 0
                 usage.append({
                     'date': date,
                     'actor': rec.get('user_id'),
-                    'service': service,
+                    'service': model,
                     'usage_quantity': tokens if tokens else None,
                     'unit': 'tokens',
-                    'cost_amount': None,
+                    'cost_amount': round(user_cost, 6) if user_cost > 0 else 0,
+                    'input_tokens': rec.get('input_tokens') or 0,
+                    'output_tokens': rec.get('output_tokens') or 0,
                 })
         else:
             for rec in normalized:

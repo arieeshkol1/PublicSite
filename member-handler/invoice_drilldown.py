@@ -820,21 +820,18 @@ def handle_resource_breakdown_request(event, member_email):
         return ownership
 
     # Task 7.9: Check DynamoDB cache first for resource-level records
-    cached_records = _read_resource_cache(member_email, account_id, period, service)
-
-    if cached_records:
-        resources = cached_records
-        warnings = []
-    elif provider_key in ('groundcover', 'anthropic'):
-        # GroundCover/Anthropic: synthesize per-user breakdown from USAGE# items
+    # For GroundCover/Anthropic, always synthesize fresh from USAGE# items
+    # (fast query, avoids stale cached zeros from previous broken logic)
+    if provider_key in ('groundcover', 'anthropic'):
         resources = _synthesize_groundcover_resource_breakdown(member_email, account_id, period, service)
         warnings = []
-        if resources:
-            try:
-                _write_resource_cache(member_email, account_id, period, service, resources)
-            except Exception as e:
-                logger.warning(f"Failed to cache GroundCover resource records: {e}")
-    elif provider_key != 'aws':
+    else:
+        cached_records = _read_resource_cache(member_email, account_id, period, service)
+
+        if cached_records:
+            resources = cached_records
+            warnings = []
+        elif provider_key != 'aws':
         # Resource-level breakdown is derived from AWS Cost Explorer, which is
         # AWS-only. Non-AWS providers (azure/gcp/openai) have no equivalent
         # per-resource drill-down source here, so return a graceful empty
@@ -2428,8 +2425,9 @@ def _synthesize_groundcover_service_breakdown(member_email, account_id, period):
 def _synthesize_groundcover_resource_breakdown(member_email, account_id, period, service):
     """Synthesize per-user resource breakdown from USAGE# items for a specific model.
 
-    When the user expands a model (service) in the invoice drilldown, this returns
-    per-user cost and token data for that model in the given period.
+    Calculates per-user cost using model pricing rates ($/MTok) applied to token
+    counts. GroundCover stores per-user token counts in USAGE# items but cost is
+    only tracked at model-level aggregate. We compute: tokens × rate = cost.
 
     Args:
         member_email: Member email (part of pk).
@@ -2440,6 +2438,35 @@ def _synthesize_groundcover_resource_breakdown(member_email, account_id, period,
     Returns:
         list of resource dicts with per-user cost breakdown.
     """
+    # Anthropic model pricing (USD per 1M tokens) - must stay in sync with
+    # groundcover_connector.py MODEL_PRICING
+    MODEL_PRICING = {
+        'claude-opus-4': {'input': 5.0, 'output': 25.0},
+        'claude-sonnet-4': {'input': 3.0, 'output': 15.0},
+        'claude-sonnet-5': {'input': 3.0, 'output': 15.0},
+        'claude-haiku-4': {'input': 1.0, 'output': 5.0},
+        'claude-fable-5': {'input': 10.0, 'output': 50.0},
+        'gemini-2.5-pro': {'input': 1.25, 'output': 10.0},
+        'gemini-2.5-flash': {'input': 0.15, 'output': 0.60},
+    }
+    DEFAULT_PRICING = {'input': 3.0, 'output': 15.0}
+
+    def _get_model_pricing(model_name):
+        """Match model name to pricing using prefix matching."""
+        model_lower = (model_name or '').lower()
+        for prefix, pricing in MODEL_PRICING.items():
+            if prefix in model_lower:
+                return pricing
+        return DEFAULT_PRICING
+
+    def _estimate_cost(pricing, input_tok, output_tok, total_tok):
+        """Estimate cost from tokens. If no input/output split, use blended rate."""
+        if input_tok > 0 or output_tok > 0:
+            return (input_tok * pricing['input'] + output_tok * pricing['output']) / 1_000_000
+        # No input/output split available — use blended average rate
+        blended_rate = (pricing['input'] + pricing['output']) / 2
+        return (total_tok * blended_rate) / 1_000_000
+
     try:
         cache_table = dynamodb.Table(
             os.environ.get('COST_CACHE_TABLE_NAME', 'Cost_Cache_Table')
@@ -2457,77 +2484,97 @@ def _synthesize_groundcover_resource_breakdown(member_email, account_id, period,
         if not usage_items:
             return []
 
-        # Filter for the specific model (service) and aggregate by user (actor)
-        user_costs = {}  # {user: {cost, tokens, input_tokens, output_tokens}}
+        # Get model pricing
+        pricing = _get_model_pricing(service)
+
+        # Filter for the specific model and aggregate by user (actor)
+        user_data = {}  # {user: {tokens, input_tokens, output_tokens}}
         for u in usage_items:
             item_model = u.get('service', '') or ''
             if item_model != service:
                 continue
             actor = u.get('actor', '') or 'unknown'
-            cost = float(u.get('cost_amount', 0) or 0)
             tokens = int(float(u.get('usage_quantity', 0) or 0))
             input_tokens = int(float(u.get('input_tokens', 0) or 0))
             output_tokens = int(float(u.get('output_tokens', 0) or 0))
 
-            if actor not in user_costs:
-                user_costs[actor] = {'cost': 0, 'tokens': 0, 'input_tokens': 0, 'output_tokens': 0}
-            user_costs[actor]['cost'] += cost
-            user_costs[actor]['tokens'] += tokens
-            user_costs[actor]['input_tokens'] += input_tokens
-            user_costs[actor]['output_tokens'] += output_tokens
+            if actor not in user_data:
+                user_data[actor] = {'tokens': 0, 'input_tokens': 0, 'output_tokens': 0}
+            user_data[actor]['tokens'] += tokens
+            user_data[actor]['input_tokens'] += input_tokens
+            user_data[actor]['output_tokens'] += output_tokens
 
-        if not user_costs:
+        if not user_data:
             return []
 
+        # Remove "unknown" placeholder if real users exist
+        if 'unknown' in user_data and len(user_data) > 1 and user_data['unknown']['tokens'] == 0:
+            del user_data['unknown']
+
+        # Calculate cost per user using token × rate
+        user_costs = {}
+        for actor, data in user_data.items():
+            cost = _estimate_cost(pricing, data['input_tokens'], data['output_tokens'], data['tokens'])
+            user_costs[actor] = {
+                'cost': round(cost, 4),
+                'tokens': data['tokens'],
+                'input_tokens': data['input_tokens'],
+                'output_tokens': data['output_tokens'],
+            }
+
         total_cost = sum(v['cost'] for v in user_costs.values())
-        total_tokens = sum(v['tokens'] for v in user_costs.values())
 
-        # If cost is 0 per user but tokens exist, distribute model total proportionally
-        if total_cost < 0.01 and total_tokens > 0:
-            # Get model total from service breakdown
-            model_total = total_cost
-            # Try to get from parent service breakdown
-            svc_breakdown = _synthesize_groundcover_service_breakdown(member_email, account_id, period)
-            for svc in svc_breakdown:
-                if svc.get('serviceName', '') == service:
-                    model_total = float(svc.get('amount', 0))
-                    break
-            if model_total > 0:
-                for actor, data in user_costs.items():
-                    if data['tokens'] > 0:
-                        data['cost'] = round((data['tokens'] / total_tokens) * model_total, 4)
-                total_cost = model_total
-
+        # Build resource records
         resources = []
         for actor, data in sorted(user_costs.items(), key=lambda x: -x[1]['cost']):
-            cost = round(data['cost'], 2)
-            if cost < 0.001 and data['tokens'] == 0:
+            cost = data['cost']
+            if cost < 0.0001 and data['tokens'] == 0:
                 continue
 
-            # Format token info for display
-            token_info = ''
-            if data['input_tokens'] > 0 or data['output_tokens'] > 0:
-                token_info = f"Input: {data['input_tokens']:,} | Output: {data['output_tokens']:,}"
-            elif data['tokens'] > 0:
-                token_info = f"Total tokens: {data['tokens']:,}"
+            pct = round((cost / total_cost) * 100, 1) if total_cost > 0 else 0
 
-            pct = round((data['cost'] / total_cost) * 100, 1) if total_cost > 0 else 0
+            # Build cost explanation showing the calculation
+            if data['input_tokens'] > 0 or data['output_tokens'] > 0:
+                explanation = (
+                    f"Input: {data['input_tokens']:,} tok × ${pricing['input']}/MTok + "
+                    f"Output: {data['output_tokens']:,} tok × ${pricing['output']}/MTok = ${cost:.2f}"
+                )
+            elif data['tokens'] > 0:
+                blended = (pricing['input'] + pricing['output']) / 2
+                explanation = (
+                    f"{data['tokens']:,} tokens × ${blended:.1f}/MTok (blended) = ${cost:.2f}"
+                )
+            else:
+                explanation = f"${cost:.2f}"
 
             resources.append({
                 'resourceId': actor,
                 'resourceName': actor,
                 'resourceType': 'User',
-                'amount': round(data['cost'], 4),
+                'amount': cost,
                 'percentage': pct,
                 'usageTypes': [
+                    {
+                        'type': 'Input Tokens',
+                        'quantity': data['input_tokens'],
+                        'unit': 'tokens',
+                        'cost': round(data['input_tokens'] * pricing['input'] / 1_000_000, 4),
+                    },
+                    {
+                        'type': 'Output Tokens',
+                        'quantity': data['output_tokens'],
+                        'unit': 'tokens',
+                        'cost': round(data['output_tokens'] * pricing['output'] / 1_000_000, 4),
+                    },
+                ] if (data['input_tokens'] > 0 or data['output_tokens'] > 0) else [
                     {
                         'type': 'Tokens',
                         'quantity': data['tokens'],
                         'unit': 'tokens',
-                        'cost': round(data['cost'], 4),
+                        'cost': cost,
                     }
                 ] if data['tokens'] > 0 else [],
-                'explanation': token_info or f"${cost:.2f} usage on {service}",
+                'explanation': explanation,
             })
 
         return resources
