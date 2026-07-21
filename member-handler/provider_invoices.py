@@ -130,11 +130,11 @@ def generate_provider_invoices(member_email, account_id, provider_key, cached_pe
         )
         return ([], True)
 
-    # GroundCover accounts are consumed through the AI Cost dashboard
-    # (handle_openai_usage), not the invoice system. Return empty but not
-    # unavailable so the refresh doesn't error out.
-    if provider_key == 'groundcover':
-        return ([], False)
+    # GroundCover/Anthropic accounts store their data in Cost_Cache_Table
+    # (via the GroundCover connector). Synthesize invoice records from USAGE#
+    # items to provide per-model monthly breakdown in the invoice drilldown.
+    if provider_key in ('groundcover', 'anthropic'):
+        return _synthesize_groundcover_invoices(member_email, account_id, provider_key)
 
     # Load credentials and authenticate. All credential/auth failures degrade to
     # the unavailable flag — they must never propagate to the HTTP handler.
@@ -312,6 +312,124 @@ class MonthlyCostAggregator:
 
     def __init__(self):
         raise NotImplementedError("MonthlyCostAggregator is implemented in task 3.1")
+
+
+def _synthesize_groundcover_invoices(member_email, account_id, provider_key):
+    """Synthesize invoice records from Cost_Cache_Table USAGE# items for GroundCover/Anthropic.
+
+    Produces one invoice record per month with per-model service breakdown,
+    matching the canonical invoice shape used by the drilldown.
+
+    Returns:
+        tuple: (records, unavailable_flag)
+    """
+    try:
+        ddb = boto3.resource('dynamodb')
+        cache_table = ddb.Table(os.environ.get('COST_CACHE_TABLE_NAME', 'Cost_Cache_Table'))
+        pk = f"{member_email}#{account_id}"
+
+        now = datetime.now(timezone.utc)
+        start_date = (now - timedelta(days=180)).strftime('%Y-%m-%d')
+        end_date = now.strftime('%Y-%m-%d')
+
+        # Query USAGE# items (most granular for AI vendors: per-model per-user per-day)
+        resp = cache_table.query(
+            KeyConditionExpression=boto3.dynamodb.conditions.Key('pk').eq(pk)
+            & boto3.dynamodb.conditions.Key('sk').between(f"USAGE#{start_date}", f"USAGE#{end_date}~")
+        )
+        usage_items = resp.get('Items', [])
+
+        if not usage_items:
+            # Fallback: try COST# items
+            resp = cache_table.query(
+                KeyConditionExpression=boto3.dynamodb.conditions.Key('pk').eq(pk)
+                & boto3.dynamodb.conditions.Key('sk').between(f"COST#{start_date}", f"COST#{end_date}~")
+            )
+            cost_items = resp.get('Items', [])
+            if not cost_items:
+                return ([], False)
+
+            # Aggregate COST# items by month
+            month_totals = {}
+            for item in cost_items:
+                sk = item.get('sk', '')
+                date_str = sk.replace('COST#', '')
+                month = date_str[:7] if len(date_str) >= 7 else ''
+                cost = float(item.get('cost_amount', 0) or 0)
+                if month:
+                    month_totals[month] = month_totals.get(month, 0) + cost
+
+            records = []
+            issuer = ISSUER_LABELS.get(provider_key, 'AI Vendor')
+            for month, total in sorted(month_totals.items(), reverse=True):
+                if total < 0.01:
+                    continue
+                year, mon = int(month[:4]), int(month[5:7])
+                last_day = calendar.monthrange(year, mon)[1]
+                records.append({
+                    'period': month,
+                    'invoiceId': f"{account_id}-{month}",
+                    'issuer': issuer,
+                    'paymentDate': f"{month}-{last_day:02d}",
+                    'paymentStatus': 'paid' if month < now.strftime('%Y-%m') else 'pending',
+                    'totalAmount': round(total, 2),
+                    'currency': 'USD',
+                    'accountId': account_id,
+                })
+            return (records, False)
+
+        # Aggregate USAGE# items by month and model
+        month_model_agg = {}  # {month: {model: cost}}
+        month_totals = {}
+        for u in usage_items:
+            sk = u.get('sk', '')
+            parts = sk.split('#')
+            date_str = parts[1] if len(parts) >= 2 else ''
+            month = date_str[:7] if len(date_str) >= 7 else ''
+            model = u.get('service', '') or 'Unknown Model'
+            cost = float(u.get('cost_amount', 0) or 0)
+            if month:
+                if month not in month_model_agg:
+                    month_model_agg[month] = {}
+                month_model_agg[month][model] = month_model_agg[month].get(model, 0) + cost
+                month_totals[month] = month_totals.get(month, 0) + cost
+
+        records = []
+        issuer = ISSUER_LABELS.get(provider_key, 'AI Vendor')
+        for month in sorted(month_model_agg.keys(), reverse=True):
+            total = month_totals.get(month, 0)
+            if total < 0.01:
+                continue
+            year, mon = int(month[:4]), int(month[5:7])
+            last_day = calendar.monthrange(year, mon)[1]
+
+            # Build per-model service breakdown for this month
+            model_breakdown = []
+            for model, model_cost in sorted(month_model_agg[month].items(), key=lambda x: -x[1]):
+                if model_cost >= 0.001:
+                    model_breakdown.append({
+                        'serviceName': model,
+                        'amount': round(model_cost, 4),
+                        'percentage': round((model_cost / total) * 100, 1) if total > 0 else 0,
+                    })
+
+            records.append({
+                'period': month,
+                'invoiceId': f"{account_id}-{month}",
+                'issuer': issuer,
+                'paymentDate': f"{month}-{last_day:02d}",
+                'paymentStatus': 'paid' if month < now.strftime('%Y-%m') else 'pending',
+                'totalAmount': round(total, 2),
+                'currency': 'USD',
+                'accountId': account_id,
+                'serviceBreakdown': model_breakdown,
+            })
+
+        return (records, False)
+
+    except Exception as e:
+        logger.warning(f"GroundCover invoice synthesis failed for {account_id}: {e}")
+        return ([], False)
 
 
 def _reporting_window(now=None):

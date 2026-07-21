@@ -12,6 +12,8 @@ from datetime import datetime, timezone
 # Pre-compiled patterns
 _MONTH_PATTERN = re.compile(r'^\d{4}-\d{2}$')
 _ACCOUNT_ID_PATTERN = re.compile(r'^\d{12}$')
+# Non-AWS account IDs (OpenAI, GroundCover, Azure, GCP) use alphanumeric+dash formats
+_NON_AWS_ACCOUNT_ID_PATTERN = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._:\-]{0,127}$')
 
 # Valid enum values
 VALID_SORT_BY = ('cost', 'service', 'date')
@@ -55,7 +57,9 @@ def validate_month(month_str):
 
 
 def validate_account_id(account_id):
-    """Validate accountId parameter (exactly 12 digits).
+    """Validate accountId parameter.
+
+    Accepts AWS 12-digit accounts and non-AWS identifiers (OpenAI, GroundCover, etc.).
 
     Returns:
         None if valid, or an error dict with statusCode/body if invalid.
@@ -63,8 +67,12 @@ def validate_account_id(account_id):
     if account_id is None:
         return _validation_error('accountId is required')
 
-    if not isinstance(account_id, str) or not _ACCOUNT_ID_PATTERN.match(account_id):
-        return _validation_error('Account ID must be a 12-digit number')
+    if not isinstance(account_id, str) or not account_id.strip():
+        return _validation_error('accountId is required')
+
+    # Accept either AWS 12-digit or non-AWS alphanumeric identifier
+    if not _ACCOUNT_ID_PATTERN.match(account_id) and not _NON_AWS_ACCOUNT_ID_PATTERN.match(account_id):
+        return _validation_error('Invalid account identifier format')
 
     return None
 

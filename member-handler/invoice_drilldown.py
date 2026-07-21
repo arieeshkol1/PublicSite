@@ -64,7 +64,7 @@ logger.setLevel(logging.INFO)
 
 INVOICES_TABLE_NAME = os.environ.get('INVOICES_TABLE_NAME', 'MemberPortal-Invoices')
 ACCOUNTS_TABLE_NAME = os.environ.get('ACCOUNTS_TABLE_NAME', 'MemberPortal-Accounts')
-BEDROCK_MODEL_ID = os.environ.get('BEDROCK_MODEL_ID', 'us.amazon.nova-2-lite-v1:0')
+BEDROCK_MODEL_ID = os.environ.get('BEDROCK_MODEL_ID', 'us.anthropic.claude-opus-4-0-20250514-v1:0')
 
 # TTL: 90 days in seconds
 TTL_SECONDS = 7776000
@@ -93,8 +93,10 @@ ACCOUNT_ID_REGEX = re.compile(r'^\d{12}$')
 # gate.
 NON_AWS_ACCOUNT_ID_REGEX = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._:\-]{0,127}$')
 PERIOD_REGEX = re.compile(r'^\d{4}-(0[1-9]|1[0-2])$')
-VALID_SORT_BY = ['paymentDate', 'amount', 'status']
+VALID_SORT_BY = ['paymentDate', 'amount', 'status', 'cost', 'date', 'service']
 VALID_SORT_ORDER = ['asc', 'desc']
+# Alias mapping: frontend may send 'cost'/'date'/'service' from the main invoice view
+SORT_BY_ALIASES = {'cost': 'amount', 'date': 'paymentDate', 'service': 'paymentDate'}
 DEFAULT_PAGE_SIZE = 25
 MAX_PAGE_SIZE = 100
 
@@ -536,6 +538,8 @@ def handle_invoice_list_request(event, member_email):
     # Apply sorting (default: paymentDate desc)
     effective_sort_by = sort_by or 'paymentDate'
     effective_sort_order = sort_order or 'desc'
+    # Resolve aliases (cost->amount, date->paymentDate, service->paymentDate)
+    effective_sort_by = SORT_BY_ALIASES.get(effective_sort_by, effective_sort_by)
 
     sort_key_map = {
         'paymentDate': lambda x: x.get('paymentDate', ''),
@@ -710,6 +714,11 @@ def handle_service_breakdown_request(event, member_email):
             services = generate_openai_service_breakdown(member_email, account_id, period)
             if services:
                 _write_service_cache(member_email, account_id, period, services)
+    elif provider_key in ('groundcover', 'anthropic'):
+        # GroundCover/Anthropic: synthesize per-model breakdown from USAGE# items
+        services = _synthesize_groundcover_service_breakdown(member_email, account_id, period)
+        if services:
+            _write_service_cache(member_email, account_id, period, services)
     elif provider_key != 'aws':
         # Service-level breakdown is derived from AWS Cost Explorer, which is
         # AWS-only. Azure/GCP have no equivalent per-service drill-down source
@@ -2353,6 +2362,58 @@ def _get_or_refresh_forecast(member_email, account_id, provider_key, items, now=
     except Exception as e:
         logger.warning(f"Forecast write failed for {account_id}: {e}")
     return record, False
+
+
+def _synthesize_groundcover_service_breakdown(member_email, account_id, period):
+    """Synthesize per-model service breakdown from USAGE# items in Cost_Cache_Table.
+
+    Args:
+        member_email: Member email (part of pk).
+        account_id: GroundCover/Anthropic account ID.
+        period: YYYY-MM period string.
+
+    Returns:
+        list of service dicts matching the canonical service-breakdown shape.
+    """
+    try:
+        cache_table = dynamodb.Table(
+            os.environ.get('COST_CACHE_TABLE_NAME', 'Cost_Cache_Table')
+        )
+        pk = f"{member_email}#{account_id}"
+        start_sk = f"USAGE#{period}-01"
+        end_sk = f"USAGE#{period}-31~"
+
+        resp = cache_table.query(
+            KeyConditionExpression=boto3.dynamodb.conditions.Key('pk').eq(pk)
+            & boto3.dynamodb.conditions.Key('sk').between(start_sk, end_sk)
+        )
+        usage_items = resp.get('Items', [])
+
+        if not usage_items:
+            return []
+
+        # Aggregate by model
+        model_costs = {}
+        for u in usage_items:
+            model = u.get('service', '') or 'Unknown Model'
+            cost = float(u.get('cost_amount', 0) or 0)
+            model_costs[model] = model_costs.get(model, 0) + cost
+
+        total = sum(model_costs.values())
+        services = []
+        for model, cost in sorted(model_costs.items(), key=lambda x: -x[1]):
+            if cost >= 0.001:
+                services.append({
+                    'serviceName': model,
+                    'amount': round(cost, 4),
+                    'percentage': round((cost / total) * 100, 1) if total > 0 else 0,
+                    'region': 'global',
+                })
+
+        return services
+    except Exception as e:
+        logger.warning(f"GroundCover service breakdown synthesis failed for {account_id} period={period}: {e}")
+        return []
 
 
 def _read_service_cache(member_email, account_id, period):
