@@ -152,7 +152,7 @@ Implement a guided multi-step wizard for the SlashMyBill Custom Dashboard that e
     - Add saved data sources panel section
     - _Requirements: 1.1, 8.1, 11.3_
 
-  - [~] 7.2 Update dashboard.js to remove "table" from widget palette and add legacy table widget handling
+  - [ ] 7.2 Update dashboard.js to remove "table" from widget palette and add legacy table widget handling
     - Remove "table" option from the widget type selector/palette in the frontend
     - Add read-only rendering for existing "table" widgets with migration notice text
     - Wire "New Data Source" button click to DataSourceWizard.open()

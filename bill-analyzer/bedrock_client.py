@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 # Environment variables
 TIPS_TABLE_NAME = os.environ.get('TIPS_TABLE_NAME', 'ViewMyBill-CostOptimizationTips')
-BEDROCK_MODEL_ID = os.environ.get('BEDROCK_MODEL_ID', 'us.amazon.nova-2-lite-v1:0')
+BEDROCK_MODEL_ID = os.environ.get('BEDROCK_MODEL_ID', 'us.anthropic.claude-opus-4-0-20250514-v1:0')
 MAX_TOKENS = int(os.environ.get('MAX_TOKENS', '5000'))
 
 # Chunking and retry configuration

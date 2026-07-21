@@ -892,6 +892,15 @@ Resources:
                   - dynamodb:UpdateItem
                 Resource:
                   - !GetAtt CustomPlanDiscountConfigTable.Arn
+        - PolicyName: DynamoDBAdminsReadAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                Resource:
+                  - !GetAtt AdminsTable.Arn
       Tags:
         - Key: Project
           Value: ViewMyBill
@@ -921,6 +930,7 @@ Resources:
           STORAGE_BUCKET: !Ref BillStorageBucket
           FEEDBACK_TABLE_NAME: !Ref AgentFeedbackTable
           DISCOUNT_CONFIG_TABLE_NAME: !Ref CustomPlanDiscountConfigTable
+          ADMINS_TABLE_NAME: !Ref AdminsTable
       Tags:
         - Key: Project
           Value: ViewMyBill
@@ -2352,6 +2362,26 @@ Resources:
           AttributeType: S
       KeySchema:
         - AttributeName: configId
+          KeyType: HASH
+      SSESpecification:
+        SSEEnabled: true
+      Tags:
+        - Key: Project
+          Value: ViewMyBill
+
+  # ============================================================
+  # DynamoDB Table - Admin Users (multi-admin support)
+  # ============================================================
+  AdminsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: AdminPortal-Admins
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: email
+          AttributeType: S
+      KeySchema:
+        - AttributeName: email
           KeyType: HASH
       SSESpecification:
         SSEEnabled: true

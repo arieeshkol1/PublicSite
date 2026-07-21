@@ -178,15 +178,28 @@ def _persist_async(entry):
     try:
         table = dynamodb.Table(TRANSACTION_LOG_TABLE_NAME)
 
-        # Truncate payloads if they exceed 100KB
+        # Truncate payloads if they exceed 10KB (MAX_PAYLOAD_BYTES)
         entry['request_payload'] = _truncate_payload(entry.get('request_payload', {}))
         entry['response_payload'] = _truncate_payload(entry.get('response_payload', {}))
 
+        # Truncate inference_trace if it exceeds 200KB to stay under DynamoDB 400KB item limit
+        inference_trace = entry.get('inference_trace')
+        if inference_trace:
+            try:
+                trace_str = inference_trace if isinstance(inference_trace, str) else json.dumps(inference_trace, default=str)
+                if len(trace_str.encode('utf-8')) > 200 * 1024:
+                    entry['inference_trace'] = trace_str[:200 * 1024]
+                    logger.warning(f"inference_trace truncated from {len(trace_str)} bytes to 200KB")
+            except (TypeError, ValueError):
+                entry['inference_trace'] = '{"_error": "trace_not_serializable"}'
         # Convert payload dicts to JSON strings for DynamoDB storage
         if isinstance(entry.get('request_payload'), dict):
             entry['request_payload'] = json.dumps(entry['request_payload'], default=str)
         if isinstance(entry.get('response_payload'), dict):
             entry['response_payload'] = json.dumps(entry['response_payload'], default=str)
+        # Serialize inference_trace to string if it's a dict/list
+        if isinstance(entry.get('inference_trace'), (dict, list)):
+            entry['inference_trace'] = json.dumps(entry['inference_trace'], default=str)
 
         # Remove any empty string values (DynamoDB doesn't allow empty strings in some contexts)
         clean_entry = {k: v for k, v in entry.items() if v != '' and v is not None}

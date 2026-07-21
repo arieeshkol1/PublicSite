@@ -43,11 +43,11 @@
 - [x] 8.3 Ensure `.lab-container` uses `display: flex; flex-direction: column; height: 100%;` to create the flex layout that allows the chat to fill available space above the sticky input
 
 ## Task 7: Testing
-- [ ] 7.1 Write property-based tests with `hypothesis` for `_derive_related_service()` — Property 5: for any question with known keywords, correct service is returned; for any question without keywords, "General" is returned
-- [ ] 7.2 Write property-based tests for `handle_ai_feedback()` validation — Property 4: for any payload missing required fields or with invalid feedbackScore, API returns 400
-- [ ] 7.3 Write property-based tests for positive feedback tip creation — Property 6: for any positive feedback, tip is saved with `confidenceTag: high-confidence`
-- [ ] 7.4 Write property-based tests for negative feedback — Property 8: for any negative feedback, no tip is written to tips table
-- [ ] 7.5 Write property-based tests for `_search_tips()` sorting — Property 9: for any tip list, high-confidence tips appear first
-- [ ] 7.6 Write property-based tests for validated tip annotation — Property 10: for any high-confidence tip in context, prompt contains `[Validated]` label
-- [ ] 7.7 Write property-based tests for interactionId format — Property 11: for any generated interactionId, it matches ISO-timestamp + 8-hex-char pattern
-- [ ] 7.8 Write unit tests for edge cases: empty correction text, duplicate feedback submission, very long agentResponse truncation, prompt string verification (Requirements 6.1, 6.2)
+- [x] 7.1 Write property-based tests with `hypothesis` for `_derive_related_service()` — Property 5: for any question with known keywords, correct service is returned; for any question without keywords, "General" is returned
+- [x] 7.2 Write property-based tests for `handle_ai_feedback()` validation — Property 4: for any payload missing required fields or with invalid feedbackScore, API returns 400
+- [x] 7.3 Write property-based tests for positive feedback tip creation — Property 6: for any positive feedback, tip is saved with `confidenceTag: high-confidence`
+- [x] 7.4 Write property-based tests for negative feedback — Property 8: for any negative feedback, no tip is written to tips table
+- [x] 7.5 Write property-based tests for `_search_tips()` sorting — Property 9: for any tip list, high-confidence tips appear first
+- [x] 7.6 Write property-based tests for validated tip annotation — Property 10: for any high-confidence tip in context, prompt contains `[Validated]` label
+- [x] 7.7 Write property-based tests for interactionId format — Property 11: for any generated interactionId, it matches ISO-timestamp + 8-hex-char pattern
+- [x] 7.8 Write unit tests for edge cases: empty correction text, duplicate feedback submission, very long agentResponse truncation, prompt string verification (Requirements 6.1, 6.2)
