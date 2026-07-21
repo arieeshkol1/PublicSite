@@ -825,6 +825,15 @@ def handle_resource_breakdown_request(event, member_email):
     if cached_records:
         resources = cached_records
         warnings = []
+    elif provider_key in ('groundcover', 'anthropic'):
+        # GroundCover/Anthropic: synthesize per-user breakdown from USAGE# items
+        resources = _synthesize_groundcover_resource_breakdown(member_email, account_id, period, service)
+        warnings = []
+        if resources:
+            try:
+                _write_resource_cache(member_email, account_id, period, service, resources)
+            except Exception as e:
+                logger.warning(f"Failed to cache GroundCover resource records: {e}")
     elif provider_key != 'aws':
         # Resource-level breakdown is derived from AWS Cost Explorer, which is
         # AWS-only. Non-AWS providers (azure/gcp/openai) have no equivalent
@@ -2413,6 +2422,117 @@ def _synthesize_groundcover_service_breakdown(member_email, account_id, period):
         return services
     except Exception as e:
         logger.warning(f"GroundCover service breakdown synthesis failed for {account_id} period={period}: {e}")
+        return []
+
+
+def _synthesize_groundcover_resource_breakdown(member_email, account_id, period, service):
+    """Synthesize per-user resource breakdown from USAGE# items for a specific model.
+
+    When the user expands a model (service) in the invoice drilldown, this returns
+    per-user cost and token data for that model in the given period.
+
+    Args:
+        member_email: Member email (part of pk).
+        account_id: GroundCover/Anthropic account ID.
+        period: YYYY-MM period string.
+        service: Model name (e.g., 'claude-opus-4-8').
+
+    Returns:
+        list of resource dicts with per-user cost breakdown.
+    """
+    try:
+        cache_table = dynamodb.Table(
+            os.environ.get('COST_CACHE_TABLE_NAME', 'Cost_Cache_Table')
+        )
+        pk = f"{member_email}#{account_id}"
+        start_sk = f"USAGE#{period}-01"
+        end_sk = f"USAGE#{period}-31~"
+
+        resp = cache_table.query(
+            KeyConditionExpression=boto3.dynamodb.conditions.Key('pk').eq(pk)
+            & boto3.dynamodb.conditions.Key('sk').between(start_sk, end_sk)
+        )
+        usage_items = resp.get('Items', [])
+
+        if not usage_items:
+            return []
+
+        # Filter for the specific model (service) and aggregate by user (actor)
+        user_costs = {}  # {user: {cost, tokens, input_tokens, output_tokens}}
+        for u in usage_items:
+            item_model = u.get('service', '') or ''
+            if item_model != service:
+                continue
+            actor = u.get('actor', '') or 'unknown'
+            cost = float(u.get('cost_amount', 0) or 0)
+            tokens = int(float(u.get('usage_quantity', 0) or 0))
+            input_tokens = int(float(u.get('input_tokens', 0) or 0))
+            output_tokens = int(float(u.get('output_tokens', 0) or 0))
+
+            if actor not in user_costs:
+                user_costs[actor] = {'cost': 0, 'tokens': 0, 'input_tokens': 0, 'output_tokens': 0}
+            user_costs[actor]['cost'] += cost
+            user_costs[actor]['tokens'] += tokens
+            user_costs[actor]['input_tokens'] += input_tokens
+            user_costs[actor]['output_tokens'] += output_tokens
+
+        if not user_costs:
+            return []
+
+        total_cost = sum(v['cost'] for v in user_costs.values())
+        total_tokens = sum(v['tokens'] for v in user_costs.values())
+
+        # If cost is 0 per user but tokens exist, distribute model total proportionally
+        if total_cost < 0.01 and total_tokens > 0:
+            # Get model total from service breakdown
+            model_total = total_cost
+            # Try to get from parent service breakdown
+            svc_breakdown = _synthesize_groundcover_service_breakdown(member_email, account_id, period)
+            for svc in svc_breakdown:
+                if svc.get('serviceName', '') == service:
+                    model_total = float(svc.get('amount', 0))
+                    break
+            if model_total > 0:
+                for actor, data in user_costs.items():
+                    if data['tokens'] > 0:
+                        data['cost'] = round((data['tokens'] / total_tokens) * model_total, 4)
+                total_cost = model_total
+
+        resources = []
+        for actor, data in sorted(user_costs.items(), key=lambda x: -x[1]['cost']):
+            cost = round(data['cost'], 2)
+            if cost < 0.001 and data['tokens'] == 0:
+                continue
+
+            # Format token info for display
+            token_info = ''
+            if data['input_tokens'] > 0 or data['output_tokens'] > 0:
+                token_info = f"Input: {data['input_tokens']:,} | Output: {data['output_tokens']:,}"
+            elif data['tokens'] > 0:
+                token_info = f"Total tokens: {data['tokens']:,}"
+
+            pct = round((data['cost'] / total_cost) * 100, 1) if total_cost > 0 else 0
+
+            resources.append({
+                'resourceId': actor,
+                'resourceName': actor,
+                'resourceType': 'User',
+                'amount': round(data['cost'], 4),
+                'percentage': pct,
+                'usageTypes': [
+                    {
+                        'type': 'Tokens',
+                        'quantity': data['tokens'],
+                        'unit': 'tokens',
+                        'cost': round(data['cost'], 4),
+                    }
+                ] if data['tokens'] > 0 else [],
+                'explanation': token_info or f"${cost:.2f} usage on {service}",
+            })
+
+        return resources
+    except Exception as e:
+        logger.warning(f"GroundCover resource breakdown synthesis failed for {account_id} period={period} service={service}: {e}")
         return []
 
 
