@@ -832,28 +832,28 @@ def handle_resource_breakdown_request(event, member_email):
             resources = cached_records
             warnings = []
         elif provider_key != 'aws':
-        # Resource-level breakdown is derived from AWS Cost Explorer, which is
-        # AWS-only. Non-AWS providers (azure/gcp/openai) have no equivalent
-        # per-resource drill-down source here, so return a graceful empty
-        # breakdown instead of attempting a Cost Explorer call (which would
-        # fail with a 502).
-        resources = []
-        warnings = []
-    else:
-        # Cache miss: fetch resources → enrich metadata → generate AI → store
-        try:
-            resources, warnings = fetch_resource_breakdown(member_email, account_id, period, service)
-        except Exception as e:
-            logger.error(f"Failed to fetch resource breakdown for {account_id} period={period} service={service}: {e}")
-            return create_error_response(502, 'FetchError', f'Failed to retrieve resource data: {str(e)}')
-
-        # Store fetched records in cache (only if we got data)
-        if resources:
+            # Resource-level breakdown is derived from AWS Cost Explorer, which is
+            # AWS-only. Non-AWS providers (azure/gcp/openai) have no equivalent
+            # per-resource drill-down source here, so return a graceful empty
+            # breakdown instead of attempting a Cost Explorer call (which would
+            # fail with a 502).
+            resources = []
+            warnings = []
+        else:
+            # Cache miss: fetch resources → enrich metadata → generate AI → store
             try:
-                _write_resource_cache(member_email, account_id, period, service, resources)
+                resources, warnings = fetch_resource_breakdown(member_email, account_id, period, service)
             except Exception as e:
-                logger.warning(f"Failed to cache resource records: {e}")
-                # Non-fatal — still return the data
+                logger.error(f"Failed to fetch resource breakdown for {account_id} period={period} service={service}: {e}")
+                return create_error_response(502, 'FetchError', f'Failed to retrieve resource data: {str(e)}')
+
+            # Store fetched records in cache (only if we got data)
+            if resources:
+                try:
+                    _write_resource_cache(member_email, account_id, period, service, resources)
+                except Exception as e:
+                    logger.warning(f"Failed to cache resource records: {e}")
+                    # Non-fatal — still return the data
 
     # Sort by cost descending
     resources = sorted(resources, key=lambda x: float(x.get('amount', 0)), reverse=True)
