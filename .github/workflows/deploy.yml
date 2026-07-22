@@ -1115,7 +1115,9 @@ jobs:
           echo "✓ Cognito configured to send via SES (noreply@eshkolai.com)"
 
       - name: Ensure API Gateway routes exist
+        timeout-minutes: 10
         run: |
+          export AWS_PAGER=""
           API_ID="l2fd4h481h"
           MEMBER_INT=$(aws apigatewayv2 get-integrations --api-id $API_ID --query "Items[?contains(IntegrationUri, 'member-api')].IntegrationId" --output text)
           ADMIN_INT=$(aws apigatewayv2 get-integrations --api-id $API_ID --query "Items[?contains(IntegrationUri, 'admin-api')].IntegrationId" --output text)
@@ -1200,6 +1202,11 @@ jobs:
             "POST /admin/tips-sync/trigger"
             "GET /admin/transactions"
             "GET /admin/transactions/detail"
+            "GET /admin/connectors"
+            "GET /admin/connectors/{provider_key}"
+            "POST /admin/connectors"
+            "PUT /admin/connectors/{provider_key}"
+            "DELETE /admin/connectors/{provider_key}"
           )
           for ROUTE in "${ADMIN_ROUTES[@]}"; do
             aws apigatewayv2 create-route --api-id $API_ID --route-key "$ROUTE" --target "integrations/$ADMIN_INT" 2>/dev/null || true
