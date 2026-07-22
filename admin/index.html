@@ -51,6 +51,7 @@
             <button class="tab-btn" data-tab="sync">Tips Sync</button>
             <button class="tab-btn" data-tab="transactions">Transactions</button>
             <button class="tab-btn" data-tab="custom-plans">Custom Plans</button>
+            <button class="tab-btn" data-tab="connectors">Connectors</button>
         </nav>
 
         <!-- Leads Tab -->
@@ -363,6 +364,166 @@
                         <button type="button" id="dc-save-btn" class="btn btn-primary">Save Configuration</button>
                     </div>
                     <div id="dc-meta" class="dc-meta"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Connectors Tab -->
+        <div id="connectors-tab" class="tab-content" hidden>
+            <div class="tab-toolbar">
+                <input type="text" id="connectors-search" class="search-input" placeholder="Search by provider key, display name, or cloud...">
+                <button id="add-connector-btn" class="btn btn-primary btn-sm">+ Add Connector</button>
+            </div>
+            <div class="table-wrapper">
+                <table id="connectors-table" class="data-table">
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th class="sortable" data-col="providerKey">Provider Key <span class="sort-icon">⇅</span></th>
+                            <th class="sortable" data-col="displayName">Display Name <span class="sort-icon">⇅</span></th>
+                            <th class="sortable" data-col="authType">Auth Type <span class="sort-icon">⇅</span></th>
+                            <th class="sortable" data-col="cloud">Cloud <span class="sort-icon">⇅</span></th>
+                            <th class="sortable" data-col="stalenessThresholdHours">Staleness (hrs) <span class="sort-icon">⇅</span></th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="connectors-tbody"></tbody>
+                </table>
+                <div id="connectors-empty" class="empty-state" hidden>
+                    <p>No connectors configured yet. Click "Add Connector" to create one.</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Connector Modal -->
+        <div id="connector-modal" class="modal-overlay" hidden>
+            <div class="modal-card modal-card-lg">
+                <div class="modal-header">
+                    <h2 id="connector-modal-title">Add Connector</h2>
+                    <button id="connector-modal-close" class="modal-close">&times;</button>
+                </div>
+                <form id="connector-form" novalidate>
+                    <div class="modal-body">
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="conn-providerKey">Provider Key *</label>
+                                <input type="text" id="conn-providerKey" placeholder="e.g. aws, azure, openai" required>
+                                <div class="field-hint">Lowercase letters, numbers, underscores. 2-31 chars.</div>
+                            </div>
+                            <div class="form-group">
+                                <label for="conn-displayName">Display Name *</label>
+                                <input type="text" id="conn-displayName" placeholder="e.g. Amazon Web Services" required>
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="conn-cloud">Cloud *</label>
+                                <input type="text" id="conn-cloud" placeholder="e.g. aws, azure, gcp, ai_vendor" required>
+                            </div>
+                            <div class="form-group">
+                                <label for="conn-authType">Auth Type *</label>
+                                <select id="conn-authType" required>
+                                    <option value="">Select auth type</option>
+                                    <option value="iam_role">iam_role</option>
+                                    <option value="service_principal">service_principal</option>
+                                    <option value="service_account">service_account</option>
+                                    <option value="api_key">api_key</option>
+                                    <option value="oauth2">oauth2</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="conn-iconUrl">Icon URL *</label>
+                                <input type="text" id="conn-iconUrl" placeholder="/icons/provider.svg" required>
+                            </div>
+                            <div class="form-group">
+                                <label for="conn-connectorClass">Connector Class *</label>
+                                <input type="text" id="conn-connectorClass" placeholder="e.g. aws_connector.AWSConnector" required>
+                                <div class="field-hint">Format: module_name.ClassName</div>
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="conn-stalenessThresholdHours">Staleness Threshold (hrs) *</label>
+                                <input type="number" id="conn-stalenessThresholdHours" min="1" max="720" placeholder="48" required>
+                            </div>
+                            <div class="form-group">
+                                <label for="conn-tipsRepository">Tips Repository *</label>
+                                <input type="text" id="conn-tipsRepository" placeholder="ViewMyBill-CostOptimizationTips" required>
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label for="conn-supportedOperations">Supported Operations * <span class="label-optional">(comma-separated)</span></label>
+                            <input type="text" id="conn-supportedOperations" placeholder="getCostBreakdown, getMonthlyTrend, getOptimizationTips" required>
+                            <div class="field-hint">At least one operation required.</div>
+                        </div>
+                        <div class="form-group">
+                            <label for="conn-syncFields">Sync Fields <span class="label-optional">(comma-separated)</span></label>
+                            <input type="text" id="conn-syncFields" placeholder="costBreakdown, monthlyTrend, ec2Instances">
+                        </div>
+
+                        <div class="form-section-divider">Invoice Fields</div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="conn-issuerLabel">Issuer Label</label>
+                                <input type="text" id="conn-issuerLabel" placeholder="e.g. Amazon Web Services, Inc.">
+                            </div>
+                            <div class="form-group">
+                                <label for="conn-accountIdPattern">Account ID Pattern</label>
+                                <input type="text" id="conn-accountIdPattern" placeholder="e.g. ^\\d{12}$">
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label for="conn-currencyDefault">Currency Default</label>
+                            <input type="text" id="conn-currencyDefault" placeholder="USD" value="USD">
+                        </div>
+
+                        <div class="form-section-divider">Cache Schema</div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="conn-pkPrefix">PK Prefix *</label>
+                                <input type="text" id="conn-pkPrefix" placeholder="e.g. AWS" required>
+                                <div class="field-hint">Uppercase letters and digits only.</div>
+                            </div>
+                            <div class="form-group">
+                                <label for="conn-skFormat">SK Format</label>
+                                <input type="text" id="conn-skFormat" placeholder="COST#{month}">
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label for="conn-fieldNames">Field Names <span class="label-optional">(comma-separated)</span></label>
+                            <input type="text" id="conn-fieldNames" placeholder="totalCost, services, dailyCosts">
+                        </div>
+
+                        <div class="form-section-divider">Cost Estimation Rates <span class="label-optional">(JSON)</span></div>
+                        <div class="form-group">
+                            <label for="conn-costEstimationRates">Rates (JSON object)</label>
+                            <textarea id="conn-costEstimationRates" rows="3" placeholder='{"model-name": 0.03}'></textarea>
+                        </div>
+
+                        <div id="connector-form-error" class="form-error" role="alert" aria-live="polite"></div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" id="connector-cancel-btn" class="btn btn-outline">Cancel</button>
+                        <button type="submit" id="connector-submit-btn" class="btn btn-primary">Save Connector</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- Connector Delete Confirmation -->
+        <div id="connector-delete-dialog" class="modal-overlay" hidden>
+            <div class="modal-card modal-card-sm">
+                <div class="modal-header">
+                    <h2>Delete Connector</h2>
+                </div>
+                <div class="modal-body">
+                    <p id="connector-delete-msg">Are you sure you want to delete this connector? This action cannot be undone.</p>
+                </div>
+                <div class="modal-footer">
+                    <button id="connector-delete-cancel" class="btn btn-outline">Cancel</button>
+                    <button id="connector-delete-confirm" class="btn btn-danger">Delete</button>
                 </div>
             </div>
         </div>

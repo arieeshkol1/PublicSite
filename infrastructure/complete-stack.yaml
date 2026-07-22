@@ -108,7 +108,77 @@ Resources:
         DNSName: !GetAtt CloudFrontDistribution.DomainName
         EvaluateTargetHealth: false
 
+  # DynamoDB Table for Admin Connector Configuration
+  ConnectorConfigTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: ConnectorConfig
+      AttributeDefinitions:
+        - AttributeName: providerKey
+          AttributeType: S
+      KeySchema:
+        - AttributeName: providerKey
+          KeyType: HASH
+      BillingMode: PAY_PER_REQUEST
+      Tags:
+        - Key: Project
+          Value: SlashMyCloudBill
+        - Key: Feature
+          Value: AdminConnectorConfig
+
+  # IAM Policy for ConnectorConfig table access
+  ConnectorConfigAdminPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: ConnectorConfig-AdminAccess
+      Description: Full CRUD access to ConnectorConfig table for Admin Handler Lambda
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action:
+              - dynamodb:Scan
+              - dynamodb:GetItem
+              - dynamodb:PutItem
+              - dynamodb:UpdateItem
+              - dynamodb:DeleteItem
+            Resource: !GetAtt ConnectorConfigTable.Arn
+
+  ConnectorConfigReadPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: ConnectorConfig-ReadAccess
+      Description: Read access to ConnectorConfig table for Member Handler and Agent Action Lambdas
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action:
+              - dynamodb:Scan
+              - dynamodb:GetItem
+            Resource: !GetAtt ConnectorConfigTable.Arn
+
 Outputs:
+  ConnectorConfigTableName:
+    Description: ConnectorConfig DynamoDB Table Name
+    Value: !Ref ConnectorConfigTable
+    Export:
+      Name: connector-config-table-name
+
+  ConnectorConfigTableArn:
+    Description: ConnectorConfig DynamoDB Table ARN
+    Value: !GetAtt ConnectorConfigTable.Arn
+    Export:
+      Name: connector-config-table-arn
+
+  ConnectorConfigAdminPolicyArn:
+    Description: IAM Policy ARN for Admin CRUD access to ConnectorConfig
+    Value: !Ref ConnectorConfigAdminPolicy
+
+  ConnectorConfigReadPolicyArn:
+    Description: IAM Policy ARN for read-only access to ConnectorConfig
+    Value: !Ref ConnectorConfigReadPolicy
+
   BucketName:
     Description: S3 Bucket Name
     Value: !Ref S3BucketName

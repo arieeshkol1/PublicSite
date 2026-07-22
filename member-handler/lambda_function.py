@@ -35,6 +35,11 @@ except ImportError:
     provider_registry = None
 
 try:
+    import connector_config_cache
+except ImportError:
+    connector_config_cache = None
+
+try:
     from cost_cache import _get_cost_data_cached
 except ImportError:
     _get_cost_data_cached = None
@@ -161,6 +166,10 @@ def lambda_handler(event, context):
 
     route_key = event.get('routeKey', '')
     logger.info(f"Member API request: {route_key}")
+
+    # Log warning if connector config is using fallback mode
+    if connector_config_cache and connector_config_cache.is_fallback_active():
+        logger.warning("ConnectorConfig: dynamic configuration unavailable, serving from vendor_registry.json fallback")
 
     if route_key.startswith('OPTIONS '):
         return create_response(200, {'message': 'OK'})

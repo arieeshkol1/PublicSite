@@ -19,6 +19,11 @@ from botocore.exceptions import ClientError
 import legacy_mapper
 import provider_router
 
+try:
+    import connector_config_cache
+except ImportError:
+    connector_config_cache = None
+
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
@@ -36,6 +41,10 @@ dynamodb = boto3.resource('dynamodb')
 def lambda_handler(event, context):
     """Handle Bedrock Agent action group invocations."""
     logger.info(f"Agent action event: {json.dumps(event, default=str)}")
+
+    # Log warning if connector config is using fallback mode
+    if connector_config_cache and connector_config_cache.is_fallback_active():
+        logger.warning("ConnectorConfig: dynamic configuration unavailable, serving from vendor_registry.json fallback")
 
     action_group = event.get('actionGroup', '')
     api_path = event.get('apiPath', '')

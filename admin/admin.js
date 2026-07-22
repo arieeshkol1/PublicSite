@@ -902,3 +902,365 @@ if(dcSaveBtn)dcSaveBtn.onclick=saveDiscountConfig;
         }
     };
 })();
+
+// ============================================================
+// CONNECTORS TAB
+// ============================================================
+var allConnectors=[],editingConnector=null,connectorLoaded=false;
+var connSc='providerKey',connSa=true;
+
+// Tab activation — extend switchTab for connectors
+(function(){
+    var prevSwitch=switchTab;
+    switchTab=function(n){
+        prevSwitch(n);
+        var connPanel=$('connectors-tab');
+        if(connPanel)connPanel.hidden=n!=='connectors';
+        if(n==='connectors'&&!connectorLoaded){
+            loadConnectors();
+        }
+    };
+})();
+
+async function loadConnectors(){
+    try{
+        showL();
+        var d=await api('GET','/admin/connectors');
+        allConnectors=d.connectors||[];
+        connectorLoaded=true;
+        applyConnectors();
+    }catch(e){
+        notify('Failed to load connectors: '+(e.message||'Error'),'error');
+    }finally{hideL();}
+}
+
+function applyConnectors(){
+    var q=($('connectors-search')||{}).value||'';
+    q=q.toLowerCase().trim();
+    var filtered=q?allConnectors.filter(function(c){
+        return (c.providerKey||'').toLowerCase().includes(q)||
+               (c.displayName||'').toLowerCase().includes(q)||
+               (c.cloud||'').toLowerCase().includes(q)||
+               (c.authType||'').toLowerCase().includes(q);
+    }):allConnectors.slice();
+    filtered=sortArr(filtered,connSc,connSa);
+    renderConnectors(filtered);
+}
+
+function renderConnectors(items){
+    var tbody=$('connectors-tbody');
+    var empty=$('connectors-empty');
+    if(!tbody)return;
+    tbody.innerHTML='';
+    if(!items.length){if(empty)empty.hidden=false;return;}
+    if(empty)empty.hidden=true;
+    items.forEach(function(c,idx){
+        var r=document.createElement('tr');
+        r.innerHTML='<td style="color:#999;font-size:12px">'+(idx+1)+'</td>'+
+            '<td><code>'+esc(c.providerKey||'')+'</code></td>'+
+            '<td>'+esc(c.displayName||'')+'</td>'+
+            '<td><span class="badge">'+esc(c.authType||'')+'</span></td>'+
+            '<td>'+esc(c.cloud||'')+'</td>'+
+            '<td>'+esc(String(c.stalenessThresholdHours||''))+'</td>'+
+            '<td class="actions-cell">'+
+                '<button class="btn-icon btn-icon-edit" data-a="ec" data-k="'+ea(c.providerKey)+'">&#9998;</button> '+
+                '<button class="btn-icon" data-a="dupc" data-k="'+ea(c.providerKey)+'" title="Duplicate">⧉</button> '+
+                '<button class="btn-icon btn-icon-delete" data-a="dc" data-k="'+ea(c.providerKey)+'">&#128465;</button>'+
+            '</td>';
+        tbody.appendChild(r);
+    });
+}
+
+// Search
+(function(){
+    var s=$('connectors-search');
+    if(s)s.oninput=function(){applyConnectors();};
+})();
+
+// Sort
+(function(){
+    var tbl=$('connectors-table');
+    if(tbl)tbl.querySelector('thead').onclick=function(e){
+        var th=e.target.closest('.sortable');
+        if(!th)return;
+        var c=th.dataset.col;
+        if(connSc===c)connSa=!connSa;else{connSc=c;connSa=true;}
+        applyConnectors();
+    };
+})();
+
+// Add connector button
+(function(){
+    var btn=$('add-connector-btn');
+    if(btn)btn.onclick=function(){showConnectorForm(null);};
+})();
+
+// Connector form
+function showConnectorForm(connector){
+    var modal=$('connector-modal');
+    var title=$('connector-modal-title');
+    var submitBtn=$('connector-submit-btn');
+    var errEl=$('connector-form-error');
+    if(errEl)errEl.textContent='';
+    editingConnector=connector;
+
+    if(connector){
+        title.textContent='Edit Connector';
+        submitBtn.textContent='Update Connector';
+        $('conn-providerKey').value=connector.providerKey||'';
+        $('conn-providerKey').disabled=true;
+        $('conn-displayName').value=connector.displayName||'';
+        $('conn-cloud').value=connector.cloud||'';
+        $('conn-authType').value=connector.authType||'';
+        $('conn-iconUrl').value=connector.iconUrl||'';
+        $('conn-connectorClass').value=connector.connectorClass||'';
+        $('conn-stalenessThresholdHours').value=connector.stalenessThresholdHours||'';
+        $('conn-tipsRepository').value=connector.tipsRepository||'';
+        $('conn-supportedOperations').value=(connector.supportedOperations||[]).join(', ');
+        $('conn-syncFields').value=(connector.syncFields||[]).join(', ');
+        var inv=connector.invoiceFields||{};
+        $('conn-issuerLabel').value=inv.issuerLabel||'';
+        $('conn-accountIdPattern').value=inv.accountIdPattern||'';
+        $('conn-currencyDefault').value=inv.currencyDefault||'USD';
+        var cs=connector.cacheSchema||{};
+        $('conn-pkPrefix').value=cs.pkPrefix||'';
+        $('conn-skFormat').value=cs.skFormat||'';
+        $('conn-fieldNames').value=(cs.fieldNames||[]).join(', ');
+        $('conn-costEstimationRates').value=connector.costEstimationRates?JSON.stringify(connector.costEstimationRates,null,2):'{}';
+    }else{
+        title.textContent='Add Connector';
+        submitBtn.textContent='Save Connector';
+        $('conn-providerKey').value='';
+        $('conn-providerKey').disabled=false;
+        $('conn-displayName').value='';
+        $('conn-cloud').value='';
+        $('conn-authType').value='';
+        $('conn-iconUrl').value='';
+        $('conn-connectorClass').value='';
+        $('conn-stalenessThresholdHours').value='';
+        $('conn-tipsRepository').value='';
+        $('conn-supportedOperations').value='';
+        $('conn-syncFields').value='';
+        $('conn-issuerLabel').value='';
+        $('conn-accountIdPattern').value='';
+        $('conn-currencyDefault').value='USD';
+        $('conn-pkPrefix').value='';
+        $('conn-skFormat').value='COST#{month}';
+        $('conn-fieldNames').value='';
+        $('conn-costEstimationRates').value='{}';
+    }
+    modal.hidden=false;
+}
+
+function hideConnectorForm(){
+    var modal=$('connector-modal');
+    if(modal)modal.hidden=true;
+    editingConnector=null;
+}
+
+function validateProviderKey(key){
+    return /^[a-z][a-z0-9_]{1,30}$/.test(key);
+}
+
+function buildConnectorBody(){
+    var pk=$('conn-providerKey').value.trim();
+    var displayName=$('conn-displayName').value.trim();
+    var cloud=$('conn-cloud').value.trim();
+    var authType=$('conn-authType').value;
+    var iconUrl=$('conn-iconUrl').value.trim();
+    var connectorClass=$('conn-connectorClass').value.trim();
+    var staleness=parseInt($('conn-stalenessThresholdHours').value,10);
+    var tipsRepo=$('conn-tipsRepository').value.trim();
+    var opsStr=$('conn-supportedOperations').value.trim();
+    var syncStr=$('conn-syncFields').value.trim();
+    var issuerLabel=$('conn-issuerLabel').value.trim();
+    var accountIdPattern=$('conn-accountIdPattern').value.trim();
+    var currencyDefault=$('conn-currencyDefault').value.trim()||'USD';
+    var pkPrefix=$('conn-pkPrefix').value.trim();
+    var skFormat=$('conn-skFormat').value.trim();
+    var fieldNamesStr=$('conn-fieldNames').value.trim();
+    var ratesStr=$('conn-costEstimationRates').value.trim()||'{}';
+
+    // Client-side validation
+    var errors=[];
+    if(!editingConnector&&!validateProviderKey(pk)){
+        errors.push('providerKey: must be lowercase letters/numbers/underscores, 2-31 chars, start with letter');
+    }
+    if(!displayName)errors.push('displayName is required');
+    if(!authType)errors.push('authType is required');
+    if(!opsStr)errors.push('supportedOperations: at least one operation required');
+
+    if(errors.length)return{errors:errors};
+
+    var ops=opsStr.split(',').map(function(s){return s.trim();}).filter(function(s){return s;});
+    if(!ops.length)return{errors:['supportedOperations: at least one operation required']};
+
+    var syncFields=syncStr?syncStr.split(',').map(function(s){return s.trim();}).filter(function(s){return s;}):[];
+    var fieldNames=fieldNamesStr?fieldNamesStr.split(',').map(function(s){return s.trim();}).filter(function(s){return s;}):[];
+
+    var costRates={};
+    try{costRates=JSON.parse(ratesStr);}catch(e){return{errors:['costEstimationRates: invalid JSON']};}
+
+    var body={
+        providerKey:pk,
+        displayName:displayName,
+        cloud:cloud,
+        authType:authType,
+        iconUrl:iconUrl,
+        connectorClass:connectorClass,
+        stalenessThresholdHours:staleness||48,
+        tipsRepository:tipsRepo,
+        supportedOperations:ops,
+        syncFields:syncFields,
+        invoiceFields:{
+            issuerLabel:issuerLabel,
+            accountIdPattern:accountIdPattern,
+            currencyDefault:currencyDefault
+        },
+        cacheSchema:{
+            pkPrefix:pkPrefix,
+            skFormat:skFormat||'COST#{month}',
+            fieldNames:fieldNames
+        },
+        costEstimationRates:costRates
+    };
+    return{body:body};
+}
+
+async function saveConnector(){
+    var errEl=$('connector-form-error');
+    if(errEl)errEl.textContent='';
+
+    var result=buildConnectorBody();
+    if(result.errors){
+        if(errEl)errEl.textContent=result.errors.join('; ');
+        return;
+    }
+    var body=result.body;
+
+    try{
+        showL();
+        if(editingConnector){
+            await api('PUT','/admin/connectors/'+encodeURIComponent(editingConnector.providerKey),body);
+            notify('Connector updated successfully.','success');
+        }else{
+            await api('POST','/admin/connectors',body);
+            notify('Connector created successfully.','success');
+        }
+        hideConnectorForm();
+        await loadConnectors();
+    }catch(e){
+        var msg=e.message||'Failed to save connector.';
+        // Check if error has validation details
+        if(e.errors&&Array.isArray(e.errors)){
+            msg=e.errors.join('; ');
+        }
+        if(errEl)errEl.textContent=msg;
+    }finally{hideL();}
+}
+
+function duplicateConnector(connector){
+    showConnectorForm(null);
+    // Pre-fill all fields from source except providerKey
+    $('conn-displayName').value=connector.displayName||'';
+    $('conn-cloud').value=connector.cloud||'';
+    $('conn-authType').value=connector.authType||'';
+    $('conn-iconUrl').value=connector.iconUrl||'';
+    $('conn-connectorClass').value=connector.connectorClass||'';
+    $('conn-stalenessThresholdHours').value=connector.stalenessThresholdHours||'';
+    $('conn-tipsRepository').value=connector.tipsRepository||'';
+    $('conn-supportedOperations').value=(connector.supportedOperations||[]).join(', ');
+    $('conn-syncFields').value=(connector.syncFields||[]).join(', ');
+    var inv=connector.invoiceFields||{};
+    $('conn-issuerLabel').value=inv.issuerLabel||'';
+    $('conn-accountIdPattern').value=inv.accountIdPattern||'';
+    $('conn-currencyDefault').value=inv.currencyDefault||'USD';
+    var cs=connector.cacheSchema||{};
+    $('conn-pkPrefix').value=cs.pkPrefix||'';
+    $('conn-skFormat').value=cs.skFormat||'';
+    $('conn-fieldNames').value=(cs.fieldNames||[]).join(', ');
+    $('conn-costEstimationRates').value=connector.costEstimationRates?JSON.stringify(connector.costEstimationRates,null,2):'{}';
+    // Clear and focus providerKey
+    $('conn-providerKey').value='';
+    $('conn-providerKey').disabled=false;
+    $('conn-providerKey').focus();
+}
+
+// Delete connector
+var deletingConnectorKey=null;
+function showConnectorDelete(providerKey){
+    deletingConnectorKey=providerKey;
+    var dialog=$('connector-delete-dialog');
+    var msg=$('connector-delete-msg');
+    if(msg)msg.textContent='Delete connector "'+providerKey+'"? This action cannot be undone.';
+    if(dialog)dialog.hidden=false;
+}
+function hideConnectorDelete(){
+    var dialog=$('connector-delete-dialog');
+    if(dialog)dialog.hidden=true;
+    deletingConnectorKey=null;
+}
+async function doConnectorDelete(){
+    if(!deletingConnectorKey)return;
+    try{
+        showL();
+        await api('DELETE','/admin/connectors/'+encodeURIComponent(deletingConnectorKey));
+        notify('Connector "'+deletingConnectorKey+'" deleted.','success');
+        hideConnectorDelete();
+        await loadConnectors();
+    }catch(e){
+        notify('Failed to delete connector: '+(e.message||'Error'),'error');
+        hideConnectorDelete();
+    }finally{hideL();}
+}
+
+// Wire connector modal buttons
+(function(){
+    var form=$('connector-form');
+    if(form)form.onsubmit=function(e){e.preventDefault();saveConnector();};
+    var cancelBtn=$('connector-cancel-btn');
+    if(cancelBtn)cancelBtn.onclick=hideConnectorForm;
+    var closeBtn=$('connector-modal-close');
+    if(closeBtn)closeBtn.onclick=hideConnectorForm;
+    var delCancel=$('connector-delete-cancel');
+    if(delCancel)delCancel.onclick=hideConnectorDelete;
+    var delConfirm=$('connector-delete-confirm');
+    if(delConfirm)delConfirm.onclick=doConnectorDelete;
+})();
+
+// Delegate click events on connector table and actions
+document.addEventListener('click',function(e){
+    var btn=e.target.closest('[data-a]');
+    if(!btn)return;
+    var action=btn.dataset.a;
+    var key=btn.dataset.k;
+    if(action==='ec'){
+        // Edit connector
+        var conn=allConnectors.find(function(c){return c.providerKey===key;});
+        if(conn)showConnectorForm(conn);
+    }else if(action==='dc'){
+        // Delete connector
+        showConnectorDelete(key);
+    }else if(action==='dupc'){
+        // Duplicate connector
+        var src=allConnectors.find(function(c){return c.providerKey===key;});
+        if(src)duplicateConnector(src);
+    }
+});
+
+// Override api function to handle validation errors properly
+(function(){
+    var origApi=api;
+    api=async function(method,path,body){
+        var o={method:method,headers:{'Content-Type':'application/json'}};
+        if(body)o.body=JSON.stringify(body);
+        var r=await fetch(API+path,o);
+        var d=await r.json();
+        if(!r.ok){
+            var err={status:r.status,message:d.message||'Error'};
+            if(d.errors)err.errors=d.errors;
+            throw err;
+        }
+        return d;
+    };
+})();

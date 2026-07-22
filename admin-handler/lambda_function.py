@@ -19,6 +19,7 @@ import jwt
 import bcrypt
 
 from transaction_logger import transaction_log
+from connector_validator import validate_connector_config
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -47,6 +48,7 @@ TIPS_TABLE_NAME = os.environ.get('TIPS_TABLE_NAME', 'ViewMyBill-CostOptimization
 FEEDBACK_TABLE_NAME = os.environ.get('FEEDBACK_TABLE_NAME', 'MemberPortal-AgentFeedback')
 TRANSACTION_LOG_TABLE_NAME = os.environ.get('TRANSACTION_LOG_TABLE_NAME', 'Audit_Transaction_Log')
 DISCOUNT_CONFIG_TABLE_NAME = os.environ.get('DISCOUNT_CONFIG_TABLE_NAME', 'CustomPlan-DiscountConfig')
+CONNECTOR_CONFIG_TABLE_NAME = os.environ.get('CONNECTOR_CONFIG_TABLE_NAME', 'ConnectorConfig')
 
 dynamodb = boto3.resource('dynamodb')
 s3_client = boto3.client('s3')
@@ -98,6 +100,11 @@ def lambda_handler(event, context):
         'GET /admin/custom-plans': handle_get_custom_plans,
         'GET /admin/custom-plans/config': handle_get_discount_config,
         'PUT /admin/custom-plans/config': handle_put_discount_config,
+        'GET /admin/connectors': handle_get_connectors,
+        'GET /admin/connectors/{provider_key}': handle_get_connector,
+        'POST /admin/connectors': handle_create_connector,
+        'PUT /admin/connectors/{provider_key}': handle_update_connector,
+        'DELETE /admin/connectors/{provider_key}': handle_delete_connector,
     }
 
     handler = routes.get(route_key)
@@ -1288,6 +1295,180 @@ def handle_put_discount_config(event):
     except ClientError as e:
         logger.error(f"DynamoDB error updating discount config: {e}")
         return create_error_response(500, 'ServerError', 'Failed to update discount configuration')
+
+
+# ============================================================
+# Connector Configuration CRUD Routes
+# ============================================================
+
+@transaction_log('admin-handler')
+def handle_get_connectors(event):
+    """Return all connector configurations from the ConnectorConfig table."""
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+
+    try:
+        table = dynamodb.Table(CONNECTOR_CONFIG_TABLE_NAME)
+        response = table.scan()
+        items = response.get('Items', [])
+        while 'LastEvaluatedKey' in response:
+            response = table.scan(ExclusiveStartKey=response['LastEvaluatedKey'])
+            items.extend(response.get('Items', []))
+        connectors = _decimal_to_native(items)
+        connectors.sort(key=lambda x: x.get('providerKey', ''))
+        return create_response(200, {'connectors': connectors})
+    except ClientError as e:
+        logger.error(f"DynamoDB error scanning connectors: {e}")
+        return create_error_response(500, 'ServerError', 'Internal server error')
+
+
+@transaction_log('admin-handler')
+def handle_get_connector(event):
+    """Return a single connector configuration by providerKey."""
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+
+    path_params = event.get('pathParameters', {}) or {}
+    provider_key = path_params.get('provider_key', '')
+    if not provider_key:
+        return create_error_response(400, 'InvalidRequest', 'Provider key is required')
+
+    try:
+        table = dynamodb.Table(CONNECTOR_CONFIG_TABLE_NAME)
+        response = table.get_item(Key={'providerKey': provider_key})
+        item = response.get('Item')
+        if not item:
+            return create_error_response(404, 'NotFound', 'Connector not found')
+        return create_response(200, {'connector': _decimal_to_native(item)})
+    except ClientError as e:
+        logger.error(f"DynamoDB error getting connector: {e}")
+        return create_error_response(500, 'ServerError', 'Internal server error')
+
+
+@transaction_log('admin-handler')
+def handle_create_connector(event):
+    """Create a new connector configuration."""
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+
+    try:
+        body = json.loads(event.get('body', '{}'))
+    except (json.JSONDecodeError, TypeError):
+        return create_error_response(400, 'InvalidRequest', 'Invalid request body')
+
+    # Validate
+    errors = validate_connector_config(body, is_update=False)
+    if errors:
+        return create_response(400, {
+            'error': 'ValidationError',
+            'message': 'Validation failed',
+            'errors': errors,
+            'code': 400,
+        })
+
+    provider_key = body['providerKey']
+
+    # Check if already exists
+    try:
+        table = dynamodb.Table(CONNECTOR_CONFIG_TABLE_NAME)
+        existing = table.get_item(Key={'providerKey': provider_key}).get('Item')
+        if existing:
+            return create_error_response(409, 'ConflictError', 'Connector with this providerKey already exists')
+    except ClientError as e:
+        logger.error(f"DynamoDB error checking connector existence: {e}")
+        return create_error_response(500, 'ServerError', 'Internal server error')
+
+    # Set timestamps
+    now = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
+    body['createdAt'] = now
+    body['updatedAt'] = now
+
+    try:
+        table.put_item(Item=body)
+        return create_response(201, {'connector': body, 'message': 'Connector created successfully'})
+    except ClientError as e:
+        logger.error(f"DynamoDB error creating connector: {e}")
+        return create_error_response(500, 'ServerError', 'Internal server error')
+
+
+@transaction_log('admin-handler')
+def handle_update_connector(event):
+    """Update an existing connector configuration."""
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+
+    path_params = event.get('pathParameters', {}) or {}
+    provider_key = path_params.get('provider_key', '')
+    if not provider_key:
+        return create_error_response(400, 'InvalidRequest', 'Provider key is required')
+
+    try:
+        body = json.loads(event.get('body', '{}'))
+    except (json.JSONDecodeError, TypeError):
+        return create_error_response(400, 'InvalidRequest', 'Invalid request body')
+
+    # Ensure providerKey in body matches path
+    body['providerKey'] = provider_key
+
+    # Validate
+    errors = validate_connector_config(body, is_update=False)
+    if errors:
+        return create_response(400, {
+            'error': 'ValidationError',
+            'message': 'Validation failed',
+            'errors': errors,
+            'code': 400,
+        })
+
+    # Check record exists
+    try:
+        table = dynamodb.Table(CONNECTOR_CONFIG_TABLE_NAME)
+        existing = table.get_item(Key={'providerKey': provider_key}).get('Item')
+        if not existing:
+            return create_error_response(404, 'NotFound', 'Connector not found')
+    except ClientError as e:
+        logger.error(f"DynamoDB error checking connector: {e}")
+        return create_error_response(500, 'ServerError', 'Internal server error')
+
+    # Preserve createdAt, update updatedAt
+    body['createdAt'] = existing.get('createdAt', time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()))
+    body['updatedAt'] = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
+
+    try:
+        table.put_item(Item=body)
+        return create_response(200, {'connector': body, 'message': 'Connector updated successfully'})
+    except ClientError as e:
+        logger.error(f"DynamoDB error updating connector: {e}")
+        return create_error_response(500, 'ServerError', 'Internal server error')
+
+
+@transaction_log('admin-handler')
+def handle_delete_connector(event):
+    """Delete a connector configuration."""
+    auth = validate_token(event)
+    if isinstance(auth, dict) and 'statusCode' in auth:
+        return auth
+
+    path_params = event.get('pathParameters', {}) or {}
+    provider_key = path_params.get('provider_key', '')
+    if not provider_key:
+        return create_error_response(400, 'InvalidRequest', 'Provider key is required')
+
+    try:
+        table = dynamodb.Table(CONNECTOR_CONFIG_TABLE_NAME)
+        existing = table.get_item(Key={'providerKey': provider_key}).get('Item')
+        if not existing:
+            return create_error_response(404, 'NotFound', 'Connector not found')
+
+        table.delete_item(Key={'providerKey': provider_key})
+        return create_response(200, {'message': 'Connector deleted successfully'})
+    except ClientError as e:
+        logger.error(f"DynamoDB error deleting connector: {e}")
+        return create_error_response(500, 'ServerError', 'Internal server error')
 
 
 # ============================================================
