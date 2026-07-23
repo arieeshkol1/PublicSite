@@ -1303,7 +1303,8 @@ def handle_put_discount_config(event):
 
 @transaction_log('admin-handler')
 def handle_get_connectors(event):
-    """Return all connector configurations from the ConnectorConfig table."""
+    """Return all connector configurations from the ConnectorConfig table.
+    Auto-seeds default providers if table exists but is empty."""
     try:
         table = dynamodb.Table(CONNECTOR_CONFIG_TABLE_NAME)
         response = table.scan()
@@ -1311,6 +1312,12 @@ def handle_get_connectors(event):
         while 'LastEvaluatedKey' in response:
             response = table.scan(ExclusiveStartKey=response['LastEvaluatedKey'])
             items.extend(response.get('Items', []))
+
+        # Auto-seed if table is empty
+        if not items:
+            logger.info("ConnectorConfig table is empty — auto-seeding default providers")
+            items = _seed_default_connectors(table)
+
         connectors = _decimal_to_native(items)
         connectors.sort(key=lambda x: x.get('providerKey', ''))
         return create_response(200, {'connectors': connectors})
@@ -1324,6 +1331,75 @@ def handle_get_connectors(event):
     except Exception as e:
         logger.error(f"Unexpected error in handle_get_connectors: {type(e).__name__}: {e}")
         return create_error_response(500, 'ServerError', f'Unexpected error: {type(e).__name__}: {str(e)}')
+
+
+def _seed_default_connectors(table):
+    """Seed the ConnectorConfig table with default providers. Returns the seeded items."""
+    now = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
+    defaults = [
+        {'providerKey': 'aws', 'displayName': 'Amazon Web Services', 'cloud': 'aws', 'authType': 'iam_role',
+         'connectorClass': 'aws_connector.AWSConnector', 'iconUrl': '/icons/aws.svg', 'stalenessThresholdHours': 24,
+         'supportedOperations': ['get_cost_breakdown', 'get_recommendations', 'get_resource_inventory'],
+         'syncFields': ['costBreakdown', 'monthlyTrend', 'ec2Instances', 'rdsInstances', 'lambdaFunctions'],
+         'tipsRepository': 'ViewMyBill-CostOptimizationTips',
+         'invoiceFields': {'issuerLabel': 'Amazon Web Services, Inc.', 'accountIdPattern': '^\\d{12}$', 'currencyDefault': 'USD'},
+         'cacheSchema': {'pkPrefix': 'AWS', 'skFormat': 'COST#{month}', 'fieldNames': ['totalCost', 'services', 'dailyCosts', 'currency']},
+         'costEstimationRates': {}},
+        {'providerKey': 'azure', 'displayName': 'Microsoft Azure', 'cloud': 'azure', 'authType': 'service_principal',
+         'connectorClass': 'azure_connector.AzureConnector', 'iconUrl': '/icons/azure.svg', 'stalenessThresholdHours': 48,
+         'supportedOperations': ['get_cost_breakdown', 'get_recommendations'],
+         'syncFields': ['costBreakdown', 'monthlyTrend', 'computeInstances'],
+         'tipsRepository': 'ViewMyBill-CostOptimizationTips',
+         'invoiceFields': {'issuerLabel': 'Microsoft Corporation', 'accountIdPattern': '^[0-9a-f-]{36}$', 'currencyDefault': 'USD'},
+         'cacheSchema': {'pkPrefix': 'AZURE', 'skFormat': 'COST#{month}', 'fieldNames': ['totalCost', 'services', 'dailyCosts', 'currency']},
+         'costEstimationRates': {}},
+        {'providerKey': 'gcp', 'displayName': 'Google Cloud Platform', 'cloud': 'gcp', 'authType': 'service_account',
+         'connectorClass': 'gcp_connector.GCPConnector', 'iconUrl': '/icons/gcp.svg', 'stalenessThresholdHours': 48,
+         'supportedOperations': ['get_cost_breakdown', 'get_recommendations'],
+         'syncFields': ['costBreakdown', 'monthlyTrend', 'computeInstances'],
+         'tipsRepository': 'ViewMyBill-CostOptimizationTips',
+         'invoiceFields': {'issuerLabel': 'Google Cloud', 'accountIdPattern': '^[a-z][a-z0-9-]{4,28}[a-z0-9]$', 'currencyDefault': 'USD'},
+         'cacheSchema': {'pkPrefix': 'GCP', 'skFormat': 'COST#{month}', 'fieldNames': ['totalCost', 'services', 'dailyCosts', 'currency']},
+         'costEstimationRates': {}},
+        {'providerKey': 'openai', 'displayName': 'OpenAI', 'cloud': 'ai_vendor', 'authType': 'api_key',
+         'connectorClass': 'ai_vendor_connector.OpenAIConnector', 'iconUrl': '/icons/openai.svg', 'stalenessThresholdHours': 24,
+         'supportedOperations': ['get_usage', 'get_cost_breakdown', 'get_model_pricing'],
+         'syncFields': ['costBreakdown', 'monthlyTrend', 'aiUsage', 'modelBreakdown'],
+         'tipsRepository': 'ViewMyBill-CostOptimizationTips',
+         'invoiceFields': {'issuerLabel': 'OpenAI, LLC', 'accountIdPattern': '^org-[A-Za-z0-9]+$', 'currencyDefault': 'USD'},
+         'cacheSchema': {'pkPrefix': 'OPENAI', 'skFormat': 'COST#{month}', 'fieldNames': ['totalCost', 'models', 'dailyCosts', 'currency']},
+         'costEstimationRates': {'gpt-4o': '0.005', 'gpt-4-turbo': '0.01', 'gpt-3.5-turbo': '0.0015'}},
+        {'providerKey': 'anthropic', 'displayName': 'Anthropic', 'cloud': 'ai_vendor', 'authType': 'api_key',
+         'connectorClass': 'ai_vendor_connector.AnthropicConnector', 'iconUrl': '/icons/anthropic.svg', 'stalenessThresholdHours': 24,
+         'supportedOperations': ['get_usage', 'get_cost_breakdown', 'get_model_pricing'],
+         'syncFields': ['costBreakdown', 'monthlyTrend', 'aiUsage', 'modelBreakdown'],
+         'tipsRepository': 'ViewMyBill-CostOptimizationTips',
+         'invoiceFields': {'issuerLabel': 'Anthropic, PBC', 'accountIdPattern': '^org-[A-Za-z0-9]+$', 'currencyDefault': 'USD'},
+         'cacheSchema': {'pkPrefix': 'ANTHROPIC', 'skFormat': 'COST#{month}', 'fieldNames': ['totalCost', 'models', 'dailyCosts', 'currency']},
+         'costEstimationRates': {'claude-3-opus': '0.015', 'claude-3-sonnet': '0.003', 'claude-3-haiku': '0.00025'}},
+        {'providerKey': 'groundcover', 'displayName': 'Groundcover', 'cloud': 'monitoring', 'authType': 'api_key',
+         'connectorClass': 'ai_vendor_connector.GroundcoverConnector', 'iconUrl': '/icons/groundcover.svg', 'stalenessThresholdHours': 24,
+         'supportedOperations': ['get_usage', 'get_cost_breakdown'],
+         'syncFields': ['costBreakdown', 'monthlyTrend', 'clusterUsage'],
+         'tipsRepository': 'ViewMyBill-CostOptimizationTips',
+         'invoiceFields': {'issuerLabel': 'GroundCover Ltd.', 'accountIdPattern': '^[A-Za-z0-9_-]+$', 'currencyDefault': 'USD'},
+         'cacheSchema': {'pkPrefix': 'GROUNDCOVER', 'skFormat': 'COST#{month}', 'fieldNames': ['totalCost', 'services', 'dailyCosts', 'currency']},
+         'costEstimationRates': {}},
+    ]
+    seeded = []
+    for p in defaults:
+        p['createdAt'] = now
+        p['updatedAt'] = now
+        try:
+            table.put_item(Item=p, ConditionExpression='attribute_not_exists(providerKey)')
+            seeded.append(p)
+            logger.info(f"  Seeded connector: {p['providerKey']}")
+        except ClientError as e:
+            if e.response['Error']['Code'] == 'ConditionalCheckFailedException':
+                seeded.append(p)  # already exists
+            else:
+                logger.error(f"  Failed to seed {p['providerKey']}: {e}")
+    return seeded
 
 
 @transaction_log('admin-handler')
