@@ -1232,11 +1232,19 @@ jobs:
             if echo "$EXISTING_ROUTES" | grep -qF "$ROUTE"; then
               SKIPPED=$((SKIPPED+1))
             else
-              aws apigatewayv2 create-route --api-id $API_ID --route-key "$ROUTE" --target "integrations/$ADMIN_INT" > /dev/null 2>&1 || true
+              aws apigatewayv2 create-route --api-id $API_ID --route-key "$ROUTE" --target "integrations/$ADMIN_INT" --authorization-type NONE > /dev/null 2>&1 || true
               CREATED=$((CREATED+1))
             fi
           done
           echo "Admin routes: $CREATED created, $SKIPPED already existed"
+
+          # Fix any admin/connectors routes that have wrong authorizer
+          for ROUTE_KEY in "GET /admin/connectors" "POST /admin/connectors" "GET /admin/connectors/{provider_key}" "PUT /admin/connectors/{provider_key}" "DELETE /admin/connectors/{provider_key}"; do
+            ROUTE_ID=$(aws apigatewayv2 get-routes --api-id $API_ID --query "Items[?RouteKey=='$ROUTE_KEY'].RouteId" --output text 2>/dev/null || echo "")
+            if [ -n "$ROUTE_ID" ] && [ "$ROUTE_ID" != "None" ] && [ "$ROUTE_ID" != "" ]; then
+              aws apigatewayv2 update-route --api-id $API_ID --route-id "$ROUTE_ID" --authorization-type NONE > /dev/null 2>&1 || true
+            fi
+          done
 
           # Deploy API
           aws apigatewayv2 create-deployment --api-id $API_ID > /dev/null
