@@ -1304,10 +1304,6 @@ def handle_put_discount_config(event):
 @transaction_log('admin-handler')
 def handle_get_connectors(event):
     """Return all connector configurations from the ConnectorConfig table."""
-    auth = validate_token(event)
-    if isinstance(auth, dict) and 'statusCode' in auth:
-        return auth
-
     try:
         table = dynamodb.Table(CONNECTOR_CONFIG_TABLE_NAME)
         response = table.scan()
@@ -1326,10 +1322,6 @@ def handle_get_connectors(event):
 @transaction_log('admin-handler')
 def handle_get_connector(event):
     """Return a single connector configuration by providerKey."""
-    auth = validate_token(event)
-    if isinstance(auth, dict) and 'statusCode' in auth:
-        return auth
-
     path_params = event.get('pathParameters', {}) or {}
     provider_key = path_params.get('provider_key', '')
     if not provider_key:
@@ -1350,10 +1342,6 @@ def handle_get_connector(event):
 @transaction_log('admin-handler')
 def handle_create_connector(event):
     """Create a new connector configuration."""
-    auth = validate_token(event)
-    if isinstance(auth, dict) and 'statusCode' in auth:
-        return auth
-
     try:
         body = json.loads(event.get('body', '{}'))
     except (json.JSONDecodeError, TypeError):
@@ -1397,10 +1385,6 @@ def handle_create_connector(event):
 @transaction_log('admin-handler')
 def handle_update_connector(event):
     """Update an existing connector configuration."""
-    auth = validate_token(event)
-    if isinstance(auth, dict) and 'statusCode' in auth:
-        return auth
-
     path_params = event.get('pathParameters', {}) or {}
     provider_key = path_params.get('provider_key', '')
     if not provider_key:
@@ -1449,10 +1433,6 @@ def handle_update_connector(event):
 @transaction_log('admin-handler')
 def handle_delete_connector(event):
     """Delete a connector configuration."""
-    auth = validate_token(event)
-    if isinstance(auth, dict) and 'statusCode' in auth:
-        return auth
-
     path_params = event.get('pathParameters', {}) or {}
     provider_key = path_params.get('provider_key', '')
     if not provider_key:
