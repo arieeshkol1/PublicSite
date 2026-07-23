@@ -1301,7 +1301,6 @@ def handle_put_discount_config(event):
 # Connector Configuration CRUD Routes
 # ============================================================
 
-@transaction_log('admin-handler')
 def _ensure_connector_table_exists():
     """Create the ConnectorConfig table if it doesn't exist. Returns the table resource."""
     client = boto3.client('dynamodb')
@@ -1329,7 +1328,7 @@ def handle_get_connectors(event):
     """Return all connector configurations from the ConnectorConfig table.
     Auto-creates table and seeds default providers if needed."""
     try:
-        table = _ensure_connector_table_exists()
+        table = dynamodb.Table(CONNECTOR_CONFIG_TABLE_NAME)
         response = table.scan()
         items = response.get('Items', [])
         while 'LastEvaluatedKey' in response:
@@ -1462,7 +1461,7 @@ def handle_get_connector(event):
         return create_error_response(400, 'InvalidRequest', 'Provider key is required')
 
     try:
-        table = _ensure_connector_table_exists()
+        table = dynamodb.Table(CONNECTOR_CONFIG_TABLE_NAME)
         response = table.get_item(Key={'providerKey': provider_key})
         item = response.get('Item')
         if not item:
@@ -1501,7 +1500,7 @@ def handle_create_connector(event):
 
     # Check if already exists
     try:
-        table = _ensure_connector_table_exists()
+        table = dynamodb.Table(CONNECTOR_CONFIG_TABLE_NAME)
         existing = table.get_item(Key={'providerKey': provider_key}).get('Item')
         if existing:
             return create_error_response(409, 'ConflictError', 'Connector with this providerKey already exists')
@@ -1550,7 +1549,7 @@ def handle_update_connector(event):
 
     # Check record exists
     try:
-        table = _ensure_connector_table_exists()
+        table = dynamodb.Table(CONNECTOR_CONFIG_TABLE_NAME)
         existing = table.get_item(Key={'providerKey': provider_key}).get('Item')
         if not existing:
             return create_error_response(404, 'NotFound', 'Connector not found')
@@ -1579,7 +1578,7 @@ def handle_delete_connector(event):
         return create_error_response(400, 'InvalidRequest', 'Provider key is required')
 
     try:
-        table = _ensure_connector_table_exists()
+        table = dynamodb.Table(CONNECTOR_CONFIG_TABLE_NAME)
         existing = table.get_item(Key={'providerKey': provider_key}).get('Item')
         if not existing:
             return create_error_response(404, 'NotFound', 'Connector not found')
