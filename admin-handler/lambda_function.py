@@ -1302,11 +1302,34 @@ def handle_put_discount_config(event):
 # ============================================================
 
 @transaction_log('admin-handler')
+def _ensure_connector_table_exists():
+    """Create the ConnectorConfig table if it doesn't exist. Returns the table resource."""
+    client = boto3.client('dynamodb')
+    try:
+        client.describe_table(TableName=CONNECTOR_CONFIG_TABLE_NAME)
+    except ClientError as e:
+        if e.response['Error']['Code'] == 'ResourceNotFoundException':
+            logger.info(f"Creating DynamoDB table '{CONNECTOR_CONFIG_TABLE_NAME}'...")
+            client.create_table(
+                TableName=CONNECTOR_CONFIG_TABLE_NAME,
+                AttributeDefinitions=[{'AttributeName': 'providerKey', 'AttributeType': 'S'}],
+                KeySchema=[{'AttributeName': 'providerKey', 'KeyType': 'HASH'}],
+                BillingMode='PAY_PER_REQUEST',
+            )
+            # Wait for table to become active
+            waiter = client.get_waiter('table_exists')
+            waiter.wait(TableName=CONNECTOR_CONFIG_TABLE_NAME, WaiterConfig={'Delay': 2, 'MaxAttempts': 30})
+            logger.info(f"Table '{CONNECTOR_CONFIG_TABLE_NAME}' created successfully")
+        else:
+            raise
+    return dynamodb.Table(CONNECTOR_CONFIG_TABLE_NAME)
+
+
 def handle_get_connectors(event):
     """Return all connector configurations from the ConnectorConfig table.
-    Auto-seeds default providers if table exists but is empty."""
+    Auto-creates table and seeds default providers if needed."""
     try:
-        table = dynamodb.Table(CONNECTOR_CONFIG_TABLE_NAME)
+        table = _ensure_connector_table_exists()
         response = table.scan()
         items = response.get('Items', [])
         while 'LastEvaluatedKey' in response:
@@ -1323,8 +1346,8 @@ def handle_get_connectors(event):
         return create_response(200, {'connectors': connectors})
     except ClientError as e:
         error_code = e.response.get('Error', {}).get('Code', '')
-        if error_code in ('ResourceNotFoundException', 'AccessDeniedException'):
-            logger.warning(f"ConnectorConfig table '{CONNECTOR_CONFIG_TABLE_NAME}' not accessible ({error_code}). Returning empty list.")
+        if error_code in ('AccessDeniedException',):
+            logger.warning(f"ConnectorConfig table not accessible ({error_code}). Returning empty list.")
             return create_response(200, {'connectors': []})
         logger.error(f"DynamoDB error scanning connectors: {error_code} - {e}")
         return create_error_response(500, 'ServerError', f'DynamoDB error: {error_code}')
@@ -1439,7 +1462,7 @@ def handle_get_connector(event):
         return create_error_response(400, 'InvalidRequest', 'Provider key is required')
 
     try:
-        table = dynamodb.Table(CONNECTOR_CONFIG_TABLE_NAME)
+        table = _ensure_connector_table_exists()
         response = table.get_item(Key={'providerKey': provider_key})
         item = response.get('Item')
         if not item:
@@ -1478,7 +1501,7 @@ def handle_create_connector(event):
 
     # Check if already exists
     try:
-        table = dynamodb.Table(CONNECTOR_CONFIG_TABLE_NAME)
+        table = _ensure_connector_table_exists()
         existing = table.get_item(Key={'providerKey': provider_key}).get('Item')
         if existing:
             return create_error_response(409, 'ConflictError', 'Connector with this providerKey already exists')
@@ -1527,7 +1550,7 @@ def handle_update_connector(event):
 
     # Check record exists
     try:
-        table = dynamodb.Table(CONNECTOR_CONFIG_TABLE_NAME)
+        table = _ensure_connector_table_exists()
         existing = table.get_item(Key={'providerKey': provider_key}).get('Item')
         if not existing:
             return create_error_response(404, 'NotFound', 'Connector not found')
@@ -1556,7 +1579,7 @@ def handle_delete_connector(event):
         return create_error_response(400, 'InvalidRequest', 'Provider key is required')
 
     try:
-        table = dynamodb.Table(CONNECTOR_CONFIG_TABLE_NAME)
+        table = _ensure_connector_table_exists()
         existing = table.get_item(Key={'providerKey': provider_key}).get('Item')
         if not existing:
             return create_error_response(404, 'NotFound', 'Connector not found')
