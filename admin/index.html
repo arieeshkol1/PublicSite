@@ -452,12 +452,17 @@
                             </div>
                         </div>
 
-                        <div class="form-section-divider">🧾 Optional Invoice Info</div>
+                        <div class="form-section-divider">🧾 Optional Settings</div>
                         <div class="form-row">
                             <div class="form-group">
                                 <label for="conn-issuerLabel">Invoice Issuer Label</label>
                                 <input type="text" id="conn-issuerLabel" placeholder="e.g. Amazon Web Services, Inc.">
                                 <div class="field-hint">Legal entity name on invoices. Defaults to Display Name if left empty.</div>
+                            </div>
+                            <div class="form-group">
+                                <label for="conn-tipsUrl">Tips Sync Source URL</label>
+                                <input type="text" id="conn-tipsUrl" placeholder="e.g. https://docs.aws.amazon.com/cost-tips">
+                                <div class="field-hint">External URL where optimization tips are fetched from during daily sync.</div>
                             </div>
                         </div>
 

@@ -1015,7 +1015,7 @@ function showConnectorForm(connector){
         $('conn-stalenessThresholdHours').value=connector.stalenessThresholdHours||24;
         var inv=connector.invoiceFields||{};
         $('conn-issuerLabel').value=inv.issuerLabel||'';
-        $('conn-accountIdPattern').value=inv.accountIdPattern||'';
+        if($('conn-tipsUrl'))$('conn-tipsUrl').value=connector.tipsSyncUrl||'';
     }else{
         title.textContent='Add Connector';
         submitBtn.textContent='Save Connector';
@@ -1026,7 +1026,7 @@ function showConnectorForm(connector){
         $('conn-authType').value='';
         $('conn-stalenessThresholdHours').value='24';
         $('conn-issuerLabel').value='';
-        $('conn-accountIdPattern').value='';
+        if($('conn-tipsUrl'))$('conn-tipsUrl').value='';
     }
     modal.hidden=false;
 }
@@ -1048,7 +1048,8 @@ function buildConnectorBody(){
     var authType=$('conn-authType').value;
     var staleness=parseInt($('conn-stalenessThresholdHours').value,10);
     var issuerLabel=$('conn-issuerLabel').value.trim();
-    var accountIdPattern=$('conn-accountIdPattern').value.trim();
+    var tipsUrl=($('conn-tipsUrl')||{}).value||'';
+    tipsUrl=tipsUrl.trim();
 
     // Client-side validation
     var errors=[];
@@ -1078,7 +1079,8 @@ function buildConnectorBody(){
     body.syncFields=['costBreakdown','monthlyTrend'];
     body.cacheSchema={pkPrefix:pk.toUpperCase(),skFormat:'COST#{month}',fieldNames:['totalCost','services','dailyCosts','currency']};
     body.costEstimationRates={};
-    body.invoiceFields={issuerLabel:issuerLabel||displayName,accountIdPattern:accountIdPattern||'.*',currencyDefault:'USD'};
+    body.invoiceFields={issuerLabel:issuerLabel||displayName,accountIdPattern:'.*',currencyDefault:'USD'};
+    if(tipsUrl)body.tipsSyncUrl=tipsUrl;
 
     return{body:body};
 }
