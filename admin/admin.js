@@ -1012,21 +1012,10 @@ function showConnectorForm(connector){
         $('conn-displayName').value=connector.displayName||'';
         $('conn-cloud').value=connector.cloud||'';
         $('conn-authType').value=connector.authType||'';
-        $('conn-iconUrl').value=connector.iconUrl||'';
-        $('conn-connectorClass').value=connector.connectorClass||'';
-        $('conn-stalenessThresholdHours').value=connector.stalenessThresholdHours||'';
-        $('conn-tipsRepository').value=connector.tipsRepository||'';
-        $('conn-supportedOperations').value=(connector.supportedOperations||[]).join(', ');
-        $('conn-syncFields').value=(connector.syncFields||[]).join(', ');
+        $('conn-stalenessThresholdHours').value=connector.stalenessThresholdHours||24;
         var inv=connector.invoiceFields||{};
         $('conn-issuerLabel').value=inv.issuerLabel||'';
         $('conn-accountIdPattern').value=inv.accountIdPattern||'';
-        $('conn-currencyDefault').value=inv.currencyDefault||'USD';
-        var cs=connector.cacheSchema||{};
-        $('conn-pkPrefix').value=cs.pkPrefix||'';
-        $('conn-skFormat').value=cs.skFormat||'';
-        $('conn-fieldNames').value=(cs.fieldNames||[]).join(', ');
-        $('conn-costEstimationRates').value=connector.costEstimationRates?JSON.stringify(connector.costEstimationRates,null,2):'{}';
     }else{
         title.textContent='Add Connector';
         submitBtn.textContent='Save Connector';
@@ -1035,19 +1024,9 @@ function showConnectorForm(connector){
         $('conn-displayName').value='';
         $('conn-cloud').value='';
         $('conn-authType').value='';
-        $('conn-iconUrl').value='';
-        $('conn-connectorClass').value='';
-        $('conn-stalenessThresholdHours').value='';
-        $('conn-tipsRepository').value='';
-        $('conn-supportedOperations').value='';
-        $('conn-syncFields').value='';
+        $('conn-stalenessThresholdHours').value='24';
         $('conn-issuerLabel').value='';
         $('conn-accountIdPattern').value='';
-        $('conn-currencyDefault').value='USD';
-        $('conn-pkPrefix').value='';
-        $('conn-skFormat').value='COST#{month}';
-        $('conn-fieldNames').value='';
-        $('conn-costEstimationRates').value='{}';
     }
     modal.hidden=false;
 }
@@ -1067,19 +1046,9 @@ function buildConnectorBody(){
     var displayName=$('conn-displayName').value.trim();
     var cloud=$('conn-cloud').value.trim();
     var authType=$('conn-authType').value;
-    var iconUrl=$('conn-iconUrl').value.trim();
-    var connectorClass=$('conn-connectorClass').value.trim();
     var staleness=parseInt($('conn-stalenessThresholdHours').value,10);
-    var tipsRepo=$('conn-tipsRepository').value.trim();
-    var opsStr=$('conn-supportedOperations').value.trim();
-    var syncStr=$('conn-syncFields').value.trim();
     var issuerLabel=$('conn-issuerLabel').value.trim();
     var accountIdPattern=$('conn-accountIdPattern').value.trim();
-    var currencyDefault=$('conn-currencyDefault').value.trim()||'USD';
-    var pkPrefix=$('conn-pkPrefix').value.trim();
-    var skFormat=$('conn-skFormat').value.trim();
-    var fieldNamesStr=$('conn-fieldNames').value.trim();
-    var ratesStr=$('conn-costEstimationRates').value.trim()||'{}';
 
     // Client-side validation
     var errors=[];
@@ -1087,43 +1056,30 @@ function buildConnectorBody(){
         errors.push('providerKey: must be lowercase letters/numbers/underscores, 2-31 chars, start with letter');
     }
     if(!displayName)errors.push('displayName is required');
+    if(!cloud)errors.push('cloud is required');
     if(!authType)errors.push('authType is required');
-    if(!opsStr)errors.push('supportedOperations: at least one operation required');
+    if(!staleness||staleness<1||staleness>720)errors.push('stalenessThresholdHours must be 1-720');
 
     if(errors.length)return{errors:errors};
 
-    var ops=opsStr.split(',').map(function(s){return s.trim();}).filter(function(s){return s;});
-    if(!ops.length)return{errors:['supportedOperations: at least one operation required']};
-
-    var syncFields=syncStr?syncStr.split(',').map(function(s){return s.trim();}).filter(function(s){return s;}):[];
-    var fieldNames=fieldNamesStr?fieldNamesStr.split(',').map(function(s){return s.trim();}).filter(function(s){return s;}):[];
-
-    var costRates={};
-    try{costRates=JSON.parse(ratesStr);}catch(e){return{errors:['costEstimationRates: invalid JSON']};}
-
+    // Auto-generate technical fields from providerKey and cloud
     var body={
         providerKey:pk,
         displayName:displayName,
         cloud:cloud,
         authType:authType,
-        iconUrl:iconUrl,
-        connectorClass:connectorClass,
-        stalenessThresholdHours:staleness||48,
-        tipsRepository:tipsRepo,
-        supportedOperations:ops,
-        syncFields:syncFields,
-        invoiceFields:{
-            issuerLabel:issuerLabel,
-            accountIdPattern:accountIdPattern,
-            currencyDefault:currencyDefault
-        },
-        cacheSchema:{
-            pkPrefix:pkPrefix,
-            skFormat:skFormat||'COST#{month}',
-            fieldNames:fieldNames
-        },
-        costEstimationRates:costRates
+        stalenessThresholdHours:staleness
     };
+
+    body.connectorClass=pk+'_connector.'+pk.charAt(0).toUpperCase()+pk.slice(1)+'Connector';
+    body.iconUrl='/icons/'+pk+'.svg';
+    body.tipsRepository='ViewMyBill-CostOptimizationTips';
+    body.supportedOperations=(cloud==='ai_vendor')?['get_usage','get_cost_breakdown']:['get_cost_breakdown','get_recommendations','get_resource_inventory'];
+    body.syncFields=['costBreakdown','monthlyTrend'];
+    body.cacheSchema={pkPrefix:pk.toUpperCase(),skFormat:'COST#{month}',fieldNames:['totalCost','services','dailyCosts','currency']};
+    body.costEstimationRates={};
+    body.invoiceFields={issuerLabel:issuerLabel||displayName,accountIdPattern:accountIdPattern||'.*',currencyDefault:'USD'};
+
     return{body:body};
 }
 
@@ -1151,7 +1107,6 @@ async function saveConnector(){
         await loadConnectors();
     }catch(e){
         var msg=e.message||'Failed to save connector.';
-        // Check if error has validation details
         if(e.errors&&Array.isArray(e.errors)){
             msg=e.errors.join('; ');
         }
@@ -1161,25 +1116,14 @@ async function saveConnector(){
 
 function duplicateConnector(connector){
     showConnectorForm(null);
-    // Pre-fill all fields from source except providerKey
+    // Pre-fill from source except providerKey
     $('conn-displayName').value=connector.displayName||'';
     $('conn-cloud').value=connector.cloud||'';
     $('conn-authType').value=connector.authType||'';
-    $('conn-iconUrl').value=connector.iconUrl||'';
-    $('conn-connectorClass').value=connector.connectorClass||'';
-    $('conn-stalenessThresholdHours').value=connector.stalenessThresholdHours||'';
-    $('conn-tipsRepository').value=connector.tipsRepository||'';
-    $('conn-supportedOperations').value=(connector.supportedOperations||[]).join(', ');
-    $('conn-syncFields').value=(connector.syncFields||[]).join(', ');
+    $('conn-stalenessThresholdHours').value=connector.stalenessThresholdHours||24;
     var inv=connector.invoiceFields||{};
     $('conn-issuerLabel').value=inv.issuerLabel||'';
     $('conn-accountIdPattern').value=inv.accountIdPattern||'';
-    $('conn-currencyDefault').value=inv.currencyDefault||'USD';
-    var cs=connector.cacheSchema||{};
-    $('conn-pkPrefix').value=cs.pkPrefix||'';
-    $('conn-skFormat').value=cs.skFormat||'';
-    $('conn-fieldNames').value=(cs.fieldNames||[]).join(', ');
-    $('conn-costEstimationRates').value=connector.costEstimationRates?JSON.stringify(connector.costEstimationRates,null,2):'{}';
     // Clear and focus providerKey
     $('conn-providerKey').value='';
     $('conn-providerKey').disabled=false;
