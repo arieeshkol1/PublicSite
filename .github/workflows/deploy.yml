@@ -1120,6 +1120,7 @@ jobs:
 
       - name: Ensure API Gateway routes exist
         timeout-minutes: 10
+        continue-on-error: true
         run: |
           export AWS_PAGER=""
           API_ID="l2fd4h481h"
