@@ -1315,8 +1315,15 @@ def handle_get_connectors(event):
         connectors.sort(key=lambda x: x.get('providerKey', ''))
         return create_response(200, {'connectors': connectors})
     except ClientError as e:
-        logger.error(f"DynamoDB error scanning connectors: {e}")
-        return create_error_response(500, 'ServerError', 'Internal server error')
+        error_code = e.response.get('Error', {}).get('Code', '')
+        if error_code in ('ResourceNotFoundException', 'AccessDeniedException'):
+            logger.warning(f"ConnectorConfig table '{CONNECTOR_CONFIG_TABLE_NAME}' not accessible ({error_code}). Returning empty list.")
+            return create_response(200, {'connectors': []})
+        logger.error(f"DynamoDB error scanning connectors: {error_code} - {e}")
+        return create_error_response(500, 'ServerError', f'DynamoDB error: {error_code}')
+    except Exception as e:
+        logger.error(f"Unexpected error in handle_get_connectors: {type(e).__name__}: {e}")
+        return create_error_response(500, 'ServerError', f'Unexpected error: {type(e).__name__}: {str(e)}')
 
 
 @transaction_log('admin-handler')
@@ -1335,6 +1342,9 @@ def handle_get_connector(event):
             return create_error_response(404, 'NotFound', 'Connector not found')
         return create_response(200, {'connector': _decimal_to_native(item)})
     except ClientError as e:
+        error_code = e.response.get('Error', {}).get('Code', '')
+        if error_code == 'ResourceNotFoundException':
+            return create_error_response(404, 'NotFound', 'Connector not found')
         logger.error(f"DynamoDB error getting connector: {e}")
         return create_error_response(500, 'ServerError', 'Internal server error')
 
