@@ -120,6 +120,8 @@ jobs:
           echo "Packaging Admin Handler Lambda..."
           pip install PyJWT bcrypt -t .build-admin-handler/ --quiet
           cp admin-handler/lambda_function.py .build-admin-handler/
+          cp admin-handler/connector_validator.py .build-admin-handler/
+          cp admin-handler/connector_config_cache.py .build-admin-handler/
           cp transaction_logger.py .build-admin-handler/
           cp member-handler/provider_registry.py .build-admin-handler/
           cp member-handler/sts_assume_role.py .build-admin-handler/
@@ -157,6 +159,7 @@ jobs:
           cp member-handler/openai_recommendations.py .build-member-handler/
           cp member-handler/trace_collector.py .build-member-handler/
           cp member-handler/discount_engine.py .build-member-handler/
+          cp member-handler/connector_config_cache.py .build-member-handler/
           cp -r member-handler/hcl_generator .build-member-handler/hcl_generator
           cp -r member-handler/connectors .build-member-handler/connectors
           rm -rf .build-member-handler/connectors/__pycache__
@@ -189,6 +192,7 @@ jobs:
           # Legacy helpers (still used by some paths)
           cp member-handler/provider_registry.py .build-agent-action/ 2>/dev/null || true
           cp member-handler/sts_assume_role.py .build-agent-action/ 2>/dev/null || true
+          cp agent-action/connector_config_cache.py .build-agent-action/ 2>/dev/null || true
           cd .build-agent-action && zip -r ../agent-action-lambda.zip . -q
           cd ..
           aws s3 cp agent-action-lambda.zip s3://${{ env.STORAGE_BUCKET }}/lambda-packages/agent-action.zip
@@ -1121,6 +1125,11 @@ jobs:
           API_ID="l2fd4h481h"
           MEMBER_INT=$(aws apigatewayv2 get-integrations --api-id $API_ID --query "Items[?contains(IntegrationUri, 'member-api')].IntegrationId" --output text)
           ADMIN_INT=$(aws apigatewayv2 get-integrations --api-id $API_ID --query "Items[?contains(IntegrationUri, 'admin-api')].IntegrationId" --output text)
+          echo "Member integration: $MEMBER_INT, Admin integration: $ADMIN_INT"
+
+          # Fetch all existing routes in one call
+          EXISTING_ROUTES=$(aws apigatewayv2 get-routes --api-id $API_ID --query "Items[].RouteKey" --output text)
+          echo "Existing routes: $(echo "$EXISTING_ROUTES" | wc -w)"
 
           # Member routes
           MEMBER_ROUTES=(
@@ -1185,11 +1194,18 @@ jobs:
             "POST /members/accounts/openai-usage"
             "POST /members/accounts/test-openai-connection"
           )
-          echo "MEMBER_INT=$MEMBER_INT"
-          echo "Creating/verifying ${#MEMBER_ROUTES[@]} member routes..."
+
+          CREATED=0
+          SKIPPED=0
           for ROUTE in "${MEMBER_ROUTES[@]}"; do
-            aws apigatewayv2 create-route --api-id $API_ID --route-key "$ROUTE" --target "integrations/$MEMBER_INT" 2>/dev/null || true
+            if echo "$EXISTING_ROUTES" | grep -qF "$ROUTE"; then
+              SKIPPED=$((SKIPPED+1))
+            else
+              aws apigatewayv2 create-route --api-id $API_ID --route-key "$ROUTE" --target "integrations/$MEMBER_INT" > /dev/null 2>&1 || true
+              CREATED=$((CREATED+1))
+            fi
           done
+          echo "Member routes: $CREATED created, $SKIPPED already existed"
 
           # Admin routes
           ADMIN_ROUTES=(
@@ -1208,16 +1224,23 @@ jobs:
             "PUT /admin/connectors/{provider_key}"
             "DELETE /admin/connectors/{provider_key}"
           )
+
+          CREATED=0
+          SKIPPED=0
           for ROUTE in "${ADMIN_ROUTES[@]}"; do
-            aws apigatewayv2 create-route --api-id $API_ID --route-key "$ROUTE" --target "integrations/$ADMIN_INT" 2>/dev/null || true
+            if echo "$EXISTING_ROUTES" | grep -qF "$ROUTE"; then
+              SKIPPED=$((SKIPPED+1))
+            else
+              aws apigatewayv2 create-route --api-id $API_ID --route-key "$ROUTE" --target "integrations/$ADMIN_INT" > /dev/null 2>&1 || true
+              CREATED=$((CREATED+1))
+            fi
           done
+          echo "Admin routes: $CREATED created, $SKIPPED already existed"
 
           # Deploy API
           aws apigatewayv2 create-deployment --api-id $API_ID > /dev/null
-          # Verify critical routes exist
-          ROUTES_JSON=$(aws apigatewayv2 get-routes --api-id $API_ID --query "Items[].RouteKey" --output text)
-          echo "Active routes count: $(echo "$ROUTES_JSON" | wc -w)"
-          echo "✓ API Gateway routes ensured"
+          FINAL_COUNT=$(aws apigatewayv2 get-routes --api-id $API_ID --query "length(Items)" --output text)
+          echo "✓ API Gateway routes ensured (total: $FINAL_COUNT)"
 
       - name: Seed DynamoDB knowledge base
         run: |
