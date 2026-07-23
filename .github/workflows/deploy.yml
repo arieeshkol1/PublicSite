@@ -566,6 +566,44 @@ jobs:
             echo "✓ Member-handler DiscountConfig access granted"
           fi
 
+      - name: Ensure Lambda roles have ConnectorConfig table access
+        continue-on-error: true
+        run: |
+          CONNECTOR_TABLE_ARN="arn:aws:dynamodb:us-east-1:991105135552:table/ConnectorConfig"
+          # Get the admin-handler role name
+          ADMIN_ROLE_ARN=$(aws lambda get-function-configuration --function-name aws-bill-analyzer-admin-api --query 'Role' --output text 2>/dev/null || echo "")
+          ADMIN_ROLE_NAME=$(echo "$ADMIN_ROLE_ARN" | sed 's|.*/||')
+          if [ -n "$ADMIN_ROLE_NAME" ] && [ "$ADMIN_ROLE_NAME" != "" ]; then
+            echo "Adding ConnectorConfig full access to admin-handler role: $ADMIN_ROLE_NAME"
+            aws iam put-role-policy \
+              --role-name "$ADMIN_ROLE_NAME" \
+              --policy-name "ConnectorConfigAccess" \
+              --policy-document "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"dynamodb:Scan\",\"dynamodb:GetItem\",\"dynamodb:PutItem\",\"dynamodb:UpdateItem\",\"dynamodb:DeleteItem\",\"dynamodb:DescribeTable\",\"dynamodb:CreateTable\"],\"Resource\":\"$CONNECTOR_TABLE_ARN\"}]}" 2>/dev/null || true
+            echo "✓ Admin-handler ConnectorConfig access granted"
+          fi
+          # Get the member-handler role name
+          MEMBER_ROLE_ARN=$(aws lambda get-function-configuration --function-name aws-bill-analyzer-member-api --query 'Role' --output text 2>/dev/null || echo "")
+          MEMBER_ROLE_NAME=$(echo "$MEMBER_ROLE_ARN" | sed 's|.*/||')
+          if [ -n "$MEMBER_ROLE_NAME" ] && [ "$MEMBER_ROLE_NAME" != "" ]; then
+            echo "Adding ConnectorConfig read access to member-handler role: $MEMBER_ROLE_NAME"
+            aws iam put-role-policy \
+              --role-name "$MEMBER_ROLE_NAME" \
+              --policy-name "ConnectorConfigAccess" \
+              --policy-document "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"dynamodb:Scan\",\"dynamodb:GetItem\"],\"Resource\":\"$CONNECTOR_TABLE_ARN\"}]}" 2>/dev/null || true
+            echo "✓ Member-handler ConnectorConfig access granted"
+          fi
+          # Get the agent-action role name
+          AGENT_ROLE_ARN=$(aws lambda get-function-configuration --function-name SlashMyBill-AgentAction --query 'Role' --output text 2>/dev/null || echo "")
+          AGENT_ROLE_NAME=$(echo "$AGENT_ROLE_ARN" | sed 's|.*/||')
+          if [ -n "$AGENT_ROLE_NAME" ] && [ "$AGENT_ROLE_NAME" != "" ]; then
+            echo "Adding ConnectorConfig read access to agent-action role: $AGENT_ROLE_NAME"
+            aws iam put-role-policy \
+              --role-name "$AGENT_ROLE_NAME" \
+              --policy-name "ConnectorConfigAccess" \
+              --policy-document "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"dynamodb:Scan\",\"dynamodb:GetItem\"],\"Resource\":\"$CONNECTOR_TABLE_ARN\"}]}" 2>/dev/null || true
+            echo "✓ Agent-action ConnectorConfig access granted"
+          fi
+
       - name: Seed Provider Registry
         if: success()
         run: |
