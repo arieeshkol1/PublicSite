@@ -1333,6 +1333,34 @@ def handle_get_connectors(event):
         return create_error_response(500, 'ServerError', f'Unexpected error: {type(e).__name__}: {str(e)}')
 
 
+def _autofill_connector_defaults(body):
+    """Auto-fill technical fields that the simplified form doesn't send."""
+    pk = body.get('providerKey', '')
+    cloud = body.get('cloud', '')
+    display = body.get('displayName', pk)
+
+    if not body.get('connectorClass') and pk:
+        body['connectorClass'] = f"{pk}_connector.{pk.title().replace('_', '')}Connector"
+    if not body.get('iconUrl') and pk:
+        body['iconUrl'] = f"/icons/{pk}.svg"
+    if not body.get('tipsRepository'):
+        body['tipsRepository'] = 'ViewMyBill-CostOptimizationTips'
+    if not body.get('supportedOperations'):
+        if cloud == 'ai_vendor':
+            body['supportedOperations'] = ['get_usage', 'get_cost_breakdown']
+        else:
+            body['supportedOperations'] = ['get_cost_breakdown', 'get_recommendations', 'get_resource_inventory']
+    if not body.get('syncFields'):
+        body['syncFields'] = ['costBreakdown', 'monthlyTrend']
+    if not body.get('cacheSchema') and pk:
+        body['cacheSchema'] = {'pkPrefix': pk.upper(), 'skFormat': 'COST#{month}', 'fieldNames': ['totalCost', 'services', 'dailyCosts', 'currency']}
+    if not body.get('costEstimationRates'):
+        body['costEstimationRates'] = {}
+    if not body.get('invoiceFields'):
+        body['invoiceFields'] = {'issuerLabel': display, 'accountIdPattern': '.*', 'currencyDefault': 'USD'}
+    return body
+
+
 def _seed_default_connectors(table):
     """Seed the ConnectorConfig table with default providers. Returns the seeded items."""
     now = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
@@ -1432,6 +1460,9 @@ def handle_create_connector(event):
         body = json.loads(event.get('body', '{}'))
     except (json.JSONDecodeError, TypeError):
         return create_error_response(400, 'InvalidRequest', 'Invalid request body')
+
+    # Auto-fill technical fields if not provided (simplified form sends minimal data)
+    body = _autofill_connector_defaults(body)
 
     # Validate
     errors = validate_connector_config(body, is_update=False)
