@@ -397,109 +397,165 @@
 
         <!-- Connector Modal -->
         <div id="connector-modal" class="modal-overlay" hidden>
-            <div class="modal-card modal-card-lg">
+            <div class="modal-card modal-card-lg" style="max-width:780px;">
                 <div class="modal-header">
                     <h2 id="connector-modal-title">Add Connector</h2>
                     <button id="connector-modal-close" class="modal-close">&times;</button>
                 </div>
                 <form id="connector-form" novalidate>
-                    <div class="modal-body">
+                    <div class="modal-body" style="max-height:72vh;overflow-y:auto;">
+
+                        <!-- Section: Identity -->
+                        <div class="form-section-divider">🏷️ Provider Identity</div>
+                        <p class="section-description">Define the unique identifier and how this connector appears in the platform. Works for both cloud providers (AWS, Azure, GCP) and AI vendors (OpenAI, Anthropic, Cohere).</p>
                         <div class="form-row">
                             <div class="form-group">
                                 <label for="conn-providerKey">Provider Key *</label>
-                                <input type="text" id="conn-providerKey" placeholder="e.g. aws, azure, openai" required>
-                                <div class="field-hint">Lowercase letters, numbers, underscores. 2-31 chars.</div>
+                                <input type="text" id="conn-providerKey" placeholder="e.g. aws, openai, datadog" required>
+                                <div class="field-hint">Unique lowercase identifier (letters, numbers, underscores). 2-31 chars.<br>
+                                    <strong>Cloud:</strong> aws, azure, gcp &nbsp;|&nbsp; <strong>AI:</strong> openai, anthropic, cohere</div>
                             </div>
                             <div class="form-group">
                                 <label for="conn-displayName">Display Name *</label>
                                 <input type="text" id="conn-displayName" placeholder="e.g. Amazon Web Services" required>
+                                <div class="field-hint">Human-readable name shown in the UI.<br>
+                                    <strong>Examples:</strong> "Amazon Web Services", "OpenAI", "Google Cloud Platform"</div>
                             </div>
                         </div>
                         <div class="form-row">
                             <div class="form-group">
-                                <label for="conn-cloud">Cloud *</label>
-                                <input type="text" id="conn-cloud" placeholder="e.g. aws, azure, gcp, ai_vendor" required>
+                                <label for="conn-cloud">Cloud / Category *</label>
+                                <select id="conn-cloud" required>
+                                    <option value="">Select category</option>
+                                    <option value="aws">aws — Amazon Web Services</option>
+                                    <option value="azure">azure — Microsoft Azure</option>
+                                    <option value="gcp">gcp — Google Cloud Platform</option>
+                                    <option value="ai_vendor">ai_vendor — AI/ML Provider (OpenAI, Anthropic, etc.)</option>
+                                    <option value="monitoring">monitoring — Observability (Datadog, etc.)</option>
+                                    <option value="other">other — Custom provider</option>
+                                </select>
+                                <div class="field-hint">Logical grouping used for filtering and routing.</div>
                             </div>
                             <div class="form-group">
-                                <label for="conn-authType">Auth Type *</label>
+                                <label for="conn-authType">Authentication Type *</label>
                                 <select id="conn-authType" required>
                                     <option value="">Select auth type</option>
-                                    <option value="iam_role">iam_role</option>
-                                    <option value="service_principal">service_principal</option>
-                                    <option value="service_account">service_account</option>
-                                    <option value="api_key">api_key</option>
-                                    <option value="oauth2">oauth2</option>
+                                    <option value="iam_role">iam_role — AWS IAM cross-account role</option>
+                                    <option value="service_principal">service_principal — Azure AD app registration</option>
+                                    <option value="service_account">service_account — GCP service account JSON key</option>
+                                    <option value="api_key">api_key — Simple API key/token (OpenAI, Anthropic)</option>
+                                    <option value="oauth2">oauth2 — OAuth 2.0 client credentials flow</option>
                                 </select>
+                                <div class="field-hint"><strong>Cloud:</strong> iam_role (AWS), service_principal (Azure), service_account (GCP)<br><strong>AI:</strong> api_key (most AI vendors)</div>
                             </div>
                         </div>
+
+                        <!-- Section: Technical -->
+                        <div class="form-section-divider">⚙️ Technical Configuration</div>
+                        <p class="section-description">Define the connector implementation class and how the platform interacts with this provider's API.</p>
                         <div class="form-row">
-                            <div class="form-group">
-                                <label for="conn-iconUrl">Icon URL *</label>
-                                <input type="text" id="conn-iconUrl" placeholder="/icons/provider.svg" required>
-                            </div>
                             <div class="form-group">
                                 <label for="conn-connectorClass">Connector Class *</label>
                                 <input type="text" id="conn-connectorClass" placeholder="e.g. aws_connector.AWSConnector" required>
-                                <div class="field-hint">Format: module_name.ClassName</div>
+                                <div class="field-hint">Python module.ClassName path for the connector implementation.<br>
+                                    <strong>Cloud:</strong> aws_connector.AWSConnector, azure_connector.AzureConnector<br>
+                                    <strong>AI:</strong> ai_vendor_connector.OpenAIConnector, ai_vendor_connector.AnthropicConnector</div>
+                            </div>
+                            <div class="form-group">
+                                <label for="conn-iconUrl">Icon URL *</label>
+                                <input type="text" id="conn-iconUrl" placeholder="/icons/aws.svg" required>
+                                <div class="field-hint">Path to provider logo (SVG recommended). Displayed in the member portal.</div>
                             </div>
                         </div>
                         <div class="form-row">
                             <div class="form-group">
-                                <label for="conn-stalenessThresholdHours">Staleness Threshold (hrs) *</label>
-                                <input type="number" id="conn-stalenessThresholdHours" min="1" max="720" placeholder="48" required>
+                                <label for="conn-stalenessThresholdHours">Cache Staleness (hours) *</label>
+                                <input type="number" id="conn-stalenessThresholdHours" min="1" max="720" placeholder="24" required>
+                                <div class="field-hint">Max hours before cached cost data is considered stale and refreshed. Range: 1-720.<br>
+                                    <strong>Typical:</strong> 24h (real-time APIs) or 48h (batch billing exports)</div>
                             </div>
                             <div class="form-group">
                                 <label for="conn-tipsRepository">Tips Repository *</label>
                                 <input type="text" id="conn-tipsRepository" placeholder="ViewMyBill-CostOptimizationTips" required>
+                                <div class="field-hint">DynamoDB table name where optimization tips for this provider are stored.</div>
                             </div>
                         </div>
+
+                        <!-- Section: Operations & Data -->
+                        <div class="form-section-divider">🔧 Operations & Data Fields</div>
+                        <p class="section-description">Define what actions and data this connector supports. Different providers have different capabilities.</p>
                         <div class="form-group">
                             <label for="conn-supportedOperations">Supported Operations * <span class="label-optional">(comma-separated)</span></label>
-                            <input type="text" id="conn-supportedOperations" placeholder="getCostBreakdown, getMonthlyTrend, getOptimizationTips" required>
-                            <div class="field-hint">At least one operation required.</div>
+                            <input type="text" id="conn-supportedOperations" placeholder="get_cost_breakdown, get_recommendations, get_resource_inventory" required>
+                            <div class="field-hint">Available agent tools for this provider. At least one required.<br>
+                                <strong>Cloud:</strong> get_cost_breakdown, get_recommendations, get_resource_inventory, get_reserved_instances<br>
+                                <strong>AI:</strong> get_usage, get_cost_breakdown, get_model_pricing, get_token_consumption</div>
                         </div>
                         <div class="form-group">
                             <label for="conn-syncFields">Sync Fields <span class="label-optional">(comma-separated)</span></label>
                             <input type="text" id="conn-syncFields" placeholder="costBreakdown, monthlyTrend, ec2Instances">
+                            <div class="field-hint">Data fields retrieved and normalized from the provider API.<br>
+                                <strong>Cloud:</strong> costBreakdown, monthlyTrend, ec2Instances, rdsInstances, lambdaFunctions<br>
+                                <strong>AI:</strong> costBreakdown, monthlyTrend, aiUsage, modelBreakdown, tokenCounts</div>
                         </div>
 
-                        <div class="form-section-divider">Invoice Fields</div>
+                        <!-- Section: Invoice -->
+                        <div class="form-section-divider">🧾 Invoice Configuration</div>
+                        <p class="section-description">Configure how invoices are generated and validated for this provider.</p>
                         <div class="form-row">
                             <div class="form-group">
                                 <label for="conn-issuerLabel">Issuer Label</label>
                                 <input type="text" id="conn-issuerLabel" placeholder="e.g. Amazon Web Services, Inc.">
+                                <div class="field-hint">Legal entity name on invoices.<br>
+                                    <strong>Examples:</strong> "Amazon Web Services, Inc.", "OpenAI, LLC", "Microsoft Corporation"</div>
                             </div>
                             <div class="form-group">
-                                <label for="conn-accountIdPattern">Account ID Pattern</label>
-                                <input type="text" id="conn-accountIdPattern" placeholder="e.g. ^\\d{12}$">
+                                <label for="conn-accountIdPattern">Account ID Pattern (regex)</label>
+                                <input type="text" id="conn-accountIdPattern" placeholder="e.g. ^\d{12}$">
+                                <div class="field-hint">Regex to validate account identifiers.<br>
+                                    <strong>AWS:</strong> ^\d{12}$ &nbsp;|&nbsp; <strong>Azure:</strong> ^[0-9a-f-]{36}$<br>
+                                    <strong>GCP:</strong> ^[a-z][a-z0-9\-]{4,28}[a-z0-9]$ &nbsp;|&nbsp; <strong>OpenAI:</strong> ^org-[A-Za-z0-9]+$</div>
                             </div>
                         </div>
                         <div class="form-group">
-                            <label for="conn-currencyDefault">Currency Default</label>
+                            <label for="conn-currencyDefault">Default Currency</label>
                             <input type="text" id="conn-currencyDefault" placeholder="USD" value="USD">
+                            <div class="field-hint">ISO 4217 code. Most providers use USD. Some support EUR, GBP, etc.</div>
                         </div>
 
-                        <div class="form-section-divider">Cache Schema</div>
+                        <!-- Section: Cache Schema -->
+                        <div class="form-section-divider">💾 Cache Schema</div>
+                        <p class="section-description">Define the DynamoDB key structure for caching cost data. Each provider gets its own cache partition.</p>
                         <div class="form-row">
                             <div class="form-group">
                                 <label for="conn-pkPrefix">PK Prefix *</label>
                                 <input type="text" id="conn-pkPrefix" placeholder="e.g. AWS" required>
-                                <div class="field-hint">Uppercase letters and digits only.</div>
+                                <div class="field-hint">Uppercase partition key prefix in the cost cache table.<br>
+                                    <strong>Examples:</strong> AWS, AZURE, GCP, OPENAI, ANTHROPIC</div>
                             </div>
                             <div class="form-group">
                                 <label for="conn-skFormat">SK Format</label>
-                                <input type="text" id="conn-skFormat" placeholder="COST#{month}">
+                                <input type="text" id="conn-skFormat" placeholder="COST#{month}" value="COST#{month}">
+                                <div class="field-hint">Sort key template. {month} is replaced with YYYY-MM at runtime.</div>
                             </div>
                         </div>
                         <div class="form-group">
-                            <label for="conn-fieldNames">Field Names <span class="label-optional">(comma-separated)</span></label>
-                            <input type="text" id="conn-fieldNames" placeholder="totalCost, services, dailyCosts">
+                            <label for="conn-fieldNames">Cached Field Names <span class="label-optional">(comma-separated)</span></label>
+                            <input type="text" id="conn-fieldNames" placeholder="totalCost, services, dailyCosts, currency">
+                            <div class="field-hint">Attributes stored in each cache record.<br>
+                                <strong>Cloud:</strong> totalCost, services, dailyCosts, currency<br>
+                                <strong>AI:</strong> totalCost, models, dailyCosts, currency, tokenCount</div>
                         </div>
 
-                        <div class="form-section-divider">Cost Estimation Rates <span class="label-optional">(JSON)</span></div>
+                        <!-- Section: Cost Estimation -->
+                        <div class="form-section-divider">💰 Cost Estimation Rates <span class="label-optional">(optional)</span></div>
+                        <p class="section-description">Per-unit pricing used for cost distribution and estimation. Primarily useful for AI vendors with per-token or per-request pricing.</p>
                         <div class="form-group">
                             <label for="conn-costEstimationRates">Rates (JSON object)</label>
-                            <textarea id="conn-costEstimationRates" rows="3" placeholder='{"model-name": 0.03}'></textarea>
+                            <textarea id="conn-costEstimationRates" rows="4" placeholder='Cloud providers: usually empty {}&#10;&#10;AI vendors example:&#10;{"gpt-4o": 0.005, "gpt-4-turbo": 0.01, "claude-3-sonnet": 0.003}'></textarea>
+                            <div class="field-hint">Map of model/service → price per unit. Leave empty {} for cloud providers.<br>
+                                <strong>OpenAI:</strong> {"gpt-4o": 0.005, "gpt-4-turbo": 0.01, "gpt-3.5-turbo": 0.0015}<br>
+                                <strong>Anthropic:</strong> {"claude-3-opus": 0.015, "claude-3-sonnet": 0.003, "claude-3-haiku": 0.00025}</div>
                         </div>
 
                         <div id="connector-form-error" class="form-error" role="alert" aria-live="polite"></div>
