@@ -22122,6 +22122,21 @@ def handle_get_invoices(event):
         provider = _get_account_provider(member_email, account_id)
         if provider in ('openai', 'groundcover', 'anthropic'):
             all_items = _synthesize_ai_vendor_invoice_items(member_email, account_id)
+    else:
+        # For AI vendors that DO have invoice records but lack per-service breakdown,
+        # enrich the existing monthly totals with service_breakdown from the cache.
+        provider = _get_account_provider(member_email, account_id)
+        if provider in ('openai', 'groundcover', 'anthropic'):
+            # Check if existing items lack service detail (only monthly totals)
+            has_service_detail = any(
+                item.get('service') and item.get('service') not in ('AI Cost', 'AI Usage', 'Total', '')
+                for item in all_items
+            )
+            if not has_service_detail:
+                # Replace with synthesized items that have per-model breakdown
+                synth_items = _synthesize_ai_vendor_invoice_items(member_email, account_id)
+                if synth_items:
+                    all_items = synth_items
 
     # --- Apply server-side filters ---
     filtered_items = _apply_invoice_filters(all_items, validated)
@@ -22624,6 +22639,106 @@ def _refresh_invoices_single(event):
     })
 
 
+def _refresh_ai_vendor_cost_cache(member_email, account_id, provider_key, months):
+    """Fetch cost data from AI vendor API and write to Cost_Cache_Table with model breakdown.
+
+    This ensures the Invoices tab shows per-model breakdown for OpenAI, Anthropic, etc.
+    Returns the number of records written.
+    """
+    import importlib
+    cache_table = dynamodb.Table(COST_CACHE_TABLE_NAME)
+    pk = f"{member_email}#{account_id}"
+    now = datetime.now(timezone.utc)
+    record_count = 0
+
+    # Determine the cache prefix from ConnectorConfig
+    cache_prefix = provider_key.upper()
+    if connector_config_cache:
+        try:
+            cfg = connector_config_cache.get_connector(provider_key)
+            if cfg and cfg.get('cacheSchema', {}).get('pkPrefix'):
+                cache_prefix = cfg['cacheSchema']['pkPrefix']
+        except Exception:
+            pass
+
+    try:
+        # Import the AI vendor connector
+        try:
+            from connectors.ai_vendor_connector import AIVendorConnector
+            connector = AIVendorConnector()
+        except ImportError:
+            # If running in member-handler (no connectors package), try direct import
+            try:
+                import ai_vendor_connector
+                connector = ai_vendor_connector.AIVendorConnector()
+            except ImportError:
+                logger.warning(f"AI vendor connector not available in member-handler for {provider_key}")
+                return 0
+
+        # Fetch cost breakdown from the AI vendor API (last 60 days)
+        start_date = (now - timedelta(days=60)).strftime('%Y-%m-%d')
+        end_date = now.strftime('%Y-%m-%d')
+        params = {'startDate': start_date, 'endDate': end_date}
+
+        try:
+            result = connector.get_cost_breakdown(account_id, member_email, params)
+        except Exception as e:
+            logger.warning(f"AI vendor cost fetch failed for {account_id}: {type(e).__name__}: {e}")
+            return 0
+
+        # Extract model-level breakdown and write to cache
+        top_services = result.get('topServices', [])
+        daily_costs = result.get('dailyCosts', [])
+        cached_at = now.isoformat()
+
+        # Build service_breakdown map from topServices
+        service_breakdown = {}
+        for svc in top_services:
+            svc_name = svc.get('service', '') or svc.get('model', '')
+            svc_cost = svc.get('cost', 0)
+            if svc_name:
+                service_breakdown[svc_name] = str(round(float(svc_cost), 4))
+
+        if daily_costs:
+            # Write per-day cache entries with model breakdown
+            for day_entry in daily_costs:
+                date = day_entry.get('date', '')
+                cost = day_entry.get('cost', 0)
+                if date and float(cost) > 0:
+                    sk = f"{cache_prefix}#{account_id}#{date}"
+                    cache_table.put_item(Item={
+                        'pk': pk,
+                        'sk': sk,
+                        'cost_amount': str(cost),
+                        'service_breakdown': service_breakdown,
+                        'cached_at': cached_at,
+                    })
+                    record_count += 1
+        elif service_breakdown:
+            # No daily costs but we have a total — write one entry per month
+            total_cost = result.get('totalCost30Days', 0)
+            # Write entries for current and previous month
+            for month_offset in range(2):
+                target = now - timedelta(days=month_offset * 30)
+                date_str = target.strftime('%Y-%m-15')  # mid-month placeholder
+                sk = f"{cache_prefix}#{account_id}#{date_str}"
+                cache_table.put_item(Item={
+                    'pk': pk,
+                    'sk': sk,
+                    'cost_amount': str(round(total_cost / 2, 2)) if month_offset == 0 else str(round(total_cost / 2, 2)),
+                    'service_breakdown': service_breakdown,
+                    'cached_at': cached_at,
+                })
+                record_count += 1
+
+        logger.info(f"AI vendor cost cache refreshed for {account_id}: {record_count} records, {len(service_breakdown)} models")
+
+    except Exception as e:
+        logger.error(f"AI vendor cost cache refresh failed for {account_id}: {type(e).__name__}: {e}")
+
+    return record_count
+
+
 def _refresh_invoices_for_account(member_email, account_id, months, event):
     """Re-sync invoice data for a single account.
 
@@ -22644,14 +22759,14 @@ def _refresh_invoices_for_account(member_email, account_id, months, event):
     # handler (which uses provider_invoices.generate_provider_invoices).
     provider_key = _get_account_provider(member_email, account_id)
     if provider_key != 'aws':
-        # AI vendor accounts (groundcover, openai) don't have traditional invoices.
-        # Their cost data lives in Cost_Cache_Table and is served via
-        # _synthesize_ai_vendor_invoice_items. A refresh is a no-op — return success.
+        # AI vendor accounts (groundcover, openai, anthropic) fetch cost data
+        # from their API and write it to Cost_Cache_Table with model-level breakdown.
         _ai_vendors = {'groundcover', 'openai', 'anthropic'}
         if provider_key in _ai_vendors:
+            record_count = _refresh_ai_vendor_cost_cache(member_email, account_id, provider_key, months)
             return {
                 'accountId': account_id, 'provider': provider_key, 'ok': True,
-                'months': months, 'recordCount': 0,
+                'months': months, 'recordCount': record_count,
             }
         try:
             from invoice_drilldown import handle_drilldown_refresh_request
