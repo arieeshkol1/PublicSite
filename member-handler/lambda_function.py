@@ -22966,9 +22966,12 @@ def _synthesize_ai_vendor_invoice_items(member_email, account_id):
     """Synthesize invoice-like items from Cost_Cache_Table for AI vendor accounts.
 
     AI vendor accounts (OpenAI, GroundCover/Anthropic) store their cost data in
-    Cost_Cache_Table with COST# and USAGE# SK prefixes. This function reads those
-    items and reshapes them into the same format that handle_get_invoices_summary
-    and handle_get_invoices expect (items with 'month', 'service', 'cost' fields).
+    Cost_Cache_Table with provider-prefixed SK patterns (e.g. OPENAI#account#date).
+    The cache prefix is read from ConnectorConfig via connector_config_cache.
+
+    This function reads those items and reshapes them into the same format that
+    handle_get_invoices_summary and handle_get_invoices expect (items with
+    'month', 'service', 'cost' fields).
     """
     cache_table = dynamodb.Table(COST_CACHE_TABLE_NAME)
     pk = f"{member_email}#{account_id}"
@@ -22977,57 +22980,109 @@ def _synthesize_ai_vendor_invoice_items(member_email, account_id):
     start_date = (now - timedelta(days=90)).strftime('%Y-%m-%d')
     end_date = now.strftime('%Y-%m-%d')
 
+    # Determine the cache prefix from ConnectorConfig (e.g. OPENAI, ANTHROPIC, GROUNDCOVER)
+    provider_key = _get_account_provider(member_email, account_id)
+    cache_prefix = provider_key.upper()
+    if connector_config_cache:
+        try:
+            cfg = connector_config_cache.get_connector(provider_key)
+            if cfg and cfg.get('cacheSchema', {}).get('pkPrefix'):
+                cache_prefix = cfg['cacheSchema']['pkPrefix']
+        except Exception:
+            pass
+
     items = []
+    month_service_agg = {}
+
     try:
-        # Try USAGE# items first (most granular for AI vendors)
+        # Strategy 1: Query with provider cache prefix (e.g. OPENAI#account_id#date)
+        # This is how provider_router._write_cost_cache stores AI vendor data
+        prefix_sk_start = f"{cache_prefix}#{account_id}#{start_date}"
+        prefix_sk_end = f"{cache_prefix}#{account_id}#{end_date}~"
         resp = cache_table.query(
             KeyConditionExpression=boto3.dynamodb.conditions.Key('pk').eq(pk)
-            & boto3.dynamodb.conditions.Key('sk').between(f"USAGE#{start_date}", f"USAGE#{end_date}~")
+            & boto3.dynamodb.conditions.Key('sk').between(prefix_sk_start, prefix_sk_end)
         )
-        usage_items = resp.get('Items', [])
+        prefix_items = resp.get('Items', [])
+        while 'LastEvaluatedKey' in resp:
+            resp = cache_table.query(
+                KeyConditionExpression=boto3.dynamodb.conditions.Key('pk').eq(pk)
+                & boto3.dynamodb.conditions.Key('sk').between(prefix_sk_start, prefix_sk_end),
+                ExclusiveStartKey=resp['LastEvaluatedKey']
+            )
+            prefix_items.extend(resp.get('Items', []))
 
-        if usage_items:
-            month_service_agg = {}
-            for u in usage_items:
-                sk = u.get('sk', '')
+        if prefix_items:
+            for c in prefix_items:
+                sk = c.get('sk', '')
+                # SK format: OPENAI#account_id#YYYY-MM-DD
                 parts = sk.split('#')
-                date_str = parts[1] if len(parts) >= 2 else ''
+                date_str = parts[2] if len(parts) >= 3 else ''
                 month = date_str[:7] if len(date_str) >= 7 else ''
-                service = u.get('service', '') or 'Unknown'
-                cost = float(u.get('cost_amount', 0) or 0)
-                if month:
-                    key = (month, service)
-                    month_service_agg[key] = month_service_agg.get(key, 0) + cost
+                if not month:
+                    continue
+                svc_breakdown = c.get('service_breakdown', {})
+                if svc_breakdown:
+                    for svc, svc_cost in svc_breakdown.items():
+                        cost_val = float(svc_cost) if not isinstance(svc_cost, dict) else float(svc_cost.get('cost', 0))
+                        if cost_val >= 0.001:
+                            key = (month, svc)
+                            month_service_agg[key] = month_service_agg.get(key, 0) + cost_val
+                else:
+                    cost_val = float(c.get('cost_amount', 0) or 0)
+                    if cost_val >= 0.001:
+                        key = (month, 'AI Usage')
+                        month_service_agg[key] = month_service_agg.get(key, 0) + cost_val
 
-            for (month, service), cost in month_service_agg.items():
-                if cost >= 0.01:
-                    items.append({'month': month, 'service': service, 'cost': round(cost, 2), 'sk': f"{month}#{service}"})
-        else:
-            # Fallback: COST# items
+        # Strategy 2: Try USAGE# items (legacy format, most granular)
+        if not month_service_agg:
+            resp = cache_table.query(
+                KeyConditionExpression=boto3.dynamodb.conditions.Key('pk').eq(pk)
+                & boto3.dynamodb.conditions.Key('sk').between(f"USAGE#{start_date}", f"USAGE#{end_date}~")
+            )
+            usage_items = resp.get('Items', [])
+            if usage_items:
+                for u in usage_items:
+                    sk = u.get('sk', '')
+                    parts = sk.split('#')
+                    date_str = parts[1] if len(parts) >= 2 else ''
+                    month = date_str[:7] if len(date_str) >= 7 else ''
+                    service = u.get('service', '') or 'Unknown'
+                    cost = float(u.get('cost_amount', 0) or 0)
+                    if month and cost >= 0.001:
+                        key = (month, service)
+                        month_service_agg[key] = month_service_agg.get(key, 0) + cost
+
+        # Strategy 3: Fallback to COST# items (legacy)
+        if not month_service_agg:
             resp = cache_table.query(
                 KeyConditionExpression=boto3.dynamodb.conditions.Key('pk').eq(pk)
                 & boto3.dynamodb.conditions.Key('sk').between(f"COST#{start_date}", f"COST#{end_date}~")
             )
             cost_items = resp.get('Items', [])
-            month_service_agg = {}
             for c in cost_items:
                 sk = c.get('sk', '')
                 date_str = sk.replace('COST#', '')
                 month = date_str[:7] if len(date_str) >= 7 else ''
+                if not month:
+                    continue
                 svc_breakdown = c.get('service_breakdown', {})
-                if svc_breakdown and month:
+                if svc_breakdown:
                     for svc, svc_cost in svc_breakdown.items():
                         cost_val = float(svc_cost) if not isinstance(svc_cost, dict) else float(svc_cost.get('cost', 0))
-                        key = (month, svc)
+                        if cost_val >= 0.001:
+                            key = (month, svc)
+                            month_service_agg[key] = month_service_agg.get(key, 0) + cost_val
+                else:
+                    cost_val = float(c.get('cost_amount', 0) or 0)
+                    if cost_val >= 0.001:
+                        key = (month, 'AI Usage')
                         month_service_agg[key] = month_service_agg.get(key, 0) + cost_val
-                elif month:
-                    cost_val = float(c.get('cost_amount', 0))
-                    key = (month, 'AI Usage')
-                    month_service_agg[key] = month_service_agg.get(key, 0) + cost_val
 
-            for (month, service), cost in month_service_agg.items():
-                if cost >= 0.01:
-                    items.append({'month': month, 'service': service, 'cost': round(cost, 2), 'sk': f"{month}#{service}"})
+        # Build final items from aggregation
+        for (month, service), cost in month_service_agg.items():
+            if cost >= 0.01:
+                items.append({'month': month, 'service': service, 'cost': round(cost, 2), 'sk': f"{month}#{service}"})
 
     except Exception as e:
         logger.warning(f"AI vendor invoice synthesis failed for {account_id}: {e}")
