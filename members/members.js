@@ -13052,6 +13052,7 @@ function _providerDisplayName(key) {
     if (k === 'azure') return 'Microsoft Azure';
     if (k === 'gcp') return 'Google Cloud';
     if (k === 'openai') return AI_COST_LABEL;
+    if (k === 'anthropic') return 'Anthropic';
     return 'Amazon Web Services';
 }
 
@@ -14095,7 +14096,7 @@ function _renderAIVendorConnections() {
     if (!listEl) return;
 
     var aiAccounts = allAccounts.filter(function(a) {
-        return a.cloudProvider === 'openai' || a.cloudProvider === 'groundcover' || a.vendorType === 'ai_vendor';
+        return a.cloudProvider === 'openai' || a.cloudProvider === 'groundcover' || a.cloudProvider === 'anthropic' || a.vendorType === 'ai_vendor';
     });
 
     if (!aiAccounts.length) {
@@ -14237,11 +14238,15 @@ function _showAddAIVendorModal() {
     html += '<div style="display:grid;grid-template-columns:1fr;gap:10px;">';
     html += '<button id="ai-vendor-select-openai" style="display:flex;align-items:center;gap:12px;padding:14px 16px;border:2px solid #e5e7eb;border-radius:10px;background:#fff;cursor:pointer;text-align:left;transition:border-color 0.2s;">';
     html += '<div style="width:40px;height:40px;background:#10a37f;border-radius:8px;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:16px;">AI</div>';
-    html += '<div><div style="font-weight:600;color:#1f2937;">AI Cost</div><div style="font-size:0.8em;color:#6b7280;">ChatGPT, GPT-4, DALL-E, Whisper</div></div>';
+    html += '<div><div style="font-weight:600;color:#1f2937;">OpenAI</div><div style="font-size:0.8em;color:#6b7280;">ChatGPT, GPT-4o, DALL-E, Whisper</div></div>';
+    html += '</button>';
+    html += '<button id="ai-vendor-select-anthropic" style="display:flex;align-items:center;gap:12px;padding:14px 16px;border:2px solid #e5e7eb;border-radius:10px;background:#fff;cursor:pointer;text-align:left;transition:border-color 0.2s;">';
+    html += '<div style="width:40px;height:40px;background:#d97706;border-radius:8px;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:14px;">A</div>';
+    html += '<div><div style="font-weight:600;color:#1f2937;">Anthropic (Direct)</div><div style="font-size:0.8em;color:#6b7280;">Claude — connect with your API key</div></div>';
     html += '</button>';
     html += '<button id="ai-vendor-select-groundcover" style="display:flex;align-items:center;gap:12px;padding:14px 16px;border:2px solid #e5e7eb;border-radius:10px;background:#fff;cursor:pointer;text-align:left;transition:border-color 0.2s;">';
     html += '<div style="width:40px;height:40px;background:#6366f1;border-radius:8px;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:14px;">GC</div>';
-    html += '<div><div style="font-weight:600;color:#1f2937;">Anthropic (via GroundCover)</div><div style="font-size:0.8em;color:#6b7280;">AI usage monitoring via GroundCover</div></div>';
+    html += '<div><div style="font-weight:600;color:#1f2937;">Groundcover</div><div style="font-size:0.8em;color:#6b7280;">AI usage monitoring via GroundCover</div></div>';
     html += '</button>';
     html += '</div>';
     html += '</div>';
@@ -14305,6 +14310,12 @@ function _showAddAIVendorModal() {
         document.getElementById('ai-vendor-step-form').style.display = 'block';
         _updateAIVendorFormForProvider('openai');
     };
+    document.getElementById('ai-vendor-select-anthropic').onclick = function() {
+        _aiVendorSelectedProvider = 'anthropic';
+        document.getElementById('ai-vendor-step-select').style.display = 'none';
+        document.getElementById('ai-vendor-step-form').style.display = 'block';
+        _updateAIVendorFormForProvider('anthropic');
+    };
     document.getElementById('ai-vendor-select-groundcover').onclick = function() {
         _aiVendorSelectedProvider = 'groundcover';
         document.getElementById('ai-vendor-step-select').style.display = 'none';
@@ -14329,20 +14340,29 @@ function _showAddAIVendorModal() {
         if (provider === 'groundcover') {
             if (keyInput) keyInput.placeholder = 'gcsa_...';
             if (nameInput) nameInput.placeholder = 'e.g. Production GroundCover';
-            if (submitBtn) submitBtn.textContent = 'Connect Anthropic (via GroundCover)';
+            if (submitBtn) submitBtn.textContent = 'Connect Groundcover';
             if (loadingEl) loadingEl.innerHTML = '<div class="spinner" style="margin:0 auto 8px;"></div>Validating token with GroundCover...';
             if (headerContainer) {
                 var headerInfo = headerContainer.querySelector('div:last-child');
-                if (headerInfo) headerInfo.innerHTML = '<div style="width:28px;height:28px;background:#6366f1;border-radius:6px;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:10px;">GC</div><span style="font-weight:600;color:#1f2937;">Connect Anthropic (via GroundCover)</span>';
+                if (headerInfo) headerInfo.innerHTML = '<div style="width:28px;height:28px;background:#6366f1;border-radius:6px;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:10px;">GC</div><span style="font-weight:600;color:#1f2937;">Connect Groundcover</span>';
+            }
+        } else if (provider === 'anthropic') {
+            if (keyInput) keyInput.placeholder = 'sk-ant-api03-...';
+            if (nameInput) nameInput.placeholder = 'e.g. Anthropic Production';
+            if (submitBtn) submitBtn.textContent = 'Connect Anthropic';
+            if (loadingEl) loadingEl.innerHTML = '<div class="spinner" style="margin:0 auto 8px;"></div>Validating API key with Anthropic...';
+            if (headerContainer) {
+                var headerInfo = headerContainer.querySelector('div:last-child');
+                if (headerInfo) headerInfo.innerHTML = '<div style="width:28px;height:28px;background:#d97706;border-radius:6px;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:11px;">A</div><span style="font-weight:600;color:#1f2937;">Connect Anthropic (Direct)</span>';
             }
         } else {
             if (keyInput) keyInput.placeholder = 'sk-...';
             if (nameInput) nameInput.placeholder = 'e.g. Production AI Cost';
-            if (submitBtn) submitBtn.textContent = 'Connect AI Cost';
-            if (loadingEl) loadingEl.innerHTML = '<div class="spinner" style="margin:0 auto 8px;"></div>Validating API key with AI Cost...';
+            if (submitBtn) submitBtn.textContent = 'Connect OpenAI';
+            if (loadingEl) loadingEl.innerHTML = '<div class="spinner" style="margin:0 auto 8px;"></div>Validating API key with OpenAI...';
             if (headerContainer) {
                 var headerInfo = headerContainer.querySelector('div:last-child');
-                if (headerInfo) headerInfo.innerHTML = '<div style="width:28px;height:28px;background:#10a37f;border-radius:6px;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:11px;">AI</div><span style="font-weight:600;color:#1f2937;">Connect AI Cost</span>';
+                if (headerInfo) headerInfo.innerHTML = '<div style="width:28px;height:28px;background:#10a37f;border-radius:6px;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:11px;">AI</div><span style="font-weight:600;color:#1f2937;">Connect OpenAI</span>';
             }
         }
     }
@@ -14356,7 +14376,12 @@ function _showAddAIVendorModal() {
     keyInput.onblur = function() {
         var val = keyInput.value.trim();
         if (!val) return;
-        var result = _aiVendorSelectedProvider === 'groundcover' ? _validateGroundcoverKey(val) : _validateOpenAIKey(val);
+        var result;
+        if (_aiVendorSelectedProvider === 'groundcover') result = _validateGroundcoverKey(val);
+        else if (_aiVendorSelectedProvider === 'anthropic') {
+            result = { valid: true };
+            if (!val.startsWith('sk-ant-')) result = { valid: false, message: 'Anthropic API keys start with sk-ant-' };
+        } else result = _validateOpenAIKey(val);
         var errEl = document.getElementById('ai-vendor-key-error');
         if (!result.valid && errEl) errEl.textContent = result.message;
     };
@@ -14408,7 +14433,18 @@ async function _submitAIVendorConnection() {
     var connectionName = nameInput ? nameInput.value.trim() : '';
 
     // Client-side validation
-    var validation = _aiVendorSelectedProvider === 'groundcover' ? _validateGroundcoverKey(apiKey) : _validateOpenAIKey(apiKey);
+    var validation;
+    if (_aiVendorSelectedProvider === 'groundcover') {
+        validation = _validateGroundcoverKey(apiKey);
+    } else if (_aiVendorSelectedProvider === 'anthropic') {
+        // Anthropic keys start with sk-ant-
+        validation = { valid: true };
+        if (!apiKey) validation = { valid: false, message: 'API key is required.' };
+        else if (!apiKey.startsWith('sk-ant-')) validation = { valid: false, message: 'Anthropic API keys start with sk-ant-' };
+        else if (apiKey.length < 20) validation = { valid: false, message: 'API key seems too short.' };
+    } else {
+        validation = _validateOpenAIKey(apiKey);
+    }
     if (!validation.valid) {
         if (errEl) errEl.textContent = validation.message;
         return;
@@ -14436,8 +14472,12 @@ async function _submitAIVendorConnection() {
     try {
         var payload = { apiKey: apiKey };
         if (connectionName) payload.connectionName = connectionName;
+        if (_aiVendorSelectedProvider === 'anthropic') payload.vendor = 'anthropic';
 
-        var endpoint = _aiVendorSelectedProvider === 'groundcover' ? '/members/accounts/add-groundcover' : '/members/accounts/add-openai';
+        var endpoint;
+        if (_aiVendorSelectedProvider === 'groundcover') endpoint = '/members/accounts/add-groundcover';
+        else if (_aiVendorSelectedProvider === 'anthropic') endpoint = '/members/accounts/add-openai';
+        else endpoint = '/members/accounts/add-openai';
         var data = await api('POST', endpoint, payload);
         clearTimeout(timeoutId);
 
@@ -14490,7 +14530,7 @@ function _renderOpenAIDashboard() {
 
     // Find the first connected AI vendor account (OpenAI or GroundCover)
     var openaiAccounts = allAccounts.filter(function(a) {
-        return (a.cloudProvider === 'openai' || a.cloudProvider === 'groundcover') && a.connectionStatus === 'connected';
+        return (a.cloudProvider === 'openai' || a.cloudProvider === 'groundcover' || a.cloudProvider === 'anthropic') && a.connectionStatus === 'connected';
     });
 
     if (!openaiAccounts.length) {
