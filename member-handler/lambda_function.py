@@ -22640,26 +22640,20 @@ def _refresh_invoices_single(event):
 
 
 def _refresh_ai_vendor_cost_cache(member_email, account_id, provider_key, months):
-    """Fetch cost data from AI vendor API and write to Cost_Cache_Table with model breakdown.
+    """Fetch cost data from AI vendor API and write to MemberPortal-Invoices table.
 
-    This ensures the Invoices tab shows per-model breakdown for OpenAI, Anthropic, etc.
+    Writes records in the same format as AWS invoice sync so the Invoices UI
+    shows per-model breakdown for OpenAI, Anthropic, etc.
     Returns the number of records written.
     """
-    import importlib
-    cache_table = dynamodb.Table(COST_CACHE_TABLE_NAME)
+    from decimal import Decimal
+    import os
+    invoices_table_name = os.environ.get('INVOICES_TABLE_NAME', 'MemberPortal-Invoices')
+    invoices_table = dynamodb.Table(invoices_table_name)
     pk = f"{member_email}#{account_id}"
     now = datetime.now(timezone.utc)
+    synced_at = now.isoformat()
     record_count = 0
-
-    # Determine the cache prefix from ConnectorConfig
-    cache_prefix = provider_key.upper()
-    if connector_config_cache:
-        try:
-            cfg = connector_config_cache.get_connector(provider_key)
-            if cfg and cfg.get('cacheSchema', {}).get('pkPrefix'):
-                cache_prefix = cfg['cacheSchema']['pkPrefix']
-        except Exception:
-            pass
 
     try:
         # Import the AI vendor connector
@@ -22667,7 +22661,6 @@ def _refresh_ai_vendor_cost_cache(member_email, account_id, provider_key, months
             from connectors.ai_vendor_connector import AIVendorConnector
             connector = AIVendorConnector()
         except ImportError:
-            # If running in member-handler (no connectors package), try direct import
             try:
                 import ai_vendor_connector
                 connector = ai_vendor_connector.AIVendorConnector()
@@ -22686,55 +22679,59 @@ def _refresh_ai_vendor_cost_cache(member_email, account_id, provider_key, months
             logger.warning(f"AI vendor cost fetch failed for {account_id}: {type(e).__name__}: {e}")
             return 0
 
-        # Extract model-level breakdown and write to cache
+        # Extract model-level breakdown
         top_services = result.get('topServices', [])
-        daily_costs = result.get('dailyCosts', [])
-        cached_at = now.isoformat()
+        total_cost = result.get('totalCost30Days', 0)
 
-        # Build service_breakdown map from topServices
-        service_breakdown = {}
-        for svc in top_services:
-            svc_name = svc.get('service', '') or svc.get('model', '')
-            svc_cost = svc.get('cost', 0)
-            if svc_name:
-                service_breakdown[svc_name] = str(round(float(svc_cost), 4))
+        if not top_services and total_cost > 0:
+            # No model breakdown available — write a single "AI Usage" record
+            top_services = [{'service': 'AI Usage', 'cost': total_cost}]
 
-        if daily_costs:
-            # Write per-day cache entries with model breakdown
-            for day_entry in daily_costs:
-                date = day_entry.get('date', '')
-                cost = day_entry.get('cost', 0)
-                if date and float(cost) > 0:
-                    sk = f"{cache_prefix}#{account_id}#{date}"
-                    cache_table.put_item(Item={
-                        'pk': pk,
-                        'sk': sk,
-                        'cost_amount': str(cost),
-                        'service_breakdown': service_breakdown,
-                        'cached_at': cached_at,
-                    })
-                    record_count += 1
-        elif service_breakdown:
-            # No daily costs but we have a total — write one entry per month
-            total_cost = result.get('totalCost30Days', 0)
-            # Write entries for current and previous month
-            for month_offset in range(2):
-                target = now - timedelta(days=month_offset * 30)
-                date_str = target.strftime('%Y-%m-15')  # mid-month placeholder
-                sk = f"{cache_prefix}#{account_id}#{date_str}"
-                cache_table.put_item(Item={
+        # Determine which months to write (default: current and previous)
+        if not months:
+            months = [(now - timedelta(days=i * 30)).strftime('%Y-%m') for i in range(2)]
+            months = sorted(set(months), reverse=True)
+
+        # Get issuer label from connector config
+        issuer_label = 'AI Cost'
+        if connector_config_cache:
+            try:
+                cfg = connector_config_cache.get_connector(provider_key)
+                if cfg and cfg.get('invoiceFields', {}).get('issuerLabel'):
+                    issuer_label = cfg['invoiceFields']['issuerLabel']
+            except Exception:
+                pass
+
+        # Write invoice records per model per month (same format as AWS invoice_sync)
+        for month in months:
+            for svc in top_services:
+                svc_name = svc.get('service', '') or svc.get('model', '') or 'Unknown'
+                svc_cost = float(svc.get('cost', 0))
+                if svc_cost < 0.01:
+                    continue
+
+                record = {
                     'pk': pk,
-                    'sk': sk,
-                    'cost_amount': str(round(total_cost / 2, 2)) if month_offset == 0 else str(round(total_cost / 2, 2)),
-                    'service_breakdown': service_breakdown,
-                    'cached_at': cached_at,
-                })
+                    'sk': f'{month}#{svc_name}',
+                    'memberEmail': member_email,
+                    'accountId': account_id,
+                    'month': month,
+                    'service': svc_name,
+                    'cost': Decimal(str(round(svc_cost, 2))),
+                    'currency': 'USD',
+                    'usageTypes': [],
+                    'dailyCosts': {},
+                    'region': 'global',
+                    'issuer': issuer_label,
+                    'lastSyncedAt': synced_at,
+                }
+                invoices_table.put_item(Item=record)
                 record_count += 1
 
-        logger.info(f"AI vendor cost cache refreshed for {account_id}: {record_count} records, {len(service_breakdown)} models")
+        logger.info(f"AI vendor invoice sync for {account_id}: {record_count} records written to {invoices_table_name}")
 
     except Exception as e:
-        logger.error(f"AI vendor cost cache refresh failed for {account_id}: {type(e).__name__}: {e}")
+        logger.error(f"AI vendor invoice sync failed for {account_id}: {type(e).__name__}: {e}")
 
     return record_count
 
@@ -22959,6 +22956,22 @@ def _refresh_invoices_for_account(member_email, account_id, months, event):
     }
 
 
+def _refresh_ai_vendor_cost_cache(member_email, account_id, provider_key, months):
+    """Refresh the Cost_Cache_Table for an AI vendor account.
+
+    Delegates to _refresh_ai_usage_cache_for_account which fetches usage from
+    the vendor API and writes model-level breakdown to Cost_Cache_Table using
+    the neutral COST#/USAGE# schema. Returns the number of records written.
+    """
+    try:
+        resolved = _refresh_ai_usage_cache_for_account(member_email, account_id, provider_key)
+        items = list(resolved.get('rollups', []) or []) + list(resolved.get('usage', []) or [])
+        return len(items)
+    except Exception as e:
+        logger.warning(f"AI vendor cost cache refresh failed for {account_id} ({provider_key}): {e}")
+        return 0
+
+
 def _refresh_ai_usage_cache_for_account(member_email, account_id, provider=None):
     """Refresh the neutral AI cost/usage cache for one AI-vendor account.
 
@@ -23110,6 +23123,7 @@ def _synthesize_ai_vendor_invoice_items(member_email, account_id):
     month_service_agg = {}
 
     try:
+        logger.info(f"AI invoice synthesis for pk={pk}, prefix={cache_prefix}, start={start_date}, end={end_date}")
         # Strategy 1: Query with provider cache prefix (e.g. OPENAI#account_id#date)
         # This is how provider_router._write_cost_cache stores AI vendor data
         prefix_sk_start = f"{cache_prefix}#{account_id}#{start_date}"
@@ -23128,6 +23142,7 @@ def _synthesize_ai_vendor_invoice_items(member_email, account_id):
             prefix_items.extend(resp.get('Items', []))
 
         if prefix_items:
+            logger.info(f"AI invoice: Strategy 1 found {len(prefix_items)} items with prefix {cache_prefix}")
             for c in prefix_items:
                 sk = c.get('sk', '')
                 # SK format: OPENAI#account_id#YYYY-MM-DD
@@ -23149,20 +23164,34 @@ def _synthesize_ai_vendor_invoice_items(member_email, account_id):
                         key = (month, 'AI Usage')
                         month_service_agg[key] = month_service_agg.get(key, 0) + cost_val
 
-        # Strategy 2: Try USAGE# items (legacy format, most granular)
+        # Strategy 2: Try USAGE# items (neutral schema: USAGE#date#actor#service)
         if not month_service_agg:
             resp = cache_table.query(
                 KeyConditionExpression=boto3.dynamodb.conditions.Key('pk').eq(pk)
                 & boto3.dynamodb.conditions.Key('sk').between(f"USAGE#{start_date}", f"USAGE#{end_date}~")
             )
             usage_items = resp.get('Items', [])
+            while 'LastEvaluatedKey' in resp:
+                resp = cache_table.query(
+                    KeyConditionExpression=boto3.dynamodb.conditions.Key('pk').eq(pk)
+                    & boto3.dynamodb.conditions.Key('sk').between(f"USAGE#{start_date}", f"USAGE#{end_date}~"),
+                    ExclusiveStartKey=resp['LastEvaluatedKey']
+                )
+                usage_items.extend(resp.get('Items', []))
             if usage_items:
+                logger.info(f"AI invoice: Strategy 2 found {len(usage_items)} USAGE# items")
                 for u in usage_items:
                     sk = u.get('sk', '')
                     parts = sk.split('#')
+                    # SK format: USAGE#date#actor#service (neutral schema)
                     date_str = parts[1] if len(parts) >= 2 else ''
                     month = date_str[:7] if len(date_str) >= 7 else ''
-                    service = u.get('service', '') or 'Unknown'
+                    # Extract service from SK (index 3) or from item field
+                    service = ''
+                    if len(parts) >= 4:
+                        service = parts[3]  # model name from SK
+                    if not service:
+                        service = u.get('service', '') or u.get('model', '') or 'Unknown'
                     cost = float(u.get('cost_amount', 0) or 0)
                     if month and cost >= 0.001:
                         key = (month, service)
@@ -23193,6 +23222,60 @@ def _synthesize_ai_vendor_invoice_items(member_email, account_id):
                     if cost_val >= 0.001:
                         key = (month, 'AI Usage')
                         month_service_agg[key] = month_service_agg.get(key, 0) + cost_val
+
+        # Strategy 4: Last resort — scan ALL items under pk to find any cost data
+        if not month_service_agg:
+            logger.warning(f"AI invoice: Strategies 1-3 found nothing. Scanning all items for pk={pk}")
+            resp = cache_table.query(
+                KeyConditionExpression=boto3.dynamodb.conditions.Key('pk').eq(pk),
+                Limit=20
+            )
+            all_items_sample = resp.get('Items', [])
+            if all_items_sample:
+                sk_samples = [item.get('sk', '?') for item in all_items_sample[:10]]
+                logger.info(f"AI invoice: Found {len(all_items_sample)} items. SK samples: {sk_samples}")
+                for item in all_items_sample:
+                    sk = item.get('sk', '')
+                    # Try to extract date and service from ANY SK format
+                    parts = sk.split('#')
+                    date_str = ''
+                    service = ''
+                    cost_val = float(item.get('cost_amount', 0) or 0)
+                    svc_breakdown = item.get('service_breakdown', {})
+
+                    # Parse various SK formats
+                    if sk.startswith('USAGE#') and len(parts) >= 4:
+                        date_str = parts[1]
+                        service = parts[3] if len(parts) >= 4 else ''
+                    elif sk.startswith('USAGE#') and len(parts) >= 2:
+                        date_str = parts[1]
+                        service = item.get('service', '') or 'AI Usage'
+                    elif sk.startswith('COST#') and len(parts) >= 2:
+                        date_str = parts[1]
+                    elif sk.startswith('DAILY#') and len(parts) >= 2:
+                        date_str = parts[1]
+                    elif '#' in sk and len(parts) >= 3:
+                        # OPENAI#account#date or similar
+                        date_str = parts[-1] if len(parts[-1]) == 10 and '-' in parts[-1] else ''
+
+                    month = date_str[:7] if len(date_str) >= 7 else ''
+                    if not month:
+                        continue
+
+                    if svc_breakdown:
+                        for svc, svc_cost in svc_breakdown.items():
+                            cv = float(svc_cost) if not isinstance(svc_cost, dict) else float(svc_cost.get('cost', 0))
+                            if cv >= 0.001:
+                                key = (month, svc)
+                                month_service_agg[key] = month_service_agg.get(key, 0) + cv
+                    elif service and cost_val >= 0.001:
+                        key = (month, service)
+                        month_service_agg[key] = month_service_agg.get(key, 0) + cost_val
+                    elif cost_val >= 0.001:
+                        key = (month, 'AI Usage')
+                        month_service_agg[key] = month_service_agg.get(key, 0) + cost_val
+            else:
+                logger.warning(f"AI invoice: No items at all for pk={pk}")
 
         # Build final items from aggregation
         for (month, service), cost in month_service_agg.items():
