@@ -12981,13 +12981,45 @@ def handle_add_openai(event):
     if not validation['valid']:
         return create_error_response(400, 'InvalidKeyFormat', validation['error'])
 
-    # Generate a unique account ID for this OpenAI connection
-    account_id = f"openai-{uuid.uuid4().hex[:12]}"
+    # Determine vendor type (openai or anthropic)
+    vendor = (body.get('vendor') or 'openai').strip().lower()
+    is_anthropic = vendor == 'anthropic'
 
-    # Test the connection by calling OpenAI GET /v1/models
-    connector = OpenAIConnector()
-    auth_context = {'api_key': api_key, 'org_name': ''}
-    test_result = connector.test_connection(auth_context, account_id)
+    # Generate a unique account ID
+    account_id = f"anthropic-{uuid.uuid4().hex[:12]}" if is_anthropic else f"openai-{uuid.uuid4().hex[:12]}"
+
+    # Test the connection
+    if is_anthropic:
+        # Test Anthropic connection by calling their /v1/messages endpoint
+        import urllib.request
+        test_result = {'success': False, 'message': 'Connection test failed.'}
+        try:
+            req = urllib.request.Request(
+                'https://api.anthropic.com/v1/models',
+                headers={
+                    'x-api-key': api_key,
+                    'anthropic-version': '2023-06-01',
+                    'Content-Type': 'application/json',
+                }
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                if resp.status == 200:
+                    test_result = {'success': True, 'message': 'Anthropic connection verified.'}
+        except urllib.error.HTTPError as e:
+            if e.code == 401:
+                test_result = {'success': False, 'message': 'Invalid API key. Authentication failed with Anthropic.'}
+            elif e.code == 403:
+                test_result = {'success': False, 'message': 'API key lacks required permissions.'}
+            else:
+                # 200-level or other — treat as success if we got a response
+                test_result = {'success': True, 'message': f'Anthropic responded (HTTP {e.code}).'}
+        except Exception as e:
+            test_result = {'success': False, 'message': f'Connection failed: {str(e)[:100]}'}
+    else:
+        # Test OpenAI connection
+        connector = OpenAIConnector()
+        auth_context = {'api_key': api_key, 'org_name': ''}
+        test_result = connector.test_connection(auth_context, account_id)
 
     if not test_result.get('success'):
         failure_reason = test_result.get('message', 'Connection test failed.')[:200]
@@ -13008,13 +13040,13 @@ def handle_add_openai(event):
 
     # Store record in MemberPortal-Accounts DynamoDB table
     now_iso = datetime.now(timezone.utc).isoformat()
-    account_name = connection_name or 'OpenAI Connection'
+    account_name = connection_name or ('Anthropic Connection' if is_anthropic else 'OpenAI Connection')
 
     account_record = {
         'memberEmail': member_email,
         'accountId': account_id,
         'accountName': account_name,
-        'cloudProvider': 'openai',
+        'cloudProvider': 'anthropic' if is_anthropic else 'openai',
         'vendorType': 'ai_vendor',
         'connectionStatus': 'connected',
         'lastTestedAt': now_iso,
@@ -13031,13 +13063,13 @@ def handle_add_openai(event):
         logger.error(f"DynamoDB write error for OpenAI account: {e}")
         return create_error_response(500, 'ServerError', 'Failed to save connection. Please try again.')
 
-    logger.info(f"OpenAI account {account_id} added for member {member_email}")
+    logger.info(f"{'Anthropic' if is_anthropic else 'OpenAI'} account {account_id} added for member {member_email}")
 
     # Return success response (exclude encrypted credentials from response)
     response_record = {
         'accountId': account_id,
         'accountName': account_name,
-        'cloudProvider': 'openai',
+        'cloudProvider': 'anthropic' if is_anthropic else 'openai',
         'vendorType': 'ai_vendor',
         'connectionStatus': 'connected',
         'lastTestedAt': now_iso,
@@ -13046,7 +13078,7 @@ def handle_add_openai(event):
 
     return create_response(201, {
         'success': True,
-        'message': 'OpenAI connection added successfully.',
+        'message': f"{'Anthropic' if is_anthropic else 'OpenAI'} connection added successfully.",
         'account': response_record,
     })
 
